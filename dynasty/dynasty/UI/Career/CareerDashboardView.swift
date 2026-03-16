@@ -12,6 +12,9 @@ struct CareerDashboardView: View {
     /// Players on the roster for this team.
     @State private var rosterCount: Int = 0
 
+    /// Coaches on staff for this team.
+    @State private var coachCount: Int = 0
+
     /// Show game summary after advancing a week
     @State private var showGameSummary = false
     @State private var lastGameResult: GameSimulator.GameResult?
@@ -191,10 +194,69 @@ struct CareerDashboardView: View {
                     detail: career.currentSeason.description
                 )
             }
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+            NavigationLink {
+                CoachingStaffView(career: career)
+            } label: {
+                dashboardNavRow(
+                    icon: "person.2.fill",
+                    label: "Coaching Staff",
+                    detail: "\(coachCount) coaches"
+                )
+            }
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+            NavigationLink {
+                CapOverviewView(career: career)
+            } label: {
+                dashboardNavRow(
+                    icon: "dollarsign.circle.fill",
+                    label: "Salary Cap",
+                    detail: team.map { formatCapDetail($0.availableCap) } ?? "—"
+                )
+            }
+
+            if career.currentPhase == .freeAgency {
+                Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+                NavigationLink {
+                    FreeAgencyView(career: career)
+                } label: {
+                    dashboardNavRow(
+                        icon: "person.badge.plus",
+                        label: "Free Agency",
+                        detail: "Active"
+                    )
+                }
+            }
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+            NavigationLink {
+                ScoutingHubView(career: career)
+            } label: {
+                dashboardNavRow(
+                    icon: "magnifyingglass",
+                    label: "Scouting",
+                    detail: phaseDisplayName(career.currentPhase)
+                )
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(20)
         .cardBackground()
+    }
+
+    private func formatCapDetail(_ thousands: Int) -> String {
+        let millions = Double(thousands) / 1000.0
+        if abs(millions) >= 1.0 {
+            return String(format: "$%.1fM avail", millions)
+        } else {
+            return "$\(thousands)K avail"
+        }
     }
 
     // MARK: - Advance Week Button
@@ -291,6 +353,9 @@ struct CareerDashboardView: View {
         guard let fetchedTeamID = team?.id else { return }
         let playerDescriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == fetchedTeamID })
         rosterCount = (try? modelContext.fetchCount(playerDescriptor)) ?? 0
+
+        let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == fetchedTeamID })
+        coachCount = (try? modelContext.fetchCount(coachDescriptor)) ?? 0
     }
 }
 

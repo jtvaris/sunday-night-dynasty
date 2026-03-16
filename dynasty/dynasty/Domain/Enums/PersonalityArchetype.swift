@@ -10,4 +10,18 @@ enum PersonalityArchetype: String, Codable, CaseIterable {
     case mentor           = "Mentor"
     case fieryCompetitor  = "FieryCompetitor"
     case classClown       = "ClassClown"
+
+    var displayName: String {
+        switch self {
+        case .teamLeader:        return "Team Leader"
+        case .loneWolf:          return "Lone Wolf"
+        case .feelPlayer:        return "Feel Player"
+        case .steadyPerformer:   return "Steady Performer"
+        case .dramaQueen:        return "Drama Queen"
+        case .quietProfessional: return "Quiet Professional"
+        case .mentor:            return "Mentor"
+        case .fieryCompetitor:   return "Fiery Competitor"
+        case .classClown:        return "Class Clown"
+        }
+    }
 }
