@@ -12,6 +12,12 @@ struct CareerDashboardView: View {
     /// Players on the roster for this team.
     @State private var rosterCount: Int = 0
 
+    /// Show game summary after advancing a week
+    @State private var showGameSummary = false
+    @State private var lastGameResult: GameSimulator.GameResult?
+    @State private var lastHomeTeam: Team?
+    @State private var lastAwayTeam: Team?
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -43,6 +49,18 @@ struct CareerDashboardView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task {
             loadTeamData()
+        }
+        .sheet(isPresented: $showGameSummary) {
+            if let result = lastGameResult, let home = lastHomeTeam, let away = lastAwayTeam {
+                NavigationStack {
+                    GameSummaryView(
+                        boxScore: result.boxScore,
+                        homeTeam: home,
+                        awayTeam: away,
+                        playerStats: result.playerStats
+                    )
+                }
+            }
         }
     }
 
@@ -183,7 +201,18 @@ struct CareerDashboardView: View {
 
     private var advanceWeekButton: some View {
         Button {
+            let teamsByID = fetchTeamsByID()
             WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+            // Check if there was a play-by-play game result
+            if let result = WeekAdvancer.lastPlayerGameResult,
+               let home = teamsByID[result.boxScore.home.teamID],
+               let away = teamsByID[result.boxScore.away.teamID] {
+                lastGameResult = result
+                lastHomeTeam = home
+                lastAwayTeam = away
+                showGameSummary = true
+            }
+            loadTeamData()
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "chevron.right.2")
@@ -245,6 +274,12 @@ struct CareerDashboardView: View {
         case .tradeDeadline:   return "Trade Deadline"
         case .playoffs:        return "Playoffs"
         }
+    }
+
+    private func fetchTeamsByID() -> [UUID: Team] {
+        let descriptor = FetchDescriptor<Team>()
+        let teams = (try? modelContext.fetch(descriptor)) ?? []
+        return Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
     }
 
     private func loadTeamData() {

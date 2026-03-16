@@ -5,6 +5,9 @@ import SwiftData
 /// simulating games, and managing season/phase transitions.
 enum WeekAdvancer {
 
+    /// The result of the last player team game simulation (available after advanceWeek)
+    static var lastPlayerGameResult: GameSimulator.GameResult?
+
     // MARK: - Public API
 
     /// Advances the career state by exactly one week.
@@ -123,13 +126,32 @@ enum WeekAdvancer {
         let teamsByID = fetchTeamsByID(modelContext: modelContext)
 
         // Simulate every unplayed game.
+        // Player's team game uses full play-by-play simulation;
+        // all other games use the fast random score generator.
+        var playerGameResult: GameSimulator.GameResult?
+
         for game in unplayedGames {
-            let score = simulateGameScore()
-            game.homeScore = score.home
-            game.awayScore = score.away
+            let isPlayerGame = (game.homeTeamID == career.teamID || game.awayTeamID == career.teamID)
+
+            if isPlayerGame,
+               let homeTeam = teamsByID[game.homeTeamID],
+               let awayTeam = teamsByID[game.awayTeamID] {
+                // Full play-by-play simulation for the player's game
+                let result = GameSimulator.simulate(homeTeam: homeTeam, awayTeam: awayTeam)
+                game.homeScore = result.homeScore
+                game.awayScore = result.awayScore
+                playerGameResult = result
+            } else {
+                let score = simulateGameScore()
+                game.homeScore = score.home
+                game.awayScore = score.away
+            }
 
             updateTeamRecords(game: game, teamsByID: teamsByID)
         }
+
+        // Store the latest player game result for UI to access
+        lastPlayerGameResult = playerGameResult
 
         // Advance the week counter.
         career.currentWeek += 1
