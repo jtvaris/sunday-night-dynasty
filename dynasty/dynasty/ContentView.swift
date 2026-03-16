@@ -1,15 +1,16 @@
 import SwiftUI
+import SwiftData
 
 struct ContentView: View {
     var body: some View {
         NavigationStack {
-            Text("DYNASTY")
-                .font(.system(size: 64, weight: .black))
-                .tracking(8)
+            MainMenuView()
         }
+        .preferredColorScheme(.dark)
     }
 }
 
 #Preview {
     ContentView()
+        .modelContainer(for: Career.self, inMemory: true)
 }
