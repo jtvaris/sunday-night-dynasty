@@ -4,6 +4,7 @@ import SwiftData
 struct NewCareerView: View {
 
     @State private var playerName: String = ""
+    @State private var selectedAvatarID: String = "coach_m1"
     @State private var selectedRole: CareerRole = .gm
     @State private var selectedCapMode: CapMode = .simple
 
@@ -21,6 +22,18 @@ struct NewCareerView: View {
                     Text("Player Name")
                 } footer: {
                     Text("This is how you'll be known around the league.")
+                }
+
+                // MARK: - Avatar Selection
+                Section {
+                    AvatarSelectionView(selectedAvatarID: $selectedAvatarID)
+                        .padding(.vertical, 8)
+                } header: {
+                    Text("Your Look")
+                } footer: {
+                    if let avatar = CoachAvatars.avatar(for: selectedAvatarID) {
+                        Text("\"\(avatar.name)\" — \(avatar.gender == .male ? "Male" : "Female") coach")
+                    }
                 }
 
                 // MARK: - Role Selection
@@ -67,6 +80,7 @@ struct NewCareerView: View {
                 Section {
                     NavigationLink(destination: TeamSelectionView(
                         playerName: playerName,
+                        avatarID: selectedAvatarID,
                         selectedRole: selectedRole,
                         selectedCapMode: selectedCapMode
                     )) {

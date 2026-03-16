@@ -4,6 +4,7 @@ import SwiftData
 struct TeamSelectionView: View {
 
     let playerName: String
+    let avatarID: String
     let selectedRole: CareerRole
     let selectedCapMode: CapMode
 
@@ -84,6 +85,7 @@ struct TeamSelectionView: View {
 
         let career = Career(
             playerName: playerName,
+            avatarID: avatarID,
             role: selectedRole,
             capMode: selectedCapMode
         )
@@ -174,6 +176,7 @@ private struct MarketBadge: View {
     NavigationStack {
         TeamSelectionView(
             playerName: "John Doe",
+            avatarID: "coach_m1",
             selectedRole: .gm,
             selectedCapMode: .simple
         )
