@@ -46,6 +46,7 @@ struct PlayerDetailView: View {
                         .foregroundStyle(moraleColor)
                 }
             }
+            .accessibilityLabel("Morale, \(moraleLabel)")
             if player.isInjured {
                 LabeledContent("Status") {
                     Label("Injured -- \(player.injuryWeeksRemaining) wk\(player.injuryWeeksRemaining == 1 ? "" : "s")", systemImage: "cross.circle.fill")
@@ -121,9 +122,9 @@ struct PlayerDetailView: View {
             Text(player.position.rawValue)
                 .font(.caption)
                 .fontWeight(.bold)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
+                .foregroundStyle(Color.textPrimary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
                 .background(positionSideColor, in: RoundedRectangle(cornerRadius: 4))
             Text(player.position.side.rawValue)
                 .foregroundStyle(Color.textSecondary)
@@ -195,6 +196,15 @@ struct AttributeRow: View {
     let name: String
     let value: Int
 
+    private var ratingLabel: String {
+        switch value {
+        case 85...:   return "elite"
+        case 70..<85: return "good"
+        case 55..<70: return "average"
+        default:      return "below average"
+        }
+    }
+
     var body: some View {
         LabeledContent(name) {
             Text("\(value)")
@@ -202,6 +212,7 @@ struct AttributeRow: View {
                 .monospacedDigit()
                 .foregroundStyle(Color.forRating(value))
         }
+        .accessibilityLabel("\(name), \(value), \(ratingLabel)")
     }
 }
 

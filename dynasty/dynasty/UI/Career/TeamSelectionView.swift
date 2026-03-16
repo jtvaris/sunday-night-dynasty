@@ -142,6 +142,8 @@ private struct TeamRowView: View {
             MarketBadge(market: team.mediaMarket)
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(team.city) \(team.name), \(team.mediaMarket.rawValue) market")
     }
 }
 
@@ -169,6 +171,7 @@ private struct MarketBadge: View {
                 Capsule()
                     .fill(color.opacity(0.15))
             )
+            .accessibilityLabel("\(market.rawValue) market")
     }
 }
 

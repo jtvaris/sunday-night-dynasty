@@ -32,6 +32,8 @@ struct CareerDashboardView: View {
                     navigationCard
                 }
                 .padding(24)
+                .frame(maxWidth: 720)
+                .frame(maxWidth: .infinity)
             }
         }
         .navigationBarBackButtonHidden(true)
@@ -210,6 +212,8 @@ private struct StatColumn: View {
                 .foregroundStyle(Color.textSecondary)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label), \(value)")
     }
 }
 

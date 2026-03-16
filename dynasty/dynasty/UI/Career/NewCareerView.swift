@@ -18,6 +18,7 @@ struct NewCareerView: View {
                     TextField("Enter your name", text: $playerName)
                         .textInputAutocapitalization(.words)
                         .autocorrectionDisabled()
+                        .listRowBackground(Color.backgroundSecondary)
                 } header: {
                     Text("Player Name")
                 } footer: {
@@ -28,6 +29,7 @@ struct NewCareerView: View {
                 Section {
                     AvatarSelectionView(selectedAvatarID: $selectedAvatarID)
                         .padding(.vertical, 8)
+                        .listRowBackground(Color.backgroundSecondary)
                 } header: {
                     Text("Your Look")
                 } footer: {
@@ -43,6 +45,7 @@ struct NewCareerView: View {
                         Text("GM & Head Coach").tag(CareerRole.gmAndHeadCoach)
                     }
                     .pickerStyle(.segmented)
+                    .listRowBackground(Color.backgroundSecondary)
                 } header: {
                     Text("Career Role")
                 } footer: {
@@ -63,6 +66,7 @@ struct NewCareerView: View {
                         Text("Realistic").tag(CapMode.realistic)
                     }
                     .pickerStyle(.segmented)
+                    .listRowBackground(Color.backgroundSecondary)
                 } header: {
                     Text("Salary Cap Mode")
                 } footer: {
@@ -92,6 +96,7 @@ struct NewCareerView: View {
                         }
                     }
                     .disabled(playerName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .listRowBackground(Color.backgroundSecondary)
                 }
             }
             .scrollContentBackground(.hidden)

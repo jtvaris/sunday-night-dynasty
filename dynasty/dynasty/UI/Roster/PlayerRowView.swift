@@ -24,11 +24,14 @@ struct PlayerRowView: View {
                 Image(systemName: "cross.circle.fill")
                     .foregroundStyle(Color.danger)
                     .font(.caption)
+                    .accessibilityLabel("Injured")
             }
 
             overallBadge
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(player.fullName), \(player.position.rawValue), overall \(player.overall)\(player.isInjured ? ", injured" : "")")
     }
 
     // MARK: - Subviews
@@ -37,9 +40,10 @@ struct PlayerRowView: View {
         Text(player.position.rawValue)
             .font(.caption)
             .fontWeight(.bold)
-            .foregroundStyle(.white)
-            .frame(width: 36, height: 24)
+            .foregroundStyle(Color.textPrimary)
+            .frame(width: 36, height: 28)
             .background(positionColor, in: RoundedRectangle(cornerRadius: 4))
+            .accessibilityLabel("\(player.position.rawValue), \(player.position.side.rawValue)")
     }
 
     private var overallBadge: some View {
@@ -48,6 +52,7 @@ struct PlayerRowView: View {
             .fontWeight(.bold)
             .foregroundStyle(Color.forRating(player.overall))
             .frame(width: 36, alignment: .trailing)
+            .accessibilityLabel("Overall rating \(player.overall)")
     }
 
     // MARK: - Helpers

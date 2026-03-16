@@ -395,6 +395,9 @@ struct AvatarSelectionView: View {
                             .foregroundStyle(selectedAvatarID == avatar.id ? Color.accentGold : Color.textSecondary)
                             .lineLimit(1)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(avatar.name), \(avatar.gender == .male ? "male" : "female") coach")
+                    .accessibilityAddTraits(selectedAvatarID == avatar.id ? [.isButton, .isSelected] : .isButton)
                     .onTapGesture {
                         selectedAvatarID = avatar.id
                     }

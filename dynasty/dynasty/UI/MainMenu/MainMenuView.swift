@@ -7,62 +7,72 @@ struct MainMenuView: View {
 
     var body: some View {
         ZStack {
-            Color.backgroundPrimary
+            // MARK: - Full Screen Hero Image
+            Image("HeroImage")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
                 .ignoresSafeArea()
 
-            VStack(spacing: 32) {
+            // Dark gradient overlay for text readability
+            LinearGradient(
+                stops: [
+                    .init(color: Color.black.opacity(0.3), location: 0.0),
+                    .init(color: Color.black.opacity(0.15), location: 0.25),
+                    .init(color: Color.black.opacity(0.4), location: 0.5),
+                    .init(color: Color.black.opacity(0.85), location: 0.75),
+                    .init(color: Color.black.opacity(0.95), location: 1.0),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            VStack(spacing: 0) {
                 Spacer()
 
-                // MARK: - Trophy + Title Block
-                ZStack {
-                    // Trophy behind title, faded
-                    LombardiTrophyView()
-                        .frame(width: 140, height: 280)
-                        .opacity(0.25)
-                        .offset(y: -10)
+                // MARK: - Title Block (bottom half, over the darker gradient)
+                VStack(spacing: 8) {
+                    Text("SUNDAY NIGHT")
+                        .font(.system(size: 22, weight: .bold))
+                        .tracking(10)
+                        .foregroundStyle(Color.accentGold)
 
-                    VStack(spacing: 8) {
-                        Text("SUNDAY NIGHT")
-                            .font(.system(size: 24, weight: .bold))
-                            .tracking(8)
-                            .foregroundStyle(Color.accentGold)
+                    Text("DYNASTY")
+                        .font(.system(size: 68, weight: .black))
+                        .tracking(12)
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.6), radius: 8, y: 4)
 
-                        Text("DYNASTY")
-                            .font(.system(size: 72, weight: .black))
-                            .tracking(10)
-                            .foregroundStyle(Color.textPrimary)
-
-                        Text("NFL FOOTBALL MANAGER")
-                            .font(.system(size: 16, weight: .medium))
-                            .tracking(6)
-                            .foregroundStyle(Color.textSecondary)
-                            .padding(.top, 4)
-                    }
+                    Text("NFL FOOTBALL MANAGER")
+                        .font(.system(size: 14, weight: .medium))
+                        .tracking(6)
+                        .foregroundStyle(Color.white.opacity(0.7))
+                        .padding(.top, 4)
                 }
-
-                Spacer()
+                .padding(.bottom, 40)
 
                 // MARK: - Menu Buttons
-                VStack(spacing: 16) {
+                VStack(spacing: 14) {
                     NavigationLink(destination: NewCareerView()) {
                         MenuButton(title: "New Career", icon: "plus.circle.fill", isPrimary: true)
                     }
+                    .accessibilityLabel("New Career")
 
                     if !careers.isEmpty {
                         NavigationLink(destination: CareerListView()) {
                             MenuButton(title: "Continue Career", icon: "play.circle.fill", isPrimary: false)
                         }
+                        .accessibilityLabel("Continue Career")
                     }
                 }
                 .padding(.horizontal, 60)
-
-                Spacer()
+                .padding(.bottom, 32)
 
                 // MARK: - Footer
                 Text("v1.0")
                     .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
-                    .padding(.bottom, 20)
+                    .foregroundStyle(Color.white.opacity(0.3))
+                    .padding(.bottom, 16)
             }
         }
         .toolbar(.hidden, for: .navigationBar)
@@ -84,15 +94,15 @@ private struct MenuButton: View {
                 .font(.title2.weight(.semibold))
                 .tracking(2)
         }
-        .foregroundStyle(isPrimary ? Color.backgroundPrimary : Color.textPrimary)
+        .foregroundStyle(isPrimary ? Color.backgroundPrimary : .white)
         .frame(maxWidth: 400)
-        .frame(height: 60)
+        .frame(height: 56)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(isPrimary ? Color.accentGold : Color.backgroundTertiary)
+                .fill(isPrimary ? Color.accentGold : Color.white.opacity(0.15))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(isPrimary ? Color.clear : Color.surfaceBorder, lineWidth: 1)
+                        .strokeBorder(isPrimary ? Color.clear : Color.white.opacity(0.2), lineWidth: 1)
                 )
         )
     }

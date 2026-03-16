@@ -87,6 +87,7 @@ struct RosterView: View {
         } label: {
             Label("Sort", systemImage: "arrow.up.arrow.down")
         }
+        .accessibilityLabel("Sort roster, currently by \(sortOrder.label)")
     }
 
     // MARK: - Helpers
