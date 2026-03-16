@@ -30,6 +30,9 @@ struct CareerDashboardView: View {
 
                     // MARK: - Navigation
                     navigationCard
+
+                    // MARK: - Advance Week
+                    advanceWeekButton
                 }
                 .padding(24)
                 .frame(maxWidth: 720)
@@ -140,28 +143,88 @@ struct CareerDashboardView: View {
                 .navigationTitle("Roster")
                 .toolbarColorScheme(.dark, for: .navigationBar)
             } label: {
-                HStack {
-                    Image(systemName: "person.3.fill")
-                        .foregroundStyle(Color.accentGold)
-                    Text("Roster")
-                        .foregroundStyle(Color.textPrimary)
-                    Spacer()
-                    Text("\(rosterCount) players")
-                        .foregroundStyle(Color.textSecondary)
-                        .monospacedDigit()
-                    Image(systemName: "chevron.right")
-                        .foregroundStyle(Color.textTertiary)
-                }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.backgroundTertiary)
+                dashboardNavRow(
+                    icon: "person.3.fill",
+                    label: "Roster",
+                    detail: "\(rosterCount) players"
+                )
+            }
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+            NavigationLink {
+                ScheduleView(career: career)
+            } label: {
+                dashboardNavRow(
+                    icon: "calendar",
+                    label: "Schedule",
+                    detail: "Week \(career.currentWeek)"
+                )
+            }
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+            NavigationLink {
+                StandingsView(career: career)
+            } label: {
+                dashboardNavRow(
+                    icon: "list.number",
+                    label: "Standings",
+                    detail: career.currentSeason.description
                 )
             }
         }
         .frame(maxWidth: .infinity)
         .padding(20)
         .cardBackground()
+    }
+
+    // MARK: - Advance Week Button
+
+    private var advanceWeekButton: some View {
+        Button {
+            WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "chevron.right.2")
+                    .font(.system(size: 16, weight: .bold))
+                Text("Advance to Week \(career.currentWeek + 1)")
+                    .font(.system(size: 17, weight: .bold))
+            }
+            .foregroundStyle(Color.backgroundPrimary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 18)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color.accentGold)
+                    .shadow(color: Color.accentGold.opacity(0.4), radius: 12, x: 0, y: 4)
+            )
+        }
+        .accessibilityLabel("Advance to Week \(career.currentWeek + 1)")
+    }
+
+    // MARK: - Nav Row Helper
+
+    private func dashboardNavRow(icon: String, label: String, detail: String) -> some View {
+        HStack {
+            Image(systemName: icon)
+                .foregroundStyle(Color.accentGold)
+                .frame(width: 24)
+            Text(label)
+                .foregroundStyle(Color.textPrimary)
+            Spacer()
+            Text(detail)
+                .foregroundStyle(Color.textSecondary)
+                .monospacedDigit()
+            Image(systemName: "chevron.right")
+                .foregroundStyle(Color.textTertiary)
+                .font(.system(size: 13))
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.backgroundTertiary)
+        )
     }
 
     // MARK: - Helpers
