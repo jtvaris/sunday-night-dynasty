@@ -1,8 +1,9 @@
-# Dynasty — NFL Football Manager Game Design
+# Sunday Night Dynasty — NFL Football Manager Game Design
 
 **Date:** 2026-03-16
 **Platform:** iPadOS (iPad-first)
 **Tech Stack:** SwiftUI + SceneKit + Swift Data + Pure Swift Engine
+**Bundle ID:** com.brewcrow.dynasty
 
 ---
 

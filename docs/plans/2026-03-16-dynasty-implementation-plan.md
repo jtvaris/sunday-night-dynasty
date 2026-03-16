@@ -1889,34 +1889,66 @@ git commit -m "Add roster view with player list, filtering, sorting, and detail 
 ## Phase 8: NFL Draft (outline)
 
 - Task 44: Draft board UI
-- Task 45: Draft simulation (AI picks)
-- Task 46: Trade offer system during draft
+- Task 45: Draft simulation (AI picks based on team needs and big boards)
+- Task 46: Trade offer system during draft (trade up/down, future picks)
 - Task 47: Draft grades and media reaction
+- Task 48: Draft pick value chart for trade negotiations
 
 ## Phase 9: Player Development (outline)
 
-- Task 48: Offseason development calculations
-- Task 49: In-season experience gains
-- Task 50: Age regression system
-- Task 51: Mentor/mentee system
-- Task 52: Potential realization logic
+- Task 49: Offseason development calculations (work ethic, coaching quality, age curve)
+- Task 50: In-season experience gains (playing time, game performance)
+- Task 51: Age regression system (physical first, mental later, position-specific peaks)
+- Task 52: Mentor/mentee system (veteran leadership accelerates young player growth)
+- Task 53: Potential realization logic (coaching fit, personality, scheme fit)
+- Task 54: Injury recovery and durability impact
 
 ## Phase 10: Media and Events (outline)
 
-- Task 53: News/headline generator
-- Task 54: Owner satisfaction system
-- Task 55: Firing and rehiring flow
-- Task 56: Off-field event generator (holdouts, drama, injuries)
-- Task 57: Event response UI and consequence system
+- Task 55: News/headline generator (weekly headlines, draft speculation, performance tracking)
+- Task 56: Owner satisfaction system (patience, media market pressure, meddling)
+- Task 57: Firing and rehiring flow (potkut → työnhaku → uusi joukkue → reputation vaikuttaa)
+- Task 58: Off-field event generator (holdouts, suspensions, drama, retirements, positive events)
+- Task 59: Event response UI and consequence system (choices with locker room/media/owner impact)
 
-## Phase 11: Roster Import/Export (outline)
+## Phase 11: Visual Polish and Branding (outline)
 
-- Task 58: JSON roster format definition
-- Task 59: Export current roster to JSON
-- Task 60: Import roster from JSON file
-- Task 61: Default randomized roster vs. development (real) roster toggle
+- Task 60: Team logos (AI-generated or procedural for all 32 teams)
+- Task 61: Player headshot generation (procedural portraits or AI-generated)
+- Task 62: UI animations and transitions (screen transitions, card reveals, stat animations)
+- Task 63: Sound design (menu music, game day atmosphere, notification sounds)
+- Task 64: iPad-specific layout optimization (split view, sidebar navigation for larger screens)
+- Task 65: App icon and launch screen design
+- Task 66: Settings screen (difficulty, simulation speed, notification preferences)
+- Task 67: Tutorial/onboarding flow for new players
+- Task 68: Achievement/trophy system (career milestones, Super Bowl wins)
+
+## Phase 12: Roster Import/Export (outline)
+
+- Task 69: JSON roster format definition (players, teams, names, attributes)
+- Task 70: Export current roster to JSON
+- Task 71: Import roster from JSON file (Files app integration)
+- Task 72: Default randomized roster vs. development (real) roster toggle
+- Task 73: Community sharing support (share roster packs via AirDrop/Files)
 
 ---
+
+## Progress Tracker
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| 1. Foundation | DONE | SwiftUI, domain models, UI flow, roster |
+| 2. Season Structure | DONE | Schedule, standings, week advancement |
+| 3. Match Engine | DONE | Play-by-play simulation, box score, game summary |
+| 4. SceneKit 3D | DONE | 3D field, match view with replay |
+| 5. Coaching Staff | DONE | Scheme fit, coach development, hiring/firing |
+| 6. Contracts/Cap | DONE | Simple + realistic modes, free agency |
+| 7. Scouting | DONE | Scouts, prospects, combine, draft class |
+| 8. NFL Draft | TODO | Draft UI, AI picks, trade system |
+| 9. Player Development | TODO | Development, regression, mentoring |
+| 10. Media & Events | TODO | Headlines, owner, drama, consequences |
+| 11. Visual Polish | TODO | Logos, portraits, animations, sound, settings |
+| 12. Roster Import/Export | TODO | JSON format, import/export, sharing |
 
 ## Notes
 
@@ -1924,7 +1956,12 @@ git commit -m "Add roster view with player list, filtering, sorting, and detail 
 - Phase 1 establishes the playable foundation: create career → see roster → advance through the season skeleton
 - Phases 2-3 make the core game loop functional (season + match sim)
 - Phase 4 adds the visual match experience
-- Phases 5-10 layer on depth features
-- Phase 11 enables community content
+- Phases 5-7 layer on management depth (coaching, contracts, scouting)
+- Phase 8 completes the draft cycle
+- Phases 9-10 add dynamic gameplay (development, media, events)
+- Phase 11 polishes the visual experience for release quality
+- Phase 12 enables community content
 - All game logic (Engine layer) should be testable without UI
 - The project uses `PBXFileSystemSynchronizedRootGroup` — adding files to the `dynasty/dynasty/` folder automatically includes them in the Xcode project
+- Game name: **Sunday Night Dynasty**
+- Bundle ID: com.brewcrow.dynasty
