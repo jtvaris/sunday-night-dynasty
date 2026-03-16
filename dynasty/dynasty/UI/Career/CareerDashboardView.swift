@@ -14,7 +14,7 @@ struct CareerDashboardView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.backgroundPrimary.ignoresSafeArea()
 
             ScrollView {
                 VStack(spacing: 24) {
@@ -47,7 +47,7 @@ struct CareerDashboardView: View {
         VStack(spacing: 8) {
             Text(team?.fullName ?? "No Team")
                 .font(.system(size: 32, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.accentGold)
 
             HStack(spacing: 12) {
                 Label(
@@ -56,23 +56,23 @@ struct CareerDashboardView: View {
                 )
 
                 Text("|")
-                    .foregroundStyle(.gray.opacity(0.5))
+                    .foregroundStyle(Color.textTertiary)
 
                 Text(career.playerName)
             }
             .font(.subheadline)
-            .foregroundStyle(.gray)
+            .foregroundStyle(Color.textSecondary)
 
             if let team {
                 Text("\(team.conference.rawValue) \(team.division.rawValue)")
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.accentGold)
                     .padding(.top, 2)
             }
         }
         .frame(maxWidth: .infinity)
         .padding(24)
-        .background(cardBackground)
+        .cardBackground()
     }
 
     // MARK: - Season Info Card
@@ -81,9 +81,9 @@ struct CareerDashboardView: View {
         VStack(spacing: 12) {
             Text("Season Overview")
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.textPrimary)
 
-            Divider().overlay(Color.white.opacity(0.1))
+            Divider().overlay(Color.surfaceBorder)
 
             HStack(spacing: 0) {
                 StatColumn(label: "Season", value: "\(career.currentSeason)")
@@ -93,7 +93,7 @@ struct CareerDashboardView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(20)
-        .background(cardBackground)
+        .cardBackground()
     }
 
     // MARK: - Record Card
@@ -102,9 +102,9 @@ struct CareerDashboardView: View {
         VStack(spacing: 12) {
             Text("Team Record")
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.textPrimary)
 
-            Divider().overlay(Color.white.opacity(0.1))
+            Divider().overlay(Color.surfaceBorder)
 
             HStack(spacing: 0) {
                 StatColumn(label: "Record", value: team?.record ?? "0-0")
@@ -114,7 +114,7 @@ struct CareerDashboardView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(20)
-        .background(cardBackground)
+        .cardBackground()
     }
 
     // MARK: - Navigation Card
@@ -123,54 +123,46 @@ struct CareerDashboardView: View {
         VStack(spacing: 12) {
             Text("Front Office")
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.textPrimary)
 
-            Divider().overlay(Color.white.opacity(0.1))
+            Divider().overlay(Color.surfaceBorder)
 
             NavigationLink {
                 // Placeholder roster view
                 ZStack {
-                    Color.black.ignoresSafeArea()
+                    Color.backgroundPrimary.ignoresSafeArea()
                     Text("Roster - Coming Soon")
                         .font(.title2)
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(Color.textSecondary)
                 }
                 .navigationTitle("Roster")
                 .toolbarColorScheme(.dark, for: .navigationBar)
             } label: {
                 HStack {
                     Image(systemName: "person.3.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.accentGold)
                     Text("Roster")
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.textPrimary)
                     Spacer()
                     Text("\(rosterCount) players")
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(Color.textSecondary)
+                        .monospacedDigit()
                     Image(systemName: "chevron.right")
-                        .foregroundStyle(.gray.opacity(0.5))
+                        .foregroundStyle(Color.textTertiary)
                 }
                 .padding(12)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.white.opacity(0.03))
+                        .fill(Color.backgroundTertiary)
                 )
             }
         }
         .frame(maxWidth: .infinity)
         .padding(20)
-        .background(cardBackground)
+        .cardBackground()
     }
 
     // MARK: - Helpers
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 16)
-            .fill(Color.white.opacity(0.06))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-            )
-    }
 
     private func phaseDisplayName(_ phase: SeasonPhase) -> String {
         switch phase {
@@ -211,11 +203,11 @@ private struct StatColumn: View {
     var body: some View {
         VStack(spacing: 4) {
             Text(value)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.white)
+                .font(.title3.weight(.bold).monospacedDigit())
+                .foregroundStyle(Color.textPrimary)
             Text(label)
                 .font(.caption)
-                .foregroundStyle(.gray)
+                .foregroundStyle(Color.textSecondary)
         }
         .frame(maxWidth: .infinity)
     }

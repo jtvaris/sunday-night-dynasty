@@ -9,7 +9,7 @@ struct NewCareerView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.backgroundPrimary.ignoresSafeArea()
 
             Form {
                 // MARK: - Player Info
@@ -72,7 +72,7 @@ struct NewCareerView: View {
                     )) {
                         HStack {
                             Image(systemName: "sportscourt.fill")
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(Color.accentGold)
                             Text("Choose Your Team")
                                 .font(.headline)
                         }

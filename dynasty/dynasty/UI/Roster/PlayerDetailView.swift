@@ -4,16 +4,22 @@ struct PlayerDetailView: View {
     let player: Player
 
     var body: some View {
-        List {
-            overviewSection
-            physicalSection
-            mentalSection
-            personalitySection
-            contractSection
+        ZStack {
+            Color.backgroundPrimary.ignoresSafeArea()
+
+            List {
+                overviewSection
+                physicalSection
+                mentalSection
+                personalitySection
+                contractSection
+            }
+            .scrollContentBackground(.hidden)
+            .listStyle(.insetGrouped)
         }
-        .listStyle(.insetGrouped)
         .navigationTitle(player.fullName)
         .navigationBarTitleDisplayMode(.large)
+        .toolbarColorScheme(.dark, for: .navigationBar)
     }
 
     // MARK: - Sections
@@ -23,10 +29,14 @@ struct PlayerDetailView: View {
             LabeledContent("Position") {
                 positionLabel
             }
-            LabeledContent("Age", value: "\(player.age)")
+            LabeledContent("Age") {
+                Text("\(player.age)")
+                    .monospacedDigit()
+                    .foregroundStyle(Color.textPrimary)
+            }
             LabeledContent("Experience") {
                 Text(player.yearsPro == 0 ? "Rookie" : "\(player.yearsPro) year\(player.yearsPro == 1 ? "" : "s") pro")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.textSecondary)
             }
             AttributeRow(name: "Overall", value: player.overall)
             LabeledContent("Morale") {
@@ -38,11 +48,12 @@ struct PlayerDetailView: View {
             }
             if player.isInjured {
                 LabeledContent("Status") {
-                    Label("Injured – \(player.injuryWeeksRemaining) wk\(player.injuryWeeksRemaining == 1 ? "" : "s")", systemImage: "cross.circle.fill")
-                        .foregroundStyle(.red)
+                    Label("Injured -- \(player.injuryWeeksRemaining) wk\(player.injuryWeeksRemaining == 1 ? "" : "s")", systemImage: "cross.circle.fill")
+                        .foregroundStyle(Color.danger)
                 }
             }
         }
+        .listRowBackground(Color.backgroundSecondary)
     }
 
     private var physicalSection: some View {
@@ -54,6 +65,7 @@ struct PlayerDetailView: View {
             AttributeRow(name: "Stamina",      value: player.physical.stamina)
             AttributeRow(name: "Durability",   value: player.physical.durability)
         }
+        .listRowBackground(Color.backgroundSecondary)
     }
 
     private var mentalSection: some View {
@@ -65,6 +77,7 @@ struct PlayerDetailView: View {
             AttributeRow(name: "Coachability",     value: player.mental.coachability)
             AttributeRow(name: "Leadership",       value: player.mental.leadership)
         }
+        .listRowBackground(Color.backgroundSecondary)
     }
 
     private var personalitySection: some View {
@@ -74,24 +87,31 @@ struct PlayerDetailView: View {
             if player.personality.isMentor {
                 Label("Mentor influence on team", systemImage: "person.2.fill")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.textSecondary)
             }
             if player.personality.isDramaticInMedia {
                 Label("Can generate media drama", systemImage: "exclamationmark.bubble.fill")
                     .font(.footnote)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.warning)
             }
         }
+        .listRowBackground(Color.backgroundSecondary)
     }
 
     private var contractSection: some View {
         Section("Contract") {
-            LabeledContent("Years Remaining", value: "\(player.contractYearsRemaining)")
+            LabeledContent("Years Remaining") {
+                Text("\(player.contractYearsRemaining)")
+                    .monospacedDigit()
+                    .foregroundStyle(Color.textPrimary)
+            }
             LabeledContent("Annual Salary") {
                 Text(formattedSalary)
-                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .foregroundStyle(Color.textSecondary)
             }
         }
+        .listRowBackground(Color.backgroundSecondary)
     }
 
     // MARK: - Helpers
@@ -106,15 +126,15 @@ struct PlayerDetailView: View {
                 .padding(.vertical, 3)
                 .background(positionSideColor, in: RoundedRectangle(cornerRadius: 4))
             Text(player.position.side.rawValue)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.textSecondary)
         }
     }
 
     private var positionSideColor: Color {
         switch player.position.side {
-        case .offense:      return .blue
-        case .defense:      return .red
-        case .specialTeams: return Color(red: 0.75, green: 0.55, blue: 0.0)
+        case .offense:      return .accentBlue
+        case .defense:      return .danger
+        case .specialTeams: return .accentGold
         }
     }
 
@@ -128,7 +148,7 @@ struct PlayerDetailView: View {
     }
 
     private var moraleColor: Color {
-        overallColor(for: player.morale)
+        Color.forRating(player.morale)
     }
 
     private var moraleIcon: some View {
@@ -179,7 +199,8 @@ struct AttributeRow: View {
         LabeledContent(name) {
             Text("\(value)")
                 .fontWeight(.semibold)
-                .foregroundStyle(overallColor(for: value))
+                .monospacedDigit()
+                .foregroundStyle(Color.forRating(value))
         }
     }
 }

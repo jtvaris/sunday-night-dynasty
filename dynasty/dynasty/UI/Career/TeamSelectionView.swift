@@ -30,7 +30,7 @@ struct TeamSelectionView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.backgroundPrimary.ignoresSafeArea()
 
             List {
                 ForEach(teamsByConference, id: \.conference) { group in
@@ -42,12 +42,12 @@ struct TeamSelectionView: View {
                                 } label: {
                                     TeamRowView(team: team)
                                 }
-                                .listRowBackground(Color.white.opacity(0.05))
+                                .listRowBackground(Color.backgroundSecondary)
                             }
                         } header: {
                             Text("\(group.conference.rawValue) \(divisionGroup.division.rawValue)")
                                 .font(.subheadline.weight(.bold))
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(Color.accentGold)
                         }
                     }
                 }
@@ -57,14 +57,14 @@ struct TeamSelectionView: View {
 
             if isLoading {
                 ZStack {
-                    Color.black.opacity(0.7).ignoresSafeArea()
+                    Color.backgroundPrimary.opacity(0.85).ignoresSafeArea()
                     VStack(spacing: 16) {
                         ProgressView()
                             .controlSize(.large)
-                            .tint(.orange)
+                            .tint(Color.accentGold)
                         Text("Generating League...")
                             .font(.headline)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Color.textPrimary)
                     }
                 }
             }
@@ -128,11 +128,11 @@ private struct TeamRowView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(team.city) \(team.name)")
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.textPrimary)
 
                 Text(team.abbreviation)
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(.gray)
+                    .foregroundStyle(Color.textSecondary)
             }
 
             Spacer()
@@ -150,9 +150,9 @@ private struct MarketBadge: View {
 
     private var color: Color {
         switch market {
-        case .large:  return .orange
-        case .medium: return .blue
-        case .small:  return .gray
+        case .large:  return .accentGold
+        case .medium: return .accentBlue
+        case .small:  return .textTertiary
         }
     }
 

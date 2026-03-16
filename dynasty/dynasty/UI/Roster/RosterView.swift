@@ -39,15 +39,22 @@ struct RosterView: View {
     }
 
     var body: some View {
-        List {
-            ForEach(filteredPlayers) { player in
-                NavigationLink(destination: PlayerDetailView(player: player)) {
-                    PlayerRowView(player: player)
+        ZStack {
+            Color.backgroundPrimary.ignoresSafeArea()
+
+            List {
+                ForEach(filteredPlayers) { player in
+                    NavigationLink(destination: PlayerDetailView(player: player)) {
+                        PlayerRowView(player: player)
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .listStyle(.insetGrouped)
         }
-        .listStyle(.insetGrouped)
         .navigationTitle("Roster (\(players.count))")
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 filterPicker

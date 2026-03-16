@@ -7,7 +7,7 @@ struct MainMenuView: View {
 
     var body: some View {
         ZStack {
-            Color.black
+            Color.backgroundPrimary
                 .ignoresSafeArea()
 
             VStack(spacing: 40) {
@@ -15,22 +15,21 @@ struct MainMenuView: View {
 
                 // MARK: - Title Block
                 VStack(spacing: 8) {
+                    Text("SUNDAY NIGHT")
+                        .font(.system(size: 24, weight: .bold))
+                        .tracking(8)
+                        .foregroundStyle(Color.accentGold)
+
                     Text("DYNASTY")
                         .font(.system(size: 72, weight: .black))
                         .tracking(10)
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color.orange, Color.yellow],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                        .foregroundStyle(Color.textPrimary)
 
-                    Text("NFL Football Manager")
-                        .font(.system(size: 20, weight: .medium))
-                        .tracking(4)
-                        .foregroundStyle(.gray)
-                        .textCase(.uppercase)
+                    Text("NFL FOOTBALL MANAGER")
+                        .font(.system(size: 16, weight: .medium))
+                        .tracking(6)
+                        .foregroundStyle(Color.textSecondary)
+                        .padding(.top, 4)
                 }
 
                 Spacer()
@@ -38,12 +37,12 @@ struct MainMenuView: View {
                 // MARK: - Menu Buttons
                 VStack(spacing: 16) {
                     NavigationLink(destination: NewCareerView()) {
-                        MenuButton(title: "New Career", icon: "plus.circle.fill")
+                        MenuButton(title: "New Career", icon: "plus.circle.fill", isPrimary: true)
                     }
 
                     if !careers.isEmpty {
                         NavigationLink(destination: CareerListView()) {
-                            MenuButton(title: "Continue Career", icon: "play.circle.fill")
+                            MenuButton(title: "Continue Career", icon: "play.circle.fill", isPrimary: false)
                         }
                     }
                 }
@@ -54,7 +53,7 @@ struct MainMenuView: View {
                 // MARK: - Footer
                 Text("v1.0")
                     .font(.caption)
-                    .foregroundStyle(.gray.opacity(0.5))
+                    .foregroundStyle(Color.textTertiary)
                     .padding(.bottom, 20)
             }
         }
@@ -67,6 +66,7 @@ struct MainMenuView: View {
 private struct MenuButton: View {
     let title: String
     let icon: String
+    let isPrimary: Bool
 
     var body: some View {
         HStack(spacing: 12) {
@@ -76,15 +76,15 @@ private struct MenuButton: View {
                 .font(.title2.weight(.semibold))
                 .tracking(2)
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(isPrimary ? Color.backgroundPrimary : Color.textPrimary)
         .frame(maxWidth: 400)
         .frame(height: 60)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.08))
+                .fill(isPrimary ? Color.accentGold : Color.backgroundTertiary)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
+                        .strokeBorder(isPrimary ? Color.clear : Color.surfaceBorder, lineWidth: 1)
                 )
         )
     }
@@ -99,14 +99,14 @@ struct CareerListView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.backgroundPrimary.ignoresSafeArea()
 
             List {
                 ForEach(careers) { career in
                     NavigationLink(destination: CareerDashboardView(career: career)) {
                         CareerRowView(career: career)
                     }
-                    .listRowBackground(Color.white.opacity(0.05))
+                    .listRowBackground(Color.backgroundSecondary)
                 }
                 .onDelete(perform: deleteCareers)
             }
@@ -133,16 +133,18 @@ private struct CareerRowView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(career.playerName)
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.textPrimary)
 
             HStack(spacing: 16) {
-                Label(career.role == .gm ? "General Manager" : "GM & Head Coach",
-                      systemImage: career.role == .gm ? "briefcase.fill" : "sportscourt.fill")
+                Label(
+                    career.role == .gm ? "General Manager" : "GM & Head Coach",
+                    systemImage: career.role == .gm ? "briefcase.fill" : "sportscourt.fill"
+                )
 
                 Label("Season \(career.currentSeason)", systemImage: "calendar")
             }
             .font(.subheadline)
-            .foregroundStyle(.gray)
+            .foregroundStyle(Color.textSecondary)
         }
         .padding(.vertical, 4)
     }

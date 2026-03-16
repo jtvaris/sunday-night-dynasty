@@ -11,18 +11,18 @@ struct PlayerRowView: View {
                 Text(player.fullName)
                     .font(.body)
                     .fontWeight(.medium)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Color.textPrimary)
 
                 Text(experienceLabel)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.textSecondary)
             }
 
             Spacer()
 
             if player.isInjured {
                 Image(systemName: "cross.circle.fill")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.danger)
                     .font(.caption)
             }
 
@@ -44,9 +44,9 @@ struct PlayerRowView: View {
 
     private var overallBadge: some View {
         Text("\(player.overall)")
-            .font(.callout)
+            .font(.callout.monospacedDigit())
             .fontWeight(.bold)
-            .foregroundStyle(overallColor(for: player.overall))
+            .foregroundStyle(Color.forRating(player.overall))
             .frame(width: 36, alignment: .trailing)
     }
 
@@ -54,27 +54,22 @@ struct PlayerRowView: View {
 
     private var positionColor: Color {
         switch player.position.side {
-        case .offense:      return .blue
-        case .defense:      return .red
-        case .specialTeams: return Color(red: 0.75, green: 0.55, blue: 0.0)
+        case .offense:      return .accentBlue
+        case .defense:      return .danger
+        case .specialTeams: return .accentGold
         }
     }
 
     private var experienceLabel: String {
         let expText = player.yearsPro == 0 ? "Rookie" : "\(player.yearsPro)yr pro"
-        return "Age \(player.age)  •  \(expText)"
+        return "Age \(player.age)  |  \(expText)"
     }
 }
 
 // MARK: - Overall Color Helper (package-level for reuse)
 
 func overallColor(for value: Int) -> Color {
-    switch value {
-    case 85...: return .green
-    case 70..<85: return .accentColor
-    case 55..<70: return .orange
-    default:    return .red
-    }
+    Color.forRating(value)
 }
 
 // MARK: - Preview
