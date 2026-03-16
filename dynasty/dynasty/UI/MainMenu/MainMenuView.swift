@@ -10,26 +10,34 @@ struct MainMenuView: View {
             Color.backgroundPrimary
                 .ignoresSafeArea()
 
-            VStack(spacing: 40) {
+            VStack(spacing: 32) {
                 Spacer()
 
-                // MARK: - Title Block
-                VStack(spacing: 8) {
-                    Text("SUNDAY NIGHT")
-                        .font(.system(size: 24, weight: .bold))
-                        .tracking(8)
-                        .foregroundStyle(Color.accentGold)
+                // MARK: - Trophy + Title Block
+                ZStack {
+                    // Trophy behind title, faded
+                    LombardiTrophyView()
+                        .frame(width: 140, height: 280)
+                        .opacity(0.25)
+                        .offset(y: -10)
 
-                    Text("DYNASTY")
-                        .font(.system(size: 72, weight: .black))
-                        .tracking(10)
-                        .foregroundStyle(Color.textPrimary)
+                    VStack(spacing: 8) {
+                        Text("SUNDAY NIGHT")
+                            .font(.system(size: 24, weight: .bold))
+                            .tracking(8)
+                            .foregroundStyle(Color.accentGold)
 
-                    Text("NFL FOOTBALL MANAGER")
-                        .font(.system(size: 16, weight: .medium))
-                        .tracking(6)
-                        .foregroundStyle(Color.textSecondary)
-                        .padding(.top, 4)
+                        Text("DYNASTY")
+                            .font(.system(size: 72, weight: .black))
+                            .tracking(10)
+                            .foregroundStyle(Color.textPrimary)
+
+                        Text("NFL FOOTBALL MANAGER")
+                            .font(.system(size: 16, weight: .medium))
+                            .tracking(6)
+                            .foregroundStyle(Color.textSecondary)
+                            .padding(.top, 4)
+                    }
                 }
 
                 Spacer()
