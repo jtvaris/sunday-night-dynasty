@@ -165,13 +165,13 @@ struct CoachingTreeView: View {
                     .foregroundStyle(Color.textPrimary)
 
                 if isCurrent {
-                    Text("Since \(entry.yearHired)")
+                    Text("Since \(String(entry.yearHired))")
                         .font(.caption)
                         .foregroundStyle(Color.textSecondary)
                 } else {
                     let tenureYears = (entry.yearLeft ?? career.currentSeason) - entry.yearHired
                     let tenureText = tenureYears <= 0 ? "< 1 yr" : "\(tenureYears) yr\(tenureYears == 1 ? "" : "s")"
-                    Text("\(entry.yearHired)–\(entry.yearLeft.map(String.init) ?? "Present") · \(tenureText)")
+                    Text("\(String(entry.yearHired))–\(entry.yearLeft.map(String.init) ?? "Present") · \(tenureText)")
                         .font(.caption)
                         .foregroundStyle(Color.textSecondary)
                 }

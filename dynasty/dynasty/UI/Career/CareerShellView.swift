@@ -71,10 +71,8 @@ struct CareerShellView: View {
             Text("Your progress is saved automatically.")
         }
         .task { loadShellData() }
-        .onChange(of: navigationPath.count) { _, newCount in
-            if newCount == 0 {
-                refreshTaskCompletionStatus()
-            }
+        .onChange(of: navigationPath) { _, _ in
+            refreshTaskCompletionStatus()
         }
         .onChange(of: career.currentPhase) { _, newPhase in
             regenerateTasks(for: newPhase)

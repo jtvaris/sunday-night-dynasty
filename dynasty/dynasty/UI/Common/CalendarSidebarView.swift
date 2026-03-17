@@ -89,7 +89,7 @@ struct CalendarSidebarView: View {
 
             // Season & week context
             HStack(spacing: 16) {
-                Label("Season \(career.currentSeason)", systemImage: "calendar")
+                Label("Season \(String(career.currentSeason))", systemImage: "calendar")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.textSecondary)
                 Label("Week \(career.currentWeek)", systemImage: "clock")

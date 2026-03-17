@@ -310,6 +310,7 @@ struct PressConferenceView: View {
             )
             .opacity(isDisabled ? 0.4 : 1.0)
         }
+        .buttonStyle(.plain)
         .disabled(selectedResponseIndex != nil)
         .animation(.easeInOut(duration: 0.25), value: selectedResponseIndex)
     }

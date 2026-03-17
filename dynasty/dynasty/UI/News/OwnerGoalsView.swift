@@ -75,7 +75,7 @@ struct OwnerGoalsView: View {
                 Text(team.fullName)
                     .font(.subheadline)
                     .foregroundStyle(Color.textSecondary)
-                Text("Season \(career.currentSeason) Goals")
+                Text("Season \(String(career.currentSeason)) Goals")
                     .font(.caption)
                     .foregroundStyle(Color.textTertiary)
             }

@@ -105,7 +105,7 @@ struct ContractTimelineView: View {
             HStack(spacing: 0) {
                 ForEach(Array(seasons.enumerated()), id: \.element) { idx, season in
                     VStack(spacing: 6) {
-                        Text("\(season)")
+                        Text(String(season))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(idx == 0 ? Color.accentGold : Color.textSecondary)
                             .monospacedDigit()
@@ -221,7 +221,7 @@ struct ContractTimelineView: View {
 
             // Season columns
             ForEach(Array(seasons.enumerated()), id: \.element) { idx, season in
-                Text("\(season)")
+                Text(String(season))
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(idx == 0 ? Color.accentGold : Color.textTertiary)
                     .frame(maxWidth: .infinity)

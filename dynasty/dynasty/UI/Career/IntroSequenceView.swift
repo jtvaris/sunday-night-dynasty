@@ -81,7 +81,7 @@ struct IntroSequenceView: View {
             }
         }
         .navigationBarBackButtonHidden(true)
-        .navigationDestination(isPresented: $navigateToDashboard) {
+        .fullScreenCover(isPresented: $navigateToDashboard) {
             CareerShellView(career: career)
         }
         .task { loadData() }
@@ -487,7 +487,7 @@ private struct TeamOverviewStep: View {
                         SectionLabel(text: "DRAFT PICKS")
 
                         if draftPicks.isEmpty {
-                            Text("No picks available for \(career.currentSeason)")
+                            Text("No picks available for \(String(career.currentSeason))")
                                 .font(.subheadline)
                                 .foregroundStyle(Color.textSecondary)
                         } else {

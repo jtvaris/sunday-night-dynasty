@@ -57,7 +57,7 @@ struct OwnerMeetingView: View {
                 Text(team?.fullName ?? "Owner")
                     .font(.subheadline)
                     .foregroundStyle(Color.textSecondary)
-                Text("Season \(career.currentSeason)")
+                Text("Season \(String(career.currentSeason))")
                     .font(.caption)
                     .foregroundStyle(Color.textTertiary)
             }

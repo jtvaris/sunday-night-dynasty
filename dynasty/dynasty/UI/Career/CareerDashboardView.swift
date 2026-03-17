@@ -299,7 +299,7 @@ struct CareerDashboardView: View {
                         Text(phaseDisplayName(career.currentPhase))
                             .font(.title3.weight(.bold))
                             .foregroundStyle(Color.accentGold)
-                        Text("Season \(career.currentSeason)")
+                        Text("Season \(String(career.currentSeason))")
                             .font(.caption.weight(.medium))
                             .foregroundStyle(Color.textSecondary)
                     }

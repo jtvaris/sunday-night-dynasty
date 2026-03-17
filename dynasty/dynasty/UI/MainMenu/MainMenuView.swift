@@ -115,6 +115,7 @@ struct CareerListView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Career.currentSeason, order: .reverse) private var careers: [Career]
+    @State private var selectedCareer: Career?
 
     var body: some View {
         ZStack {
@@ -122,7 +123,9 @@ struct CareerListView: View {
 
             List {
                 ForEach(careers) { career in
-                    NavigationLink(destination: CareerShellView(career: career)) {
+                    Button {
+                        selectedCareer = career
+                    } label: {
                         CareerRowView(career: career)
                     }
                     .listRowBackground(Color.backgroundSecondary)
@@ -134,6 +137,9 @@ struct CareerListView: View {
         .navigationTitle("Continue Career")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .fullScreenCover(item: $selectedCareer) { career in
+            CareerShellView(career: career)
+        }
     }
 
     private func deleteCareers(at offsets: IndexSet) {
@@ -160,7 +166,7 @@ private struct CareerRowView: View {
                     systemImage: career.role == .gm ? "briefcase.fill" : "sportscourt.fill"
                 )
 
-                Label("Season \(career.currentSeason)", systemImage: "calendar")
+                Label("Season \(String(career.currentSeason))", systemImage: "calendar")
             }
             .font(.subheadline)
             .foregroundStyle(Color.textSecondary)
