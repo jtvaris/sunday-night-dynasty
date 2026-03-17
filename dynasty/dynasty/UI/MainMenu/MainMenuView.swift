@@ -27,14 +27,19 @@ struct MainMenuView: View {
             )
             .ignoresSafeArea()
 
-            // Vertical stack — works in both orientations
+            // Title centered
             VStack(spacing: 0) {
                 Spacer()
                 titleBlock
-                    .padding(.bottom, 40)
+                Spacer()
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 12) {
                 buttonsBlock
                 footerBlock
             }
+            .padding(.bottom, 8)
         }
         .toolbar(.hidden, for: .navigationBar)
     }
