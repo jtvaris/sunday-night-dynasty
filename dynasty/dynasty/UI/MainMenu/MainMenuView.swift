@@ -121,7 +121,7 @@ struct CareerListView: View {
 
             List {
                 ForEach(careers) { career in
-                    NavigationLink(destination: CareerDashboardView(career: career)) {
+                    NavigationLink(destination: CareerShellView(career: career)) {
                         CareerRowView(career: career)
                     }
                     .listRowBackground(Color.backgroundSecondary)

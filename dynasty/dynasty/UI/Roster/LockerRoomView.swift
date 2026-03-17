@@ -51,6 +51,7 @@ struct LockerRoomView: View {
 
             ScrollView {
                 VStack(spacing: 20) {
+                    squadDynamicsLink
                     chemistryCard
                     moraleDistributionCard
                     leadersCard
@@ -65,6 +66,37 @@ struct LockerRoomView: View {
         .navigationTitle("Locker Room")
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task { loadData() }
+    }
+
+    // MARK: - Squad Dynamics Link
+
+    private var squadDynamicsLink: some View {
+        NavigationLink(destination: SquadDynamicsView(career: career)) {
+            HStack(spacing: 12) {
+                Image(systemName: "person.3.sequence.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.accentGold)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Squad Dynamics")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text("Personality map, hierarchy & relationships")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                }
+                Spacer()
+                Text("View Full Squad Dynamics")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.accentGold)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.accentGold.opacity(0.7))
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .cardBackground()
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Chemistry Card
