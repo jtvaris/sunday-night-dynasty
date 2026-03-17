@@ -31,8 +31,9 @@ struct MainMenuView: View {
                 )
 
                 if isLandscape {
-                    // Landscape: content centered, pushed up slightly
+                    // Landscape: content in lower-center area
                     VStack(spacing: 16) {
+                        Spacer()
                         Spacer()
                         Spacer()
                         titleBlock
