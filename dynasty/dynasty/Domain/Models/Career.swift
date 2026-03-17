@@ -21,6 +21,10 @@ final class Career {
     var currentWeek: Int
     var currentPhase: SeasonPhase
 
+    // MARK: - Legacy
+    /// Tracks press conference promises, achievements, and media reputation.
+    var legacy: LegacyTracker
+
     // MARK: - Coaching Tree
     /// Full history of coaches who have worked under this career.
     /// SwiftData encodes this Codable struct as a composite attribute automatically.
@@ -70,6 +74,7 @@ final class Career {
         self.currentPhase = .preseason
         self.hasCompletedIntro = false
         self.seasonGoals = nil
+        self.legacy = LegacyTracker()
         self.coachingTree = CoachingTreeData()
         self.hcGMRelationship = CoachRelationshipEngine.HCGMRelationship()
     }

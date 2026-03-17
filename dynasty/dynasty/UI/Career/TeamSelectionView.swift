@@ -33,27 +33,39 @@ struct TeamSelectionView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            List {
-                ForEach(teamsByConference, id: \.conference) { group in
-                    ForEach(group.divisions, id: \.division) { divisionGroup in
-                        Section {
-                            ForEach(divisionGroup.teams, id: \.abbreviation) { team in
-                                Button {
-                                    startCareer(with: team)
-                                } label: {
-                                    TeamRowView(team: team)
+            ScrollView {
+                LazyVStack(spacing: 24) {
+                    ForEach(teamsByConference, id: \.conference) { group in
+                        ForEach(group.divisions, id: \.division) { divisionGroup in
+                            VStack(alignment: .leading, spacing: 12) {
+                                // Section header
+                                HStack(spacing: 8) {
+                                    Image(systemName: "football.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(Color.accentGold)
+                                    Text("\(group.conference.rawValue) \(divisionGroup.division.rawValue)")
+                                        .font(.subheadline.weight(.bold))
+                                        .foregroundStyle(Color.accentGold)
                                 }
-                                .listRowBackground(Color.backgroundSecondary)
+                                .padding(.horizontal, 20)
+
+                                ForEach(divisionGroup.teams, id: \.abbreviation) { team in
+                                    Button {
+                                        startCareer(with: team)
+                                    } label: {
+                                        TeamCardView(team: team)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.horizontal, 16)
+                                }
                             }
-                        } header: {
-                            Text("\(group.conference.rawValue) \(divisionGroup.division.rawValue)")
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(Color.accentGold)
                         }
                     }
                 }
+                .padding(.vertical, 16)
+                .frame(maxWidth: 800)
+                .frame(maxWidth: .infinity)
             }
-            .scrollContentBackground(.hidden)
             .disabled(isLoading)
 
             if isLoading {
@@ -120,58 +132,162 @@ struct TeamSelectionView: View {
     }
 }
 
-// MARK: - Team Row
+// MARK: - Team Card View
 
-private struct TeamRowView: View {
+private struct TeamCardView: View {
     let team: NFLTeamDefinition
 
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(team.city) \(team.name)")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
+    private var preview: TeamPreview { team.preview }
 
-                Text(team.abbreviation)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(Color.textSecondary)
-            }
-
-            Spacer()
-
-            MarketBadge(market: team.mediaMarket)
+    private var situationColor: Color {
+        switch preview.situation {
+        case "Rebuilding": return .accentBlue
+        case "Rising":     return .success
+        case "Contender":  return .accentGold
+        case "Win Now":    return .warning
+        case "Dynasty":    return .danger
+        default:           return .textSecondary
         }
-        .padding(.vertical, 4)
+    }
+
+    private var difficultyColor: Color {
+        switch preview.difficulty {
+        case 1, 2: return .success
+        case 3:    return .accentGold
+        case 4:    return .warning
+        case 5:    return .danger
+        default:   return .textSecondary
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Main content area
+            HStack(alignment: .top, spacing: 16) {
+                // Left: Team identity
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(team.city) \(team.name)")
+                        .font(.headline)
+                        .foregroundStyle(Color.textPrimary)
+
+                    Text("\(team.conference.rawValue) \(team.division.rawValue)")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.textSecondary)
+                }
+
+                Spacer(minLength: 8)
+
+                // Center: Difficulty & Situation
+                VStack(spacing: 6) {
+                    // Difficulty stars
+                    HStack(spacing: 2) {
+                        ForEach(1...5, id: \.self) { star in
+                            Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
+                                .font(.system(size: 12))
+                                .foregroundStyle(star <= preview.difficulty ? difficultyColor : Color.textTertiary.opacity(0.4))
+                        }
+                    }
+
+                    Text(preview.difficultyLabel)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(difficultyColor)
+
+                    // Situation badge
+                    Text(preview.situation)
+                        .font(.caption2.weight(.bold))
+                        .textCase(.uppercase)
+                        .foregroundStyle(situationColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(situationColor.opacity(0.15))
+                        )
+                }
+
+                Spacer(minLength: 8)
+
+                // Right: Owner expectations
+                VStack(alignment: .trailing, spacing: 6) {
+                    HStack(spacing: 4) {
+                        Image(systemName: preview.ownerPatienceIcon)
+                            .font(.system(size: 11))
+                            .foregroundStyle(ownerPatienceColor)
+                        Text(preview.ownerPatience)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(ownerPatienceColor)
+                    }
+
+                    Text("\(preview.patienceSeasons) season\(preview.patienceSeasons == 1 ? "" : "s") tolerance")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+            .padding(16)
+
+            // Market description
+            Text(preview.marketDescription)
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+
+            // Divider
+            Rectangle()
+                .fill(Color.surfaceBorder)
+                .frame(height: 1)
+                .padding(.horizontal, 16)
+
+            // Bottom stats row
+            HStack(spacing: 0) {
+                StatPill(icon: "chart.bar.fill", label: "Roster OVR", value: "\(preview.estimatedOVR)", valueColor: Color.forRating(preview.estimatedOVR))
+                StatPill(icon: "dollarsign.circle.fill", label: "Cap Space", value: "$\(preview.estimatedCapSpace)M", valueColor: preview.estimatedCapSpace > 30 ? .success : preview.estimatedCapSpace > 15 ? .accentGold : .warning)
+                StatPill(icon: "doc.text.fill", label: "Draft Picks", value: "\(preview.estimatedDraftPicks)", valueColor: preview.estimatedDraftPicks >= 9 ? .success : preview.estimatedDraftPicks >= 7 ? .textPrimary : .warning)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 10)
+        }
+        .cardBackground()
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(team.city) \(team.name), \(team.mediaMarket.rawValue) market")
+        .accessibilityLabel("\(team.city) \(team.name), \(preview.situation), difficulty \(preview.difficulty) of 5, \(preview.ownerPatience) owner")
+    }
+
+    private var ownerPatienceColor: Color {
+        switch preview.ownerPatience {
+        case "Very Patient": return .success
+        case "Patient":      return .success.opacity(0.8)
+        case "Moderate":     return .accentGold
+        case "Demanding":    return .warning
+        case "Win Now":      return .danger
+        default:             return .textSecondary
+        }
     }
 }
 
-// MARK: - Market Badge
+// MARK: - Stat Pill
 
-private struct MarketBadge: View {
-    let market: MediaMarket
-
-    private var color: Color {
-        switch market {
-        case .large:  return .accentGold
-        case .medium: return .accentBlue
-        case .small:  return .textTertiary
-        }
-    }
+private struct StatPill: View {
+    let icon: String
+    let label: String
+    let value: String
+    var valueColor: Color = .textPrimary
 
     var body: some View {
-        Text(market.rawValue)
-            .font(.caption2.weight(.bold))
-            .textCase(.uppercase)
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule()
-                    .fill(color.opacity(0.15))
-            )
-            .accessibilityLabel("\(market.rawValue) market")
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+                Text(label)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            Text(value)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(valueColor)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 

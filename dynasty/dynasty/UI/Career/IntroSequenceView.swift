@@ -13,6 +13,7 @@ struct IntroSequenceView: View {
 
     @State private var currentStep = 0
     @State private var navigateToDashboard = false
+    @State private var pressConferenceComplete = false
 
     // Loaded data
     @State private var team: Team?
@@ -30,11 +31,14 @@ struct IntroSequenceView: View {
 
             if team != nil {
                 TabView(selection: $currentStep) {
-                    PressConferenceStep(
+                    PressConferenceView(
                         career: career,
                         team: team!,
                         owner: owner,
-                        onContinue: { advanceStep() }
+                        onComplete: { result in
+                            applyPressConferenceResult(result)
+                            advanceStep()
+                        }
                     )
                     .tag(0)
 
@@ -87,6 +91,19 @@ struct IntroSequenceView: View {
         }
     }
 
+    private func applyPressConferenceResult(_ result: PressConferenceResult) {
+        // Apply effects to career legacy
+        career.legacy.applyPressConferenceResult(result, season: career.currentSeason)
+
+        // Apply owner satisfaction
+        if let ownerObj = owner {
+            ownerObj.satisfaction = max(0, min(100, ownerObj.satisfaction + result.totalEffects.ownerSatisfaction))
+        }
+
+        pressConferenceComplete = true
+        try? modelContext.save()
+    }
+
     private func completeIntro() {
         career.hasCompletedIntro = true
         career.currentPhase = .superBowl
@@ -122,126 +139,6 @@ struct IntroSequenceView: View {
         let avgOverall = players.isEmpty ? 60 : players.map(\.overall).reduce(0, +) / players.count
         let ownerPrefersWinNow = owner?.prefersWinNow ?? false
         seasonGoals = SeasonGoals.generate(teamQuality: avgOverall, ownerPreference: ownerPrefersWinNow)
-    }
-}
-
-// MARK: - Step 1: Press Conference
-
-private struct PressConferenceStep: View {
-
-    let career: Career
-    let team: Team
-    let owner: Owner?
-    let onContinue: () -> Void
-
-    @State private var showBreaking = false
-    @State private var showHeadline = false
-    @State private var showAvatar = false
-    @State private var showQuotes = false
-    @State private var showMarket = false
-
-    private var roleName: String {
-        switch career.role {
-        case .gm: return "General Manager"
-        case .gmAndHeadCoach: return "GM & Head Coach"
-        }
-    }
-
-    private var marketExpectation: String {
-        switch team.mediaMarket {
-        case .large:  return "massive -- the spotlight will be intense from day one"
-        case .medium: return "competitive -- fans expect a winner, but you will have some room to build"
-        case .small:  return "patient -- but do not mistake quiet for complacent"
-        }
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 28) {
-                Spacer().frame(height: 20)
-
-                // BREAKING NEWS banner
-                if showBreaking {
-                    Text("BREAKING NEWS")
-                        .font(.system(size: 14, weight: .black))
-                        .tracking(4)
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.accentGold)
-                        )
-                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                }
-
-                // Headline
-                if showHeadline {
-                    Text("\(team.city) \(team.name) announce \(career.playerName) as new \(roleName)")
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(Color.textPrimary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-
-                // Coach avatar
-                if showAvatar, let avatar = CoachAvatars.avatar(for: career.avatarID) {
-                    CoachAvatarView(avatar: avatar, size: 136)
-                        .shadow(color: Color.accentGold.opacity(0.3), radius: 20, y: 4)
-                        .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                }
-
-                // Quotes
-                if showQuotes {
-                    VStack(spacing: 20) {
-                        // Owner quote
-                        if let ownerName = owner?.name {
-                            QuoteBubble(
-                                speaker: ownerName,
-                                quote: "We believe \(career.playerName) is the right person to lead this franchise into a new era."
-                            )
-                        }
-
-                        // Player quote
-                        QuoteBubble(
-                            speaker: career.playerName,
-                            quote: "I'm honored to join the \(team.name). We're going to build something special here."
-                        )
-                    }
-                    .padding(.horizontal, 24)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-
-                // Media market context
-                if showMarket {
-                    HStack(spacing: 10) {
-                        Image(systemName: "antenna.radiowaves.left.and.right")
-                            .foregroundStyle(Color.accentGold)
-                        Text("The \(team.city) media market is \(team.mediaMarket.rawValue.lowercased()) -- \(marketExpectation).")
-                            .font(.subheadline)
-                            .foregroundStyle(Color.textSecondary)
-                    }
-                    .padding(.horizontal, 28)
-                    .transition(.opacity)
-                }
-
-                Spacer().frame(height: 12)
-
-                IntroContinueButton(action: onContinue)
-                    .padding(.bottom, 40)
-            }
-        }
-        .scrollIndicators(.hidden)
-        .onAppear { runAnimations() }
-    }
-
-    private func runAnimations() {
-        withAnimation(.easeOut(duration: 0.5).delay(0.2)) { showBreaking = true }
-        withAnimation(.easeOut(duration: 0.6).delay(0.8)) { showHeadline = true }
-        withAnimation(.easeOut(duration: 0.6).delay(1.5)) { showAvatar = true }
-        withAnimation(.easeOut(duration: 0.6).delay(2.2)) { showQuotes = true }
-        withAnimation(.easeOut(duration: 0.5).delay(3.0)) { showMarket = true }
     }
 }
 

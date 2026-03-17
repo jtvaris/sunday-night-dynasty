@@ -9,7 +9,104 @@ struct NFLTeamDefinition {
     let mediaMarket: MediaMarket
 }
 
+// MARK: - Team Preview (Pre-Generation Scouting Data)
+
+struct TeamPreview {
+    let difficulty: Int          // 1-5 stars
+    let situation: String        // "Rebuilding", "Rising", "Contender", "Win Now", "Dynasty"
+    let ownerPatience: String    // "Very Patient", "Patient", "Moderate", "Demanding", "Win Now"
+    let patienceSeasons: Int     // How many losing seasons before pressure mounts
+    let marketDescription: String // Explains the media market
+    let estimatedOVR: Int        // Approximate roster overall 60-88
+    let estimatedCapSpace: Int   // In millions
+    let estimatedDraftPicks: Int // Total picks
+
+    var difficultyLabel: String {
+        switch difficulty {
+        case 1: return "Very Easy"
+        case 2: return "Easy"
+        case 3: return "Moderate"
+        case 4: return "Hard"
+        case 5: return "Very Hard"
+        default: return "Moderate"
+        }
+    }
+
+    var ownerPatienceIcon: String {
+        switch ownerPatience {
+        case "Very Patient": return "clock.fill"
+        case "Patient":      return "clock"
+        case "Moderate":     return "gauge.medium"
+        case "Demanding":    return "exclamationmark.triangle"
+        case "Win Now":      return "exclamationmark.triangle.fill"
+        default:             return "gauge.medium"
+        }
+    }
+}
+
+extension NFLTeamDefinition {
+    var preview: TeamPreview {
+        NFLTeamData.previews[abbreviation] ?? TeamPreview(
+            difficulty: 3, situation: "Rising", ownerPatience: "Moderate",
+            patienceSeasons: 3, marketDescription: "Moderate expectations",
+            estimatedOVR: 75, estimatedCapSpace: 25, estimatedDraftPicks: 7
+        )
+    }
+}
+
 enum NFLTeamData {
+
+    // MARK: - Team Preview Data
+
+    static let previews: [String: TeamPreview] = [
+        // AFC East
+        "BUF": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Passionate fan base with moderate media coverage", estimatedOVR: 82, estimatedCapSpace: 18, estimatedDraftPicks: 7),
+        "MIA": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Large market with national spotlight and high fan expectations", estimatedOVR: 78, estimatedCapSpace: 22, estimatedDraftPicks: 7),
+        "NE":  TeamPreview(difficulty: 2, situation: "Rebuilding", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Storied franchise, media expects return to glory", estimatedOVR: 70, estimatedCapSpace: 40, estimatedDraftPicks: 9),
+        "NYJ": TeamPreview(difficulty: 4, situation: "Rising", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Intense scrutiny, win now pressure from NYC media", estimatedOVR: 74, estimatedCapSpace: 20, estimatedDraftPicks: 7),
+
+        // AFC North
+        "BAL": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Loyal fan base that expects tough, competitive football", estimatedOVR: 83, estimatedCapSpace: 15, estimatedDraftPicks: 7),
+        "CIN": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Moderate expectations with a growing fan base", estimatedOVR: 80, estimatedCapSpace: 28, estimatedDraftPicks: 7),
+        "CLE": TeamPreview(difficulty: 4, situation: "Rebuilding", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Passionate but frustrated fan base demanding results", estimatedOVR: 68, estimatedCapSpace: 12, estimatedDraftPicks: 6),
+        "PIT": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Blue-collar market that values toughness and consistency", estimatedOVR: 76, estimatedCapSpace: 30, estimatedDraftPicks: 8),
+
+        // AFC South
+        "HOU": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Large market with growing national media attention", estimatedOVR: 81, estimatedCapSpace: 20, estimatedDraftPicks: 7),
+        "IND": TeamPreview(difficulty: 2, situation: "Rising", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Moderate expectations, patient ownership group", estimatedOVR: 75, estimatedCapSpace: 35, estimatedDraftPicks: 8),
+        "JAX": TeamPreview(difficulty: 1, situation: "Rebuilding", ownerPatience: "Very Patient", patienceSeasons: 5, marketDescription: "Low pressure, patient fans rebuilding culture", estimatedOVR: 66, estimatedCapSpace: 50, estimatedDraftPicks: 10),
+        "TEN": TeamPreview(difficulty: 2, situation: "Rebuilding", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Quiet market with room to build without pressure", estimatedOVR: 69, estimatedCapSpace: 42, estimatedDraftPicks: 9),
+
+        // AFC West
+        "DEN": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Dedicated fan base expecting a return to prominence", estimatedOVR: 76, estimatedCapSpace: 25, estimatedDraftPicks: 7),
+        "KC":  TeamPreview(difficulty: 4, situation: "Dynasty", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Championship culture, high expectations to sustain success", estimatedOVR: 87, estimatedCapSpace: 10, estimatedDraftPicks: 6),
+        "LV":  TeamPreview(difficulty: 4, situation: "Rebuilding", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Flashy market with impatient ownership wanting results fast", estimatedOVR: 70, estimatedCapSpace: 18, estimatedDraftPicks: 7),
+        "LAC": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Large market but competing for attention in LA", estimatedOVR: 77, estimatedCapSpace: 28, estimatedDraftPicks: 7),
+
+        // NFC East
+        "DAL": TeamPreview(difficulty: 5, situation: "Win Now", ownerPatience: "Win Now", patienceSeasons: 1, marketDescription: "America's Team — maximum media pressure at all times", estimatedOVR: 80, estimatedCapSpace: 12, estimatedDraftPicks: 6),
+        "NYG": TeamPreview(difficulty: 4, situation: "Rebuilding", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "NYC market demands winners, legacy franchise with high bar", estimatedOVR: 67, estimatedCapSpace: 22, estimatedDraftPicks: 8),
+        "PHI": TeamPreview(difficulty: 4, situation: "Contender", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Intense scrutiny, passionate fan base expects championships", estimatedOVR: 84, estimatedCapSpace: 14, estimatedDraftPicks: 6),
+        "WAS": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Rebuilding brand in a major market, moderate pressure", estimatedOVR: 73, estimatedCapSpace: 32, estimatedDraftPicks: 8),
+
+        // NFC North
+        "CHI": TeamPreview(difficulty: 4, situation: "Rising", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Massive market, title-starved fan base growing impatient", estimatedOVR: 74, estimatedCapSpace: 35, estimatedDraftPicks: 8),
+        "DET": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Hungry fan base riding momentum, rising expectations", estimatedOVR: 83, estimatedCapSpace: 16, estimatedDraftPicks: 7),
+        "GB":  TeamPreview(difficulty: 2, situation: "Rising", ownerPatience: "Very Patient", patienceSeasons: 5, marketDescription: "Small market, community-owned — unique patience and loyalty", estimatedOVR: 78, estimatedCapSpace: 25, estimatedDraftPicks: 7),
+        "MIN": TeamPreview(difficulty: 3, situation: "Contender", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Dedicated fans with moderate media presence", estimatedOVR: 80, estimatedCapSpace: 20, estimatedDraftPicks: 7),
+
+        // NFC South
+        "ATL": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Large market pushing for relevance, growing expectations", estimatedOVR: 75, estimatedCapSpace: 22, estimatedDraftPicks: 7),
+        "CAR": TeamPreview(difficulty: 1, situation: "Rebuilding", ownerPatience: "Very Patient", patienceSeasons: 5, marketDescription: "Low pressure market with a patient, long-term approach", estimatedOVR: 64, estimatedCapSpace: 55, estimatedDraftPicks: 10),
+        "NO":  TeamPreview(difficulty: 3, situation: "Rebuilding", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Passionate city, transitioning from a championship era", estimatedOVR: 72, estimatedCapSpace: 8, estimatedDraftPicks: 7),
+        "TB":  TeamPreview(difficulty: 2, situation: "Rebuilding", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Moderate market, post-dynasty reset with room to grow", estimatedOVR: 71, estimatedCapSpace: 38, estimatedDraftPicks: 8),
+
+        // NFC West
+        "ARI": TeamPreview(difficulty: 2, situation: "Rebuilding", ownerPatience: "Patient", patienceSeasons: 4, marketDescription: "Moderate market with a patient ownership group", estimatedOVR: 69, estimatedCapSpace: 40, estimatedDraftPicks: 9),
+        "LAR": TeamPreview(difficulty: 4, situation: "Win Now", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Win now in LA — star-driven franchise under constant spotlight", estimatedOVR: 79, estimatedCapSpace: 10, estimatedDraftPicks: 5),
+        "SF":  TeamPreview(difficulty: 4, situation: "Contender", ownerPatience: "Demanding", patienceSeasons: 2, marketDescription: "Elite expectations, championship-or-bust mentality", estimatedOVR: 85, estimatedCapSpace: 12, estimatedDraftPicks: 6),
+        "SEA": TeamPreview(difficulty: 3, situation: "Rising", ownerPatience: "Moderate", patienceSeasons: 3, marketDescription: "Passionate 12th Man fan base, moderate media market", estimatedOVR: 77, estimatedCapSpace: 24, estimatedDraftPicks: 7),
+    ]
 
     static let allTeams: [NFLTeamDefinition] = [
         // MARK: - AFC East

@@ -372,6 +372,7 @@ struct CoachAvatarView: View {
 
 struct AvatarSelectionView: View {
     @Binding var selectedAvatarID: String
+    var avatarSize: CGFloat = 72
     let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 5)
 
     var body: some View {
@@ -379,7 +380,7 @@ struct AvatarSelectionView: View {
             LazyVGrid(columns: columns, spacing: 16) {
                 ForEach(CoachAvatars.all) { avatar in
                     VStack(spacing: 6) {
-                        CoachAvatarView(avatar: avatar, size: 72)
+                        CoachAvatarView(avatar: avatar, size: avatarSize)
                             .overlay(
                                 Circle()
                                     .strokeBorder(
