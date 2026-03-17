@@ -35,7 +35,7 @@ struct TeamSelectionView: View {
 
             ScrollView {
                 LazyVStack(spacing: 24) {
-                    ForEach(teamsByConference, id: \.conference) { group in
+                    ForEach(Array(teamsByConference.enumerated()), id: \.offset) { confIndex, group in
                         // Conference header
                         Text(group.conference.rawValue)
                             .font(.system(size: 28, weight: .black))
@@ -45,7 +45,7 @@ struct TeamSelectionView: View {
                             .padding(.top, 16)
                             .padding(.bottom, 4)
 
-                        ForEach(group.divisions, id: \.division) { divisionGroup in
+                        ForEach(Array(group.divisions.enumerated()), id: \.offset) { divIndex, divisionGroup in
                             VStack(alignment: .leading, spacing: 12) {
                                 // Division header
                                 HStack(spacing: 8) {

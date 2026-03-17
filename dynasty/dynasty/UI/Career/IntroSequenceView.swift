@@ -443,9 +443,10 @@ private struct TeamOverviewStep: View {
                         } else {
                             let byRound = Dictionary(grouping: draftPicks, by: { $0.round })
                             ForEach(byRound.keys.sorted(), id: \.self) { round in
-                                let count = byRound[round]?.count ?? 0
+                                let picks = byRound[round] ?? []
+                                let pickNumbers = picks.map { "#\($0.pickNumber)" }.joined(separator: ", ")
                                 StatRow(label: "Round \(round)",
-                                        value: "\(count) pick\(count == 1 ? "" : "s")")
+                                        value: pickNumbers)
                             }
                         }
                     }
