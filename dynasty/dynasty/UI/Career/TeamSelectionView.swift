@@ -39,27 +39,37 @@ struct TeamSelectionView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 12)
 
-                // Team list
-                ScrollView {
-                    VStack(spacing: 2) {
-                        ForEach(divisionsForConference, id: \.division) { group in
-                            // Division header
-                            divisionHeader(group.division.rawValue)
+                // Team grid — adapts to orientation
+                GeometryReader { geo in
+                    let isLandscape = geo.size.width > geo.size.height
+                    let columns = isLandscape
+                        ? Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
+                        : Array(repeating: GridItem(.flexible(), spacing: 12), count: 2)
 
-                            ForEach(group.teams, id: \.abbreviation) { team in
-                                Button {
-                                    detailTeam = team
-                                } label: {
-                                    CompactTeamRow(team: team)
+                    ScrollView {
+                        VStack(spacing: 16) {
+                            ForEach(divisionsForConference, id: \.division) { group in
+                                // Division header
+                                divisionHeader(group.division.rawValue)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                                LazyVGrid(columns: columns, spacing: 12) {
+                                    ForEach(group.teams, id: \.abbreviation) { team in
+                                        Button {
+                                            detailTeam = team
+                                        } label: {
+                                            TeamGridCard(team: team)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
+                        .frame(maxWidth: 1200)
+                        .frame(maxWidth: .infinity)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
-                    .frame(maxWidth: 800)
-                    .frame(maxWidth: .infinity)
                 }
             }
             .disabled(isLoading)
@@ -327,6 +337,76 @@ private struct CompactTeamRow: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(team.city) \(team.name), \(preview.situation), difficulty \(preview.difficulty) of 5")
+    }
+}
+
+// MARK: - Team Grid Card (compact card for 2x2 / 4-column grid)
+
+private struct TeamGridCard: View {
+    let team: NFLTeamDefinition
+    private var preview: TeamPreview { team.preview }
+
+    private var situationColor: Color {
+        switch preview.situation {
+        case "Rebuilding": return .accentBlue
+        case "Rising":     return .success
+        case "Contender":  return .accentGold
+        case "Win Now":    return .warning
+        case "Dynasty":    return .danger
+        default:           return .textSecondary
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            // Logo + name
+            TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 44)
+
+            Text(team.name)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+
+            Text(team.city)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.textSecondary)
+                .lineLimit(1)
+
+            // Difficulty stars
+            HStack(spacing: 2) {
+                ForEach(1...5, id: \.self) { star in
+                    Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
+                        .font(.system(size: 8))
+                        .foregroundStyle(star <= preview.difficulty ? Color.accentGold : Color.textTertiary)
+                }
+            }
+
+            // Situation badge
+            Text(preview.situation.uppercased())
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.5)
+                .foregroundStyle(situationColor)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule().fill(situationColor.opacity(0.15))
+                )
+
+            // Cap space
+            Text("$\(preview.estimatedCapSpace)M cap")
+                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .foregroundStyle(Color.textTertiary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 0.5)
+                )
+        )
     }
 }
 
