@@ -23,7 +23,7 @@ struct IntroSequenceView: View {
     @State private var draftPicks: [DraftPick] = []
     @State private var seasonGoals: SeasonGoals?
 
-    private let totalSteps = 4
+    private let totalSteps = 5
 
     var body: some View {
         ZStack {
@@ -61,11 +61,16 @@ struct IntroSequenceView: View {
                     )
                     .tag(2)
 
+                    YourRoadmapStep(
+                        onContinue: { advanceStep() }
+                    )
+                    .tag(3)
+
                     ReadyToBeginStep(
                         career: career,
                         onEnter: { completeIntro() }
                     )
-                    .tag(3)
+                    .tag(4)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .animation(.easeInOut(duration: 0.4), value: currentStep)
@@ -312,8 +317,6 @@ private struct TeamOverviewStep: View {
     @State private var showRoster = false
     @State private var showCap = false
     @State private var showDraft = false
-    @State private var showTasks = false
-    @State private var showCalendar = false
 
     private var averageOverall: Int {
         guard !players.isEmpty else { return 0 }
@@ -458,19 +461,76 @@ private struct TeamOverviewStep: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
-                // First tasks
-                if showTasks {
-                    VStack(alignment: .leading, spacing: 16) {
-                        SectionLabel(text: "YOUR FIRST TASKS")
+                Spacer().frame(height: 12)
 
-                        TaskRow(number: 1, text: "Hire your coaching staff")
-                        TaskRow(number: 2, text: "Evaluate the roster")
-                        TaskRow(number: 3, text: "Prepare for the Combine and Free Agency")
+                IntroContinueButton(action: onContinue)
+                    .padding(.bottom, 40)
+            }
+        }
+        .scrollIndicators(.hidden)
+        .onAppear { runAnimations() }
+    }
+
+    private func runAnimations() {
+        withAnimation(.easeOut(duration: 0.5).delay(0.2)) { showHeader = true }
+        withAnimation(.easeOut(duration: 0.5).delay(0.7)) { showRoster = true }
+        withAnimation(.easeOut(duration: 0.5).delay(1.2)) { showCap = true }
+        withAnimation(.easeOut(duration: 0.5).delay(1.7)) { showDraft = true }
+    }
+}
+
+// MARK: - Step 3: Your Roadmap
+
+private struct YourRoadmapStep: View {
+
+    let onContinue: () -> Void
+
+    @State private var showHeader = false
+    @State private var showCalendar = false
+    @State private var showTasks = false
+
+    private struct CalendarEntry {
+        let name: String
+        let description: String
+    }
+
+    private static let offseasonCalendarEntries: [CalendarEntry] = [
+        CalendarEntry(name: "Coaching Changes", description: "Hire/fire coaching staff, build your team"),
+        CalendarEntry(name: "Roster Evaluation", description: "Assess your players, identify needs"),
+        CalendarEntry(name: "NFL Combine", description: "Scout draft prospects, evaluate measurables"),
+        CalendarEntry(name: "Free Agency", description: "Sign free agents, re-sign your own players"),
+        CalendarEntry(name: "NFL Draft", description: "Select new talent across 7 rounds"),
+        CalendarEntry(name: "Undrafted Free Agents", description: "Sign overlooked prospects"),
+        CalendarEntry(name: "OTAs", description: "Set depth chart, assign mentoring pairs"),
+        CalendarEntry(name: "Training Camp", description: "Player development, position battles"),
+        CalendarEntry(name: "Preseason", description: "Evaluate young players in live action"),
+        CalendarEntry(name: "Roster Cuts", description: "Cut to 53-man roster"),
+        CalendarEntry(name: "Regular Season", description: "18 weeks of football"),
+    ]
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                Spacer().frame(height: 20)
+
+                // Header
+                if showHeader {
+                    VStack(spacing: 12) {
+                        Image(systemName: "map.fill")
+                            .font(.system(size: 36))
+                            .foregroundStyle(Color.accentGold)
+
+                        Text("YOUR ROADMAP")
+                            .font(.system(size: 14, weight: .black))
+                            .tracking(4)
+                            .foregroundStyle(Color.accentGold)
+
+                        Text("Here's what lies ahead in your first offseason")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+                            .multilineTextAlignment(.center)
                     }
-                    .padding(20)
-                    .cardBackground()
-                    .padding(.horizontal, 24)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 // Offseason calendar timeline
@@ -521,6 +581,21 @@ private struct TeamOverviewStep: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
+                // First tasks
+                if showTasks {
+                    VStack(alignment: .leading, spacing: 16) {
+                        SectionLabel(text: "YOUR FIRST TASKS")
+
+                        TaskRow(number: 1, text: "Hire your coaching staff")
+                        TaskRow(number: 2, text: "Evaluate the roster")
+                        TaskRow(number: 3, text: "Prepare for the Combine and Free Agency")
+                    }
+                    .padding(20)
+                    .cardBackground()
+                    .padding(.horizontal, 24)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+
                 Spacer().frame(height: 12)
 
                 IntroContinueButton(action: onContinue)
@@ -531,36 +606,14 @@ private struct TeamOverviewStep: View {
         .onAppear { runAnimations() }
     }
 
-    private struct CalendarEntry {
-        let name: String
-        let description: String
-    }
-
-    private static let offseasonCalendarEntries: [CalendarEntry] = [
-        CalendarEntry(name: "Coaching Changes", description: "Hire/fire coaching staff, build your team"),
-        CalendarEntry(name: "Roster Evaluation", description: "Assess your players, identify needs"),
-        CalendarEntry(name: "NFL Combine", description: "Scout draft prospects, evaluate measurables"),
-        CalendarEntry(name: "Free Agency", description: "Sign free agents, re-sign your own players"),
-        CalendarEntry(name: "NFL Draft", description: "Select new talent across 7 rounds"),
-        CalendarEntry(name: "Undrafted Free Agents", description: "Sign overlooked prospects"),
-        CalendarEntry(name: "OTAs", description: "Set depth chart, assign mentoring pairs"),
-        CalendarEntry(name: "Training Camp", description: "Player development, position battles"),
-        CalendarEntry(name: "Preseason", description: "Evaluate young players in live action"),
-        CalendarEntry(name: "Roster Cuts", description: "Cut to 53-man roster"),
-        CalendarEntry(name: "Regular Season", description: "18 weeks of football"),
-    ]
-
     private func runAnimations() {
         withAnimation(.easeOut(duration: 0.5).delay(0.2)) { showHeader = true }
-        withAnimation(.easeOut(duration: 0.5).delay(0.7)) { showRoster = true }
-        withAnimation(.easeOut(duration: 0.5).delay(1.2)) { showCap = true }
-        withAnimation(.easeOut(duration: 0.5).delay(1.7)) { showDraft = true }
-        withAnimation(.easeOut(duration: 0.5).delay(2.2)) { showTasks = true }
-        withAnimation(.easeOut(duration: 0.5).delay(2.7)) { showCalendar = true }
+        withAnimation(.easeOut(duration: 0.5).delay(0.7)) { showCalendar = true }
+        withAnimation(.easeOut(duration: 0.5).delay(1.2)) { showTasks = true }
     }
 }
 
-// MARK: - Step 4: Ready to Begin
+// MARK: - Step 4: Ready to Begin (tag 4)
 
 private struct ReadyToBeginStep: View {
 

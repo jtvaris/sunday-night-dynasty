@@ -15,6 +15,36 @@ struct TeamSelectionView: View {
     /// All 32 NFL teams from static data.
     private let allTeams = NFLTeamData.allTeams
 
+    /// Flat list items for rendering without nested ForEach (avoids SwiftUI id conflicts)
+    private enum TeamListItem: Identifiable {
+        case conferenceHeader(String)
+        case divisionHeader(String)
+        case team(NFLTeamDefinition)
+
+        var id: String {
+            switch self {
+            case .conferenceHeader(let c): return "conf_\(c)"
+            case .divisionHeader(let d): return "div_\(d)"
+            case .team(let t): return "team_\(t.abbreviation)"
+            }
+        }
+    }
+
+    private var flatTeamList: [TeamListItem] {
+        var items: [TeamListItem] = []
+        for group in teamsByConference {
+            let confName = group.conference.rawValue
+            items.append(.conferenceHeader(confName))
+            for divGroup in group.divisions {
+                items.append(.divisionHeader("\(confName)_\(divGroup.division.rawValue)"))
+                for team in divGroup.teams {
+                    items.append(.team(team))
+                }
+            }
+        }
+        return items
+    }
+
     /// Teams grouped by conference then division for sectioned display.
     private var teamsByConference: [(conference: Conference, divisions: [(division: Division, teams: [NFLTeamDefinition])])] {
         Conference.allCases.map { conference in
@@ -35,39 +65,34 @@ struct TeamSelectionView: View {
 
             ScrollView {
                 LazyVStack(spacing: 24) {
-                    ForEach(Array(teamsByConference.enumerated()), id: \.offset) { confIndex, group in
-                        // Conference header
-                        Text(group.conference.rawValue)
-                            .font(.system(size: 28, weight: .black))
-                            .tracking(4)
-                            .foregroundStyle(Color.accentGold)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.top, 16)
-                            .padding(.bottom, 4)
-
-                        ForEach(Array(group.divisions.enumerated()), id: \.offset) { divIndex, divisionGroup in
-                            VStack(alignment: .leading, spacing: 12) {
-                                // Division header
-                                HStack(spacing: 8) {
-                                    Image(systemName: "football.fill")
-                                        .font(.caption)
-                                        .foregroundStyle(Color.accentGold)
-                                    Text(divisionGroup.division.rawValue)
-                                        .font(.subheadline.weight(.bold))
-                                        .foregroundStyle(Color.accentGold)
-                                }
-                                .padding(.horizontal, 20)
-
-                                ForEach(divisionGroup.teams, id: \.abbreviation) { team in
-                                    Button {
-                                        startCareer(with: team)
-                                    } label: {
-                                        TeamCardView(team: team)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .padding(.horizontal, 16)
-                                }
+                    ForEach(flatTeamList, id: \.id) { item in
+                        switch item {
+                        case .conferenceHeader(let conf):
+                            Text(conf)
+                                .font(.system(size: 28, weight: .black))
+                                .tracking(4)
+                                .foregroundStyle(Color.accentGold)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.top, 16)
+                                .padding(.bottom, 4)
+                        case .divisionHeader(let div):
+                            HStack(spacing: 8) {
+                                Image(systemName: "football.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.accentGold)
+                                Text(div.components(separatedBy: "_").dropFirst().joined(separator: " "))
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(Color.accentGold)
                             }
+                            .padding(.horizontal, 20)
+                        case .team(let team):
+                            Button {
+                                startCareer(with: team)
+                            } label: {
+                                TeamCardView(team: team)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 16)
                         }
                     }
                 }

@@ -170,16 +170,19 @@ enum TaskGenerator {
     /// - Parameters:
     ///   - phase: The current season phase.
     ///   - career: The player's career model.
-    ///   - team: The player's team (optional — nil if not yet assigned).
+    ///   - team: The player's team (optional -- nil if not yet assigned).
     ///   - rosterCount: Number of players currently on the active roster.
     ///   - hasPendingTradeOffers: Whether unanswered trade offers exist.
-    ///   - hasCoachingVacancies: Whether the coaching staff has open positions.
+    ///   - hasHeadCoach: Whether the team currently has a head coach.
+    ///   - hasOC: Whether the team currently has an offensive coordinator.
+    ///   - hasDC: Whether the team currently has a defensive coordinator.
     ///   - hasExpiringContracts: Whether any key players have expiring contracts.
     ///   - opponentName: The name of the next opponent (regular season / playoffs).
     ///   - playoffRoundName: The name of the current playoff round (e.g. "Divisional").
     ///   - hasScoutsAssigned: Whether any scouts are deployed on college scouting.
     ///   - hasPendingEvents: Whether there are unhandled game events / news items.
     ///   - ownerSatisfaction: The owner's current satisfaction rating.
+    ///   - isDraftComplete: Whether the draft has already been completed this phase.
     /// - Returns: An ordered array of `GameTask` items.
     static func generateTasks(
         for phase: SeasonPhase,
@@ -187,13 +190,16 @@ enum TaskGenerator {
         team: Team?,
         rosterCount: Int = 53,
         hasPendingTradeOffers: Bool = false,
-        hasCoachingVacancies: Bool = false,
+        hasHeadCoach: Bool = true,
+        hasOC: Bool = true,
+        hasDC: Bool = true,
         hasExpiringContracts: Bool = false,
         opponentName: String? = nil,
         playoffRoundName: String? = nil,
         hasScoutsAssigned: Bool = false,
         hasPendingEvents: Bool = false,
-        ownerSatisfaction: Int = 50
+        ownerSatisfaction: Int = 50,
+        isDraftComplete: Bool = false
     ) -> [GameTask] {
         switch phase {
         case .superBowl:
@@ -201,13 +207,17 @@ enum TaskGenerator {
         case .proBowl:
             return proBowlTasks()
         case .coachingChanges:
-            return coachingChangesTasks(hasVacancies: hasCoachingVacancies)
+            return coachingChangesTasks(
+                hasHeadCoach: hasHeadCoach,
+                hasOC: hasOC,
+                hasDC: hasDC
+            )
         case .combine:
             return combineTasks()
         case .freeAgency:
             return freeAgencyTasks(hasExpiringContracts: hasExpiringContracts)
         case .draft:
-            return draftTasks()
+            return draftTasks(isDraftComplete: isDraftComplete)
         case .otas:
             return otasTasks()
         case .trainingCamp:
@@ -273,28 +283,56 @@ enum TaskGenerator {
         ]
     }
 
-    private static func coachingChangesTasks(hasVacancies: Bool) -> [GameTask] {
-        var tasks: [GameTask] = [
-            GameTask(
-                phase: .coachingChanges,
-                title: "Review coaching staff",
-                description: "Evaluate your coordinators and position coaches.",
-                icon: "person.3.fill",
-                destination: .coachingStaff,
-                isRequired: hasVacancies
-            ),
-        ]
+    private static func coachingChangesTasks(
+        hasHeadCoach: Bool,
+        hasOC: Bool,
+        hasDC: Bool
+    ) -> [GameTask] {
+        var tasks: [GameTask] = []
 
-        if hasVacancies {
+        // REQUIRED: individual coach hiring tasks
+        if !hasHeadCoach {
             tasks.append(GameTask(
                 phase: .coachingChanges,
-                title: "Hire coaching staff",
-                description: "Fill open coaching positions before the offseason begins.",
+                title: "Hire Head Coach",
+                description: "Your team has no head coach. Hire one before moving on.",
                 icon: "person.badge.plus",
                 destination: .hireCoach,
                 isRequired: true
             ))
         }
+
+        if !hasOC {
+            tasks.append(GameTask(
+                phase: .coachingChanges,
+                title: "Hire Offensive Coordinator",
+                description: "Your team needs an offensive coordinator to run the offense.",
+                icon: "person.badge.plus",
+                destination: .hireCoach,
+                isRequired: true
+            ))
+        }
+
+        if !hasDC {
+            tasks.append(GameTask(
+                phase: .coachingChanges,
+                title: "Hire Defensive Coordinator",
+                description: "Your team needs a defensive coordinator to run the defense.",
+                icon: "person.badge.plus",
+                destination: .hireCoach,
+                isRequired: true
+            ))
+        }
+
+        // Optional: review and schemes
+        tasks.append(GameTask(
+            phase: .coachingChanges,
+            title: "Review coaching staff",
+            description: "Evaluate your coordinators and position coaches.",
+            icon: "person.3.fill",
+            destination: .coachingStaff,
+            isRequired: false
+        ))
 
         tasks.append(GameTask(
             phase: .coachingChanges,
@@ -310,20 +348,22 @@ enum TaskGenerator {
 
     private static func combineTasks() -> [GameTask] {
         [
+            // REQUIRED: must visit scouting at least once
+            GameTask(
+                phase: .combine,
+                title: "Review Combine results",
+                description: "Check 40 times, bench press, and drill results for top prospects.",
+                icon: "chart.bar.fill",
+                destination: .scouting,
+                isRequired: true
+            ),
+            // Optional
             GameTask(
                 phase: .combine,
                 title: "Send scouts to Combine",
                 description: "Deploy your scouting staff to evaluate prospects in person.",
                 icon: "binoculars.fill",
                 destination: .scouting,
-                isRequired: false
-            ),
-            GameTask(
-                phase: .combine,
-                title: "Review Combine results",
-                description: "Check 40 times, bench press, and drill results for top prospects.",
-                icon: "chart.bar.fill",
-                destination: .prospectList,
                 isRequired: false
             ),
             GameTask(
@@ -348,15 +388,28 @@ enum TaskGenerator {
     private static func freeAgencyTasks(hasExpiringContracts: Bool) -> [GameTask] {
         var tasks: [GameTask] = []
 
+        // REQUIRED: review free agent market
+        tasks.append(GameTask(
+            phase: .freeAgency,
+            title: "Review free agent market",
+            description: "Visit the free agency view to see available players.",
+            icon: "person.2.fill",
+            destination: .freeAgency,
+            isRequired: true
+        ))
+
+        // REQUIRED: review expiring contracts / cap situation
+        tasks.append(GameTask(
+            phase: .freeAgency,
+            title: "Review expiring contracts",
+            description: "Check your salary cap and contract situations before spending.",
+            icon: "dollarsign.circle.fill",
+            destination: .capOverview,
+            isRequired: true
+        ))
+
+        // Optional
         if hasExpiringContracts {
-            tasks.append(GameTask(
-                phase: .freeAgency,
-                title: "Evaluate expiring contracts",
-                description: "Review which of your players are about to hit the open market.",
-                icon: "doc.text.magnifyingglass",
-                destination: .contractTimeline,
-                isRequired: false
-            ))
             tasks.append(GameTask(
                 phase: .freeAgency,
                 title: "Re-sign key players",
@@ -367,38 +420,31 @@ enum TaskGenerator {
             ))
         }
 
-        tasks.append(contentsOf: [
-            GameTask(
-                phase: .freeAgency,
-                title: "Browse free agent market",
-                description: "Explore available players and identify targets for your roster.",
-                icon: "person.2.fill",
-                destination: .freeAgency,
-                isRequired: false
-            ),
-            GameTask(
-                phase: .freeAgency,
-                title: "Sign free agents",
-                description: "Make offers to free agents who fill your team's biggest needs.",
-                icon: "person.badge.plus",
-                destination: .freeAgency,
-                isRequired: false
-            ),
-            GameTask(
-                phase: .freeAgency,
-                title: "Review cap situation",
-                description: "Check your salary cap space and plan your spending.",
-                icon: "dollarsign.circle.fill",
-                destination: .capOverview,
-                isRequired: false
-            ),
-        ])
+        tasks.append(GameTask(
+            phase: .freeAgency,
+            title: "Sign free agents",
+            description: "Make offers to free agents who fill your team's biggest needs.",
+            icon: "person.badge.plus",
+            destination: .freeAgency,
+            isRequired: false
+        ))
 
         return tasks
     }
 
-    private static func draftTasks() -> [GameTask] {
-        [
+    private static func draftTasks(isDraftComplete: Bool) -> [GameTask] {
+        var tasks: [GameTask] = [
+            // REQUIRED: enter the draft
+            GameTask(
+                phase: .draft,
+                title: "Enter the Draft",
+                description: "It's time to select the future of your franchise.",
+                icon: "list.clipboard.fill",
+                destination: .draft,
+                isRequired: true,
+                status: isDraftComplete ? .done : .todo
+            ),
+            // Optional
             GameTask(
                 phase: .draft,
                 title: "Finalize Big Board",
@@ -415,19 +461,14 @@ enum TaskGenerator {
                 destination: .depthChart,
                 isRequired: false
             ),
-            GameTask(
-                phase: .draft,
-                title: "Enter the Draft",
-                description: "It's time to select the future of your franchise.",
-                icon: "list.clipboard.fill",
-                destination: .draft,
-                isRequired: true
-            ),
         ]
+
+        return tasks
     }
 
     private static func otasTasks() -> [GameTask] {
         [
+            // REQUIRED: set depth chart
             GameTask(
                 phase: .otas,
                 title: "Set depth chart",
@@ -435,6 +476,15 @@ enum TaskGenerator {
                 icon: "list.bullet.rectangle.portrait.fill",
                 destination: .depthChart,
                 isRequired: true
+            ),
+            // Optional
+            GameTask(
+                phase: .otas,
+                title: "Set game plan",
+                description: "Install your offensive and defensive schemes for the upcoming season.",
+                icon: "sportscourt.fill",
+                destination: .gamePlan,
+                isRequired: false
             ),
             GameTask(
                 phase: .otas,
@@ -444,19 +494,12 @@ enum TaskGenerator {
                 destination: .mentoring,
                 isRequired: false
             ),
-            GameTask(
-                phase: .otas,
-                title: "Set game plan",
-                description: "Install your offensive and defensive schemes for the upcoming season.",
-                icon: "sportscourt.fill",
-                destination: .gamePlan,
-                isRequired: false
-            ),
         ]
     }
 
     private static func trainingCampTasks() -> [GameTask] {
         [
+            // All optional
             GameTask(
                 phase: .trainingCamp,
                 title: "Review player development",
@@ -486,6 +529,7 @@ enum TaskGenerator {
 
     private static func preseasonTasks() -> [GameTask] {
         [
+            // All optional
             GameTask(
                 phase: .preseason,
                 title: "Watch preseason games",
@@ -509,10 +553,11 @@ enum TaskGenerator {
     private static func rosterCutsTasks(rosterCount: Int) -> [GameTask] {
         let overLimit = rosterCount > 53
         var tasks: [GameTask] = [
+            // REQUIRED only if over 53
             GameTask(
                 phase: .rosterCuts,
                 title: overLimit
-                    ? "Cut roster to 53 players (\(rosterCount) currently)"
+                    ? "Finalize 53-man roster (\(rosterCount) currently)"
                     : "Roster is at 53 players",
                 description: overLimit
                     ? "You must release \(rosterCount - 53) player(s) to reach the 53-man limit."
@@ -543,6 +588,7 @@ enum TaskGenerator {
         hasPendingEvents: Bool,
         ownerSatisfaction: Int
     ) -> [GameTask] {
+        // Regular season: no required tasks — advance always allowed
         var tasks: [GameTask] = []
 
         let opponent = opponentName ?? "your opponent"
@@ -616,15 +662,6 @@ enum TaskGenerator {
                 isRequired: false
             ))
         }
-
-        tasks.append(GameTask(
-            phase: .regularSeason,
-            title: "Advance to Game Day",
-            description: "When you're ready, advance the week to play your next game.",
-            icon: "forward.fill",
-            destination: .schedule,
-            isRequired: true
-        ))
 
         return tasks
     }

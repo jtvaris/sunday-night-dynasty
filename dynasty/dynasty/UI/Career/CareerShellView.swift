@@ -19,7 +19,7 @@ struct CareerShellView: View {
 
     /// The current list of tasks for the active phase, persisted across view
     /// updates. Regenerated when the phase changes.
-    @State private var currentTasks: [GameTask] = []
+    @State var currentTasks: [GameTask] = []
 
     /// Tracks the last phase we generated tasks for, so we can detect phase changes.
     @State private var lastGeneratedPhase: SeasonPhase?
@@ -39,7 +39,9 @@ struct CareerShellView: View {
 
             // Main content area
             NavigationStack(path: $navigationPath) {
-                CareerDashboardView(career: career)
+                CareerDashboardView(career: career, tasks: $currentTasks, onTaskSelected: { destination in
+                    handleTaskNavigation(destination)
+                })
                     .navigationDestination(for: ShellDestination.self) { dest in
                         destinationView(for: dest)
                     }
@@ -95,82 +97,126 @@ struct CareerShellView: View {
             }
             .navigationTitle("Roster")
             .toolbarColorScheme(.dark, for: .navigationBar)
-            .onAppear { markTaskVisited(for: .roster) }
+            .onAppear {
+                markTaskVisited(for: .roster)
+                refreshTaskCompletionStatus()
+            }
         case .schedule:
             ScheduleView(career: career)
-                .onAppear { markTaskVisited(for: .schedule) }
+                .onAppear {
+                    markTaskVisited(for: .schedule)
+                    refreshTaskCompletionStatus()
+                }
         case .standings:
             StandingsView(career: career)
-                .onAppear { markTaskVisited(for: .standings) }
+                .onAppear {
+                    markTaskVisited(for: .standings)
+                    refreshTaskCompletionStatus()
+                }
         case .draft:
             DraftView(career: career)
-                .onAppear { markTaskVisited(for: .draft) }
+                .onAppear {
+                    markTaskVisited(for: .draft)
+                    refreshTaskCompletionStatus()
+                }
+                .onDisappear {
+                    refreshTaskCompletionStatus()
+                }
         case .scouting:
             ScoutingHubView(career: career)
-                .onAppear { markTaskVisited(for: .scouting) }
+                .onAppear {
+                    markTaskVisited(for: .scouting)
+                    refreshTaskCompletionStatus()
+                }
         case .cap, .capOverview:
             CapOverviewView(career: career)
-                .onAppear { markTaskVisited(for: .capOverview) }
+                .onAppear {
+                    markTaskVisited(for: .capOverview)
+                    refreshTaskCompletionStatus()
+                }
         case .depthChart:
             DepthChartView(career: career)
-                .onAppear { markTaskVisited(for: .depthChart) }
+                .onAppear {
+                    markTaskVisited(for: .depthChart)
+                    refreshTaskCompletionStatus()
+                }
         case .gamePlan:
             GamePlanView(gamePlan: .constant(.balanced))
-                .onAppear { markTaskVisited(for: .gamePlan) }
+                .onAppear {
+                    markTaskVisited(for: .gamePlan)
+                    refreshTaskCompletionStatus()
+                }
         case .coachingStaff, .hireCoach:
             CoachingStaffView(career: career)
                 .onAppear {
                     markTaskVisited(for: .coachingStaff)
                     markTaskVisited(for: .hireCoach)
+                    refreshTaskCompletionStatus()
+                }
+                .onDisappear {
+                    refreshTaskCompletionStatus()
                 }
         case .prospectList:
             ScoutingHubView(career: career)
-                .onAppear { markTaskVisited(for: .prospectList) }
+                .onAppear {
+                    markTaskVisited(for: .prospectList)
+                    refreshTaskCompletionStatus()
+                }
         case .bigBoard:
             ScoutingHubView(career: career)
-                .onAppear { markTaskVisited(for: .bigBoard) }
+                .onAppear {
+                    markTaskVisited(for: .bigBoard)
+                    refreshTaskCompletionStatus()
+                }
         case .freeAgency:
-            ZStack {
-                Color.backgroundPrimary.ignoresSafeArea()
-                Text("Free Agency - Coming Soon")
-                    .font(.title2)
-                    .foregroundStyle(Color.textSecondary)
-            }
-            .navigationTitle("Free Agency")
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .onAppear { markTaskVisited(for: .freeAgency) }
+            FreeAgencyView(career: career)
+                .onAppear {
+                    markTaskVisited(for: .freeAgency)
+                    refreshTaskCompletionStatus()
+                }
         case .contractTimeline:
             ContractTimelineView(career: career)
-                .onAppear { markTaskVisited(for: .contractTimeline) }
+                .onAppear {
+                    markTaskVisited(for: .contractTimeline)
+                    refreshTaskCompletionStatus()
+                }
         case .mentoring:
             MentoringView(career: career)
-                .onAppear { markTaskVisited(for: .mentoring) }
+                .onAppear {
+                    markTaskVisited(for: .mentoring)
+                    refreshTaskCompletionStatus()
+                }
         case .trades:
             TradeView(career: career)
-                .onAppear { markTaskVisited(for: .trades) }
+                .onAppear {
+                    markTaskVisited(for: .trades)
+                    refreshTaskCompletionStatus()
+                }
         case .news:
-            ZStack {
-                Color.backgroundPrimary.ignoresSafeArea()
-                Text("News - Coming Soon")
-                    .font(.title2)
-                    .foregroundStyle(Color.textSecondary)
-            }
-            .navigationTitle("News")
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .onAppear { markTaskVisited(for: .news) }
+            NewsView(career: career)
+                .onAppear {
+                    markTaskVisited(for: .news)
+                    refreshTaskCompletionStatus()
+                }
         case .ownerMeeting:
             OwnerMeetingView(career: career)
-                .onAppear { markTaskVisited(for: .ownerMeeting) }
+                .onAppear {
+                    markTaskVisited(for: .ownerMeeting)
+                    refreshTaskCompletionStatus()
+                }
         case .lockerRoom:
             LockerRoomView(career: career)
-                .onAppear { markTaskVisited(for: .lockerRoom) }
+                .onAppear {
+                    markTaskVisited(for: .lockerRoom)
+                    refreshTaskCompletionStatus()
+                }
         }
     }
 
     // MARK: - Task Navigation
 
     /// Maps a `TaskDestination` to a `ShellDestination` and navigates there.
-    private func handleTaskNavigation(_ destination: TaskDestination) {
+    func handleTaskNavigation(_ destination: TaskDestination) {
         let shellDest: ShellDestination
         switch destination {
         case .roster:             shellDest = .roster
@@ -223,6 +269,65 @@ struct CareerShellView: View {
         }
     }
 
+    // MARK: - Task Completion Refresh
+
+    /// Checks actual game state against tasks and marks them done when the
+    /// underlying condition is satisfied (e.g., coach hired, roster trimmed).
+    func refreshTaskCompletionStatus() {
+        guard let teamID = career.teamID else { return }
+
+        // Fetch current coaches
+        let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
+        let hasHC = coaches.contains { $0.role == .headCoach }
+        let hasOC = coaches.contains { $0.role == .offensiveCoordinator }
+        let hasDC = coaches.contains { $0.role == .defensiveCoordinator }
+
+        // Fetch current roster count
+        let playerDescriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
+        let rosterCount = (try? modelContext.fetchCount(playerDescriptor)) ?? 0
+
+        for index in currentTasks.indices {
+            guard currentTasks[index].status != .done else { continue }
+            let task = currentTasks[index]
+
+            switch task.title {
+            // Coaching Changes
+            case "Hire Head Coach":
+                if hasHC { currentTasks[index].status = .done }
+            case "Hire Offensive Coordinator":
+                if hasOC { currentTasks[index].status = .done }
+            case "Hire Defensive Coordinator":
+                if hasDC { currentTasks[index].status = .done }
+
+            // Combine — "Review Combine results" is completed by visiting scouting
+            case "Review Combine results":
+                if task.status == .inProgress { currentTasks[index].status = .done }
+
+            // Free Agency — visit-based completion
+            case "Review free agent market":
+                if task.status == .inProgress { currentTasks[index].status = .done }
+            case "Review expiring contracts":
+                if task.status == .inProgress { currentTasks[index].status = .done }
+
+            // Draft — "Enter the Draft" completed when draft view visited
+            case "Enter the Draft":
+                if task.status == .inProgress { currentTasks[index].status = .done }
+
+            // OTAs — "Set depth chart" completed by visiting
+            case "Set depth chart":
+                if task.status == .inProgress { currentTasks[index].status = .done }
+
+            // Roster Cuts — check if roster <= 53
+            case _ where task.title.contains("Finalize 53-man roster"):
+                if rosterCount <= 53 { currentTasks[index].status = .done }
+
+            default:
+                break
+            }
+        }
+    }
+
     // MARK: - Bookmark Navigation
 
     private func handleBookmarkNavigation(_ bookmark: TopNavigationBar.BookmarkDestination) {
@@ -254,9 +359,28 @@ struct CareerShellView: View {
         guard phase != lastGeneratedPhase else { return }
         lastGeneratedPhase = phase
 
-        let rosterCount = team?.players.count ?? 53
+        let rosterCount: Int
+        if let teamID = career.teamID {
+            let playerDescriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
+            rosterCount = (try? modelContext.fetchCount(playerDescriptor)) ?? 53
+        } else {
+            rosterCount = 53
+        }
+
         let hasPendingTradeOffers = false // TODO: wire up when TradeOffer model exists
-        let hasCoachingVacancies = false  // TODO: wire up when coaching vacancy tracking exists
+
+        // Detect coaching vacancies
+        var hasHC = true
+        var hasOC = true
+        var hasDC = true
+        if let teamID = career.teamID {
+            let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+            let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
+            hasHC = coaches.contains { $0.role == .headCoach }
+            hasOC = coaches.contains { $0.role == .offensiveCoordinator }
+            hasDC = coaches.contains { $0.role == .defensiveCoordinator }
+        }
+
         let hasExpiringContracts = false  // TODO: wire up when contract expiration tracking exists
         let hasScoutsAssigned = false     // TODO: wire up when scout deployment tracking exists
         let hasPendingEvents = !WeekAdvancer.lastEvents.isEmpty
@@ -276,7 +400,9 @@ struct CareerShellView: View {
             team: team,
             rosterCount: rosterCount,
             hasPendingTradeOffers: hasPendingTradeOffers,
-            hasCoachingVacancies: hasCoachingVacancies,
+            hasHeadCoach: hasHC,
+            hasOC: hasOC,
+            hasDC: hasDC,
             hasExpiringContracts: hasExpiringContracts,
             opponentName: opponentName,
             playoffRoundName: nil,  // TODO: derive from playoff bracket

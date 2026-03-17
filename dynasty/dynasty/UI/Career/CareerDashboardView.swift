@@ -4,6 +4,8 @@ import SwiftData
 struct CareerDashboardView: View {
 
     @Bindable var career: Career
+    @Binding var tasks: [GameTask]
+    var onTaskSelected: (TaskDestination) -> Void
     @Environment(\.modelContext) private var modelContext
 
     // MARK: - State
@@ -23,6 +25,24 @@ struct CareerDashboardView: View {
     @State private var lastHomeTeam: Team?
     @State private var lastAwayTeam: Team?
 
+    // MARK: - Derived
+
+    private var requiredTasks: [GameTask] {
+        tasks.filter { $0.isRequired }
+    }
+
+    private var optionalTasks: [GameTask] {
+        tasks.filter { !$0.isRequired }
+    }
+
+    private var incompleteRequiredCount: Int {
+        TaskGenerator.incompleteRequiredCount(in: tasks)
+    }
+
+    private var canAdvance: Bool {
+        TaskGenerator.allRequiredComplete(in: tasks)
+    }
+
     // MARK: - Grid
 
     private let columns = [
@@ -36,13 +56,13 @@ struct CareerDashboardView: View {
             ScrollView {
                 VStack(spacing: 16) {
 
-                    // Row 1 — Key Info
+                    // Row 1 -- Key Info
                     LazyVGrid(columns: columns, spacing: 16) {
                         teamTile
                         seasonTile
                     }
 
-                    // Row 2 — Action Tiles
+                    // Row 2 -- Action Tiles
                     LazyVGrid(columns: columns, spacing: 16) {
                         rosterTile
                         scheduleTile
@@ -50,7 +70,7 @@ struct CareerDashboardView: View {
                         newsTile
                     }
 
-                    // Row 3 — Management Tiles
+                    // Row 3 -- Management Tiles
                     LazyVGrid(columns: columns, spacing: 16) {
                         staffTile
                         scoutingTile
@@ -58,7 +78,7 @@ struct CareerDashboardView: View {
                         lockerRoomTile
                     }
 
-                    // Row 4 — Seasonal / Contextual Tiles
+                    // Row 4 -- Seasonal / Contextual Tiles
                     LazyVGrid(columns: columns, spacing: 16) {
                         if career.currentPhase == .draft || career.currentPhase == .combine {
                             draftTile
@@ -69,6 +89,11 @@ struct CareerDashboardView: View {
                         if career.currentPhase == .regularSeason || career.currentPhase == .tradeDeadline {
                             tradeTile
                         }
+                    }
+
+                    // Phase Tasks Checklist
+                    if !tasks.isEmpty {
+                        phaseTasksSection
                     }
 
                     // Advance Week
@@ -95,6 +120,116 @@ struct CareerDashboardView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Phase Tasks Section
+
+    private var phaseTasksSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Gold header
+            HStack(spacing: 8) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.accentGold)
+                Text("PHASE TASKS \u{2014} \(phaseDisplayName(career.currentPhase))")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Color.accentGold)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+                Spacer()
+                if incompleteRequiredCount > 0 {
+                    Text("\(incompleteRequiredCount)")
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.danger))
+                }
+            }
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.6))
+
+            // Required tasks first
+            if !requiredTasks.isEmpty {
+                ForEach(requiredTasks) { task in
+                    taskRow(task, isRequired: true)
+                }
+            }
+
+            // Optional tasks below, dimmer
+            if !optionalTasks.isEmpty {
+                if !requiredTasks.isEmpty {
+                    Divider().overlay(Color.surfaceBorder.opacity(0.3))
+                }
+                ForEach(optionalTasks) { task in
+                    taskRow(task, isRequired: false)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private func taskRow(_ task: GameTask, isRequired: Bool) -> some View {
+        Button {
+            onTaskSelected(task.destination)
+        } label: {
+            HStack(spacing: 10) {
+                // Status indicator
+                if task.status == .done {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color.success)
+                } else if isRequired {
+                    Circle()
+                        .fill(Color.danger)
+                        .frame(width: 10, height: 10)
+                        .padding(.horizontal, 3)
+                } else {
+                    Circle()
+                        .strokeBorder(Color.textTertiary, lineWidth: 1.5)
+                        .frame(width: 10, height: 10)
+                        .padding(.horizontal, 3)
+                }
+
+                // Label
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        if isRequired && task.status != .done {
+                            Text("Required")
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.danger))
+                        }
+                        Text(task.title)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(task.status == .done ? Color.textTertiary : Color.textPrimary)
+                            .strikethrough(task.status == .done, color: Color.textTertiary)
+                    }
+                }
+
+                Spacer()
+
+                if task.status != .done {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+            .padding(.vertical, 6)
+            .opacity(task.status == .done ? 0.6 : (isRequired ? 1.0 : 0.75))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Row 1: Team Tile
@@ -646,36 +781,54 @@ struct CareerDashboardView: View {
     }
 
     private var advanceWeekButton: some View {
-        Button {
-            let teamsByID = fetchTeamsByID()
-            WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
-            if let result = WeekAdvancer.lastPlayerGameResult,
-               let home = teamsByID[result.boxScore.home.teamID],
-               let away = teamsByID[result.boxScore.away.teamID] {
-                lastGameResult = result
-                lastHomeTeam = home
-                lastAwayTeam = away
-                showGameSummary = true
+        VStack(spacing: 8) {
+            // Warning text when blocked
+            if !canAdvance {
+                Label(
+                    "Complete \(incompleteRequiredCount) required task\(incompleteRequiredCount == 1 ? "" : "s") to advance",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Color.danger)
             }
-            loadAllData()
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "chevron.right.2")
-                    .font(.system(size: 16, weight: .bold))
-                Text(advanceButtonLabel)
-                    .font(.system(size: 18, weight: .bold))
+
+            Button {
+                guard canAdvance else { return }
+                let teamsByID = fetchTeamsByID()
+                WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+                if let result = WeekAdvancer.lastPlayerGameResult,
+                   let home = teamsByID[result.boxScore.home.teamID],
+                   let away = teamsByID[result.boxScore.away.teamID] {
+                    lastGameResult = result
+                    lastHomeTeam = home
+                    lastAwayTeam = away
+                    showGameSummary = true
+                }
+                loadAllData()
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "chevron.right.2")
+                        .font(.system(size: 16, weight: .bold))
+                    Text(advanceButtonLabel)
+                        .font(.system(size: 18, weight: .bold))
+                }
+                .foregroundStyle(canAdvance ? Color.backgroundPrimary : Color.textTertiary)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 48)
+                .padding(.vertical, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(canAdvance ? Color.accentGold : Color.backgroundTertiary)
+                        .shadow(
+                            color: canAdvance ? Color.accentGold.opacity(0.4) : Color.clear,
+                            radius: 12, x: 0, y: 4
+                        )
+                )
             }
-            .foregroundStyle(Color.backgroundPrimary)
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: 48)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.accentGold)
-                    .shadow(color: Color.accentGold.opacity(0.4), radius: 12, x: 0, y: 4)
-            )
+            .disabled(!canAdvance)
+            .animation(.spring(duration: 0.3), value: canAdvance)
+            .accessibilityLabel(advanceButtonLabel)
         }
-        .accessibilityLabel(advanceButtonLabel)
     }
 
     // MARK: - Owner Satisfaction Bar
@@ -714,13 +867,13 @@ struct CareerDashboardView: View {
     // MARK: - Division Rank
 
     private var divisionRank: String {
-        guard let myTeam = team else { return "—" }
+        guard let myTeam = team else { return "\u{2014}" }
         let sorted = divisionTeams.sorted { $0.wins > $1.wins }
         if let idx = sorted.firstIndex(where: { $0.id == myTeam.id }) {
             let rank = idx + 1
             return "#\(rank)"
         }
-        return "—"
+        return "\u{2014}"
     }
 
     // MARK: - Phase Highlight
@@ -890,12 +1043,25 @@ private struct DashboardTile<Content: View>: View {
 }
 
 #Preview {
+    @Previewable @State var previewTasks: [GameTask] = TaskGenerator.generateTasks(
+        for: .coachingChanges,
+        career: Career(playerName: "John Doe", role: .gm, capMode: .simple),
+        team: nil,
+        hasHeadCoach: false,
+        hasOC: false,
+        hasDC: true
+    )
+
     NavigationStack {
-        CareerDashboardView(career: Career(
-            playerName: "John Doe",
-            role: .gm,
-            capMode: .simple
-        ))
+        CareerDashboardView(
+            career: Career(
+                playerName: "John Doe",
+                role: .gm,
+                capMode: .simple
+            ),
+            tasks: $previewTasks,
+            onTaskSelected: { _ in }
+        )
     }
     .modelContainer(for: Career.self, inMemory: true)
 }
