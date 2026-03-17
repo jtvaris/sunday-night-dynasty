@@ -6,38 +6,54 @@ struct MainMenuView: View {
     @Query(sort: \Career.currentSeason, order: .reverse) private var careers: [Career]
 
     var body: some View {
-        ZStack {
-            // MARK: - Full Screen Hero Image
-            Image("HeroImage")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .ignoresSafeArea()
+        GeometryReader { geo in
+            let isLandscape = geo.size.width > geo.size.height
 
-            // Dark gradient overlay for text readability
-            LinearGradient(
-                stops: [
-                    .init(color: Color.black.opacity(0.3), location: 0.0),
-                    .init(color: Color.black.opacity(0.15), location: 0.25),
-                    .init(color: Color.black.opacity(0.4), location: 0.5),
-                    .init(color: Color.black.opacity(0.85), location: 0.75),
-                    .init(color: Color.black.opacity(0.95), location: 1.0),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
+            ZStack {
+                // MARK: - Full Screen Hero Image
+                Image("HeroImage")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
 
-            // Everything together — title + buttons
-            VStack(spacing: 0) {
-                Spacer()
-                titleBlock
-                    .padding(.bottom, 24)
-                buttonsBlock
-                footerBlock
+                // Dark gradient overlay
+                LinearGradient(
+                    stops: [
+                        .init(color: Color.black.opacity(0.3), location: 0.0),
+                        .init(color: Color.black.opacity(0.15), location: 0.25),
+                        .init(color: Color.black.opacity(0.5), location: 0.5),
+                        .init(color: Color.black.opacity(0.85), location: 0.75),
+                        .init(color: Color.black.opacity(0.95), location: 1.0),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                if isLandscape {
+                    // Landscape: content centered, pushed up slightly
+                    VStack(spacing: 16) {
+                        Spacer()
+                        Spacer()
+                        titleBlock
+                        buttonsBlock
+                        footerBlock
+                        Spacer()
+                    }
+                } else {
+                    // Portrait: content at bottom
+                    VStack(spacing: 0) {
+                        Spacer()
+                        titleBlock
+                            .padding(.bottom, 24)
+                        buttonsBlock
+                        footerBlock
+                    }
+                    .padding(.bottom, 16)
+                }
             }
-            .padding(.bottom, 16)
-            .safeAreaPadding(.bottom)
         }
+        .ignoresSafeArea()
         .toolbar(.hidden, for: .navigationBar)
     }
 
