@@ -211,7 +211,8 @@ enum TaskGenerator {
             return coachingChangesTasks(
                 hasHeadCoach: hasHeadCoach,
                 hasOC: hasOC,
-                hasDC: hasDC
+                hasDC: hasDC,
+                playerIsHC: career.role == .gmAndHeadCoach
             )
         case .combine:
             return combineTasks()
@@ -287,12 +288,14 @@ enum TaskGenerator {
     private static func coachingChangesTasks(
         hasHeadCoach: Bool,
         hasOC: Bool,
-        hasDC: Bool
+        hasDC: Bool,
+        playerIsHC: Bool = false
     ) -> [GameTask] {
         var tasks: [GameTask] = []
 
         // REQUIRED: individual coach hiring tasks
-        if !hasHeadCoach {
+        // If player is GM+HC, they ARE the head coach — no need to hire one
+        if !hasHeadCoach && !playerIsHC {
             tasks.append(GameTask(
                 phase: .coachingChanges,
                 title: "Hire Head Coach",
