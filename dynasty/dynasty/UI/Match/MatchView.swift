@@ -14,6 +14,9 @@ struct MatchView: View {
 
     let homeTeam: Team
     let awayTeam: Team
+    /// Which team the player coaches.  Determines which side of the ball the
+    /// play-call UI is presented for in `callOffense` / `callDefense` modes.
+    let playerTeamIsHome: Bool
     let gameResult: GameSimulator.GameResult
 
     // MARK: Private Derived Data
@@ -40,6 +43,31 @@ struct MatchView: View {
     @State private var playLog: [PlayResult] = []
     @State private var isGameOver: Bool = false
 
+    // MARK: Control Mode
+
+    /// Determines whether the player calls plays or lets the engine auto-simulate.
+    @State private var controlMode: MatchControlMode = .autoSimulate
+
+    // MARK: Manual Play-Calling State
+
+    /// Set to `true` when the game is paused waiting for the player to call the
+    /// next offensive play.
+    @State private var awaitingOffensiveCall: Bool = false
+    /// Set to `true` when the game is paused waiting for the player to call the
+    /// next defensive alignment.
+    @State private var awaitingDefensiveCall: Bool = false
+
+    /// The offensive call the player has confirmed for the current play.
+    @State private var pendingOffensiveCall: OffensivePlayCall? = nil
+    /// The defensive package the player has confirmed for the current play.
+    @State private var pendingDefensiveCall: DefensivePackage? = nil
+
+    /// Log of every play call the player made this game, for review purposes.
+    @State private var callHistory: [(play: PlayResult, offCall: OffensivePlayCall?, defCall: DefensivePackage?)] = []
+
+    /// Result banner shown briefly after each manually-called play resolves.
+    @State private var latestResultBanner: String? = nil
+
     // MARK: Scroll Proxy ID
 
     private let feedBottomID = "feedBottom"
@@ -57,9 +85,27 @@ struct MatchView: View {
             GeometryReader { geo in
                 VStack(spacing: 0) {
                     scoreboardBar
-                    fieldSection(height: geo.size.height * 0.58)
+                    controlModeBar          // play-calling mode toggle
+                    fieldSection(height: geo.size.height * 0.50)
                     bottomPanel
                 }
+            }
+
+            // Result banner — briefly visible after a manually-called play lands
+            if let banner = latestResultBanner {
+                VStack {
+                    Spacer()
+                    Text(banner)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(Color.backgroundTertiary, in: Capsule())
+                        .padding(.bottom, 100)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                .animation(.spring(duration: 0.35), value: latestResultBanner)
             }
         }
         .onAppear {
@@ -67,6 +113,41 @@ struct MatchView: View {
         }
         .onDisappear {
             playbackTask?.cancel()
+        }
+        // ---- Play-call sheets ----
+        .sheet(isPresented: $awaitingDefensiveCall) {
+            PlayCallView(
+                side: .defense,
+                situation: currentSituation,
+                aiOffensiveSuggestion: nil,
+                aiDefensiveSuggestion: aiDefensiveSuggestion,
+                onDefensiveCall: { pkg in
+                    pendingDefensiveCall = pkg
+                    awaitingDefensiveCall = false
+                    // If we also need an offensive call, present that next
+                    if controlMode.playerCallsOffense && isPlayerTeamOnOffense {
+                        awaitingOffensiveCall = true
+                    }
+                    // Otherwise resume playback (offensive call goes straight to engine)
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $awaitingOffensiveCall) {
+            PlayCallView(
+                side: .offense,
+                situation: currentSituation,
+                aiOffensiveSuggestion: aiOffensiveSuggestion,
+                aiDefensiveSuggestion: nil,
+                onOffensiveCall: { call in
+                    pendingOffensiveCall = call
+                    awaitingOffensiveCall = false
+                    // All calls are now in; signal the playback task to continue
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -129,6 +210,58 @@ struct MatchView: View {
                 .animation(.spring(duration: 0.3), value: score)
         }
         .frame(minWidth: 70, alignment: alignment == .leading ? .leading : .trailing)
+    }
+
+    // MARK: - Control Mode Bar
+
+    /// Horizontal strip beneath the scoreboard that lets the player switch
+    /// between auto-simulate and the various play-calling modes at any time,
+    /// even mid-game.
+    private var controlModeBar: some View {
+        HStack(spacing: 0) {
+            ForEach(MatchControlMode.allCases, id: \.self) { mode in
+                controlModeButton(mode)
+            }
+        }
+        .background(Color.backgroundSecondary)
+        .overlay(
+            Rectangle()
+                .frame(height: 1)
+                .foregroundStyle(Color.surfaceBorder),
+            alignment: .bottom
+        )
+    }
+
+    private func controlModeButton(_ mode: MatchControlMode) -> some View {
+        let isSelected = controlMode == mode
+        return Button {
+            guard controlMode != mode else { return }
+            // Switching away from auto-simulate pauses ongoing playback
+            if controlMode == .autoSimulate && mode != .autoSimulate {
+                pausePlayback()
+            }
+            // Switching back to auto resumes
+            if mode == .autoSimulate {
+                controlMode = mode
+                if !isGameOver { startPlayback() }
+            } else {
+                controlMode = mode
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: mode.icon)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(mode.label)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity)
+            .background(isSelected ? Color.accentGold : Color.clear)
+            .animation(.easeInOut(duration: 0.15), value: isSelected)
+        }
+        .buttonStyle(.plain)
+        .disabled(isGameOver)
     }
 
     // MARK: - 3D Field
@@ -255,23 +388,36 @@ struct MatchView: View {
                     .frame(width: 44, height: 44)
                     .background(Color.backgroundTertiary, in: Circle())
             }
-            .disabled(isGameOver)
+            .disabled(isGameOver || awaitingOffensiveCall || awaitingDefensiveCall)
 
             Divider()
                 .frame(height: 28)
                 .background(Color.surfaceBorder)
 
-            // Speed controls
-            HStack(spacing: 6) {
-                ForEach([1.0, 2.0, 4.0], id: \.self) { speed in
-                    speedButton(speed: speed)
+            if controlMode == .autoSimulate {
+                // Speed controls — only relevant in auto-simulate mode
+                HStack(spacing: 6) {
+                    ForEach([1.0, 2.0, 4.0], id: \.self) { speed in
+                        speedButton(speed: speed)
+                    }
+                }
+            } else {
+                // Manual mode status label
+                if awaitingOffensiveCall || awaitingDefensiveCall {
+                    Label("Waiting for call…", systemImage: "hand.tap")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.accentGold)
+                } else {
+                    Label("Play-calling on", systemImage: "person.fill.checkmark")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.textSecondary)
                 }
             }
 
             Spacer()
 
-            // Skip to end
-            if !isGameOver {
+            // Skip to end (auto-simulate only; skipping would bypass play calls)
+            if !isGameOver && controlMode == .autoSimulate {
                 Button {
                     skipToEnd()
                 } label: {
@@ -282,6 +428,13 @@ struct MatchView: View {
                         .padding(.vertical, 8)
                         .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
                 }
+            }
+
+            // Call history badge
+            if !callHistory.isEmpty {
+                Text("\(callHistory.count) calls")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
             }
         }
         .padding(.horizontal, 16)
@@ -341,20 +494,90 @@ struct MatchView: View {
     }
 
     /// Advances through remaining plays one at a time, sleeping between each.
-    /// The delay scales inversely with ``gameSpeed``.
+    ///
+    /// In auto-simulate mode this behaves identically to the original
+    /// implementation.  In a manual mode the loop pauses before each play,
+    /// waits for the player to confirm their call(s) via the sheet UI, then
+    /// records the call alongside the pre-simulated `PlayResult` and continues.
+    ///
+    /// Because the underlying game is fully pre-simulated, the play call does
+    /// not change the actual `PlayResult` stored in `gameResult`; instead it is
+    /// logged in `callHistory` and the simulator hint is available for future
+    /// live simulation integration.  Visual feedback is provided through
+    /// `latestResultBanner`.
     private func advancePlays() async {
         let plays = allPlays
+
         while currentPlayIndex < plays.count {
             guard !Task.isCancelled else { return }
 
             let play = plays[currentPlayIndex]
-            await MainActor.run {
-                applyPlay(play)
+
+            // ---- Manual play-calling pause ----
+            if controlMode != .autoSimulate {
+                // Determine whether this play is on the player's offense/defense
+                let playerOnOffense = isPlayerTeamOnOffense(for: play)
+                let needsOffCall = controlMode.playerCallsOffense && playerOnOffense
+                let needsDefCall = controlMode.playerCallsDefense && !playerOnOffense
+
+                if needsOffCall || needsDefCall {
+                    // Reset pending calls
+                    await MainActor.run {
+                        pendingOffensiveCall = nil
+                        pendingDefensiveCall = nil
+                    }
+
+                    // Present defensive sheet first (so player knows coverage they're
+                    // running before committing to an offensive call)
+                    if needsDefCall {
+                        await MainActor.run { awaitingDefensiveCall = true }
+                        // Wait until the defensive sheet is dismissed
+                        while await MainActor.run(resultType: Bool.self, body: { awaitingDefensiveCall }) {
+                            guard !Task.isCancelled else { return }
+                            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 s poll
+                        }
+                    }
+
+                    // Present offensive sheet
+                    if needsOffCall && !needsDefCall {
+                        // Defense is not player-controlled; show offense sheet directly
+                        await MainActor.run { awaitingOffensiveCall = true }
+                    }
+                    // If both sides are player-controlled, the defensive sheet's
+                    // completion handler already sets awaitingOffensiveCall = true.
+
+                    // Wait until the offensive sheet is dismissed (if it was opened)
+                    if needsOffCall {
+                        while await MainActor.run(resultType: Bool.self, body: { awaitingOffensiveCall }) {
+                            guard !Task.isCancelled else { return }
+                            try? await Task.sleep(nanoseconds: 100_000_000)
+                        }
+                    }
+
+                    guard !Task.isCancelled else { return }
+
+                    // Record the call in history
+                    let capturedOff = await MainActor.run(resultType: OffensivePlayCall?.self) { pendingOffensiveCall }
+                    let capturedDef = await MainActor.run(resultType: DefensivePackage?.self)  { pendingDefensiveCall }
+
+                    await MainActor.run {
+                        callHistory.append((play: play, offCall: capturedOff, defCall: capturedDef))
+                    }
+                }
             }
 
-            // Determine per-play delay: base is 2 seconds; scoring plays linger
-            let baseDelay: Double = play.scoringPlay ? 3.0 : 2.0
-            let delay = baseDelay / gameSpeed
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                applyPlay(play)
+                showResultBanner(for: play)
+            }
+
+            // Determine per-play delay: base is 2 seconds; scoring plays linger.
+            // In manual mode, stay on the result a beat longer so the player can
+            // read the outcome before the next call sheet appears.
+            let baseDelay: Double = play.scoringPlay ? 3.0 : (controlMode == .autoSimulate ? 2.0 : 2.5)
+            let delay = baseDelay / (controlMode == .autoSimulate ? gameSpeed : 1.0)
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         }
 
@@ -399,6 +622,97 @@ struct MatchView: View {
         // Sync to definitive final scores from GameResult
         homeScore = gameResult.homeScore
         awayScore = gameResult.awayScore
+    }
+
+    // MARK: - Manual Mode Helpers
+
+    /// Returns `true` when the player's team is on offense for the given play.
+    /// Falls back to checking the current live `quarter` and `timeRemaining`
+    /// when no specific play is provided.
+    private func isPlayerTeamOnOffense(for play: PlayResult? = nil) -> Bool {
+        guard let play = play else { return isPlayerTeamOnOffense }
+        // The drive that owns this play tells us which team had possession
+        guard let drive = driveForPlay(play) else { return false }
+        return playerTeamIsHome ? drive.teamID == homeTeam.id : drive.teamID == awayTeam.id
+    }
+
+    /// Convenience computed property for the current play (used in sheet bindings).
+    private var isPlayerTeamOnOffense: Bool {
+        guard let latest = playLog.last else { return playerTeamIsHome }
+        return isPlayerTeamOnOffense(for: latest)
+    }
+
+    /// Build a `PlayCallView.GameSituation` from current live state.
+    private var currentSituation: PlayCallView.GameSituation {
+        let latest = playLog.last
+        return PlayCallView.GameSituation(
+            down: latest?.down ?? 1,
+            distance: latest?.distance ?? 10,
+            yardLine: latest?.yardLine ?? 25,
+            quarter: quarter,
+            timeRemaining: timeRemaining,
+            homeScore: homeScore,
+            awayScore: awayScore,
+            homeAbbreviation: homeTeam.abbreviation,
+            awayAbbreviation: awayTeam.abbreviation,
+            playerTeamIsHome: playerTeamIsHome
+        )
+    }
+
+    /// Simple AI suggestion: delegate to `PlaySimulator.decidePlayCall` and map
+    /// the result to the nearest `OffensivePlayCall`.
+    private var aiOffensiveSuggestion: OffensivePlayCall? {
+        guard let latest = playLog.last else { return .slant }
+        let aiType = PlaySimulator.decidePlayCall(
+            down: latest.down,
+            distance: latest.distance,
+            yardLine: latest.yardLine,
+            quarter: quarter,
+            timeRemaining: timeRemaining
+        )
+        switch aiType {
+        case .run:       return latest.distance <= 2 ? .qbSneak : (latest.distance <= 5 ? .insideRun : .outsideRun)
+        case .pass:
+            if latest.distance <= 4  { return .slant }
+            if latest.distance <= 8  { return .curl }
+            return .dig
+        case .kneel:     return .kneel
+        case .spike:     return .spike
+        default:         return nil
+        }
+    }
+
+    /// Simple AI defensive suggestion based on down/distance.
+    private var aiDefensiveSuggestion: DefensivePackage {
+        guard let latest = playLog.last else { return .standard }
+        let isShortYardage  = latest.distance <= 3
+        let isLongDistance  = latest.distance >= 8
+        let isRedZone       = latest.yardLine >= 80
+
+        if isRedZone {
+            return DefensivePackage(coverage: .manToMan, blitz: .noBlitz, front: .goalLine)
+        }
+        if isShortYardage {
+            return DefensivePackage(coverage: .cover3, blitz: .noBlitz, front: .base)
+        }
+        if isLongDistance {
+            return DefensivePackage(coverage: .cover4, blitz: .dbBlitz, front: .nickel)
+        }
+        return .standard
+    }
+
+    /// Briefly show a result banner after a manually-called play resolves.
+    private func showResultBanner(for play: PlayResult) {
+        guard controlMode != .autoSimulate else { return }
+        withAnimation {
+            latestResultBanner = play.description
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: 2_500_000_000) // 2.5 s
+            await MainActor.run {
+                withAnimation { latestResultBanner = nil }
+            }
+        }
     }
 
     // MARK: - Helpers
@@ -602,5 +916,5 @@ private struct PlayFeedRow: View {
         mvp: nil
     )
 
-    MatchView(homeTeam: homeTeam, awayTeam: awayTeam, gameResult: result)
+    MatchView(homeTeam: homeTeam, awayTeam: awayTeam, playerTeamIsHome: true, gameResult: result)
 }

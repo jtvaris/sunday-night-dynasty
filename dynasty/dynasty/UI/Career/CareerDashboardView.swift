@@ -241,6 +241,18 @@ struct CareerDashboardView: View {
                 )
             }
 
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+            NavigationLink {
+                TradeView(career: career)
+            } label: {
+                dashboardNavRow(
+                    icon: "arrow.left.arrow.right",
+                    label: "Trade",
+                    detail: tradeWindowDetail
+                )
+            }
+
             if career.currentPhase == .freeAgency {
                 Divider().overlay(Color.surfaceBorder.opacity(0.5))
 
@@ -304,6 +316,18 @@ struct CareerDashboardView: View {
                     detail: ownerSatisfactionDetail
                 )
             }
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+            NavigationLink {
+                LockerRoomView(career: career)
+            } label: {
+                dashboardNavRow(
+                    icon: "heart.fill",
+                    label: "Locker Room",
+                    detail: "Chemistry"
+                )
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(20)
@@ -314,6 +338,16 @@ struct CareerDashboardView: View {
     private var ownerSatisfactionDetail: String {
         guard let owner = team?.owner else { return "—" }
         return "\(owner.satisfaction)% satisfied"
+    }
+
+    /// "Open" during regular season and at the trade deadline; "Closed" otherwise.
+    private var tradeWindowDetail: String {
+        switch career.currentPhase {
+        case .regularSeason, .tradeDeadline:
+            return "Open"
+        default:
+            return "Closed"
+        }
     }
 
     private func formatCapDetail(_ thousands: Int) -> String {

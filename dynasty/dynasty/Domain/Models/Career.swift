@@ -21,6 +21,16 @@ final class Career {
     var currentWeek: Int
     var currentPhase: SeasonPhase
 
+    // MARK: - Coaching Tree
+    /// Full history of coaches who have worked under this career.
+    /// SwiftData encodes this Codable struct as a composite attribute automatically.
+    var coachingTree: CoachingTreeData
+
+    // MARK: - HC-GM Relationship
+    /// Persisted relationship state between the GM and their Head Coach.
+    /// Only meaningful when `role == .gm`; ignored for `.gmAndHeadCoach` careers.
+    var hcGMRelationship: CoachRelationshipEngine.HCGMRelationship
+
     var winPercentage: Double {
         let totalGames = totalWins + totalLosses
         guard totalGames > 0 else { return 0.0 }
@@ -50,5 +60,7 @@ final class Career {
         self.currentSeason = currentSeason
         self.currentWeek = 1
         self.currentPhase = .preseason
+        self.coachingTree = CoachingTreeData()
+        self.hcGMRelationship = CoachRelationshipEngine.HCGMRelationship()
     }
 }

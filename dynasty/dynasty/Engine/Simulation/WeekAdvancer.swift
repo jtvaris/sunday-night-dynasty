@@ -8,6 +8,26 @@ enum WeekAdvancer {
     /// The result of the last player team game simulation (available after advanceWeek)
     static var lastPlayerGameResult: GameSimulator.GameResult?
 
+    // MARK: - Static Storage for UI Access
+
+    /// News items generated during the most recent advance.
+    static var lastNewsItems: [NewsItem] = []
+
+    /// Game events generated during the most recent advance.
+    static var lastEvents: [GameEvent] = []
+
+    /// Set to `true` when the owner fires the player after a satisfaction check.
+    static var wasFired: Bool = false
+
+    /// Tracks whether a draft class has been generated for the current offseason cycle.
+    static var draftClassGenerated: Bool = false
+
+    /// The current draft class of college prospects (persists across offseason phases).
+    static var currentDraftClass: [CollegeProspect] = []
+
+    /// Draft picks generated for the current draft.
+    static var currentDraftPicks: [DraftPick] = []
+
     // MARK: - Public API
 
     /// Advances the career state by exactly one week.
@@ -27,6 +47,11 @@ enum WeekAdvancer {
     ///   - career: The active `Career` object (mutated in place).
     ///   - modelContext: SwiftData context used to fetch and persist `Game` and `Team` objects.
     static func advanceWeek(career: Career, modelContext: ModelContext) {
+        // Reset per-advance state
+        lastNewsItems = []
+        lastEvents = []
+        wasFired = false
+
         switch career.currentPhase {
 
         case .regularSeason:
@@ -106,6 +131,11 @@ enum WeekAdvancer {
         // 4. Update career state.
         career.currentPhase = .regularSeason
         career.currentWeek = 1
+
+        // 5. Reset draft class flag for the new offseason cycle.
+        draftClassGenerated = false
+        currentDraftClass = []
+        currentDraftPicks = []
     }
 
     // MARK: - Private: Regular Season
@@ -124,6 +154,8 @@ enum WeekAdvancer {
 
         // Build a team lookup so we can update records efficiently.
         let teamsByID = fetchTeamsByID(modelContext: modelContext)
+        let allPlayers = fetchAllPlayers(modelContext: modelContext)
+        let allCoaches = fetchAllCoaches(modelContext: modelContext)
 
         // Simulate every unplayed game.
         // Player's team game uses full play-by-play simulation;
@@ -153,6 +185,70 @@ enum WeekAdvancer {
         // Store the latest player game result for UI to access
         lastPlayerGameResult = playerGameResult
 
+        // --- Engine integrations after game simulation ---
+
+        let teams = Array(teamsByID.values)
+
+        // 1. Generate weekly news
+        lastNewsItems = NewsGenerator.generateWeeklyNews(
+            teams: teams,
+            players: allPlayers,
+            career: career,
+            week: week,
+            season: season
+        )
+
+        // 2. Generate weekly events for the player's team
+        if let playerTeamID = career.teamID,
+           let playerTeam = teamsByID[playerTeamID] {
+            lastEvents = EventEngine.generateWeeklyEvents(
+                team: playerTeam,
+                players: allPlayers,
+                coaches: allCoaches,
+                career: career
+            )
+
+            // 3. Update owner satisfaction
+            if let owner = playerTeam.owner {
+                OwnerSatisfactionEngine.updateSatisfaction(
+                    owner: owner,
+                    team: playerTeam,
+                    career: career,
+                    newsItems: lastNewsItems
+                )
+
+                // 4. Check if the owner fires the player
+                wasFired = OwnerSatisfactionEngine.checkFiring(owner: owner, career: career)
+            }
+        }
+
+        // 5. Apply fatigue changes for players who played this week
+        for player in allPlayers where player.teamID != nil && !player.isInjured {
+            let fatigueGain = Int.random(in: 3...8)
+            player.fatigue = min(100, player.fatigue + fatigueGain)
+        }
+
+        // 6. Process injuries for players who played (starters, approximated by non-injured, rostered)
+        for player in allPlayers where player.teamID != nil && !player.isInjured {
+            let intensity = Double.random(in: 0.4...1.0)
+            _ = PlayerDevelopmentEngine.checkForInjury(player, playIntensity: intensity)
+        }
+
+        // 7. Apply game experience for starters (approximated: high-overall rostered players)
+        for player in allPlayers where player.teamID != nil && !player.isInjured {
+            // Approximate starters as those with overall >= 65 or on small rosters
+            if player.overall >= 65 {
+                PlayerDevelopmentEngine.applyGameExperience(player, gamesPlayed: 1, gamesStarted: 1)
+            } else {
+                PlayerDevelopmentEngine.applyGameExperience(player, gamesPlayed: 1, gamesStarted: 0)
+            }
+        }
+
+        // 8. Process existing injuries (decrement recovery time)
+        for player in allPlayers where player.isInjured {
+            _ = PlayerDevelopmentEngine.processInjury(player)
+        }
+
         // Advance the week counter.
         career.currentWeek += 1
 
@@ -162,6 +258,21 @@ enum WeekAdvancer {
         if week == 8 {
             career.currentPhase = .tradeDeadline
             career.currentPhase = .regularSeason
+        }
+
+        // 9. At season end (week 18): decrement contract years and expire contracts
+        if week == 18 {
+            for player in allPlayers where player.contractYearsRemaining > 0 {
+                player.contractYearsRemaining -= 1
+                if player.contractYearsRemaining == 0 {
+                    // Contract expired: player becomes a free agent
+                    if let teamID = player.teamID, let team = teamsByID[teamID] {
+                        team.currentCapUsage -= player.annualSalary
+                    }
+                    player.teamID = nil
+                    player.annualSalary = 0
+                }
+            }
         }
 
         // Transition to playoffs once all 18 regular season weeks are done.
@@ -222,14 +333,202 @@ enum WeekAdvancer {
     /// Steps the career forward to the next offseason phase in calendar order.
     /// When the cycle reaches `.regularSeason`, a new season is bootstrapped.
     private static func advanceOffseasonPhase(career: Career, modelContext: ModelContext) {
-        let nextPhase = phase(after: career.currentPhase)
+        let currentPhase = career.currentPhase
+        let nextPhase = phase(after: currentPhase)
 
+        let teams = fetchAllTeams(modelContext: modelContext)
+        let allPlayers = fetchAllPlayers(modelContext: modelContext)
+        let allCoaches = fetchAllCoaches(modelContext: modelContext)
+        let teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
+
+        // --- Run engine logic for the CURRENT phase before transitioning ---
+        switch currentPhase {
+
+        case .superBowl:
+            // Generate championship news
+            lastNewsItems = NewsGenerator.generateOffseasonNews(
+                phase: .superBowl,
+                career: career,
+                teams: teams
+            )
+
+        case .proBowl:
+            // Awards news
+            lastNewsItems = NewsGenerator.generateOffseasonNews(
+                phase: .proBowl,
+                career: career,
+                teams: teams
+            )
+
+        case .coachingChanges:
+            // Check coordinator poaching for all teams
+            for team in teams {
+                let teamCoaches = allCoaches.filter { $0.teamID == team.id }
+                let poached = CoachingEngine.checkCoordinatorPoaching(
+                    coaches: teamCoaches,
+                    teamWins: team.wins
+                )
+                // Poached coaches leave the team
+                for coach in poached {
+                    coach.teamID = nil
+                }
+            }
+
+            // Develop all coaches based on their team's performance
+            for coach in allCoaches {
+                let teamWins: Int
+                if let tid = coach.teamID, let team = teamsByID[tid] {
+                    teamWins = team.wins
+                } else {
+                    teamWins = 8 // neutral default for unattached coaches
+                }
+                CoachingEngine.developCoach(coach, teamWins: teamWins)
+            }
+
+            lastNewsItems = NewsGenerator.generateOffseasonNews(
+                phase: .coachingChanges,
+                career: career,
+                teams: teams
+            )
+
+        case .combine:
+            // Generate draft class if not yet generated
+            if !draftClassGenerated {
+                currentDraftClass = ScoutingEngine.generateDraftClass()
+                draftClassGenerated = true
+            }
+
+            // Simulate combine for all prospects
+            ScoutingEngine.simulateCombine(prospects: &currentDraftClass)
+
+            lastNewsItems = NewsGenerator.generateOffseasonNews(
+                phase: .combine,
+                career: career,
+                teams: teams
+            )
+
+        case .freeAgency:
+            // Decrement contract years and expire contracts for all players
+            for player in allPlayers where player.contractYearsRemaining > 0 {
+                player.contractYearsRemaining -= 1
+                if player.contractYearsRemaining == 0 {
+                    // Contract expired: player becomes a free agent
+                    if let teamID = player.teamID, let team = teamsByID[teamID] {
+                        team.currentCapUsage -= player.annualSalary
+                    }
+                    player.teamID = nil
+                    player.annualSalary = 0
+                }
+            }
+
+            // Generate free agent market
+            let freeAgents = FreeAgencyEngine.generateFreeAgentMarket(allPlayers: allPlayers)
+
+            // Simulate AI free agency (AI teams sign available free agents)
+            let aiTeams = teams.filter { $0.id != career.teamID }
+            FreeAgencyEngine.simulateAIFreeAgency(
+                freeAgents: freeAgents,
+                teams: aiTeams,
+                modelContext: modelContext
+            )
+
+            // Grow salary cap by 5% for all teams
+            for team in teams {
+                team.salaryCap = Int(Double(team.salaryCap) * 1.05)
+            }
+
+            lastNewsItems = NewsGenerator.generateOffseasonNews(
+                phase: .freeAgency,
+                career: career,
+                teams: teams
+            )
+
+        case .draft:
+            // Generate draft order based on standings
+            let allGames = fetchAllGamesForSeason(
+                seasonYear: career.currentSeason,
+                modelContext: modelContext
+            )
+            let draftPicks = DraftEngine.generateDraftOrder(
+                teams: teams,
+                games: allGames,
+                seasonYear: career.currentSeason
+            )
+            currentDraftPicks = draftPicks
+
+            // Persist draft picks
+            for pick in draftPicks {
+                modelContext.insert(pick)
+            }
+
+            lastNewsItems = NewsGenerator.generateOffseasonNews(
+                phase: .draft,
+                career: career,
+                teams: teams
+            )
+
+        case .otas:
+            // Nothing special — just generate phase news
+            lastNewsItems = NewsGenerator.generateOffseasonNews(
+                phase: .otas,
+                career: career,
+                teams: teams
+            )
+
+        case .trainingCamp:
+            // Process offseason development for all teams
+            for team in teams {
+                let teamPlayers = allPlayers.filter { $0.teamID == team.id }
+                let teamCoaches = allCoaches.filter { $0.teamID == team.id }
+                _ = PlayerDevelopmentEngine.processOffseason(
+                    players: teamPlayers,
+                    coaches: teamCoaches
+                )
+            }
+
+            // Note: processOffseason already calls applyAgeRegression which increments
+            // player.age and player.yearsPro, so no separate age increment needed.
+
+            lastNewsItems = NewsGenerator.generateOffseasonNews(
+                phase: .trainingCamp,
+                career: career,
+                teams: teams
+            )
+
+        case .preseason:
+            // Generate preseason news
+            lastNewsItems = NewsGenerator.generateOffseasonNews(
+                phase: .preseason,
+                career: career,
+                teams: teams
+            )
+
+        case .rosterCuts:
+            // Player handles manually — just generate phase news
+            lastNewsItems = NewsGenerator.generateOffseasonNews(
+                phase: .rosterCuts,
+                career: career,
+                teams: teams
+            )
+
+        default:
+            break
+        }
+
+        // --- Transition to the next phase ---
         if nextPhase == .regularSeason {
             // Increment the season year before generating a new schedule.
             career.currentSeason += 1
 
-            let teams = fetchAllTeams(modelContext: modelContext)
             startNewSeason(career: career, teams: teams, modelContext: modelContext)
+
+            // Generate schedule news for the new season
+            let scheduleNews = NewsGenerator.generateOffseasonNews(
+                phase: .regularSeason,
+                career: career,
+                teams: teams
+            )
+            lastNewsItems.append(contentsOf: scheduleNews)
         } else {
             career.currentPhase = nextPhase
         }
@@ -313,6 +612,28 @@ enum WeekAdvancer {
 
     private static func fetchAllTeams(modelContext: ModelContext) -> [Team] {
         let descriptor = FetchDescriptor<Team>()
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    private static func fetchAllPlayers(modelContext: ModelContext) -> [Player] {
+        let descriptor = FetchDescriptor<Player>()
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    private static func fetchAllCoaches(modelContext: ModelContext) -> [Coach] {
+        let descriptor = FetchDescriptor<Coach>()
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    private static func fetchAllGamesForSeason(
+        seasonYear: Int,
+        modelContext: ModelContext
+    ) -> [Game] {
+        let descriptor = FetchDescriptor<Game>(
+            predicate: #Predicate { game in
+                game.seasonYear == seasonYear
+            }
+        )
         return (try? modelContext.fetch(descriptor)) ?? []
     }
 
