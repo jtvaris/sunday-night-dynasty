@@ -69,69 +69,75 @@ struct PressConferenceView: View {
     // MARK: - Intro Phase
 
     private var introContent: some View {
-        VStack(spacing: 32) {
-            Spacer()
+        ScrollView {
+            VStack(spacing: 32) {
+                Spacer(minLength: 40)
 
-            if showHeader {
-                VStack(spacing: 20) {
-                    // Microphone icon
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 52))
-                        .foregroundStyle(Color.accentGold)
-                        .shadow(color: Color.accentGold.opacity(0.4), radius: 16, y: 0)
+                if showHeader {
+                    VStack(spacing: 20) {
+                        // Microphone icon
+                        Image(systemName: "mic.fill")
+                            .font(.system(size: 52))
+                            .foregroundStyle(Color.accentGold)
+                            .shadow(color: Color.accentGold.opacity(0.4), radius: 16, y: 0)
 
-                    Text("PRESS CONFERENCE")
-                        .font(.system(size: 16, weight: .black))
-                        .tracking(6)
-                        .foregroundStyle(Color.accentGold)
+                        Text("PRESS CONFERENCE")
+                            .font(.system(size: 16, weight: .black))
+                            .tracking(6)
+                            .foregroundStyle(Color.accentGold)
 
-                    Text("\(team.city) \(team.name)")
-                        .font(.title.weight(.bold))
-                        .foregroundStyle(Color.textPrimary)
+                        Text("\(team.city) \(team.name)")
+                            .font(.title.weight(.bold))
+                            .foregroundStyle(Color.textPrimary)
 
-                    Text("Introductory Press Conference")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textSecondary)
+                        Text("Introductory Press Conference")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
 
-                    // Divider line
-                    Rectangle()
-                        .fill(Color.accentGold.opacity(0.3))
-                        .frame(width: 80, height: 2)
-                        .padding(.top, 8)
+                        // Divider line
+                        Rectangle()
+                            .fill(Color.accentGold.opacity(0.3))
+                            .frame(width: 80, height: 2)
+                            .padding(.top, 8)
 
-                    Text("The media is waiting. Choose your words carefully -- they will be remembered.")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
-                        .padding(.top, 4)
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.95)))
-            }
-
-            Spacer()
-
-            if showHeader {
-                Button(action: { beginQuestioning() }) {
-                    HStack(spacing: 8) {
-                        Text("Take the Podium")
-                            .font(.headline.weight(.bold))
-                        Image(systemName: "chevron.right")
-                            .font(.subheadline.weight(.bold))
+                        Text("The media is waiting. Choose your words carefully -- they will be remembered.")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 40)
+                            .padding(.top, 4)
                     }
-                    .foregroundStyle(Color.backgroundPrimary)
-                    .padding(.horizontal, 36)
-                    .padding(.vertical, 14)
-                    .background(
-                        Capsule()
-                            .fill(Color.accentGold)
-                            .shadow(color: Color.accentGold.opacity(0.3), radius: 8, y: 4)
-                    )
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 }
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-                .padding(.bottom, 50)
+
+                Spacer(minLength: 40)
+
+                if showHeader {
+                    Button(action: { beginQuestioning() }) {
+                        HStack(spacing: 8) {
+                            Text("Take the Podium")
+                                .font(.headline.weight(.bold))
+                            Image(systemName: "chevron.right")
+                                .font(.subheadline.weight(.bold))
+                        }
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 36)
+                        .padding(.vertical, 14)
+                        .background(
+                            Capsule()
+                                .fill(Color.accentGold)
+                                .shadow(color: Color.accentGold.opacity(0.3), radius: 8, y: 4)
+                        )
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .padding(.bottom, 50)
+                }
             }
+            .padding(.horizontal, 20)
+            .frame(maxWidth: 800)
+            .frame(maxWidth: .infinity)
         }
+        .scrollIndicators(.hidden)
         .onAppear {
             withAnimation(.easeOut(duration: 0.7).delay(0.3)) { showHeader = true }
         }
@@ -178,6 +184,8 @@ struct PressConferenceView: View {
 
                 Spacer().frame(height: 40)
             }
+            .frame(maxWidth: 800)
+            .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
     }
@@ -516,6 +524,8 @@ struct PressConferenceView: View {
                 }
                 .padding(.bottom, 40)
             }
+            .frame(maxWidth: 800)
+            .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
     }

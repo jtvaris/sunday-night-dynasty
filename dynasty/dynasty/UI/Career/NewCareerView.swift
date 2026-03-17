@@ -8,6 +8,8 @@ struct NewCareerView: View {
     @State private var selectedCoachingStyle: CoachingStyle = .tactician
     @State private var selectedRole: CareerRole = .gmAndHeadCoach
     @State private var selectedCapMode: CapMode = .realistic
+    @State private var currentStep = 1
+    @State private var showNameError = false
 
     private var isNameValid: Bool {
         !playerName.trimmingCharacters(in: .whitespaces).isEmpty
@@ -17,146 +19,26 @@ struct NewCareerView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            ScrollView {
-                VStack(spacing: 20) {
-                    // MARK: - Player Info Card
-                    cardSection(icon: "person.fill", title: "Player Name") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            TextField("Enter your name", text: $playerName)
-                                .textInputAutocapitalization(.words)
-                                .autocorrectionDisabled()
-                                .font(.body)
-                                .foregroundStyle(Color.textPrimary)
-                                .padding(12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Color.backgroundPrimary)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                                )
+            GeometryReader { geo in
+                let isLandscape = geo.size.width > geo.size.height
 
-                            Text("This is how you'll be known around the league.")
-                                .font(.caption)
-                                .foregroundStyle(Color.textTertiary)
-                        }
+                VStack(spacing: 0) {
+                    // MARK: - Step Indicator
+                    stepIndicator
+
+                    // MARK: - Page Content
+                    if currentStep == 1 {
+                        page1Content(isLandscape: isLandscape)
+                    } else {
+                        page2Content(isLandscape: isLandscape)
                     }
-
-                    // MARK: - Coaching Style Card
-                    cardSection(icon: "gamecontroller.fill", title: "Coaching Style") {
-                        VStack(spacing: 10) {
-                            ForEach(CoachingStyle.allCases, id: \.self) { style in
-                                CoachingStyleCard(
-                                    style: style,
-                                    isSelected: selectedCoachingStyle == style
-                                )
-                                .onTapGesture {
-                                    withAnimation(.spring(response: 0.3)) {
-                                        selectedCoachingStyle = style
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // MARK: - Avatar Selection Card
-                    cardSection(icon: "person.crop.circle.fill", title: "Your Look") {
-                        VStack(spacing: 12) {
-                            AvatarSelectionView(selectedAvatarID: $selectedAvatarID, avatarSize: 72)
-                                .padding(.vertical, 4)
-
-                            if let avatar = CoachAvatars.avatar(for: selectedAvatarID) {
-                                Text("\"\(avatar.name)\" — \(avatar.gender == .male ? "Male" : "Female") coach")
-                                    .font(.caption)
-                                    .foregroundStyle(Color.textTertiary)
-                            }
-                        }
-                    }
-
-                    // MARK: - Role Selection Card
-                    cardSection(icon: "briefcase.fill", title: "Career Role") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Picker("Role", selection: $selectedRole) {
-                                Text("General Manager").tag(CareerRole.gm)
-                                Text("GM & Head Coach").tag(CareerRole.gmAndHeadCoach)
-                            }
-                            .pickerStyle(.segmented)
-
-                            Group {
-                                switch selectedRole {
-                                case .gm:
-                                    Text("Focus on roster building, trades, the draft, and free agency. You'll hire a head coach to handle game-day decisions.")
-                                case .gmAndHeadCoach:
-                                    Text("Full control. Manage the roster and make coaching decisions including scheme selection and game-day strategy.")
-                                }
-                            }
-                            .font(.caption)
-                            .foregroundStyle(Color.textTertiary)
-                        }
-                    }
-
-                    // MARK: - Cap Mode Card
-                    cardSection(icon: "dollarsign.circle.fill", title: "Salary Cap Mode") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Picker("Salary Cap", selection: $selectedCapMode) {
-                                Text("Simple").tag(CapMode.simple)
-                                Text("Realistic").tag(CapMode.realistic)
-                            }
-                            .pickerStyle(.segmented)
-
-                            Group {
-                                switch selectedCapMode {
-                                case .simple:
-                                    Text("Streamlined cap management. Contracts are straightforward annual salaries with no dead cap or restructuring.")
-                                case .realistic:
-                                    Text("Full NFL salary cap rules including signing bonuses, dead cap, restructures, franchise tags, and cap rollover.")
-                                }
-                            }
-                            .font(.caption)
-                            .foregroundStyle(Color.textTertiary)
-                        }
-                    }
-
-                    // MARK: - Choose Your Team CTA
-                    NavigationLink(destination: TeamSelectionView(
-                        playerName: playerName,
-                        avatarID: selectedAvatarID,
-                        coachingStyle: selectedCoachingStyle,
-                        selectedRole: selectedRole,
-                        selectedCapMode: selectedCapMode
-                    )) {
-                        HStack(spacing: 10) {
-                            Image(systemName: "sportscourt.fill")
-                                .font(.body.weight(.semibold))
-                            Text("Choose Your Team")
-                                .font(.headline)
-                        }
-                        .foregroundStyle(isNameValid ? Color.backgroundPrimary : Color.textTertiary)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(isNameValid ? Color.accentGold : Color.backgroundTertiary)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .strokeBorder(isNameValid ? Color.accentGold.opacity(0.6) : Color.surfaceBorder, lineWidth: 1)
-                        )
-                    }
-                    .disabled(!isNameValid)
-                    .padding(.top, 4)
                 }
-                .padding(16)
-                .frame(maxWidth: 800)
-                .frame(maxWidth: .infinity)
             }
         }
-        .navigationTitle("New Career")
+        .navigationTitle(currentStep == 1 ? "Your Career" : "Your Identity")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
-            // Style segmented controls for dark theme
             UISegmentedControl.appearance().selectedSegmentTintColor = UIColor(Color.accentGold)
             UISegmentedControl.appearance().setTitleTextAttributes(
                 [.foregroundColor: UIColor(Color.backgroundPrimary)], for: .selected
@@ -165,6 +47,304 @@ struct NewCareerView: View {
                 [.foregroundColor: UIColor(Color.textSecondary)], for: .normal
             )
             UISegmentedControl.appearance().backgroundColor = UIColor(Color.backgroundPrimary)
+        }
+    }
+
+    // MARK: - Step Indicator
+
+    private var stepIndicator: some View {
+        HStack(spacing: 8) {
+            Text("Step \(currentStep) of 2")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.textSecondary)
+
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Color.accentGold)
+                    .frame(width: 8, height: 8)
+                Circle()
+                    .fill(currentStep == 2 ? Color.accentGold : Color.backgroundTertiary)
+                    .frame(width: 8, height: 8)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Page 1: Your Career
+
+    @ViewBuilder
+    private func page1Content(isLandscape: Bool) -> some View {
+        ScrollView {
+            if isLandscape {
+                HStack(alignment: .top, spacing: 20) {
+                    // Left: Player Name
+                    nameSection
+                        .frame(maxWidth: .infinity)
+
+                    // Right: Role + Cap Mode
+                    VStack(spacing: 20) {
+                        roleSection
+                        capModeSection
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .padding(16)
+                .frame(maxWidth: 1000)
+                .frame(maxWidth: .infinity)
+            } else {
+                VStack(spacing: 20) {
+                    nameSection
+                    roleSection
+                    capModeSection
+                }
+                .padding(16)
+                .frame(maxWidth: 800)
+                .frame(maxWidth: .infinity)
+            }
+
+            // Next button
+            nextButton
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+                .frame(maxWidth: 800)
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    // MARK: - Page 2: Your Identity
+
+    @ViewBuilder
+    private func page2Content(isLandscape: Bool) -> some View {
+        ScrollView {
+            if isLandscape {
+                HStack(alignment: .top, spacing: 20) {
+                    // Left: Coaching Style
+                    coachingStyleSection
+                        .frame(maxWidth: .infinity)
+
+                    // Right: Avatars
+                    avatarSection
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(16)
+                .frame(maxWidth: 1000)
+                .frame(maxWidth: .infinity)
+            } else {
+                VStack(spacing: 20) {
+                    coachingStyleSection
+                    avatarSection
+                }
+                .padding(16)
+                .frame(maxWidth: 800)
+                .frame(maxWidth: .infinity)
+            }
+
+            // Bottom buttons
+            VStack(spacing: 12) {
+                chooseTeamButton
+                backButton
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+            .frame(maxWidth: 800)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    // MARK: - Section Views
+
+    private var nameSection: some View {
+        cardSection(icon: "person.fill", title: "Player Name") {
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("Enter your name", text: $playerName)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .font(.body)
+                    .foregroundStyle(Color.textPrimary)
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.backgroundPrimary)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(showNameError && !isNameValid ? Color.red : Color.surfaceBorder, lineWidth: 1)
+                    )
+
+                if showNameError && !isNameValid {
+                    Text("Please enter your name to continue.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                } else {
+                    Text("This is how you'll be known around the league.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+        }
+    }
+
+    private var roleSection: some View {
+        cardSection(icon: "briefcase.fill", title: "Career Role") {
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("Role", selection: $selectedRole) {
+                    Text("General Manager").tag(CareerRole.gm)
+                    Text("GM & Head Coach").tag(CareerRole.gmAndHeadCoach)
+                }
+                .pickerStyle(.segmented)
+
+                Group {
+                    switch selectedRole {
+                    case .gm:
+                        Text("Focus on roster building, trades, the draft, and free agency. You'll hire a head coach to handle game-day decisions.")
+                    case .gmAndHeadCoach:
+                        Text("Full control. Manage the roster and make coaching decisions including scheme selection and game-day strategy.")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(Color.textTertiary)
+            }
+        }
+    }
+
+    private var capModeSection: some View {
+        cardSection(icon: "dollarsign.circle.fill", title: "Salary Cap Mode") {
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("Salary Cap", selection: $selectedCapMode) {
+                    Text("Simple").tag(CapMode.simple)
+                    Text("Realistic").tag(CapMode.realistic)
+                }
+                .pickerStyle(.segmented)
+
+                Group {
+                    switch selectedCapMode {
+                    case .simple:
+                        Text("Streamlined cap management. Contracts are straightforward annual salaries with no dead cap or restructuring.")
+                    case .realistic:
+                        Text("Full NFL salary cap rules including signing bonuses, dead cap, restructures, franchise tags, and cap rollover.")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(Color.textTertiary)
+            }
+        }
+    }
+
+    private var coachingStyleSection: some View {
+        cardSection(icon: "gamecontroller.fill", title: "Coaching Style") {
+            VStack(spacing: 10) {
+                ForEach(CoachingStyle.allCases, id: \.self) { style in
+                    CoachingStyleCard(
+                        style: style,
+                        isSelected: selectedCoachingStyle == style
+                    )
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.3)) {
+                            selectedCoachingStyle = style
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var avatarSection: some View {
+        cardSection(icon: "person.crop.circle.fill", title: "Your Look") {
+            VStack(spacing: 12) {
+                AvatarSelectionView(selectedAvatarID: $selectedAvatarID, avatarSize: 72)
+                    .padding(.vertical, 4)
+
+                if let avatar = CoachAvatars.avatar(for: selectedAvatarID) {
+                    Text("\"\(avatar.name)\" — \(avatar.gender == .male ? "Male" : "Female") coach")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+        }
+    }
+
+    // MARK: - Buttons
+
+    private var nextButton: some View {
+        Button {
+            if isNameValid {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    currentStep = 2
+                    showNameError = false
+                }
+            } else {
+                showNameError = true
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Text("Next")
+                    .font(.headline)
+                Image(systemName: "arrow.right")
+                    .font(.body.weight(.semibold))
+            }
+            .foregroundStyle(Color.backgroundPrimary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.accentGold)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.accentGold.opacity(0.6), lineWidth: 1)
+            )
+        }
+        .padding(.top, 4)
+    }
+
+    private var chooseTeamButton: some View {
+        NavigationLink(destination: TeamSelectionView(
+            playerName: playerName,
+            avatarID: selectedAvatarID,
+            coachingStyle: selectedCoachingStyle,
+            selectedRole: selectedRole,
+            selectedCapMode: selectedCapMode
+        )) {
+            HStack(spacing: 10) {
+                Image(systemName: "sportscourt.fill")
+                    .font(.body.weight(.semibold))
+                Text("Choose Your Team")
+                    .font(.headline)
+                Image(systemName: "arrow.right")
+                    .font(.body.weight(.semibold))
+            }
+            .foregroundStyle(Color.backgroundPrimary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.accentGold)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.accentGold.opacity(0.6), lineWidth: 1)
+            )
+        }
+        .padding(.top, 4)
+    }
+
+    private var backButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentStep = 1
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.left")
+                    .font(.body.weight(.semibold))
+                Text("Back")
+                    .font(.headline)
+            }
+            .foregroundStyle(Color.textSecondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
         }
     }
 
@@ -177,7 +357,6 @@ struct NewCareerView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Section header with gold icon
             HStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(.subheadline.weight(.semibold))
@@ -202,7 +381,6 @@ private struct CoachingStyleCard: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            // Icon
             ZStack {
                 Circle()
                     .fill(isSelected ? Color.accentGold.opacity(0.2) : Color.backgroundTertiary)
@@ -212,7 +390,6 @@ private struct CoachingStyleCard: View {
                     .foregroundStyle(isSelected ? Color.accentGold : Color.textSecondary)
             }
 
-            // Text
             VStack(alignment: .leading, spacing: 3) {
                 Text(style.displayName)
                     .font(.subheadline.weight(.bold))
@@ -226,7 +403,6 @@ private struct CoachingStyleCard: View {
 
             Spacer(minLength: 4)
 
-            // Bonus badge
             VStack(spacing: 2) {
                 Text("+\(style.bonusValue)")
                     .font(.system(size: 14, weight: .bold).monospacedDigit())

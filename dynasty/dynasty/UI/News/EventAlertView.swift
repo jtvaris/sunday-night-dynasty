@@ -33,6 +33,8 @@ struct EventAlertView: View {
                     Spacer(minLength: 32)
                 }
                 .padding(24)
+                .frame(maxWidth: 700)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .navigationTitle("Event")
