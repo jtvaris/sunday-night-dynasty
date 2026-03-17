@@ -36,14 +36,23 @@ struct TeamSelectionView: View {
             ScrollView {
                 LazyVStack(spacing: 24) {
                     ForEach(teamsByConference, id: \.conference) { group in
+                        // Conference header
+                        Text(group.conference.rawValue)
+                            .font(.system(size: 28, weight: .black))
+                            .tracking(4)
+                            .foregroundStyle(Color.accentGold)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 16)
+                            .padding(.bottom, 4)
+
                         ForEach(group.divisions, id: \.division) { divisionGroup in
                             VStack(alignment: .leading, spacing: 12) {
-                                // Section header
+                                // Division header
                                 HStack(spacing: 8) {
                                     Image(systemName: "football.fill")
                                         .font(.caption)
                                         .foregroundStyle(Color.accentGold)
-                                    Text("\(group.conference.rawValue) \(divisionGroup.division.rawValue)")
+                                    Text(divisionGroup.division.rawValue)
                                         .font(.subheadline.weight(.bold))
                                         .foregroundStyle(Color.accentGold)
                                 }
