@@ -6,60 +6,36 @@ struct MainMenuView: View {
     @Query(sort: \Career.currentSeason, order: .reverse) private var careers: [Career]
 
     var body: some View {
-        GeometryReader { geo in
-            let isLandscape = geo.size.width > geo.size.height
-
-            ZStack {
-                // MARK: - Full Screen Hero Image
-                Image("HeroImage")
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .clipped()
-                    .ignoresSafeArea()
-
-                // Dark gradient overlay for text readability
-                LinearGradient(
-                    stops: [
-                        .init(color: Color.black.opacity(0.3), location: 0.0),
-                        .init(color: Color.black.opacity(0.15), location: 0.25),
-                        .init(color: Color.black.opacity(0.4), location: 0.5),
-                        .init(color: Color.black.opacity(0.85), location: 0.75),
-                        .init(color: Color.black.opacity(0.95), location: 1.0),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+        ZStack {
+            // MARK: - Full Screen Hero Image
+            Image("HeroImage")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
                 .ignoresSafeArea()
 
-                if isLandscape {
-                    // Landscape — title left, buttons right
-                    HStack(alignment: .bottom, spacing: 40) {
-                        Spacer()
-                        titleBlock
-                            .frame(maxWidth: 480)
-                        VStack(spacing: 0) {
-                            Spacer()
-                            buttonsBlock
-                            footerBlock
-                        }
-                        .frame(maxWidth: 360)
-                        Spacer()
-                    }
+            // Dark gradient overlay for text readability
+            LinearGradient(
+                stops: [
+                    .init(color: Color.black.opacity(0.3), location: 0.0),
+                    .init(color: Color.black.opacity(0.15), location: 0.25),
+                    .init(color: Color.black.opacity(0.4), location: 0.5),
+                    .init(color: Color.black.opacity(0.85), location: 0.75),
+                    .init(color: Color.black.opacity(0.95), location: 1.0),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            // Vertical stack — works in both orientations
+            VStack(spacing: 0) {
+                Spacer()
+                titleBlock
                     .padding(.bottom, 40)
-                } else {
-                    // Portrait — standard vertical stack
-                    VStack(spacing: 0) {
-                        Spacer()
-                        titleBlock
-                            .padding(.bottom, 40)
-                        buttonsBlock
-                        footerBlock
-                    }
-                }
+                buttonsBlock
+                footerBlock
             }
         }
-        .ignoresSafeArea()
         .toolbar(.hidden, for: .navigationBar)
     }
 

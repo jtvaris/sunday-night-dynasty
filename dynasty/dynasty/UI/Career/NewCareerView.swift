@@ -19,19 +19,15 @@ struct NewCareerView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            GeometryReader { geo in
-                let isLandscape = geo.size.width > geo.size.height
+            VStack(spacing: 0) {
+                // MARK: - Step Indicator
+                stepIndicator
 
-                VStack(spacing: 0) {
-                    // MARK: - Step Indicator
-                    stepIndicator
-
-                    // MARK: - Page Content
-                    if currentStep == 1 {
-                        page1Content(isLandscape: isLandscape)
-                    } else {
-                        page2Content(isLandscape: isLandscape)
-                    }
+                // MARK: - Page Content
+                if currentStep == 1 {
+                    page1Content(isLandscape: false)
+                } else {
+                    page2Content(isLandscape: false)
                 }
             }
         }
