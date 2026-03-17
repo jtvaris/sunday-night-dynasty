@@ -7,7 +7,12 @@ struct CoachAvatarInfo: Identifiable {
     let name: String
     let gender: Gender
 
-    // Visual traits for procedural avatar
+    // AI-generated image position
+    let gridImage: String    // "CoachAvatarGrid1" etc
+    let gridRow: Int         // 0-2
+    let gridCol: Int         // 0-4
+
+    // Visual traits for procedural avatar (fallback)
     let skinTone: Color
     let hairColor: Color
     let hairStyle: HairStyle
@@ -26,52 +31,62 @@ enum CoachAvatars {
     static let all: [CoachAvatarInfo] = [
         // Male coaches
         CoachAvatarInfo(id: "coach_m1", name: "The Veteran", gender: .male,
+                        gridImage: "CoachAvatarGrid1", gridRow: 0, gridCol: 0,
                         skinTone: Color(red: 0.87, green: 0.75, blue: 0.65),
                         hairColor: Color(white: 0.55),
                         hairStyle: .slickedBack, accessory: .headset, facialHair: .mustache),
 
         CoachAvatarInfo(id: "coach_m2", name: "The Strategist", gender: .male,
+                        gridImage: "CoachAvatarGrid1", gridRow: 0, gridCol: 1,
                         skinTone: Color(red: 0.72, green: 0.55, blue: 0.42),
                         hairColor: Color(red: 0.15, green: 0.12, blue: 0.10),
                         hairStyle: .short, accessory: .glasses, facialHair: .none),
 
         CoachAvatarInfo(id: "coach_m3", name: "The Old School", gender: .male,
+                        gridImage: "CoachAvatarGrid1", gridRow: 0, gridCol: 2,
                         skinTone: Color(red: 0.92, green: 0.82, blue: 0.72),
                         hairColor: Color(white: 0.75),
                         hairStyle: .flat, accessory: .cap, facialHair: .none),
 
         CoachAvatarInfo(id: "coach_m4", name: "The Motivator", gender: .male,
+                        gridImage: "CoachAvatarGrid1", gridRow: 0, gridCol: 3,
                         skinTone: Color(red: 0.55, green: 0.38, blue: 0.28),
                         hairColor: Color(red: 0.08, green: 0.06, blue: 0.05),
                         hairStyle: .buzzCut, accessory: .whistle, facialHair: .stubble),
 
         CoachAvatarInfo(id: "coach_m5", name: "The Innovator", gender: .male,
+                        gridImage: "CoachAvatarGrid1", gridRow: 0, gridCol: 4,
                         skinTone: Color(red: 0.82, green: 0.68, blue: 0.55),
                         hairColor: Color(red: 0.35, green: 0.20, blue: 0.12),
                         hairStyle: .curly, accessory: .visor, facialHair: .none),
 
         // Female coaches
         CoachAvatarInfo(id: "coach_f1", name: "The Pioneer", gender: .female,
+                        gridImage: "CoachAvatarGrid1", gridRow: 1, gridCol: 0,
                         skinTone: Color(red: 0.90, green: 0.78, blue: 0.68),
                         hairColor: Color(red: 0.60, green: 0.35, blue: 0.15),
                         hairStyle: .ponytail, accessory: .headset, facialHair: .none),
 
         CoachAvatarInfo(id: "coach_f2", name: "The Analyst", gender: .female,
+                        gridImage: "CoachAvatarGrid1", gridRow: 1, gridCol: 4,
                         skinTone: Color(red: 0.70, green: 0.52, blue: 0.40),
                         hairColor: Color(red: 0.10, green: 0.08, blue: 0.06),
                         hairStyle: .shoulderLength, accessory: .glasses, facialHair: .none),
 
         CoachAvatarInfo(id: "coach_f3", name: "The Trailblazer", gender: .female,
+                        gridImage: "CoachAvatarGrid1", gridRow: 2, gridCol: 2,
                         skinTone: Color(red: 0.55, green: 0.40, blue: 0.30),
                         hairColor: Color(red: 0.08, green: 0.06, blue: 0.05),
                         hairStyle: .braided, accessory: .visor, facialHair: .none),
 
         CoachAvatarInfo(id: "coach_f4", name: "The Tactician", gender: .female,
+                        gridImage: "CoachAvatarGrid1", gridRow: 2, gridCol: 3,
                         skinTone: Color(red: 0.85, green: 0.72, blue: 0.62),
                         hairColor: Color(red: 0.82, green: 0.72, blue: 0.55),
                         hairStyle: .bob, accessory: .cap, facialHair: .none),
 
         CoachAvatarInfo(id: "coach_f5", name: "The Commander", gender: .female,
+                        gridImage: "CoachAvatarGrid1", gridRow: 2, gridCol: 4,
                         skinTone: Color(red: 0.78, green: 0.62, blue: 0.50),
                         hairColor: Color(red: 0.20, green: 0.15, blue: 0.10),
                         hairStyle: .pixie, accessory: .whistle, facialHair: .none),
@@ -380,7 +395,12 @@ struct AvatarSelectionView: View {
             LazyVGrid(columns: columns, spacing: 16) {
                 ForEach(CoachAvatars.all) { avatar in
                     VStack(spacing: 6) {
-                        CoachAvatarView(avatar: avatar, size: avatarSize)
+                        CoachAvatarImageView(
+                            gridImage: avatar.gridImage,
+                            row: avatar.gridRow,
+                            col: avatar.gridCol,
+                            size: avatarSize
+                        )
                             .overlay(
                                 Circle()
                                     .strokeBorder(
