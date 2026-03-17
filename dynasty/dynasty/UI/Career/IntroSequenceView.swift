@@ -163,7 +163,7 @@ private struct PressConferenceStep: View {
                 // BREAKING NEWS banner
                 if showBreaking {
                     Text("BREAKING NEWS")
-                        .font(.system(size: 14, weight: .black, design: .default))
+                        .font(.system(size: 14, weight: .black))
                         .tracking(4)
                         .foregroundStyle(Color.backgroundPrimary)
                         .padding(.horizontal, 24)
@@ -187,7 +187,7 @@ private struct PressConferenceStep: View {
 
                 // Coach avatar
                 if showAvatar, let avatar = CoachAvatars.avatar(for: career.avatarID) {
-                    CoachAvatarView(avatar: avatar, size: 140)
+                    CoachAvatarView(avatar: avatar, size: 136)
                         .shadow(color: Color.accentGold.opacity(0.3), radius: 20, y: 4)
                         .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
@@ -294,7 +294,7 @@ private struct OwnerMeetingStep: View {
 
                         Text("OWNER MEETING")
                             .font(.system(size: 14, weight: .black))
-                            .tracking(3)
+                            .tracking(4)
                             .foregroundStyle(Color.accentGold)
 
                         if let ownerName = owner?.name {
@@ -482,7 +482,7 @@ private struct TeamOverviewStep: View {
 
                         Text("TEAM OVERVIEW")
                             .font(.system(size: 14, weight: .black))
-                            .tracking(3)
+                            .tracking(4)
                             .foregroundStyle(Color.accentGold)
 
                         Text(team.fullName)
@@ -612,12 +612,12 @@ private struct ReadyToBeginStep: View {
                 if showTitle {
                     VStack(spacing: 16) {
                         Image(systemName: "sportscourt.fill")
-                            .font(.system(size: 52))
+                            .font(.system(size: 48))
                             .foregroundStyle(Color.accentGold)
                             .shadow(color: Color.accentGold.opacity(glowAmount), radius: 20, y: 0)
 
                         Text("Your Journey Begins")
-                            .font(.largeTitle.weight(.bold))
+                            .font(.system(size: 36, weight: .bold))
                             .foregroundStyle(Color.textPrimary)
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
@@ -728,11 +728,12 @@ private struct GoalRow: View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .foregroundStyle(Color.accentGold)
-                .frame(width: 20)
+                .frame(width: 24)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(label.uppercased())
                     .font(.system(size: 10, weight: .bold))
+                    .tracking(1)
                     .foregroundStyle(Color.textTertiary)
                 Text(value)
                     .font(.subheadline.weight(.medium))

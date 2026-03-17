@@ -130,18 +130,18 @@ private struct WeekChip: View {
     var body: some View {
         VStack(spacing: 2) {
             Text("WK")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textTertiary)
             Text("\(week)")
-                .font(.system(size: 15, weight: .bold).monospacedDigit())
+                .font(.system(size: 16, weight: .bold).monospacedDigit())
                 .foregroundStyle(isSelected ? Color.backgroundPrimary : chipTextColor)
         }
         .frame(width: 44, height: 44)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 8)
                 .fill(isSelected ? Color.accentGold : Color.backgroundTertiary)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(
                             isCurrent && !isSelected ? Color.accentGold.opacity(0.5) : Color.clear,
                             lineWidth: 1.5
@@ -190,19 +190,20 @@ private struct GameCard: View {
         VStack(spacing: 0) {
             // Header bar for player games
             if isPlayerGame {
-                HStack {
+                HStack(spacing: 6) {
                     Image(systemName: "star.fill")
                         .font(.system(size: 10, weight: .bold))
                     Text("YOUR GAME")
                         .font(.system(size: 10, weight: .bold))
+                        .tracking(1)
                     Spacer()
                     if game.isPlayed {
                         resultLabel
                     }
                 }
                 .foregroundStyle(isPlayerGame && game.isPlayed ? resultAccentColor : Color.accentGold)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
                 .background(
                     (isPlayerGame && game.isPlayed ? resultAccentColor : Color.accentGold)
                         .opacity(0.12)
@@ -246,14 +247,14 @@ private struct GameCard: View {
                     alignment: .trailing
                 )
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 16)
         }
         .background(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(Color.backgroundSecondary)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14)
+                    RoundedRectangle(cornerRadius: 12)
                         .strokeBorder(borderColor, lineWidth: isPlayerGame ? 1.5 : 1)
                 )
         )
@@ -276,7 +277,7 @@ private struct GameCard: View {
                 .foregroundStyle(isWinner ? Color.accentGold : Color.textPrimary)
 
             Text(team?.city ?? "")
-                .font(.system(size: 11))
+                .font(.system(size: 12))
                 .foregroundStyle(Color.textSecondary)
                 .lineLimit(1)
 

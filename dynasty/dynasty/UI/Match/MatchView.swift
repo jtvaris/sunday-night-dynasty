@@ -96,11 +96,11 @@ struct MatchView: View {
                 VStack {
                     Spacer()
                     Text(banner)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Color.textPrimary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
+                        .padding(.vertical, 12)
                         .background(Color.backgroundTertiary, in: Capsule())
                         .padding(.bottom, 100)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -165,12 +165,12 @@ struct MatchView: View {
             Spacer()
 
             // Quarter / Clock
-            VStack(spacing: 2) {
+            VStack(spacing: 4) {
                 Text(quarterLabel)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Color.textTertiary)
                 Text(formattedClock)
-                    .font(.system(size: 20, weight: .heavy).monospacedDigit())
+                    .font(.system(size: 22, weight: .heavy).monospacedDigit())
                     .foregroundStyle(Color.textPrimary)
             }
 
@@ -199,17 +199,17 @@ struct MatchView: View {
         score: Int,
         alignment: HorizontalAlignment
     ) -> some View {
-        VStack(alignment: alignment, spacing: 1) {
+        VStack(alignment: alignment, spacing: 2) {
             Text(abbreviation)
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(Color.textSecondary)
             Text("\(score)")
-                .font(.system(size: 34, weight: .black).monospacedDigit())
+                .font(.system(size: 36, weight: .black).monospacedDigit())
                 .foregroundStyle(Color.textPrimary)
                 .contentTransition(.numericText())
                 .animation(.spring(duration: 0.3), value: score)
         }
-        .frame(minWidth: 70, alignment: alignment == .leading ? .leading : .trailing)
+        .frame(minWidth: 72, alignment: alignment == .leading ? .leading : .trailing)
     }
 
     // MARK: - Control Mode Bar
@@ -248,15 +248,16 @@ struct MatchView: View {
                 controlMode = mode
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: mode.icon)
                     .font(.system(size: 12, weight: .semibold))
                 Text(mode.label)
                     .font(.system(size: 12, weight: .semibold))
             }
             .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
-            .padding(.vertical, 7)
+            .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
+            .frame(minHeight: 36)
             .background(isSelected ? Color.accentGold : Color.clear)
             .animation(.easeInOut(duration: 0.15), value: isSelected)
         }
@@ -279,10 +280,10 @@ struct MatchView: View {
 
     private var finalBadge: some View {
         Text("FINAL")
-            .font(.system(size: 11, weight: .black))
+            .font(.system(size: 12, weight: .black))
             .foregroundStyle(Color.backgroundPrimary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
             .background(Color.accentGold, in: Capsule())
     }
 
@@ -451,12 +452,12 @@ struct MatchView: View {
             }
         } label: {
             Text(speedLabel(for: speed))
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
-                .frame(width: 36, height: 28)
+                .frame(width: 44, height: 36)
                 .background(
                     isSelected ? Color.accentGold : Color.backgroundTertiary,
-                    in: RoundedRectangle(cornerRadius: 6)
+                    in: RoundedRectangle(cornerRadius: 8)
                 )
         }
         .animation(.easeInOut(duration: 0.15), value: gameSpeed)
@@ -769,15 +770,15 @@ private struct PlayFeedRow: View {
     let isLatest: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: 12) {
             // Quarter pill
             Text(quarterLabel)
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(accentColor)
-                .frame(width: 26, height: 18)
+                .frame(width: 28, height: 20)
                 .background(accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 // Down & distance header
                 Text(downDistanceText)
                     .font(.system(size: 10, weight: .semibold).monospacedDigit())
@@ -785,7 +786,7 @@ private struct PlayFeedRow: View {
 
                 // Play description
                 Text(play.description)
-                    .font(.system(size: 13))
+                    .font(.system(size: 14))
                     .foregroundStyle(isLatest ? Color.textPrimary : Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -795,10 +796,10 @@ private struct PlayFeedRow: View {
             // Yards badge
             if play.yardsGained != 0 {
                 Text(yardsBadgeText)
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
                     .foregroundStyle(accentColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
                     .background(accentColor.opacity(0.12), in: Capsule())
             }
         }

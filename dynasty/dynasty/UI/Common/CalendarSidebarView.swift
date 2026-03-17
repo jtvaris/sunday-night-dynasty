@@ -83,7 +83,7 @@ struct CalendarSidebarView: View {
         VStack(spacing: 12) {
             // Phase name — large, gold
             Text(phaseInfo.name)
-                .font(.title.weight(.bold))
+                .font(.system(size: 28, weight: .bold))
                 .foregroundStyle(Color.accentGold)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -336,13 +336,13 @@ struct CalendarSidebarView: View {
         let isPast = Self.phaseOrder(phase) < Self.phaseOrder(career.currentPhase)
 
         return HStack(spacing: 12) {
-            // Timeline dot + connector line
+            // Timeline dot
             VStack(spacing: 0) {
                 Circle()
                     .fill(isCurrent ? Color.accentGold : isPast ? Color.textTertiary : Color.backgroundTertiary)
-                    .frame(width: isCurrent ? 10 : 8, height: isCurrent ? 10 : 8)
+                    .frame(width: isCurrent ? 12 : 8, height: isCurrent ? 12 : 8)
             }
-            .frame(width: 14)
+            .frame(width: 16)
 
             Text(event)
                 .font(.subheadline.weight(isCurrent ? .semibold : .regular))
@@ -382,13 +382,15 @@ struct CalendarSidebarView: View {
             Button {
                 onAdvancePhase()
             } label: {
-                HStack {
+                HStack(spacing: 8) {
                     Image(systemName: "forward.fill")
+                        .font(.system(size: 14, weight: .semibold))
                     Text("Advance to Next Phase")
-                        .font(.headline)
+                        .font(.system(size: 16, weight: .bold))
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
+                .frame(minHeight: 48)
+                .padding(.vertical, 12)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
                         .fill(canAdvance ? Color.accentGold : Color.backgroundTertiary)
@@ -396,7 +398,7 @@ struct CalendarSidebarView: View {
                 .foregroundStyle(canAdvance ? Color.backgroundPrimary : Color.textTertiary)
             }
             .disabled(!canAdvance)
-            .animation(.easeInOut(duration: 0.2), value: canAdvance)
+            .animation(.spring(duration: 0.3), value: canAdvance)
         }
     }
 

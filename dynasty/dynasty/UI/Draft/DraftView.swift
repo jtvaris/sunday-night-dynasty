@@ -114,9 +114,9 @@ struct DraftView: View {
 
     private var draftHeader: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text("NFL DRAFT")
-                    .font(.system(size: 11, weight: .heavy))
+                    .font(.system(size: 12, weight: .heavy))
                     .foregroundStyle(Color.accentGold)
                     .tracking(2)
                 if let pick = currentPick {
@@ -148,7 +148,7 @@ struct DraftView: View {
             }
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.vertical, 16)
         .background(Color.backgroundSecondary)
         .overlay(
             Rectangle()
@@ -201,14 +201,14 @@ struct DraftView: View {
             HStack(spacing: 8) {
                 Circle()
                     .fill(Color.accentGold)
-                    .frame(width: 10, height: 10)
+                    .frame(width: 8, height: 8)
                 Text("YOU'RE ON THE CLOCK")
-                    .font(.system(size: 11, weight: .heavy))
+                    .font(.system(size: 12, weight: .heavy))
                     .foregroundStyle(Color.accentGold)
-                    .tracking(1.5)
+                    .tracking(2)
                 Circle()
                     .fill(Color.accentGold)
-                    .frame(width: 10, height: 10)
+                    .frame(width: 8, height: 8)
             }
 
             Text("Round \(pick.round)  ·  Pick \(pick.pickNumber)")
@@ -223,13 +223,13 @@ struct DraftView: View {
                         Image(systemName: "list.clipboard.fill")
                             .font(.system(size: 14, weight: .semibold))
                         Text("Make Pick")
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.system(size: 16, weight: .bold))
                     }
                     .foregroundStyle(Color.backgroundPrimary)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 24)
+                    .frame(minHeight: 44)
                     .background(
-                        RoundedRectangle(cornerRadius: 10)
+                        RoundedRectangle(cornerRadius: 12)
                             .fill(Color.accentGold)
                             .shadow(color: Color.accentGold.opacity(0.35), radius: 8, x: 0, y: 3)
                     )
@@ -243,16 +243,16 @@ struct DraftView: View {
                         Image(systemName: "wand.and.sparkles")
                             .font(.system(size: 14))
                         Text("Auto-Pick")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.system(size: 16, weight: .semibold))
                     }
                     .foregroundStyle(Color.textSecondary)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 24)
+                    .frame(minHeight: 44)
                     .background(
-                        RoundedRectangle(cornerRadius: 10)
+                        RoundedRectangle(cornerRadius: 12)
                             .fill(Color.backgroundTertiary)
                             .overlay(
-                                RoundedRectangle(cornerRadius: 10)
+                                RoundedRectangle(cornerRadius: 12)
                                     .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                             )
                     )
@@ -279,8 +279,8 @@ struct DraftView: View {
             Text(teamAbbreviation(for: pick.currentTeamID) ?? "???")
                 .font(.system(size: 18, weight: .heavy))
                 .foregroundStyle(Color.backgroundPrimary)
-                .frame(width: 52, height: 52)
-                .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: 10))
+                .frame(width: 48, height: 48)
+                .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: 8))
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("On the Clock")
@@ -385,14 +385,14 @@ struct DraftView: View {
     private var sidebarHeader: some View {
         HStack {
             Text("Your Big Board")
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(Color.accentGold)
             Spacer()
             Text("\(availableProspects.filter { $0.scoutedOverall != nil }.count) left")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(Color.textTertiary)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(Color.backgroundTertiary)
         .overlay(
@@ -406,17 +406,17 @@ struct DraftView: View {
     private func sidebarProspectRow(rank: Int, prospect: CollegeProspect) -> some View {
         HStack(spacing: 8) {
             Text("\(rank)")
-                .font(.system(size: 11, weight: .heavy).monospacedDigit())
+                .font(.system(size: 12, weight: .heavy).monospacedDigit())
                 .foregroundStyle(rank == 1 ? Color.accentGold : Color.textTertiary)
-                .frame(width: 20, alignment: .trailing)
+                .frame(width: 24, alignment: .trailing)
 
             Text(prospect.position.rawValue)
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(Color.textPrimary)
-                .frame(width: 28, height: 20)
-                .background(positionColor(prospect.position), in: RoundedRectangle(cornerRadius: 3))
+                .frame(width: 32, height: 22)
+                .background(positionColor(prospect.position), in: RoundedRectangle(cornerRadius: 4))
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(prospect.fullName)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
@@ -431,12 +431,12 @@ struct DraftView: View {
 
             if let overall = prospect.scoutedOverall {
                 Text("\(overall)")
-                    .font(.system(size: 12, weight: .bold).monospacedDigit())
+                    .font(.system(size: 14, weight: .bold).monospacedDigit())
                     .foregroundStyle(Color.forRating(overall))
             }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color.backgroundPrimary.opacity(0.5))

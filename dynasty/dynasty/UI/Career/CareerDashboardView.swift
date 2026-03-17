@@ -75,8 +75,8 @@ struct CareerDashboardView: View {
                     advanceWeekButton
                         .padding(.top, 8)
                 }
-                .padding(16)
-                .frame(maxWidth: 1200)
+                .padding(20)
+                .frame(maxWidth: 800)
                 .frame(maxWidth: .infinity)
             }
         }
@@ -106,7 +106,7 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "shield.fill", title: "Team") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(team?.fullName ?? "No Team")
-                        .font(.system(size: 18, weight: .bold))
+                        .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
 
@@ -609,18 +609,18 @@ struct CareerDashboardView: View {
             }
             loadAllData()
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Image(systemName: "chevron.right.2")
                     .font(.system(size: 16, weight: .bold))
                 Text("Advance to Week \(career.currentWeek + 1)")
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.system(size: 18, weight: .bold))
             }
             .foregroundStyle(Color.backgroundPrimary)
             .frame(maxWidth: .infinity)
-            .frame(minHeight: 44)
-            .padding(.vertical, 18)
+            .frame(minHeight: 48)
+            .padding(.vertical, 16)
             .background(
-                RoundedRectangle(cornerRadius: 14)
+                RoundedRectangle(cornerRadius: 12)
                     .fill(Color.accentGold)
                     .shadow(color: Color.accentGold.opacity(0.4), radius: 12, x: 0, y: 4)
             )
@@ -767,16 +767,17 @@ private struct DashboardTile<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             // Header
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                 Text(title)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                     .textCase(.uppercase)
+                    .tracking(0.5)
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10))

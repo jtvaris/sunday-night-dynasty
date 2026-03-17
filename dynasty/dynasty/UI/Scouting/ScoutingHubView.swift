@@ -18,9 +18,9 @@ struct ScoutingHubView: View {
 
             VStack(spacing: 0) {
                 tabPicker
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, 20)
                     .padding(.top, 16)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 12)
 
                 Divider()
                     .overlay(Color.surfaceBorder)
@@ -118,14 +118,15 @@ private struct HireScoutSheet: View {
         NavigationStack {
             ZStack {
                 Color.backgroundPrimary.ignoresSafeArea()
-                VStack(spacing: 16) {
+                VStack(spacing: 20) {
                     Image(systemName: "person.badge.plus")
                         .font(.system(size: 48))
                         .foregroundStyle(Color.accentGold)
                     Text("Hire Scout")
-                        .font(.title2.weight(.bold))
+                        .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                     Text("Scout hiring market coming soon.")
+                        .font(.subheadline)
                         .foregroundStyle(Color.textSecondary)
                         .multilineTextAlignment(.center)
                 }

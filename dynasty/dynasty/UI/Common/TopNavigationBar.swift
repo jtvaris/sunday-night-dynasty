@@ -53,8 +53,8 @@ struct TopNavigationBar: View {
                 .frame(minWidth: 52, alignment: .trailing)
         }
         .padding(.horizontal, 16)
-        .frame(height: 50)
-        .background(Color(red: 0.043, green: 0.071, blue: 0.133)) // #0B1222
+        .frame(height: 52)
+        .background(Color.backgroundPrimary)
     }
 
     // MARK: - Team Badge
@@ -62,7 +62,7 @@ struct TopNavigationBar: View {
     private var teamBadge: some View {
         HStack(spacing: 8) {
             Text(teamAbbreviation)
-                .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                .font(.system(size: 14, weight: .heavy, design: .monospaced))
                 .foregroundStyle(Color.backgroundPrimary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
@@ -88,14 +88,14 @@ struct TopNavigationBar: View {
                 Button {
                     onBookmarkTapped?(bookmark.destination)
                 } label: {
-                    VStack(spacing: 2) {
+                    VStack(spacing: 3) {
                         Image(systemName: bookmark.icon)
-                            .font(.system(size: 15))
+                            .font(.system(size: 16))
                         Text(bookmark.label)
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.system(size: 10, weight: .medium))
                     }
                     .foregroundStyle(Color.textSecondary)
-                    .frame(minWidth: 44, minHeight: 44)
+                    .frame(minWidth: 48, minHeight: 44)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

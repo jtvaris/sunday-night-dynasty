@@ -26,7 +26,7 @@ struct CapOverviewView: View {
                             .padding(.top, 80)
                     }
                 }
-                .padding(24)
+                .padding(20)
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
             }
@@ -41,9 +41,15 @@ struct CapOverviewView: View {
 
     private func capSummaryCard(team: Team) -> some View {
         VStack(spacing: 12) {
-            Text("Cap Summary")
-                .font(.headline)
-                .foregroundStyle(Color.textPrimary)
+            HStack(spacing: 8) {
+                Image(systemName: "dollarsign.circle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.accentGold)
+                Text("Cap Summary")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color.textPrimary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Divider().overlay(Color.surfaceBorder)
 
@@ -71,9 +77,9 @@ struct CapOverviewView: View {
     }
 
     private func capStatColumn(label: String, value: String, color: Color) -> some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             Text(value)
-                .font(.system(size: 26, weight: .bold).monospacedDigit())
+                .font(.system(size: 28, weight: .bold).monospacedDigit())
                 .foregroundStyle(color)
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)
@@ -89,10 +95,10 @@ struct CapOverviewView: View {
     // MARK: - Cap Bar Card
 
     private func capBarCard(team: Team) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Cap Usage")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
                 Spacer()
                 Text(String(format: "%.1f%%", usagePercentage(team: team) * 100))
@@ -123,12 +129,17 @@ struct CapOverviewView: View {
     private func contractListCard(team: Team) -> some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Player Contracts")
-                    .font(.headline)
-                    .foregroundStyle(Color.textPrimary)
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.text.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Player Contracts")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                }
                 Spacer()
                 Text("\(players.count) players")
-                    .font(.caption)
+                    .font(.caption.monospacedDigit())
                     .foregroundStyle(Color.textSecondary)
             }
             .padding(.horizontal, 20)

@@ -86,6 +86,11 @@
       "sourceType": "github",
       "computedHash": "09a095a1550f225e9264633931cc3c7d027ab2d09ecf5dcbc7e14f4c3cc15461"
     },
+    "design-for-ai": {
+      "source": "ryanthedev/design-for-ai",
+      "sourceType": "github",
+      "computedHash": "f2d784df95b45dc5c055155c28ae3637657645f846c2e5e8ce414d196293cab2"
+    },
     "design-review": {
       "source": "Donchitos/Claude-Code-Game-Studios",
       "sourceType": "github",

@@ -38,7 +38,7 @@ struct MainMenuView: View {
                         .foregroundStyle(Color.accentGold)
 
                     Text("DYNASTY")
-                        .font(.system(size: 68, weight: .black))
+                        .font(.system(size: 64, weight: .black))
                         .tracking(12)
                         .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.6), radius: 8, y: 4)
@@ -52,7 +52,7 @@ struct MainMenuView: View {
                 .padding(.bottom, 40)
 
                 // MARK: - Menu Buttons
-                VStack(spacing: 14) {
+                VStack(spacing: 16) {
                     NavigationLink(destination: NewCareerView()) {
                         MenuButton(title: "New Career", icon: "plus.circle.fill", isPrimary: true)
                     }
@@ -66,7 +66,7 @@ struct MainMenuView: View {
                     }
                 }
                 .padding(.horizontal, 60)
-                .padding(.bottom, 32)
+                .padding(.bottom, 40)
 
                 // MARK: - Footer
                 Text("v1.0")
@@ -89,9 +89,9 @@ private struct MenuButton: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.title2)
+                .font(.system(size: 22, weight: .semibold))
             Text(title)
-                .font(.title2.weight(.semibold))
+                .font(.system(size: 22, weight: .semibold))
                 .tracking(2)
         }
         .foregroundStyle(isPrimary ? Color.backgroundPrimary : .white)
@@ -99,11 +99,12 @@ private struct MenuButton: View {
         .frame(height: 56)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(isPrimary ? Color.accentGold : Color.white.opacity(0.15))
+                .fill(isPrimary ? Color.accentGold : Color.white.opacity(0.12))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(isPrimary ? Color.clear : Color.white.opacity(0.2), lineWidth: 1)
+                        .strokeBorder(isPrimary ? Color.clear : Color.white.opacity(0.25), lineWidth: 1)
                 )
+                .shadow(color: isPrimary ? Color.accentGold.opacity(0.3) : Color.clear, radius: 12, y: 4)
         )
     }
 }

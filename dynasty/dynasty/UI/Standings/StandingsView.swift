@@ -129,7 +129,7 @@ private struct DivisionStandingsSection: View {
                 if index < sortedRecords.count - 1 {
                     Divider()
                         .overlay(Color.surfaceBorder.opacity(0.5))
-                        .padding(.horizontal, 12)
+                        .padding(.horizontal, 16)
                 }
             }
         }
@@ -141,11 +141,11 @@ private struct DivisionStandingsSection: View {
             Text("\(conference.rawValue) \(division.rawValue.uppercased())")
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(Color.accentGold)
-                .tracking(1.2)
+                .tracking(1.5)
             Spacer()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .background(Color.backgroundTertiary.opacity(0.6))
     }
 }
@@ -169,8 +169,8 @@ private struct StandingsHeaderRow: View {
         }
         .font(.system(size: 10, weight: .semibold))
         .foregroundStyle(Color.textTertiary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
         .tracking(0.5)
     }
 
@@ -221,7 +221,7 @@ private struct StandingsTeamRow: View {
                 }
 
                 Text(team?.abbreviation ?? "???")
-                    .font(.system(size: 14, weight: isLeader ? .bold : .semibold))
+                    .font(.system(size: 14, weight: isLeader ? .heavy : .semibold))
                     .foregroundStyle(isLeader ? Color.accentGold : Color.textPrimary)
 
                 if isPlayerTeam {
@@ -241,9 +241,9 @@ private struct StandingsTeamRow: View {
             statCell("\(record.pointsAgainst)", width: 52, color: Color.textSecondary)
             statCell(diffFormatted,           width: 52, color: diffColor)
         }
-        .font(.system(size: 13).monospacedDigit())
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .font(.system(size: 14).monospacedDigit())
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .background(
             isPlayerTeam
                 ? Color.accentGold.opacity(0.07)

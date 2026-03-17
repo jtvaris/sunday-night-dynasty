@@ -15,6 +15,7 @@ struct PlayerRowView: View {
 
                 Text(experienceLabel)
                     .font(.caption)
+                    .monospacedDigit()
                     .foregroundStyle(Color.textSecondary)
             }
 
@@ -41,7 +42,7 @@ struct PlayerRowView: View {
             .font(.caption)
             .fontWeight(.bold)
             .foregroundStyle(Color.textPrimary)
-            .frame(width: 36, height: 28)
+            .frame(width: 40, height: 28)
             .background(positionColor, in: RoundedRectangle(cornerRadius: 4))
             .accessibilityLabel("\(player.position.rawValue), \(player.position.side.rawValue)")
     }

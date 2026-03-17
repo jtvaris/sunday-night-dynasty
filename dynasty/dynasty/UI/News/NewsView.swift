@@ -78,10 +78,10 @@ struct NewsView: View {
             }
         } label: {
             Text(filter.rawValue)
-                .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
                 .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .frame(minHeight: 36)
                 .background(
                     Capsule()
                         .fill(isSelected ? Color.accentGold : Color.backgroundTertiary)
@@ -116,6 +116,8 @@ struct NewsView: View {
                         }
                     }
                     .padding(20)
+                    .frame(maxWidth: 720)
+                    .frame(maxWidth: .infinity)
                 }
             }
         }
@@ -207,13 +209,13 @@ private struct NewsItemCard: View {
                             .foregroundStyle(Color.accentBlue)
                     }
                 }
-                .padding(14)
+                .padding(16)
             }
             .background(
-                RoundedRectangle(cornerRadius: 16)
+                RoundedRectangle(cornerRadius: 12)
                     .fill(Color.backgroundSecondary)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16)
+                        RoundedRectangle(cornerRadius: 12)
                             .strokeBorder(
                                 isMyTeam ? Color.accentGold.opacity(0.4) : Color.surfaceBorder,
                                 lineWidth: 1

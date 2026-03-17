@@ -36,6 +36,7 @@ struct PlayerDetailView: View {
             }
             LabeledContent("Experience") {
                 Text(player.yearsPro == 0 ? "Rookie" : "\(player.yearsPro) year\(player.yearsPro == 1 ? "" : "s") pro")
+                    .monospacedDigit()
                     .foregroundStyle(Color.textSecondary)
             }
             AttributeRow(name: "Overall", value: player.overall)
@@ -50,6 +51,7 @@ struct PlayerDetailView: View {
             if player.isInjured {
                 LabeledContent("Status") {
                     Label("Injured -- \(player.injuryWeeksRemaining) wk\(player.injuryWeeksRemaining == 1 ? "" : "s")", systemImage: "cross.circle.fill")
+                        .monospacedDigit()
                         .foregroundStyle(Color.danger)
                 }
             }
@@ -108,6 +110,7 @@ struct PlayerDetailView: View {
             }
             LabeledContent("Annual Salary") {
                 Text(formattedSalary)
+                    .fontWeight(.semibold)
                     .monospacedDigit()
                     .foregroundStyle(Color.textSecondary)
             }

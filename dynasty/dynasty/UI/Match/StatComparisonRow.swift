@@ -39,10 +39,10 @@ struct StatComparisonRow: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 6) {
             // Centered label
             Text(label)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Color.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .center)
 

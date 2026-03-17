@@ -50,7 +50,7 @@ struct GameSummaryView: View {
         VStack(spacing: 16) {
             // FINAL badge
             Text("FINAL")
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(Color.accentGold)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
@@ -106,13 +106,13 @@ struct GameSummaryView: View {
                 .foregroundStyle(isWinner ? Color.accentGold : Color.textPrimary)
 
             Text(fullName)
-                .font(.system(size: 11))
+                .font(.system(size: 12))
                 .foregroundStyle(Color.textSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
 
             Text("\(score)")
-                .font(.system(size: 52, weight: .black).monospacedDigit())
+                .font(.system(size: 48, weight: .black).monospacedDigit())
                 .foregroundStyle(isWinner ? Color.accentGold : Color.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
@@ -129,7 +129,7 @@ struct GameSummaryView: View {
             // Header column
             VStack(alignment: .trailing, spacing: 6) {
                 Text("")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .frame(height: 18)
                 Text(awayTeam.abbreviation)
                     .font(.system(size: 12, weight: .bold))
@@ -146,14 +146,14 @@ struct GameSummaryView: View {
             ForEach(0..<quarters, id: \.self) { idx in
                 VStack(spacing: 6) {
                     Text(idx < 4 ? "Q\(idx + 1)" : "OT")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color.textTertiary)
                         .frame(height: 18)
                     Text(quarterScore(scores: boxScore.away.quarterScores, index: idx))
-                        .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                        .font(.system(size: 14, weight: .semibold).monospacedDigit())
                         .foregroundStyle(Color.textPrimary)
                     Text(quarterScore(scores: boxScore.home.quarterScores, index: idx))
-                        .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                        .font(.system(size: 14, weight: .semibold).monospacedDigit())
                         .foregroundStyle(Color.textPrimary)
                 }
                 .frame(maxWidth: .infinity)
@@ -167,7 +167,7 @@ struct GameSummaryView: View {
 
             VStack(spacing: 6) {
                 Text("F")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
                     .frame(height: 18)
                 Text("\(boxScore.away.score)")
@@ -457,14 +457,14 @@ private struct PlayerStatRow: View {
             HStack(spacing: 6) {
                 // Position badge
                 Text(stat.position.rawValue)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Color.textPrimary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(positionColor, in: RoundedRectangle(cornerRadius: 3))
 
                 Text(stat.playerName)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
             }
@@ -541,7 +541,7 @@ private struct HighlightRow: View {
 
             // Description
             Text(play.description)
-                .font(.system(size: 13))
+                .font(.system(size: 14))
                 .foregroundStyle(Color.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -621,7 +621,7 @@ private struct DriveDisclosureRow: View {
 
                     // Team abbrev
                     Text(teamAbbrev)
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                         .frame(width: 36, alignment: .leading)
 
@@ -644,7 +644,7 @@ private struct DriveDisclosureRow: View {
 
                     // Chevron
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color.textTertiary)
                         .frame(width: 18)
                 }

@@ -74,7 +74,7 @@ struct RosterView: View {
             }
         }
         .pickerStyle(.segmented)
-        .frame(minWidth: 340)
+        .frame(minWidth: 320, maxWidth: 400)
     }
 
     private var sortMenu: some View {

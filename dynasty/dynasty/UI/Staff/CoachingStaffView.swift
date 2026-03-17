@@ -149,11 +149,11 @@ private struct CoachRowView: View {
         HStack(spacing: 12) {
             // Role badge
             Text(coach.role.abbreviation)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(Color.backgroundPrimary)
-                .padding(.horizontal, 7)
+                .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(coach.role.badgeColor, in: RoundedRectangle(cornerRadius: 5))
+                .background(coach.role.badgeColor, in: RoundedRectangle(cornerRadius: 4))
                 .frame(width: 44)
 
             // Name + meta
@@ -173,15 +173,16 @@ private struct CoachRowView: View {
                     }
                 }
                 .font(.caption)
+                .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
             }
 
             Spacer()
 
             // Key attribute
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: 4) {
                 Text("\(keyAttribute.value)")
-                    .font(.system(size: 17, weight: .bold).monospacedDigit())
+                    .font(.system(size: 18, weight: .bold).monospacedDigit())
                     .foregroundStyle(Color.forRating(keyAttribute.value))
                 Text(keyAttribute.name)
                     .font(.system(size: 10))

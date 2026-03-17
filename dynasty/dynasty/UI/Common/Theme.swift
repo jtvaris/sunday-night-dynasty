@@ -45,10 +45,10 @@ struct CardBackgroundModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background(
-                RoundedRectangle(cornerRadius: 16)
+                RoundedRectangle(cornerRadius: 12)
                     .fill(Color.backgroundSecondary)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16)
+                        RoundedRectangle(cornerRadius: 12)
                             .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                     )
             )
