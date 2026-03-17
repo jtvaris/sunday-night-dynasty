@@ -110,6 +110,14 @@ struct TeamSelectionView: View {
         career.leagueID = result.league.id
         career.teamID = chosenTeam?.id
 
+        // Bug fix #2: Player's team starts with NO coaches — the wizard guides
+        // them to hire staff first. Remove all coaches from the chosen team only.
+        if let chosenTeamID = chosenTeam?.id {
+            for coach in result.coaches where coach.teamID == chosenTeamID {
+                coach.teamID = nil
+            }
+        }
+
         // Insert all generated objects into the model context.
         modelContext.insert(career)
         modelContext.insert(result.league)
@@ -125,6 +133,9 @@ struct TeamSelectionView: View {
         }
         for coach in result.coaches {
             modelContext.insert(coach)
+        }
+        for pick in result.draftPicks {
+            modelContext.insert(pick)
         }
 
         isLoading = false

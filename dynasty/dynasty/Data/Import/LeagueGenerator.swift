@@ -7,13 +7,14 @@ enum LeagueGenerator {
     /// Position counts for a standard 53-man roster.
     private static let rosterBlueprint: [(Position, Int)] = [
         (.QB, 3), (.RB, 3), (.FB, 1), (.WR, 6), (.TE, 3),
-        (.LT, 1), (.LG, 1), (.C, 1), (.RG, 1), (.RT, 1),
-        // Extra OL depth spread across interior/tackle spots
-        (.LT, 1), (.LG, 1), (.C, 1),
-        (.DE, 4), (.DT, 3), (.OLB, 4), (.MLB, 2),
+        (.LT, 2), (.LG, 2), (.C, 2), (.RG, 2), (.RT, 1),
+        (.DE, 4), (.DT, 3), (.OLB, 4), (.MLB, 3),
         (.CB, 5), (.FS, 2), (.SS, 2),
-        (.K, 1), (.P, 1)
+        (.K, 1), (.P, 1),
+        // Extra depth
+        (.WR, 1), (.DE, 1), (.CB, 1)
     ]
+    // Total: 3+3+1+6+3+2+2+2+2+1+4+3+4+3+5+2+2+1+1+1+1+1 = 53
 
     /// All 12 coaching roles, one per staff member.
     private static let coachingStaffRoles: [CoachRole] = [
@@ -71,6 +72,17 @@ enum LeagueGenerator {
         "Smith", "Hackett", "Gannon", "Ryans", "Morris"
     ]
 
+    // MARK: - 2026 NFL Draft Order (First Round)
+
+    /// Real 2026 NFL first-round draft order by team abbreviation.
+    /// Teams appearing multiple times have extra first-round picks from trades.
+    private static let firstRoundDraftOrder: [String] = [
+        "LV", "NYJ", "ARI", "TEN", "NYG", "CLE", "WAS", "NO",
+        "KC", "CIN", "MIA", "DAL", "LAR", "BAL", "TB", "NYJ",
+        "DET", "MIN", "CAR", "DAL", "PIT", "LAC", "PHI", "CLE",
+        "CHI", "BUF", "SF", "HOU", "KC", "DEN", "NE", "SEA"
+    ]
+
     // MARK: - Public API
 
     typealias GeneratedLeague = (
@@ -78,7 +90,8 @@ enum LeagueGenerator {
         teams: [Team],
         players: [Player],
         owners: [Owner],
-        coaches: [Coach]
+        coaches: [Coach],
+        draftPicks: [DraftPick]
     )
 
     /// Generates a complete league with 32 teams, rosters, owners, and coaching staffs.
@@ -106,15 +119,13 @@ enum LeagueGenerator {
                 owner: owner
             )
 
-            // Create 53-man roster
-            var teamPlayers: [Player] = []
-            for (position, count) in rosterBlueprint {
-                for _ in 0..<count {
-                    let player = generatePlayer(position: position, teamID: team.id)
-                    teamPlayers.append(player)
-                }
-            }
+            // Create 53-man roster with realistic salary tiers
+            let teamPlayers = generateRoster(teamID: team.id)
             team.players = teamPlayers
+
+            // Bug fix #1: Set cap usage to sum of all player salaries
+            team.currentCapUsage = teamPlayers.reduce(0) { $0 + $1.annualSalary }
+
             allPlayers.append(contentsOf: teamPlayers)
 
             // Create coaching staff (12 coaches)
@@ -131,7 +142,83 @@ enum LeagueGenerator {
             currentSeason: startYear
         )
 
-        return (league, allTeams, allPlayers, allOwners, allCoaches)
+        // Bug fix #3: Generate draft picks for all teams
+        let draftPicks = generateInitialDraftPicks(teams: allTeams, seasonYear: startYear)
+
+        return (league, allTeams, allPlayers, allOwners, allCoaches, draftPicks)
+    }
+
+    // MARK: - Draft Pick Generation
+
+    /// Generates 7 rounds of draft picks for each team using the real 2026 first-round order.
+    /// Teams with extra first-round picks (from trades) receive bonus picks.
+    /// Rounds 2-7 use the same base order (simplified).
+    /// - Parameters:
+    ///   - teams: All 32 generated teams.
+    ///   - seasonYear: The draft year.
+    /// - Returns: An array of all draft picks.
+    static func generateInitialDraftPicks(teams: [Team], seasonYear: Int) -> [DraftPick] {
+        // Build abbreviation -> Team lookup
+        var teamsByAbbreviation: [String: Team] = [:]
+        for team in teams {
+            teamsByAbbreviation[team.abbreviation] = team
+        }
+
+        var picks: [DraftPick] = []
+        var overallPick = 1
+
+        // Round 1: Use the real 2026 draft order (32 picks, some teams appear twice)
+        for (index, abbreviation) in firstRoundDraftOrder.enumerated() {
+            guard let team = teamsByAbbreviation[abbreviation] else { continue }
+            let pick = DraftPick(
+                seasonYear: seasonYear,
+                round: 1,
+                pickNumber: overallPick,
+                originalTeamID: team.id,
+                currentTeamID: team.id,
+                teamAbbreviation: abbreviation
+            )
+            _ = index // suppress unused warning
+            picks.append(pick)
+            overallPick += 1
+        }
+
+        // Rounds 2-7: Each of the 32 teams gets one pick per round.
+        // Use the same first-round base order (deduplicated) for simplicity.
+        // Teams that had extra round-1 picks do NOT get extra picks in later rounds.
+        var baseOrder: [String] = []
+        var seen = Set<String>()
+        for abbreviation in firstRoundDraftOrder {
+            if !seen.contains(abbreviation) {
+                baseOrder.append(abbreviation)
+                seen.insert(abbreviation)
+            }
+        }
+        // Fill in any teams not in the first round order (IND, JAX, GB, ATL)
+        for team in teams {
+            if !seen.contains(team.abbreviation) {
+                baseOrder.append(team.abbreviation)
+                seen.insert(team.abbreviation)
+            }
+        }
+
+        for round in 2...7 {
+            for abbreviation in baseOrder {
+                guard let team = teamsByAbbreviation[abbreviation] else { continue }
+                let pick = DraftPick(
+                    seasonYear: seasonYear,
+                    round: round,
+                    pickNumber: overallPick,
+                    originalTeamID: team.id,
+                    currentTeamID: team.id,
+                    teamAbbreviation: abbreviation
+                )
+                picks.append(pick)
+                overallPick += 1
+            }
+        }
+
+        return picks
     }
 
     // MARK: - Private Generators
@@ -148,7 +235,38 @@ enum LeagueGenerator {
         )
     }
 
-    private static func generatePlayer(position: Position, teamID: UUID) -> Player {
+    /// Generates a full 53-man roster with realistic salary tiers.
+    /// Total salary targets ~$200-230M (80-90% of $255M cap).
+    private static func generateRoster(teamID: UUID) -> [Player] {
+        var players: [Player] = []
+        var depthChart: [Position: Int] = [:]
+
+        for (position, count) in rosterBlueprint {
+            for _ in 0..<count {
+                let depthIndex = depthChart[position, default: 0]
+                let player = generatePlayer(position: position, teamID: teamID, depthIndex: depthIndex)
+                players.append(player)
+                depthChart[position] = depthIndex + 1
+            }
+        }
+
+        // Adjust total salary to target 80-95% of $255,000 cap (~$204K-$242K in thousands)
+        let targetCap = Int.random(in: 204_000...235_000)
+        let currentTotal = players.reduce(0) { $0 + $1.annualSalary }
+
+        if currentTotal > 0 {
+            let ratio = Double(targetCap) / Double(currentTotal)
+            for player in players {
+                let adjusted = Int((Double(player.annualSalary) * ratio).rounded())
+                // Enforce minimum salary of $750K
+                player.annualSalary = max(750, adjusted)
+            }
+        }
+
+        return players
+    }
+
+    private static func generatePlayer(position: Position, teamID: UUID, depthIndex: Int) -> Player {
         let name = RandomNameGenerator.randomName()
         let age = randomAge(for: position)
         let yearsPro = max(0, age - Int.random(in: 21...23))
@@ -157,7 +275,8 @@ enum LeagueGenerator {
             archetype: PersonalityArchetype.allCases.randomElement()!,
             motivation: Motivation.allCases.randomElement()!
         )
-        let salary = randomSalary(for: position, yearsPro: yearsPro)
+        let salary = realisticSalary(for: position, yearsPro: yearsPro, depthIndex: depthIndex)
+        let contractYears = realisticContractYears(yearsPro: yearsPro, age: age)
 
         return Player(
             firstName: name.first,
@@ -168,7 +287,7 @@ enum LeagueGenerator {
             positionAttributes: posAttrs,
             personality: personality,
             teamID: teamID,
-            contractYearsRemaining: Int.random(in: 1...5),
+            contractYearsRemaining: contractYears,
             annualSalary: salary
         )
     }
@@ -230,40 +349,79 @@ enum LeagueGenerator {
         }
     }
 
-    private static func randomSalary(for position: Position, yearsPro: Int) -> Int {
-        // Base salary in thousands, scaled by position premium and experience
-        let baseSalary: Int
+    // MARK: - Realistic Salary (Bug Fix #5)
+
+    /// Returns a salary in thousands that reflects the player's position tier and depth.
+    /// - depthIndex 0 = starter, 1 = backup, 2+ = deep depth
+    private static func realisticSalary(for position: Position, yearsPro: Int, depthIndex: Int) -> Int {
+        // Rookies / deep backups
+        if yearsPro <= 1 || depthIndex >= 2 {
+            return Int.random(in: 750...2_000)
+        }
+
+        // Backup tier (depthIndex == 1)
+        if depthIndex == 1 {
+            switch position {
+            case .QB:
+                return Int.random(in: 1_000...5_000)
+            default:
+                return Int.random(in: 1_000...4_000)
+            }
+        }
+
+        // Starter tier (depthIndex == 0)
         switch position {
         case .QB:
-            baseSalary = Int.random(in: 800...35000)
-        case .LT, .RT:
-            baseSalary = Int.random(in: 700...20000)
-        case .DE:
-            baseSalary = Int.random(in: 700...22000)
+            // Franchise QBs are the most expensive
+            return Int.random(in: 25_000...45_000)
+        case .DE, .OLB:
+            // Premium pass rushers / EDGE
+            return Int.random(in: 15_000...25_000)
         case .CB:
-            baseSalary = Int.random(in: 700...18000)
+            // Top corners
+            return Int.random(in: 15_000...22_000)
         case .WR:
-            baseSalary = Int.random(in: 700...20000)
+            // WR1 tier
+            return Int.random(in: 15_000...25_000)
+        case .LT, .RT:
+            // Franchise tackles
+            return Int.random(in: 12_000...20_000)
         case .DT:
-            baseSalary = Int.random(in: 700...16000)
-        case .OLB, .MLB:
-            baseSalary = Int.random(in: 700...15000)
+            return Int.random(in: 10_000...18_000)
         case .FS, .SS:
-            baseSalary = Int.random(in: 700...14000)
+            return Int.random(in: 8_000...15_000)
         case .TE:
-            baseSalary = Int.random(in: 700...14000)
-        case .RB:
-            baseSalary = Int.random(in: 700...12000)
+            return Int.random(in: 8_000...15_000)
+        case .MLB:
+            return Int.random(in: 8_000...15_000)
         case .LG, .RG, .C:
-            baseSalary = Int.random(in: 700...14000)
+            return Int.random(in: 8_000...14_000)
+        case .RB:
+            return Int.random(in: 5_000...12_000)
         case .FB:
-            baseSalary = Int.random(in: 700...3000)
+            return Int.random(in: 1_500...3_500)
         case .K, .P:
-            baseSalary = Int.random(in: 700...5000)
+            return Int.random(in: 2_000...5_500)
         }
-        // Veterans command slightly more
-        let experienceBonus = min(yearsPro * 200, 5000)
-        return baseSalary + experienceBonus
+    }
+
+    // MARK: - Realistic Contract Years (Bug Fix #6)
+
+    /// Returns contract years remaining based on career stage.
+    /// - Veteran stars (7+ years): 1-2 years (expiring = interesting decisions)
+    /// - Mid-career (3-6 years pro): 2-4 years
+    /// - Young players on rookie deals (0-2 years pro): 3-4 years
+    private static func realisticContractYears(yearsPro: Int, age: Int) -> Int {
+        if yearsPro <= 2 {
+            // Young players on rookie deals
+            return Int.random(in: 3...4)
+        } else if yearsPro <= 6 {
+            // Mid-career players
+            return Int.random(in: 2...4)
+        } else {
+            // Veteran stars — expiring contracts create drama
+            return Int.random(in: 1...2)
+        }
     }
 
     private static func randomPositionAttributes(for position: Position) -> PositionAttributes {
