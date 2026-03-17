@@ -39,51 +39,38 @@ struct TeamSelectionView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 12)
 
-                // Team list — adapts to orientation
+                // All 16 teams visible at once — 4 columns (1 per division), 4 rows
                 GeometryReader { geo in
                     let isLandscape = geo.size.width > geo.size.height
+                    let availableHeight = geo.size.height
+                    let availableWidth = geo.size.width
+                    let cardHeight = isLandscape ? (availableHeight - 40) / 4.2 : (availableHeight - 60) / 4.5
 
-                    ScrollView {
-                        if isLandscape {
-                            // Landscape: 4-column grid
-                            let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
-                            VStack(spacing: 16) {
-                                ForEach(divisionsForConference, id: \.division) { group in
-                                    divisionHeader(group.division.rawValue)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                    LazyVGrid(columns: columns, spacing: 12) {
-                                        ForEach(group.teams, id: \.abbreviation) { team in
-                                            Button { detailTeam = team } label: {
-                                                TeamGridCard(team: team)
-                                            }
-                                            .buttonStyle(.plain)
-                                        }
+                    let divisions = divisionsForConference
+
+                    HStack(alignment: .top, spacing: 8) {
+                        ForEach(divisions, id: \.division) { group in
+                            VStack(spacing: 4) {
+                                // Division header
+                                Text(group.division.rawValue.uppercased())
+                                    .font(.system(size: 10, weight: .black))
+                                    .tracking(2)
+                                    .foregroundStyle(Color.accentGold)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 4)
+
+                                // 4 teams stacked vertically
+                                ForEach(group.teams, id: \.abbreviation) { team in
+                                    Button { detailTeam = team } label: {
+                                        MiniTeamCard(team: team, height: cardHeight)
                                     }
+                                    .buttonStyle(.plain)
                                 }
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 16)
-                            .frame(maxWidth: 1200)
-                            .frame(maxWidth: .infinity)
-                        } else {
-                            // Portrait: compact row list
-                            VStack(spacing: 2) {
-                                ForEach(divisionsForConference, id: \.division) { group in
-                                    divisionHeader(group.division.rawValue)
-                                    ForEach(group.teams, id: \.abbreviation) { team in
-                                        Button { detailTeam = team } label: {
-                                            CompactTeamRow(team: team)
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 16)
-                            .frame(maxWidth: 800)
-                            .frame(maxWidth: .infinity)
                         }
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
                 }
             }
             .disabled(isLoading)
@@ -360,6 +347,69 @@ private struct CompactTeamRow: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(team.city) \(team.name), \(preview.situation), difficulty \(preview.difficulty) of 5")
+    }
+}
+
+// MARK: - Mini Team Card (fits 16 teams on screen)
+
+private struct MiniTeamCard: View {
+    let team: NFLTeamDefinition
+    var height: CGFloat = 140
+    private var preview: TeamPreview { team.preview }
+
+    private var situationColor: Color {
+        switch preview.situation {
+        case "Rebuilding": return .accentBlue
+        case "Rising":     return .success
+        case "Contender":  return .accentGold
+        case "Win Now":    return .warning
+        case "Dynasty":    return .danger
+        default:           return .textSecondary
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 3) {
+            // Logo
+            TeamLogoPlaceholder(abbreviation: team.abbreviation, size: min(36, height * 0.28))
+
+            // Name
+            Text(team.name)
+                .font(.system(size: min(13, height * 0.1), weight: .bold))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+
+            // City
+            Text(team.city)
+                .font(.system(size: min(10, height * 0.07)))
+                .foregroundStyle(Color.textSecondary)
+                .lineLimit(1)
+
+            // Stars
+            HStack(spacing: 1) {
+                ForEach(1...5, id: \.self) { star in
+                    Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
+                        .font(.system(size: min(7, height * 0.05)))
+                        .foregroundStyle(star <= preview.difficulty ? Color.accentGold : Color.textTertiary)
+                }
+            }
+
+            // Situation
+            Text(preview.situation.uppercased())
+                .font(.system(size: min(8, height * 0.06), weight: .bold))
+                .foregroundStyle(situationColor)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 0.5)
+                )
+        )
     }
 }
 
