@@ -39,38 +39,23 @@ struct TeamSelectionView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 12)
 
-                // All 16 teams visible at once — 4 columns (1 per division), 4 rows
-                GeometryReader { geo in
-                    let isLandscape = geo.size.width > geo.size.height
-                    let availableHeight = geo.size.height
-                    let availableWidth = geo.size.width
-                    let cardHeight = isLandscape ? (availableHeight - 40) / 4.2 : (availableHeight - 60) / 4.5
-
-                    let divisions = divisionsForConference
-
-                    HStack(alignment: .top, spacing: 8) {
-                        ForEach(divisions, id: \.division) { group in
-                            VStack(spacing: 4) {
-                                // Division header
-                                Text(group.division.rawValue.uppercased())
-                                    .font(.system(size: 10, weight: .black))
-                                    .tracking(2)
-                                    .foregroundStyle(Color.accentGold)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 4)
-
-                                // 4 teams stacked vertically
-                                ForEach(group.teams, id: \.abbreviation) { team in
-                                    Button { detailTeam = team } label: {
-                                        MiniTeamCard(team: team, height: cardHeight)
-                                    }
-                                    .buttonStyle(.plain)
+                // Compact table rows — all 16 teams with minimal scrolling
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(divisionsForConference, id: \.division) { group in
+                            divisionHeader(group.division.rawValue)
+                            ForEach(group.teams, id: \.abbreviation) { team in
+                                Button { detailTeam = team } label: {
+                                    CompactTeamRow(team: team)
                                 }
+                                .buttonStyle(.plain)
                             }
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                    .frame(maxWidth: 900)
+                    .frame(maxWidth: .infinity)
                 }
             }
             .disabled(isLoading)
