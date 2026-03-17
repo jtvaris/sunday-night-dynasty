@@ -70,8 +70,8 @@ final class Career {
         self.championships = 0
         self.yearsFired = 0
         self.currentSeason = currentSeason
-        self.currentWeek = 1
-        self.currentPhase = .preseason
+        self.currentWeek = 0
+        self.currentPhase = .coachingChanges
         self.hasCompletedIntro = false
         self.seasonGoals = nil
         self.legacy = LegacyTracker()

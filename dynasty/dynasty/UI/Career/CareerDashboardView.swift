@@ -60,7 +60,7 @@ struct CareerDashboardView: View {
 
                     // Row 4 — Seasonal / Contextual Tiles
                     LazyVGrid(columns: columns, spacing: 16) {
-                        if career.currentPhase == .draft {
+                        if career.currentPhase == .draft || career.currentPhase == .combine {
                             draftTile
                         }
                         if career.currentPhase == .freeAgency {
@@ -141,25 +141,49 @@ struct CareerDashboardView: View {
 
     // MARK: - Row 1: Season Tile
 
+    private var isOffseasonPhase: Bool {
+        switch career.currentPhase {
+        case .regularSeason, .playoffs, .tradeDeadline:
+            return false
+        default:
+            return true
+        }
+    }
+
     private var seasonTile: some View {
         DashboardTile(icon: "clock.fill", title: "Season") {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Week")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                        Text("\(career.currentWeek) of 18")
-                            .font(.title3.weight(.bold).monospacedDigit())
-                            .foregroundStyle(Color.textPrimary)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Phase")
+                if isOffseasonPhase {
+                    // Offseason: show phase name prominently instead of week
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Offseason")
                             .font(.caption)
                             .foregroundStyle(Color.textSecondary)
                         Text(phaseDisplayName(career.currentPhase))
-                            .font(.subheadline.weight(.semibold))
+                            .font(.title3.weight(.bold))
                             .foregroundStyle(Color.accentGold)
+                        Text("Season \(career.currentSeason)")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Week")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                            Text("\(career.currentWeek) of 18")
+                                .font(.title3.weight(.bold).monospacedDigit())
+                                .foregroundStyle(Color.textPrimary)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Phase")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                            Text(phaseDisplayName(career.currentPhase))
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.accentGold)
+                        }
                     }
                 }
 
@@ -197,7 +221,7 @@ struct CareerDashboardView: View {
             .navigationTitle("Roster")
             .toolbarColorScheme(.dark, for: .navigationBar)
         } label: {
-            DashboardTile(icon: "person.3.fill", title: "Roster") {
+            DashboardTile(icon: "person.3.fill", title: "Roster", highlighted: currentPhaseHighlightedTiles.contains("Roster")) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text("Players")
@@ -229,7 +253,7 @@ struct CareerDashboardView: View {
         NavigationLink {
             ScheduleView(career: career)
         } label: {
-            DashboardTile(icon: "calendar", title: "Schedule") {
+            DashboardTile(icon: "calendar", title: "Schedule", highlighted: currentPhaseHighlightedTiles.contains("Schedule")) {
                 VStack(alignment: .leading, spacing: 6) {
                     if let last = lastGame, last.isPlayed {
                         let isHome = last.homeTeamID == career.teamID
@@ -351,7 +375,7 @@ struct CareerDashboardView: View {
         NavigationLink {
             CoachingStaffView(career: career)
         } label: {
-            DashboardTile(icon: "person.2.fill", title: "Staff") {
+            DashboardTile(icon: "person.2.fill", title: "Staff", highlighted: currentPhaseHighlightedTiles.contains("Staff")) {
                 VStack(alignment: .leading, spacing: 6) {
                     if let hc = headCoach {
                         HStack {
@@ -394,7 +418,7 @@ struct CareerDashboardView: View {
         NavigationLink {
             ScoutingHubView(career: career)
         } label: {
-            DashboardTile(icon: "magnifyingglass", title: "Scouting") {
+            DashboardTile(icon: "magnifyingglass", title: "Scouting", highlighted: currentPhaseHighlightedTiles.contains("Scouting")) {
                 VStack(alignment: .leading, spacing: 6) {
                     let topProspect = WeekAdvancer.currentDraftClass.first
                     if let prospect = topProspect {
@@ -430,7 +454,7 @@ struct CareerDashboardView: View {
         NavigationLink {
             CapOverviewView(career: career)
         } label: {
-            DashboardTile(icon: "dollarsign.circle.fill", title: "Salary Cap") {
+            DashboardTile(icon: "dollarsign.circle.fill", title: "Salary Cap", highlighted: currentPhaseHighlightedTiles.contains("Salary Cap")) {
                 VStack(alignment: .leading, spacing: 8) {
                     if let t = team {
                         let usedFraction = t.salaryCap > 0
@@ -525,7 +549,7 @@ struct CareerDashboardView: View {
         NavigationLink {
             DraftView(career: career)
         } label: {
-            DashboardTile(icon: "list.clipboard.fill", title: "Draft") {
+            DashboardTile(icon: "list.clipboard.fill", title: "Draft", highlighted: currentPhaseHighlightedTiles.contains("Draft")) {
                 VStack(alignment: .leading, spacing: 6) {
                     let picks = WeekAdvancer.currentDraftPicks.filter { $0.currentTeamID == career.teamID }
                     if let firstPick = picks.first {
@@ -553,7 +577,7 @@ struct CareerDashboardView: View {
         NavigationLink {
             FreeAgencyView(career: career)
         } label: {
-            DashboardTile(icon: "person.badge.plus", title: "Free Agency") {
+            DashboardTile(icon: "person.badge.plus", title: "Free Agency", highlighted: currentPhaseHighlightedTiles.contains("Free Agency")) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text("Available Cap")
@@ -595,6 +619,32 @@ struct CareerDashboardView: View {
 
     // MARK: - Advance Week Button
 
+    /// Returns the label text for the advance button based on the current phase.
+    private var advanceButtonLabel: String {
+        switch career.currentPhase {
+        case .regularSeason:
+            return "Advance to Week \(career.currentWeek + 1)"
+        case .playoffs:
+            switch career.currentWeek {
+            case 19: return "Advance to Divisional Round"
+            case 20: return "Advance to Conference Championships"
+            case 21: return "Advance to Super Bowl"
+            default: return "Advance to Next Round"
+            }
+        case .superBowl:       return "Advance to Pro Bowl"
+        case .proBowl:         return "Advance to Coaching Changes"
+        case .coachingChanges: return "Advance to NFL Combine"
+        case .combine:         return "Advance to Free Agency"
+        case .freeAgency:      return "Advance to NFL Draft"
+        case .draft:           return "Advance to OTAs"
+        case .otas:            return "Advance to Training Camp"
+        case .trainingCamp:    return "Advance to Preseason"
+        case .preseason:       return "Advance to Roster Cuts"
+        case .rosterCuts:      return "Advance to Regular Season"
+        case .tradeDeadline:   return "Advance to Week \(career.currentWeek + 1)"
+        }
+    }
+
     private var advanceWeekButton: some View {
         Button {
             let teamsByID = fetchTeamsByID()
@@ -612,7 +662,7 @@ struct CareerDashboardView: View {
             HStack(spacing: 12) {
                 Image(systemName: "chevron.right.2")
                     .font(.system(size: 16, weight: .bold))
-                Text("Advance to Week \(career.currentWeek + 1)")
+                Text(advanceButtonLabel)
                     .font(.system(size: 18, weight: .bold))
             }
             .foregroundStyle(Color.backgroundPrimary)
@@ -625,7 +675,7 @@ struct CareerDashboardView: View {
                     .shadow(color: Color.accentGold.opacity(0.4), radius: 12, x: 0, y: 4)
             )
         }
-        .accessibilityLabel("Advance to Week \(career.currentWeek + 1)")
+        .accessibilityLabel(advanceButtonLabel)
     }
 
     // MARK: - Owner Satisfaction Bar
@@ -671,6 +721,30 @@ struct CareerDashboardView: View {
             return "#\(rank)"
         }
         return "—"
+    }
+
+    // MARK: - Phase Highlight
+
+    /// Which dashboard tile names should be visually emphasized for the current phase.
+    private var currentPhaseHighlightedTiles: Set<String> {
+        switch career.currentPhase {
+        case .coachingChanges:
+            return ["Staff"]
+        case .combine:
+            return ["Scouting", "Draft"]
+        case .freeAgency:
+            return ["Free Agency", "Salary Cap"]
+        case .draft:
+            return ["Draft", "Scouting"]
+        case .otas, .trainingCamp:
+            return ["Roster"]
+        case .rosterCuts:
+            return ["Roster"]
+        case .preseason:
+            return ["Schedule", "Roster"]
+        default:
+            return []
+        }
     }
 
     // MARK: - Helpers
@@ -764,6 +838,7 @@ private struct DashboardTile<Content: View>: View {
 
     let icon: String
     let title: String
+    var highlighted: Bool = false
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -779,6 +854,14 @@ private struct DashboardTile<Content: View>: View {
                     .textCase(.uppercase)
                     .tracking(0.5)
                 Spacer()
+                if highlighted {
+                    Text("ACTIVE")
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.accentGold))
+                }
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10))
                     .foregroundStyle(Color.textTertiary)
@@ -796,7 +879,10 @@ private struct DashboardTile<Content: View>: View {
                 .fill(Color.backgroundSecondary)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                        .strokeBorder(
+                            highlighted ? Color.accentGold.opacity(0.6) : Color.surfaceBorder,
+                            lineWidth: highlighted ? 1.5 : 1
+                        )
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: 12))

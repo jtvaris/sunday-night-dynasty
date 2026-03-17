@@ -106,7 +106,8 @@ struct IntroSequenceView: View {
 
     private func completeIntro() {
         career.hasCompletedIntro = true
-        career.currentPhase = .superBowl
+        career.currentPhase = .coachingChanges
+        career.currentWeek = 0
         if let goals = seasonGoals {
             career.seasonGoals = goals
         }
@@ -312,6 +313,7 @@ private struct TeamOverviewStep: View {
     @State private var showCap = false
     @State private var showDraft = false
     @State private var showTasks = false
+    @State private var showCalendar = false
 
     private var averageOverall: Int {
         guard !players.isEmpty else { return 0 }
@@ -471,6 +473,54 @@ private struct TeamOverviewStep: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
+                // Offseason calendar timeline
+                if showCalendar {
+                    VStack(alignment: .leading, spacing: 16) {
+                        SectionLabel(text: "OFFSEASON CALENDAR")
+
+                        Text("Your journey through the NFL year:")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(Self.offseasonCalendarEntries.enumerated()), id: \.offset) { index, entry in
+                                HStack(alignment: .top, spacing: 12) {
+                                    // Timeline connector
+                                    VStack(spacing: 0) {
+                                        Circle()
+                                            .fill(index == 0 ? Color.accentGold : Color.textTertiary.opacity(0.5))
+                                            .frame(width: index == 0 ? 10 : 8, height: index == 0 ? 10 : 8)
+
+                                        if index < Self.offseasonCalendarEntries.count - 1 {
+                                            Rectangle()
+                                                .fill(Color.surfaceBorder)
+                                                .frame(width: 2)
+                                                .frame(maxHeight: .infinity)
+                                        }
+                                    }
+                                    .frame(width: 16)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(entry.name)
+                                            .font(.subheadline.weight(index == 0 ? .bold : .medium))
+                                            .foregroundStyle(index == 0 ? Color.accentGold : Color.textPrimary)
+                                        Text(entry.description)
+                                            .font(.caption)
+                                            .foregroundStyle(Color.textSecondary)
+                                    }
+
+                                    Spacer()
+                                }
+                                .padding(.vertical, 6)
+                            }
+                        }
+                    }
+                    .padding(20)
+                    .cardBackground()
+                    .padding(.horizontal, 24)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+
                 Spacer().frame(height: 12)
 
                 IntroContinueButton(action: onContinue)
@@ -481,12 +531,32 @@ private struct TeamOverviewStep: View {
         .onAppear { runAnimations() }
     }
 
+    private struct CalendarEntry {
+        let name: String
+        let description: String
+    }
+
+    private static let offseasonCalendarEntries: [CalendarEntry] = [
+        CalendarEntry(name: "Coaching Changes", description: "Hire/fire coaching staff, build your team"),
+        CalendarEntry(name: "Roster Evaluation", description: "Assess your players, identify needs"),
+        CalendarEntry(name: "NFL Combine", description: "Scout draft prospects, evaluate measurables"),
+        CalendarEntry(name: "Free Agency", description: "Sign free agents, re-sign your own players"),
+        CalendarEntry(name: "NFL Draft", description: "Select new talent across 7 rounds"),
+        CalendarEntry(name: "Undrafted Free Agents", description: "Sign overlooked prospects"),
+        CalendarEntry(name: "OTAs", description: "Set depth chart, assign mentoring pairs"),
+        CalendarEntry(name: "Training Camp", description: "Player development, position battles"),
+        CalendarEntry(name: "Preseason", description: "Evaluate young players in live action"),
+        CalendarEntry(name: "Roster Cuts", description: "Cut to 53-man roster"),
+        CalendarEntry(name: "Regular Season", description: "18 weeks of football"),
+    ]
+
     private func runAnimations() {
         withAnimation(.easeOut(duration: 0.5).delay(0.2)) { showHeader = true }
         withAnimation(.easeOut(duration: 0.5).delay(0.7)) { showRoster = true }
         withAnimation(.easeOut(duration: 0.5).delay(1.2)) { showCap = true }
         withAnimation(.easeOut(duration: 0.5).delay(1.7)) { showDraft = true }
         withAnimation(.easeOut(duration: 0.5).delay(2.2)) { showTasks = true }
+        withAnimation(.easeOut(duration: 0.5).delay(2.7)) { showCalendar = true }
     }
 }
 
