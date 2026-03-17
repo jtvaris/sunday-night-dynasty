@@ -16,6 +16,9 @@ enum WeekAdvancer {
     /// Game events generated during the most recent advance.
     static var lastEvents: [GameEvent] = []
 
+    /// Inbox messages generated during the most recent phase transition.
+    static var lastInboxMessages: [InboxMessage] = []
+
     /// Set to `true` when the owner fires the player after a satisfaction check.
     static var wasFired: Bool = false
 
@@ -50,6 +53,7 @@ enum WeekAdvancer {
         // Reset per-advance state
         lastNewsItems = []
         lastEvents = []
+        lastInboxMessages = []
         wasFired = false
 
         switch career.currentPhase {
@@ -220,6 +224,16 @@ enum WeekAdvancer {
                 // 4. Check if the owner fires the player
                 wasFired = OwnerSatisfactionEngine.checkFiring(owner: owner, career: career)
             }
+
+            // 4b. Generate weekly inbox messages
+            let teamCoaches = allCoaches.filter { $0.teamID == playerTeamID }
+            lastInboxMessages = InboxEngine.generatePhaseMessages(
+                phase: career.currentPhase,
+                career: career,
+                team: playerTeam,
+                coaches: teamCoaches,
+                owner: playerTeam.owner
+            )
         }
 
         // 5. Apply fatigue changes for players who played this week
@@ -531,6 +545,19 @@ enum WeekAdvancer {
             lastNewsItems.append(contentsOf: scheduleNews)
         } else {
             career.currentPhase = nextPhase
+        }
+
+        // --- Generate inbox messages for the new phase ---
+        if let playerTeamID = career.teamID,
+           let playerTeam = teamsByID[playerTeamID] {
+            let teamCoaches = allCoaches.filter { $0.teamID == playerTeamID }
+            lastInboxMessages = InboxEngine.generatePhaseMessages(
+                phase: career.currentPhase,
+                career: career,
+                team: playerTeam,
+                coaches: teamCoaches,
+                owner: playerTeam.owner
+            )
         }
     }
 

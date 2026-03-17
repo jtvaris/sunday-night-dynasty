@@ -25,6 +25,9 @@ struct CareerShellView: View {
     /// Tracks the last phase we generated tasks for, so we can detect phase changes.
     @State private var lastGeneratedPhase: SeasonPhase?
 
+    /// Accumulated inbox messages across all phase transitions.
+    @State var inboxMessages: [InboxMessage] = []
+
     var body: some View {
         VStack(spacing: 0) {
             // Persistent top navigation bar
@@ -41,7 +44,7 @@ struct CareerShellView: View {
 
             // Main content area
             NavigationStack(path: $navigationPath) {
-                CareerDashboardView(career: career, tasks: $currentTasks, onTaskSelected: { destination in
+                CareerDashboardView(career: career, tasks: $currentTasks, inboxMessages: $inboxMessages, onTaskSelected: { destination in
                     handleTaskNavigation(destination)
                 })
                     .navigationDestination(for: ShellDestination.self) { dest in
@@ -68,8 +71,17 @@ struct CareerShellView: View {
             Text("Your progress is saved automatically.")
         }
         .task { loadShellData() }
+        .onChange(of: navigationPath.count) { _, newCount in
+            if newCount == 0 {
+                refreshTaskCompletionStatus()
+            }
+        }
         .onChange(of: career.currentPhase) { _, newPhase in
             regenerateTasks(for: newPhase)
+            collectInboxMessages()
+        }
+        .onChange(of: career.currentWeek) { _, _ in
+            collectInboxMessages()
         }
         .sheet(isPresented: $showCalendar) {
             CalendarSidebarView(
@@ -100,25 +112,18 @@ struct CareerShellView: View {
         case depthChart, gamePlan, coachingStaff, hireCoach
         case prospectList, bigBoard, capOverview, freeAgency
         case contractTimeline, mentoring, trades, news
-        case ownerMeeting, lockerRoom
+        case ownerMeeting, lockerRoom, inbox
     }
 
     @ViewBuilder
     private func destinationView(for destination: ShellDestination) -> some View {
         switch destination {
         case .roster:
-            ZStack {
-                Color.backgroundPrimary.ignoresSafeArea()
-                Text("Roster - Coming Soon")
-                    .font(.title2)
-                    .foregroundStyle(Color.textSecondary)
-            }
-            .navigationTitle("Roster")
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .onAppear {
-                markTaskVisited(for: .roster)
-                refreshTaskCompletionStatus()
-            }
+            RosterViewWrapper(career: career)
+                .onAppear {
+                    markTaskVisited(for: .roster)
+                    refreshTaskCompletionStatus()
+                }
         case .schedule:
             ScheduleView(career: career)
                 .onAppear {
@@ -228,6 +233,14 @@ struct CareerShellView: View {
                     markTaskVisited(for: .lockerRoom)
                     refreshTaskCompletionStatus()
                 }
+        case .inbox:
+            InboxView(
+                career: career,
+                messages: $inboxMessages,
+                onNavigate: { destination in
+                    handleTaskNavigation(destination)
+                }
+            )
         }
     }
 
@@ -256,6 +269,7 @@ struct CareerShellView: View {
         case .news:               shellDest = .news
         case .ownerMeeting:       shellDest = .ownerMeeting
         case .lockerRoom:         shellDest = .lockerRoom
+        case .inbox:              shellDest = .inbox
         }
 
         // Dismiss calendar, then navigate
@@ -428,6 +442,18 @@ struct CareerShellView: View {
             hasPendingEvents: hasPendingEvents,
             ownerSatisfaction: ownerSatisfaction
         )
+    }
+
+    // MARK: - Inbox Collection
+
+    /// Appends any newly generated inbox messages from WeekAdvancer to the
+    /// accumulated inbox. Called after each phase/week transition.
+    func collectInboxMessages() {
+        let newMessages = WeekAdvancer.lastInboxMessages
+        guard !newMessages.isEmpty else { return }
+        inboxMessages.append(contentsOf: newMessages)
+        // Clear so we don't double-add on next read
+        WeekAdvancer.lastInboxMessages = []
     }
 
     // MARK: - Data Loading

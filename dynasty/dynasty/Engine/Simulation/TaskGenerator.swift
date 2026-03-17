@@ -62,6 +62,7 @@ enum TaskDestination: String, Codable, CaseIterable {
     case news
     case ownerMeeting
     case lockerRoom
+    case inbox
 }
 
 // MARK: - Task Generator

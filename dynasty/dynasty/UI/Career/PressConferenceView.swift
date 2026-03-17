@@ -35,6 +35,25 @@ struct PressConferenceView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
+            // Dimmed background image
+            Image("BgPressConference")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .ignoresSafeArea()
+                .opacity(0.15)
+
+            // Dark gradient overlay for readability
+            LinearGradient(
+                colors: [
+                    Color.backgroundPrimary.opacity(0.7),
+                    Color.backgroundPrimary.opacity(0.9),
+                    Color.backgroundPrimary.opacity(0.7)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
             switch phase {
             case .intro:
                 introContent

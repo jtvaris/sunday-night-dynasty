@@ -68,6 +68,7 @@ struct IntroSequenceView: View {
 
                     ReadyToBeginStep(
                         career: career,
+                        team: team,
                         onEnter: { completeIntro() }
                     )
                     .tag(4)
@@ -184,6 +185,25 @@ private struct OwnerMeetingStep: View {
     }
 
     var body: some View {
+        ZStack {
+            // Dimmed background image for corporate meeting feel
+            Image("BgContract")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .ignoresSafeArea()
+                .opacity(0.12)
+
+            LinearGradient(
+                colors: [
+                    Color.backgroundPrimary.opacity(0.85),
+                    Color.backgroundPrimary.opacity(0.7),
+                    Color.backgroundPrimary.opacity(0.85)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
         ScrollView {
             VStack(spacing: 24) {
                 Spacer().frame(height: 20)
@@ -298,6 +318,7 @@ private struct OwnerMeetingStep: View {
             }
         }
         .scrollIndicators(.hidden)
+        }
         .onAppear { runAnimations() }
     }
 
@@ -351,7 +372,7 @@ private struct TeamOverviewStep: View {
     }
 
     /// Total coaching staff positions expected (HC + OC + DC + STC + position coaches).
-    private var totalCoachingSlots: Int { 10 }
+    private var totalCoachingSlots: Int { CoachRole.allCases.count }
 
     private var capAvailableFormatted: String {
         let available = team.availableCap
@@ -434,6 +455,23 @@ private struct TeamOverviewStep: View {
 
                         StatRow(label: "Total Cap", value: totalCapFormatted)
                         StatRow(label: "Used", value: capUsedFormatted)
+
+                        // Cap usage progress bar
+                        GeometryReader { geo in
+                            let usedFraction = team.salaryCap > 0
+                                ? Double(team.currentCapUsage) / Double(team.salaryCap)
+                                : 0
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.backgroundTertiary)
+                                    .frame(height: 8)
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(usedFraction > 0.9 ? Color.danger : Color.accentGold)
+                                    .frame(width: geo.size.width * min(usedFraction, 1.0), height: 8)
+                            }
+                        }
+                        .frame(height: 8)
+
                         StatRow(label: "Available", value: capAvailableFormatted,
                                 valueColor: team.availableCap > 0 ? Color.success : Color.danger)
                     }
@@ -453,13 +491,17 @@ private struct TeamOverviewStep: View {
                                 .font(.subheadline)
                                 .foregroundStyle(Color.textSecondary)
                         } else {
-                            let byRound = Dictionary(grouping: draftPicks, by: { $0.round })
-                            ForEach(byRound.keys.sorted(), id: \.self) { round in
-                                let picks = byRound[round] ?? []
-                                let pickNumbers = picks.map { "#\($0.pickNumber)" }.joined(separator: ", ")
-                                StatRow(label: "Round \(round)",
-                                        value: pickNumbers)
-                            }
+                            // Compact single-row format: "Rd1 #13 | Rd2 #45 | ..."
+                            let sortedPicks = draftPicks.sorted { $0.round < $1.round || ($0.round == $1.round && $0.pickNumber < $1.pickNumber) }
+                            let pickSummary = sortedPicks.map { "Rd\($0.round) #\($0.pickNumber)" }.joined(separator: " | ")
+                            Text(pickSummary)
+                                .font(.subheadline.weight(.medium).monospacedDigit())
+                                .foregroundStyle(Color.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            Text("\(draftPicks.count) pick\(draftPicks.count == 1 ? "" : "s") total")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
                         }
                     }
                     .padding(20)
@@ -625,6 +667,7 @@ private struct YourRoadmapStep: View {
 private struct ReadyToBeginStep: View {
 
     let career: Career
+    let team: Team?
     let onEnter: () -> Void
 
     @State private var showTitle = false
@@ -633,30 +676,56 @@ private struct ReadyToBeginStep: View {
     @State private var glowAmount: CGFloat = 0.3
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
+        ZStack {
+            // Dimmed background image
+            Image("BgStadiumDawn")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .ignoresSafeArea()
+                .opacity(0.15)
 
-            VStack(spacing: 28) {
-                if showTitle {
-                    VStack(spacing: 16) {
-                        Image(systemName: "sportscourt.fill")
-                            .font(.system(size: 48))
-                            .foregroundStyle(Color.accentGold)
-                            .shadow(color: Color.accentGold.opacity(glowAmount), radius: 20, y: 0)
+            // Dark gradient overlay for readability
+            LinearGradient(
+                colors: [
+                    Color.backgroundPrimary.opacity(0.8),
+                    Color.backgroundPrimary.opacity(0.6),
+                    Color.backgroundPrimary.opacity(0.8)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
 
-                        Text("Your Journey Begins")
-                            .font(.system(size: 36, weight: .bold))
-                            .foregroundStyle(Color.textPrimary)
+            VStack(spacing: 0) {
+                Spacer()
+
+                VStack(spacing: 28) {
+                    if showTitle {
+                        VStack(spacing: 16) {
+                            Image(systemName: "football.fill")
+                                .font(.system(size: 48))
+                                .foregroundStyle(Color.accentGold)
+                                .shadow(color: Color.accentGold.opacity(glowAmount), radius: 20, y: 0)
+
+                            Text("Your Journey Begins")
+                                .font(.system(size: 36, weight: .bold))
+                                .foregroundStyle(Color.textPrimary)
+
+                            if let team = team {
+                                Text("with the \(team.fullName)")
+                                    .font(.title3.weight(.medium))
+                                    .foregroundStyle(Color.textSecondary)
+                            }
+                        }
+                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
                     }
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                }
 
-                if showSubtitle {
-                    Text("Build Your Dynasty.")
-                        .font(.title3.weight(.medium))
-                        .foregroundStyle(Color.accentGold)
-                        .transition(.opacity)
-                }
+                    if showSubtitle {
+                        Text("Build Your Dynasty.")
+                            .font(.title3.weight(.medium))
+                            .foregroundStyle(Color.accentGold)
+                            .transition(.opacity)
+                    }
 
                 if showButton {
                     Button(action: onEnter) {
@@ -679,7 +748,8 @@ private struct ReadyToBeginStep: View {
                 }
             }
 
-            Spacer()
+                Spacer()
+            }
         }
         .onAppear { runAnimations() }
     }

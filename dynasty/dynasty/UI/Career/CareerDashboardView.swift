@@ -5,6 +5,7 @@ struct CareerDashboardView: View {
 
     @Bindable var career: Career
     @Binding var tasks: [GameTask]
+    @Binding var inboxMessages: [InboxMessage]
     var onTaskSelected: (TaskDestination) -> Void
     @Environment(\.modelContext) private var modelContext
 
@@ -64,6 +65,7 @@ struct CareerDashboardView: View {
 
                     // Row 2 -- Action Tiles
                     LazyVGrid(columns: columns, spacing: 16) {
+                        inboxTile
                         rosterTile
                         scheduleTile
                         standingsTile
@@ -416,9 +418,15 @@ struct CareerDashboardView: View {
                                 .foregroundStyle(Color.textSecondary)
                         }
                     } else {
-                        Text("No results yet")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
+                        if isOffseasonPhase {
+                            Text("Season starts after Roster Cuts")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                        } else {
+                            Text("No results yet")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                        }
                     }
 
                     if let next = upcomingGames.first {
@@ -454,6 +462,13 @@ struct CareerDashboardView: View {
                             .font(.caption)
                             .foregroundStyle(Color.textSecondary)
                     } else {
+                        Text("Your Division")
+                            .font(.system(size: 10, weight: .bold))
+                            .tracking(1)
+                            .foregroundStyle(Color.textTertiary)
+                            .textCase(.uppercase)
+                            .padding(.bottom, 2)
+
                         ForEach(divisionTeams.sorted(by: { $0.wins > $1.wins }), id: \.id) { t in
                             HStack {
                                 Text(t.abbreviation)
@@ -465,6 +480,75 @@ struct CareerDashboardView: View {
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(t.id == team?.id ? Color.textPrimary : Color.textSecondary)
                             }
+                            .padding(.vertical, t.id == team?.id ? 2 : 0)
+                            .padding(.horizontal, t.id == team?.id ? 6 : 0)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.accentGold.opacity(t.id == team?.id ? 0.08 : 0))
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Row 2: Inbox Tile
+
+    private var inboxUnreadCount: Int {
+        inboxMessages.filter { !$0.isRead }.count
+    }
+
+    private var inboxTile: some View {
+        Button {
+            onTaskSelected(.inbox)
+        } label: {
+            DashboardTile(
+                icon: "tray.full.fill",
+                title: "Inbox",
+                highlighted: inboxUnreadCount > 0
+            ) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if inboxUnreadCount > 0 {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(Color.accentGold)
+                                .frame(width: 8, height: 8)
+                            Text("\(inboxUnreadCount) unread message\(inboxUnreadCount == 1 ? "" : "s")")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.accentGold)
+                        }
+                    } else {
+                        Text("No unread messages")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+
+                    // Show latest message preview
+                    if let latest = inboxMessages.last {
+                        Divider().overlay(Color.surfaceBorder.opacity(0.5))
+                        HStack(spacing: 6) {
+                            Image(systemName: latest.sender.icon)
+                                .font(.caption2)
+                                .foregroundStyle(Color.textTertiary)
+                            Text(latest.subject)
+                                .font(.caption)
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    // Show action-required count
+                    let actionCount = inboxMessages.filter { $0.actionRequired && !$0.isRead }.count
+                    if actionCount > 0 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption2)
+                                .foregroundStyle(Color.danger)
+                            Text("\(actionCount) requiring action")
+                                .font(.caption)
+                                .foregroundStyle(Color.danger)
                         }
                     }
                 }
@@ -999,7 +1083,7 @@ private struct DashboardTile<Content: View>: View {
             // Header
             HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                 Text(title)
                     .font(.system(size: 14, weight: .bold))
@@ -1016,7 +1100,7 @@ private struct DashboardTile<Content: View>: View {
                         .background(Capsule().fill(Color.accentGold))
                 }
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
 
@@ -1051,6 +1135,7 @@ private struct DashboardTile<Content: View>: View {
         hasOC: false,
         hasDC: true
     )
+    @Previewable @State var previewInbox: [InboxMessage] = []
 
     NavigationStack {
         CareerDashboardView(
@@ -1060,6 +1145,7 @@ private struct DashboardTile<Content: View>: View {
                 capMode: .simple
             ),
             tasks: $previewTasks,
+            inboxMessages: $previewInbox,
             onTaskSelected: { _ in }
         )
     }
