@@ -4,56 +4,62 @@ import SwiftData
 struct MainMenuView: View {
 
     @Query(sort: \Career.currentSeason, order: .reverse) private var careers: [Career]
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
-        ZStack {
-            // MARK: - Full Screen Hero Image
-            Image("HeroImage")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
+        GeometryReader { geo in
+            let isLandscape = geo.size.width > geo.size.height
+
+            ZStack {
+                // MARK: - Full Screen Hero Image
+                Image("HeroImage")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .ignoresSafeArea()
+
+                // Dark gradient overlay for text readability
+                LinearGradient(
+                    stops: [
+                        .init(color: Color.black.opacity(0.3), location: 0.0),
+                        .init(color: Color.black.opacity(0.15), location: 0.25),
+                        .init(color: Color.black.opacity(0.4), location: 0.5),
+                        .init(color: Color.black.opacity(0.85), location: 0.75),
+                        .init(color: Color.black.opacity(0.95), location: 1.0),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
                 .ignoresSafeArea()
 
-            // Dark gradient overlay for text readability
-            LinearGradient(
-                stops: [
-                    .init(color: Color.black.opacity(0.3), location: 0.0),
-                    .init(color: Color.black.opacity(0.15), location: 0.25),
-                    .init(color: Color.black.opacity(0.4), location: 0.5),
-                    .init(color: Color.black.opacity(0.85), location: 0.75),
-                    .init(color: Color.black.opacity(0.95), location: 1.0),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-
-            // Adaptive layout: stack vertically in portrait, side-by-side in landscape
-            if horizontalSizeClass == .regular {
-                // Landscape / regular width — title left, buttons right
-                HStack(alignment: .bottom, spacing: 0) {
-                    Spacer()
-                    titleBlock
-                        .frame(maxWidth: 480)
-                    Spacer()
+                if isLandscape {
+                    // Landscape — title left, buttons right
+                    HStack(alignment: .bottom, spacing: 40) {
+                        Spacer()
+                        titleBlock
+                            .frame(maxWidth: 480)
+                        VStack(spacing: 0) {
+                            Spacer()
+                            buttonsBlock
+                            footerBlock
+                        }
+                        .frame(maxWidth: 360)
+                        Spacer()
+                    }
+                    .padding(.bottom, 40)
+                } else {
+                    // Portrait — standard vertical stack
                     VStack(spacing: 0) {
                         Spacer()
+                        titleBlock
+                            .padding(.bottom, 40)
                         buttonsBlock
                         footerBlock
                     }
-                    .frame(maxWidth: 360)
-                    Spacer()
-                }
-            } else {
-                // Portrait / compact width — standard vertical stack
-                VStack(spacing: 0) {
-                    Spacer()
-                    titleBlock
-                    buttonsBlock
-                    footerBlock
                 }
             }
         }
+        .ignoresSafeArea()
         .toolbar(.hidden, for: .navigationBar)
     }
 

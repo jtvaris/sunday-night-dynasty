@@ -210,6 +210,7 @@ private struct OwnerMeetingStep: View {
 
                 // Meeting header
                 if showHeader {
+
                     VStack(spacing: 12) {
                         if let owner = owner {
                             OwnerAvatarImageView(
@@ -316,6 +317,8 @@ private struct OwnerMeetingStep: View {
                 IntroContinueButton(action: onContinue)
                     .padding(.bottom, 40)
             }
+            .frame(maxWidth: 800)
+            .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
         }
@@ -515,6 +518,8 @@ private struct TeamOverviewStep: View {
                 IntroContinueButton(action: onContinue)
                     .padding(.bottom, 40)
             }
+            .frame(maxWidth: 800)
+            .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
         .onAppear { runAnimations() }
@@ -650,6 +655,8 @@ private struct YourRoadmapStep: View {
                 IntroContinueButton(action: onContinue)
                     .padding(.bottom, 40)
             }
+            .frame(maxWidth: 800)
+            .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
         .onAppear { runAnimations() }
