@@ -657,20 +657,7 @@ private struct TeamDetailSheet: View {
                     .cardBackground()
 
                     // Select button
-                    Button(action: onSelect) {
-                        Text("SELECT THIS TEAM")
-                            .font(.system(size: 16, weight: .bold))
-                            .tracking(1.5)
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color.accentGold)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, 8)
+                    // SELECT button is in safeAreaInset(edge: .bottom)
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 32)
@@ -678,8 +665,26 @@ private struct TeamDetailSheet: View {
                 .frame(maxWidth: .infinity)
             }
         }
-        .presentationDetents([.large])
+        .presentationDetents([.large, .medium])
         .presentationDragIndicator(.visible)
+        .safeAreaInset(edge: .bottom) {
+            Button(action: onSelect) {
+                Text("SELECT THIS TEAM")
+                    .font(.system(size: 16, weight: .bold))
+                    .tracking(1.5)
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.accentGold)
+                    )
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 12)
+            .background(Color.backgroundPrimary)
+        }
     }
 
     private func sectionLabel(_ text: String) -> some View {
