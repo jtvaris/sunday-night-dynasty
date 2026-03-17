@@ -27,19 +27,16 @@ struct MainMenuView: View {
             )
             .ignoresSafeArea()
 
-            // Title centered
+            // Everything together — title + buttons
             VStack(spacing: 0) {
                 Spacer()
                 titleBlock
-                Spacer()
-            }
-        }
-        .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 12) {
+                    .padding(.bottom, 24)
                 buttonsBlock
                 footerBlock
             }
-            .padding(.bottom, 8)
+            .padding(.bottom, 16)
+            .safeAreaPadding(.bottom)
         }
         .toolbar(.hidden, for: .navigationBar)
     }
