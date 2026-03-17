@@ -48,14 +48,7 @@ struct OwnerMeetingView: View {
     private func ownerProfileCard(_ owner: Owner) -> some View {
         HStack(spacing: 16) {
             // Avatar
-            ZStack {
-                Circle()
-                    .fill(Color.backgroundTertiary)
-                    .frame(width: 64, height: 64)
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 40))
-                    .foregroundStyle(Color.accentGold)
-            }
+            OwnerAvatarImageView(avatarID: owner.avatarID, size: 64)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(owner.name)

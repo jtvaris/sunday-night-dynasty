@@ -7,6 +7,7 @@ final class Career {
     var id: UUID
     var playerName: String
     var avatarID: String
+    var coachingStyle: CoachingStyle
     var role: CareerRole
     var capMode: CapMode
     var teamID: UUID?
@@ -52,6 +53,7 @@ final class Career {
     init(
         playerName: String,
         avatarID: String = "coach_m1",
+        coachingStyle: CoachingStyle = .tactician,
         role: CareerRole,
         capMode: CapMode,
         currentSeason: Int = 2026
@@ -59,6 +61,7 @@ final class Career {
         self.id = UUID()
         self.playerName = playerName
         self.avatarID = avatarID
+        self.coachingStyle = coachingStyle
         self.role = role
         self.capMode = capMode
         self.teamID = nil

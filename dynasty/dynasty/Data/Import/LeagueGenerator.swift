@@ -226,8 +226,10 @@ enum LeagueGenerator {
     private static func generateOwner() -> Owner {
         let first = ownerFirstNames.randomElement()!
         let last = ownerLastNames.randomElement()!
+        let avatarID = OwnerAvatars.allIDs.randomElement()!
         return Owner(
             name: "\(first) \(last)",
+            avatarID: avatarID,
             patience: Int.random(in: 2...9),
             spendingWillingness: Int.random(in: 20...95),
             meddling: Int.random(in: 5...80),

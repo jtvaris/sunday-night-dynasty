@@ -1,28 +1,15 @@
 import SwiftUI
 
-/// Displays an owner avatar cropped from a grid image.
-/// Grid images are 1024x1024 with 4 columns x 3 rows of portraits.
+/// Displays an owner avatar from a pre-cropped individual image.
 struct OwnerAvatarImageView: View {
-    let gridImage: String
-    let row: Int        // 0-2
-    let col: Int        // 0-3
+    let avatarID: String   // "owner_m1" etc — matches the asset name
     var size: CGFloat = 64
     var grayscale: Bool = false
 
-    private let gridCols: CGFloat = 4
-    private let gridRows: CGFloat = 3
-
     var body: some View {
-        let scaledWidth = size * gridCols
-        let scaledHeight = size * gridRows
-
-        Image(gridImage)
+        Image(avatarID)
             .resizable()
-            .frame(width: scaledWidth, height: scaledHeight)
-            .offset(
-                x: -size * CGFloat(col) + (size * (gridCols - 1) / 2),
-                y: -size * CGFloat(row) + (size * (gridRows - 1) / 2)
-            )
+            .scaledToFill()
             .frame(width: size, height: size)
             .clipShape(Circle())
             .saturation(grayscale ? 0 : 1)
@@ -33,16 +20,19 @@ struct OwnerAvatarImageView: View {
     }
 }
 
-/// Helper to get a deterministic owner avatar based on owner name hash
-enum OwnerAvatarMapper {
-    static func avatarPosition(for ownerName: String) -> (gridImage: String, row: Int, col: Int) {
+/// All available owner avatar IDs.
+enum OwnerAvatars {
+    static let allIDs: [String] = [
+        "owner_m1", "owner_m2", "owner_m3", "owner_m4", "owner_m5",
+        "owner_m6", "owner_m7", "owner_m8", "owner_m9", "owner_m10", "owner_m11",
+        "owner_f1", "owner_f2", "owner_f3"
+    ]
+
+    /// Returns a deterministic owner avatar ID based on the owner's name.
+    static func avatarID(for ownerName: String) -> String {
         let hash = abs(ownerName.hashValue)
-        let gridIndex = (hash % 4) + 1
-        let totalPositions = 12
-        let position = hash % totalPositions
-        let row = position / 4
-        let col = position % 4
-        return (gridImage: "OwnerAvatarGrid\(gridIndex)", row: row, col: col)
+        let index = hash % allIDs.count
+        return allIDs[index]
     }
 }
 
@@ -51,14 +41,16 @@ enum OwnerAvatarMapper {
         Color.backgroundPrimary.ignoresSafeArea()
         VStack(spacing: 20) {
             HStack(spacing: 16) {
-                ForEach(0..<4, id: \.self) { col in
-                    OwnerAvatarImageView(gridImage: "OwnerAvatarGrid1", row: 0, col: col, size: 80)
-                }
+                OwnerAvatarImageView(avatarID: "owner_m1", size: 80)
+                OwnerAvatarImageView(avatarID: "owner_m2", size: 80)
+                OwnerAvatarImageView(avatarID: "owner_m3", size: 80)
+                OwnerAvatarImageView(avatarID: "owner_f1", size: 80)
             }
             HStack(spacing: 16) {
-                ForEach(0..<4, id: \.self) { col in
-                    OwnerAvatarImageView(gridImage: "OwnerAvatarGrid1", row: 1, col: col, size: 80, grayscale: true)
-                }
+                OwnerAvatarImageView(avatarID: "owner_m4", size: 80, grayscale: true)
+                OwnerAvatarImageView(avatarID: "owner_m5", size: 80, grayscale: true)
+                OwnerAvatarImageView(avatarID: "owner_f2", size: 80, grayscale: true)
+                OwnerAvatarImageView(avatarID: "owner_f3", size: 80, grayscale: true)
             }
         }
     }

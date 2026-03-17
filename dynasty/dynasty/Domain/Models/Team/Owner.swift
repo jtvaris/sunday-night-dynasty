@@ -5,6 +5,7 @@ import SwiftData
 final class Owner {
     var id: UUID
     var name: String
+    var avatarID: String
 
     /// How many bad seasons the owner will tolerate before firing the coach (scale 1–10).
     var patience: Int
@@ -24,6 +25,7 @@ final class Owner {
     init(
         id: UUID = UUID(),
         name: String,
+        avatarID: String = "owner_m1",
         patience: Int = 5,
         spendingWillingness: Int = 50,
         meddling: Int = 30,
@@ -32,6 +34,7 @@ final class Owner {
     ) {
         self.id = id
         self.name = name
+        self.avatarID = avatarID
         self.patience = patience
         self.spendingWillingness = spendingWillingness
         self.meddling = meddling

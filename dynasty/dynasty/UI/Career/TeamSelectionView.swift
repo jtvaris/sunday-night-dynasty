@@ -5,6 +5,7 @@ struct TeamSelectionView: View {
 
     let playerName: String
     let avatarID: String
+    let coachingStyle: CoachingStyle
     let selectedRole: CareerRole
     let selectedCapMode: CapMode
 
@@ -132,6 +133,7 @@ struct TeamSelectionView: View {
         let career = Career(
             playerName: playerName,
             avatarID: avatarID,
+            coachingStyle: coachingStyle,
             role: selectedRole,
             capMode: selectedCapMode
         )
@@ -341,6 +343,7 @@ private struct StatPill: View {
         TeamSelectionView(
             playerName: "John Doe",
             avatarID: "coach_m1",
+            coachingStyle: .tactician,
             selectedRole: .gm,
             selectedCapMode: .simple
         )

@@ -5,6 +5,7 @@ struct NewCareerView: View {
 
     @State private var playerName: String = ""
     @State private var selectedAvatarID: String = "coach_m1"
+    @State private var selectedCoachingStyle: CoachingStyle = .tactician
     @State private var selectedRole: CareerRole = .gmAndHeadCoach
     @State private var selectedCapMode: CapMode = .realistic
 
@@ -42,10 +43,27 @@ struct NewCareerView: View {
                         }
                     }
 
+                    // MARK: - Coaching Style Card
+                    cardSection(icon: "gamecontroller.fill", title: "Coaching Style") {
+                        VStack(spacing: 10) {
+                            ForEach(CoachingStyle.allCases, id: \.self) { style in
+                                CoachingStyleCard(
+                                    style: style,
+                                    isSelected: selectedCoachingStyle == style
+                                )
+                                .onTapGesture {
+                                    withAnimation(.spring(response: 0.3)) {
+                                        selectedCoachingStyle = style
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // MARK: - Avatar Selection Card
                     cardSection(icon: "person.crop.circle.fill", title: "Your Look") {
                         VStack(spacing: 12) {
-                            AvatarSelectionView(selectedAvatarID: $selectedAvatarID, avatarSize: 96)
+                            AvatarSelectionView(selectedAvatarID: $selectedAvatarID, avatarSize: 72)
                                 .padding(.vertical, 4)
 
                             if let avatar = CoachAvatars.avatar(for: selectedAvatarID) {
@@ -104,6 +122,7 @@ struct NewCareerView: View {
                     NavigationLink(destination: TeamSelectionView(
                         playerName: playerName,
                         avatarID: selectedAvatarID,
+                        coachingStyle: selectedCoachingStyle,
                         selectedRole: selectedRole,
                         selectedCapMode: selectedCapMode
                     )) {
@@ -172,6 +191,68 @@ struct NewCareerView: View {
         }
         .padding(16)
         .cardBackground()
+    }
+}
+
+// MARK: - Coaching Style Card
+
+private struct CoachingStyleCard: View {
+    let style: CoachingStyle
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 14) {
+            // Icon
+            ZStack {
+                Circle()
+                    .fill(isSelected ? Color.accentGold.opacity(0.2) : Color.backgroundTertiary)
+                    .frame(width: 44, height: 44)
+                Image(systemName: style.icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(isSelected ? Color.accentGold : Color.textSecondary)
+            }
+
+            // Text
+            VStack(alignment: .leading, spacing: 3) {
+                Text(style.displayName)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(isSelected ? Color.accentGold : Color.textPrimary)
+
+                Text(style.description)
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 4)
+
+            // Bonus badge
+            VStack(spacing: 2) {
+                Text("+\(style.bonusValue)")
+                    .font(.system(size: 14, weight: .bold).monospacedDigit())
+                    .foregroundStyle(isSelected ? Color.accentGold : Color.textTertiary)
+                Text(style.bonusAttribute)
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(isSelected ? Color.accentGold.opacity(0.8) : Color.textTertiary)
+                    .lineLimit(1)
+            }
+            .frame(width: 60)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isSelected ? Color.accentGold.opacity(0.08) : Color.backgroundPrimary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(
+                    isSelected ? Color.accentGold : Color.surfaceBorder,
+                    lineWidth: isSelected ? 2 : 1
+                )
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(style.displayName), \(style.description), plus \(style.bonusValue) \(style.bonusAttribute)")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
 
