@@ -312,15 +312,20 @@ private struct OwnerMeetingStep: View {
                     .transition(.opacity)
                 }
 
-                Spacer().frame(height: 12)
-
-                IntroContinueButton(action: onContinue)
-                    .padding(.bottom, 40)
+                Spacer().frame(height: 80)
             }
             .frame(maxWidth: 800)
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
+        .safeAreaInset(edge: .bottom) {
+            IntroContinueButton(action: onContinue)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 16)
+                .padding(.top, 12)
+                .frame(maxWidth: .infinity)
+                .background(Color.backgroundPrimary.opacity(0.95))
+        }
         }
         .onAppear { runAnimations() }
     }
@@ -513,15 +518,20 @@ private struct TeamOverviewStep: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
-                Spacer().frame(height: 12)
-
-                IntroContinueButton(action: onContinue)
-                    .padding(.bottom, 40)
+                Spacer().frame(height: 80)
             }
             .frame(maxWidth: 800)
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
+        .safeAreaInset(edge: .bottom) {
+            IntroContinueButton(action: onContinue)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 16)
+                .padding(.top, 12)
+                .frame(maxWidth: .infinity)
+                .background(Color.backgroundPrimary.opacity(0.95))
+        }
         .onAppear { runAnimations() }
     }
 
@@ -562,103 +572,135 @@ private struct YourRoadmapStep: View {
         CalendarEntry(name: "Regular Season", description: "18 weeks of football"),
     ]
 
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                Spacer().frame(height: 20)
+    private var calendarCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            SectionLabel(text: "OFFSEASON CALENDAR")
 
-                // Header
-                if showHeader {
-                    VStack(spacing: 12) {
-                        Image(systemName: "map.fill")
-                            .font(.system(size: 36))
-                            .foregroundStyle(Color.accentGold)
+            Text("Your journey through the NFL year:")
+                .font(.subheadline)
+                .foregroundStyle(Color.textSecondary)
 
-                        Text("YOUR ROADMAP")
-                            .font(.system(size: 14, weight: .black))
-                            .tracking(4)
-                            .foregroundStyle(Color.accentGold)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(Self.offseasonCalendarEntries.enumerated()), id: \.offset) { index, entry in
+                    HStack(alignment: .top, spacing: 12) {
+                        // Timeline connector
+                        VStack(spacing: 0) {
+                            Circle()
+                                .fill(index == 0 ? Color.accentGold : Color.textTertiary.opacity(0.5))
+                                .frame(width: index == 0 ? 10 : 8, height: index == 0 ? 10 : 8)
 
-                        Text("Here's what lies ahead in your first offseason")
-                            .font(.subheadline)
-                            .foregroundStyle(Color.textSecondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-
-                // Offseason calendar timeline
-                if showCalendar {
-                    VStack(alignment: .leading, spacing: 16) {
-                        SectionLabel(text: "OFFSEASON CALENDAR")
-
-                        Text("Your journey through the NFL year:")
-                            .font(.subheadline)
-                            .foregroundStyle(Color.textSecondary)
-
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(Self.offseasonCalendarEntries.enumerated()), id: \.offset) { index, entry in
-                                HStack(alignment: .top, spacing: 12) {
-                                    // Timeline connector
-                                    VStack(spacing: 0) {
-                                        Circle()
-                                            .fill(index == 0 ? Color.accentGold : Color.textTertiary.opacity(0.5))
-                                            .frame(width: index == 0 ? 10 : 8, height: index == 0 ? 10 : 8)
-
-                                        if index < Self.offseasonCalendarEntries.count - 1 {
-                                            Rectangle()
-                                                .fill(Color.surfaceBorder)
-                                                .frame(width: 2)
-                                                .frame(maxHeight: .infinity)
-                                        }
-                                    }
-                                    .frame(width: 16)
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(entry.name)
-                                            .font(.subheadline.weight(index == 0 ? .bold : .medium))
-                                            .foregroundStyle(index == 0 ? Color.accentGold : Color.textPrimary)
-                                        Text(entry.description)
-                                            .font(.caption)
-                                            .foregroundStyle(Color.textSecondary)
-                                    }
-
-                                    Spacer()
-                                }
-                                .padding(.vertical, 6)
+                            if index < Self.offseasonCalendarEntries.count - 1 {
+                                Rectangle()
+                                    .fill(Color.surfaceBorder)
+                                    .frame(width: 2)
+                                    .frame(maxHeight: .infinity)
                             }
                         }
+                        .frame(width: 16)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.name)
+                                .font(.subheadline.weight(index == 0 ? .bold : .medium))
+                                .foregroundStyle(index == 0 ? Color.accentGold : Color.textPrimary)
+                            Text(entry.description)
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                        }
+
+                        Spacer()
                     }
-                    .padding(20)
-                    .cardBackground()
-                    .padding(.horizontal, 24)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .padding(.vertical, 6)
                 }
-
-                // First tasks
-                if showTasks {
-                    VStack(alignment: .leading, spacing: 16) {
-                        SectionLabel(text: "YOUR FIRST TASKS")
-
-                        TaskRow(number: 1, text: "Hire your coaching staff")
-                        TaskRow(number: 2, text: "Evaluate the roster")
-                        TaskRow(number: 3, text: "Prepare for the Combine and Free Agency")
-                    }
-                    .padding(20)
-                    .cardBackground()
-                    .padding(.horizontal, 24)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-
-                Spacer().frame(height: 12)
-
-                IntroContinueButton(action: onContinue)
-                    .padding(.bottom, 40)
             }
-            .frame(maxWidth: 800)
-            .frame(maxWidth: .infinity)
         }
-        .scrollIndicators(.hidden)
+        .padding(20)
+        .cardBackground()
+    }
+
+    private var tasksCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            SectionLabel(text: "YOUR FIRST TASKS")
+
+            TaskRow(number: 1, text: "Hire your coaching staff")
+            TaskRow(number: 2, text: "Evaluate the roster")
+            TaskRow(number: 3, text: "Prepare for the Combine and Free Agency")
+        }
+        .padding(20)
+        .cardBackground()
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let isLandscape = geo.size.width > geo.size.height
+
+            ScrollView {
+                VStack(spacing: 24) {
+                    Spacer().frame(height: 20)
+
+                    // Header
+                    if showHeader {
+                        VStack(spacing: 12) {
+                            Image(systemName: "map.fill")
+                                .font(.system(size: 36))
+                                .foregroundStyle(Color.accentGold)
+
+                            Text("YOUR ROADMAP")
+                                .font(.system(size: 14, weight: .black))
+                                .tracking(4)
+                                .foregroundStyle(Color.accentGold)
+
+                            Text("Here's what lies ahead in your first offseason")
+                                .font(.subheadline)
+                                .foregroundStyle(Color.textSecondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
+                    if isLandscape {
+                        // Landscape: Calendar and Tasks side by side
+                        HStack(alignment: .top, spacing: 16) {
+                            if showCalendar {
+                                calendarCard
+                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            }
+
+                            if showTasks {
+                                tasksCard
+                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                    } else {
+                        // Portrait: stacked vertically
+                        if showCalendar {
+                            calendarCard
+                                .padding(.horizontal, 24)
+                                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        }
+
+                        if showTasks {
+                            tasksCard
+                                .padding(.horizontal, 24)
+                                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        }
+                    }
+
+                    Spacer().frame(height: 80)
+                }
+                .frame(maxWidth: 800)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollIndicators(.hidden)
+            .safeAreaInset(edge: .bottom) {
+                IntroContinueButton(action: onContinue)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 16)
+                    .padding(.top, 12)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.backgroundPrimary.opacity(0.95))
+            }
+        }
         .onAppear { runAnimations() }
     }
 
@@ -733,29 +775,34 @@ private struct ReadyToBeginStep: View {
                             .foregroundStyle(Color.accentGold)
                             .transition(.opacity)
                     }
-
-                if showButton {
-                    Button(action: onEnter) {
-                        HStack(spacing: 12) {
-                            Text("Enter the Front Office")
-                                .font(.headline.weight(.bold))
-                            Image(systemName: "arrow.right")
-                                .font(.headline)
-                        }
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 40)
-                        .padding(.vertical, 18)
-                        .background(
-                            Capsule()
-                                .fill(Color.accentGold)
-                                .shadow(color: Color.accentGold.opacity(0.4), radius: 12, y: 4)
-                        )
-                    }
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
-            }
 
                 Spacer()
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if showButton {
+                Button(action: onEnter) {
+                    HStack(spacing: 12) {
+                        Text("Enter the Front Office")
+                            .font(.headline.weight(.bold))
+                        Image(systemName: "arrow.right")
+                            .font(.headline)
+                    }
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .padding(.horizontal, 40)
+                    .padding(.vertical, 18)
+                    .background(
+                        Capsule()
+                            .fill(Color.accentGold)
+                            .shadow(color: Color.accentGold.opacity(0.4), radius: 12, y: 4)
+                    )
+                }
+                .padding(.bottom, 16)
+                .padding(.top, 12)
+                .frame(maxWidth: .infinity)
+                .background(Color.backgroundPrimary.opacity(0.95))
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
         .onAppear { runAnimations() }
