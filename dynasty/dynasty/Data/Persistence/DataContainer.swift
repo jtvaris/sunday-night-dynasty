@@ -16,6 +16,7 @@ enum DataContainer {
             Contract.self,
             Scout.self,
             CollegeProspect.self,
+            DraftPick.self,
         ])
         let config = ModelConfiguration(isStoredInMemoryOnly: false)
         do {

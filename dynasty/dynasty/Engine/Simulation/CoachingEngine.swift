@@ -474,6 +474,32 @@ enum CoachingEngine {
 
         return min(1.5, max(0.8, multiplier))
     }
+
+    // MARK: - Position Role Matching
+
+    /// Returns `true` if the coach's role is a direct position-group match for the player.
+    static func positionRoleMatch(coachRole: CoachRole, playerPosition: Position) -> Bool {
+        switch coachRole {
+        case .qbCoach:
+            return playerPosition == .QB
+        case .rbCoach:
+            return playerPosition == .RB || playerPosition == .FB
+        case .wrCoach:
+            return playerPosition == .WR || playerPosition == .TE
+        case .olCoach:
+            return [.LT, .LG, .C, .RG, .RT].contains(playerPosition)
+        case .dlCoach:
+            return [.DE, .DT].contains(playerPosition)
+        case .lbCoach:
+            return [.MLB, .OLB].contains(playerPosition)
+        case .dbCoach:
+            return [.CB, .FS, .SS].contains(playerPosition)
+        case .strengthCoach:
+            return true  // Strength coach benefits every player equally
+        default:
+            return false
+        }
+    }
 }
 
 // MARK: - Private Helpers
@@ -500,30 +526,6 @@ private extension CoachingEngine {
         switch role {
         case .defensiveCoordinator, .dlCoach, .lbCoach, .dbCoach:
             return true
-        default:
-            return false
-        }
-    }
-
-    /// Returns `true` if the coach's role is a direct position-group match for the player.
-    static func positionRoleMatch(coachRole: CoachRole, playerPosition: Position) -> Bool {
-        switch coachRole {
-        case .qbCoach:
-            return playerPosition == .QB
-        case .rbCoach:
-            return playerPosition == .RB || playerPosition == .FB
-        case .wrCoach:
-            return playerPosition == .WR || playerPosition == .TE
-        case .olCoach:
-            return [.LT, .LG, .C, .RG, .RT].contains(playerPosition)
-        case .dlCoach:
-            return [.DE, .DT].contains(playerPosition)
-        case .lbCoach:
-            return [.MLB, .OLB].contains(playerPosition)
-        case .dbCoach:
-            return [.CB, .FS, .SS].contains(playerPosition)
-        case .strengthCoach:
-            return true  // Strength coach benefits every player equally
         default:
             return false
         }

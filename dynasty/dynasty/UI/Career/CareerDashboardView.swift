@@ -95,10 +95,32 @@ struct CareerDashboardView: View {
                     .foregroundStyle(Color.accentGold)
                     .padding(.top, 2)
             }
+
+            if let owner = team?.owner {
+                HStack(spacing: 6) {
+                    Image(systemName: "building.2.fill")
+                        .font(.caption2)
+                    Text("Owner: \(owner.satisfaction)% satisfied")
+                        .font(.caption)
+                }
+                .foregroundStyle(ownerSatisfactionIndicatorColor(owner.satisfaction))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(ownerSatisfactionIndicatorColor(owner.satisfaction).opacity(0.15))
+                )
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(24)
         .cardBackground()
+    }
+
+    private func ownerSatisfactionIndicatorColor(_ value: Int) -> Color {
+        if value > 60  { return Color.success }
+        if value >= 35 { return Color.warning }
+        return Color.danger
     }
 
     // MARK: - Season Info Card
@@ -233,6 +255,20 @@ struct CareerDashboardView: View {
                 }
             }
 
+            if career.currentPhase == .draft {
+                Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+                NavigationLink {
+                    DraftView(career: career)
+                } label: {
+                    dashboardNavRow(
+                        icon: "list.clipboard.fill",
+                        label: "NFL Draft",
+                        detail: "Active"
+                    )
+                }
+            }
+
             Divider().overlay(Color.surfaceBorder.opacity(0.5))
 
             NavigationLink {
@@ -244,10 +280,40 @@ struct CareerDashboardView: View {
                     detail: phaseDisplayName(career.currentPhase)
                 )
             }
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+            NavigationLink {
+                NewsView(career: career)
+            } label: {
+                dashboardNavRow(
+                    icon: "newspaper.fill",
+                    label: "News",
+                    detail: "Headlines"
+                )
+            }
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+            NavigationLink {
+                OwnerMeetingView(career: career)
+            } label: {
+                dashboardNavRow(
+                    icon: "building.2.fill",
+                    label: "Owner",
+                    detail: ownerSatisfactionDetail
+                )
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(20)
         .cardBackground()
+    }
+
+    /// Satisfaction percentage pulled from the team's owner, or a dash if unavailable.
+    private var ownerSatisfactionDetail: String {
+        guard let owner = team?.owner else { return "—" }
+        return "\(owner.satisfaction)% satisfied"
     }
 
     private func formatCapDetail(_ thousands: Int) -> String {
