@@ -8,6 +8,7 @@ struct TopNavigationBar: View {
     let teamName: String
     let pendingTaskCount: Int
     let onCalendarTapped: () -> Void
+    var onQuitTapped: (() -> Void)?
 
     // MARK: - Bookmark Definitions
 
@@ -48,9 +49,21 @@ struct TopNavigationBar: View {
 
             Spacer(minLength: 8)
 
-            // MARK: Right — Calendar / Tasks
-            calendarButton
-                .frame(minWidth: 52, alignment: .trailing)
+            // MARK: Right — Calendar + Quit
+            HStack(spacing: 12) {
+                calendarButton
+
+                Button {
+                    onQuitTapped?()
+                } label: {
+                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(Color.textSecondary)
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Quit to main menu")
+            }
+            .frame(alignment: .trailing)
         }
         .padding(.horizontal, 16)
         .frame(height: 52)

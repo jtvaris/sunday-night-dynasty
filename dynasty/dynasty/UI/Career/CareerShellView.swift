@@ -10,6 +10,7 @@ struct CareerShellView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var showCalendar = false
+    @State private var showQuitConfirmation = false
     @State private var team: Team?
     @State private var upcomingGames: [Game] = []
     @State private var allTeamsByID: [UUID: Team] = [:]
@@ -32,6 +33,7 @@ struct CareerShellView: View {
                 teamName: team?.fullName ?? "No Team",
                 pendingTaskCount: pendingTaskCount,
                 onCalendarTapped: { showCalendar = true },
+                onQuitTapped: { showQuitConfirmation = true },
                 onBookmarkTapped: { destination in
                     handleBookmarkNavigation(destination)
                 }
@@ -49,6 +51,22 @@ struct CareerShellView: View {
         }
         .background(Color.backgroundPrimary)
         .navigationBarBackButtonHidden(true)
+        .alert("Quit to Main Menu?", isPresented: $showQuitConfirmation) {
+            Button("Quit", role: .destructive) {
+                // Pop to root by dismissing
+                if let window = UIApplication.shared.connectedScenes
+                    .compactMap({ $0 as? UIWindowScene })
+                    .first?.windows.first {
+                    window.rootViewController = UIHostingController(rootView:
+                        ContentView()
+                            .modelContainer(DataContainer.create())
+                    )
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your progress is saved automatically.")
+        }
         .task { loadShellData() }
         .onChange(of: career.currentPhase) { _, newPhase in
             regenerateTasks(for: newPhase)
