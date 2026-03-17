@@ -556,6 +556,26 @@ private struct TeamDetailSheet: View {
                     .padding(.vertical, 14)
                     .cardBackground()
 
+                    // Coaching budget row
+                    VStack(spacing: 8) {
+                        sectionLabel("Coaching Budget")
+
+                        HStack(spacing: 8) {
+                            Image(systemName: "dollarsign.square.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(preview.coachingBudget >= 18 ? Color.success : preview.coachingBudget >= 13 ? Color.accentGold : Color.warning)
+                            Text("$\(preview.coachingBudget)M")
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(preview.coachingBudget >= 18 ? Color.success : preview.coachingBudget >= 13 ? Color.accentGold : Color.warning)
+                            Text("for coaching & scouting staff")
+                                .font(.caption)
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity)
+                    .cardBackground()
+
                     // Select button
                     Button(action: onSelect) {
                         Text("SELECT THIS TEAM")

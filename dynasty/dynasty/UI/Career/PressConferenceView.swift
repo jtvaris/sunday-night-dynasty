@@ -539,10 +539,13 @@ struct PressConferenceView: View {
     // MARK: - Actions
 
     private func generateQuestions() {
-        guard let realOwner = owner else { return }
+        // Use the real owner if available; otherwise fall back to a neutral placeholder
+        // so the press conference is never empty even if the owner relationship hasn't
+        // been loaded from SwiftData yet.
+        let effectiveOwner = owner ?? Owner(name: "The Owner")
         questions = PressConferenceEngine.generateIntroConference(
             team: team,
-            owner: realOwner,
+            owner: effectiveOwner,
             career: career
         )
     }
