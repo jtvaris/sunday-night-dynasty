@@ -43,10 +43,7 @@ struct CareerShellView: View {
                 }
             )
 
-            // Compact timeline strip (minimal dots for quick reference)
-            TimelineStripView(currentPhase: career.currentPhase, currentWeek: career.currentWeek)
-
-            // Main content area
+            // Main content area (timeline is inside CareerDashboardView)
             NavigationStack(path: $navigationPath) {
                 CareerDashboardView(
                     career: career,
@@ -497,6 +494,20 @@ struct CareerShellView: View {
 
         // Generate tasks on initial load
         regenerateTasks(for: career.currentPhase)
+
+        // Generate initial inbox messages if empty (first time entering dashboard)
+        if inboxMessages.isEmpty, let playerTeam = team {
+            let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+            let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
+            let messages = InboxEngine.generatePhaseMessages(
+                phase: career.currentPhase,
+                career: career,
+                team: playerTeam,
+                coaches: coaches,
+                owner: playerTeam.owner
+            )
+            inboxMessages = messages
+        }
     }
 }
 

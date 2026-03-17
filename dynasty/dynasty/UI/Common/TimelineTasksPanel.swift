@@ -60,11 +60,11 @@ struct TimelineTasksPanel: View {
                     // Current phase (expanded with real tasks)
                     currentPhaseSection
 
-                    // Advance button
+                    // Advance button (full width within panel)
                     advanceSection
-                        .padding(.horizontal, 14)
+                        .padding(.horizontal, 12)
                         .padding(.top, 12)
-                        .padding(.bottom, 8)
+                        .padding(.bottom, 10)
 
                     // Upcoming phases (expanded with preview tasks)
                     ForEach(Array(upcomingPhaseTasks.enumerated()), id: \.element.phase) { index, entry in
@@ -79,6 +79,7 @@ struct TimelineTasksPanel: View {
                 .padding(.bottom, 16)
             }
         }
+        .frame(minWidth: 280)
         .background(Color.backgroundSecondary)
     }
 
@@ -249,7 +250,8 @@ struct TimelineTasksPanel: View {
                             .font(.system(size: 13, weight: task.status == .done ? .regular : .medium))
                             .foregroundStyle(task.status == .done ? Color.textTertiary : Color.textPrimary)
                             .strikethrough(task.status == .done, color: Color.textTertiary)
-                            .lineLimit(1)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
 
                         if isRequired && task.status != .done {
                             Text("Required")

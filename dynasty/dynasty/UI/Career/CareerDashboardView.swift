@@ -9,7 +9,7 @@ struct CareerDashboardView: View {
     var onTaskSelected: (TaskDestination) -> Void
     var onAdvance: (() -> Void)? = nil
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    // Layout detection uses GeometryReader in body
 
     // MARK: - State
 
@@ -37,9 +37,7 @@ struct CareerDashboardView: View {
         TaskGenerator.allRequiredComplete(in: tasks)
     }
 
-    private var isLandscape: Bool {
-        horizontalSizeClass == .regular
-    }
+    // Landscape detection now uses GeometryReader in the body.
 
     // MARK: - Advance Logic
 
@@ -65,18 +63,22 @@ struct CareerDashboardView: View {
     // MARK: - Body
 
     var body: some View {
-        ZStack {
-            Color.backgroundPrimary.ignoresSafeArea()
+        GeometryReader { geo in
+            let landscape = geo.size.width > geo.size.height
 
-            VStack(spacing: 0) {
-                // Timeline strip -- always at top
-                timelineStrip
-                    .padding(.top, 4)
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
 
-                if isLandscape {
-                    landscapeLayout
-                } else {
-                    portraitLayout
+                VStack(spacing: 0) {
+                    // Single timeline strip at top
+                    timelineStrip
+                        .padding(.top, 4)
+
+                    if landscape {
+                        landscapeLayout
+                    } else {
+                        portraitLayout
+                    }
                 }
             }
         }
@@ -97,54 +99,49 @@ struct CareerDashboardView: View {
         }
     }
 
-    // MARK: - Landscape Layout (3-column + bottom messages)
+    // MARK: - Landscape Layout (3-column)
 
     private var landscapeLayout: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 0) {
-                // Left column -- Timeline+Tasks Panel (30%)
-                TimelineTasksPanel(
-                    career: career,
-                    tasks: $tasks,
-                    onTaskSelected: onTaskSelected,
-                    onAdvance: { performAdvance() },
-                    canAdvance: canAdvance
-                )
-                .frame(maxWidth: .infinity)
-                .layoutPriority(0.3)
+        HStack(alignment: .top, spacing: 0) {
+            // Left column -- Timeline+Tasks Panel (fixed 300pt)
+            TimelineTasksPanel(
+                career: career,
+                tasks: $tasks,
+                onTaskSelected: onTaskSelected,
+                onAdvance: { performAdvance() },
+                canAdvance: canAdvance
+            )
+            .frame(width: 300)
 
-                Divider().overlay(Color.surfaceBorder)
+            Divider().overlay(Color.surfaceBorder)
 
-                // Center column -- Dashboard tiles + Messages (40%)
-                ScrollView {
-                    VStack(spacing: 12) {
-                        centerTilesGrid
-                        messagesPanel
-                            .frame(height: 280)
-                            .background(Color.backgroundSecondary)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                            )
-                    }
-                    .padding(12)
+            // Center column -- Dashboard tiles + Messages (flexible)
+            ScrollView {
+                VStack(spacing: 12) {
+                    centerTilesGrid
+                    messagesPanel
+                        .frame(minHeight: 280)
+                        .background(Color.backgroundSecondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                        )
                 }
-                .frame(maxWidth: .infinity)
-                .layoutPriority(0.4)
-
-                Divider().overlay(Color.surfaceBorder)
-
-                // Right column -- Schedule + Standings (30%)
-                ScrollView {
-                    rightPanel
-                        .padding(12)
-                }
-                .frame(maxWidth: .infinity)
-                .layoutPriority(0.3)
+                .padding(12)
             }
-            .frame(maxHeight: .infinity)
+            .frame(maxWidth: .infinity)
+
+            Divider().overlay(Color.surfaceBorder)
+
+            // Right column -- Schedule + Standings (fixed 220pt)
+            ScrollView {
+                rightPanel
+                    .padding(12)
+            }
+            .frame(width: 220)
         }
+        .frame(maxHeight: .infinity)
     }
 
     // MARK: - Portrait Layout (stacked)
@@ -152,7 +149,7 @@ struct CareerDashboardView: View {
     private var portraitLayout: some View {
         ScrollView {
             VStack(spacing: 12) {
-                // Timeline+Tasks panel (replaces old phaseTasksSection + advance button)
+                // Timeline+Tasks panel (full width, collapsible)
                 TimelineTasksPanel(
                     career: career,
                     tasks: $tasks,
@@ -160,7 +157,7 @@ struct CareerDashboardView: View {
                     onAdvance: { performAdvance() },
                     canAdvance: canAdvance
                 )
-                .frame(minHeight: 300, maxHeight: 500)
+                .frame(minWidth: 320, minHeight: 280, maxHeight: 460)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
@@ -168,33 +165,30 @@ struct CareerDashboardView: View {
                 )
                 .padding(.horizontal, 16)
 
-                // Messages + Schedule side by side
-                HStack(alignment: .top, spacing: 0) {
-                    messagesPanel
-                        .frame(maxWidth: .infinity)
-
-                    Divider().overlay(Color.surfaceBorder)
-
-                    ScrollView {
-                        VStack(spacing: 12) {
-                            // Schedule + Standings in portrait
-                            rightPanel
-                        }
-                        .padding(12)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .frame(height: 320)
-                .background(Color.backgroundSecondary)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                )
-                .padding(.horizontal, 16)
-
-                // Tiles grid
+                // 2-column tile grid
                 centerTilesGrid
+                    .padding(.horizontal, 16)
+
+                // Messages section (full width)
+                messagesPanel
+                    .frame(minHeight: 280)
+                    .background(Color.backgroundSecondary)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                    )
+                    .padding(.horizontal, 16)
+
+                // Schedule + Standings
+                rightPanel
+                    .padding(12)
+                    .background(Color.backgroundSecondary)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                    )
                     .padding(.horizontal, 16)
                     .padding(.bottom, 16)
             }
