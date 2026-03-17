@@ -12,51 +12,20 @@ struct TeamSelectionView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var selectedCareer: Career?
     @State private var isLoading = false
+    @State private var selectedConference: Conference = .AFC
+    @State private var detailTeam: NFLTeamDefinition?
 
     /// All 32 NFL teams from static data.
     private let allTeams = NFLTeamData.allTeams
 
-    /// Flat list items for rendering without nested ForEach (avoids SwiftUI id conflicts)
-    private enum TeamListItem: Identifiable {
-        case conferenceHeader(String)
-        case divisionHeader(String)
-        case team(NFLTeamDefinition)
-
-        var id: String {
-            switch self {
-            case .conferenceHeader(let c): return "conf_\(c)"
-            case .divisionHeader(let d): return "div_\(d)"
-            case .team(let t): return "team_\(t.abbreviation)"
-            }
-        }
-    }
-
-    private var flatTeamList: [TeamListItem] {
-        var items: [TeamListItem] = []
-        for group in teamsByConference {
-            let confName = group.conference.rawValue
-            items.append(.conferenceHeader(confName))
-            for divGroup in group.divisions {
-                items.append(.divisionHeader("\(confName)_\(divGroup.division.rawValue)"))
-                for team in divGroup.teams {
-                    items.append(.team(team))
-                }
-            }
-        }
-        return items
-    }
-
-    /// Teams grouped by conference then division for sectioned display.
-    private var teamsByConference: [(conference: Conference, divisions: [(division: Division, teams: [NFLTeamDefinition])])] {
-        Conference.allCases.map { conference in
-            let conferenceTeams = allTeams.filter { $0.conference == conference }
-            let divisions = Division.allCases.map { division in
-                let divisionTeams = conferenceTeams
-                    .filter { $0.division == division }
-                    .sorted { $0.city < $1.city }
-                return (division: division, teams: divisionTeams)
-            }
-            return (conference: conference, divisions: divisions)
+    /// Teams for the currently selected conference, grouped by division.
+    private var divisionsForConference: [(division: Division, teams: [NFLTeamDefinition])] {
+        let conferenceTeams = allTeams.filter { $0.conference == selectedConference }
+        return Division.allCases.map { division in
+            let teams = conferenceTeams
+                .filter { $0.division == division }
+                .sorted { $0.city < $1.city }
+            return (division: division, teams: teams)
         }
     }
 
@@ -64,42 +33,34 @@ struct TeamSelectionView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            ScrollView {
-                LazyVStack(spacing: 24) {
-                    ForEach(flatTeamList, id: \.id) { item in
-                        switch item {
-                        case .conferenceHeader(let conf):
-                            Text(conf)
-                                .font(.system(size: 28, weight: .black))
-                                .tracking(4)
-                                .foregroundStyle(Color.accentGold)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.top, 16)
-                                .padding(.bottom, 4)
-                        case .divisionHeader(let div):
-                            HStack(spacing: 8) {
-                                Image(systemName: "football.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(Color.accentGold)
-                                Text(div.components(separatedBy: "_").dropFirst().joined(separator: " "))
-                                    .font(.subheadline.weight(.bold))
-                                    .foregroundStyle(Color.accentGold)
+            VStack(spacing: 0) {
+                // Conference tab picker
+                conferencePicker
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
+
+                // Team list
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(divisionsForConference, id: \.division) { group in
+                            // Division header
+                            divisionHeader(group.division.rawValue)
+
+                            ForEach(group.teams, id: \.abbreviation) { team in
+                                Button {
+                                    detailTeam = team
+                                } label: {
+                                    CompactTeamRow(team: team)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .padding(.horizontal, 20)
-                        case .team(let team):
-                            Button {
-                                startCareer(with: team)
-                            } label: {
-                                TeamCardView(team: team)
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.horizontal, 16)
                         }
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                    .frame(maxWidth: 800)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.vertical, 16)
-                .frame(maxWidth: 800)
-                .frame(maxWidth: .infinity)
             }
             .disabled(isLoading)
 
@@ -120,9 +81,73 @@ struct TeamSelectionView: View {
         .navigationTitle("Choose Your Team")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .sheet(item: $detailTeam) { team in
+            TeamDetailSheet(team: team) {
+                detailTeam = nil
+                startCareer(with: team)
+            }
+        }
         .navigationDestination(item: $selectedCareer) { career in
             IntroSequenceView(career: career)
         }
+    }
+
+    // MARK: - Conference Picker
+
+    private var conferencePicker: some View {
+        HStack(spacing: 0) {
+            ForEach(Conference.allCases, id: \.self) { conference in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedConference = conference
+                    }
+                } label: {
+                    Text(conference.rawValue)
+                        .font(.system(size: 16, weight: .bold))
+                        .tracking(2)
+                        .foregroundStyle(selectedConference == conference ? Color.backgroundPrimary : Color.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(selectedConference == conference ? Color.accentGold : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+        )
+        .padding(.horizontal, 16)
+        .frame(maxWidth: 400)
+    }
+
+    // MARK: - Division Header
+
+    private func divisionHeader(_ name: String) -> some View {
+        HStack(spacing: 8) {
+            Rectangle()
+                .fill(Color.accentGold.opacity(0.4))
+                .frame(height: 1)
+            Text(name)
+                .font(.system(size: 12, weight: .bold))
+                .tracking(2)
+                .textCase(.uppercase)
+                .foregroundStyle(Color.accentGold)
+                .layoutPriority(1)
+            Rectangle()
+                .fill(Color.accentGold.opacity(0.4))
+                .frame(height: 1)
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 4)
     }
 
     // MARK: - Start Career
@@ -179,9 +204,15 @@ struct TeamSelectionView: View {
     }
 }
 
-// MARK: - Team Card View
+// MARK: - Identifiable conformance for sheet
 
-private struct TeamCardView: View {
+extension NFLTeamDefinition: Identifiable {
+    var id: String { abbreviation }
+}
+
+// MARK: - Compact Team Row
+
+private struct CompactTeamRow: View {
     let team: NFLTeamDefinition
 
     private var preview: TeamPreview { team.preview }
@@ -207,97 +238,204 @@ private struct TeamCardView: View {
         }
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            // Main content area
-            HStack(alignment: .top, spacing: 16) {
-                // Left: Team identity
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("\(team.city) \(team.name)")
-                        .font(.headline)
-                        .foregroundStyle(Color.textPrimary)
-
-                    Text("\(team.conference.rawValue) \(team.division.rawValue)")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.textSecondary)
-                }
-
-                Spacer(minLength: 8)
-
-                // Center: Difficulty & Situation
-                VStack(spacing: 6) {
-                    // Difficulty stars
-                    HStack(spacing: 2) {
-                        ForEach(1...5, id: \.self) { star in
-                            Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
-                                .font(.system(size: 12))
-                                .foregroundStyle(star <= preview.difficulty ? difficultyColor : Color.textTertiary.opacity(0.4))
-                        }
-                    }
-
-                    Text(preview.difficultyLabel)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(difficultyColor)
-
-                    // Situation badge
-                    Text(preview.situation)
-                        .font(.caption2.weight(.bold))
-                        .textCase(.uppercase)
-                        .foregroundStyle(situationColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule()
-                                .fill(situationColor.opacity(0.15))
-                        )
-                }
-
-                Spacer(minLength: 8)
-
-                // Right: Owner expectations
-                VStack(alignment: .trailing, spacing: 6) {
-                    HStack(spacing: 4) {
-                        Image(systemName: preview.ownerPatienceIcon)
-                            .font(.system(size: 11))
-                            .foregroundStyle(ownerPatienceColor)
-                        Text(preview.ownerPatience)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(ownerPatienceColor)
-                    }
-
-                    Text("\(preview.patienceSeasons) season\(preview.patienceSeasons == 1 ? "" : "s") tolerance")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textTertiary)
-                }
-            }
-            .padding(16)
-
-            // Market description
-            Text(preview.marketDescription)
-                .font(.caption)
-                .foregroundStyle(Color.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
-
-            // Divider
-            Rectangle()
-                .fill(Color.surfaceBorder)
-                .frame(height: 1)
-                .padding(.horizontal, 16)
-
-            // Bottom stats row
-            HStack(spacing: 0) {
-                StatPill(icon: "chart.bar.fill", label: "Roster OVR", value: "\(preview.estimatedOVR)", valueColor: Color.forRating(preview.estimatedOVR))
-                StatPill(icon: "dollarsign.circle.fill", label: "Cap Space", value: "$\(preview.estimatedCapSpace)M", valueColor: preview.estimatedCapSpace > 30 ? .success : preview.estimatedCapSpace > 15 ? .accentGold : .warning)
-                StatPill(icon: "doc.text.fill", label: "Draft Picks", value: "\(preview.estimatedDraftPicks)", valueColor: preview.estimatedDraftPicks >= 9 ? .success : preview.estimatedDraftPicks >= 7 ? .textPrimary : .warning)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 10)
+    private var ownerPatienceColor: Color {
+        switch preview.ownerPatience {
+        case "Very Patient": return .success
+        case "Patient":      return .success.opacity(0.8)
+        case "Moderate":     return .accentGold
+        case "Demanding":    return .warning
+        case "Win Now":      return .danger
+        default:             return .textSecondary
         }
-        .cardBackground()
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Team logo placeholder
+            TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 36)
+
+            // Team name + city
+            VStack(alignment: .leading, spacing: 2) {
+                Text(team.name)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.textPrimary)
+                Text(team.city)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .frame(minWidth: 90, alignment: .leading)
+
+            Spacer(minLength: 4)
+
+            // Difficulty stars
+            HStack(spacing: 1) {
+                ForEach(1...5, id: \.self) { star in
+                    Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
+                        .font(.system(size: 9))
+                        .foregroundStyle(star <= preview.difficulty ? difficultyColor : Color.textTertiary.opacity(0.3))
+                }
+            }
+
+            // Situation badge
+            Text(preview.situation)
+                .font(.system(size: 10, weight: .bold))
+                .textCase(.uppercase)
+                .foregroundStyle(situationColor)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(situationColor.opacity(0.15))
+                )
+                .frame(minWidth: 75)
+
+            // Cap space
+            VStack(spacing: 1) {
+                Text("Cap")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+                Text("$\(preview.estimatedCapSpace)M")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(preview.estimatedCapSpace > 30 ? Color.success : preview.estimatedCapSpace > 15 ? Color.accentGold : Color.warning)
+            }
+            .frame(width: 44)
+
+            // Owner patience icon + seasons
+            VStack(spacing: 1) {
+                Image(systemName: preview.ownerPatienceIcon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(ownerPatienceColor)
+                Text("\(preview.patienceSeasons)yr")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .frame(width: 30)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 0.5)
+                )
+        )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(team.city) \(team.name), \(preview.situation), difficulty \(preview.difficulty) of 5, \(preview.ownerPatience) owner")
+        .accessibilityLabel("\(team.city) \(team.name), \(preview.situation), difficulty \(preview.difficulty) of 5")
+    }
+}
+
+// MARK: - Team Logo Placeholder
+
+struct TeamLogoPlaceholder: View {
+    let abbreviation: String
+    var size: CGFloat = 36
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(TeamColors.color(for: abbreviation))
+            Text(abbreviation)
+                .font(.system(size: size * 0.33, weight: .black))
+                .foregroundStyle(.white)
+                .minimumScaleFactor(0.5)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+// MARK: - Team Colors
+
+enum TeamColors {
+    static func color(for abbreviation: String) -> Color {
+        switch abbreviation {
+        // AFC East
+        case "BUF": return Color(red: 0.00, green: 0.20, blue: 0.55)  // Bills blue
+        case "MIA": return Color(red: 0.00, green: 0.55, blue: 0.55)  // Dolphins teal
+        case "NE":  return Color(red: 0.00, green: 0.13, blue: 0.27)  // Patriots navy
+        case "NYJ": return Color(red: 0.07, green: 0.31, blue: 0.17)  // Jets green
+
+        // AFC North
+        case "BAL": return Color(red: 0.14, green: 0.03, blue: 0.33)  // Ravens purple
+        case "CIN": return Color(red: 0.98, green: 0.31, blue: 0.08)  // Bengals orange
+        case "CLE": return Color(red: 0.80, green: 0.33, blue: 0.00)  // Browns orange
+        case "PIT": return Color(red: 0.10, green: 0.10, blue: 0.10)  // Steelers black
+
+        // AFC South
+        case "HOU": return Color(red: 0.01, green: 0.08, blue: 0.25)  // Texans navy
+        case "IND": return Color(red: 0.00, green: 0.17, blue: 0.53)  // Colts blue
+        case "JAX": return Color(red: 0.00, green: 0.40, blue: 0.47)  // Jaguars teal
+        case "TEN": return Color(red: 0.27, green: 0.46, blue: 0.70)  // Titans blue
+
+        // AFC West
+        case "DEN": return Color(red: 0.98, green: 0.31, blue: 0.08)  // Broncos orange
+        case "KC":  return Color(red: 0.89, green: 0.09, blue: 0.14)  // Chiefs red
+        case "LV":  return Color(red: 0.10, green: 0.10, blue: 0.10)  // Raiders black
+        case "LAC": return Color(red: 0.00, green: 0.30, blue: 0.57)  // Chargers blue
+
+        // NFC East
+        case "DAL": return Color(red: 0.00, green: 0.21, blue: 0.47)  // Cowboys blue
+        case "NYG": return Color(red: 0.01, green: 0.14, blue: 0.42)  // Giants blue
+        case "PHI": return Color(red: 0.00, green: 0.30, blue: 0.22)  // Eagles green
+        case "WAS": return Color(red: 0.39, green: 0.09, blue: 0.14)  // Commanders burgundy
+
+        // NFC North
+        case "CHI": return Color(red: 0.05, green: 0.13, blue: 0.24)  // Bears navy
+        case "DET": return Color(red: 0.00, green: 0.42, blue: 0.69)  // Lions blue
+        case "GB":  return Color(red: 0.12, green: 0.23, blue: 0.15)  // Packers green
+        case "MIN": return Color(red: 0.31, green: 0.15, blue: 0.51)  // Vikings purple
+
+        // NFC South
+        case "ATL": return Color(red: 0.65, green: 0.07, blue: 0.11)  // Falcons red
+        case "CAR": return Color(red: 0.00, green: 0.52, blue: 0.72)  // Panthers blue
+        case "NO":  return Color(red: 0.82, green: 0.68, blue: 0.33)  // Saints gold
+        case "TB":  return Color(red: 0.82, green: 0.10, blue: 0.11)  // Buccaneers red
+
+        // NFC West
+        case "ARI": return Color(red: 0.60, green: 0.09, blue: 0.16)  // Cardinals red
+        case "LAR": return Color(red: 0.00, green: 0.21, blue: 0.53)  // Rams blue
+        case "SF":  return Color(red: 0.67, green: 0.15, blue: 0.15)  // 49ers red
+        case "SEA": return Color(red: 0.00, green: 0.13, blue: 0.26)  // Seahawks navy
+
+        default:    return Color(red: 0.30, green: 0.30, blue: 0.35)
+        }
+    }
+}
+
+// MARK: - Team Detail Sheet
+
+private struct TeamDetailSheet: View {
+    let team: NFLTeamDefinition
+    let onSelect: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var preview: TeamPreview { team.preview }
+
+    private var situationColor: Color {
+        switch preview.situation {
+        case "Rebuilding": return .accentBlue
+        case "Rising":     return .success
+        case "Contender":  return .accentGold
+        case "Win Now":    return .warning
+        case "Dynasty":    return .danger
+        default:           return .textSecondary
+        }
+    }
+
+    private var difficultyColor: Color {
+        switch preview.difficulty {
+        case 1, 2: return .success
+        case 3:    return .accentGold
+        case 4:    return .warning
+        case 5:    return .danger
+        default:   return .textSecondary
+        }
     }
 
     private var ownerPatienceColor: Color {
@@ -310,33 +448,167 @@ private struct TeamCardView: View {
         default:             return .textSecondary
         }
     }
-}
-
-// MARK: - Stat Pill
-
-private struct StatPill: View {
-    let icon: String
-    let label: String
-    let value: String
-    var valueColor: Color = .textPrimary
 
     var body: some View {
-        VStack(spacing: 4) {
+        ZStack {
+            Color.backgroundPrimary.ignoresSafeArea()
+
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Header: Logo + Name
+                    VStack(spacing: 12) {
+                        TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 72)
+
+                        Text("\(team.city) \(team.name)")
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundStyle(Color.textPrimary)
+
+                        Text("\(team.conference.rawValue) \(team.division.rawValue)")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                    .padding(.top, 24)
+
+                    // Difficulty + Situation
+                    HStack(spacing: 24) {
+                        VStack(spacing: 6) {
+                            HStack(spacing: 3) {
+                                ForEach(1...5, id: \.self) { star in
+                                    Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(star <= preview.difficulty ? difficultyColor : Color.textTertiary.opacity(0.4))
+                                }
+                            }
+                            Text(preview.difficultyLabel)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(difficultyColor)
+                        }
+
+                        Text(preview.situation)
+                            .font(.system(size: 14, weight: .bold))
+                            .textCase(.uppercase)
+                            .foregroundStyle(situationColor)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(situationColor.opacity(0.15))
+                            )
+                    }
+
+                    // Owner info
+                    VStack(spacing: 8) {
+                        sectionLabel("Owner Expectations")
+
+                        HStack(spacing: 16) {
+                            HStack(spacing: 6) {
+                                Image(systemName: preview.ownerPatienceIcon)
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(ownerPatienceColor)
+                                Text(preview.ownerPatience)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(ownerPatienceColor)
+                            }
+
+                            Text("\(preview.patienceSeasons) season\(preview.patienceSeasons == 1 ? "" : "s") tolerance")
+                                .font(.caption)
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity)
+                    .cardBackground()
+
+                    // Market description
+                    VStack(spacing: 8) {
+                        sectionLabel("Market & Media")
+
+                        Text(preview.marketDescription)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity)
+                    .cardBackground()
+
+                    // Stats row
+                    HStack(spacing: 0) {
+                        detailStat(
+                            icon: "chart.bar.fill",
+                            label: "Roster OVR",
+                            value: "\(preview.estimatedOVR)",
+                            valueColor: Color.forRating(preview.estimatedOVR)
+                        )
+                        detailStat(
+                            icon: "dollarsign.circle.fill",
+                            label: "Cap Space",
+                            value: "$\(preview.estimatedCapSpace)M",
+                            valueColor: preview.estimatedCapSpace > 30 ? .success : preview.estimatedCapSpace > 15 ? .accentGold : .warning
+                        )
+                        detailStat(
+                            icon: "doc.text.fill",
+                            label: "Draft Picks",
+                            value: "\(preview.estimatedDraftPicks)",
+                            valueColor: preview.estimatedDraftPicks >= 9 ? .success : preview.estimatedDraftPicks >= 7 ? .textPrimary : .warning
+                        )
+                    }
+                    .padding(.vertical, 14)
+                    .cardBackground()
+
+                    // Select button
+                    Button(action: onSelect) {
+                        Text("SELECT THIS TEAM")
+                            .font(.system(size: 16, weight: .bold))
+                            .tracking(1.5)
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.accentGold)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 8)
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 32)
+                .frame(maxWidth: 600)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .bold))
+            .tracking(1.5)
+            .textCase(.uppercase)
+            .foregroundStyle(Color.accentGold)
+    }
+
+    private func detailStat(icon: String, label: String, value: String, valueColor: Color) -> some View {
+        VStack(spacing: 6) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .foregroundStyle(Color.textTertiary)
                 Text(label)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
             Text(value)
-                .font(.caption.weight(.bold))
+                .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(valueColor)
         }
         .frame(maxWidth: .infinity)
     }
 }
+
+// MARK: - Preview
 
 #Preview {
     NavigationStack {

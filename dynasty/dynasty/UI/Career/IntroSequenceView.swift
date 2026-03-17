@@ -191,9 +191,16 @@ private struct OwnerMeetingStep: View {
                 // Meeting header
                 if showHeader {
                     VStack(spacing: 12) {
-                        Image(systemName: "person.crop.rectangle")
-                            .font(.system(size: 36))
-                            .foregroundStyle(Color.accentGold)
+                        if let owner = owner {
+                            OwnerAvatarImageView(
+                                avatarID: owner.avatarID,
+                                size: 96
+                            )
+                        } else {
+                            Image(systemName: "person.crop.rectangle")
+                                .font(.system(size: 36))
+                                .foregroundStyle(Color.accentGold)
+                        }
 
                         Text("OWNER MEETING")
                             .font(.system(size: 14, weight: .black))
