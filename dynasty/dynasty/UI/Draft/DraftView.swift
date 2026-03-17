@@ -11,6 +11,7 @@ struct DraftView: View {
     let career: Career
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     // MARK: Draft State
 
@@ -55,21 +56,19 @@ struct DraftView: View {
     // MARK: - Body
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                Color.backgroundPrimary.ignoresSafeArea()
+        ZStack {
+            Color.backgroundPrimary.ignoresSafeArea()
 
-                if geo.size.width > 700 {
-                    // iPad: side-by-side layout
-                    HStack(spacing: 0) {
-                        mainColumn
-                        Divider().overlay(Color.surfaceBorder)
-                        bigBoardSidebar
-                            .frame(width: 320)
-                    }
-                } else {
+            if horizontalSizeClass == .regular {
+                // iPad: side-by-side layout
+                HStack(spacing: 0) {
                     mainColumn
+                    Divider().overlay(Color.surfaceBorder)
+                    bigBoardSidebar
+                        .frame(width: 320)
                 }
+            } else {
+                mainColumn
             }
         }
         .navigationTitle("NFL Draft \(career.currentSeason)")

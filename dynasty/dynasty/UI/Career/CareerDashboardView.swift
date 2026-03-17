@@ -9,7 +9,7 @@ struct CareerDashboardView: View {
     var onTaskSelected: (TaskDestination) -> Void
     var onAdvance: (() -> Void)? = nil
     @Environment(\.modelContext) private var modelContext
-    // Layout detection uses GeometryReader in body
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     // MARK: - State
 
@@ -37,7 +37,7 @@ struct CareerDashboardView: View {
         TaskGenerator.allRequiredComplete(in: tasks)
     }
 
-    // Landscape detection now uses GeometryReader in the body.
+    /// Use horizontalSizeClass instead of GeometryReader for layout switching.
 
     // MARK: - Advance Logic
 
@@ -63,22 +63,18 @@ struct CareerDashboardView: View {
     // MARK: - Body
 
     var body: some View {
-        GeometryReader { geo in
-            let landscape = geo.size.width > geo.size.height
+        ZStack {
+            Color.backgroundPrimary.ignoresSafeArea()
 
-            ZStack {
-                Color.backgroundPrimary.ignoresSafeArea()
+            VStack(spacing: 0) {
+                // Single timeline strip at top
+                timelineStrip
+                    .padding(.top, 4)
 
-                VStack(spacing: 0) {
-                    // Single timeline strip at top
-                    timelineStrip
-                        .padding(.top, 4)
-
-                    if landscape {
-                        landscapeLayout
-                    } else {
-                        portraitLayout
-                    }
+                if horizontalSizeClass == .regular {
+                    landscapeLayout
+                } else {
+                    portraitLayout
                 }
             }
         }

@@ -73,32 +73,14 @@ struct NewCareerView: View {
     @ViewBuilder
     private func page1Content(isLandscape: Bool) -> some View {
         ScrollView {
-            if isLandscape {
-                HStack(alignment: .top, spacing: 20) {
-                    // Left: Player Name
-                    nameSection
-                        .frame(maxWidth: .infinity)
-
-                    // Right: Role + Cap Mode
-                    VStack(spacing: 20) {
-                        roleSection
-                        capModeSection
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .padding(16)
-                .frame(maxWidth: 1000)
-                .frame(maxWidth: .infinity)
-            } else {
-                VStack(spacing: 20) {
-                    nameSection
-                    roleSection
-                    capModeSection
-                }
-                .padding(16)
-                .frame(maxWidth: 800)
-                .frame(maxWidth: .infinity)
+            VStack(spacing: 20) {
+                nameSection
+                roleSection
+                capModeSection
             }
+            .padding(16)
+            .frame(maxWidth: 800)
+            .frame(maxWidth: .infinity)
 
             // Next button
             nextButton
@@ -114,28 +96,13 @@ struct NewCareerView: View {
     @ViewBuilder
     private func page2Content(isLandscape: Bool) -> some View {
         ScrollView {
-            if isLandscape {
-                HStack(alignment: .top, spacing: 20) {
-                    // Left: Coaching Style
-                    coachingStyleSection
-                        .frame(maxWidth: .infinity)
-
-                    // Right: Avatars
-                    avatarSection
-                        .frame(maxWidth: .infinity)
-                }
-                .padding(16)
-                .frame(maxWidth: 1000)
-                .frame(maxWidth: .infinity)
-            } else {
-                VStack(spacing: 20) {
-                    coachingStyleSection
-                    avatarSection
-                }
-                .padding(16)
-                .frame(maxWidth: 800)
-                .frame(maxWidth: .infinity)
+            VStack(spacing: 20) {
+                coachingStyleSection
+                avatarSection
             }
+            .padding(16)
+            .frame(maxWidth: 800)
+            .frame(maxWidth: .infinity)
 
             // Bottom buttons
             VStack(spacing: 12) {

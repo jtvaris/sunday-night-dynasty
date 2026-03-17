@@ -630,76 +630,56 @@ private struct YourRoadmapStep: View {
     }
 
     var body: some View {
-        GeometryReader { geo in
-            let isLandscape = geo.size.width > geo.size.height
+        ScrollView {
+            VStack(spacing: 24) {
+                Spacer().frame(height: 20)
 
-            ScrollView {
-                VStack(spacing: 24) {
-                    Spacer().frame(height: 20)
+                // Header
+                if showHeader {
+                    VStack(spacing: 12) {
+                        Image(systemName: "map.fill")
+                            .font(.system(size: 36))
+                            .foregroundStyle(Color.accentGold)
 
-                    // Header
-                    if showHeader {
-                        VStack(spacing: 12) {
-                            Image(systemName: "map.fill")
-                                .font(.system(size: 36))
-                                .foregroundStyle(Color.accentGold)
+                        Text("YOUR ROADMAP")
+                            .font(.system(size: 14, weight: .black))
+                            .tracking(4)
+                            .foregroundStyle(Color.accentGold)
 
-                            Text("YOUR ROADMAP")
-                                .font(.system(size: 14, weight: .black))
-                                .tracking(4)
-                                .foregroundStyle(Color.accentGold)
-
-                            Text("Here's what lies ahead in your first offseason")
-                                .font(.subheadline)
-                                .foregroundStyle(Color.textSecondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        Text("Here's what lies ahead in your first offseason")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+                            .multilineTextAlignment(.center)
                     }
-
-                    if isLandscape {
-                        // Landscape: Calendar and Tasks side by side
-                        HStack(alignment: .top, spacing: 16) {
-                            if showCalendar {
-                                calendarCard
-                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                            }
-
-                            if showTasks {
-                                tasksCard
-                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                            }
-                        }
-                        .padding(.horizontal, 24)
-                    } else {
-                        // Portrait: stacked vertically
-                        if showCalendar {
-                            calendarCard
-                                .padding(.horizontal, 24)
-                                .transition(.opacity.combined(with: .move(edge: .bottom)))
-                        }
-
-                        if showTasks {
-                            tasksCard
-                                .padding(.horizontal, 24)
-                                .transition(.opacity.combined(with: .move(edge: .bottom)))
-                        }
-                    }
-
-                    Spacer().frame(height: 80)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                .frame(maxWidth: 800)
+
+                // Single responsive layout: stacked vertically, constrained width
+                if showCalendar {
+                    calendarCard
+                        .padding(.horizontal, 24)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+
+                if showTasks {
+                    tasksCard
+                        .padding(.horizontal, 24)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+
+                Spacer().frame(height: 80)
+            }
+            .frame(maxWidth: 800)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+        .safeAreaInset(edge: .bottom) {
+            IntroContinueButton(action: onContinue)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 16)
+                .padding(.top, 12)
                 .frame(maxWidth: .infinity)
-            }
-            .scrollIndicators(.hidden)
-            .safeAreaInset(edge: .bottom) {
-                IntroContinueButton(action: onContinue)
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 16)
-                    .padding(.top, 12)
-                    .frame(maxWidth: .infinity)
-                    .background(Color.backgroundPrimary.opacity(0.95))
-            }
+                .background(Color.backgroundPrimary.opacity(0.95))
         }
         .onAppear { runAnimations() }
     }
