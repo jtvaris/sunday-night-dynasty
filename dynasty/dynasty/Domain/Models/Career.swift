@@ -26,6 +26,14 @@ final class Career {
     /// SwiftData encodes this Codable struct as a composite attribute automatically.
     var coachingTree: CoachingTreeData
 
+    // MARK: - Intro & Goals
+
+    /// Whether the new-career intro sequence has been completed.
+    var hasCompletedIntro: Bool
+
+    /// Season goals set by the owner during the intro sequence (or generated later).
+    var seasonGoals: SeasonGoals?
+
     // MARK: - HC-GM Relationship
     /// Persisted relationship state between the GM and their Head Coach.
     /// Only meaningful when `role == .gm`; ignored for `.gmAndHeadCoach` careers.
@@ -60,6 +68,8 @@ final class Career {
         self.currentSeason = currentSeason
         self.currentWeek = 1
         self.currentPhase = .preseason
+        self.hasCompletedIntro = false
+        self.seasonGoals = nil
         self.coachingTree = CoachingTreeData()
         self.hcGMRelationship = CoachRelationshipEngine.HCGMRelationship()
     }

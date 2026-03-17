@@ -74,7 +74,7 @@ struct TeamSelectionView: View {
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .navigationDestination(item: $selectedCareer) { career in
-            CareerShellView(career: career)
+            IntroSequenceView(career: career)
         }
     }
 

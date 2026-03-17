@@ -1,28 +1,47 @@
 import SwiftUI
 import SwiftData
 
-/// Slide-in sidebar showing the current date context, pending tasks,
-/// upcoming schedule, and key season dates.
+/// The central task manager sidebar. Shows the current phase, a guided task
+/// list (like an RPG quest log), upcoming games, and season timeline.
+/// Powered by `TaskGenerator` for phase-aware, contextual task lists.
 struct CalendarSidebarView: View {
 
     let career: Career
     let team: Team?
     let upcomingGames: [Game]
     let allTeams: [UUID: Team]
+    @Binding var tasks: [GameTask]
+    let onTaskSelected: (TaskDestination) -> Void
+    let onAdvancePhase: () -> Void
     let onDismiss: () -> Void
 
-    // MARK: - Task Model
+    // MARK: - Derived State
 
-    struct PendingTask: Identifiable {
-        let id = UUID()
-        let icon: String
-        let title: String
-        let destination: TaskDestination
+    private var phaseInfo: TaskGenerator.PhaseInfo {
+        TaskGenerator.phaseInfo(for: career.currentPhase)
     }
 
-    enum TaskDestination {
-        case roster, scouting, freeAgency, draft, trade, news, owner
+    private var requiredTasks: [GameTask] {
+        tasks.filter { $0.isRequired }
     }
+
+    private var optionalTasks: [GameTask] {
+        tasks.filter { !$0.isRequired }
+    }
+
+    private var incompleteRequiredCount: Int {
+        TaskGenerator.incompleteRequiredCount(in: tasks)
+    }
+
+    private var canAdvance: Bool {
+        TaskGenerator.allRequiredComplete(in: tasks)
+    }
+
+    private var completedCount: Int {
+        tasks.filter { $0.status == .done }.count
+    }
+
+    // MARK: - Body
 
     var body: some View {
         NavigationStack {
@@ -31,15 +50,22 @@ struct CalendarSidebarView: View {
 
                 ScrollView {
                     VStack(spacing: 20) {
-                        currentDateSection
-                        pendingTasksSection
+                        phaseHeaderSection
+                        if !requiredTasks.isEmpty {
+                            taskSection(title: "Required", tasks: requiredTasks, isRequired: true)
+                        }
+                        if !optionalTasks.isEmpty {
+                            taskSection(title: "Optional", tasks: optionalTasks, isRequired: false)
+                        }
                         upcomingScheduleSection
-                        keyDatesSection
+                        seasonTimelineSection
+                        advanceButton
                     }
                     .padding(20)
+                    .padding(.bottom, 20)
                 }
             }
-            .navigationTitle("Calendar & Tasks")
+            .navigationTitle("Season Guide")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
@@ -51,123 +77,168 @@ struct CalendarSidebarView: View {
         }
     }
 
-    // MARK: - Current Date Section
+    // MARK: - Phase Header
 
-    private var currentDateSection: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Image(systemName: "calendar")
-                    .foregroundStyle(Color.accentGold)
-                Text("Current Date")
-                    .font(.headline)
-                    .foregroundStyle(Color.accentGold)
+    private var phaseHeaderSection: some View {
+        VStack(spacing: 12) {
+            // Phase name — large, gold
+            Text(phaseInfo.name)
+                .font(.title.weight(.bold))
+                .foregroundStyle(Color.accentGold)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Season & week context
+            HStack(spacing: 16) {
+                Label("Season \(career.currentSeason)", systemImage: "calendar")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.textSecondary)
+                Label("Week \(career.currentWeek)", systemImage: "clock")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.textSecondary)
                 Spacer()
             }
 
-            VStack(spacing: 6) {
-                infoRow(label: "Season", value: "\(career.currentSeason)")
-                infoRow(label: "Week", value: "\(career.currentWeek)")
-                infoRow(label: "Phase", value: phaseDisplayName(career.currentPhase))
+            // Phase description
+            Text(phaseInfo.description)
+                .font(.subheadline)
+                .foregroundStyle(Color.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Progress bar: phase X of Y + task completion
+            HStack {
+                Text("Phase \(phaseInfo.order) of \(TaskGenerator.totalPhases)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textTertiary)
+                Spacer()
+                Text("\(completedCount)/\(tasks.count) tasks done")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(completedCount == tasks.count ? Color.accentGold : Color.textTertiary)
             }
+
+            // Phase progress bar
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.backgroundTertiary)
+                        .frame(height: 6)
+
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.accentGold)
+                        .frame(
+                            width: tasks.isEmpty ? 0 : geo.size.width * CGFloat(completedCount) / CGFloat(tasks.count),
+                            height: 6
+                        )
+                        .animation(.easeInOut(duration: 0.3), value: completedCount)
+                }
+            }
+            .frame(height: 6)
         }
         .padding(16)
         .cardBackground()
     }
 
-    // MARK: - Pending Tasks
+    // MARK: - Task Sections
 
-    private var pendingTasks: [PendingTask] {
-        var tasks: [PendingTask] = []
-
-        // Always suggest depth chart during regular season / preseason
-        if career.currentPhase == .regularSeason || career.currentPhase == .preseason {
-            tasks.append(PendingTask(icon: "list.bullet.rectangle", title: "Set depth chart", destination: .roster))
-        }
-
-        // Scouting during combine / college phases
-        if career.currentPhase == .combine || career.currentPhase == .otas {
-            tasks.append(PendingTask(icon: "magnifyingglass", title: "Review scouting reports", destination: .scouting))
-        }
-
-        // Free agency
-        if career.currentPhase == .freeAgency {
-            tasks.append(PendingTask(icon: "person.badge.plus", title: "Sign free agents", destination: .freeAgency))
-        }
-
-        // Draft
-        if career.currentPhase == .draft {
-            tasks.append(PendingTask(icon: "list.clipboard.fill", title: "Prepare for draft", destination: .draft))
-        }
-
-        // Trade window open
-        if career.currentPhase == .regularSeason || career.currentPhase == .tradeDeadline {
-            tasks.append(PendingTask(icon: "arrow.left.arrow.right", title: "Review trade offers", destination: .trade))
-        }
-
-        // Events pending
-        if !WeekAdvancer.lastEvents.isEmpty {
-            let headline = WeekAdvancer.lastEvents.first?.headline ?? "event"
-            tasks.append(PendingTask(icon: "exclamationmark.bubble.fill", title: "Handle event: \(headline)", destination: .news))
-        }
-
-        // Owner satisfaction low
-        if let owner = team?.owner, owner.satisfaction < 40 {
-            tasks.append(PendingTask(icon: "building.2.fill", title: "Owner meeting requested", destination: .owner))
-        }
-
-        return tasks
-    }
-
-    private var pendingTasksSection: some View {
-        VStack(spacing: 8) {
+    private func taskSection(title: String, tasks sectionTasks: [GameTask], isRequired: Bool) -> some View {
+        VStack(spacing: 10) {
+            // Section header
             HStack {
-                Image(systemName: "checklist")
-                    .foregroundStyle(Color.accentGold)
-                Text("Pending Tasks")
+                Image(systemName: isRequired ? "exclamationmark.triangle.fill" : "checklist")
+                    .foregroundStyle(isRequired ? Color.accentGold : Color.textSecondary)
+                Text(title)
                     .font(.headline)
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(isRequired ? Color.accentGold : Color.textSecondary)
                 Spacer()
-                if !pendingTasks.isEmpty {
-                    Text("\(pendingTasks.count)")
+
+                let incomplete = sectionTasks.filter { $0.status != .done }.count
+                if incomplete > 0 {
+                    Text("\(incomplete)")
                         .font(.caption.weight(.bold).monospacedDigit())
                         .foregroundStyle(.white)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(Capsule().fill(Color.danger))
+                        .background(Capsule().fill(isRequired ? Color.danger : Color.textTertiary))
                 }
             }
 
-            if pendingTasks.isEmpty {
-                Text("All caught up!")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 8)
-            } else {
-                ForEach(pendingTasks) { task in
-                    HStack(spacing: 12) {
-                        Image(systemName: task.icon)
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color.accentGold)
-                            .frame(width: 24)
-                        Text(task.title)
-                            .font(.subheadline)
-                            .foregroundStyle(Color.textPrimary)
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.textTertiary)
-                    }
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.backgroundTertiary)
-                    )
-                }
+            // Task cards
+            ForEach(sectionTasks) { task in
+                taskCard(task, isRequired: isRequired)
             }
         }
         .padding(16)
         .cardBackground()
+    }
+
+    private func taskCard(_ task: GameTask, isRequired: Bool) -> some View {
+        Button {
+            markInProgress(task)
+            onTaskSelected(task.destination)
+        } label: {
+            HStack(spacing: 12) {
+                // Status indicator
+                taskStatusIcon(task)
+
+                // Content
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(task.title)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(task.status == .done ? Color.textTertiary : Color.textPrimary)
+                        .strikethrough(task.status == .done, color: Color.textTertiary)
+                    Text(task.description)
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                        .lineLimit(2)
+                }
+
+                Spacer()
+
+                // Navigation chevron (hidden when done)
+                if task.status != .done {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.backgroundTertiary)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(
+                        isRequired && task.status != .done ? Color.accentGold.opacity(0.5) : Color.clear,
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .opacity(task.status == .done ? 0.6 : 1.0)
+        .animation(.easeInOut(duration: 0.2), value: task.status)
+    }
+
+    @ViewBuilder
+    private func taskStatusIcon(_ task: GameTask) -> some View {
+        ZStack {
+            switch task.status {
+            case .done:
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Color.accentGold)
+            case .inProgress:
+                Image(systemName: task.icon)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.accentGold)
+                    .frame(width: 20, height: 20)
+            case .todo:
+                Image(systemName: task.icon)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.textSecondary)
+                    .frame(width: 20, height: 20)
+            }
+        }
+        .frame(width: 24)
     }
 
     // MARK: - Upcoming Schedule
@@ -216,56 +287,65 @@ struct CalendarSidebarView: View {
         .cardBackground()
     }
 
-    // MARK: - Key Dates
+    // MARK: - Season Timeline
 
-    private var keyDatesSection: some View {
+    private var seasonTimelineSection: some View {
         VStack(spacing: 8) {
             HStack {
                 Image(systemName: "flag.fill")
                     .foregroundStyle(Color.accentGold)
-                Text("Key Dates")
+                Text("Season Timeline")
                     .font(.headline)
                     .foregroundStyle(Color.accentGold)
                 Spacer()
             }
 
-            VStack(spacing: 6) {
-                keyDateRow(event: "Trade Deadline", phase: .tradeDeadline)
-                keyDateRow(event: "Playoffs", phase: .playoffs)
-                keyDateRow(event: "Super Bowl", phase: .superBowl)
-                keyDateRow(event: "Free Agency", phase: .freeAgency)
-                keyDateRow(event: "NFL Draft", phase: .draft)
+            VStack(spacing: 0) {
+                ForEach(Self.timelinePhases, id: \.phase) { entry in
+                    timelineRow(event: entry.label, phase: entry.phase)
+                }
             }
         }
         .padding(16)
         .cardBackground()
     }
 
-    // MARK: - Helpers
-
-    private func infoRow(label: String, value: String) -> some View {
-        HStack {
-            Text(label)
-                .font(.subheadline)
-                .foregroundStyle(Color.textSecondary)
-            Spacer()
-            Text(value)
-                .font(.subheadline.weight(.semibold).monospacedDigit())
-                .foregroundStyle(Color.textPrimary)
-        }
+    private struct TimelineEntry {
+        let label: String
+        let phase: SeasonPhase
     }
 
-    private func keyDateRow(event: String, phase: SeasonPhase) -> some View {
-        HStack {
-            let isCurrent = career.currentPhase == phase
-            let isPast = Self.phaseOrder(phase) < Self.phaseOrder(career.currentPhase)
+    private static let timelinePhases: [TimelineEntry] = [
+        .init(label: "Preseason", phase: .preseason),
+        .init(label: "Roster Cuts", phase: .rosterCuts),
+        .init(label: "Regular Season", phase: .regularSeason),
+        .init(label: "Trade Deadline", phase: .tradeDeadline),
+        .init(label: "Playoffs", phase: .playoffs),
+        .init(label: "Super Bowl", phase: .superBowl),
+        .init(label: "Pro Bowl", phase: .proBowl),
+        .init(label: "Coaching Changes", phase: .coachingChanges),
+        .init(label: "Combine", phase: .combine),
+        .init(label: "Free Agency", phase: .freeAgency),
+        .init(label: "NFL Draft", phase: .draft),
+        .init(label: "OTAs", phase: .otas),
+        .init(label: "Training Camp", phase: .trainingCamp),
+    ]
 
-            Circle()
-                .fill(isCurrent ? Color.accentGold : isPast ? Color.textTertiary : Color.backgroundTertiary)
-                .frame(width: 8, height: 8)
+    private func timelineRow(event: String, phase: SeasonPhase) -> some View {
+        let isCurrent = career.currentPhase == phase
+        let isPast = Self.phaseOrder(phase) < Self.phaseOrder(career.currentPhase)
+
+        return HStack(spacing: 12) {
+            // Timeline dot + connector line
+            VStack(spacing: 0) {
+                Circle()
+                    .fill(isCurrent ? Color.accentGold : isPast ? Color.textTertiary : Color.backgroundTertiary)
+                    .frame(width: isCurrent ? 10 : 8, height: isCurrent ? 10 : 8)
+            }
+            .frame(width: 14)
 
             Text(event)
-                .font(.subheadline)
+                .font(.subheadline.weight(isCurrent ? .semibold : .regular))
                 .foregroundStyle(isCurrent ? Color.accentGold : isPast ? Color.textTertiary : Color.textSecondary)
 
             Spacer()
@@ -273,29 +353,63 @@ struct CalendarSidebarView: View {
             if isCurrent {
                 Text("NOW")
                     .font(.caption2.weight(.heavy))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.accentGold))
+            } else if isPast {
+                Image(systemName: "checkmark")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 
-    private func phaseDisplayName(_ phase: SeasonPhase) -> String {
-        switch phase {
-        case .superBowl:       return "Super Bowl"
-        case .proBowl:         return "Pro Bowl"
-        case .coachingChanges: return "Coaching Changes"
-        case .combine:         return "Combine"
-        case .freeAgency:      return "Free Agency"
-        case .draft:           return "Draft"
-        case .otas:            return "OTAs"
-        case .trainingCamp:    return "Training Camp"
-        case .preseason:       return "Preseason"
-        case .rosterCuts:      return "Roster Cuts"
-        case .regularSeason:   return "Regular Season"
-        case .tradeDeadline:   return "Trade Deadline"
-        case .playoffs:        return "Playoffs"
+    // MARK: - Advance Button
+
+    private var advanceButton: some View {
+        VStack(spacing: 8) {
+            if !canAdvance {
+                Label(
+                    "\(incompleteRequiredCount) required task\(incompleteRequiredCount == 1 ? "" : "s") remaining",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Color.accentGold)
+            }
+
+            Button {
+                onAdvancePhase()
+            } label: {
+                HStack {
+                    Image(systemName: "forward.fill")
+                    Text("Advance to Next Phase")
+                        .font(.headline)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(canAdvance ? Color.accentGold : Color.backgroundTertiary)
+                )
+                .foregroundStyle(canAdvance ? Color.backgroundPrimary : Color.textTertiary)
+            }
+            .disabled(!canAdvance)
+            .animation(.easeInOut(duration: 0.2), value: canAdvance)
         }
     }
+
+    // MARK: - Task Mutation
+
+    private func markInProgress(_ task: GameTask) {
+        guard task.status == .todo else { return }
+        if let index = tasks.firstIndex(where: { $0.id == task.id }) {
+            tasks[index].status = .inProgress
+        }
+    }
+
+    // MARK: - Helpers
 
     /// Rough ordering of phases within a season cycle for timeline display.
     static func phaseOrder(_ phase: SeasonPhase) -> Int {
@@ -318,11 +432,25 @@ struct CalendarSidebarView: View {
 }
 
 #Preview {
-    CalendarSidebarView(
+    @Previewable @State var previewTasks: [GameTask] = TaskGenerator.generateTasks(
+        for: .freeAgency,
         career: Career(playerName: "John Doe", role: .gm, capMode: .simple),
+        team: nil,
+        hasExpiringContracts: true
+    )
+
+    CalendarSidebarView(
+        career: {
+            let c = Career(playerName: "John Doe", role: .gm, capMode: .simple)
+            c.currentPhase = .freeAgency
+            return c
+        }(),
         team: nil,
         upcomingGames: [],
         allTeams: [:],
+        tasks: $previewTasks,
+        onTaskSelected: { _ in },
+        onAdvancePhase: {},
         onDismiss: {}
     )
 }
