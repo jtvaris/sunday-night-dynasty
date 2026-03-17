@@ -105,10 +105,19 @@ struct TeamSelectionView: View {
         .navigationTitle("Choose Your Team")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .sheet(item: $detailTeam) { team in
-            TeamDetailSheet(team: team) {
-                detailTeam = nil
-                startCareer(with: team)
+        .fullScreenCover(item: $detailTeam) { team in
+            NavigationStack {
+                TeamDetailSheet(team: team) {
+                    detailTeam = nil
+                    startCareer(with: team)
+                }
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Back") { detailTeam = nil }
+                            .foregroundStyle(Color.accentGold)
+                    }
+                }
+                .toolbarColorScheme(.dark, for: .navigationBar)
             }
         }
         .navigationDestination(item: $selectedCareer) { career in
@@ -679,15 +688,13 @@ private struct TeamDetailSheet: View {
                 .frame(maxWidth: .infinity)
             }
         }
-        .presentationDetents([.large, .medium])
-        .presentationDragIndicator(.visible)
         .safeAreaInset(edge: .bottom) {
             Button(action: onSelect) {
                 Text("SELECT THIS TEAM")
                     .font(.system(size: 16, weight: .bold))
                     .tracking(1.5)
                     .foregroundStyle(Color.backgroundPrimary)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: 500)
                     .padding(.vertical, 16)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
@@ -695,9 +702,10 @@ private struct TeamDetailSheet: View {
                     )
             }
             .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, 24)
-            .padding(.bottom, 12)
-            .background(Color.backgroundPrimary)
+            .padding(.bottom, 16)
+            .background(Color.backgroundPrimary.opacity(0.95))
         }
     }
 
