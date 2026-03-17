@@ -396,9 +396,7 @@ struct AvatarSelectionView: View {
                 ForEach(CoachAvatars.all) { avatar in
                     VStack(spacing: 6) {
                         CoachAvatarImageView(
-                            gridImage: avatar.gridImage,
-                            row: avatar.gridRow,
-                            col: avatar.gridCol,
+                            avatarID: avatar.id,
                             size: avatarSize
                         )
                             .overlay(

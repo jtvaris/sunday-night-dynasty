@@ -5,8 +5,8 @@ struct NewCareerView: View {
 
     @State private var playerName: String = ""
     @State private var selectedAvatarID: String = "coach_m1"
-    @State private var selectedRole: CareerRole = .gm
-    @State private var selectedCapMode: CapMode = .simple
+    @State private var selectedRole: CareerRole = .gmAndHeadCoach
+    @State private var selectedCapMode: CapMode = .realistic
 
     private var isNameValid: Bool {
         !playerName.trimmingCharacters(in: .whitespaces).isEmpty
