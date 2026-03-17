@@ -8,6 +8,7 @@ struct CareerShellView: View {
 
     @Bindable var career: Career
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var showCalendar = false
     @State private var showQuitConfirmation = false
@@ -42,11 +43,22 @@ struct CareerShellView: View {
                 }
             )
 
+            // Compact timeline strip (minimal dots for quick reference)
+            TimelineStripView(currentPhase: career.currentPhase, currentWeek: career.currentWeek)
+
             // Main content area
             NavigationStack(path: $navigationPath) {
-                CareerDashboardView(career: career, tasks: $currentTasks, inboxMessages: $inboxMessages, onTaskSelected: { destination in
-                    handleTaskNavigation(destination)
-                })
+                CareerDashboardView(
+                    career: career,
+                    tasks: $currentTasks,
+                    inboxMessages: $inboxMessages,
+                    onTaskSelected: { destination in
+                        handleTaskNavigation(destination)
+                    },
+                    onAdvance: {
+                        performShellAdvance()
+                    }
+                )
                     .navigationDestination(for: ShellDestination.self) { dest in
                         destinationView(for: dest)
                     }
@@ -93,14 +105,22 @@ struct CareerShellView: View {
                 },
                 onAdvancePhase: {
                     showCalendar = false
-                    // The advance logic is handled by WeekAdvancer elsewhere;
-                    // this is a placeholder for triggering that flow.
+                    performShellAdvance()
                 },
                 onDismiss: { showCalendar = false }
             )
             .presentationDetents([.large, .medium])
             .presentationDragIndicator(.visible)
         }
+    }
+
+    // MARK: - Advance Week
+
+    /// Performs the week/phase advance from the TimelineTasksPanel.
+    private func performShellAdvance() {
+        WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+        // Reload data so the dashboard picks up the new state
+        loadShellData()
     }
 
     // MARK: - Navigation Destinations

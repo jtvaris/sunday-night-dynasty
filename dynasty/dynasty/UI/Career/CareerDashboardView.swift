@@ -7,7 +7,9 @@ struct CareerDashboardView: View {
     @Binding var tasks: [GameTask]
     @Binding var inboxMessages: [InboxMessage]
     var onTaskSelected: (TaskDestination) -> Void
+    var onAdvance: (() -> Void)? = nil
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     // MARK: - State
 
@@ -26,85 +28,56 @@ struct CareerDashboardView: View {
     @State private var lastHomeTeam: Team?
     @State private var lastAwayTeam: Team?
 
+    /// Inbox filter for the messages panel
+    @State private var inboxFilter: DashboardInboxFilter = .all
+
     // MARK: - Derived
-
-    private var requiredTasks: [GameTask] {
-        tasks.filter { $0.isRequired }
-    }
-
-    private var optionalTasks: [GameTask] {
-        tasks.filter { !$0.isRequired }
-    }
-
-    private var incompleteRequiredCount: Int {
-        TaskGenerator.incompleteRequiredCount(in: tasks)
-    }
 
     private var canAdvance: Bool {
         TaskGenerator.allRequiredComplete(in: tasks)
     }
 
-    // MARK: - Grid
+    private var isLandscape: Bool {
+        horizontalSizeClass == .regular
+    }
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 300), spacing: 16)
-    ]
+    // MARK: - Advance Logic
+
+    private func performAdvance() {
+        guard canAdvance else { return }
+        if let onAdvance {
+            onAdvance()
+        } else {
+            let teamsByID = fetchTeamsByID()
+            WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+            if let result = WeekAdvancer.lastPlayerGameResult,
+               let home = teamsByID[result.boxScore.home.teamID],
+               let away = teamsByID[result.boxScore.away.teamID] {
+                lastGameResult = result
+                lastHomeTeam = home
+                lastAwayTeam = away
+                showGameSummary = true
+            }
+            loadAllData()
+        }
+    }
+
+    // MARK: - Body
 
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            ScrollView {
-                VStack(spacing: 16) {
+            VStack(spacing: 0) {
+                // Timeline strip -- always at top
+                timelineStrip
+                    .padding(.top, 4)
 
-                    // Row 1 -- Key Info
-                    LazyVGrid(columns: columns, spacing: 16) {
-                        teamTile
-                        seasonTile
-                    }
-
-                    // Row 2 -- Action Tiles
-                    LazyVGrid(columns: columns, spacing: 16) {
-                        inboxTile
-                        rosterTile
-                        scheduleTile
-                        standingsTile
-                        newsTile
-                    }
-
-                    // Row 3 -- Management Tiles
-                    LazyVGrid(columns: columns, spacing: 16) {
-                        staffTile
-                        scoutingTile
-                        capTile
-                        lockerRoomTile
-                    }
-
-                    // Row 4 -- Seasonal / Contextual Tiles
-                    LazyVGrid(columns: columns, spacing: 16) {
-                        if career.currentPhase == .draft || career.currentPhase == .combine {
-                            draftTile
-                        }
-                        if career.currentPhase == .freeAgency {
-                            freeAgencyTile
-                        }
-                        if career.currentPhase == .regularSeason || career.currentPhase == .tradeDeadline {
-                            tradeTile
-                        }
-                    }
-
-                    // Phase Tasks Checklist
-                    if !tasks.isEmpty {
-                        phaseTasksSection
-                    }
-
-                    // Advance Week
-                    advanceWeekButton
-                        .padding(.top, 8)
+                if isLandscape {
+                    landscapeLayout
+                } else {
+                    portraitLayout
                 }
-                .padding(20)
-                .frame(maxWidth: 800)
-                .frame(maxWidth: .infinity)
             }
         }
         .navigationBarBackButtonHidden(true)
@@ -124,145 +97,573 @@ struct CareerDashboardView: View {
         }
     }
 
-    // MARK: - Phase Tasks Section
+    // MARK: - Landscape Layout (3-column + bottom messages)
 
-    private var phaseTasksSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Gold header
-            HStack(spacing: 8) {
-                Image(systemName: "checklist")
+    private var landscapeLayout: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
+                // Left column -- Timeline+Tasks Panel (30%)
+                TimelineTasksPanel(
+                    career: career,
+                    tasks: $tasks,
+                    onTaskSelected: onTaskSelected,
+                    onAdvance: { performAdvance() },
+                    canAdvance: canAdvance
+                )
+                .frame(maxWidth: .infinity)
+                .layoutPriority(0.3)
+
+                Divider().overlay(Color.surfaceBorder)
+
+                // Center column -- Dashboard tiles + Messages (40%)
+                ScrollView {
+                    VStack(spacing: 12) {
+                        centerTilesGrid
+                        messagesPanel
+                            .frame(height: 280)
+                            .background(Color.backgroundSecondary)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                            )
+                    }
+                    .padding(12)
+                }
+                .frame(maxWidth: .infinity)
+                .layoutPriority(0.4)
+
+                Divider().overlay(Color.surfaceBorder)
+
+                // Right column -- Schedule + Standings (30%)
+                ScrollView {
+                    rightPanel
+                        .padding(12)
+                }
+                .frame(maxWidth: .infinity)
+                .layoutPriority(0.3)
+            }
+            .frame(maxHeight: .infinity)
+        }
+    }
+
+    // MARK: - Portrait Layout (stacked)
+
+    private var portraitLayout: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                // Timeline+Tasks panel (replaces old phaseTasksSection + advance button)
+                TimelineTasksPanel(
+                    career: career,
+                    tasks: $tasks,
+                    onTaskSelected: onTaskSelected,
+                    onAdvance: { performAdvance() },
+                    canAdvance: canAdvance
+                )
+                .frame(minHeight: 300, maxHeight: 500)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+                .padding(.horizontal, 16)
+
+                // Messages + Schedule side by side
+                HStack(alignment: .top, spacing: 0) {
+                    messagesPanel
+                        .frame(maxWidth: .infinity)
+
+                    Divider().overlay(Color.surfaceBorder)
+
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            // Schedule + Standings in portrait
+                            rightPanel
+                        }
+                        .padding(12)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .frame(height: 320)
+                .background(Color.backgroundSecondary)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+                .padding(.horizontal, 16)
+
+                // Tiles grid
+                centerTilesGrid
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+            }
+            .padding(.top, 8)
+        }
+    }
+
+    // MARK: - Bottom Bar (legacy, no longer used in main layout)
+    // The TimelineTasksPanel now serves as the combined tasks + advance UI.
+
+    // MARK: - 1. Horizontal Timeline Strip
+
+    private var timelineNodes: [(label: String, month: String, phase: SeasonPhase?, weekNum: Int?)] {
+        var nodes: [(String, String, SeasonPhase?, Int?)] = [
+            ("Coaching", "Feb", .coachingChanges, nil),
+            ("Combine", "Mar", .combine, nil),
+            ("Free Agency", "Mar", .freeAgency, nil),
+            ("Draft", "Apr", .draft, nil),
+            ("OTAs", "May", .otas, nil),
+            ("Camp", "Jun", .trainingCamp, nil),
+            ("Preseason", "Aug", .preseason, nil),
+            ("Cuts", "Aug", .rosterCuts, nil),
+        ]
+        // Regular season weeks
+        let weekMonths = ["Sep","Sep","Sep","Sep","Oct","Oct","Oct","Oct","Nov","Nov","Nov","Nov","Dec","Dec","Dec","Dec","Jan","Jan"]
+        for w in 1...18 {
+            let month = w <= weekMonths.count ? weekMonths[w - 1] : "Jan"
+            nodes.append(("Wk \(w)", month, .regularSeason, w))
+        }
+        nodes.append(("Playoffs", "Jan", .playoffs, nil))
+        nodes.append(("Super Bowl", "Feb", .superBowl, nil))
+        return nodes
+    }
+
+    /// Index of the currently active node in the timeline.
+    private var currentNodeIndex: Int {
+        let phase = career.currentPhase
+        let week = career.currentWeek
+
+        for (i, node) in timelineNodes.enumerated() {
+            if let nodePhase = node.phase {
+                if nodePhase == phase {
+                    if phase == .regularSeason || phase == .tradeDeadline {
+                        if let wk = node.weekNum, wk == week {
+                            return i
+                        }
+                    } else {
+                        return i
+                    }
+                }
+            }
+        }
+        return 0
+    }
+
+    private var timelineStrip: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 0) {
+                    ForEach(Array(timelineNodes.enumerated()), id: \.offset) { index, node in
+                        let isCurrent = index == currentNodeIndex
+                        let isPast = index < currentNodeIndex
+                        let isFuture = index > currentNodeIndex
+
+                        VStack(spacing: 2) {
+                            // Node indicator
+                            ZStack {
+                                if isCurrent {
+                                    Circle()
+                                        .fill(Color.accentGold)
+                                        .frame(width: 22, height: 22)
+                                    Text("NOW")
+                                        .font(.system(size: 6, weight: .black))
+                                        .foregroundStyle(Color.backgroundPrimary)
+                                } else if isPast {
+                                    Circle()
+                                        .fill(Color.backgroundTertiary)
+                                        .frame(width: 16, height: 16)
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(Color.textTertiary)
+                                } else {
+                                    Circle()
+                                        .strokeBorder(Color.surfaceBorder, lineWidth: 1.5)
+                                        .frame(width: 16, height: 16)
+                                }
+                            }
+                            .frame(height: 24)
+
+                            Text(node.label)
+                                .font(.system(size: 9, weight: isCurrent ? .heavy : .medium))
+                                .foregroundStyle(isCurrent ? Color.accentGold : (isPast ? Color.textTertiary : Color.textSecondary))
+                                .lineLimit(1)
+
+                            Text(node.month)
+                                .font(.system(size: 8, weight: .regular))
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                        .frame(width: 52)
+                        .opacity(isFuture ? 0.6 : 1.0)
+                        .id(index)
+
+                        // Connecting line
+                        if index < timelineNodes.count - 1 {
+                            Rectangle()
+                                .fill(isPast ? Color.textTertiary.opacity(0.4) : Color.surfaceBorder)
+                                .frame(width: 12, height: 2)
+                                .offset(y: -12)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+            .frame(height: 60)
+            .background(Color.backgroundSecondary)
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        proxy.scrollTo(currentNodeIndex, anchor: .center)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 2. Messages Panel
+
+    private var messagesPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "tray.full.fill")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
-                Text("PHASE TASKS \u{2014} \(phaseDisplayName(career.currentPhase))")
+                Text("Messages")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                     .textCase(.uppercase)
                     .tracking(0.5)
-                Spacer()
-                if incompleteRequiredCount > 0 {
-                    Text("\(incompleteRequiredCount)")
-                        .font(.caption.weight(.bold).monospacedDigit())
+
+                let unread = inboxMessages.filter { !$0.isRead }.count
+                if unread > 0 {
+                    Text("\(unread)")
+                        .font(.system(size: 10, weight: .bold).monospacedDigit())
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
                         .background(Capsule().fill(Color.danger))
+                }
+
+                Spacer()
+
+                Button {
+                    onTaskSelected(.inbox)
+                } label: {
+                    Text("View All")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.accentBlue)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            // Filter tabs
+            HStack(spacing: 0) {
+                ForEach(DashboardInboxFilter.allCases, id: \.self) { filter in
+                    Button {
+                        inboxFilter = filter
+                    } label: {
+                        Text(filter.rawValue)
+                            .font(.system(size: 11, weight: inboxFilter == filter ? .bold : .medium))
+                            .foregroundStyle(inboxFilter == filter ? Color.accentGold : Color.textTertiary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                inboxFilter == filter
+                                    ? Color.accentGold.opacity(0.12)
+                                    : Color.clear
+                            )
+                            .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.6))
+
+            // Message list
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    let filtered = filteredInboxMessages
+                    if filtered.isEmpty {
+                        VStack(spacing: 8) {
+                            Image(systemName: "tray")
+                                .font(.system(size: 24))
+                                .foregroundStyle(Color.textTertiary)
+                            Text("No messages")
+                                .font(.caption)
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 30)
+                    } else {
+                        ForEach(filtered.reversed()) { message in
+                            messageRow(message)
+                            Divider().overlay(Color.surfaceBorder.opacity(0.3))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var filteredInboxMessages: [InboxMessage] {
+        switch inboxFilter {
+        case .all:
+            return inboxMessages
+        case .new:
+            return inboxMessages.filter { !$0.isRead }
+        case .tasks:
+            return inboxMessages.filter { $0.actionRequired }
+        }
+    }
+
+    private func messageRow(_ message: InboxMessage) -> some View {
+        Button {
+            onTaskSelected(.inbox)
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                // Unread dot
+                Circle()
+                    .fill(message.isRead ? Color.clear : Color.accentGold)
+                    .frame(width: 8, height: 8)
+                    .padding(.top, 5)
+
+                // Sender avatar
+                Image(systemName: message.sender.icon)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.accentGold)
+                    .frame(width: 28, height: 28)
+                    .background(Color.backgroundTertiary)
+                    .clipShape(Circle())
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text(message.sender.displayName)
+                            .font(.system(size: 12, weight: message.isRead ? .medium : .bold))
+                            .foregroundStyle(Color.textPrimary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(message.date)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+
+                    Text(message.subject)
+                        .font(.system(size: 11, weight: message.isRead ? .regular : .semibold))
+                        .foregroundStyle(message.isRead ? Color.textSecondary : Color.textPrimary)
+                        .lineLimit(1)
+
+                    if message.actionRequired {
+                        HStack(spacing: 3) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 8))
+                                .foregroundStyle(Color.danger)
+                            Text("Action Required")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(Color.danger)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - 3. Center Tiles Grid
+
+    private let tileColumns = [
+        GridItem(.flexible(), spacing: 12),
+        GridItem(.flexible(), spacing: 12)
+    ]
+
+    private var centerTilesGrid: some View {
+        LazyVGrid(columns: tileColumns, spacing: 12) {
+            teamTile
+            rosterTile
+            staffTile
+            scoutingTile
+            capTile
+            lockerRoomTile
+
+            // Contextual tiles
+            if career.currentPhase == .draft || career.currentPhase == .combine {
+                draftTile
+            }
+            if career.currentPhase == .freeAgency {
+                freeAgencyTile
+            }
+            if career.currentPhase == .regularSeason || career.currentPhase == .tradeDeadline {
+                tradeTile
+            }
+        }
+    }
+
+    // MARK: - 4. Right Panel (Schedule + Standings)
+
+    private var rightPanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Upcoming fixtures
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.accentGold)
+                    Text("UPCOMING")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.accentGold)
+                        .tracking(0.5)
+                }
+
+                if upcomingGames.isEmpty {
+                    Text(isOffseasonPhase ? "Season starts after Roster Cuts" : "No upcoming games")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                        .padding(.vertical, 4)
+                } else {
+                    ForEach(Array(upcomingGames.prefix(5)), id: \.id) { game in
+                        fixtureRow(game)
+                    }
                 }
             }
 
             Divider().overlay(Color.surfaceBorder.opacity(0.6))
 
-            // Required tasks first
-            if !requiredTasks.isEmpty {
-                ForEach(requiredTasks) { task in
-                    taskRow(task, isRequired: true)
+            // Division standings mini-table
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "list.number")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.accentGold)
+                    Text("DIVISION")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.accentGold)
+                        .tracking(0.5)
                 }
-            }
 
-            // Optional tasks below, dimmer
-            if !optionalTasks.isEmpty {
-                if !requiredTasks.isEmpty {
-                    Divider().overlay(Color.surfaceBorder.opacity(0.3))
-                }
-                ForEach(optionalTasks) { task in
-                    taskRow(task, isRequired: false)
-                }
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.backgroundSecondary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                )
-        )
-    }
-
-    private func taskRow(_ task: GameTask, isRequired: Bool) -> some View {
-        Button {
-            onTaskSelected(task.destination)
-        } label: {
-            HStack(spacing: 10) {
-                // Status indicator
-                if task.status == .done {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(Color.success)
-                } else if isRequired {
-                    Circle()
-                        .fill(Color.danger)
-                        .frame(width: 10, height: 10)
-                        .padding(.horizontal, 3)
+                if divisionTeams.isEmpty {
+                    Text("Loading...")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
                 } else {
-                    Circle()
-                        .strokeBorder(Color.textTertiary, lineWidth: 1.5)
-                        .frame(width: 10, height: 10)
-                        .padding(.horizontal, 3)
-                }
+                    // Header row
+                    HStack {
+                        Text("Team")
+                            .frame(width: 40, alignment: .leading)
+                        Spacer()
+                        Text("W")
+                            .frame(width: 24)
+                        Text("L")
+                            .frame(width: 24)
+                    }
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.textTertiary)
+                    .textCase(.uppercase)
 
-                // Label
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        if isRequired && task.status != .done {
-                            Text("Required")
-                                .font(.system(size: 9, weight: .heavy))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.danger))
+                    ForEach(divisionTeams.sorted(by: { $0.wins > $1.wins }), id: \.id) { t in
+                        let isMyTeam = t.id == team?.id
+                        HStack {
+                            Text(t.abbreviation)
+                                .font(.system(size: 11, weight: isMyTeam ? .heavy : .medium))
+                                .foregroundStyle(isMyTeam ? Color.accentGold : Color.textSecondary)
+                                .frame(width: 40, alignment: .leading)
+                            Spacer()
+                            Text("\(t.wins)")
+                                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                                .foregroundStyle(isMyTeam ? Color.textPrimary : Color.textSecondary)
+                                .frame(width: 24)
+                            Text("\(t.losses)")
+                                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                                .foregroundStyle(isMyTeam ? Color.textPrimary : Color.textSecondary)
+                                .frame(width: 24)
                         }
-                        Text(task.title)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(task.status == .done ? Color.textTertiary : Color.textPrimary)
-                            .strikethrough(task.status == .done, color: Color.textTertiary)
+                        .padding(.vertical, 3)
+                        .padding(.horizontal, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.accentGold.opacity(isMyTeam ? 0.08 : 0))
+                        )
                     }
                 }
-
-                Spacer()
-
-                if task.status != .done {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.textTertiary)
-                }
             }
-            .padding(.vertical, 6)
-            .opacity(task.status == .done ? 0.6 : (isRequired ? 1.0 : 0.75))
         }
-        .buttonStyle(.plain)
     }
 
-    // MARK: - Row 1: Team Tile
+    private func fixtureRow(_ game: Game) -> some View {
+        let isHome = game.homeTeamID == career.teamID
+        let opponentID = isHome ? game.awayTeamID : game.homeTeamID
+        let oppAbbr = allTeamsByID[opponentID]?.abbreviation ?? "???"
+        let prefix = isHome ? "vs" : "@"
+
+        return HStack(spacing: 8) {
+            Text("Wk \(game.week)")
+                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: 34, alignment: .leading)
+
+            Text("\(prefix) \(oppAbbr)")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+
+            Spacer()
+
+            if isHome {
+                Text("HOME")
+                    .font(.system(size: 8, weight: .heavy))
+                    .foregroundStyle(Color.success)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.success.opacity(0.12).cornerRadius(3))
+            } else {
+                Text("AWAY")
+                    .font(.system(size: 8, weight: .heavy))
+                    .foregroundStyle(Color.textTertiary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.backgroundTertiary.cornerRadius(3))
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    // NOTE: phaseTasksSection, taskRow, taskChip removed -- replaced by TimelineTasksPanel.
+
+    // MARK: - Team Tile
 
     private var teamTile: some View {
         NavigationLink {
             OwnerMeetingView(career: career)
         } label: {
             DashboardTile(icon: "shield.fill", title: "Team") {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(team?.fullName ?? "No Team")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
 
-                    HStack(spacing: 16) {
+                    HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Record")
-                                .font(.caption)
+                                .font(.system(size: 10))
                                 .foregroundStyle(Color.textSecondary)
                             Text(team?.record ?? "0-0")
-                                .font(.title3.weight(.bold).monospacedDigit())
+                                .font(.system(size: 16, weight: .bold).monospacedDigit())
                                 .foregroundStyle(Color.textPrimary)
                         }
-
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Division")
-                                .font(.caption)
+                                .font(.system(size: 10))
                                 .foregroundStyle(Color.textSecondary)
                             Text(divisionRank)
-                                .font(.title3.weight(.bold).monospacedDigit())
+                                .font(.system(size: 16, weight: .bold).monospacedDigit())
                                 .foregroundStyle(Color.textPrimary)
                         }
                     }
@@ -276,76 +677,7 @@ struct CareerDashboardView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Row 1: Season Tile
-
-    private var isOffseasonPhase: Bool {
-        switch career.currentPhase {
-        case .regularSeason, .playoffs, .tradeDeadline:
-            return false
-        default:
-            return true
-        }
-    }
-
-    private var seasonTile: some View {
-        DashboardTile(icon: "clock.fill", title: "Season") {
-            VStack(alignment: .leading, spacing: 8) {
-                if isOffseasonPhase {
-                    // Offseason: show phase name prominently instead of week
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Offseason")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                        Text(phaseDisplayName(career.currentPhase))
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(Color.accentGold)
-                        Text("Season \(String(career.currentSeason))")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(Color.textSecondary)
-                    }
-                } else {
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Week")
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                            Text("\(career.currentWeek) of 18")
-                                .font(.title3.weight(.bold).monospacedDigit())
-                                .foregroundStyle(Color.textPrimary)
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Phase")
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                            Text(phaseDisplayName(career.currentPhase))
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(Color.accentGold)
-                        }
-                    }
-                }
-
-                if let nextGame = upcomingGames.first {
-                    Divider().overlay(Color.surfaceBorder)
-                    let isHome = nextGame.homeTeamID == career.teamID
-                    let opponentID = isHome ? nextGame.awayTeamID : nextGame.homeTeamID
-                    let opponentName = allTeamsByID[opponentID]?.fullName ?? "TBD"
-                    let prefix = isHome ? "vs" : "@"
-
-                    HStack(spacing: 4) {
-                        Text("Next:")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(Color.textSecondary)
-                        Text("\(prefix) \(opponentName)")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.textPrimary)
-                            .lineLimit(1)
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Row 2: Roster Tile
+    // MARK: - Roster Tile
 
     private var rosterTile: some View {
         NavigationLink {
@@ -359,23 +691,23 @@ struct CareerDashboardView: View {
             .toolbarColorScheme(.dark, for: .navigationBar)
         } label: {
             DashboardTile(icon: "person.3.fill", title: "Roster", highlighted: currentPhaseHighlightedTiles.contains("Roster")) {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("Players")
-                            .font(.caption)
+                            .font(.system(size: 10))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
                         Text("\(rosterCount)")
-                            .font(.headline.monospacedDigit())
+                            .font(.system(size: 14, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.textPrimary)
                     }
                     HStack {
                         Text("Cap Space")
-                            .font(.caption)
+                            .font(.system(size: 10))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
                         Text(formatCap(team?.availableCap ?? 0))
-                            .font(.headline.monospacedDigit())
+                            .font(.system(size: 14, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.success)
                     }
                 }
@@ -384,246 +716,37 @@ struct CareerDashboardView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Row 2: Schedule Tile
-
-    private var scheduleTile: some View {
-        NavigationLink {
-            ScheduleView(career: career)
-        } label: {
-            DashboardTile(icon: "calendar", title: "Schedule", highlighted: currentPhaseHighlightedTiles.contains("Schedule")) {
-                VStack(alignment: .leading, spacing: 6) {
-                    if let last = lastGame, last.isPlayed {
-                        let isHome = last.homeTeamID == career.teamID
-                        let myScore = isHome ? (last.homeScore ?? 0) : (last.awayScore ?? 0)
-                        let theirScore = isHome ? (last.awayScore ?? 0) : (last.homeScore ?? 0)
-                        let won = myScore > theirScore
-                        let opponentID = isHome ? last.awayTeamID : last.homeTeamID
-                        let oppAbbr = allTeamsByID[opponentID]?.abbreviation ?? "???"
-
-                        HStack {
-                            Text(won ? "W" : "L")
-                                .font(.caption.weight(.heavy))
-                                .foregroundStyle(won ? Color.success : Color.danger)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill((won ? Color.success : Color.danger).opacity(0.15))
-                                )
-                            Text("\(myScore)-\(theirScore)")
-                                .font(.subheadline.weight(.bold).monospacedDigit())
-                                .foregroundStyle(Color.textPrimary)
-                            Text("vs \(oppAbbr)")
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                        }
-                    } else {
-                        if isOffseasonPhase {
-                            Text("Season starts after Roster Cuts")
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                        } else {
-                            Text("No results yet")
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                        }
-                    }
-
-                    if let next = upcomingGames.first {
-                        Divider().overlay(Color.surfaceBorder)
-                        let isHome = next.homeTeamID == career.teamID
-                        let opponentID = isHome ? next.awayTeamID : next.homeTeamID
-                        let oppAbbr = allTeamsByID[opponentID]?.abbreviation ?? "???"
-                        HStack(spacing: 4) {
-                            Text("Next:")
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                            Text("\(isHome ? "vs" : "@") \(oppAbbr) (Wk \(next.week))")
-                                .font(.caption.weight(.semibold).monospacedDigit())
-                                .foregroundStyle(Color.textPrimary)
-                        }
-                    }
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Row 2: Standings Tile
-
-    private var standingsTile: some View {
-        NavigationLink {
-            StandingsView(career: career)
-        } label: {
-            DashboardTile(icon: "list.number", title: "Standings") {
-                VStack(alignment: .leading, spacing: 4) {
-                    if divisionTeams.isEmpty {
-                        Text("Loading...")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                    } else {
-                        Text("Your Division")
-                            .font(.system(size: 10, weight: .bold))
-                            .tracking(1)
-                            .foregroundStyle(Color.textTertiary)
-                            .textCase(.uppercase)
-                            .padding(.bottom, 2)
-
-                        ForEach(divisionTeams.sorted(by: { $0.wins > $1.wins }), id: \.id) { t in
-                            HStack {
-                                Text(t.abbreviation)
-                                    .font(.caption.weight(t.id == team?.id ? .heavy : .medium))
-                                    .foregroundStyle(t.id == team?.id ? Color.accentGold : Color.textSecondary)
-                                    .frame(width: 36, alignment: .leading)
-                                Spacer()
-                                Text(t.record)
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(t.id == team?.id ? Color.textPrimary : Color.textSecondary)
-                            }
-                            .padding(.vertical, t.id == team?.id ? 2 : 0)
-                            .padding(.horizontal, t.id == team?.id ? 6 : 0)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color.accentGold.opacity(t.id == team?.id ? 0.08 : 0))
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Row 2: Inbox Tile
-
-    private var inboxUnreadCount: Int {
-        inboxMessages.filter { !$0.isRead }.count
-    }
-
-    private var inboxTile: some View {
-        Button {
-            onTaskSelected(.inbox)
-        } label: {
-            DashboardTile(
-                icon: "tray.full.fill",
-                title: "Inbox",
-                highlighted: inboxUnreadCount > 0
-            ) {
-                VStack(alignment: .leading, spacing: 6) {
-                    if inboxUnreadCount > 0 {
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(Color.accentGold)
-                                .frame(width: 8, height: 8)
-                            Text("\(inboxUnreadCount) unread message\(inboxUnreadCount == 1 ? "" : "s")")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Color.accentGold)
-                        }
-                    } else {
-                        Text("No unread messages")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                    }
-
-                    // Show latest message preview
-                    if let latest = inboxMessages.last {
-                        Divider().overlay(Color.surfaceBorder.opacity(0.5))
-                        HStack(spacing: 6) {
-                            Image(systemName: latest.sender.icon)
-                                .font(.caption2)
-                                .foregroundStyle(Color.textTertiary)
-                            Text(latest.subject)
-                                .font(.caption)
-                                .foregroundStyle(Color.textPrimary)
-                                .lineLimit(1)
-                        }
-                    }
-
-                    // Show action-required count
-                    let actionCount = inboxMessages.filter { $0.actionRequired && !$0.isRead }.count
-                    if actionCount > 0 {
-                        HStack(spacing: 4) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.caption2)
-                                .foregroundStyle(Color.danger)
-                            Text("\(actionCount) requiring action")
-                                .font(.caption)
-                                .foregroundStyle(Color.danger)
-                        }
-                    }
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Row 2: News Tile
-
-    private var newsTile: some View {
-        NavigationLink {
-            NewsView(career: career)
-        } label: {
-            DashboardTile(icon: "newspaper.fill", title: "News") {
-                VStack(alignment: .leading, spacing: 6) {
-                    let recentNews = Array(WeekAdvancer.lastNewsItems.prefix(2))
-                    if recentNews.isEmpty {
-                        Text("No recent headlines")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                    } else {
-                        ForEach(recentNews) { item in
-                            Text(item.headline)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(Color.textPrimary)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if item.id != recentNews.last?.id {
-                                Divider().overlay(Color.surfaceBorder.opacity(0.5))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Row 3: Staff Tile
+    // MARK: - Staff Tile
 
     private var staffTile: some View {
         NavigationLink {
             CoachingStaffView(career: career)
         } label: {
             DashboardTile(icon: "person.2.fill", title: "Staff", highlighted: currentPhaseHighlightedTiles.contains("Staff")) {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     if let hc = headCoach {
-                        HStack {
+                        HStack(spacing: 4) {
                             Text("HC")
-                                .font(.caption.weight(.bold))
+                                .font(.system(size: 10, weight: .bold))
                                 .foregroundStyle(Color.accentGold)
                             Text(hc.fullName)
-                                .font(.subheadline.weight(.medium))
+                                .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(Color.textPrimary)
                                 .lineLimit(1)
                         }
-                        if let scheme = hc.offensiveScheme {
-                            Text(scheme.rawValue)
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                        }
-                        HStack {
-                            Text("Rating")
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                            Spacer()
-                            Text("\(hc.playCalling)")
-                                .font(.subheadline.weight(.bold).monospacedDigit())
-                                .foregroundStyle(Color.forRating(hc.playCalling))
-                        }
                     } else {
                         Text("No head coach")
-                            .font(.caption)
+                            .font(.system(size: 11))
                             .foregroundStyle(Color.textSecondary)
+                    }
+                    HStack {
+                        Text("Staff")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        Text("\(coachCount) filled")
+                            .font(.system(size: 11, weight: .medium).monospacedDigit())
+                            .foregroundStyle(Color.textPrimary)
                     }
                 }
             }
@@ -631,50 +754,46 @@ struct CareerDashboardView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Row 3: Scouting Tile
+    // MARK: - Scouting Tile
 
     private var scoutingTile: some View {
         NavigationLink {
             ScoutingHubView(career: career)
         } label: {
             DashboardTile(icon: "magnifyingglass", title: "Scouting", highlighted: currentPhaseHighlightedTiles.contains("Scouting")) {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     let topProspect = WeekAdvancer.currentDraftClass.first
                     if let prospect = topProspect {
                         Text("\(prospect.firstName) \(prospect.lastName)")
-                            .font(.subheadline.weight(.medium))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Color.textPrimary)
                             .lineLimit(1)
-                        HStack {
-                            Text(prospect.position.rawValue)
-                                .font(.caption)
-                                .foregroundStyle(Color.accentGold)
-                            Text(prospect.college)
-                                .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
-                        }
+                        Text("\(prospect.position.rawValue) \u{2014} \(prospect.college)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.textSecondary)
+                            .lineLimit(1)
                     } else {
                         Text("No prospects scouted")
-                            .font(.caption)
+                            .font(.system(size: 11))
                             .foregroundStyle(Color.textSecondary)
                     }
                     Text("\(WeekAdvancer.currentDraftClass.count) prospects")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(Color.textSecondary)
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
                 }
             }
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Row 3: Cap Tile
+    // MARK: - Cap Tile
 
     private var capTile: some View {
         NavigationLink {
             CapOverviewView(career: career)
         } label: {
             DashboardTile(icon: "dollarsign.circle.fill", title: "Salary Cap", highlighted: currentPhaseHighlightedTiles.contains("Salary Cap")) {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
                     if let t = team {
                         let usedFraction = t.salaryCap > 0
                             ? Double(t.currentCapUsage) / Double(t.salaryCap)
@@ -682,38 +801,38 @@ struct CareerDashboardView: View {
 
                         HStack {
                             Text("Used")
-                                .font(.caption)
+                                .font(.system(size: 10))
                                 .foregroundStyle(Color.textSecondary)
                             Spacer()
                             Text(formatCap(t.currentCapUsage))
-                                .font(.caption.weight(.semibold).monospacedDigit())
+                                .font(.system(size: 11, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(Color.textPrimary)
                         }
 
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
-                                RoundedRectangle(cornerRadius: 4)
+                                RoundedRectangle(cornerRadius: 3)
                                     .fill(Color.backgroundTertiary)
-                                    .frame(height: 8)
-                                RoundedRectangle(cornerRadius: 4)
+                                    .frame(height: 6)
+                                RoundedRectangle(cornerRadius: 3)
                                     .fill(usedFraction > 0.9 ? Color.danger : Color.accentGold)
-                                    .frame(width: geo.size.width * min(usedFraction, 1.0), height: 8)
+                                    .frame(width: geo.size.width * min(usedFraction, 1.0), height: 6)
                             }
                         }
-                        .frame(height: 8)
+                        .frame(height: 6)
 
                         HStack {
                             Text("Available")
-                                .font(.caption)
+                                .font(.system(size: 10))
                                 .foregroundStyle(Color.textSecondary)
                             Spacer()
                             Text(formatCap(t.availableCap))
-                                .font(.caption.weight(.semibold).monospacedDigit())
+                                .font(.system(size: 11, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(t.availableCap > 0 ? Color.success : Color.danger)
                         }
                     } else {
                         Text("No cap data")
-                            .font(.caption)
+                            .font(.system(size: 11))
                             .foregroundStyle(Color.textSecondary)
                     }
                 }
@@ -722,39 +841,38 @@ struct CareerDashboardView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Row 3: Locker Room Tile
+    // MARK: - Locker Room Tile
 
     private var lockerRoomTile: some View {
         NavigationLink {
             LockerRoomView(career: career)
         } label: {
             DashboardTile(icon: "heart.fill", title: "Locker Room") {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("Chemistry")
-                            .font(.caption)
+                            .font(.system(size: 10))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
                         Text("Good")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(Color.success)
                     }
 
-                    // Morale bar placeholder (0.7 = good)
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 4)
+                            RoundedRectangle(cornerRadius: 3)
                                 .fill(Color.backgroundTertiary)
-                                .frame(height: 8)
-                            RoundedRectangle(cornerRadius: 4)
+                                .frame(height: 6)
+                            RoundedRectangle(cornerRadius: 3)
                                 .fill(Color.success)
-                                .frame(width: geo.size.width * 0.7, height: 8)
+                                .frame(width: geo.size.width * 0.7, height: 6)
                         }
                     }
-                    .frame(height: 8)
+                    .frame(height: 6)
 
                     Text("Morale: 70%")
-                        .font(.caption.monospacedDigit())
+                        .font(.system(size: 10).monospacedDigit())
                         .foregroundStyle(Color.textSecondary)
                 }
             }
@@ -762,73 +880,64 @@ struct CareerDashboardView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Row 4: Draft Tile (contextual)
+    // MARK: - Contextual Tiles
 
     private var draftTile: some View {
         NavigationLink {
             DraftView(career: career)
         } label: {
             DashboardTile(icon: "list.clipboard.fill", title: "Draft", highlighted: currentPhaseHighlightedTiles.contains("Draft")) {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     let picks = WeekAdvancer.currentDraftPicks.filter { $0.currentTeamID == career.teamID }
                     if let firstPick = picks.first {
                         Text("Pick #\(firstPick.pickNumber)")
-                            .font(.title3.weight(.bold).monospacedDigit())
+                            .font(.system(size: 16, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.accentGold)
                     }
-                    if let topProspect = WeekAdvancer.currentDraftClass.first {
-                        Text("Top: \(topProspect.firstName) \(topProspect.lastName)")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(Color.textPrimary)
-                    }
                     Text("\(picks.count) pick(s)")
-                        .font(.caption.monospacedDigit())
+                        .font(.system(size: 10).monospacedDigit())
                         .foregroundStyle(Color.textSecondary)
                 }
             }
         }
         .buttonStyle(.plain)
     }
-
-    // MARK: - Row 4: Free Agency Tile (contextual)
 
     private var freeAgencyTile: some View {
         NavigationLink {
             FreeAgencyView(career: career)
         } label: {
             DashboardTile(icon: "person.badge.plus", title: "Free Agency", highlighted: currentPhaseHighlightedTiles.contains("Free Agency")) {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("Available Cap")
-                            .font(.caption)
+                            .font(.system(size: 10))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
                         Text(formatCap(team?.availableCap ?? 0))
-                            .font(.subheadline.weight(.bold).monospacedDigit())
+                            .font(.system(size: 12, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.success)
                     }
-                    Text("Browse available free agents")
-                        .font(.caption)
+                    Text("Browse free agents")
+                        .font(.system(size: 10))
                         .foregroundStyle(Color.textSecondary)
                 }
             }
         }
         .buttonStyle(.plain)
     }
-
-    // MARK: - Row 4: Trade Tile (contextual)
 
     private var tradeTile: some View {
         NavigationLink {
             TradeView(career: career)
         } label: {
             DashboardTile(icon: "arrow.left.arrow.right", title: "Trade") {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Trade window open")
-                        .font(.caption.weight(.medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Color.success)
                     Text("Review potential deals")
-                        .font(.caption)
+                        .font(.system(size: 10))
                         .foregroundStyle(Color.textSecondary)
                 }
             }
@@ -836,84 +945,8 @@ struct CareerDashboardView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Advance Week Button
-
-    /// Returns the label text for the advance button based on the current phase.
-    private var advanceButtonLabel: String {
-        switch career.currentPhase {
-        case .regularSeason:
-            return "Advance to Week \(career.currentWeek + 1)"
-        case .playoffs:
-            switch career.currentWeek {
-            case 19: return "Advance to Divisional Round"
-            case 20: return "Advance to Conference Championships"
-            case 21: return "Advance to Super Bowl"
-            default: return "Advance to Next Round"
-            }
-        case .superBowl:       return "Advance to Pro Bowl"
-        case .proBowl:         return "Advance to Coaching Changes"
-        case .coachingChanges: return "Advance to NFL Combine"
-        case .combine:         return "Advance to Free Agency"
-        case .freeAgency:      return "Advance to NFL Draft"
-        case .draft:           return "Advance to OTAs"
-        case .otas:            return "Advance to Training Camp"
-        case .trainingCamp:    return "Advance to Preseason"
-        case .preseason:       return "Advance to Roster Cuts"
-        case .rosterCuts:      return "Advance to Regular Season"
-        case .tradeDeadline:   return "Advance to Week \(career.currentWeek + 1)"
-        }
-    }
-
-    private var advanceWeekButton: some View {
-        VStack(spacing: 8) {
-            // Warning text when blocked
-            if !canAdvance {
-                Label(
-                    "Complete \(incompleteRequiredCount) required task\(incompleteRequiredCount == 1 ? "" : "s") to advance",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.caption.weight(.medium))
-                .foregroundStyle(Color.danger)
-            }
-
-            Button {
-                guard canAdvance else { return }
-                let teamsByID = fetchTeamsByID()
-                WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
-                if let result = WeekAdvancer.lastPlayerGameResult,
-                   let home = teamsByID[result.boxScore.home.teamID],
-                   let away = teamsByID[result.boxScore.away.teamID] {
-                    lastGameResult = result
-                    lastHomeTeam = home
-                    lastAwayTeam = away
-                    showGameSummary = true
-                }
-                loadAllData()
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "chevron.right.2")
-                        .font(.system(size: 16, weight: .bold))
-                    Text(advanceButtonLabel)
-                        .font(.system(size: 18, weight: .bold))
-                }
-                .foregroundStyle(canAdvance ? Color.backgroundPrimary : Color.textTertiary)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: 48)
-                .padding(.vertical, 16)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(canAdvance ? Color.accentGold : Color.backgroundTertiary)
-                        .shadow(
-                            color: canAdvance ? Color.accentGold.opacity(0.4) : Color.clear,
-                            radius: 12, x: 0, y: 4
-                        )
-                )
-            }
-            .disabled(!canAdvance)
-            .animation(.spring(duration: 0.3), value: canAdvance)
-            .accessibilityLabel(advanceButtonLabel)
-        }
-    }
+    // NOTE: advanceWeekButton and advanceWeekButtonCompact removed --
+    // advance UI is now part of TimelineTasksPanel.
 
     // MARK: - Owner Satisfaction Bar
 
@@ -948,7 +981,16 @@ struct CareerDashboardView: View {
         return Color.danger
     }
 
-    // MARK: - Division Rank
+    // MARK: - Computed Properties
+
+    private var isOffseasonPhase: Bool {
+        switch career.currentPhase {
+        case .regularSeason, .playoffs, .tradeDeadline:
+            return false
+        default:
+            return true
+        }
+    }
 
     private var divisionRank: String {
         guard let myTeam = team else { return "\u{2014}" }
@@ -960,9 +1002,6 @@ struct CareerDashboardView: View {
         return "\u{2014}"
     }
 
-    // MARK: - Phase Highlight
-
-    /// Which dashboard tile names should be visually emphasized for the current phase.
     private var currentPhaseHighlightedTiles: Set<String> {
         switch career.currentPhase {
         case .coachingChanges:
@@ -985,24 +1024,6 @@ struct CareerDashboardView: View {
     }
 
     // MARK: - Helpers
-
-    private func phaseDisplayName(_ phase: SeasonPhase) -> String {
-        switch phase {
-        case .superBowl:       return "Super Bowl"
-        case .proBowl:         return "Pro Bowl"
-        case .coachingChanges: return "Coaching"
-        case .combine:         return "Combine"
-        case .freeAgency:      return "Free Agency"
-        case .draft:           return "Draft"
-        case .otas:            return "OTAs"
-        case .trainingCamp:    return "Camp"
-        case .preseason:       return "Preseason"
-        case .rosterCuts:      return "Roster Cuts"
-        case .regularSeason:   return "Regular Season"
-        case .tradeDeadline:   return "Trade Deadline"
-        case .playoffs:        return "Playoffs"
-        }
-    }
 
     private func formatCap(_ thousands: Int) -> String {
         let millions = Double(thousands) / 1000.0
@@ -1068,6 +1089,14 @@ struct CareerDashboardView: View {
     }
 }
 
+// MARK: - Dashboard Inbox Filter
+
+private enum DashboardInboxFilter: String, CaseIterable {
+    case all = "All"
+    case new = "New"
+    case tasks = "Tasks"
+}
+
 // MARK: - Dashboard Tile
 
 /// Reusable tile component for the FM26-inspired grid layout.
@@ -1079,28 +1108,28 @@ private struct DashboardTile<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             // Header
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
                 Text(title)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                     .textCase(.uppercase)
                     .tracking(0.5)
                 Spacer()
                 if highlighted {
                     Text("ACTIVE")
-                        .font(.system(size: 9, weight: .heavy))
+                        .font(.system(size: 8, weight: .heavy))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color.accentGold))
                 }
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
 
@@ -1109,20 +1138,20 @@ private struct DashboardTile<Content: View>: View {
             // Content
             content()
         }
-        .padding(16)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 10)
                 .fill(Color.backgroundSecondary)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: 10)
                         .strokeBorder(
                             highlighted ? Color.accentGold.opacity(0.6) : Color.surfaceBorder,
                             lineWidth: highlighted ? 1.5 : 1
                         )
                 )
         )
-        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .contentShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 

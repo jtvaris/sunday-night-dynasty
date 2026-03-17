@@ -277,17 +277,25 @@ enum CoachingEngine {
         if coach.yearsExperience < 15 {
             // Randomly improve 1–3 attributes each offseason
             let improvementCount = Int.random(in: 1...3)
-            var attributes = [
-                \Coach.playCalling,
-                \Coach.playerDevelopment,
-                \Coach.adaptability
+            // Pair of getter/setter closures so we can mutate @Model properties without WritableKeyPath subscript
+            var attributes: [(get: () -> Int, set: (Int) -> Void)] = [
+                ({ coach.playCalling },        { coach.playCalling = $0 }),
+                ({ coach.playerDevelopment },   { coach.playerDevelopment = $0 }),
+                ({ coach.adaptability },        { coach.adaptability = $0 }),
+                ({ coach.gamePlanning },        { coach.gamePlanning = $0 }),
+                ({ coach.scoutingAbility },     { coach.scoutingAbility = $0 }),
+                ({ coach.recruiting },          { coach.recruiting = $0 }),
+                ({ coach.motivation },          { coach.motivation = $0 }),
+                ({ coach.discipline },          { coach.discipline = $0 }),
+                ({ coach.mediaHandling },       { coach.mediaHandling = $0 }),
+                ({ coach.moraleInfluence },     { coach.moraleInfluence = $0 })
             ]
             attributes.shuffle()
-            for i in 0..<improvementCount {
-                let kp = attributes[i]
-                let current = coach[keyPath: kp]
+            for i in 0..<min(improvementCount, attributes.count) {
+                let attr = attributes[i]
+                let current = attr.get()
                 let gain = Int.random(in: 1...3)
-                coach[keyPath: kp] = min(99, current + gain)
+                attr.set(min(99, current + gain))
             }
         }
 
@@ -298,6 +306,7 @@ enum CoachingEngine {
             if Double.random(in: 0.0..<1.0) < declineChance {
                 coach.adaptability = max(1, coach.adaptability - Int.random(in: 1...2))
                 coach.playCalling  = max(1, coach.playCalling  - Int.random(in: 0...1))
+                coach.gamePlanning = max(1, coach.gamePlanning  - Int.random(in: 0...1))
             }
         }
 
@@ -317,13 +326,15 @@ enum CoachingEngine {
     // MARK: - Hiring Market
 
     /// Generates a pool of coaching candidates available for the given role.
+    /// Produces 20–30 candidates per search to populate a market of 50+ total coaches.
     ///
     /// - Parameters:
     ///   - role: The coaching role being filled.
-    ///   - count: How many candidates to generate.
+    ///   - count: How many candidates to generate (defaults to 25).
     /// - Returns: An array of freshly created `Coach` objects not yet attached to any team.
-    static func generateCoachCandidates(role: CoachRole, count: Int) -> [Coach] {
-        (0..<count).map { _ in
+    static func generateCoachCandidates(role: CoachRole, count: Int = 25) -> [Coach] {
+        let actualCount = max(count, 20) // Floor of 20 candidates per search
+        return (0..<actualCount).map { _ in
             let name = RandomNameGenerator.randomName()
 
             // Age distribution: young assistants skew lower, coordinators/HC skew older
@@ -333,6 +344,9 @@ enum CoachingEngine {
             case .headCoach:
                 ageRange = 40...65
                 expRange = 12...30
+            case .assistantHeadCoach:
+                ageRange = 38...60
+                expRange = 10...25
             case .offensiveCoordinator, .defensiveCoordinator:
                 ageRange = 35...58
                 expRange = 8...22
@@ -357,10 +371,10 @@ enum CoachingEngine {
             let offScheme: OffensiveScheme? = offensiveRole(role) ? OffensiveScheme.allCases.randomElement() : nil
             let defScheme: DefensiveScheme? = defensiveRole(role) ? DefensiveScheme.allCases.randomElement() : nil
 
-            // Head coaches may know both
+            // Head coaches and assistant HCs may know both
             let finalOffScheme: OffensiveScheme?
             let finalDefScheme: DefensiveScheme?
-            if role == .headCoach {
+            if role == .headCoach || role == .assistantHeadCoach {
                 finalOffScheme = Bool.random() ? OffensiveScheme.allCases.randomElement() : nil
                 finalDefScheme = Bool.random() ? DefensiveScheme.allCases.randomElement() : nil
             } else {
@@ -368,7 +382,20 @@ enum CoachingEngine {
                 finalDefScheme = defScheme
             }
 
-            return Coach(
+            // Salary tiers by role (in thousands)
+            let salary: Int
+            switch role {
+            case .headCoach:               salary = Int.random(in: 5_000...12_000)
+            case .assistantHeadCoach:      salary = Int.random(in: 2_000...5_000)
+            case .offensiveCoordinator,
+                 .defensiveCoordinator:    salary = Int.random(in: 2_500...6_000)
+            case .specialTeamsCoordinator: salary = Int.random(in: 1_000...2_500)
+            default:                       salary = Int.random(in: 500...2_000)
+            }
+
+            let personality = PersonalityArchetype.allCases.randomElement() ?? .quietProfessional
+
+            let coach = Coach(
                 firstName: name.first,
                 lastName: name.last,
                 age: age,
@@ -379,11 +406,296 @@ enum CoachingEngine {
                 playerDevelopment: randAttr(),
                 reputation: randAttr(),
                 adaptability: randAttr(),
-                personality: PersonalityArchetype.allCases.randomElement() ?? .quietProfessional,
+                gamePlanning: randAttr(),
+                scoutingAbility: randAttr(),
+                recruiting: randAttr(),
+                motivation: randAttr(),
+                discipline: randAttr(),
+                mediaHandling: randAttr(),
+                contractNegotiation: randAttr(),
+                moraleInfluence: randAttr(),
+                salary: salary,
+                background: "",
+                personality: personality,
                 teamID: nil,
                 yearsExperience: exp
             )
+            coach.background = generateBackground(for: coach)
+            return coach
         }
+    }
+
+    // MARK: - Background Generation
+
+    /// Generates an auto-generated coaching background / history blurb based on the coach's
+    /// attributes, experience, personality, age, and scheme preferences.
+    static func generateBackground(for coach: Coach) -> String {
+        var parts: [String] = []
+
+        // Experience-based opening
+        let expOpeners: [String]
+        switch coach.yearsExperience {
+        case 0...5:
+            expOpeners = [
+                "A rising talent with \(coach.yearsExperience) years in the league.",
+                "Young and hungry, still building his coaching resume.",
+                "Fresh face on the coaching circuit with raw potential.",
+                "Recently transitioned from a quality control role."
+            ]
+        case 6...12:
+            expOpeners = [
+                "Spent \(coach.yearsExperience) years climbing the coaching ladder.",
+                "A mid-career coach with a growing reputation around the league.",
+                "Has been steadily building his resume over \(coach.yearsExperience) seasons.",
+                "Proven himself as a reliable coordinator over the past decade."
+            ]
+        case 13...20:
+            expOpeners = [
+                "A seasoned veteran with \(coach.yearsExperience) years of NFL experience.",
+                "Well-respected throughout the league after nearly two decades of coaching.",
+                "One of the more experienced coaches available, with \(coach.yearsExperience) years under his belt.",
+                "A veteran presence who has seen it all in his \(coach.yearsExperience)-year career."
+            ]
+        default:
+            expOpeners = [
+                "A grizzled coaching lifer with \(coach.yearsExperience) years in the business.",
+                "Has been coaching longer than some of his players have been alive.",
+                "An old-school football mind with over two decades of experience.",
+                "One of the longest-tenured coaches in professional football."
+            ]
+        }
+        parts.append(expOpeners.randomElement()!)
+
+        // Attribute-based flavor (pick the highest attribute for emphasis)
+        let attrMap: [(String, Int)] = [
+            ("play-calling", coach.playCalling),
+            ("player development", coach.playerDevelopment),
+            ("game planning", coach.gamePlanning),
+            ("scouting", coach.scoutingAbility),
+            ("recruiting", coach.recruiting),
+            ("motivation", coach.motivation),
+            ("discipline", coach.discipline),
+            ("media handling", coach.mediaHandling),
+            ("contract negotiation", coach.contractNegotiation),
+            ("morale building", coach.moraleInfluence)
+        ]
+
+        if let topAttr = attrMap.max(by: { $0.1 < $1.1 }) {
+            let attrPhrases: [String]
+            switch topAttr.0 {
+            case "play-calling":
+                attrPhrases = [
+                    "Known for creative play-calling that keeps defenses guessing.",
+                    "His game-day play-calling is considered among the best in the league.",
+                    "Offensive coordinators around the league study his play sheets."
+                ]
+            case "player development":
+                attrPhrases = [
+                    "Known for developing raw talent into starters.",
+                    "Has a track record of turning late-round picks into Pro Bowlers.",
+                    "Players who work under him consistently improve year over year."
+                ]
+            case "game planning":
+                attrPhrases = [
+                    "Meticulous game planner who leaves no stone unturned.",
+                    "His game plans are legendary for exploiting opponent weaknesses.",
+                    "Spends 18-hour days during the week perfecting his game plan."
+                ]
+            case "scouting":
+                attrPhrases = [
+                    "Has an exceptional eye for talent that others overlook.",
+                    "Former scouts credit him with finding several hidden gems.",
+                    "Known for spending extra hours in the film room evaluating prospects."
+                ]
+            case "recruiting":
+                attrPhrases = [
+                    "Free agents consistently cite him as a reason they signed.",
+                    "His recruiting pitch is considered one of the best in the league.",
+                    "Players want to play for him — it's that simple."
+                ]
+            case "motivation":
+                attrPhrases = [
+                    "His halftime speeches are the stuff of locker room legend.",
+                    "Players run through walls for him on game day.",
+                    "Known for getting the absolute maximum out of his roster."
+                ]
+            case "discipline":
+                attrPhrases = [
+                    "Runs a tight ship — his teams are among the least penalized in the league.",
+                    "Demands accountability from every player, coach, and staff member.",
+                    "His attention to detail borders on obsessive, in the best way."
+                ]
+            case "media handling":
+                attrPhrases = [
+                    "A natural in front of the cameras who shields his players from distractions.",
+                    "His press conferences are masterclasses in saying nothing and everything.",
+                    "The media respects him, and he uses that to protect his locker room."
+                ]
+            case "contract negotiation":
+                attrPhrases = [
+                    "Has a keen understanding of the salary cap and player value.",
+                    "Works closely with the front office on roster construction.",
+                    "Known for identifying value signings in free agency."
+                ]
+            case "morale building":
+                attrPhrases = [
+                    "His locker rooms are consistently described as tight-knit families.",
+                    "Creates an environment where players genuinely enjoy coming to work.",
+                    "Team chemistry has never been an issue under his leadership."
+                ]
+            default:
+                attrPhrases = ["A well-rounded coaching mind."]
+            }
+            parts.append(attrPhrases.randomElement()!)
+        }
+
+        // Personality flavor
+        switch coach.personality {
+        case .fieryCompetitor:
+            parts.append(["Brings an intense, fiery energy to every practice.", "His competitive fire is contagious in the building."].randomElement()!)
+        case .quietProfessional:
+            parts.append(["Prefers to let the results speak for themselves.", "A quiet operator who avoids the spotlight."].randomElement()!)
+        case .mentor:
+            parts.append(["Players describe him as a father figure in the locker room.", "Young coaches seek him out for career advice."].randomElement()!)
+        case .teamLeader:
+            parts.append(["A natural leader who commands respect from Day 1.", "His leadership style unites entire organizations."].randomElement()!)
+        case .dramaQueen:
+            parts.append(["Not afraid of controversy — thrives in the spotlight.", "His bold personality makes headlines, for better or worse."].randomElement()!)
+        case .loneWolf:
+            parts.append(["Keeps his inner circle small and his playbook close.", "A football hermit who lives and breathes the game in isolation."].randomElement()!)
+        case .feelPlayer:
+            parts.append(["Trusts his gut instincts over analytics.", "Makes decisions by feel — and his feel is usually right."].randomElement()!)
+        case .classClown:
+            parts.append(["Keeps the locker room loose with his sense of humor.", "Players love his lighthearted approach to a grueling season."].randomElement()!)
+        case .steadyPerformer:
+            parts.append(["Consistent and reliable — never the highest high or lowest low.", "His steady hand has guided teams through turbulent stretches."].randomElement()!)
+        }
+
+        // Scheme reference if applicable
+        if let offScheme = coach.offensiveScheme {
+            let schemePhrases = [
+                "Runs a \(offScheme.displayName) offense.",
+                "His offensive philosophy centers on the \(offScheme.displayName) system.",
+                "Brings a \(offScheme.displayName) scheme that he's refined over the years."
+            ]
+            parts.append(schemePhrases.randomElement()!)
+        }
+        if let defScheme = coach.defensiveScheme {
+            let schemePhrases = [
+                "Favors a \(defScheme.displayName) defense.",
+                "Built a top-tier defense using his \(defScheme.displayName) scheme.",
+                "His \(defScheme.displayName) defensive system has been widely imitated."
+            ]
+            parts.append(schemePhrases.randomElement()!)
+        }
+
+        // Cap at 2-3 sentences for readability
+        let selected = Array(parts.prefix(3))
+        return selected.joined(separator: " ")
+    }
+
+    // MARK: - Coach Chemistry
+
+    /// Evaluates the personality chemistry between two coaches.
+    /// Returns a value: positive = good fit, zero = neutral, negative = conflict.
+    ///
+    /// Range: roughly -1.0 (conflict) to +1.0 (excellent fit).
+    static func coachChemistry(
+        coachA: PersonalityArchetype,
+        coachB: PersonalityArchetype
+    ) -> Double {
+        // Same personality = generally good synergy
+        if coachA == coachB {
+            return coachA == .dramaQueen ? -0.3 : 0.6
+        }
+
+        switch (coachA, coachB) {
+        // Excellent pairings
+        case (.mentor, .quietProfessional), (.quietProfessional, .mentor):
+            return 0.8
+        case (.teamLeader, .steadyPerformer), (.steadyPerformer, .teamLeader):
+            return 0.7
+        case (.mentor, .teamLeader), (.teamLeader, .mentor):
+            return 0.7
+        case (.quietProfessional, .steadyPerformer), (.steadyPerformer, .quietProfessional):
+            return 0.6
+        case (.teamLeader, .fieryCompetitor), (.fieryCompetitor, .teamLeader):
+            return 0.5
+
+        // Good pairings
+        case (.mentor, .steadyPerformer), (.steadyPerformer, .mentor):
+            return 0.5
+        case (.feelPlayer, .fieryCompetitor), (.fieryCompetitor, .feelPlayer):
+            return 0.4
+        case (.classClown, .teamLeader), (.teamLeader, .classClown):
+            return 0.3
+
+        // Tension pairings
+        case (.fieryCompetitor, .quietProfessional), (.quietProfessional, .fieryCompetitor):
+            return -0.3
+        case (.dramaQueen, .quietProfessional), (.quietProfessional, .dramaQueen):
+            return -0.4
+        case (.loneWolf, .teamLeader), (.teamLeader, .loneWolf):
+            return -0.4
+        case (.classClown, .mentor), (.mentor, .classClown):
+            return -0.3
+        case (.loneWolf, .mentor), (.mentor, .loneWolf):
+            return -0.3
+
+        // Conflict pairings
+        case (.dramaQueen, .fieryCompetitor), (.fieryCompetitor, .dramaQueen):
+            return -0.8
+        case (.dramaQueen, .loneWolf), (.loneWolf, .dramaQueen):
+            return -0.7
+        case (.classClown, .loneWolf), (.loneWolf, .classClown):
+            return -0.5
+        case (.dramaQueen, .classClown), (.classClown, .dramaQueen):
+            return -0.5
+
+        // Default: mildly positive (most people can work together)
+        default:
+            return 0.1
+        }
+    }
+
+    /// Returns a chemistry label string for display in the UI.
+    static func chemistryLabel(score: Double) -> String {
+        switch score {
+        case 0.3...:   return "Good fit"
+        case -0.29...0.29: return "Tension"
+        default:        return "Conflict"
+        }
+    }
+
+    /// Returns a chemistry symbol for compact display.
+    static func chemistrySymbol(score: Double) -> String {
+        switch score {
+        case 0.3...:   return "\u{2713}"  // checkmark
+        case -0.29...0.29: return "\u{26A0}"  // warning
+        default:        return "\u{2717}"  // X mark
+        }
+    }
+
+    // MARK: - Star Ratings
+
+    /// Maps a 1-99 attribute value to a 1-5 star rating.
+    /// 1-20 = 1 star, 21-40 = 2 stars, 41-60 = 3 stars, 61-80 = 4 stars, 81-99 = 5 stars.
+    static func starRating(for attribute: Int) -> Int {
+        switch attribute {
+        case 81...99: return 5
+        case 61...80: return 4
+        case 41...60: return 3
+        case 21...40: return 2
+        default:      return 1
+        }
+    }
+
+    /// Returns a string of star characters for the given attribute.
+    static func starString(for attribute: Int) -> String {
+        let stars = starRating(for: attribute)
+        let filled = String(repeating: "\u{2605}", count: stars)    // ★
+        let empty  = String(repeating: "\u{2606}", count: 5 - stars) // ☆
+        return filled + empty
     }
 
     // MARK: - Coordinator Poaching
@@ -397,7 +709,7 @@ enum CoachingEngine {
     /// - Returns: Coaches currently being targeted with HC offers (may be empty).
     static func checkCoordinatorPoaching(coaches: [Coach], teamWins: Int) -> [Coach] {
         // Only non-HC roles are eligible for poaching
-        let candidates = coaches.filter { $0.role != .headCoach }
+        let candidates = coaches.filter { $0.role != .headCoach && $0.role != .assistantHeadCoach }
 
         // Win bonus: teams on winning records attract more HC searches
         let winBonus: Double
@@ -443,6 +755,11 @@ enum CoachingEngine {
         // 50 is neutral; each point above/below shifts the multiplier by ~0.004
         let devAttributeBonus = (Double(coach.playerDevelopment) - 50.0) / 50.0 * 0.2
         multiplier += devAttributeBonus
+
+        // MARK: Motivation bonus
+        // A highly motivating coach squeezes extra effort out of players
+        let motivationBonus = (Double(coach.motivation) - 50.0) / 50.0 * 0.05
+        multiplier += motivationBonus
 
         // MARK: Position Role Match
         // A coach who specializes in this player's position group provides an extra boost
@@ -498,6 +815,47 @@ enum CoachingEngine {
             return true  // Strength coach benefits every player equally
         default:
             return false
+        }
+    }
+
+    // MARK: - Scout Candidate Generation
+
+    /// Generates a pool of scout candidates available for the given scout role.
+    ///
+    /// - Parameters:
+    ///   - role: The scouting role being filled.
+    ///   - count: How many candidates to generate (defaults to 20).
+    /// - Returns: An array of freshly created `Scout` objects not yet attached to any team.
+    static func generateScoutCandidates(role: ScoutRole, count: Int = 20) -> [Scout] {
+        (0..<count).map { _ in
+            let name = RandomNameGenerator.randomName()
+
+            let expRange: ClosedRange<Int>
+            let salaryRange: ClosedRange<Int>
+            if role.isChief {
+                expRange = 8...25
+                salaryRange = 400...1_200
+            } else {
+                expRange = 1...15
+                salaryRange = 100...600
+            }
+
+            let experience = Int.random(in: expRange)
+            let baseCeiling = min(99, 40 + experience * 3)
+            let baseFloor = max(25, baseCeiling - 35)
+
+            return Scout(
+                firstName: name.first,
+                lastName: name.last,
+                teamID: nil,
+                positionSpecialization: role.isChief ? nil : Position.allCases.randomElement(),
+                accuracy: Int.random(in: baseFloor...baseCeiling),
+                personalityRead: Int.random(in: baseFloor...baseCeiling),
+                potentialRead: Int.random(in: baseFloor...baseCeiling),
+                experience: experience,
+                salary: Int.random(in: salaryRange),
+                scoutRole: role
+            )
         }
     }
 }

@@ -22,6 +22,10 @@ final class Owner {
     /// Current owner satisfaction with the franchise (0–100).
     var satisfaction: Int
 
+    /// Total coaching & scouting staff budget in thousands (e.g. 25000 = $25M).
+    /// Derived from spendingWillingness when the owner is created.
+    var coachingBudget: Int
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -30,7 +34,8 @@ final class Owner {
         spendingWillingness: Int = 50,
         meddling: Int = 30,
         prefersWinNow: Bool = false,
-        satisfaction: Int = 70
+        satisfaction: Int = 70,
+        coachingBudget: Int = 20_000
     ) {
         self.id = id
         self.name = name
@@ -40,5 +45,6 @@ final class Owner {
         self.meddling = meddling
         self.prefersWinNow = prefersWinNow
         self.satisfaction = satisfaction
+        self.coachingBudget = coachingBudget
     }
 }

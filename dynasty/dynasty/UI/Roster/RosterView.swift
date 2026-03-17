@@ -7,6 +7,28 @@ struct RosterView: View {
 
     @State private var selectedSide: RosterFilter = .all
     @State private var sortOrder: RosterSort = .overall
+    @State private var viewMode: RosterViewMode = .list
+
+    // MARK: - Position Groups
+
+    private static let offenseGroups: [PositionGroup] = [
+        PositionGroup(name: "Quarterbacks", positions: [.QB]),
+        PositionGroup(name: "Running Backs", positions: [.RB, .FB]),
+        PositionGroup(name: "Wide Receivers", positions: [.WR]),
+        PositionGroup(name: "Tight Ends", positions: [.TE]),
+        PositionGroup(name: "Offensive Line", positions: [.LT, .LG, .C, .RG, .RT]),
+    ]
+
+    private static let defenseGroups: [PositionGroup] = [
+        PositionGroup(name: "Defensive Line", positions: [.DE, .DT]),
+        PositionGroup(name: "Linebackers", positions: [.OLB, .MLB]),
+        PositionGroup(name: "Defensive Backs", positions: [.CB, .FS, .SS]),
+    ]
+
+    private static let specialTeamsGroups: [PositionGroup] = [
+        PositionGroup(name: "Kickers", positions: [.K]),
+        PositionGroup(name: "Punters", positions: [.P]),
+    ]
 
     // MARK: - Computed
 
@@ -35,6 +57,25 @@ struct RosterView: View {
                 if posOrder != 0 { return posOrder < 0 }
                 return $0.overall > $1.overall
             }
+        case .age:
+            return filtered.sorted { $0.age < $1.age }
+        case .salary:
+            return filtered.sorted { $0.annualSalary > $1.annualSalary }
+        case .name:
+            return filtered.sorted { $0.lastName < $1.lastName }
+        }
+    }
+
+    private var activeGroups: [PositionGroup] {
+        switch selectedSide {
+        case .all:
+            return Self.offenseGroups + Self.defenseGroups + Self.specialTeamsGroups
+        case .offense:
+            return Self.offenseGroups
+        case .defense:
+            return Self.defenseGroups
+        case .specialTeams:
+            return Self.specialTeamsGroups
         }
     }
 
@@ -42,16 +83,19 @@ struct RosterView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            List {
-                ForEach(filteredPlayers) { player in
-                    NavigationLink(destination: PlayerDetailView(player: player)) {
-                        PlayerRowView(player: player)
-                    }
-                    .listRowBackground(Color.backgroundSecondary)
+            VStack(spacing: 0) {
+                RosterSummaryBar(players: players)
+
+                viewModePicker
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+
+                if viewMode == .list {
+                    listContent
+                } else {
+                    formationContent
                 }
             }
-            .scrollContentBackground(.hidden)
-            .listStyle(.insetGrouped)
         }
         .navigationTitle("Roster (\(players.count))")
         .toolbarColorScheme(.dark, for: .navigationBar)
@@ -61,6 +105,116 @@ struct RosterView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 sortMenu
+            }
+        }
+    }
+
+    // MARK: - View Mode Picker
+
+    private var viewModePicker: some View {
+        Picker("View Mode", selection: $viewMode) {
+            ForEach(RosterViewMode.allCases) { mode in
+                Label(mode.label, systemImage: mode.icon).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+    }
+
+    // MARK: - List Content
+
+    private var listContent: some View {
+        List {
+            sortableHeader
+
+            ForEach(activeGroups) { group in
+                let groupPlayers = filteredPlayers.filter { group.positions.contains($0.position) }
+                if !groupPlayers.isEmpty {
+                    Section {
+                        ForEach(groupPlayers) { player in
+                            NavigationLink(destination: PlayerDetailView(player: player)) {
+                                PlayerRowView(player: player)
+                            }
+                            .listRowBackground(Color.backgroundSecondary)
+                        }
+                    } header: {
+                        PositionGroupHeader(
+                            group: group,
+                            players: groupPlayers
+                        )
+                    }
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .listStyle(.insetGrouped)
+    }
+
+    // MARK: - Sortable Header
+
+    private var sortableHeader: some View {
+        HStack(spacing: 0) {
+            sortButton("POS", sort: .position, width: 44)
+            sortButton("NAME", sort: .name, width: nil)
+            Spacer()
+            sortButton("AGE", sort: .age, width: 36)
+            sortButton("OVR", sort: .overall, width: 40)
+            sortButton("SAL", sort: .salary, width: 52)
+        }
+        .font(.caption2)
+        .fontWeight(.semibold)
+        .foregroundStyle(Color.textTertiary)
+        .padding(.horizontal, 4)
+        .listRowBackground(Color.backgroundPrimary)
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+    }
+
+    private func sortButton(_ title: String, sort: RosterSort, width: CGFloat?) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                sortOrder = sort
+            }
+        } label: {
+            HStack(spacing: 2) {
+                Text(title)
+                if sortOrder == sort {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8))
+                }
+            }
+            .frame(width: width, alignment: .center)
+        }
+        .foregroundStyle(sortOrder == sort ? Color.accentGold : Color.textTertiary)
+    }
+
+    // MARK: - Formation Content
+
+    private var formationContent: some View {
+        ScrollView {
+            switch selectedSide {
+            case .offense, .all:
+                FormationView(
+                    title: "Offense",
+                    players: players.filter { $0.position.side == .offense },
+                    layout: .offense
+                )
+            default:
+                EmptyView()
+            }
+
+            if selectedSide == .defense || selectedSide == .all {
+                FormationView(
+                    title: "Defense",
+                    players: players.filter { $0.position.side == .defense },
+                    layout: .defense
+                )
+            }
+
+            if selectedSide == .specialTeams || selectedSide == .all {
+                FormationView(
+                    title: "Special Teams",
+                    players: players.filter { $0.position.side == .specialTeams },
+                    layout: .specialTeams
+                )
             }
         }
     }
@@ -98,6 +252,114 @@ struct RosterView: View {
     }
 }
 
+// MARK: - Position Group Model
+
+struct PositionGroup: Identifiable {
+    let name: String
+    let positions: [Position]
+    var id: String { name }
+}
+
+// MARK: - Position Group Header
+
+struct PositionGroupHeader: View {
+    let group: PositionGroup
+    let players: [Player]
+
+    private var averageOVR: Int {
+        guard !players.isEmpty else { return 0 }
+        return players.reduce(0) { $0 + $1.overall } / players.count
+    }
+
+    private var injuredCount: Int {
+        players.filter { $0.isInjured }.count
+    }
+
+    private var depthStatus: DepthStatus {
+        let count = players.count
+        let healthy = players.filter { !$0.isInjured }.count
+        if healthy <= 1 { return .critical }
+        if healthy <= 2 { return .thin }
+        return .deep
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(group.name)
+                .font(.subheadline)
+                .fontWeight(.bold)
+                .foregroundStyle(Color.textPrimary)
+
+            Spacer()
+
+            // Depth indicator
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(depthStatus.color)
+                    .frame(width: 8, height: 8)
+                Text(depthStatus.label)
+                    .font(.caption2)
+                    .foregroundStyle(depthStatus.color)
+            }
+
+            // Average OVR
+            HStack(spacing: 3) {
+                Text("AVG")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+                Text("\(averageOVR)")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .monospacedDigit()
+                    .foregroundStyle(Color.forRating(averageOVR))
+            }
+
+            // Injured count
+            if injuredCount > 0 {
+                HStack(spacing: 2) {
+                    Image(systemName: "cross.circle.fill")
+                        .font(.caption2)
+                    Text("\(injuredCount)")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                }
+                .foregroundStyle(Color.danger)
+            }
+
+            // Player count
+            Text("\(players.count)")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.backgroundTertiary, in: Capsule())
+        }
+        .textCase(nil)
+    }
+}
+
+// MARK: - Depth Status
+
+enum DepthStatus {
+    case deep, thin, critical
+
+    var label: String {
+        switch self {
+        case .deep: return "Deep"
+        case .thin: return "Thin"
+        case .critical: return "Critical"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .deep: return .success
+        case .thin: return .warning
+        case .critical: return .danger
+        }
+    }
+}
+
 // MARK: - Supporting Enums
 
 enum RosterFilter: String, CaseIterable, Identifiable {
@@ -116,7 +378,7 @@ enum RosterFilter: String, CaseIterable, Identifiable {
 }
 
 enum RosterSort: String, CaseIterable, Identifiable {
-    case overall, position
+    case overall, position, age, salary, name
 
     var id: String { rawValue }
 
@@ -124,6 +386,9 @@ enum RosterSort: String, CaseIterable, Identifiable {
         switch self {
         case .overall:  return "Overall"
         case .position: return "Position"
+        case .age:      return "Age"
+        case .salary:   return "Salary"
+        case .name:     return "Name"
         }
     }
 
@@ -131,6 +396,29 @@ enum RosterSort: String, CaseIterable, Identifiable {
         switch self {
         case .overall:  return "star.fill"
         case .position: return "rectangle.3.group"
+        case .age:      return "calendar"
+        case .salary:   return "dollarsign.circle"
+        case .name:     return "textformat.abc"
+        }
+    }
+}
+
+enum RosterViewMode: String, CaseIterable, Identifiable {
+    case list, formation
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .list:      return "List View"
+        case .formation: return "Formation"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .list:      return "list.bullet"
+        case .formation: return "sportscourt"
         }
     }
 }
@@ -147,7 +435,8 @@ enum RosterSort: String, CaseIterable, Identifiable {
                     armStrength: 95, accuracyShort: 88, accuracyMid: 91,
                     accuracyDeep: 87, pocketPresence: 92, scrambling: 80
                 )),
-                personality: PlayerPersonality(archetype: .fieryCompetitor, motivation: .winning)
+                personality: PlayerPersonality(archetype: .fieryCompetitor, motivation: .winning),
+                morale: 90, contractYearsRemaining: 3, annualSalary: 45000
             ),
             Player(
                 firstName: "Tyreek", lastName: "Hill", position: .WR,
@@ -155,7 +444,8 @@ enum RosterSort: String, CaseIterable, Identifiable {
                 positionAttributes: .wideReceiver(WRAttributes(
                     routeRunning: 88, catching: 90, release: 92, spectacularCatch: 85
                 )),
-                personality: PlayerPersonality(archetype: .loneWolf, motivation: .stats)
+                personality: PlayerPersonality(archetype: .loneWolf, motivation: .stats),
+                isInjured: true, injuryWeeksRemaining: 3, contractYearsRemaining: 2, annualSalary: 30000
             ),
             Player(
                 firstName: "Myles", lastName: "Garrett", position: .DE,
@@ -163,13 +453,15 @@ enum RosterSort: String, CaseIterable, Identifiable {
                 positionAttributes: .defensiveLine(DLAttributes(
                     passRush: 96, blockShedding: 90, powerMoves: 88, finesseMoves: 91
                 )),
-                personality: PlayerPersonality(archetype: .quietProfessional, motivation: .winning)
+                personality: PlayerPersonality(archetype: .quietProfessional, motivation: .winning),
+                contractYearsRemaining: 4, annualSalary: 25000
             ),
             Player(
                 firstName: "Justin", lastName: "Tucker", position: .K,
                 age: 34, yearsPro: 12,
                 positionAttributes: .kicking(KickingAttributes(kickPower: 95, kickAccuracy: 98)),
-                personality: PlayerPersonality(archetype: .steadyPerformer, motivation: .loyalty)
+                personality: PlayerPersonality(archetype: .steadyPerformer, motivation: .loyalty),
+                contractYearsRemaining: 1, annualSalary: 6000
             ),
         ])
     }

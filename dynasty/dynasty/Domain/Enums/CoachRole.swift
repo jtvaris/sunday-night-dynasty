@@ -2,6 +2,7 @@ import Foundation
 
 enum CoachRole: String, Codable, CaseIterable {
     case headCoach               = "HeadCoach"
+    case assistantHeadCoach      = "AssistantHeadCoach"
     case offensiveCoordinator    = "OffensiveCoordinator"
     case defensiveCoordinator    = "DefensiveCoordinator"
     case specialTeamsCoordinator = "SpecialTeamsCoordinator"

@@ -3,21 +3,21 @@ import SwiftData
 
 // MARK: - Position Group Definition
 
-private struct PositionGroup: Identifiable {
+private struct EvalPositionGroup: Identifiable {
     let id: String
     let label: String
     let positions: [Position]
 
-    static let allGroups: [PositionGroup] = [
-        PositionGroup(id: "QB",  label: "QB",  positions: [.QB]),
-        PositionGroup(id: "RB",  label: "RB",  positions: [.RB, .FB]),
-        PositionGroup(id: "WR",  label: "WR",  positions: [.WR]),
-        PositionGroup(id: "TE",  label: "TE",  positions: [.TE]),
-        PositionGroup(id: "OL",  label: "OL",  positions: [.LT, .LG, .C, .RG, .RT]),
-        PositionGroup(id: "DL",  label: "DL",  positions: [.DE, .DT]),
-        PositionGroup(id: "LB",  label: "LB",  positions: [.OLB, .MLB]),
-        PositionGroup(id: "DB",  label: "DB",  positions: [.CB, .FS, .SS]),
-        PositionGroup(id: "ST",  label: "ST",  positions: [.K, .P]),
+    static let allGroups: [EvalPositionGroup] = [
+        EvalPositionGroup(id: "QB",  label: "QB",  positions: [.QB]),
+        EvalPositionGroup(id: "RB",  label: "RB",  positions: [.RB, .FB]),
+        EvalPositionGroup(id: "WR",  label: "WR",  positions: [.WR]),
+        EvalPositionGroup(id: "TE",  label: "TE",  positions: [.TE]),
+        EvalPositionGroup(id: "OL",  label: "OL",  positions: [.LT, .LG, .C, .RG, .RT]),
+        EvalPositionGroup(id: "DL",  label: "DL",  positions: [.DE, .DT]),
+        EvalPositionGroup(id: "LB",  label: "LB",  positions: [.OLB, .MLB]),
+        EvalPositionGroup(id: "DB",  label: "DB",  positions: [.CB, .FS, .SS]),
+        EvalPositionGroup(id: "ST",  label: "ST",  positions: [.K, .P]),
     ]
 }
 
@@ -107,10 +107,10 @@ struct RosterEvaluationView: View {
 
                 Divider().overlay(Color.surfaceBorder)
 
-                ForEach(Array(PositionGroup.allGroups.enumerated()), id: \.element.id) { index, group in
+                ForEach(Array(EvalPositionGroup.allGroups.enumerated()), id: \.element.id) { index, group in
                     positionGroupRow(group: group)
 
-                    if index < PositionGroup.allGroups.count - 1 {
+                    if index < EvalPositionGroup.allGroups.count - 1 {
                         Divider()
                             .overlay(Color.surfaceBorder.opacity(0.5))
                             .padding(.horizontal, 8)
@@ -120,7 +120,7 @@ struct RosterEvaluationView: View {
         }
     }
 
-    private func positionGroupRow(group: PositionGroup) -> some View {
+    private func positionGroupRow(group: EvalPositionGroup) -> some View {
         let groupPlayers = players.filter { group.positions.contains($0.position) }
         let avgOvr = averageOverall(groupPlayers)
         let grade = letterGrade(avgOvr)
@@ -167,7 +167,7 @@ struct RosterEvaluationView: View {
         .background(isBiggestNeed ? Color.danger.opacity(0.05) : Color.clear)
     }
 
-    private func depthPill(count: Int, group: PositionGroup) -> some View {
+    private func depthPill(count: Int, group: EvalPositionGroup) -> some View {
         let minPlayers = group.positions.count   // at minimum 1 per position in group
         let isDeep     = count >= minPlayers + 2
         let isThin     = count == minPlayers || count == minPlayers + 1
@@ -555,8 +555,8 @@ struct RosterEvaluationView: View {
             .map { $0 }
     }
 
-    private var biggestNeedGroup: PositionGroup? {
-        PositionGroup.allGroups.min(by: { a, b in
+    private var biggestNeedGroup: EvalPositionGroup? {
+        EvalPositionGroup.allGroups.min(by: { a, b in
             averageOverall(players.filter { a.positions.contains($0.position) })
             < averageOverall(players.filter { b.positions.contains($0.position) })
         })

@@ -4,6 +4,7 @@ import SwiftData
 struct MainMenuView: View {
 
     @Query(sort: \Career.currentSeason, order: .reverse) private var careers: [Career]
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
         ZStack {
@@ -27,55 +28,84 @@ struct MainMenuView: View {
             )
             .ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                Spacer()
-
-                // MARK: - Title Block (bottom half, over the darker gradient)
-                VStack(spacing: 8) {
-                    Text("SUNDAY NIGHT")
-                        .font(.system(size: 22, weight: .bold))
-                        .tracking(10)
-                        .foregroundStyle(Color.accentGold)
-
-                    Text("DYNASTY")
-                        .font(.system(size: 64, weight: .black))
-                        .tracking(12)
-                        .foregroundStyle(.white)
-                        .shadow(color: .black.opacity(0.6), radius: 8, y: 4)
-
-                    Text("NFL FOOTBALL MANAGER")
-                        .font(.system(size: 14, weight: .medium))
-                        .tracking(6)
-                        .foregroundStyle(Color.white.opacity(0.7))
-                        .padding(.top, 4)
-                }
-                .padding(.bottom, 40)
-
-                // MARK: - Menu Buttons
-                VStack(spacing: 16) {
-                    NavigationLink(destination: NewCareerView()) {
-                        MenuButton(title: "New Career", icon: "plus.circle.fill", isPrimary: true)
+            // Adaptive layout: stack vertically in portrait, side-by-side in landscape
+            if horizontalSizeClass == .regular {
+                // Landscape / regular width — title left, buttons right
+                HStack(alignment: .bottom, spacing: 0) {
+                    Spacer()
+                    titleBlock
+                        .frame(maxWidth: 480)
+                    Spacer()
+                    VStack(spacing: 0) {
+                        Spacer()
+                        buttonsBlock
+                        footerBlock
                     }
-                    .accessibilityLabel("New Career")
-
-                    if !careers.isEmpty {
-                        NavigationLink(destination: CareerListView()) {
-                            MenuButton(title: "Continue Career", icon: "play.circle.fill", isPrimary: false)
-                        }
-                        .accessibilityLabel("Continue Career")
-                    }
+                    .frame(maxWidth: 360)
+                    Spacer()
                 }
-                .padding(.horizontal, 60)
-                .padding(.bottom, 40)
-
-                // MARK: - Footer
-                Text("v1.0")
-                    .font(.caption)
-                    .foregroundStyle(Color.white.opacity(0.3))
-                    .padding(.bottom, 16)
+            } else {
+                // Portrait / compact width — standard vertical stack
+                VStack(spacing: 0) {
+                    Spacer()
+                    titleBlock
+                    buttonsBlock
+                    footerBlock
+                }
             }
         }
         .toolbar(.hidden, for: .navigationBar)
+    }
+
+    // MARK: - Subviews
+
+    private var titleBlock: some View {
+        VStack(spacing: 8) {
+            Text("SUNDAY NIGHT")
+                .font(.system(size: 22, weight: .bold))
+                .tracking(10)
+                .foregroundStyle(Color.accentGold)
+
+            Text("DYNASTY")
+                .font(.system(size: 64, weight: .black))
+                .tracking(12)
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.6), radius: 8, y: 4)
+
+            Text("NFL FOOTBALL MANAGER")
+                .font(.system(size: 14, weight: .medium))
+                .tracking(6)
+                .foregroundStyle(Color.white.opacity(0.7))
+                .padding(.top, 4)
+        }
+        .padding(.bottom, 40)
+        .multilineTextAlignment(.center)
+    }
+
+    private var buttonsBlock: some View {
+        VStack(spacing: 16) {
+            NavigationLink(destination: NewCareerView()) {
+                MenuButton(title: "New Career", icon: "plus.circle.fill", isPrimary: true)
+            }
+            .accessibilityLabel("New Career")
+
+            if !careers.isEmpty {
+                NavigationLink(destination: CareerListView()) {
+                    MenuButton(title: "Continue Career", icon: "play.circle.fill", isPrimary: false)
+                }
+                .accessibilityLabel("Continue Career")
+            }
+        }
+        .padding(.horizontal, 40)
+        .padding(.bottom, 24)
+        .frame(maxWidth: 480)
+    }
+
+    private var footerBlock: some View {
+        Text("v1.0")
+            .font(.caption)
+            .foregroundStyle(Color.white.opacity(0.3))
+            .padding(.bottom, 16)
     }
 }
 

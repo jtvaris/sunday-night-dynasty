@@ -1,34 +1,34 @@
 import SwiftUI
 import SwiftData
 
-struct HireCoachView: View {
+struct HireScoutView: View {
 
-    let role: CoachRole
+    let scoutRole: ScoutRole
     let teamID: UUID
     let remainingBudget: Int
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    @State private var candidates: [Coach] = []
-    @State private var hiredCoachID: UUID?
-    @State private var sortOption: SortOption = .reputation
+    @State private var candidates: [Scout] = []
+    @State private var hiredScoutID: UUID?
+    @State private var sortOption: SortOption = .accuracy
 
     enum SortOption: String, CaseIterable {
-        case reputation   = "Reputation"
-        case playCalling  = "Play Calling"
-        case development  = "Development"
-        case salary       = "Salary"
-        case gamePlanning = "Game Planning"
+        case accuracy      = "Accuracy"
+        case potential      = "Potential Read"
+        case personality    = "Personality Read"
+        case salary         = "Salary"
+        case experience     = "Experience"
     }
 
-    private var sortedCandidates: [Coach] {
+    private var sortedCandidates: [Scout] {
         switch sortOption {
-        case .reputation:   return candidates.sorted { $0.reputation > $1.reputation }
-        case .playCalling:  return candidates.sorted { $0.playCalling > $1.playCalling }
-        case .development:  return candidates.sorted { $0.playerDevelopment > $1.playerDevelopment }
-        case .salary:       return candidates.sorted { $0.salary < $1.salary }
-        case .gamePlanning: return candidates.sorted { $0.gamePlanning > $1.gamePlanning }
+        case .accuracy:    return candidates.sorted { $0.accuracy > $1.accuracy }
+        case .potential:   return candidates.sorted { $0.potentialRead > $1.potentialRead }
+        case .personality: return candidates.sorted { $0.personalityRead > $1.personalityRead }
+        case .salary:      return candidates.sorted { $0.salary < $1.salary }
+        case .experience:  return candidates.sorted { $0.experience > $1.experience }
         }
     }
 
@@ -62,9 +62,9 @@ struct HireCoachView: View {
 
                 Section {
                     ForEach(sortedCandidates) { candidate in
-                        CandidateRowView(
+                        ScoutCandidateRow(
                             candidate: candidate,
-                            isHired: hiredCoachID == candidate.id,
+                            isHired: hiredScoutID == candidate.id,
                             isOverBudget: candidate.salary > remainingBudget
                         ) {
                             hire(candidate)
@@ -73,7 +73,7 @@ struct HireCoachView: View {
                 } header: {
                     Text("\(candidates.count) Available Candidates")
                 } footer: {
-                    Text("Select a candidate to add them to your coaching staff. Candidates over budget are dimmed.")
+                    Text("Select a scout to add them to your scouting department.")
                         .font(.caption)
                         .foregroundStyle(Color.textTertiary)
                 }
@@ -82,19 +82,16 @@ struct HireCoachView: View {
             .scrollContentBackground(.hidden)
             .listStyle(.insetGrouped)
         }
-        .navigationTitle("Hire \(role.displayName)")
+        .navigationTitle("Hire \(scoutRole.displayName)")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
             if candidates.isEmpty {
-                // Generate 20-30 candidates per search (market of 50+)
-                let count = Int.random(in: 20...30)
-                candidates = CoachingEngine.generateCoachCandidates(role: role, count: count)
+                candidates = CoachingEngine.generateScoutCandidates(role: scoutRole, count: 20)
             }
         }
     }
 
-    /// Formats a budget value (in thousands) to a display string like "25.0".
     private func formatBudget(_ thousands: Int) -> String {
         let millions = Double(thousands) / 1_000.0
         return String(format: "%.1f", millions)
@@ -102,33 +99,31 @@ struct HireCoachView: View {
 
     // MARK: - Hire Action
 
-    private func hire(_ candidate: Coach) {
-        // Block if over budget
+    private func hire(_ candidate: Scout) {
         guard candidate.salary <= remainingBudget else { return }
 
-        // Remove any existing coach with the same role on this team
-        let descriptor = FetchDescriptor<Coach>(
+        // Remove any existing scout with the same role on this team
+        let descriptor = FetchDescriptor<Scout>(
             predicate: #Predicate { $0.teamID == teamID }
         )
         if let existing = try? modelContext.fetch(descriptor) {
-            existing.filter { $0.role == role }.forEach { modelContext.delete($0) }
+            existing.filter { $0.scoutRole == scoutRole }.forEach { modelContext.delete($0) }
         }
 
         candidate.teamID = teamID
         modelContext.insert(candidate)
-        hiredCoachID = candidate.id
+        hiredScoutID = candidate.id
 
-        // Brief delay so the user sees the hire confirmation, then dismiss
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             dismiss()
         }
     }
 }
 
-// MARK: - Candidate Row (Star Ratings)
+// MARK: - Scout Candidate Row
 
-private struct CandidateRowView: View {
-    let candidate: Coach
+private struct ScoutCandidateRow: View {
+    let candidate: Scout
     let isHired: Bool
     let isOverBudget: Bool
     let onHire: () -> Void
@@ -143,9 +138,12 @@ private struct CandidateRowView: View {
                         .foregroundStyle(isOverBudget ? Color.textTertiary : Color.textPrimary)
 
                     HStack(spacing: 6) {
-                        Text("Age \(candidate.age)")
-                        Text("\u{00B7}")
-                        Text("\(candidate.yearsExperience) yr\(candidate.yearsExperience == 1 ? "" : "s") exp")
+                        Text("\(candidate.experience) yr\(candidate.experience == 1 ? "" : "s") exp")
+                        if let spec = candidate.positionSpecialization {
+                            Text("\u{00B7}")
+                            Text("Specializes: \(spec.rawValue)")
+                                .foregroundStyle(Color.accentBlue)
+                        }
                         Text("\u{00B7}")
                         Text("$\(candidate.salary)K/yr")
                             .foregroundStyle(isOverBudget ? Color.danger : Color.accentGold)
@@ -182,46 +180,16 @@ private struct CandidateRowView: View {
                 .animation(.easeInOut(duration: 0.2), value: isHired)
             }
 
-            // Star ratings grid (2 rows of 4)
-            VStack(spacing: 6) {
-                HStack(spacing: 0) {
-                    starCell(label: "Play Calling", value: candidate.playCalling)
-                    starCell(label: "Development", value: candidate.playerDevelopment)
-                    starCell(label: "Game Plan", value: candidate.gamePlanning)
-                    starCell(label: "Reputation", value: candidate.reputation)
-                }
-                HStack(spacing: 0) {
-                    starCell(label: "Motivation", value: candidate.motivation)
-                    starCell(label: "Discipline", value: candidate.discipline)
-                    starCell(label: "Scouting", value: candidate.scoutingAbility)
-                    starCell(label: "Adaptability", value: candidate.adaptability)
-                }
+            // Star ratings
+            HStack(spacing: 0) {
+                starCell(label: "Accuracy", value: candidate.accuracy)
+                starCell(label: "Potential Read", value: candidate.potentialRead)
+                starCell(label: "Personality", value: candidate.personalityRead)
             }
             .opacity(isOverBudget ? 0.5 : 1.0)
-
-            // Background blurb
-            if !candidate.background.isEmpty {
-                Text(candidate.background)
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
-                    .lineLimit(3)
-            }
-
-            // Scheme + personality tags
-            HStack(spacing: 6) {
-                if let off = candidate.offensiveScheme {
-                    schemeTag(off.displayName, color: .accentBlue)
-                }
-                if let def = candidate.defensiveScheme {
-                    schemeTag(def.displayName, color: .danger)
-                }
-                schemeTag(candidate.personality.displayName, color: .backgroundTertiary)
-            }
         }
         .padding(.vertical, 6)
         .opacity(isOverBudget ? 0.7 : 1.0)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(candidate.fullName), age \(candidate.age), \(candidate.yearsExperience) years experience, salary \(candidate.salary) thousand per year")
     }
 
     private func starCell(label: String, value: Int) -> some View {
@@ -237,26 +205,13 @@ private struct CandidateRowView: View {
         }
         .frame(maxWidth: .infinity)
     }
-
-    private func schemeTag(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(Color.textSecondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(color.opacity(0.3), lineWidth: 0.5)
-            )
-    }
 }
 
 // MARK: - Preview
 
 #Preview {
     NavigationStack {
-        HireCoachView(role: .offensiveCoordinator, teamID: UUID(), remainingBudget: 15_000)
+        HireScoutView(scoutRole: .chiefScout, teamID: UUID(), remainingBudget: 5_000)
     }
-    .modelContainer(for: Coach.self, inMemory: true)
+    .modelContainer(for: Scout.self, inMemory: true)
 }

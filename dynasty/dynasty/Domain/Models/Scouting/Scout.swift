@@ -12,7 +12,12 @@ final class Scout {
     var personalityRead: Int
     var potentialRead: Int
     var experience: Int
+
+    /// Annual salary in thousands (e.g. 200 = $200K).
     var salary: Int
+
+    /// The scout's role in the scouting department hierarchy.
+    var scoutRole: ScoutRole
 
     // MARK: - Computed Properties
 
@@ -32,7 +37,8 @@ final class Scout {
         personalityRead: Int = 50,
         potentialRead: Int = 50,
         experience: Int = 1,
-        salary: Int = 100
+        salary: Int = 100,
+        scoutRole: ScoutRole = .regionalScout1
     ) {
         self.id = id
         self.firstName = firstName
@@ -44,5 +50,6 @@ final class Scout {
         self.potentialRead = potentialRead
         self.experience = experience
         self.salary = salary
+        self.scoutRole = scoutRole
     }
 }

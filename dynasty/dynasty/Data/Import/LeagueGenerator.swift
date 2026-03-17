@@ -16,9 +16,10 @@ enum LeagueGenerator {
     ]
     // Total: 3+3+1+6+3+2+2+2+2+1+4+3+4+3+5+2+2+1+1+1+1+1 = 53
 
-    /// All 12 coaching roles, one per staff member.
+    /// All 13 coaching roles, one per staff member.
     private static let coachingStaffRoles: [CoachRole] = [
         .headCoach,
+        .assistantHeadCoach,
         .offensiveCoordinator,
         .defensiveCoordinator,
         .specialTeamsCoordinator,
@@ -227,13 +228,20 @@ enum LeagueGenerator {
         let first = ownerFirstNames.randomElement()!
         let last = ownerLastNames.randomElement()!
         let avatarID = OwnerAvatars.allIDs.randomElement()!
+        let spending = Int.random(in: 20...95)
+
+        // Coaching budget scales with spending willingness:
+        // Low spender (20) -> ~$15M, high spender (95) -> ~$35M
+        let coachingBudget = 12_000 + Int(Double(spending) / 99.0 * 23_000.0)
+
         return Owner(
             name: "\(first) \(last)",
             avatarID: avatarID,
             patience: Int.random(in: 2...9),
-            spendingWillingness: Int.random(in: 20...95),
+            spendingWillingness: spending,
             meddling: Int.random(in: 5...80),
-            prefersWinNow: Bool.random()
+            prefersWinNow: Bool.random(),
+            coachingBudget: coachingBudget
         )
     }
 
@@ -300,14 +308,27 @@ enum LeagueGenerator {
         let age = Int.random(in: 35...68)
         let experience = max(0, age - Int.random(in: 28...40))
 
-        let offScheme: OffensiveScheme? = (role == .headCoach || role == .offensiveCoordinator)
+        let offScheme: OffensiveScheme? = (role == .headCoach || role == .offensiveCoordinator || role == .assistantHeadCoach)
             ? OffensiveScheme.allCases.randomElement()!
             : nil
-        let defScheme: DefensiveScheme? = (role == .headCoach || role == .defensiveCoordinator)
+        let defScheme: DefensiveScheme? = (role == .headCoach || role == .defensiveCoordinator || role == .assistantHeadCoach)
             ? DefensiveScheme.allCases.randomElement()!
             : nil
 
-        return Coach(
+        let personality = PersonalityArchetype.allCases.randomElement()!
+
+        // Salary tiers by role (in thousands)
+        let salary: Int
+        switch role {
+        case .headCoach:               salary = Int.random(in: 5_000...12_000)
+        case .assistantHeadCoach:      salary = Int.random(in: 2_000...5_000)
+        case .offensiveCoordinator,
+             .defensiveCoordinator:    salary = Int.random(in: 2_500...6_000)
+        case .specialTeamsCoordinator: salary = Int.random(in: 1_000...2_500)
+        default:                       salary = Int.random(in: 500...2_000)
+        }
+
+        let coach = Coach(
             firstName: first,
             lastName: last,
             age: age,
@@ -318,10 +339,22 @@ enum LeagueGenerator {
             playerDevelopment: Int.random(in: 35...90),
             reputation: Int.random(in: 30...85),
             adaptability: Int.random(in: 30...85),
-            personality: PersonalityArchetype.allCases.randomElement()!,
+            gamePlanning: Int.random(in: 35...90),
+            scoutingAbility: Int.random(in: 30...85),
+            recruiting: Int.random(in: 30...85),
+            motivation: Int.random(in: 35...90),
+            discipline: Int.random(in: 30...85),
+            mediaHandling: Int.random(in: 30...85),
+            contractNegotiation: Int.random(in: 30...80),
+            moraleInfluence: Int.random(in: 35...85),
+            salary: salary,
+            background: "",
+            personality: personality,
             teamID: teamID,
             yearsExperience: experience
         )
+        coach.background = CoachingEngine.generateBackground(for: coach)
+        return coach
     }
 
     // MARK: - Helpers

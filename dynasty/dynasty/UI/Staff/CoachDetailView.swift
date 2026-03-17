@@ -53,6 +53,21 @@ struct CoachDetailView: View {
                 Text(experienceLabel)
                     .foregroundStyle(Color.textSecondary)
             }
+            LabeledContent("Salary") {
+                Text("$\(coach.salary)K/yr")
+                    .monospacedDigit()
+                    .foregroundStyle(Color.accentGold)
+            }
+            if !coach.background.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Background")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    Text(coach.background)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
         }
         .listRowBackground(Color.backgroundSecondary)
     }
@@ -65,6 +80,14 @@ struct CoachDetailView: View {
             AttributeRow(name: "Player Development",  value: coach.playerDevelopment)
             AttributeRow(name: "Reputation",          value: coach.reputation)
             AttributeRow(name: "Adaptability",        value: coach.adaptability)
+            AttributeRow(name: "Game Planning",       value: coach.gamePlanning)
+            AttributeRow(name: "Scouting Ability",    value: coach.scoutingAbility)
+            AttributeRow(name: "Recruiting",          value: coach.recruiting)
+            AttributeRow(name: "Motivation",          value: coach.motivation)
+            AttributeRow(name: "Discipline",          value: coach.discipline)
+            AttributeRow(name: "Media Handling",      value: coach.mediaHandling)
+            AttributeRow(name: "Contract Negotiation", value: coach.contractNegotiation)
+            AttributeRow(name: "Morale Influence",    value: coach.moraleInfluence)
         }
         .listRowBackground(Color.backgroundSecondary)
     }
