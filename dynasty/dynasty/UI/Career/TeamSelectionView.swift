@@ -39,36 +39,50 @@ struct TeamSelectionView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 12)
 
-                // Team grid — adapts to orientation
+                // Team list — adapts to orientation
                 GeometryReader { geo in
                     let isLandscape = geo.size.width > geo.size.height
-                    let columns = isLandscape
-                        ? Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
-                        : Array(repeating: GridItem(.flexible(), spacing: 12), count: 2)
 
                     ScrollView {
-                        VStack(spacing: 16) {
-                            ForEach(divisionsForConference, id: \.division) { group in
-                                // Division header
-                                divisionHeader(group.division.rawValue)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                                LazyVGrid(columns: columns, spacing: 12) {
+                        if isLandscape {
+                            // Landscape: 4-column grid
+                            let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
+                            VStack(spacing: 16) {
+                                ForEach(divisionsForConference, id: \.division) { group in
+                                    divisionHeader(group.division.rawValue)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    LazyVGrid(columns: columns, spacing: 12) {
+                                        ForEach(group.teams, id: \.abbreviation) { team in
+                                            Button { detailTeam = team } label: {
+                                                TeamGridCard(team: team)
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 16)
+                            .frame(maxWidth: 1200)
+                            .frame(maxWidth: .infinity)
+                        } else {
+                            // Portrait: compact row list
+                            VStack(spacing: 2) {
+                                ForEach(divisionsForConference, id: \.division) { group in
+                                    divisionHeader(group.division.rawValue)
                                     ForEach(group.teams, id: \.abbreviation) { team in
-                                        Button {
-                                            detailTeam = team
-                                        } label: {
-                                            TeamGridCard(team: team)
+                                        Button { detailTeam = team } label: {
+                                            CompactTeamRow(team: team)
                                         }
                                         .buttonStyle(.plain)
                                     }
                                 }
                             }
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 16)
+                            .frame(maxWidth: 800)
+                            .frame(maxWidth: .infinity)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 16)
-                        .frame(maxWidth: 1200)
-                        .frame(maxWidth: .infinity)
                     }
                 }
             }
