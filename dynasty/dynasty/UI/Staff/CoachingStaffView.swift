@@ -5,6 +5,7 @@ struct CoachingStaffView: View {
 
     let career: Career
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Query private var allCoaches: [Coach]
     @Query private var allScouts: [Scout]
     @Query private var allOwners: [Owner]
@@ -103,6 +104,82 @@ struct CoachingStaffView: View {
         return ScoutRole.allCases.filter { !filledRoles.contains($0) }
     }
 
+    // MARK: - Hiring priority & budget helpers
+
+    /// Whether the device is in iPad portrait (regular width) for 2-column layout.
+    private var isIPadPortrait: Bool {
+        horizontalSizeClass == .regular
+    }
+
+    /// Priority level for a vacant coaching role.
+    private enum HiringPriority {
+        case high, recommended, normal
+
+        var label: String {
+            switch self {
+            case .high:        return "High Priority"
+            case .recommended: return "Recommended"
+            case .normal:      return ""
+            }
+        }
+    }
+
+    private func hiringPriority(for role: CoachRole) -> HiringPriority {
+        switch role {
+        case .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator:
+            return .high
+        case .qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach, .strengthCoach:
+            return .recommended
+        default:
+            return .normal
+        }
+    }
+
+    /// Estimated salary range string for a vacant role.
+    private func estimatedSalaryRange(for role: CoachRole) -> String {
+        switch role {
+        case .headCoach:
+            return "~$3-8M/yr"
+        case .assistantHeadCoach:
+            return "~$1-3M/yr"
+        case .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator:
+            return "~$2-5M/yr"
+        default:
+            return "~$0.5-2M/yr"
+        }
+    }
+
+    /// Description of what position group a position coach improves.
+    private func positionGroupBoost(for role: CoachRole) -> String? {
+        switch role {
+        case .qbCoach:        return "Improves QB development"
+        case .rbCoach:        return "Improves RB development"
+        case .wrCoach:        return "Improves WR development"
+        case .olCoach:        return "Improves OL development"
+        case .dlCoach:        return "Improves DL development"
+        case .lbCoach:        return "Improves LB development"
+        case .dbCoach:        return "Improves DB development"
+        case .strengthCoach:  return "Improves conditioning & injury prevention"
+        default:              return nil
+        }
+    }
+
+    /// Suggestion for what coordinators complement a given coaching style.
+    private func coordinatorComplementNote(for style: CoachingStyle) -> String {
+        switch style {
+        case .tactician:
+            return "Pair with creative coordinators who can execute complex schemes"
+        case .playersCoach:
+            return "Pair with disciplined coordinators to balance player freedom"
+        case .disciplinarian:
+            return "Pair with adaptable coordinators who thrive in structured systems"
+        case .innovator:
+            return "Pair with experienced coordinators who can ground bold ideas"
+        case .motivator:
+            return "Pair with detail-oriented coordinators to complement big-picture leadership"
+        }
+    }
+
     // MARK: - Chemistry helpers
 
     /// Returns the chemistry score between the HC (or player-as-HC) and a given coach.
@@ -132,6 +209,21 @@ struct CoachingStaffView: View {
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
+
+            // Locker room background image with gradient overlay
+            Image("BgLockerRoom2")
+                .resizable()
+                .scaledToFill()
+                .ignoresSafeArea()
+                .opacity(0.12)
+                .overlay(
+                    LinearGradient(
+                        colors: [Color.backgroundPrimary.opacity(0.6), Color.clear, Color.backgroundPrimary.opacity(0.8)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .ignoresSafeArea()
+                )
 
             List {
                 // MARK: - Budget Header
@@ -193,53 +285,124 @@ struct CoachingStaffView: View {
                 }
                 .listRowBackground(Color.backgroundSecondary)
 
-                // Coordinators
-                Section {
-                    let coordRoles: [CoachRole] = [.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator]
-                    ForEach(Array(coordRoles.enumerated()), id: \.element) { _, role in
-                        if let coach = coaches.first(where: { $0.role == role }) {
-                            coachRowWithChemistry(coach: coach)
-                        } else {
-                            vacantRow(role: role)
-                        }
-                    }
-                } header: {
-                    HStack(spacing: 6) {
-                        Text("2")
-                            .font(.system(size: 10, weight: .black))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .frame(width: 18, height: 18)
-                            .background(Circle().fill(Color.accentGold))
-                        Text("Coordinators")
-                    }
-                }
-                .listRowBackground(Color.backgroundSecondary)
+                if isIPadPortrait {
+                    // MARK: - 2-Column Layout (iPad Portrait)
+                    Section {
+                        HStack(alignment: .top, spacing: 16) {
+                            // Left column: Coordinators
+                            VStack(alignment: .leading, spacing: 0) {
+                                HStack(spacing: 6) {
+                                    Text("2")
+                                        .font(.system(size: 10, weight: .black))
+                                        .foregroundStyle(Color.backgroundPrimary)
+                                        .frame(width: 18, height: 18)
+                                        .background(Circle().fill(Color.accentGold))
+                                    Text("Coordinators")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(Color.textSecondary)
+                                }
+                                .padding(.bottom, 8)
 
-                // Position Coaches
-                Section {
-                    let posRoles: [CoachRole] = [.qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach, .strengthCoach]
-                    ForEach(posRoles, id: \.self) { role in
-                        if let coach = coaches.first(where: { $0.role == role }) {
-                            NavigationLink {
-                                CoachDetailView(coach: coach)
-                            } label: {
-                                CoachRowWithDescriptionView(coach: coach)
+                                let coordRoles: [CoachRole] = [.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator]
+                                ForEach(coordRoles, id: \.self) { role in
+                                    if let coach = coaches.first(where: { $0.role == role }) {
+                                        coachRowWithChemistry(coach: coach)
+                                        Divider().padding(.vertical, 4)
+                                    } else {
+                                        vacantRow(role: role)
+                                        Divider().padding(.vertical, 4)
+                                    }
+                                }
                             }
-                        } else {
-                            vacantRow(role: role)
+                            .frame(maxWidth: .infinity)
+
+                            Divider()
+
+                            // Right column: Position Coaches
+                            VStack(alignment: .leading, spacing: 0) {
+                                HStack(spacing: 6) {
+                                    Text("3")
+                                        .font(.system(size: 10, weight: .black))
+                                        .foregroundStyle(Color.backgroundPrimary)
+                                        .frame(width: 18, height: 18)
+                                        .background(Circle().fill(Color.accentGold))
+                                    Text("Position Coaches")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(Color.textSecondary)
+                                }
+                                .padding(.bottom, 8)
+
+                                let posRoles: [CoachRole] = [.qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach, .strengthCoach]
+                                ForEach(posRoles, id: \.self) { role in
+                                    if let coach = coaches.first(where: { $0.role == role }) {
+                                        NavigationLink {
+                                            CoachDetailView(coach: coach)
+                                        } label: {
+                                            CoachRowWithDescriptionView(coach: coach)
+                                        }
+                                        Divider().padding(.vertical, 4)
+                                    } else {
+                                        vacantRow(role: role)
+                                        Divider().padding(.vertical, 4)
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                    } header: {
+                        Text("Coaching Staff")
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+                } else {
+                    // MARK: - Single-Column Layout (Compact)
+                    // Coordinators
+                    Section {
+                        let coordRoles: [CoachRole] = [.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator]
+                        ForEach(Array(coordRoles.enumerated()), id: \.element) { _, role in
+                            if let coach = coaches.first(where: { $0.role == role }) {
+                                coachRowWithChemistry(coach: coach)
+                            } else {
+                                vacantRow(role: role)
+                            }
+                        }
+                    } header: {
+                        HStack(spacing: 6) {
+                            Text("2")
+                                .font(.system(size: 10, weight: .black))
+                                .foregroundStyle(Color.backgroundPrimary)
+                                .frame(width: 18, height: 18)
+                                .background(Circle().fill(Color.accentGold))
+                            Text("Coordinators")
                         }
                     }
-                } header: {
-                    HStack(spacing: 6) {
-                        Text("3")
-                            .font(.system(size: 10, weight: .black))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .frame(width: 18, height: 18)
-                            .background(Circle().fill(Color.accentGold))
-                        Text("Position Coaches")
+                    .listRowBackground(Color.backgroundSecondary)
+
+                    // Position Coaches
+                    Section {
+                        let posRoles: [CoachRole] = [.qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach, .strengthCoach]
+                        ForEach(posRoles, id: \.self) { role in
+                            if let coach = coaches.first(where: { $0.role == role }) {
+                                NavigationLink {
+                                    CoachDetailView(coach: coach)
+                                } label: {
+                                    CoachRowWithDescriptionView(coach: coach)
+                                }
+                            } else {
+                                vacantRow(role: role)
+                            }
+                        }
+                    } header: {
+                        HStack(spacing: 6) {
+                            Text("3")
+                                .font(.system(size: 10, weight: .black))
+                                .foregroundStyle(Color.backgroundPrimary)
+                                .frame(width: 18, height: 18)
+                                .background(Circle().fill(Color.accentGold))
+                            Text("Position Coaches")
+                        }
                     }
+                    .listRowBackground(Color.backgroundSecondary)
                 }
-                .listRowBackground(Color.backgroundSecondary)
 
                 // MARK: - Scouting Department
                 Section {
@@ -373,6 +536,21 @@ struct CoachingStaffView: View {
             Text("Sets the team's vision, manages coordinators, and makes key game-day decisions")
                 .font(.caption)
                 .foregroundStyle(Color.textTertiary)
+
+            // Fix #36: Coaching style bonus for player-as-HC
+            HStack(spacing: 4) {
+                Text("+\(career.coachingStyle.bonusValue) \(career.coachingStyle.bonusAttribute)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.success)
+            }
+
+            HStack(spacing: 4) {
+                Image(systemName: "lightbulb.fill")
+                    .font(.system(size: 9))
+                Text(coordinatorComplementNote(for: career.coachingStyle))
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .foregroundStyle(Color.accentGold.opacity(0.8))
         }
         .padding(.vertical, 6)
     }
@@ -465,12 +643,44 @@ struct CoachingStaffView: View {
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(role.displayName)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Color.textTertiary)
+                        HStack(spacing: 6) {
+                            Text(role.displayName)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Color.textTertiary)
+
+                            // Fix #32: Hiring priority indicator
+                            switch hiringPriority(for: role) {
+                            case .high:
+                                Text("High Priority")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.danger, in: Capsule())
+                            case .recommended:
+                                Text("Recommended")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(Color.warning)
+                            case .normal:
+                                EmptyView()
+                            }
+                        }
+
                         Text("Vacant \u{2014} Tap to hire")
                             .font(.caption)
                             .foregroundStyle(Color.accentGold)
+
+                        // Fix #35: Estimated salary range
+                        Text(estimatedSalaryRange(for: role))
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.textTertiary)
+
+                        // Fix #32: Position group boost description
+                        if let boost = positionGroupBoost(for: role) {
+                            Text(boost)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Color.accentBlue.opacity(0.8))
+                        }
                     }
                     Spacer()
                     Image(systemName: "plus.circle")
@@ -570,6 +780,43 @@ private struct HeadCoachCardView: View {
         return nil
     }
 
+    /// The HC's strongest attribute and its value.
+    private var topAttribute: (name: String, value: Int) {
+        let attributes: [(String, Int)] = [
+            ("Play Calling", coach.playCalling),
+            ("Player Dev", coach.playerDevelopment),
+            ("Game Planning", coach.gamePlanning),
+            ("Motivation", coach.motivation),
+            ("Adaptability", coach.adaptability),
+            ("Discipline", coach.discipline)
+        ]
+        return attributes.max(by: { $0.1 < $1.1 }) ?? ("Play Calling", coach.playCalling)
+    }
+
+    /// Coordinator complement note based on HC personality.
+    private var coordinatorNote: String {
+        switch coach.personality {
+        case .teamLeader:
+            return "Pair with strong-willed coordinators who bring tactical depth"
+        case .quietProfessional:
+            return "Pair with creative coordinators who can execute complex schemes"
+        case .fieryCompetitor:
+            return "Pair with calm, detail-oriented coordinators for balance"
+        case .mentor:
+            return "Pair with disciplined coordinators to balance player freedom"
+        case .steadyPerformer:
+            return "Pair with innovative coordinators who push boundaries"
+        case .feelPlayer:
+            return "Pair with experienced coordinators who can ground bold ideas"
+        case .loneWolf:
+            return "Pair with collaborative coordinators who bridge communication gaps"
+        case .dramaQueen:
+            return "Pair with steady, low-drama coordinators for stability"
+        case .classClown:
+            return "Pair with structured coordinators to complement loose leadership"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 14) {
@@ -602,6 +849,18 @@ private struct HeadCoachCardView: View {
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(Color.textSecondary)
+
+                    // Fix #36: Coaching style bonus
+                    HStack(spacing: 4) {
+                        Text("+\(topAttribute.value) \(topAttribute.name)")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.success)
+                        Text("\u{00B7}")
+                            .foregroundStyle(Color.textTertiary)
+                        Text(coach.personality.displayName)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Color.accentBlue)
+                    }
                 }
 
                 Spacer()
@@ -621,6 +880,15 @@ private struct HeadCoachCardView: View {
             Text("Sets the team's vision, manages coordinators, and makes key game-day decisions")
                 .font(.caption)
                 .foregroundStyle(Color.textTertiary)
+
+            // Fix #36: Coordinator complement note
+            HStack(spacing: 4) {
+                Image(systemName: "lightbulb.fill")
+                    .font(.system(size: 9))
+                Text(coordinatorNote)
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .foregroundStyle(Color.accentGold.opacity(0.8))
         }
         .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
@@ -646,6 +914,34 @@ private struct CoachRowWithDescriptionView: View {
         if let o = coach.offensiveScheme { return o.displayName }
         if let d = coach.defensiveScheme { return d.displayName }
         return nil
+    }
+
+    /// The coach's primary strength -- highest attribute name.
+    private var primaryStrength: String {
+        let attributes: [(String, Int)] = [
+            ("Play Calling", coach.playCalling),
+            ("Player Dev", coach.playerDevelopment),
+            ("Reputation", coach.reputation),
+            ("Adaptability", coach.adaptability),
+            ("Game Planning", coach.gamePlanning),
+            ("Scouting", coach.scoutingAbility),
+            ("Recruiting", coach.recruiting),
+            ("Motivation", coach.motivation),
+            ("Discipline", coach.discipline),
+            ("Media", coach.mediaHandling),
+            ("Negotiation", coach.contractNegotiation),
+            ("Morale", coach.moraleInfluence)
+        ]
+        return attributes.max(by: { $0.1 < $1.1 })?.0 ?? "Play Calling"
+    }
+
+    /// Average of all coach attributes, used for mini star rating.
+    private var averageAttribute: Int {
+        let sum = coach.playCalling + coach.playerDevelopment + coach.reputation +
+                  coach.adaptability + coach.gamePlanning + coach.scoutingAbility +
+                  coach.recruiting + coach.motivation + coach.discipline +
+                  coach.mediaHandling + coach.contractNegotiation + coach.moraleInfluence
+        return sum / 12
     }
 
     var body: some View {
@@ -682,6 +978,16 @@ private struct CoachRowWithDescriptionView: View {
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(Color.textSecondary)
+
+                    // Mini star rating + primary strength
+                    HStack(spacing: 6) {
+                        Text(CoachingEngine.starString(for: averageAttribute))
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.accentGold)
+                        Text(primaryStrength)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Color.textTertiary)
+                    }
                 }
 
                 Spacer()

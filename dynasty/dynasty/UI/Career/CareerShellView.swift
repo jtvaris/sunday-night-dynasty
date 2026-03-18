@@ -56,6 +56,11 @@ struct CareerShellView: View {
                         performShellAdvance()
                     }
                 )
+                    .onAppear {
+                        // Refresh task completion when returning to the dashboard
+                        // (e.g., after hiring coaches, signing players, etc.)
+                        refreshTaskCompletionStatus()
+                    }
                     .navigationDestination(for: ShellDestination.self) { dest in
                         destinationView(for: dest)
                     }
@@ -322,6 +327,9 @@ struct CareerShellView: View {
     /// underlying condition is satisfied (e.g., coach hired, roster trimmed).
     func refreshTaskCompletionStatus() {
         guard let teamID = career.teamID else { return }
+
+        // Ensure any pending inserts/updates are committed before querying
+        try? modelContext.save()
 
         // Fetch current coaches
         let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })

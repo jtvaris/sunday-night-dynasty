@@ -1,5 +1,17 @@
 import SwiftUI
 
+// MARK: - Attribute Color Helper
+
+/// Color codes attribute values: green (80+), gold (60-79), orange (40-59), red (<40).
+private func colorForAttribute(_ value: Int) -> Color {
+    switch value {
+    case 80...:   return .success
+    case 60..<80: return .accentGold
+    case 40..<60: return .warning
+    default:      return .danger
+    }
+}
+
 struct PlayerDetailView: View {
     let player: Player
 
@@ -14,6 +26,7 @@ struct PlayerDetailView: View {
                 developmentSection
                 physicalSection
                 mentalSection
+                positionAttributesSection
                 personalitySection
                 schemeFitSection
             }
@@ -139,7 +152,7 @@ struct PlayerDetailView: View {
                     .monospacedDigit()
                     .foregroundStyle(Color.textSecondary)
             }
-            AttributeRow(name: "Overall", value: player.overall)
+            ColorCodedAttributeRow(name: "Overall", value: player.overall)
             LabeledContent("Morale") {
                 HStack(spacing: 6) {
                     moraleIcon
@@ -282,12 +295,12 @@ struct PlayerDetailView: View {
 
     private var physicalSection: some View {
         Section("Physical Attributes") {
-            AttributeRow(name: "Speed",        value: player.physical.speed)
-            AttributeRow(name: "Acceleration", value: player.physical.acceleration)
-            AttributeRow(name: "Strength",     value: player.physical.strength)
-            AttributeRow(name: "Agility",      value: player.physical.agility)
-            AttributeRow(name: "Stamina",      value: player.physical.stamina)
-            AttributeRow(name: "Durability",   value: player.physical.durability)
+            ColorCodedAttributeRow(name: "Speed",        value: player.physical.speed)
+            ColorCodedAttributeRow(name: "Acceleration", value: player.physical.acceleration)
+            ColorCodedAttributeRow(name: "Strength",     value: player.physical.strength)
+            ColorCodedAttributeRow(name: "Agility",      value: player.physical.agility)
+            ColorCodedAttributeRow(name: "Stamina",      value: player.physical.stamina)
+            ColorCodedAttributeRow(name: "Durability",   value: player.physical.durability)
         }
         .listRowBackground(Color.backgroundSecondary)
     }
@@ -296,14 +309,102 @@ struct PlayerDetailView: View {
 
     private var mentalSection: some View {
         Section("Mental Attributes") {
-            AttributeRow(name: "Awareness",       value: player.mental.awareness)
-            AttributeRow(name: "Decision Making",  value: player.mental.decisionMaking)
-            AttributeRow(name: "Clutch",           value: player.mental.clutch)
-            AttributeRow(name: "Work Ethic",       value: player.mental.workEthic)
-            AttributeRow(name: "Coachability",     value: player.mental.coachability)
-            AttributeRow(name: "Leadership",       value: player.mental.leadership)
+            ColorCodedAttributeRow(name: "Awareness",       value: player.mental.awareness)
+            ColorCodedAttributeRow(name: "Decision Making",  value: player.mental.decisionMaking)
+            ColorCodedAttributeRow(name: "Clutch",           value: player.mental.clutch)
+            ColorCodedAttributeRow(name: "Work Ethic",       value: player.mental.workEthic)
+            ColorCodedAttributeRow(name: "Coachability",     value: player.mental.coachability)
+            ColorCodedAttributeRow(name: "Leadership",       value: player.mental.leadership)
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    // MARK: - Position-Specific Attributes Section
+
+    @ViewBuilder
+    private var positionAttributesSection: some View {
+        switch player.positionAttributes {
+        case .quarterback(let attrs):
+            Section("Quarterback Skills") {
+                ColorCodedAttributeRow(name: "Arm Strength",    value: attrs.armStrength)
+                ColorCodedAttributeRow(name: "Accuracy Short",  value: attrs.accuracyShort)
+                ColorCodedAttributeRow(name: "Accuracy Mid",    value: attrs.accuracyMid)
+                ColorCodedAttributeRow(name: "Accuracy Deep",   value: attrs.accuracyDeep)
+                ColorCodedAttributeRow(name: "Pocket Presence", value: attrs.pocketPresence)
+                ColorCodedAttributeRow(name: "Scrambling",      value: attrs.scrambling)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+
+        case .wideReceiver(let attrs):
+            Section("Receiver Skills") {
+                ColorCodedAttributeRow(name: "Route Running",     value: attrs.routeRunning)
+                ColorCodedAttributeRow(name: "Catching",          value: attrs.catching)
+                ColorCodedAttributeRow(name: "Release",           value: attrs.release)
+                ColorCodedAttributeRow(name: "Spectacular Catch", value: attrs.spectacularCatch)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+
+        case .runningBack(let attrs):
+            Section("Running Back Skills") {
+                ColorCodedAttributeRow(name: "Vision",       value: attrs.vision)
+                ColorCodedAttributeRow(name: "Elusiveness",  value: attrs.elusiveness)
+                ColorCodedAttributeRow(name: "Break Tackle", value: attrs.breakTackle)
+                ColorCodedAttributeRow(name: "Receiving",    value: attrs.receiving)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+
+        case .tightEnd(let attrs):
+            Section("Tight End Skills") {
+                ColorCodedAttributeRow(name: "Blocking",      value: attrs.blocking)
+                ColorCodedAttributeRow(name: "Catching",      value: attrs.catching)
+                ColorCodedAttributeRow(name: "Route Running", value: attrs.routeRunning)
+                ColorCodedAttributeRow(name: "Speed",         value: attrs.speed)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+
+        case .offensiveLine(let attrs):
+            Section("Offensive Line Skills") {
+                ColorCodedAttributeRow(name: "Run Block",  value: attrs.runBlock)
+                ColorCodedAttributeRow(name: "Pass Block", value: attrs.passBlock)
+                ColorCodedAttributeRow(name: "Pull",       value: attrs.pull)
+                ColorCodedAttributeRow(name: "Anchor",     value: attrs.anchor)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+
+        case .defensiveLine(let attrs):
+            Section("Defensive Line Skills") {
+                ColorCodedAttributeRow(name: "Pass Rush",      value: attrs.passRush)
+                ColorCodedAttributeRow(name: "Block Shedding", value: attrs.blockShedding)
+                ColorCodedAttributeRow(name: "Power Moves",    value: attrs.powerMoves)
+                ColorCodedAttributeRow(name: "Finesse Moves",  value: attrs.finesseMoves)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+
+        case .linebacker(let attrs):
+            Section("Linebacker Skills") {
+                ColorCodedAttributeRow(name: "Tackling",      value: attrs.tackling)
+                ColorCodedAttributeRow(name: "Zone Coverage", value: attrs.zoneCoverage)
+                ColorCodedAttributeRow(name: "Man Coverage",  value: attrs.manCoverage)
+                ColorCodedAttributeRow(name: "Blitzing",      value: attrs.blitzing)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+
+        case .defensiveBack(let attrs):
+            Section("Defensive Back Skills") {
+                ColorCodedAttributeRow(name: "Man Coverage",  value: attrs.manCoverage)
+                ColorCodedAttributeRow(name: "Zone Coverage", value: attrs.zoneCoverage)
+                ColorCodedAttributeRow(name: "Press",         value: attrs.press)
+                ColorCodedAttributeRow(name: "Ball Skills",   value: attrs.ballSkills)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+
+        case .kicking(let attrs):
+            Section("Kicking Skills") {
+                ColorCodedAttributeRow(name: "Kick Power",    value: attrs.kickPower)
+                ColorCodedAttributeRow(name: "Kick Accuracy", value: attrs.kickAccuracy)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        }
     }
 
     // MARK: - Personality Section
@@ -341,7 +442,7 @@ struct PlayerDetailView: View {
                         .font(.subheadline)
                     Text("(\(Int(avg.rounded())))")
                         .monospacedDigit()
-                        .foregroundStyle(Color.forRating(Int(avg.rounded())))
+                        .foregroundStyle(colorForAttribute(Int(avg.rounded())))
                 }
                 .foregroundStyle(Color.textSecondary)
             }
@@ -352,7 +453,7 @@ struct PlayerDetailView: View {
                         .font(.subheadline)
                     Text("(\(Int(avg.rounded())))")
                         .monospacedDigit()
-                        .foregroundStyle(Color.forRating(Int(avg.rounded())))
+                        .foregroundStyle(colorForAttribute(Int(avg.rounded())))
                 }
                 .foregroundStyle(Color.textSecondary)
             }
@@ -621,29 +722,53 @@ enum DevelopmentPhaseInfo {
     }
 }
 
-// MARK: - AttributeRow
+// MARK: - Color-Coded Attribute Row
 
-struct AttributeRow: View {
+/// Displays an attribute name and value with color coding:
+/// green (80+), gold/yellow (60-79), orange (40-59), red (<40).
+struct ColorCodedAttributeRow: View {
     let name: String
     let value: Int
 
+    private var attributeColor: Color {
+        colorForAttribute(value)
+    }
+
     private var ratingLabel: String {
         switch value {
-        case 85...:   return "elite"
-        case 70..<85: return "good"
-        case 55..<70: return "average"
+        case 80...:   return "elite"
+        case 60..<80: return "good"
+        case 40..<60: return "average"
         default:      return "below average"
         }
     }
 
     var body: some View {
         LabeledContent(name) {
-            Text("\(value)")
-                .fontWeight(.semibold)
-                .monospacedDigit()
-                .foregroundStyle(Color.forRating(value))
+            HStack(spacing: 6) {
+                // Color bar indicator
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(attributeColor)
+                    .frame(width: 3, height: 16)
+
+                Text("\(value)")
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(attributeColor)
+            }
         }
         .accessibilityLabel("\(name), \(value), \(ratingLabel)")
+    }
+}
+
+// MARK: - Legacy AttributeRow (kept for backward compatibility)
+
+struct AttributeRow: View {
+    let name: String
+    let value: Int
+
+    var body: some View {
+        ColorCodedAttributeRow(name: name, value: value)
     }
 }
 

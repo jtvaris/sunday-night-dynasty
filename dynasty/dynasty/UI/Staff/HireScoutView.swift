@@ -36,30 +36,24 @@ struct HireScoutView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            List {
-                // Budget info header
-                Section {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Budget Remaining")
-                                .font(.caption)
-                                .foregroundStyle(Color.textTertiary)
-                            Text("$\(formatBudget(remainingBudget))M")
-                                .font(.headline.weight(.bold).monospacedDigit())
-                                .foregroundStyle(remainingBudget > 0 ? Color.success : Color.danger)
-                        }
-                        Spacer()
-                        Picker("Sort", selection: $sortOption) {
-                            ForEach(SortOption.allCases, id: \.self) { option in
-                                Text(option.rawValue).tag(option)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .tint(Color.accentGold)
-                    }
-                }
-                .listRowBackground(Color.backgroundSecondary)
+            // Background image with gradient overlay
+            Image("BgCombine")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .opacity(0.12)
+                .ignoresSafeArea()
 
+            LinearGradient(
+                colors: [
+                    Color.backgroundPrimary.opacity(0.6),
+                    Color.backgroundPrimary.opacity(0.8)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            List {
                 Section {
                     ForEach(sortedCandidates) { candidate in
                         ScoutCandidateRow(
@@ -81,6 +75,36 @@ struct HireScoutView: View {
             }
             .scrollContentBackground(.hidden)
             .listStyle(.insetGrouped)
+            .safeAreaInset(edge: .top) {
+                VStack(spacing: 8) {
+                    Text(scoutRole.roleDescription)
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Budget Remaining")
+                                .font(.caption)
+                                .foregroundStyle(Color.textTertiary)
+                            Text("$\(formatBudget(remainingBudget))M")
+                                .font(.headline.weight(.bold).monospacedDigit())
+                                .foregroundStyle(remainingBudget > 0 ? Color.success : Color.danger)
+                        }
+                        Spacer()
+                        Picker("Sort", selection: $sortOption) {
+                            ForEach(SortOption.allCases, id: \.self) { option in
+                                Text(option.rawValue).tag(option)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(Color.accentGold)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(.ultraThinMaterial)
+            }
         }
         .navigationTitle("Hire \(scoutRole.displayName)")
         .navigationBarTitleDisplayMode(.large)

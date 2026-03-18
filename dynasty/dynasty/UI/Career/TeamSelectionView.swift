@@ -10,10 +10,13 @@ struct TeamSelectionView: View {
     let selectedCapMode: CapMode
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var selectedCareer: Career?
     @State private var isLoading = false
     @State private var selectedConference: Conference = .AFC
     @State private var detailTeam: NFLTeamDefinition?
+
+    private var isLandscape: Bool { verticalSizeClass == .compact }
 
     /// All 32 NFL teams from static data.
     private let allTeams = NFLTeamData.allTeams
@@ -33,6 +36,12 @@ struct TeamSelectionView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
+            Image("BgStadiumNight")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .ignoresSafeArea()
+                .opacity(0.15)
+
             VStack(spacing: 0) {
                 // Conference tab picker
                 conferencePicker
@@ -41,21 +50,43 @@ struct TeamSelectionView: View {
 
                 // Compact table rows — all 16 teams with minimal scrolling
                 ScrollView {
-                    VStack(spacing: 2) {
-                        ForEach(divisionsForConference, id: \.division) { group in
-                            divisionHeader(group.division.rawValue)
-                            ForEach(group.teams, id: \.abbreviation) { team in
-                                Button { detailTeam = team } label: {
-                                    CompactTeamRow(team: team)
+                    if isLandscape {
+                        let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+                        LazyVGrid(columns: columns, spacing: 2) {
+                            ForEach(divisionsForConference, id: \.division) { group in
+                                Section {
+                                    ForEach(group.teams, id: \.abbreviation) { team in
+                                        Button { detailTeam = team } label: {
+                                            CompactTeamRow(team: team)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                } header: {
+                                    divisionHeader(group.division.rawValue)
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
+                        .frame(maxWidth: 1200)
+                        .frame(maxWidth: .infinity)
+                    } else {
+                        VStack(spacing: 2) {
+                            ForEach(divisionsForConference, id: \.division) { group in
+                                divisionHeader(group.division.rawValue)
+                                ForEach(group.teams, id: \.abbreviation) { team in
+                                    Button { detailTeam = team } label: {
+                                        CompactTeamRow(team: team)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
+                        .frame(maxWidth: 900)
+                        .frame(maxWidth: .infinity)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
-                    .frame(maxWidth: 900)
-                    .frame(maxWidth: .infinity)
                 }
             }
             .disabled(isLoading)
@@ -552,6 +583,9 @@ private struct TeamDetailSheet: View {
     let onSelect: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    private var isLandscape: Bool { verticalSizeClass == .compact }
 
     private var preview: TeamPreview { team.preview }
 
@@ -591,136 +625,22 @@ private struct TeamDetailSheet: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            ScrollView {
-                VStack(spacing: 24) {
-                    // Header: Logo + Name
-                    VStack(spacing: 12) {
-                        TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 72)
+            Image("BgLockerRoom2")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .ignoresSafeArea()
+                .opacity(0.15)
 
-                        Text("\(team.city) \(team.name)")
-                            .font(.system(size: 28, weight: .bold))
-                            .foregroundStyle(Color.textPrimary)
-
-                        Text("\(team.conference.rawValue) \(team.division.rawValue)")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Color.textSecondary)
+            GeometryReader { geometry in
+                ScrollView {
+                    if isLandscape {
+                        landscapeDetailContent
+                            .frame(minHeight: geometry.size.height)
+                    } else {
+                        portraitDetailContent
+                            .frame(minHeight: geometry.size.height)
                     }
-                    .padding(.top, 24)
-
-                    // Difficulty + Situation
-                    HStack(spacing: 24) {
-                        VStack(spacing: 6) {
-                            HStack(spacing: 3) {
-                                ForEach(1...5, id: \.self) { star in
-                                    Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
-                                        .font(.system(size: 14))
-                                        .foregroundStyle(star <= preview.difficulty ? difficultyColor : Color.textTertiary.opacity(0.4))
-                                }
-                            }
-                            Text(preview.difficultyLabel)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(difficultyColor)
-                        }
-
-                        Text(preview.situation)
-                            .font(.system(size: 14, weight: .bold))
-                            .textCase(.uppercase)
-                            .foregroundStyle(situationColor)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                Capsule()
-                                    .fill(situationColor.opacity(0.15))
-                            )
-                    }
-
-                    // Owner info
-                    VStack(spacing: 8) {
-                        sectionLabel("Owner Expectations")
-
-                        HStack(spacing: 16) {
-                            HStack(spacing: 6) {
-                                Image(systemName: preview.ownerPatienceIcon)
-                                    .font(.system(size: 14))
-                                    .foregroundStyle(ownerPatienceColor)
-                                Text(preview.ownerPatience)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(ownerPatienceColor)
-                            }
-
-                            Text("\(preview.patienceSeasons) season\(preview.patienceSeasons == 1 ? "" : "s") tolerance")
-                                .font(.caption)
-                                .foregroundStyle(Color.textTertiary)
-                        }
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity)
-                    .cardBackground()
-
-                    // Market description
-                    VStack(spacing: 8) {
-                        sectionLabel("Market & Media")
-
-                        Text(preview.marketDescription)
-                            .font(.subheadline)
-                            .foregroundStyle(Color.textSecondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity)
-                    .cardBackground()
-
-                    // Stats row
-                    HStack(spacing: 0) {
-                        detailStat(
-                            icon: "chart.bar.fill",
-                            label: "Roster OVR",
-                            value: "\(preview.estimatedOVR)",
-                            valueColor: Color.forRating(preview.estimatedOVR)
-                        )
-                        detailStat(
-                            icon: "dollarsign.circle.fill",
-                            label: "Cap Space",
-                            value: "$\(preview.estimatedCapSpace)M",
-                            valueColor: preview.estimatedCapSpace > 30 ? .success : preview.estimatedCapSpace > 15 ? .accentGold : .warning
-                        )
-                        detailStat(
-                            icon: "doc.text.fill",
-                            label: "Draft Picks",
-                            value: "\(preview.estimatedDraftPicks)",
-                            valueColor: preview.estimatedDraftPicks >= 9 ? .success : preview.estimatedDraftPicks >= 7 ? .textPrimary : .warning
-                        )
-                    }
-                    .padding(.vertical, 14)
-                    .cardBackground()
-
-                    // Coaching budget row
-                    VStack(spacing: 8) {
-                        sectionLabel("Coaching Budget")
-
-                        HStack(spacing: 8) {
-                            Image(systemName: "dollarsign.square.fill")
-                                .font(.system(size: 16))
-                                .foregroundStyle(preview.coachingBudget >= 18 ? Color.success : preview.coachingBudget >= 13 ? Color.accentGold : Color.warning)
-                            Text("$\(preview.coachingBudget)M")
-                                .font(.title3.weight(.bold))
-                                .foregroundStyle(preview.coachingBudget >= 18 ? Color.success : preview.coachingBudget >= 13 ? Color.accentGold : Color.warning)
-                            Text("for coaching & scouting staff")
-                                .font(.caption)
-                                .foregroundStyle(Color.textTertiary)
-                        }
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity)
-                    .cardBackground()
-
-                    // Select button
-                    // SELECT button is in safeAreaInset(edge: .bottom)
                 }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 32)
-                .frame(maxWidth: 600)
-                .frame(maxWidth: .infinity)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -766,6 +686,177 @@ private struct TeamDetailSheet: View {
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(valueColor)
         }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Detail Header
+
+    private var detailHeader: some View {
+        VStack(spacing: 12) {
+            TeamLogoPlaceholder(abbreviation: team.abbreviation, size: isLandscape ? 56 : 72)
+
+            Text("\(team.city) \(team.name)")
+                .font(.system(size: isLandscape ? 22 : 28, weight: .bold))
+                .foregroundStyle(Color.textPrimary)
+
+            Text("\(team.conference.rawValue) \(team.division.rawValue)")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Color.textSecondary)
+        }
+        .padding(.top, isLandscape ? 12 : 24)
+    }
+
+    // MARK: - Difficulty + Situation
+
+    private var difficultySituationRow: some View {
+        HStack(spacing: 24) {
+            VStack(spacing: 6) {
+                HStack(spacing: 3) {
+                    ForEach(1...5, id: \.self) { star in
+                        Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
+                            .font(.system(size: 14))
+                            .foregroundStyle(star <= preview.difficulty ? difficultyColor : Color.textTertiary.opacity(0.4))
+                    }
+                }
+                Text(preview.difficultyLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(difficultyColor)
+            }
+
+            Text(preview.situation)
+                .font(.system(size: 14, weight: .bold))
+                .textCase(.uppercase)
+                .foregroundStyle(situationColor)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(situationColor.opacity(0.15))
+                )
+        }
+    }
+
+    // MARK: - Info Cards
+
+    private var ownerExpectationsCard: some View {
+        VStack(spacing: 8) {
+            sectionLabel("Owner Expectations")
+
+            HStack(spacing: 16) {
+                HStack(spacing: 6) {
+                    Image(systemName: preview.ownerPatienceIcon)
+                        .font(.system(size: 14))
+                        .foregroundStyle(ownerPatienceColor)
+                    Text(preview.ownerPatience)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(ownerPatienceColor)
+                }
+
+                Text("\(preview.patienceSeasons) season\(preview.patienceSeasons == 1 ? "" : "s") tolerance")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .cardBackground()
+    }
+
+    private var marketMediaCard: some View {
+        VStack(spacing: 8) {
+            sectionLabel("Market & Media")
+
+            Text(preview.marketDescription)
+                .font(.subheadline)
+                .foregroundStyle(Color.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .cardBackground()
+    }
+
+    private var statsRow: some View {
+        HStack(spacing: 0) {
+            detailStat(
+                icon: "chart.bar.fill",
+                label: "Roster OVR",
+                value: "\(preview.estimatedOVR)",
+                valueColor: Color.forRating(preview.estimatedOVR)
+            )
+            detailStat(
+                icon: "dollarsign.circle.fill",
+                label: "Cap Space",
+                value: "$\(preview.estimatedCapSpace)M",
+                valueColor: preview.estimatedCapSpace > 30 ? .success : preview.estimatedCapSpace > 15 ? .accentGold : .warning
+            )
+            detailStat(
+                icon: "doc.text.fill",
+                label: "Draft Picks",
+                value: "\(preview.estimatedDraftPicks)",
+                valueColor: preview.estimatedDraftPicks >= 9 ? .success : preview.estimatedDraftPicks >= 7 ? .textPrimary : .warning
+            )
+        }
+        .padding(.vertical, 14)
+        .cardBackground()
+    }
+
+    private var coachingBudgetCard: some View {
+        VStack(spacing: 8) {
+            sectionLabel("Coaching Budget")
+
+            HStack(spacing: 8) {
+                Image(systemName: "dollarsign.square.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(preview.coachingBudget >= 18 ? Color.success : preview.coachingBudget >= 13 ? Color.accentGold : Color.warning)
+                Text("$\(preview.coachingBudget)M")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(preview.coachingBudget >= 18 ? Color.success : preview.coachingBudget >= 13 ? Color.accentGold : Color.warning)
+                Text("for coaching & scouting staff")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .cardBackground()
+    }
+
+    // MARK: - Portrait Layout
+
+    private var portraitDetailContent: some View {
+        VStack(spacing: 24) {
+            detailHeader
+            difficultySituationRow
+            ownerExpectationsCard
+            marketMediaCard
+            statsRow
+            coachingBudgetCard
+        }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 32)
+        .frame(maxWidth: 600)
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Landscape Layout
+
+    private var landscapeDetailContent: some View {
+        VStack(spacing: 16) {
+            detailHeader
+            difficultySituationRow
+
+            let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+            LazyVGrid(columns: columns, spacing: 12) {
+                ownerExpectationsCard
+                marketMediaCard
+                coachingBudgetCard
+                statsRow
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 32)
+        .frame(maxWidth: 900)
         .frame(maxWidth: .infinity)
     }
 }

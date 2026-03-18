@@ -40,13 +40,13 @@ struct PressConferenceView: View {
                 .resizable()
                 .aspectRatio(contentMode: .fill)
                 .ignoresSafeArea()
-                .opacity(0.15)
+                .opacity(0.25)
 
             // Dark gradient overlay for readability
             LinearGradient(
                 colors: [
-                    Color.backgroundPrimary.opacity(0.7),
-                    Color.backgroundPrimary.opacity(0.9),
+                    Color.backgroundPrimary.opacity(0.6),
+                    Color.backgroundPrimary.opacity(0.4),
                     Color.backgroundPrimary.opacity(0.7)
                 ],
                 startPoint: .top,
@@ -69,6 +69,7 @@ struct PressConferenceView: View {
     // MARK: - Intro Phase
 
     private var introContent: some View {
+        GeometryReader { geometry in
         ScrollView {
             VStack(spacing: 32) {
                 Spacer(minLength: 40)
@@ -100,8 +101,8 @@ struct PressConferenceView: View {
                             .frame(width: 80, height: 2)
                             .padding(.top, 8)
 
-                        Text("The media is waiting. Choose your words carefully -- they will be remembered.")
-                            .font(.subheadline)
+                        Text("The media is waiting. Choose your words carefully — they will be remembered.")
+                            .font(.body)
                             .foregroundStyle(Color.textSecondary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 40)
@@ -136,6 +137,8 @@ struct PressConferenceView: View {
             .padding(.horizontal, 20)
             .frame(maxWidth: 800)
             .frame(maxWidth: .infinity)
+            .frame(minHeight: geometry.size.height)
+        }
         }
         .scrollIndicators(.hidden)
         .onAppear {
@@ -184,7 +187,7 @@ struct PressConferenceView: View {
 
                 Spacer().frame(height: 40)
             }
-            .frame(maxWidth: 800)
+            .frame(maxWidth: 900)
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
@@ -341,11 +344,11 @@ struct PressConferenceView: View {
     }
 
     private func effectDot(icon: String, value: Int) -> some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 8))
+                .font(.system(size: 11))
             Text(value > 0 ? "+" : "-")
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
         }
         .foregroundStyle(value > 0 ? Color.success : value < 0 ? Color.danger : Color.textTertiary)
     }
@@ -524,7 +527,7 @@ struct PressConferenceView: View {
                 }
                 .padding(.bottom, 40)
             }
-            .frame(maxWidth: 800)
+            .frame(maxWidth: 900)
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)

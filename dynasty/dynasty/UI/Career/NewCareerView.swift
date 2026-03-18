@@ -11,6 +11,13 @@ struct NewCareerView: View {
     @State private var currentStep = 1
     @State private var showNameError = false
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    private var isLandscape: Bool {
+        verticalSizeClass == .compact
+    }
+
     private var isNameValid: Bool {
         !playerName.trimmingCharacters(in: .whitespaces).isEmpty
     }
@@ -19,15 +26,28 @@ struct NewCareerView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
+            Image("BgCoachStadium2")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .ignoresSafeArea()
+                .opacity(0.2)
+
+            LinearGradient(
+                colors: [Color.backgroundPrimary.opacity(0.85), Color.backgroundPrimary.opacity(0.5), Color.backgroundPrimary.opacity(0.85)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
             VStack(spacing: 0) {
                 // MARK: - Step Indicator
                 stepIndicator
 
                 // MARK: - Page Content
                 if currentStep == 1 {
-                    page1Content(isLandscape: false)
+                    page1Content(isLandscape: isLandscape)
                 } else {
-                    page2Content(isLandscape: false)
+                    page2Content(isLandscape: isLandscape)
                 }
             }
         }
@@ -72,22 +92,39 @@ struct NewCareerView: View {
 
     @ViewBuilder
     private func page1Content(isLandscape: Bool) -> some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                nameSection
-                roleSection
-                capModeSection
-            }
-            .padding(16)
-            .frame(maxWidth: 800)
-            .frame(maxWidth: .infinity)
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 20)
 
-            // Next button
-            nextButton
-                .padding(.horizontal, 16)
-                .padding(.bottom, 16)
-                .frame(maxWidth: 800)
-                .frame(maxWidth: .infinity)
+                    VStack(spacing: 20) {
+                        if isLandscape {
+                            nameSection
+                            HStack(alignment: .top, spacing: 16) {
+                                roleSection
+                                capModeSection
+                            }
+                        } else {
+                            nameSection
+                            roleSection
+                            capModeSection
+                        }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: 800)
+                    .frame(maxWidth: .infinity)
+
+                    Spacer(minLength: 20)
+
+                    // Next button
+                    nextButton
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
+                        .frame(maxWidth: 800)
+                        .frame(maxWidth: .infinity)
+                }
+                .frame(minHeight: geometry.size.height)
+            }
         }
     }
 
@@ -95,24 +132,40 @@ struct NewCareerView: View {
 
     @ViewBuilder
     private func page2Content(isLandscape: Bool) -> some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                coachingStyleSection
-                avatarSection
-            }
-            .padding(16)
-            .frame(maxWidth: 800)
-            .frame(maxWidth: .infinity)
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 20)
 
-            // Bottom buttons
-            VStack(spacing: 12) {
-                chooseTeamButton
-                backButton
+                    VStack(spacing: 20) {
+                        if isLandscape {
+                            HStack(alignment: .top, spacing: 16) {
+                                coachingStyleSection
+                                avatarSection
+                            }
+                        } else {
+                            coachingStyleSection
+                            avatarSection
+                        }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: 800)
+                    .frame(maxWidth: .infinity)
+
+                    Spacer(minLength: 20)
+
+                    // Bottom buttons
+                    VStack(spacing: 12) {
+                        chooseTeamButton
+                        backButton
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                    .frame(maxWidth: 800)
+                    .frame(maxWidth: .infinity)
+                }
+                .frame(minHeight: geometry.size.height)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-            .frame(maxWidth: 800)
-            .frame(maxWidth: .infinity)
         }
     }
 
@@ -161,9 +214,9 @@ struct NewCareerView: View {
                 Group {
                     switch selectedRole {
                     case .gm:
-                        Text("Focus on roster building, trades, the draft, and free agency. You'll hire a head coach to handle game-day decisions.")
+                        Text("Focus on roster building, trades, the draft, and free agency. Hire a head coach for schemes and game-day playcalling.")
                     case .gmAndHeadCoach:
-                        Text("Full control. Manage the roster and make coaching decisions including scheme selection and game-day strategy.")
+                        Text("Total control. Build your roster AND call the plays — schemes, game-day strategy, and staff decisions are all yours.")
                     }
                 }
                 .font(.caption)
@@ -184,9 +237,9 @@ struct NewCareerView: View {
                 Group {
                     switch selectedCapMode {
                     case .simple:
-                        Text("Streamlined cap management. Contracts are straightforward annual salaries with no dead cap or restructuring.")
+                        Text("Straightforward annual salaries. No dead cap, no restructuring, no rollover — just build your team.")
                     case .realistic:
-                        Text("Full NFL salary cap rules including signing bonuses, dead cap, restructures, franchise tags, and cap rollover.")
+                        Text("Full NFL rules: signing bonuses, dead cap, restructures, franchise tags, and cap rollover. Every dollar counts.")
                     }
                 }
                 .font(.caption)
@@ -371,11 +424,11 @@ private struct CoachingStyleCard: View {
                     .font(.system(size: 14, weight: .bold).monospacedDigit())
                     .foregroundStyle(isSelected ? Color.accentGold : Color.textTertiary)
                 Text(style.bonusAttribute)
-                    .font(.system(size: 8, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(isSelected ? Color.accentGold.opacity(0.8) : Color.textTertiary)
                     .lineLimit(1)
             }
-            .frame(width: 60)
+            .frame(width: 70)
         }
         .padding(12)
         .background(

@@ -58,10 +58,10 @@ struct AvatarSelectionView: View {
         VStack(alignment: .leading, spacing: 16) {
             // Male coaches
             Text("Male")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(Color.textSecondary)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Color.textTertiary)
                 .textCase(.uppercase)
-                .tracking(1)
+                .tracking(0.5)
 
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(CoachAvatars.maleAvatars) { avatar in
@@ -71,10 +71,10 @@ struct AvatarSelectionView: View {
 
             // Female coaches
             Text("Female")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(Color.textSecondary)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Color.textTertiary)
                 .textCase(.uppercase)
-                .tracking(1)
+                .tracking(0.5)
                 .padding(.top, 4)
 
             LazyVGrid(columns: columns, spacing: 12) {
@@ -103,7 +103,7 @@ struct AvatarSelectionView: View {
             .animation(.spring(response: 0.3), value: selectedAvatarID)
 
             Text(avatar.name)
-                .font(.system(size: 9, weight: .medium))
+                .font(.caption2.weight(.medium))
                 .foregroundStyle(selectedAvatarID == avatar.id ? Color.accentGold : Color.textSecondary)
                 .lineLimit(1)
         }

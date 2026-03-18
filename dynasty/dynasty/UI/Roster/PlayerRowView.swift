@@ -2,67 +2,72 @@ import SwiftUI
 
 struct PlayerRowView: View {
     let player: Player
+    /// Depth chart index: 0 = starter, 1 = backup, 2+ = 3rd string. nil = unknown.
+    var depthIndex: Int? = nil
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
+            // 1. Position badge
             positionBadge
 
-            // Name column
-            VStack(alignment: .leading, spacing: 1) {
-                Text(player.fullName)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Color.textPrimary)
-                    .lineLimit(1)
+            // 2. Depth indicator
+            depthIndicator
+                .frame(width: 10, alignment: .center)
 
-                Text(experienceLabel)
-                    .font(.caption2)
-                    .monospacedDigit()
-                    .foregroundStyle(Color.textSecondary)
-            }
-            .frame(minWidth: 100, alignment: .leading)
+            // 3. Name
+            Text(player.fullName)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+                .frame(minWidth: 80, alignment: .leading)
 
-            Spacer(minLength: 4)
+            Spacer(minLength: 2)
 
-            // Age
+            // 4. Age
             Text("\(player.age)")
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 28, alignment: .center)
+                .frame(width: 24, alignment: .center)
 
-            // Overall (large, color-coded)
+            // 5. Cap Hit (salary)
+            Text(formattedCapHit)
+                .font(.caption2)
+                .fontWeight(.medium)
+                .monospacedDigit()
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 44, alignment: .trailing)
+
+            // 6. Contract years remaining (final year highlighted)
+            contractYearsLabel
+                .frame(width: 26, alignment: .center)
+
+            // 7. OVR (large, color-coded)
             Text("\(player.overall)")
                 .font(.callout.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
                 .frame(width: 32, alignment: .center)
 
-            // Contract salary + years
-            VStack(alignment: .trailing, spacing: 0) {
-                Text(formattedSalary)
-                    .font(.caption2)
-                    .fontWeight(.medium)
-                    .monospacedDigit()
-                    .foregroundStyle(Color.textSecondary)
-                Text("\(player.contractYearsRemaining)yr")
-                    .font(.system(size: 9))
-                    .monospacedDigit()
-                    .foregroundStyle(Color.textTertiary)
-            }
-            .frame(width: 48, alignment: .trailing)
+            // 8. Development arrow
+            developmentArrow
+                .frame(width: 14, alignment: .center)
 
-            // Morale indicator
+            // 9. Salary
+            Text(formattedSalary)
+                .font(.system(size: 9))
+                .monospacedDigit()
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: 40, alignment: .trailing)
+
+            // 10. Morale icon
             moraleIndicator
                 .frame(width: 14, alignment: .center)
 
-            // Health status
+            // 11. Health status
             healthIndicator
                 .frame(width: 20, alignment: .center)
-
-            // Development trend
-            developmentArrow
-                .frame(width: 14, alignment: .center)
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
@@ -81,10 +86,32 @@ struct PlayerRowView: View {
             .accessibilityLabel("\(player.position.rawValue), \(player.position.side.rawValue)")
     }
 
-    private var moraleIndicator: some View {
+    private var depthIndicator: some View {
         Circle()
-            .fill(moraleColor)
+            .fill(depthColor)
             .frame(width: 8, height: 8)
+            .accessibilityLabel(depthLabel)
+    }
+
+    private var contractYearsLabel: some View {
+        Text("\(player.contractYearsRemaining)yr")
+            .font(.system(size: 9, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(player.contractYearsRemaining <= 1 ? Color.warning : Color.textTertiary)
+            .padding(.horizontal, 2)
+            .padding(.vertical, 1)
+            .background(
+                player.contractYearsRemaining <= 1
+                    ? Color.warning.opacity(0.15)
+                    : Color.clear,
+                in: RoundedRectangle(cornerRadius: 3)
+            )
+    }
+
+    private var moraleIndicator: some View {
+        Image(systemName: moraleSystemImage)
+            .font(.system(size: 10))
+            .foregroundStyle(moraleColor)
             .accessibilityLabel("Morale \(moraleLabel)")
     }
 
@@ -129,8 +156,30 @@ struct PlayerRowView: View {
         }
     }
 
-    private var experienceLabel: String {
-        player.yearsPro == 0 ? "Rookie" : "\(player.yearsPro)yr pro"
+    private var depthColor: Color {
+        switch depthIndex {
+        case 0:     return .success   // starter = green
+        case 1:     return .accentBlue // backup = blue
+        default:    return .textTertiary // 3rd string or unknown = gray
+        }
+    }
+
+    private var depthLabel: String {
+        switch depthIndex {
+        case 0:     return "Starter"
+        case 1:     return "Backup"
+        case 2:     return "Third string"
+        default:    return "Reserve"
+        }
+    }
+
+    private var formattedCapHit: String {
+        let millions = Double(player.annualSalary) / 1000.0
+        if millions >= 1.0 {
+            return String(format: "$%.1fM", millions)
+        } else {
+            return "$\(player.annualSalary)K"
+        }
     }
 
     private var formattedSalary: String {
@@ -160,6 +209,15 @@ struct PlayerRowView: View {
         }
     }
 
+    private var moraleSystemImage: String {
+        switch player.morale {
+        case 85...:   return "face.smiling.fill"
+        case 70..<85: return "face.smiling"
+        case 55..<70: return "face.dashed"
+        default:      return "face.dashed.fill"
+        }
+    }
+
     private var developmentTrend: DevelopmentTrend {
         let peak = player.position.peakAgeRange
         if player.age < peak.lowerBound {
@@ -175,9 +233,11 @@ struct PlayerRowView: View {
         var parts = [
             player.fullName,
             player.position.rawValue,
+            depthLabel,
             "overall \(player.overall)",
             "age \(player.age)",
             formattedSalary,
+            "\(player.contractYearsRemaining) year\(player.contractYearsRemaining == 1 ? "" : "s") remaining",
         ]
         if player.isInjured {
             parts.append("injured \(player.injuryWeeksRemaining) weeks")
@@ -238,7 +298,7 @@ func overallColor(for value: Int) -> Color {
             )),
             personality: PlayerPersonality(archetype: .fieryCompetitor, motivation: .winning),
             morale: 85, contractYearsRemaining: 3, annualSalary: 45000
-        ))
+        ), depthIndex: 0)
         PlayerRowView(player: Player(
             firstName: "Tyreek",
             lastName: "Hill",
@@ -250,7 +310,7 @@ func overallColor(for value: Int) -> Color {
             )),
             personality: PlayerPersonality(archetype: .loneWolf, motivation: .stats),
             isInjured: true, injuryWeeksRemaining: 4, contractYearsRemaining: 2, annualSalary: 30000
-        ))
+        ), depthIndex: 1)
         PlayerRowView(player: Player(
             firstName: "Myles",
             lastName: "Garrett",
@@ -262,7 +322,7 @@ func overallColor(for value: Int) -> Color {
             )),
             personality: PlayerPersonality(archetype: .quietProfessional, motivation: .winning),
             contractYearsRemaining: 4, annualSalary: 25000
-        ))
+        ), depthIndex: 2)
         PlayerRowView(player: Player(
             firstName: "Justin",
             lastName: "Tucker",
@@ -272,6 +332,6 @@ func overallColor(for value: Int) -> Color {
             positionAttributes: .kicking(KickingAttributes(kickPower: 95, kickAccuracy: 98)),
             personality: PlayerPersonality(archetype: .steadyPerformer, motivation: .loyalty),
             contractYearsRemaining: 1, annualSalary: 6000
-        ))
+        ), depthIndex: 0)
     }
 }

@@ -10,6 +10,7 @@ struct CareerDashboardView: View {
     var onAdvance: (() -> Void)? = nil
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     // MARK: - State
 
@@ -30,6 +31,9 @@ struct CareerDashboardView: View {
 
     /// Inbox filter for the messages panel
     @State private var inboxFilter: DashboardInboxFilter = .all
+
+    /// Pulsing animation state for advance button guidance
+    @State private var advancePulse = false
 
     // MARK: - Derived
 
@@ -66,6 +70,13 @@ struct CareerDashboardView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
+            // Fix #30: Subtle stadium background texture
+            Image("BgStadiumNight")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .ignoresSafeArea()
+                .opacity(0.06)
+
             VStack(spacing: 0) {
                 // Single timeline strip at top
                 timelineStrip
@@ -100,13 +111,19 @@ struct CareerDashboardView: View {
     private var landscapeLayout: some View {
         HStack(alignment: .top, spacing: 0) {
             // Left column -- Timeline+Tasks Panel (fixed 300pt)
-            TimelineTasksPanel(
-                career: career,
-                tasks: $tasks,
-                onTaskSelected: onTaskSelected,
-                onAdvance: { performAdvance() },
-                canAdvance: canAdvance
-            )
+            VStack(spacing: 0) {
+                // Fix #64: Clear guidance when all tasks complete
+                if canAdvance {
+                    allTasksCompleteBanner
+                }
+                TimelineTasksPanel(
+                    career: career,
+                    tasks: $tasks,
+                    onTaskSelected: onTaskSelected,
+                    onAdvance: { performAdvance() },
+                    canAdvance: canAdvance
+                )
+            }
             .frame(width: 300)
 
             Divider().overlay(Color.surfaceBorder)
@@ -146,20 +163,32 @@ struct CareerDashboardView: View {
         ScrollView {
             VStack(spacing: 12) {
                 // Timeline+Tasks panel (full width, collapsible)
-                TimelineTasksPanel(
-                    career: career,
-                    tasks: $tasks,
-                    onTaskSelected: onTaskSelected,
-                    onAdvance: { performAdvance() },
-                    canAdvance: canAdvance
-                )
+                VStack(spacing: 0) {
+                    // Fix #64: Clear guidance when all tasks complete
+                    if canAdvance {
+                        allTasksCompleteBanner
+                    }
+                    TimelineTasksPanel(
+                        career: career,
+                        tasks: $tasks,
+                        onTaskSelected: onTaskSelected,
+                        onAdvance: { performAdvance() },
+                        canAdvance: canAdvance
+                    )
+                }
                 .frame(minWidth: 320, minHeight: 280, maxHeight: 460)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                        .strokeBorder(canAdvance ? Color.accentGold : Color.surfaceBorder, lineWidth: canAdvance ? 2 : 1)
                 )
+                .shadow(color: canAdvance ? Color.accentGold.opacity(advancePulse ? 0.4 : 0.1) : .clear, radius: canAdvance ? 8 : 0)
                 .padding(.horizontal, 16)
+                .onAppear {
+                    withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                        advancePulse = true
+                    }
+                }
 
                 // 2-column tile grid
                 centerTilesGrid
@@ -176,8 +205,19 @@ struct CareerDashboardView: View {
                     )
                     .padding(.horizontal, 16)
 
-                // Schedule + Standings
-                rightPanel
+                // Division Standings (moved to center column in portrait)
+                divisionStandingsSection
+                    .padding(12)
+                    .background(Color.backgroundSecondary)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                    )
+                    .padding(.horizontal, 16)
+
+                // Schedule only (standings already shown above)
+                rightPanelScheduleOnly
                     .padding(12)
                     .background(Color.backgroundSecondary)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -340,9 +380,16 @@ struct CareerDashboardView: View {
                 Button {
                     onTaskSelected(.inbox)
                 } label: {
-                    Text("View All")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.accentBlue)
+                    HStack(spacing: 4) {
+                        Text("View All")
+                            .font(.system(size: 12, weight: .bold))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.accentBlue))
                 }
                 .buttonStyle(.plain)
             }
@@ -391,9 +438,23 @@ struct CareerDashboardView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, 30)
                     } else {
-                        ForEach(filtered.reversed()) { message in
+                        let displayMessages = Array(filtered.reversed().prefix(5))
+                        ForEach(displayMessages) { message in
                             messageRow(message)
                             Divider().overlay(Color.surfaceBorder.opacity(0.3))
+                        }
+
+                        if filtered.count > 5 {
+                            Button {
+                                onTaskSelected(.inbox)
+                            } label: {
+                                Text("\(filtered.count - 5) more message\(filtered.count - 5 == 1 ? "" : "s")")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(Color.accentBlue)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -498,89 +559,105 @@ struct CareerDashboardView: View {
 
     // MARK: - 4. Right Panel (Schedule + Standings)
 
+    /// Full right panel with both schedule and standings (used in landscape right sidebar)
     private var rightPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Upcoming fixtures
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Color.accentGold)
-                    Text("UPCOMING")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Color.accentGold)
-                        .tracking(0.5)
-                }
+            scheduleSection
+            Divider().overlay(Color.surfaceBorder.opacity(0.6))
+            divisionStandingsSection
+        }
+    }
 
-                if upcomingGames.isEmpty {
-                    Text(isOffseasonPhase ? "Season starts after Roster Cuts" : "No upcoming games")
-                        .font(.caption)
-                        .foregroundStyle(Color.textSecondary)
-                        .padding(.vertical, 4)
-                } else {
-                    ForEach(Array(upcomingGames.prefix(5)), id: \.id) { game in
-                        fixtureRow(game)
-                    }
-                }
+    /// Schedule-only right panel (used in portrait where standings move to center)
+    private var rightPanelScheduleOnly: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            scheduleSection
+        }
+    }
+
+    // MARK: - Schedule Section
+
+    private var scheduleSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.accentGold)
+                Text("UPCOMING")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.accentGold)
+                    .tracking(0.5)
             }
 
-            Divider().overlay(Color.surfaceBorder.opacity(0.6))
-
-            // Division standings mini-table
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "list.number")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Color.accentGold)
-                    Text("DIVISION")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Color.accentGold)
-                        .tracking(0.5)
+            if upcomingGames.isEmpty {
+                Text(isOffseasonPhase ? "Season starts after Roster Cuts" : "No upcoming games")
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .padding(.vertical, 4)
+            } else {
+                ForEach(Array(upcomingGames.prefix(5)), id: \.id) { game in
+                    fixtureRow(game)
                 }
+            }
+        }
+    }
 
-                if divisionTeams.isEmpty {
-                    Text("Loading...")
-                        .font(.caption)
-                        .foregroundStyle(Color.textSecondary)
-                } else {
-                    // Header row
+    // MARK: - Division Standings Section
+
+    private var divisionStandingsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "list.number")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.accentGold)
+                Text("DIVISION")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.accentGold)
+                    .tracking(0.5)
+            }
+
+            if divisionTeams.isEmpty {
+                Text("Loading...")
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+            } else {
+                // Header row
+                HStack {
+                    Text("Team")
+                        .frame(width: 40, alignment: .leading)
+                    Spacer()
+                    Text("W")
+                        .frame(width: 24)
+                    Text("L")
+                        .frame(width: 24)
+                }
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Color.textTertiary)
+                .textCase(.uppercase)
+
+                ForEach(divisionTeams.sorted(by: { $0.wins > $1.wins }), id: \.id) { t in
+                    let isMyTeam = t.id == team?.id
                     HStack {
-                        Text("Team")
+                        Text(t.abbreviation)
+                            .font(.system(size: 11, weight: isMyTeam ? .heavy : .medium))
+                            .foregroundStyle(isMyTeam ? Color.accentGold : Color.textSecondary)
                             .frame(width: 40, alignment: .leading)
                         Spacer()
-                        Text("W")
+                        Text("\(t.wins)")
+                            .font(.system(size: 11, weight: .medium).monospacedDigit())
+                            .foregroundStyle(isMyTeam ? Color.textPrimary : Color.textSecondary)
                             .frame(width: 24)
-                        Text("L")
+                        Text("\(t.losses)")
+                            .font(.system(size: 11, weight: .medium).monospacedDigit())
+                            .foregroundStyle(isMyTeam ? Color.textPrimary : Color.textSecondary)
                             .frame(width: 24)
                     }
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Color.textTertiary)
-                    .textCase(.uppercase)
-
-                    ForEach(divisionTeams.sorted(by: { $0.wins > $1.wins }), id: \.id) { t in
-                        let isMyTeam = t.id == team?.id
-                        HStack {
-                            Text(t.abbreviation)
-                                .font(.system(size: 11, weight: isMyTeam ? .heavy : .medium))
-                                .foregroundStyle(isMyTeam ? Color.accentGold : Color.textSecondary)
-                                .frame(width: 40, alignment: .leading)
-                            Spacer()
-                            Text("\(t.wins)")
-                                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                                .foregroundStyle(isMyTeam ? Color.textPrimary : Color.textSecondary)
-                                .frame(width: 24)
-                            Text("\(t.losses)")
-                                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                                .foregroundStyle(isMyTeam ? Color.textPrimary : Color.textSecondary)
-                                .frame(width: 24)
-                        }
-                        .padding(.vertical, 3)
-                        .padding(.horizontal, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.accentGold.opacity(isMyTeam ? 0.08 : 0))
-                        )
-                    }
+                    .padding(.vertical, 3)
+                    .padding(.horizontal, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.accentGold.opacity(isMyTeam ? 0.08 : 0))
+                    )
                 }
             }
         }
@@ -639,23 +716,22 @@ struct CareerDashboardView: View {
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
 
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Record")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Color.textSecondary)
-                            Text(team?.record ?? "0-0")
-                                .font(.system(size: 16, weight: .bold).monospacedDigit())
-                                .foregroundStyle(Color.textPrimary)
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Division")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Color.textSecondary)
-                            Text(divisionRank)
-                                .font(.system(size: 16, weight: .bold).monospacedDigit())
-                                .foregroundStyle(Color.textPrimary)
-                        }
+                    // Fix #28: Prominent record display
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(team?.record ?? "0-0")
+                            .font(.title2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Color.textPrimary)
+
+                        Text(divisionRank)
+                            .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(Color.textSecondary)
+                    }
+
+                    // Win/loss streak indicator
+                    if let streak = currentStreak, streak.count > 1 {
+                        Text(streak.label)
+                            .font(.system(size: 12, weight: .bold).monospacedDigit())
+                            .foregroundStyle(streak.isWin ? Color.success : Color.danger)
                     }
 
                     if let owner = team?.owner {
@@ -671,14 +747,7 @@ struct CareerDashboardView: View {
 
     private var rosterTile: some View {
         NavigationLink {
-            ZStack {
-                Color.backgroundPrimary.ignoresSafeArea()
-                Text("Roster - Coming Soon")
-                    .font(.title2)
-                    .foregroundStyle(Color.textSecondary)
-            }
-            .navigationTitle("Roster")
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            RosterViewWrapper(career: career)
         } label: {
             DashboardTile(icon: "person.3.fill", title: "Roster", highlighted: currentPhaseHighlightedTiles.contains("Roster")) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -729,15 +798,48 @@ struct CareerDashboardView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(Color.textSecondary)
                     }
-                    HStack {
+
+                    // Fix #61: Prominent filled/total staff display
+                    let totalSlots = CoachRole.allCases.count
+                    let isFullyStaffed = coachCount >= totalSlots
+                    HStack(spacing: 6) {
+                        HStack(spacing: 2) {
+                            Text("\(coachCount)")
+                                .font(.system(size: 18, weight: .bold).monospacedDigit())
+                                .foregroundStyle(Color.textPrimary)
+                            Text("/")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(Color.textTertiary)
+                            Text("\(totalSlots)")
+                                .font(.system(size: 18, weight: .bold).monospacedDigit())
+                                .foregroundStyle(Color.textSecondary)
+                        }
                         Text("Staff")
-                            .font(.system(size: 10))
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
-                        Text("\(coachCount) filled")
-                            .font(.system(size: 11, weight: .medium).monospacedDigit())
-                            .foregroundStyle(Color.textPrimary)
+                        if isFullyStaffed {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(Color.success)
+                        }
                     }
+
+                    // Mini progress bar
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color.backgroundTertiary)
+                                .frame(height: 5)
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(isFullyStaffed ? Color.success : Color.accentGold)
+                                .frame(
+                                    width: geo.size.width * min(1.0, Double(coachCount) / Double(totalSlots)),
+                                    height: 5
+                                )
+                        }
+                    }
+                    .frame(height: 5)
                 }
             }
         }
@@ -805,7 +907,7 @@ struct CareerDashboardView: View {
                                     .fill(Color.backgroundTertiary)
                                     .frame(height: 6)
                                 RoundedRectangle(cornerRadius: 3)
-                                    .fill(usedFraction > 0.9 ? Color.danger : Color.accentGold)
+                                    .fill(capBarColor(usedFraction))
                                     .frame(width: geo.size.width * min(usedFraction, 1.0), height: 6)
                             }
                         }
@@ -938,6 +1040,26 @@ struct CareerDashboardView: View {
     // NOTE: advanceWeekButton and advanceWeekButtonCompact removed --
     // advance UI is now part of TimelineTasksPanel.
 
+    // MARK: - All Tasks Complete Banner (Fix #64)
+
+    private var allTasksCompleteBanner: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(Color.success)
+            Text("All tasks complete!")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Color.success)
+            Spacer()
+            Text("Ready to advance")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.accentGold)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.success.opacity(0.1))
+    }
+
     // MARK: - Owner Satisfaction Bar
 
     private func ownerSatisfactionBar(_ satisfaction: Int) -> some View {
@@ -965,6 +1087,12 @@ struct CareerDashboardView: View {
         }
     }
 
+    private func capBarColor(_ fraction: Double) -> Color {
+        if fraction > 0.9 { return Color.danger }
+        if fraction > 0.8 { return Color.warning }
+        return Color.success
+    }
+
     private func satisfactionColor(_ value: Int) -> Color {
         if value > 60  { return Color.success }
         if value >= 35 { return Color.warning }
@@ -980,6 +1108,43 @@ struct CareerDashboardView: View {
         default:
             return true
         }
+    }
+
+    /// Streak info derived from recent played games.
+    private var currentStreak: (label: String, count: Int, isWin: Bool)? {
+        guard let teamID = career.teamID else { return nil }
+        let seasonYear = career.currentSeason
+        let gameDescriptor = FetchDescriptor<Game>(predicate: #Predicate {
+            $0.seasonYear == seasonYear
+        })
+        let allGames = (try? modelContext.fetch(gameDescriptor)) ?? []
+        let playedGames = allGames
+            .filter { ($0.homeTeamID == teamID || $0.awayTeamID == teamID) && $0.isPlayed }
+            .sorted { $0.week > $1.week }
+
+        guard let latest = playedGames.first,
+              let latestHS = latest.homeScore,
+              let latestAS = latest.awayScore else { return nil }
+
+        let latestIsWin: Bool = {
+            let isHome = latest.homeTeamID == teamID
+            return isHome ? latestHS > latestAS : latestAS > latestHS
+        }()
+
+        var streakCount = 0
+        for game in playedGames {
+            guard let hs = game.homeScore, let aws = game.awayScore else { break }
+            let isHome = game.homeTeamID == teamID
+            let won = isHome ? hs > aws : aws > hs
+            if won == latestIsWin {
+                streakCount += 1
+            } else {
+                break
+            }
+        }
+
+        let label = latestIsWin ? "W\(streakCount)" : "L\(streakCount)"
+        return (label, streakCount, latestIsWin)
     }
 
     private var divisionRank: String {

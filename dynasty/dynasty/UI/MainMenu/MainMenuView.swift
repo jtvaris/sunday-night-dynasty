@@ -103,9 +103,9 @@ struct MainMenuView: View {
     }
 
     private var footerBlock: some View {
-        Text("v1.0")
-            .font(.caption)
-            .foregroundStyle(Color.white.opacity(0.3))
+        Text("v2")
+            .font(.caption2)
+            .foregroundStyle(Color.white.opacity(0.2))
             .padding(.bottom, 16)
     }
 }

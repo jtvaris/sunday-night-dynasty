@@ -69,6 +69,7 @@ struct IntroSequenceView: View {
                     ReadyToBeginStep(
                         career: career,
                         team: team,
+                        teamOverall: players.isEmpty ? 60 : players.map(\.overall).reduce(0, +) / players.count,
                         onEnter: { completeIntro() }
                     )
                     .tag(4)
@@ -186,24 +187,25 @@ private struct OwnerMeetingStep: View {
 
     var body: some View {
         ZStack {
-            // Dimmed background image for corporate meeting feel
+            Color.backgroundPrimary.ignoresSafeArea()
             Image("BgContract")
                 .resizable()
                 .aspectRatio(contentMode: .fill)
                 .ignoresSafeArea()
-                .opacity(0.12)
+                .opacity(0.2)
 
             LinearGradient(
                 colors: [
-                    Color.backgroundPrimary.opacity(0.85),
                     Color.backgroundPrimary.opacity(0.7),
-                    Color.backgroundPrimary.opacity(0.85)
+                    Color.backgroundPrimary.opacity(0.4),
+                    Color.backgroundPrimary.opacity(0.7)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
 
+        GeometryReader { geometry in
         ScrollView {
             VStack(spacing: 24) {
                 Spacer().frame(height: 20)
@@ -316,6 +318,7 @@ private struct OwnerMeetingStep: View {
             }
             .frame(maxWidth: 800)
             .frame(maxWidth: .infinity)
+            .frame(minHeight: geometry.size.height)
         }
         .scrollIndicators(.hidden)
         .safeAreaInset(edge: .bottom) {
@@ -325,6 +328,7 @@ private struct OwnerMeetingStep: View {
                 .padding(.top, 12)
                 .frame(maxWidth: .infinity)
                 .background(Color.backgroundPrimary.opacity(0.95))
+        }
         }
         }
         .onAppear { runAnimations() }
@@ -407,6 +411,19 @@ private struct TeamOverviewStep: View {
     }
 
     var body: some View {
+        ZStack {
+            Color.backgroundPrimary.ignoresSafeArea()
+            Image("BgTrainingCamp")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .ignoresSafeArea()
+                .opacity(0.2)
+            LinearGradient(
+                colors: [Color.backgroundPrimary.opacity(0.7), Color.backgroundPrimary.opacity(0.4), Color.backgroundPrimary.opacity(0.7)],
+                startPoint: .top, endPoint: .bottom
+            ).ignoresSafeArea()
+
+        GeometryReader { geometry in
         ScrollView {
             VStack(spacing: 24) {
                 Spacer().frame(height: 20)
@@ -522,6 +539,7 @@ private struct TeamOverviewStep: View {
             }
             .frame(maxWidth: 800)
             .frame(maxWidth: .infinity)
+            .frame(minHeight: geometry.size.height)
         }
         .scrollIndicators(.hidden)
         .safeAreaInset(edge: .bottom) {
@@ -531,6 +549,8 @@ private struct TeamOverviewStep: View {
                 .padding(.top, 12)
                 .frame(maxWidth: .infinity)
                 .background(Color.backgroundPrimary.opacity(0.95))
+        }
+        }
         }
         .onAppear { runAnimations() }
     }
@@ -630,6 +650,14 @@ private struct YourRoadmapStep: View {
     }
 
     var body: some View {
+        ZStack {
+            Color.backgroundPrimary.ignoresSafeArea()
+            Image("BgCoachStadium1")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .ignoresSafeArea()
+                .opacity(0.1)
+
         ScrollView {
             VStack(spacing: 24) {
                 Spacer().frame(height: 20)
@@ -681,6 +709,7 @@ private struct YourRoadmapStep: View {
                 .frame(maxWidth: .infinity)
                 .background(Color.backgroundPrimary.opacity(0.95))
         }
+        }
         .onAppear { runAnimations() }
     }
 
@@ -697,12 +726,22 @@ private struct ReadyToBeginStep: View {
 
     let career: Career
     let team: Team?
+    let teamOverall: Int
     let onEnter: () -> Void
 
     @State private var showTitle = false
     @State private var showSubtitle = false
     @State private var showButton = false
     @State private var glowAmount: CGFloat = 0.3
+
+    private var motivationalLine: String {
+        switch teamOverall {
+        case ...64:   return "Turn this franchise around."
+        case 65...74: return "Write your legacy."
+        case 75...84: return "Finish what they started."
+        default:      return "Defend the throne."
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -711,14 +750,14 @@ private struct ReadyToBeginStep: View {
                 .resizable()
                 .aspectRatio(contentMode: .fill)
                 .ignoresSafeArea()
-                .opacity(0.15)
+                .opacity(0.3)
 
-            // Dark gradient overlay for readability
+            // Dramatic gradient overlay: dark bottom fading to more visible stadium top
             LinearGradient(
                 colors: [
-                    Color.backgroundPrimary.opacity(0.8),
-                    Color.backgroundPrimary.opacity(0.6),
-                    Color.backgroundPrimary.opacity(0.8)
+                    Color.backgroundPrimary.opacity(0.3),
+                    Color.backgroundPrimary.opacity(0.5),
+                    Color.backgroundPrimary.opacity(0.85)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -750,10 +789,17 @@ private struct ReadyToBeginStep: View {
                     }
 
                     if showSubtitle {
-                        Text("Build Your Dynasty.")
-                            .font(.title3.weight(.medium))
-                            .foregroundStyle(Color.accentGold)
-                            .transition(.opacity)
+                        VStack(spacing: 8) {
+                            Text("Build Your Dynasty.")
+                                .font(.title3.weight(.medium))
+                                .foregroundStyle(Color.accentGold)
+                                .shadow(color: Color.accentGold.opacity(0.5), radius: 12)
+
+                            Text(motivationalLine)
+                                .font(.subheadline.italic())
+                                .foregroundStyle(Color.accentGold.opacity(0.75))
+                        }
+                        .transition(.opacity)
                     }
                 }
 
@@ -763,15 +809,15 @@ private struct ReadyToBeginStep: View {
         .safeAreaInset(edge: .bottom) {
             if showButton {
                 Button(action: onEnter) {
-                    HStack(spacing: 12) {
+                    HStack(spacing: 14) {
                         Text("Enter the Front Office")
-                            .font(.headline.weight(.bold))
+                            .font(.title3.weight(.bold))
                         Image(systemName: "arrow.right")
-                            .font(.headline)
+                            .font(.title3.weight(.bold))
                     }
                     .foregroundStyle(Color.backgroundPrimary)
-                    .padding(.horizontal, 40)
-                    .padding(.vertical, 18)
+                    .padding(.horizontal, 48)
+                    .padding(.vertical, 22)
                     .background(
                         Capsule()
                             .fill(Color.accentGold)

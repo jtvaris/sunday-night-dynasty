@@ -9,25 +9,23 @@ struct RosterView: View {
     @State private var sortOrder: RosterSort = .overall
     @State private var viewMode: RosterViewMode = .list
 
-    // MARK: - Position Groups
+    // MARK: - Position Groups (NFL-style names)
 
     private static let offenseGroups: [PositionGroup] = [
-        PositionGroup(name: "Quarterbacks", positions: [.QB]),
-        PositionGroup(name: "Running Backs", positions: [.RB, .FB]),
-        PositionGroup(name: "Wide Receivers", positions: [.WR]),
-        PositionGroup(name: "Tight Ends", positions: [.TE]),
+        PositionGroup(name: "QB Room", positions: [.QB]),
+        PositionGroup(name: "Backfield", positions: [.RB, .FB]),
+        PositionGroup(name: "Receivers", positions: [.WR, .TE]),
         PositionGroup(name: "Offensive Line", positions: [.LT, .LG, .C, .RG, .RT]),
     ]
 
     private static let defenseGroups: [PositionGroup] = [
         PositionGroup(name: "Defensive Line", positions: [.DE, .DT]),
         PositionGroup(name: "Linebackers", positions: [.OLB, .MLB]),
-        PositionGroup(name: "Defensive Backs", positions: [.CB, .FS, .SS]),
+        PositionGroup(name: "Secondary", positions: [.CB, .FS, .SS]),
     ]
 
     private static let specialTeamsGroups: [PositionGroup] = [
-        PositionGroup(name: "Kickers", positions: [.K]),
-        PositionGroup(name: "Punters", positions: [.P]),
+        PositionGroup(name: "Specialists", positions: [.K, .P]),
     ]
 
     // MARK: - Computed
@@ -276,15 +274,25 @@ struct PositionGroupHeader: View {
     }
 
     private var depthStatus: DepthStatus {
-        let count = players.count
         let healthy = players.filter { !$0.isInjured }.count
         if healthy <= 1 { return .critical }
         if healthy <= 2 { return .thin }
         return .deep
     }
 
+    private var letterGrade: (letter: String, color: Color) {
+        switch averageOVR {
+        case 85...:   return ("A", .success)
+        case 75..<85: return ("B", .accentGold)
+        case 65..<75: return ("C", .warning)
+        case 55..<65: return ("D", .danger)
+        default:      return ("F", .danger)
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
+            // Group name
             Text(group.name)
                 .font(.subheadline)
                 .fontWeight(.bold)
@@ -292,15 +300,13 @@ struct PositionGroupHeader: View {
 
             Spacer()
 
-            // Depth indicator
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(depthStatus.color)
-                    .frame(width: 8, height: 8)
-                Text(depthStatus.label)
-                    .font(.caption2)
-                    .foregroundStyle(depthStatus.color)
-            }
+            // Letter grade badge
+            Text(letterGrade.letter)
+                .font(.caption)
+                .fontWeight(.heavy)
+                .foregroundStyle(letterGrade.color)
+                .frame(width: 20, height: 20)
+                .background(letterGrade.color.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
 
             // Average OVR
             HStack(spacing: 3) {
@@ -312,6 +318,16 @@ struct PositionGroupHeader: View {
                     .fontWeight(.bold)
                     .monospacedDigit()
                     .foregroundStyle(Color.forRating(averageOVR))
+            }
+
+            // Depth indicator
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(depthStatus.color)
+                    .frame(width: 8, height: 8)
+                Text(depthStatus.label)
+                    .font(.caption2)
+                    .foregroundStyle(depthStatus.color)
             }
 
             // Injured count

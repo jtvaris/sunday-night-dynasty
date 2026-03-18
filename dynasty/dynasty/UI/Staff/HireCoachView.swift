@@ -12,42 +12,55 @@ struct HireCoachView: View {
 
     @State private var candidates: [Coach] = []
     @State private var hiredCoachID: UUID?
-    @State private var sortColumn: SortColumn = .reputation
+    @State private var sortColumn: SortColumn = .ovr
     @State private var sortAscending: Bool = false
     @State private var selectedCandidate: Coach?
+    @State private var showAffordableOnly: Bool = false
 
     // MARK: - Sort Column
 
     enum SortColumn: String, CaseIterable {
-        case name       = "Name"
-        case age        = "Age"
-        case experience = "Exp"
-        case scheme     = "Scheme"
-        case play       = "Play"
-        case dev        = "Dev"
-        case game       = "Game"
-        case scout      = "Scout"
-        case recruit    = "Recruit"
-        case salary     = "Salary"
-        case reputation = "Rep"
+        case name    = "Name"
+        case age     = "Age"
+        case scheme  = "Scheme"
+        case ovr     = "OVR"
+        case play    = "Play"
+        case dev     = "Dev"
+        case game    = "Game"
+        case salary  = "Salary"
     }
 
-    // MARK: - Sorted Candidates
+    // MARK: - Helpers
+
+    private func coachOverall(_ coach: Coach) -> Int {
+        let sum = coach.playCalling + coach.playerDevelopment + coach.gamePlanning
+            + coach.scoutingAbility + coach.recruiting + coach.motivation
+            + coach.discipline + coach.adaptability + coach.mediaHandling
+            + coach.contractNegotiation + coach.moraleInfluence + coach.reputation
+        return sum / 12
+    }
+
+    // MARK: - Filtered & Sorted Candidates
+
+    private var filteredCandidates: [Coach] {
+        if showAffordableOnly {
+            return candidates.filter { $0.salary <= remainingBudget }
+        }
+        return candidates
+    }
 
     private var sortedCandidates: [Coach] {
+        let list = filteredCandidates
         let sorted: [Coach]
         switch sortColumn {
-        case .name:       sorted = candidates.sorted { $0.lastName < $1.lastName }
-        case .age:        sorted = candidates.sorted { $0.age < $1.age }
-        case .experience: sorted = candidates.sorted { $0.yearsExperience > $1.yearsExperience }
-        case .scheme:     sorted = candidates.sorted { schemeLabel($0) < schemeLabel($1) }
-        case .play:       sorted = candidates.sorted { $0.playCalling > $1.playCalling }
-        case .dev:        sorted = candidates.sorted { $0.playerDevelopment > $1.playerDevelopment }
-        case .game:       sorted = candidates.sorted { $0.gamePlanning > $1.gamePlanning }
-        case .scout:      sorted = candidates.sorted { $0.scoutingAbility > $1.scoutingAbility }
-        case .recruit:    sorted = candidates.sorted { $0.recruiting > $1.recruiting }
-        case .salary:     sorted = candidates.sorted { $0.salary < $1.salary }
-        case .reputation: sorted = candidates.sorted { $0.reputation > $1.reputation }
+        case .name:    sorted = list.sorted { $0.lastName < $1.lastName }
+        case .age:     sorted = list.sorted { $0.age < $1.age }
+        case .scheme:  sorted = list.sorted { schemeLabel($0) < schemeLabel($1) }
+        case .ovr:     sorted = list.sorted { coachOverall($0) > coachOverall($1) }
+        case .play:    sorted = list.sorted { $0.playCalling > $1.playCalling }
+        case .dev:     sorted = list.sorted { $0.playerDevelopment > $1.playerDevelopment }
+        case .game:    sorted = list.sorted { $0.gamePlanning > $1.gamePlanning }
+        case .salary:  sorted = list.sorted { $0.salary < $1.salary }
         }
         return sortAscending ? sorted.reversed() : sorted
     }
@@ -56,7 +69,21 @@ struct HireCoachView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
+            Image("BgCoachStadium1")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .ignoresSafeArea()
+                .opacity(0.15)
+
+            LinearGradient(
+                colors: [Color.backgroundPrimary.opacity(0.85), Color.backgroundPrimary.opacity(0.5), Color.backgroundPrimary.opacity(0.85)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
             VStack(spacing: 0) {
+                // Sticky budget header + filter
                 budgetHeader
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -64,7 +91,7 @@ struct HireCoachView: View {
 
                 Divider().overlay(Color.surfaceBorder)
 
-                // Table header
+                // Sticky column headers
                 tableHeaderRow
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -119,29 +146,40 @@ struct HireCoachView: View {
                     .foregroundStyle(remainingBudget > 0 ? Color.success : Color.danger)
             }
             Spacer()
-            Text("\(candidates.count) candidates")
+
+            // Fix #39: Affordable-only toggle
+            Toggle(isOn: $showAffordableOnly) {
+                Text("Affordable")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .toggleStyle(.switch)
+            .tint(Color.accentGold)
+            .fixedSize()
+
+            Spacer().frame(width: 16)
+
+            Text("\(filteredCandidates.count) candidates")
                 .font(.caption)
                 .foregroundStyle(Color.textSecondary)
         }
     }
 
-    // MARK: - Table Header
+    // MARK: - Table Header (Fix #42: simplified columns — OVR + numeric skills)
 
     private var tableHeaderRow: some View {
         HStack(spacing: 0) {
             headerButton("Name", column: .name, width: nil, alignment: .leading)
             headerButton("Age", column: .age, width: 34)
-            headerButton("Exp", column: .experience, width: 34)
             headerButton("Scheme", column: .scheme, width: 62)
-            starHeader("Play", column: .play)
-            starHeader("Dev", column: .dev)
-            starHeader("Game", column: .game)
-            starHeader("Scout", column: .scout)
-            starHeader("Recr", column: .recruit)
+            headerButton("OVR", column: .ovr, width: 36)
+            headerButton("Play", column: .play, width: 36)
+            headerButton("Dev", column: .dev, width: 36)
+            headerButton("Game", column: .game, width: 36)
             headerButton("Salary", column: .salary, width: 56)
-            // Action column
+            // Status column
             Text("")
-                .frame(width: 80)
+                .frame(width: 30)
         }
         .font(.system(size: 10, weight: .semibold))
         .foregroundStyle(Color.textTertiary)
@@ -169,113 +207,99 @@ struct HireCoachView: View {
         .foregroundStyle(sortColumn == column ? Color.accentGold : Color.textTertiary)
     }
 
-    private func starHeader(_ title: String, column: SortColumn) -> some View {
-        headerButton(title, column: column, width: 42)
-    }
-
-    // MARK: - Candidate Row
+    // MARK: - Candidate Row (Fix #42: one star rating + numeric skill values)
 
     private func candidateRow(_ candidate: Coach) -> some View {
         let isOverBudget = candidate.salary > remainingBudget
         let isHired = hiredCoachID == candidate.id
+        let ovr = coachOverall(candidate)
 
-        return HStack(spacing: 0) {
-            // Name
-            VStack(alignment: .leading, spacing: 1) {
-                Text(candidate.fullName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(isOverBudget ? Color.textTertiary : Color.textPrimary)
-                    .lineLimit(1)
-                Text(candidate.personality.displayName)
-                    .font(.system(size: 9))
-                    .foregroundStyle(Color.textTertiary)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            // Age
-            Text("\(candidate.age)")
-                .font(.system(size: 11).monospacedDigit())
-                .foregroundStyle(Color.textSecondary)
-                .frame(width: 34)
-
-            // Experience
-            Text("\(candidate.yearsExperience)")
-                .font(.system(size: 11).monospacedDigit())
-                .foregroundStyle(Color.textSecondary)
-                .frame(width: 34)
-
-            // Scheme
-            Text(schemeLabel(candidate))
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(Color.accentBlue)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(width: 62)
-
-            // Star ratings
-            starCell(candidate.playCalling, width: 42)
-            starCell(candidate.playerDevelopment, width: 42)
-            starCell(candidate.gamePlanning, width: 42)
-            starCell(candidate.scoutingAbility, width: 42)
-            starCell(candidate.recruiting, width: 42)
-
-            // Salary
-            Text(salaryFormatted(candidate.salary))
-                .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                .foregroundStyle(isOverBudget ? Color.danger : Color.textSecondary)
-                .frame(width: 56)
-
-            // Action buttons
-            HStack(spacing: 4) {
-                Button {
-                    selectedCandidate = candidate
-                } label: {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Color.accentBlue)
+        return Button {
+            selectedCandidate = candidate
+        } label: {
+            HStack(spacing: 0) {
+                // Name
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(candidate.fullName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(isOverBudget ? Color.textTertiary : Color.textPrimary)
+                        .lineLimit(1)
+                    // One overall star rating
+                    Text(CoachingEngine.starString(for: ovr))
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.accentGold)
                 }
-                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                if isHired {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Color.success)
-                } else if isOverBudget {
-                    Image(systemName: "xmark.circle")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Color.danger.opacity(0.5))
-                } else {
-                    Button {
-                        hire(candidate)
-                    } label: {
-                        Text("Hire")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 5))
+                // Age
+                Text("\(candidate.age)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+                    .frame(width: 34)
+
+                // Scheme
+                Text(schemeLabel(candidate))
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(Color.accentBlue)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(width: 62)
+
+                // OVR numeric
+                Text("\(ovr)")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(Color.forRating(ovr))
+                    .frame(width: 36)
+
+                // Key skill numerics
+                Text("\(candidate.playCalling)")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Color.forRating(candidate.playCalling))
+                    .frame(width: 36)
+
+                Text("\(candidate.playerDevelopment)")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Color.forRating(candidate.playerDevelopment))
+                    .frame(width: 36)
+
+                Text("\(candidate.gamePlanning)")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Color.forRating(candidate.gamePlanning))
+                    .frame(width: 36)
+
+                // Salary
+                Text(salaryFormatted(candidate.salary))
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(isOverBudget ? Color.danger : Color.textSecondary)
+                    .frame(width: 56)
+
+                // Status indicator
+                Group {
+                    if isHired {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.success)
+                    } else if isOverBudget {
+                        Image(systemName: "xmark.circle")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.danger.opacity(0.5))
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.textTertiary)
                     }
-                    .buttonStyle(.plain)
                 }
+                .frame(width: 30)
             }
-            .frame(width: 80)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .buttonStyle(.plain)
         .opacity(isOverBudget ? 0.6 : 1.0)
         .background(isHired ? Color.success.opacity(0.06) : Color.clear)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(candidate.fullName), age \(candidate.age), salary \(candidate.salary) thousand")
-    }
-
-    // MARK: - Star Cell
-
-    private func starCell(_ value: Int, width: CGFloat) -> some View {
-        Text(CoachingEngine.starString(for: value))
-            .font(.system(size: 9))
-            .foregroundStyle(Color.accentGold)
-            .frame(width: width)
+        .accessibilityLabel("\(candidate.fullName), age \(candidate.age), overall \(ovr), salary \(candidate.salary) thousand")
     }
 
     // MARK: - Helpers
@@ -354,6 +378,14 @@ private struct CandidateDetailSheet: View {
         Int(proposedSalary) > remainingBudget
     }
 
+    private func coachOverall(_ coach: Coach) -> Int {
+        let sum = coach.playCalling + coach.playerDevelopment + coach.gamePlanning
+            + coach.scoutingAbility + coach.recruiting + coach.motivation
+            + coach.discipline + coach.adaptability + coach.mediaHandling
+            + coach.contractNegotiation + coach.moraleInfluence + coach.reputation
+        return sum / 12
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -364,7 +396,16 @@ private struct CandidateDetailSheet: View {
                         // Profile header
                         profileHeader
 
-                        // All attributes with star ratings and numeric values
+                        // Fix #43: Prominent hire button at top of sheet
+                        if !isHired && negotiationResult?.accepted != true {
+                            quickHireButton
+                        }
+
+                        if isHired || negotiationResult?.accepted == true {
+                            hiredBanner
+                        }
+
+                        // All attributes (Fix #47: use VStack instead of LazyVGrid)
                         attributesCard
 
                         // Background story
@@ -428,8 +469,21 @@ private struct CandidateDetailSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Scheme + salary summary
+            // Overall rating + scheme + salary summary
             HStack(spacing: 12) {
+                // Overall badge
+                let ovr = coachOverall(candidate)
+                VStack(spacing: 2) {
+                    Text("\(ovr)")
+                        .font(.system(size: 22, weight: .black).monospacedDigit())
+                        .foregroundStyle(Color.forRating(ovr))
+                    Text("OVR")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .frame(width: 48, height: 48)
+                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
+
                 if let off = candidate.offensiveScheme {
                     schemeTag(off.displayName, color: .accentBlue)
                 }
@@ -451,7 +505,62 @@ private struct CandidateDetailSheet: View {
         .cardBackground()
     }
 
-    // MARK: - Attributes Card
+    // MARK: - Quick Hire Button (Fix #43: prominent gold button at top)
+
+    private var quickHireButton: some View {
+        Button {
+            // Use asking salary directly for quick hire
+            proposedSalary = askingSalary
+            proposedYears = 3
+            makeOffer()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "handshake.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                VStack(spacing: 2) {
+                    Text("Offer Contract")
+                        .font(.headline.weight(.bold))
+                    Text("at asking salary \(salaryFormatted(candidate.salary))/yr")
+                        .font(.caption2)
+                        .opacity(0.8)
+                }
+            }
+            .foregroundStyle(Color.backgroundPrimary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 56)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(candidate.salary > remainingBudget ? Color.backgroundTertiary : Color.accentGold)
+            )
+        }
+        .disabled(candidate.salary > remainingBudget)
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Hired Banner
+
+    private var hiredBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.title2)
+                .foregroundStyle(Color.success)
+            Text("Hired!")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(Color.success)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.success.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.success.opacity(0.3), lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Attributes Card (Fix #47: VStack grid instead of LazyVGrid to prevent disappearing)
 
     private var attributesCard: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -475,36 +584,39 @@ private struct CandidateDetailSheet: View {
                 ("Reputation", candidate.reputation),
             ]
 
-            LazyVGrid(columns: [
-                GridItem(.flexible(), spacing: 8),
-                GridItem(.flexible(), spacing: 8),
-            ], spacing: 8) {
-                ForEach(attrs, id: \.0) { attr in
-                    HStack(spacing: 6) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(attr.0)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(Color.textSecondary)
-                            Text(CoachingEngine.starString(for: attr.1))
-                                .font(.system(size: 10))
-                                .foregroundStyle(Color.accentGold)
-                        }
-                        Spacer()
-                        Text("\(attr.1)")
-                            .font(.system(size: 16, weight: .bold).monospacedDigit())
-                            .foregroundStyle(Color.forRating(attr.1))
+            // Fix #47: Use plain VStack with manual two-column rows instead of LazyVGrid.
+            VStack(spacing: 8) {
+                ForEach(0..<(attrs.count / 2), id: \.self) { rowIndex in
+                    let left = attrs[rowIndex * 2]
+                    let right = attrs[rowIndex * 2 + 1]
+                    HStack(spacing: 8) {
+                        attributeCell(name: left.0, value: left.1)
+                        attributeCell(name: right.0, value: right.1)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.backgroundTertiary.opacity(0.5))
-                    )
                 }
             }
         }
         .padding(16)
         .cardBackground()
+    }
+
+    private func attributeCell(name: String, value: Int) -> some View {
+        HStack(spacing: 6) {
+            Text(name)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color.textSecondary)
+            Spacer()
+            Text("\(value)")
+                .font(.system(size: 16, weight: .bold).monospacedDigit())
+                .foregroundStyle(Color.forRating(value))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.backgroundTertiary.opacity(0.5))
+        )
     }
 
     // MARK: - Background Card
@@ -669,20 +781,20 @@ private struct CandidateDetailSheet: View {
                 )
             }
 
-            // Make Offer button
+            // Make Offer button (Fix #43: large gold button)
             if !isHired && negotiationResult?.accepted != true {
                 Button {
                     makeOffer()
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "handshake.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                        Text("Make Offer")
+                            .font(.system(size: 16, weight: .semibold))
+                        Text("Offer Contract")
                             .font(.headline.weight(.bold))
                     }
                     .foregroundStyle(Color.backgroundPrimary)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 48)
+                    .frame(height: 52)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
                             .fill(isOverBudget ? Color.backgroundTertiary : Color.accentGold)
