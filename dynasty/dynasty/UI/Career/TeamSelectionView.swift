@@ -152,6 +152,7 @@ struct TeamSelectionView: View {
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(selectedConference == conference ? Color.accentGold : Color.clear)
                         )
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
