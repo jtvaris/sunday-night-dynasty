@@ -1,5 +1,5 @@
 ---
-name: screen-polish-loop
+name: analyze-app
 description: Use when iteratively reviewing and polishing app screens one by one - takes simulator screenshots, analyzes visual design and game data completeness, tracks improvements as todos, and dispatches background agents to fix issues while continuing to the next screen.
 ---
 
