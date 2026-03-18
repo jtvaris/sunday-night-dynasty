@@ -36,11 +36,15 @@ struct PressConferenceView: View {
             Color.backgroundPrimary.ignoresSafeArea()
 
             // Dimmed background image
-            Image("BgPressConference")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .ignoresSafeArea()
-                .opacity(0.25)
+            GeometryReader { geo in
+                Image("BgPressConference")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.25)
+            }
+            .ignoresSafeArea()
 
             // Dark gradient overlay for readability
             LinearGradient(

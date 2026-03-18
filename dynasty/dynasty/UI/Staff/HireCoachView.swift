@@ -69,11 +69,15 @@ struct HireCoachView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            Image("BgCoachStadium1")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .ignoresSafeArea()
-                .opacity(0.15)
+            GeometryReader { geo in
+                Image("BgCoachStadium1")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.15)
+            }
+            .ignoresSafeArea()
 
             LinearGradient(
                 colors: [Color.backgroundPrimary.opacity(0.85), Color.backgroundPrimary.opacity(0.5), Color.backgroundPrimary.opacity(0.85)],

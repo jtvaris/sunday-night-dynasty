@@ -36,11 +36,15 @@ struct TeamSelectionView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            Image("BgStadiumNight")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .ignoresSafeArea()
-                .opacity(0.15)
+            GeometryReader { geo in
+                Image("BgStadiumNight")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.15)
+            }
+            .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 // Conference tab picker
@@ -625,11 +629,15 @@ private struct TeamDetailSheet: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            Image("BgLockerRoom2")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .ignoresSafeArea()
-                .opacity(0.15)
+            GeometryReader { geo in
+                Image("BgLockerRoom2")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.15)
+            }
+            .ignoresSafeArea()
 
             GeometryReader { geometry in
                 ScrollView {

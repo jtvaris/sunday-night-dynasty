@@ -37,11 +37,15 @@ struct HireScoutView: View {
             Color.backgroundPrimary.ignoresSafeArea()
 
             // Background image with gradient overlay
-            Image("BgCombine")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .opacity(0.12)
-                .ignoresSafeArea()
+            GeometryReader { geo in
+                Image("BgCombine")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.12)
+            }
+            .ignoresSafeArea()
 
             LinearGradient(
                 colors: [

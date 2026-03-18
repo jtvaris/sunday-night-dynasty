@@ -71,21 +71,23 @@ struct CareerDashboardView: View {
             Color.backgroundPrimary.ignoresSafeArea()
 
             // Fix #30: Subtle stadium background texture
-            Image("BgStadiumNight")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .ignoresSafeArea()
-                .opacity(0.06)
+            GeometryReader { geo in
+                Image("BgStadiumNight")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.06)
+            }
+            .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                // Single timeline strip at top
-                timelineStrip
-                    .padding(.top, 4)
-
-                if horizontalSizeClass == .regular {
+                if verticalSizeClass == .compact {
+                    // Landscape: 3-column (tasks | tiles+messages | schedule+standings)
                     landscapeLayout
                 } else {
-                    portraitLayout
+                    // Portrait: 2-column (tasks | tiles+messages+standings)
+                    portraitTwoColumnLayout
                 }
             }
         }
@@ -107,6 +109,61 @@ struct CareerDashboardView: View {
     }
 
     // MARK: - Landscape Layout (3-column)
+
+    // MARK: - Portrait 2-Column Layout (tasks | content)
+
+    private var portraitTwoColumnLayout: some View {
+        HStack(alignment: .top, spacing: 0) {
+            // Left column -- Tasks (fixed 280pt)
+            ScrollView {
+                VStack(spacing: 0) {
+                    if canAdvance {
+                        allTasksCompleteBanner
+                    }
+                    TimelineTasksPanel(
+                        career: career,
+                        tasks: $tasks,
+                        onTaskSelected: onTaskSelected,
+                        onAdvance: { performAdvance() },
+                        canAdvance: canAdvance
+                    )
+                }
+                .padding(.leading, 8)
+            }
+            .frame(width: 280)
+
+            Divider().overlay(Color.surfaceBorder)
+
+            // Right column -- Tiles + Messages + Division + Schedule
+            ScrollView {
+                VStack(spacing: 12) {
+                    centerTilesGrid
+                    messagesPanel
+                        .frame(minHeight: 240)
+                        .background(Color.backgroundSecondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                        )
+                    divisionStandingsSection
+                        .padding(12)
+                        .background(Color.backgroundSecondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                        )
+                        .padding(.bottom, 16)
+                }
+                .padding(12)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    // MARK: - Landscape 3-Column Layout
 
     private var landscapeLayout: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -147,12 +204,12 @@ struct CareerDashboardView: View {
 
             Divider().overlay(Color.surfaceBorder)
 
-            // Right column -- Schedule + Standings (fixed 220pt)
+            // Right column -- Division standings only (fixed 200pt)
             ScrollView {
-                rightPanel
+                divisionStandingsSection
                     .padding(12)
             }
-            .frame(width: 220)
+            .frame(width: 200)
         }
         .frame(maxHeight: .infinity)
     }

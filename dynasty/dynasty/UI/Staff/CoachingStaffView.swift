@@ -211,11 +211,15 @@ struct CoachingStaffView: View {
             Color.backgroundPrimary.ignoresSafeArea()
 
             // Locker room background image with gradient overlay
-            Image("BgLockerRoom2")
-                .resizable()
-                .scaledToFill()
-                .ignoresSafeArea()
-                .opacity(0.12)
+            GeometryReader { geo in
+                Image("BgLockerRoom2")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.12)
+            }
+            .ignoresSafeArea()
                 .overlay(
                     LinearGradient(
                         colors: [Color.backgroundPrimary.opacity(0.6), Color.clear, Color.backgroundPrimary.opacity(0.8)],

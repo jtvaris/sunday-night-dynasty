@@ -41,11 +41,15 @@ struct CoachDetailView: View {
             Color.backgroundPrimary.ignoresSafeArea()
 
             // Subtle locker room background
-            Image("BgLockerRoom")
-                .resizable()
-                .scaledToFill()
-                .ignoresSafeArea()
-                .opacity(0.08)
+            GeometryReader { geo in
+                Image("BgLockerRoom")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.08)
+            }
+            .ignoresSafeArea()
 
             List {
                 avatarSection

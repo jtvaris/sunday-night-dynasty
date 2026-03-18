@@ -188,11 +188,15 @@ private struct OwnerMeetingStep: View {
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
-            Image("BgContract")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .ignoresSafeArea()
-                .opacity(0.2)
+            GeometryReader { geo in
+                Image("BgContract")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.2)
+            }
+            .ignoresSafeArea()
 
             LinearGradient(
                 colors: [
@@ -413,11 +417,15 @@ private struct TeamOverviewStep: View {
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
-            Image("BgTrainingCamp")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .ignoresSafeArea()
-                .opacity(0.2)
+            GeometryReader { geo in
+                Image("BgTrainingCamp")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.2)
+            }
+            .ignoresSafeArea()
             LinearGradient(
                 colors: [Color.backgroundPrimary.opacity(0.7), Color.backgroundPrimary.opacity(0.4), Color.backgroundPrimary.opacity(0.7)],
                 startPoint: .top, endPoint: .bottom
@@ -652,11 +660,15 @@ private struct YourRoadmapStep: View {
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
-            Image("BgCoachStadium1")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .ignoresSafeArea()
-                .opacity(0.1)
+            GeometryReader { geo in
+                Image("BgCoachStadium1")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.1)
+            }
+            .ignoresSafeArea()
 
         ScrollView {
             VStack(spacing: 24) {
@@ -746,11 +758,15 @@ private struct ReadyToBeginStep: View {
     var body: some View {
         ZStack {
             // Dimmed background image
-            Image("BgStadiumDawn")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .ignoresSafeArea()
-                .opacity(0.3)
+            GeometryReader { geo in
+                Image("BgStadiumDawn")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.3)
+            }
+            .ignoresSafeArea()
 
             // Dramatic gradient overlay: dark bottom fading to more visible stadium top
             LinearGradient(

@@ -26,11 +26,15 @@ struct NewCareerView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            Image("BgCoachStadium2")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .ignoresSafeArea()
-                .opacity(0.2)
+            GeometryReader { geo in
+                Image("BgCoachStadium2")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.2)
+            }
+            .ignoresSafeArea()
 
             LinearGradient(
                 colors: [Color.backgroundPrimary.opacity(0.85), Color.backgroundPrimary.opacity(0.5), Color.backgroundPrimary.opacity(0.85)],
