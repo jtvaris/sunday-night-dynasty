@@ -242,8 +242,8 @@ enum LeagueGenerator {
         let spending = Int.random(in: 20...95)
 
         // Coaching budget scales with spending willingness:
-        // Low spender (20) -> ~$15M, high spender (95) -> ~$35M
-        let coachingBudget = 12_000 + Int(Double(spending) / 99.0 * 23_000.0)
+        // Low spender (20) -> ~$23M, average (50) -> ~$35M, high spender (95) -> ~$53M
+        let coachingBudget = 15_000 + Int(Double(spending) / 99.0 * 40_000.0)
 
         return Owner(
             name: "\(first) \(last)",
@@ -429,16 +429,25 @@ enum LeagueGenerator {
 
         let personality = PersonalityArchetype.allCases.randomElement()!
 
-        // Salary tiers by role (in thousands)
-        let salary: Int
-        switch role {
-        case .headCoach:               salary = Int.random(in: 5_000...12_000)
-        case .assistantHeadCoach:      salary = Int.random(in: 2_000...5_000)
-        case .offensiveCoordinator,
-             .defensiveCoordinator:    salary = Int.random(in: 2_500...6_000)
-        case .specialTeamsCoordinator: salary = Int.random(in: 1_000...2_500)
-        default:                       salary = Int.random(in: 500...2_000)
-        }
+        // Temporary attributes to compute OVR for salary calculation
+        let tmpPlayCalling = Int.random(in: 35...90)
+        let tmpPlayerDev   = Int.random(in: 35...90)
+        let tmpReputation  = Int.random(in: 30...85)
+        let tmpAdaptability = Int.random(in: 30...85)
+        let tmpGamePlanning = Int.random(in: 35...90)
+        let tmpScouting     = Int.random(in: 30...85)
+        let tmpRecruiting   = Int.random(in: 30...85)
+        let tmpMotivation   = Int.random(in: 35...90)
+        let tmpDiscipline   = Int.random(in: 30...85)
+        let tmpMedia        = Int.random(in: 30...85)
+        let tmpContract     = Int.random(in: 30...80)
+        let tmpMorale       = Int.random(in: 35...85)
+
+        let ovr = (tmpPlayCalling + tmpPlayerDev + tmpReputation + tmpAdaptability
+            + tmpGamePlanning + tmpScouting + tmpRecruiting + tmpMotivation
+            + tmpDiscipline + tmpMedia + tmpContract + tmpMorale) / 12
+
+        let salary = Self.salaryForCoach(role: role, ovr: ovr, yearsExperience: experience)
 
         let coach = Coach(
             firstName: first,
@@ -447,18 +456,18 @@ enum LeagueGenerator {
             role: role,
             offensiveScheme: offScheme,
             defensiveScheme: defScheme,
-            playCalling: Int.random(in: 35...90),
-            playerDevelopment: Int.random(in: 35...90),
-            reputation: Int.random(in: 30...85),
-            adaptability: Int.random(in: 30...85),
-            gamePlanning: Int.random(in: 35...90),
-            scoutingAbility: Int.random(in: 30...85),
-            recruiting: Int.random(in: 30...85),
-            motivation: Int.random(in: 35...90),
-            discipline: Int.random(in: 30...85),
-            mediaHandling: Int.random(in: 30...85),
-            contractNegotiation: Int.random(in: 30...80),
-            moraleInfluence: Int.random(in: 35...85),
+            playCalling: tmpPlayCalling,
+            playerDevelopment: tmpPlayerDev,
+            reputation: tmpReputation,
+            adaptability: tmpAdaptability,
+            gamePlanning: tmpGamePlanning,
+            scoutingAbility: tmpScouting,
+            recruiting: tmpRecruiting,
+            motivation: tmpMotivation,
+            discipline: tmpDiscipline,
+            mediaHandling: tmpMedia,
+            contractNegotiation: tmpContract,
+            moraleInfluence: tmpMorale,
             salary: salary,
             background: "",
             personality: personality,
@@ -494,6 +503,30 @@ enum LeagueGenerator {
         case .K, .P:
             return Int.random(in: 22...40)
         }
+    }
+
+    // MARK: - Coach Salary from OVR + Experience
+
+    /// Computes a realistic coach salary (in thousands) based on role ranges, OVR, and experience.
+    /// Higher OVR coaches command salaries toward the top of their role's range.
+    /// Experience adds a slight bump (up to ~10% of the range).
+    static func salaryForCoach(role: CoachRole, ovr: Int, yearsExperience: Int) -> Int {
+        let range = role.salaryRange
+        let spread = range.max - range.min
+
+        // OVR drives most of the salary: map 30-90 OVR onto 0.0-1.0
+        let ovrFraction = Double(min(max(ovr, 30), 90) - 30) / 60.0
+
+        // Experience bonus: up to 10% of spread for 25+ years
+        let expFraction = min(Double(yearsExperience) / 25.0, 1.0) * 0.10
+
+        let rawSalary = Double(range.min) + Double(spread) * (ovrFraction * 0.90 + expFraction)
+
+        // Add +-5% noise so coaches with identical OVR don't all cost the same
+        let noise = rawSalary * Double.random(in: -0.05...0.05)
+        let final = Int((rawSalary + noise).rounded())
+
+        return min(range.max, max(range.min, final))
     }
 
     // MARK: - Realistic Salary (Bug Fix #5)

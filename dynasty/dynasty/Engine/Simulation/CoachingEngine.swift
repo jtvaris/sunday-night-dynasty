@@ -382,16 +382,25 @@ enum CoachingEngine {
                 finalDefScheme = defScheme
             }
 
-            // Salary tiers by role (in thousands)
-            let salary: Int
-            switch role {
-            case .headCoach:               salary = Int.random(in: 5_000...12_000)
-            case .assistantHeadCoach:      salary = Int.random(in: 2_000...5_000)
-            case .offensiveCoordinator,
-                 .defensiveCoordinator:    salary = Int.random(in: 2_500...6_000)
-            case .specialTeamsCoordinator: salary = Int.random(in: 1_000...2_500)
-            default:                       salary = Int.random(in: 500...2_000)
-            }
+            // Generate attributes first, then derive salary from OVR + experience
+            let attrPlayCalling = randAttr()
+            let attrPlayerDev   = randAttr()
+            let attrReputation  = randAttr()
+            let attrAdaptability = randAttr()
+            let attrGamePlanning = randAttr()
+            let attrScouting     = randAttr()
+            let attrRecruiting   = randAttr()
+            let attrMotivation   = randAttr()
+            let attrDiscipline   = randAttr()
+            let attrMedia        = randAttr()
+            let attrContract     = randAttr()
+            let attrMorale       = randAttr()
+
+            let ovr = (attrPlayCalling + attrPlayerDev + attrReputation + attrAdaptability
+                + attrGamePlanning + attrScouting + attrRecruiting + attrMotivation
+                + attrDiscipline + attrMedia + attrContract + attrMorale) / 12
+
+            let salary = LeagueGenerator.salaryForCoach(role: role, ovr: ovr, yearsExperience: exp)
 
             let personality = PersonalityArchetype.allCases.randomElement() ?? .quietProfessional
 
@@ -402,18 +411,18 @@ enum CoachingEngine {
                 role: role,
                 offensiveScheme: finalOffScheme,
                 defensiveScheme: finalDefScheme,
-                playCalling: randAttr(),
-                playerDevelopment: randAttr(),
-                reputation: randAttr(),
-                adaptability: randAttr(),
-                gamePlanning: randAttr(),
-                scoutingAbility: randAttr(),
-                recruiting: randAttr(),
-                motivation: randAttr(),
-                discipline: randAttr(),
-                mediaHandling: randAttr(),
-                contractNegotiation: randAttr(),
-                moraleInfluence: randAttr(),
+                playCalling: attrPlayCalling,
+                playerDevelopment: attrPlayerDev,
+                reputation: attrReputation,
+                adaptability: attrAdaptability,
+                gamePlanning: attrGamePlanning,
+                scoutingAbility: attrScouting,
+                recruiting: attrRecruiting,
+                motivation: attrMotivation,
+                discipline: attrDiscipline,
+                mediaHandling: attrMedia,
+                contractNegotiation: attrContract,
+                moraleInfluence: attrMorale,
                 salary: salary,
                 background: "",
                 personality: personality,
