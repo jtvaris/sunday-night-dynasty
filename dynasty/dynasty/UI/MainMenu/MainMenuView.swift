@@ -5,6 +5,7 @@ struct MainMenuView: View {
 
     @Query(sort: \Career.currentSeason, order: .reverse) private var careers: [Career]
     @State private var showSettings = false
+    @State private var continueCareer: Career?
 
     var body: some View {
         GeometryReader { geo in
@@ -60,6 +61,9 @@ struct MainMenuView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
+        .fullScreenCover(item: $continueCareer) { career in
+            CareerShellView(career: career)
+        }
     }
 
     // MARK: - Subviews
@@ -91,7 +95,9 @@ struct MainMenuView: View {
         VStack(spacing: 16) {
             if let mostRecentCareer = careers.first {
                 // Continue Career is the primary action when a saved career exists
-                NavigationLink(destination: CareerShellView(career: mostRecentCareer)) {
+                Button {
+                    continueCareer = mostRecentCareer
+                } label: {
                     MenuButton(title: "Continue Career", icon: "play.circle.fill", isPrimary: true)
                 }
                 .accessibilityLabel("Continue Career")

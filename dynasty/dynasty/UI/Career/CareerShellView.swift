@@ -208,9 +208,7 @@ struct CareerShellView: View {
                     refreshTaskCompletionStatus()
                 }
         case .scouting:
-            NavigationStack {
-                ScoutingHubView(career: career)
-            }
+            ScoutingHubView(career: career)
             .onAppear {
                 markTaskVisited(for: .scouting)
                 refreshTaskCompletionStatus()
@@ -250,17 +248,13 @@ struct CareerShellView: View {
         case .hireDC:
             hireCoachDestination(role: .defensiveCoordinator, taskDestination: .hireDC)
         case .prospectList:
-            NavigationStack {
-                ScoutingHubView(career: career)
-            }
+            ScoutingHubView(career: career)
             .onAppear {
                 markTaskVisited(for: .prospectList)
                 refreshTaskCompletionStatus()
             }
         case .bigBoard:
-            NavigationStack {
-                ScoutingHubView(career: career)
-            }
+            ScoutingHubView(career: career)
             .onAppear {
                 markTaskVisited(for: .bigBoard)
                 refreshTaskCompletionStatus()
@@ -335,7 +329,7 @@ struct CareerShellView: View {
     /// Creates a HireCoachView destination for a specific coaching role.
     @ViewBuilder
     private func hireCoachDestination(role: CoachRole, taskDestination: TaskDestination) -> some View {
-        NavigationStack {
+        Group {
             if let teamID = career.teamID {
                 let budget = team?.owner?.coachingBudget ?? 0
                 let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
