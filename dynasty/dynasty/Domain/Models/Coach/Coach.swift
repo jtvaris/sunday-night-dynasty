@@ -27,6 +27,13 @@ final class Coach {
     var contractNegotiation: Int
     var moraleInfluence: Int
 
+    // Coach Development System
+    var potential: Int = 50
+    var currentXP: Int = 0
+    var promotedInSeason: Int?
+    var mentorCoachID: UUID?
+    var mentorshipOrigin: String?
+
     /// Annual salary in thousands (e.g. 2500 = $2.5M).
     var salary: Int
 
@@ -71,6 +78,7 @@ final class Coach {
         mediaHandling: Int = 50,
         contractNegotiation: Int = 50,
         moraleInfluence: Int = 50,
+        potential: Int = 50,
         salary: Int = 500,
         background: String = "",
         personality: PersonalityArchetype = .quietProfessional,
@@ -96,10 +104,74 @@ final class Coach {
         self.mediaHandling = mediaHandling
         self.contractNegotiation = contractNegotiation
         self.moraleInfluence = moraleInfluence
+        self.potential = potential
         self.salary = salary
         self.background = background
         self.personality = personality
         self.teamID = teamID
         self.yearsExperience = yearsExperience
+    }
+
+    // MARK: - Coach Development Computed Properties
+
+    /// Attribute ceiling derived from potential
+    var attributeCeiling: Int {
+        Int(Double(potential) * 0.65 + 35)
+    }
+
+    /// Whether coach is in adjustment period after promotion
+    var isInAdjustmentPeriod: Bool {
+        promotedInSeason != nil
+    }
+
+    /// Fuzzy potential label for UI
+    func potentialLabel(seasonsOnTeam: Int) -> String {
+        let noise = seasonsOnTeam >= 2 ? Int.random(in: -3...3) : Int.random(in: -10...10)
+        let displayed = min(99, max(1, potential + noise))
+        switch displayed {
+        case 85...99: return "Elite Ceiling"
+        case 70...84: return "High Ceiling"
+        case 55...69: return "Solid Ceiling"
+        case 40...54: return "Limited Upside"
+        default:      return "Low Ceiling"
+        }
+    }
+
+    // MARK: - Attribute Access Helpers
+
+    func attributeValue(named name: String) -> Int {
+        switch name {
+        case "playCalling": return playCalling
+        case "playerDevelopment": return playerDevelopment
+        case "reputation": return reputation
+        case "adaptability": return adaptability
+        case "gamePlanning": return gamePlanning
+        case "scoutingAbility": return scoutingAbility
+        case "recruiting": return recruiting
+        case "motivation": return motivation
+        case "discipline": return discipline
+        case "mediaHandling": return mediaHandling
+        case "contractNegotiation": return contractNegotiation
+        case "moraleInfluence": return moraleInfluence
+        default: return 50
+        }
+    }
+
+    func setAttributeValue(named name: String, value: Int) {
+        switch name {
+        case "playCalling": playCalling = value
+        case "playerDevelopment": playerDevelopment = value
+        case "reputation": reputation = value
+        case "adaptability": adaptability = value
+        case "gamePlanning": gamePlanning = value
+        case "scoutingAbility": scoutingAbility = value
+        case "recruiting": recruiting = value
+        case "motivation": motivation = value
+        case "discipline": discipline = value
+        case "mediaHandling": mediaHandling = value
+        case "contractNegotiation": contractNegotiation = value
+        case "moraleInfluence": moraleInfluence = value
+        default: break
+        }
     }
 }

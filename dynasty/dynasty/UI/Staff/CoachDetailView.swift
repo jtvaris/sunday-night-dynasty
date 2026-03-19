@@ -12,22 +12,28 @@ struct CoachDetailView: View {
 
     @State private var showFireConfirmation = false
     @State private var showExtendAlert = false
-    @State private var showPromoteAlert = false
+    @State private var showPromoteSheet = false
+    @State private var showDemoteAlert = false
+    @State private var selectedPromotionRole: CoachRole?
+    @State private var showPromoteConfirmation = false
 
-    /// Promotion target role for this coach (nil if not promotable).
-    private var promotionRole: CoachRole? {
-        switch coach.role {
-        case .qbCoach, .rbCoach, .wrCoach, .olCoach:
-            return .offensiveCoordinator
-        case .dlCoach, .lbCoach, .dbCoach:
-            return .defensiveCoordinator
-        case .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator:
-            return .assistantHeadCoach
-        case .assistantHeadCoach:
-            return .headCoach
-        default:
-            return nil
+    /// Available promotion targets, filtered by career role constraints.
+    private var availablePromotionTargets: [CoachRole] {
+        var targets = coach.role.promotionTargets
+        // If promoting to HC, only allow if career role is .gm (not .gmAndHeadCoach)
+        if let career = career, career.role == .gmAndHeadCoach {
+            targets = targets.filter { $0 != .headCoach }
         }
+        return targets
+    }
+
+    /// Coach overall rating (average of 12 attributes).
+    private var coachOverallRating: Int {
+        let sum = coach.playCalling + coach.playerDevelopment + coach.gamePlanning
+            + coach.scoutingAbility + coach.recruiting + coach.motivation
+            + coach.discipline + coach.adaptability + coach.mediaHandling
+            + coach.contractNegotiation + coach.moraleInfluence + coach.reputation
+        return sum / 12
     }
 
     /// Deterministic avatar ID derived from the coach's name.
@@ -72,6 +78,7 @@ struct CoachDetailView: View {
             List {
                 avatarSection
                 overviewSection
+                developmentSection
                 attributesSection
                 personalitySection
                 schemeSection
@@ -101,18 +108,34 @@ struct CoachDetailView: View {
         } message: {
             Text("This will offer \(coach.firstName) a 2-year contract extension at their current salary of $\(coach.salary)K/yr.")
         }
-        // Fix #53: Promote alert
-        .alert("Promote \(coach.fullName)?", isPresented: $showPromoteAlert) {
-            if let targetRole = promotionRole {
+        // Promote: role picker sheet
+        .sheet(isPresented: $showPromoteSheet) {
+            promoteRolePickerSheet
+        }
+        // Promote: confirmation alert after role selection
+        .alert("Promote \(coach.fullName)?", isPresented: $showPromoteConfirmation) {
+            if let targetRole = selectedPromotionRole {
                 Button("Promote to \(targetRole.displayName)") {
-                    promoteCoach()
+                    promoteCoach(to: targetRole)
                 }
+            }
+            Button("Cancel", role: .cancel) {
+                selectedPromotionRole = nil
+            }
+        } message: {
+            if let targetRole = selectedPromotionRole {
+                let newSalary = Int(Double(coach.salary) * 1.2)
+                Text("This will promote \(coach.firstName) from \(coach.role.displayName) to \(targetRole.displayName). Salary will increase to $\(newSalary)K/yr.")
+            }
+        }
+        // Demote: confirmation alert
+        .alert("Demote \(coach.fullName)?", isPresented: $showDemoteAlert) {
+            Button("Demote", role: .destructive) {
+                demoteCoach()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            if let targetRole = promotionRole {
-                Text("This will promote \(coach.firstName) from \(coach.role.displayName) to \(targetRole.displayName). Their salary may increase.")
-            }
+            Text("Demoting will reduce morale and reputation by 10. Continue?")
         }
     }
 
@@ -173,6 +196,140 @@ struct CoachDetailView: View {
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    // MARK: - Development Section
+
+    private var developmentSection: some View {
+        Section("Development") {
+            // Fuzzy potential label
+            let label = coach.potentialLabel(seasonsOnTeam: 2) // TODO: calculate actual seasons
+            LabeledContent("Potential") {
+                Text(label)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(potentialLabelColor(label))
+            }
+
+            // Trajectory
+            LabeledContent("Trajectory") {
+                let trajectory = coachTrajectory
+                Text(trajectory.label)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(trajectory.color)
+            }
+
+            // Attribute ceiling
+            LabeledContent("Attribute Ceiling") {
+                Text("\(coach.attributeCeiling)")
+                    .monospacedDigit()
+                    .foregroundStyle(Color.forRating(coach.attributeCeiling))
+            }
+
+            // Adjustment period
+            if coach.isInAdjustmentPeriod {
+                LabeledContent("Status") {
+                    Text("Adjusting to Role")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            // Mentorship origin
+            if coach.mentorCoachID != nil, let origin = coach.mentorshipOrigin {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Mentorship")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    Text(origin)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// Color for the fuzzy potential label.
+    private func potentialLabelColor(_ label: String) -> Color {
+        switch label {
+        case "Elite Ceiling":   return Color.accentGold
+        case "High Ceiling":    return .green
+        case "Solid Ceiling":   return Color.accentBlue
+        case "Limited Upside":  return .orange
+        case "Low Ceiling":     return .red
+        default:                return Color.textSecondary
+        }
+    }
+
+    /// Trajectory based on age and rating vs ceiling.
+    private var coachTrajectory: (label: String, color: Color) {
+        if coach.age >= 55 {
+            return ("Declining", .red)
+        } else if coach.age < 50 && coachOverallRating < coach.attributeCeiling - 5 {
+            return ("Improving", .green)
+        } else {
+            return ("Plateaued", .orange)
+        }
+    }
+
+    // MARK: - Promote Role Picker Sheet
+
+    private var promoteRolePickerSheet: some View {
+        NavigationStack {
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
+
+                List {
+                    Section("Select New Role") {
+                        ForEach(availablePromotionTargets, id: \.self) { targetRole in
+                            Button {
+                                selectedPromotionRole = targetRole
+                                showPromoteSheet = false
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    showPromoteConfirmation = true
+                                }
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Text(targetRole.abbreviation)
+                                        .font(.system(size: 12, weight: .black))
+                                        .foregroundStyle(Color.backgroundPrimary)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 4))
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(targetRole.displayName)
+                                            .font(.subheadline.weight(.bold))
+                                            .foregroundStyle(Color.textPrimary)
+                                        let newSalary = Int(Double(coach.salary) * 1.2)
+                                        Text("Salary: $\(coach.salary)K → $\(newSalary)K/yr")
+                                            .font(.caption)
+                                            .foregroundStyle(Color.textSecondary)
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "arrow.up.circle.fill")
+                                        .font(.title3)
+                                        .foregroundStyle(Color.accentBlue)
+                                }
+                            }
+                        }
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+                }
+                .scrollContentBackground(.hidden)
+                .listStyle(.insetGrouped)
+            }
+            .navigationTitle("Promote \(coach.firstName)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showPromoteSheet = false }
+                }
+            }
+        }
     }
 
     // MARK: - Attributes Section (2-column grid on iPad)
@@ -343,15 +500,36 @@ struct CoachDetailView: View {
             }
 
             // Promote (if applicable)
-            if let targetRole = promotionRole {
+            if !availablePromotionTargets.isEmpty {
                 Button {
-                    showPromoteAlert = true
+                    if availablePromotionTargets.count == 1 {
+                        // Single target: skip sheet, go straight to confirmation
+                        selectedPromotionRole = availablePromotionTargets.first
+                        showPromoteConfirmation = true
+                    } else {
+                        showPromoteSheet = true
+                    }
                 } label: {
                     HStack {
                         Spacer()
-                        Label("Promote to \(targetRole.displayName)", systemImage: "arrow.up.circle.fill")
+                        Label("Promote", systemImage: "arrow.up.circle.fill")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Color.accentBlue)
+                        Spacer()
+                    }
+                }
+            }
+
+            // Demote (if applicable)
+            if !coach.role.demotionTargets.isEmpty {
+                Button {
+                    showDemoteAlert = true
+                } label: {
+                    HStack {
+                        Spacer()
+                        Label("Demote", systemImage: "arrow.down.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.orange)
                         Spacer()
                     }
                 }
@@ -490,12 +668,23 @@ struct CoachDetailView: View {
         try? modelContext.save()
     }
 
-    /// Promote the coach to the next role in the hierarchy.
-    private func promoteCoach() {
-        guard let targetRole = promotionRole else { return }
+    /// Promote the coach to the selected target role.
+    private func promoteCoach(to targetRole: CoachRole) {
         coach.role = targetRole
         // Salary bump for promotion (~20%)
         coach.salary = Int(Double(coach.salary) * 1.2)
+        // Mark as promoted this season (triggers adjustment period)
+        coach.promotedInSeason = career?.currentSeason ?? 1
+        try? modelContext.save()
+        selectedPromotionRole = nil
+    }
+
+    /// Demote the coach to the first available demotion target.
+    private func demoteCoach() {
+        guard let targetRole = coach.role.demotionTargets.first else { return }
+        coach.role = targetRole
+        // Reduce reputation by 10
+        coach.reputation = max(1, coach.reputation - 10)
         try? modelContext.save()
     }
 }

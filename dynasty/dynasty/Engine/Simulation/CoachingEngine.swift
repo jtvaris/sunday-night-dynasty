@@ -263,64 +263,23 @@ enum CoachingEngine {
 
     // MARK: - Coach Development
 
-    /// Ages a coach by one year and applies end-of-season attribute changes.
+    /// Applies end-of-season development to a coach via the XP-based CoachDevelopmentEngine.
     ///
     /// - Parameters:
     ///   - coach: The coach to develop (mutated in place).
     ///   - teamWins: The team's win total for the just-completed season (0–17).
-    static func developCoach(_ coach: Coach, teamWins: Int) {
-        // Age and experience
-        coach.age += 1
-        coach.yearsExperience += 1
-
-        // MARK: Young/Mid-Career Growth (< 15 years experience)
-        if coach.yearsExperience < 15 {
-            // Randomly improve 1–3 attributes each offseason
-            let improvementCount = Int.random(in: 1...3)
-            // Pair of getter/setter closures so we can mutate @Model properties without WritableKeyPath subscript
-            var attributes: [(get: () -> Int, set: (Int) -> Void)] = [
-                ({ coach.playCalling },        { coach.playCalling = $0 }),
-                ({ coach.playerDevelopment },   { coach.playerDevelopment = $0 }),
-                ({ coach.adaptability },        { coach.adaptability = $0 }),
-                ({ coach.gamePlanning },        { coach.gamePlanning = $0 }),
-                ({ coach.scoutingAbility },     { coach.scoutingAbility = $0 }),
-                ({ coach.recruiting },          { coach.recruiting = $0 }),
-                ({ coach.motivation },          { coach.motivation = $0 }),
-                ({ coach.discipline },          { coach.discipline = $0 }),
-                ({ coach.mediaHandling },       { coach.mediaHandling = $0 }),
-                ({ coach.moraleInfluence },     { coach.moraleInfluence = $0 })
-            ]
-            attributes.shuffle()
-            for i in 0..<min(improvementCount, attributes.count) {
-                let attr = attributes[i]
-                let current = attr.get()
-                let gain = Int.random(in: 1...3)
-                attr.set(min(99, current + gain))
-            }
-        }
-
-        // MARK: Veteran Decline (20+ years experience)
-        // Experienced coaches may lose a step mentally—primarily in adaptability.
-        if coach.yearsExperience >= 20 {
-            let declineChance = Double(coach.yearsExperience - 20) * 0.04  // 4% per year past 20
-            if Double.random(in: 0.0..<1.0) < declineChance {
-                coach.adaptability = max(1, coach.adaptability - Int.random(in: 1...2))
-                coach.playCalling  = max(1, coach.playCalling  - Int.random(in: 0...1))
-                coach.gamePlanning = max(1, coach.gamePlanning  - Int.random(in: 0...1))
-            }
-        }
-
-        // MARK: Reputation Change Based on Win Total
-        // Win total context: 0–4 poor, 5–8 average, 9–11 good, 12–17 elite
-        let reputationDelta: Int
-        switch teamWins {
-        case 14...17: reputationDelta = Int.random(in: 3...6)
-        case 11...13: reputationDelta = Int.random(in: 1...3)
-        case 8...10:  reputationDelta = Int.random(in: -1...1)
-        case 5...7:   reputationDelta = Int.random(in: -3...(-1))
-        default:      reputationDelta = Int.random(in: -6...(-3))
-        }
-        coach.reputation = min(99, max(1, coach.reputation + reputationDelta))
+    ///   - headCoach: The team's head coach (for mentorship bonus).
+    ///   - assistantHC: The team's assistant head coach (for mentorship bonus).
+    ///   - wonSuperBowl: Whether the team won the Super Bowl this season.
+    static func developCoach(_ coach: Coach, teamWins: Int, headCoach: Coach? = nil, assistantHC: Coach? = nil, wonSuperBowl: Bool = false) {
+        CoachDevelopmentEngine.applySeasonalDevelopment(
+            coach: coach,
+            teamWins: teamWins,
+            madePlayoffs: teamWins >= 9,
+            wonSuperBowl: wonSuperBowl,
+            headCoach: headCoach,
+            assistantHC: assistantHC
+        )
     }
 
     // MARK: - Hiring Market
@@ -359,6 +318,7 @@ enum CoachingEngine {
             }
 
             let age = Int.random(in: ageRange)
+            let potential = CoachDevelopmentEngine.generatePotential(forAge: age)
             let exp = Int.random(in: expRange)
 
             // Attribute ceilings correlated with experience
@@ -423,6 +383,7 @@ enum CoachingEngine {
                 mediaHandling: attrMedia,
                 contractNegotiation: attrContract,
                 moraleInfluence: attrMorale,
+                potential: potential,
                 salary: salary,
                 background: "",
                 personality: personality,
@@ -765,6 +726,50 @@ enum CoachingEngine {
         return filled + empty
     }
 
+    // MARK: - HC Promotion Poaching
+
+    /// Check if coordinators receive HC interview requests (NFL-realistic).
+    /// Unlike `checkCoordinatorPoaching`, this focuses on coordinator-to-HC pipeline
+    /// based on overall rating, team success, and motivation.
+    ///
+    /// - Parameters:
+    ///   - coaches: The coaching staff to evaluate.
+    ///   - teamWins: The team's win total for the season.
+    /// - Returns: Coaches who have accepted HC positions elsewhere.
+    static func checkHCPromotionPoaching(
+        coaches: [Coach],
+        teamWins: Int
+    ) -> [Coach] {
+        var poached: [Coach] = []
+
+        let candidates = coaches.filter { coach in
+            [CoachRole.offensiveCoordinator, .defensiveCoordinator, .assistantHeadCoach].contains(coach.role)
+            && coachOverallRating(coach) >= 70
+        }
+
+        for coach in candidates {
+            let ovr = coachOverallRating(coach)
+            var chance = Double(ovr - 60) / 40.0 * 0.30
+            if teamWins >= 10 { chance += 0.10 }
+            if teamWins >= 13 { chance += 0.10 }
+            if teamWins >= 11 { chance -= 0.05 }  // Winners slightly less likely to leave
+            chance += Double(coach.motivation - 50) / 50.0 * 0.10
+
+            if Double.random(in: 0...1) < max(0.0, chance) {
+                poached.append(coach)
+            }
+        }
+
+        return poached
+    }
+
+    /// Computes a coach's overall rating as the average of their 12 core attributes.
+    static func coachOverallRating(_ coach: Coach) -> Int {
+        (coach.playCalling + coach.playerDevelopment + coach.reputation + coach.adaptability
+            + coach.gamePlanning + coach.scoutingAbility + coach.recruiting + coach.motivation
+            + coach.discipline + coach.mediaHandling + coach.contractNegotiation + coach.moraleInfluence) / 12
+    }
+
     // MARK: - Coordinator Poaching
 
     /// Evaluates a coaching staff and returns the subset of coordinators or position coaches
@@ -857,6 +862,47 @@ enum CoachingEngine {
         multiplier += workEthicFactor
 
         return min(1.5, max(0.8, multiplier))
+    }
+
+    // MARK: - Hierarchical Development Bonus
+
+    /// Calculate layered coaching bonus from HC → AHC → Coordinator → Position Coach
+    static func hierarchicalDevelopmentBonus(
+        headCoach: Coach?,
+        assistantHC: Coach?,
+        coordinator: Coach?,
+        positionCoach: Coach?,
+        player: Player
+    ) -> Double {
+        var multiplier = 1.0
+
+        // Layer 1: HC team-wide bonus
+        if let hc = headCoach {
+            let hcBonus = (Double(hc.motivation) - 50.0) / 50.0 * 0.08
+            multiplier += hcBonus
+            if hc.isInAdjustmentPeriod { multiplier -= 0.05 }
+        }
+
+        // Layer 2: AHC secondary bonus
+        if let ahc = assistantHC {
+            let ahcBonus = (Double(ahc.playerDevelopment) - 50.0) / 50.0 * 0.04
+            multiplier += ahcBonus
+        }
+
+        // Layer 3: Coordinator unit bonus
+        if let coord = coordinator {
+            let coordBonus = (Double(coord.playerDevelopment) - 50.0) / 50.0 * 0.10
+            multiplier += coordBonus
+            if coord.isInAdjustmentPeriod { multiplier -= 0.03 }
+        }
+
+        // Layer 4: Position coach direct bonus
+        if let pos = positionCoach {
+            let posBonus = (Double(pos.playerDevelopment) - 50.0) / 50.0 * 0.15
+            multiplier += posBonus
+        }
+
+        return max(0.5, min(1.8, multiplier))
     }
 
     // MARK: - Position Role Matching

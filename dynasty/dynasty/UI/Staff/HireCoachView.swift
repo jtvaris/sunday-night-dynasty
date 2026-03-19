@@ -361,6 +361,14 @@ struct HireCoachView: View {
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(isOverBudget ? Color.textTertiary : Color.textPrimary)
                             .lineLimit(1)
+                        // Potential label badge
+                        let potLabel = candidate.potentialLabel(seasonsOnTeam: 0)
+                        Text(potLabel)
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(potentialBadgeColor(potLabel))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(potentialBadgeColor(potLabel).opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
                         // Fix #56: Best Available badge for top 3
                         if isTop3 {
                             Text("TOP")
@@ -504,6 +512,18 @@ struct HireCoachView: View {
     }
 
     // MARK: - Helpers
+
+    /// Color for potential label badge text.
+    private func potentialBadgeColor(_ label: String) -> Color {
+        switch label {
+        case "Elite Ceiling":   return Color.accentGold
+        case "High Ceiling":    return .green
+        case "Solid Ceiling":   return Color.accentBlue
+        case "Limited Upside":  return .orange
+        case "Low Ceiling":     return .red
+        default:                return Color.textSecondary
+        }
+    }
 
     private func schemeLabel(_ coach: Coach) -> String {
         if let o = coach.offensiveScheme { return o.displayName }

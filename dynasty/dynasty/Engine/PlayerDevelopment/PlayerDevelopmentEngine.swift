@@ -31,15 +31,27 @@ enum PlayerDevelopmentEngine {
 
         var totalPoints = workEthicPts + coachabilityPts + playingTimePts
 
-        // --- Coaching multiplier ---
-        // Find the matching position coach and apply the development bonus.
+        // --- Coaching multiplier (4-layer hierarchy) ---
+        // Find coaching chain for this player
+        let hc = coaches.first { $0.role == .headCoach }
+        let ahc = coaches.first { $0.role == .assistantHeadCoach }
+        let coordinator = coaches.first { coach in
+            (player.position.side == .offense && coach.role == .offensiveCoordinator) ||
+            (player.position.side == .defense && coach.role == .defensiveCoordinator) ||
+            (player.position.side == .specialTeams && coach.role == .specialTeamsCoordinator)
+        }
         let positionCoach = coaches.first { coach in
             CoachingEngine.positionRoleMatch(coachRole: coach.role, playerPosition: player.position)
         }
-        if let positionCoach {
-            let bonus = CoachingEngine.coachDevelopmentBonus(coach: positionCoach, player: player)
-            totalPoints *= bonus
-        }
+
+        let coachBonus = CoachingEngine.hierarchicalDevelopmentBonus(
+            headCoach: hc,
+            assistantHC: ahc,
+            coordinator: coordinator,
+            positionCoach: positionCoach,
+            player: player
+        )
+        totalPoints *= coachBonus
 
         // --- Strength coach bonus ---
         // Adds 0.5-1.0 extra points toward physical attributes.

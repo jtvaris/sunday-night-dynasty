@@ -38,4 +38,55 @@ enum CoachRole: String, Codable, CaseIterable {
         case .physio:                  return (min: 150,   avg: 300,    max: 600)
         }
     }
+
+    /// Attributes that grow fastest for this role (weighted 2x in XP distribution)
+    var focusAttributes: [String] {
+        switch self {
+        case .headCoach:               return ["motivation", "discipline", "adaptability"]
+        case .assistantHeadCoach:      return ["playerDevelopment", "motivation", "gamePlanning"]
+        case .offensiveCoordinator:    return ["playCalling", "gamePlanning", "adaptability"]
+        case .defensiveCoordinator:    return ["playCalling", "gamePlanning", "adaptability"]
+        case .specialTeamsCoordinator: return ["playCalling", "discipline"]
+        case .qbCoach:                 return ["playCalling", "playerDevelopment", "gamePlanning"]
+        case .rbCoach, .wrCoach:       return ["playerDevelopment", "motivation"]
+        case .olCoach, .dlCoach:       return ["playerDevelopment", "discipline"]
+        case .lbCoach, .dbCoach:       return ["playerDevelopment", "gamePlanning"]
+        case .strengthCoach:           return ["playerDevelopment", "discipline", "motivation"]
+        case .teamDoctor, .physio:     return ["playerDevelopment"]
+        }
+    }
+
+    /// Roles this coach can be promoted to
+    var promotionTargets: [CoachRole] {
+        switch self {
+        case .qbCoach, .rbCoach, .wrCoach, .olCoach:
+            return [.offensiveCoordinator]
+        case .dlCoach, .lbCoach, .dbCoach:
+            return [.defensiveCoordinator]
+        case .strengthCoach:
+            return [.specialTeamsCoordinator]
+        case .offensiveCoordinator, .defensiveCoordinator:
+            return [.assistantHeadCoach]
+        case .specialTeamsCoordinator:
+            return [.assistantHeadCoach]
+        case .assistantHeadCoach:
+            return [.headCoach]
+        default:
+            return []
+        }
+    }
+
+    /// Roles this coach can be demoted to
+    var demotionTargets: [CoachRole] {
+        switch self {
+        case .offensiveCoordinator:
+            return [.qbCoach, .rbCoach, .wrCoach, .olCoach]
+        case .defensiveCoordinator:
+            return [.dlCoach, .lbCoach, .dbCoach]
+        case .assistantHeadCoach:
+            return [.offensiveCoordinator, .defensiveCoordinator]
+        default:
+            return []
+        }
+    }
 }

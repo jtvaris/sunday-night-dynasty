@@ -418,6 +418,7 @@ enum LeagueGenerator {
         let first = coachFirstNames.randomElement()!
         let last = coachLastNames.randomElement()!
         let age = Int.random(in: 35...68)
+        let potential = CoachDevelopmentEngine.generatePotential(forAge: age)
         let experience = max(0, age - Int.random(in: 28...40))
 
         let offScheme: OffensiveScheme? = (role == .headCoach || role == .offensiveCoordinator || role == .assistantHeadCoach)
@@ -468,6 +469,7 @@ enum LeagueGenerator {
             mediaHandling: tmpMedia,
             contractNegotiation: tmpContract,
             moraleInfluence: tmpMorale,
+            potential: potential,
             salary: salary,
             background: "",
             personality: personality,

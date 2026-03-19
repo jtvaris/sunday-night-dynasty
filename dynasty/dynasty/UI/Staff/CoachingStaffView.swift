@@ -555,7 +555,7 @@ struct CoachingStaffView: View {
                         NavigationLink {
                             CoachDetailView(coach: hc)
                         } label: {
-                            HeadCoachCardView(coach: hc)
+                            HeadCoachCardView(coach: hc, menteeCount: coaches.filter { $0.mentorCoachID == hc.id }.count)
                         }
                     } else {
                         headCoachVacantRow
@@ -1629,10 +1629,21 @@ struct CoachingStaffView: View {
                     .foregroundStyle(Color.forRating(keyAttr.value))
             }
 
-            Text(coach.fullName)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Color.textPrimary)
-                .lineLimit(1)
+            HStack(spacing: 4) {
+                Text(coach.fullName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+
+                if coach.isInAdjustmentPeriod {
+                    Text("Adjusting")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+                }
+            }
 
             HStack(spacing: 4) {
                 Text("\(coach.yearsExperience)yr")
@@ -1936,6 +1947,7 @@ struct CoachingStaffView: View {
 
 private struct HeadCoachCardView: View {
     let coach: Coach
+    var menteeCount: Int = 0
 
     private var schemeText: String? {
         if let o = coach.offensiveScheme { return o.displayName }
@@ -2052,6 +2064,20 @@ private struct HeadCoachCardView: View {
                     .font(.system(size: 10, weight: .medium))
             }
             .foregroundStyle(Color.accentGold.opacity(0.8))
+
+            // Coaching Tree badge
+            if menteeCount > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "person.3.fill")
+                        .font(.system(size: 9))
+                    Text("Coaching Tree: \(menteeCount)")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundStyle(Color.accentBlue)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.accentBlue.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
+            }
         }
         .padding(.vertical, 6)
         .accessibilityElement(children: .combine)

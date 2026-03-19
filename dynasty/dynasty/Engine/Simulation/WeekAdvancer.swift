@@ -220,6 +220,33 @@ enum WeekAdvancer {
         // Store the latest player game result for UI to access
         lastPlayerGameResult = playerGameResult
 
+        // Coach weekly XP
+        if let playerTeamID = career.teamID {
+            let teamCoaches = allCoaches.filter { $0.teamID == playerTeamID }
+            let hc = teamCoaches.first { $0.role == .headCoach }
+            let ahc = teamCoaches.first { $0.role == .assistantHeadCoach }
+            let isPlayoff = career.currentPhase == .playoffs
+            let playerTeamWon: Bool = {
+                guard let result = playerGameResult else { return false }
+                if let game = unplayedGames.first(where: {
+                    $0.homeTeamID == playerTeamID || $0.awayTeamID == playerTeamID
+                }) {
+                    let isHome = game.homeTeamID == playerTeamID
+                    return isHome ? result.homeScore > result.awayScore : result.awayScore > result.homeScore
+                }
+                return false
+            }()
+            for coach in teamCoaches {
+                CoachDevelopmentEngine.applyWeeklyXP(
+                    coach: coach,
+                    didWin: playerTeamWon,
+                    isPlayoff: isPlayoff,
+                    headCoach: hc,
+                    assistantHC: ahc
+                )
+            }
+        }
+
         // 0. Generate weekly press conference questions
         if let playerTeamID = career.teamID,
            let playerTeam = teamsByID[playerTeamID] {
@@ -545,7 +572,9 @@ enum WeekAdvancer {
             )
 
         case .coachingChanges:
-            // Check coordinator poaching for all teams
+            var newMessages: [InboxMessage] = []
+
+            // Check coordinator poaching for all teams (legacy system)
             for team in teams {
                 let teamCoaches = allCoaches.filter { $0.teamID == team.id }
                 let poached = CoachingEngine.checkCoordinatorPoaching(
@@ -558,16 +587,61 @@ enum WeekAdvancer {
                 }
             }
 
-            // Develop all coaches based on their team's performance
-            for coach in allCoaches {
-                let teamWins: Int
-                if let tid = coach.teamID, let team = teamsByID[tid] {
-                    teamWins = team.wins
-                } else {
-                    teamWins = 8 // neutral default for unattached coaches
+            // HC promotion poaching (NFL-realistic coordinator-to-HC pipeline)
+            for team in teams {
+                let teamCoaches = allCoaches.filter { $0.teamID == team.id }
+                let poached = CoachingEngine.checkHCPromotionPoaching(
+                    coaches: teamCoaches,
+                    teamWins: team.wins
+                )
+                for coach in poached {
+                    if coach.teamID == career.teamID {
+                        let message = InboxMessage(
+                            sender: .leagueOffice,
+                            subject: "\(coach.fullName) Hired as Head Coach",
+                            body: "\(coach.fullName) has accepted a Head Coach position with another team. You will receive a compensatory 3rd round draft pick.",
+                            date: "Offseason - Coaching Changes, Season \(career.currentSeason)",
+                            category: .staffUpdate
+                        )
+                        newMessages.append(message)
+                    }
+                    coach.teamID = nil
                 }
-                CoachingEngine.developCoach(coach, teamWins: teamWins)
             }
+
+            // Develop all coaches based on their team's performance
+            for team in teams {
+                let teamCoaches = allCoaches.filter { $0.teamID == team.id }
+                let hc = teamCoaches.first { $0.role == .headCoach }
+                let ahc = teamCoaches.first { $0.role == .assistantHeadCoach }
+                for coach in teamCoaches {
+                    CoachingEngine.developCoach(coach, teamWins: team.wins, headCoach: hc, assistantHC: ahc)
+                }
+            }
+            // Develop unattached coaches with neutral win total
+            for coach in allCoaches where coach.teamID == nil {
+                CoachingEngine.developCoach(coach, teamWins: 8)
+            }
+
+            // Coach retirement (65+)
+            for coach in allCoaches where coach.age >= 65 {
+                if CoachDevelopmentEngine.shouldRetire(coach: coach) {
+                    // Generate retirement news if it's the player's team
+                    if coach.teamID == career.teamID {
+                        let message = InboxMessage(
+                            sender: .leagueOffice,
+                            subject: "\(coach.fullName) Announces Retirement",
+                            body: "\(coach.fullName), your \(coach.role.rawValue), has announced their retirement after \(coach.yearsExperience) seasons in coaching. Their position is now vacant.",
+                            date: "Offseason - Coaching Changes, Season \(career.currentSeason)",
+                            category: .staffUpdate
+                        )
+                        newMessages.append(message)
+                    }
+                    coach.teamID = nil  // Remove from team
+                }
+            }
+
+            lastInboxMessages.append(contentsOf: newMessages)
 
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .coachingChanges,
