@@ -324,6 +324,7 @@ struct CalendarSidebarView: View {
         .init(label: "Super Bowl", phase: .superBowl),
         .init(label: "Pro Bowl", phase: .proBowl),
         .init(label: "Coaching Changes", phase: .coachingChanges),
+        .init(label: "Review Roster", phase: .reviewRoster),
         .init(label: "Combine", phase: .combine),
         .init(label: "Free Agency", phase: .freeAgency),
         .init(label: "NFL Draft", phase: .draft),

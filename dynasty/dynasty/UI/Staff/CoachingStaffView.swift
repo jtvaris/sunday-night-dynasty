@@ -9,6 +9,14 @@ enum StaffTab: String, CaseIterable {
     case review = "Review"
 }
 
+/// Single navigation destination enum to avoid multiple `navigationDestination(item:)` conflicts.
+/// Using a single binding prevents SwiftUI from confusing which destination to activate after dismiss.
+enum StaffNavDestination: Hashable {
+    case hireCoach(CoachRole)
+    case hireScout(ScoutRole)
+    case coachDetail(UUID)
+}
+
 struct CoachingStaffView: View {
 
     let career: Career
@@ -28,6 +36,7 @@ struct CoachingStaffView: View {
     // MARK: - Lock-in Confirmation (#66)
     @State private var showLockInConfirmation: Bool = false
     @State private var showIncompleteStaffWarning: Bool = false
+    @State private var showSchemesNotSetWarning: Bool = false
 
     // MARK: - Scheme Selection State (#67)
     @State private var showOffensiveSchemeSelection: Bool = false
@@ -39,12 +48,8 @@ struct CoachingStaffView: View {
     @State private var isMedicalExpanded: Bool = true
     @State private var isScoutingExpanded: Bool = true
 
-    // MARK: - Hire Navigation State
-    @State private var hireRole: CoachRole?
-    @State private var hireScoutRole: ScoutRole?
-
-    // MARK: - Detail Navigation State
-    @State private var selectedCoachID: UUID?
+    // MARK: - Navigation State (single binding to avoid multiple navigationDestination conflicts)
+    @State private var navDestination: StaffNavDestination?
 
     /// Coaches filtered to this team, derived from @Query result.
     private var coaches: [Coach] {
@@ -202,6 +207,13 @@ struct CoachingStaffView: View {
     private var isSchemesTabAvailable: Bool {
         coaches.contains(where: { $0.role == .offensiveCoordinator }) ||
         coaches.contains(where: { $0.role == .defensiveCoordinator })
+    }
+
+    /// Whether both offensive and defensive schemes have been set by coordinators.
+    private var areSchemesSet: Bool {
+        let oc = coaches.first(where: { $0.role == .offensiveCoordinator })
+        let dc = coaches.first(where: { $0.role == .defensiveCoordinator })
+        return oc?.offensiveScheme != nil && dc?.defensiveScheme != nil
     }
 
     /// Whether the Review tab is available (requires at least one hire).
@@ -453,30 +465,31 @@ struct CoachingStaffView: View {
         .navigationTitle("Coaching Staff")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .navigationDestination(item: $hireRole) { role in
-            if let teamID = career.teamID {
-                HireCoachView(role: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
-                    showHiringConfirmation(coachName: name, roleName: roleName)
-                })
-            }
-        }
-        .navigationDestination(item: $hireScoutRole) { role in
-            if let teamID = career.teamID {
-                HireScoutView(scoutRole: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
-                    showHiringConfirmation(coachName: name, roleName: roleName)
-                })
-            }
-        }
-        .navigationDestination(item: $selectedCoachID) { coachID in
-            if let coach = allCoaches.first(where: { $0.id == coachID }) {
-                CoachDetailView(coach: coach)
+        .navigationDestination(item: $navDestination) { destination in
+            switch destination {
+            case .hireCoach(let role):
+                if let teamID = career.teamID {
+                    HireCoachView(role: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
+                        showHiringConfirmation(coachName: name, roleName: roleName)
+                    })
+                }
+            case .hireScout(let scoutRole):
+                if let teamID = career.teamID {
+                    HireScoutView(scoutRole: scoutRole, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
+                        showHiringConfirmation(coachName: name, roleName: roleName)
+                    })
+                }
+            case .coachDetail(let coachID):
+                if let coach = allCoaches.first(where: { $0.id == coachID }) {
+                    CoachDetailView(coach: coach)
+                }
             }
         }
         // MARK: - Lock-in Confirmation Alert (#66)
         // #169: Confirmation dialog before phase change
         .alert("Advance to Review Roster?", isPresented: $showLockInConfirmation) {
             Button("Advance") {
-                career.currentPhase = .combine
+                career.currentPhase = .reviewRoster
                 try? modelContext.save()
             }
             Button("Cancel", role: .cancel) { }
@@ -485,12 +498,22 @@ struct CoachingStaffView: View {
         }
         .alert("Incomplete Staff", isPresented: $showIncompleteStaffWarning) {
             Button("Lock in Anyway") {
-                career.currentPhase = .combine
+                career.currentPhase = .reviewRoster
                 try? modelContext.save()
             }
             Button("Go Back", role: .cancel) { }
         } message: {
             Text("You still have vacant positions: \(missingRequiredRoles.map { $0.displayName }.joined(separator: ", ")). Are you sure you want to proceed without filling them?")
+        }
+        .alert("Set Schemes First", isPresented: $showSchemesNotSetWarning) {
+            Button("Go to Schemes") {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    selectedTab = .schemes
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Set offensive and defensive schemes before locking in. Go to the Schemes tab to configure your coordinators' schemes.")
         }
     }
 
@@ -587,7 +610,7 @@ struct CoachingStaffView: View {
                         playerAsHeadCoachRow
                     } else if let hc = headCoach {
                         Button {
-                            selectedCoachID = hc.id
+                            navDestination = .coachDetail(hc.id)
                         } label: {
                             HeadCoachCardView(coach: hc, menteeCount: coaches.filter { $0.mentorCoachID == hc.id }.count)
                         }
@@ -675,7 +698,7 @@ struct CoachingStaffView: View {
                             ForEach(posRoles, id: \.self) { role in
                                 if let coach = coaches.first(where: { $0.role == role }) {
                                     Button {
-                                        selectedCoachID = coach.id
+                                        navDestination = .coachDetail(coach.id)
                                     } label: {
                                         compactCoachCard(coach: coach)
                                     }
@@ -718,7 +741,7 @@ struct CoachingStaffView: View {
                                     ForEach(medRoles, id: \.self) { role in
                                         if let coach = coaches.first(where: { $0.role == role }) {
                                             Button {
-                                                selectedCoachID = coach.id
+                                                navDestination = .coachDetail(coach.id)
                                             } label: {
                                                 compactCoachCard(coach: coach)
                                             }
@@ -792,7 +815,7 @@ struct CoachingStaffView: View {
                             ForEach(medRoles, id: \.self) { role in
                                 if let coach = coaches.first(where: { $0.role == role }) {
                                     Button {
-                                        selectedCoachID = coach.id
+                                        navDestination = .coachDetail(coach.id)
                                     } label: {
                                         compactCoachCard(coach: coach)
                                     }
@@ -1380,6 +1403,21 @@ struct CoachingStaffView: View {
                 .padding(.bottom, 2)
             }
 
+            // Scheme warning: require schemes to be set before lock-in
+            if allRequiredRolesFilled && !areSchemesSet && !isBudgetOverspent {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.warning)
+                    Text("Set offensive and defensive schemes before locking in")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.warning)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 2)
+            }
+
             // #155: Show minimum cost to fill all vacant positions
             if (!vacantCoachRoles.isEmpty || !vacantScoutRoles.isEmpty) && !isBudgetOverspent {
                 Text("Est. minimum to fill all: ~$\(String(format: "%.1f", Double(estimatedMinimumToFillAll) / 1_000.0))M")
@@ -1409,6 +1447,8 @@ struct CoachingStaffView: View {
                     // Do nothing -- button is disabled
                 } else if !allRequiredRolesFilled {
                     showIncompleteStaffWarning = true
+                } else if !areSchemesSet {
+                    showSchemesNotSetWarning = true
                 } else {
                     showLockInConfirmation = true
                 }
@@ -1644,7 +1684,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func coachRowWithChemistry(coach: Coach) -> some View {
         Button {
-            selectedCoachID = coach.id
+            navDestination = .coachDetail(coach.id)
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 CoachRowWithDescriptionView(coach: coach)
@@ -1735,7 +1775,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func compactVacantCard(role: CoachRole) -> some View {
         Button {
-            hireRole = role
+            navDestination = .hireCoach(role)
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -1793,7 +1833,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private var headCoachVacantRow: some View {
         Button {
-            hireRole = .headCoach
+            navDestination = .hireCoach(.headCoach)
         } label: {
                 VStack(spacing: 10) {
                     HStack {
@@ -1836,7 +1876,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func vacantRow(role: CoachRole) -> some View {
         Button {
-            hireRole = role
+            navDestination = .hireCoach(role)
         } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -1954,7 +1994,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func scoutVacantRow(role: ScoutRole) -> some View {
         Button {
-            hireScoutRole = role
+            navDestination = .hireScout(role)
         } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
