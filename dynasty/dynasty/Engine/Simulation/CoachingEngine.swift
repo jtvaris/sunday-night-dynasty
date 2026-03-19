@@ -421,7 +421,65 @@ enum CoachingEngine {
                 yearsExperience: exp
             )
             coach.background = generateBackground(for: coach)
+            initializeSchemeExpertise(for: coach)
             return coach
+        }
+    }
+
+    // MARK: - Scheme Expertise Initialization
+
+    /// Initializes a coach's scheme expertise based on their assigned scheme,
+    /// related schemes, and adaptability attribute.
+    static func initializeSchemeExpertise(for coach: Coach) {
+        var expertise: [String: Int] = [:]
+
+        // Primary offensive scheme: high expertise
+        if let offScheme = coach.offensiveScheme {
+            expertise[offScheme.rawValue] = Int.random(in: 75...95)
+            for related in schemeFamilyMembers(offScheme) where related != offScheme {
+                expertise[related.rawValue] = Int.random(in: 40...65)
+            }
+        }
+
+        // Primary defensive scheme: high expertise
+        if let defScheme = coach.defensiveScheme {
+            expertise[defScheme.rawValue] = Int.random(in: 75...95)
+            for related in schemeFamilyMembers(defScheme) where related != defScheme {
+                expertise[related.rawValue] = Int.random(in: 40...65)
+            }
+        }
+
+        // Adaptability gives higher baseline for unknown schemes
+        let baselineBonus = Int(Double(coach.adaptability) / 99.0 * 15.0)
+        for scheme in OffensiveScheme.allCases where expertise[scheme.rawValue] == nil {
+            expertise[scheme.rawValue] = 15 + baselineBonus + Int.random(in: 0...10)
+        }
+        for scheme in DefensiveScheme.allCases where expertise[scheme.rawValue] == nil {
+            expertise[scheme.rawValue] = 15 + baselineBonus + Int.random(in: 0...10)
+        }
+
+        coach.schemeExpertise = expertise
+    }
+
+    /// Returns schemes in the same "family" as the given offensive scheme.
+    static func schemeFamilyMembers(_ scheme: OffensiveScheme) -> [OffensiveScheme] {
+        switch scheme {
+        case .westCoast, .airRaid, .proPassing, .spread:
+            return [.westCoast, .airRaid, .proPassing, .spread]
+        case .powerRun, .shanahan, .option, .rpo:
+            return [.powerRun, .shanahan, .option, .rpo]
+        }
+    }
+
+    /// Returns schemes in the same "family" as the given defensive scheme.
+    static func schemeFamilyMembers(_ scheme: DefensiveScheme) -> [DefensiveScheme] {
+        switch scheme {
+        case .pressMan, .base43:
+            return [.pressMan, .base43]
+        case .cover3, .tampa2, .base34:
+            return [.cover3, .tampa2, .base34]
+        case .multiple, .hybrid:
+            return [.multiple, .hybrid]
         }
     }
 

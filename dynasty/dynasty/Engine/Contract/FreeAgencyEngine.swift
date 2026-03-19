@@ -23,7 +23,7 @@ enum FreeAgencyEngine {
     /// Asking prices are influenced by market value and the player's personality motivation.
     static func generateFreeAgentMarket(allPlayers: [Player]) -> [FreeAgent] {
         allPlayers
-            .filter { $0.contractYearsRemaining == 0 }
+            .filter { $0.contractYearsRemaining == 0 && !$0.isFranchiseTagged }
             .map { player in
                 let baseValue = ContractEngine.estimateMarketValue(player: player)
 

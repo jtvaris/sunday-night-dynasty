@@ -12,6 +12,7 @@ struct TimelineStripView: View {
     private static let orderedPhases: [SeasonPhase] = [
         .coachingChanges,
         .combine,
+        .reviewRoster,
         .freeAgency,
         .draft,
         .otas,
@@ -177,6 +178,7 @@ struct TimelineStripView: View {
         case .coachingChanges: return "Coaching"
         case .combine:         return "Combine"
         case .freeAgency:      return "Free Agency"
+        case .reviewRoster:    return "Review Roster"
         case .draft:           return "Draft"
         case .otas:            return "OTAs"
         case .trainingCamp:    return "Camp"
@@ -195,6 +197,7 @@ struct TimelineStripView: View {
         case .coachingChanges: return "Feb"
         case .combine:         return "Feb–Mar"
         case .freeAgency:      return "Mar"
+        case .reviewRoster:    return "Mar–Apr"
         case .draft:           return "Apr"
         case .otas:            return "May"
         case .trainingCamp:    return "Jul–Aug"
@@ -213,6 +216,7 @@ struct TimelineStripView: View {
         case .coachingChanges: return "person.badge.key.fill"
         case .combine:         return "stopwatch.fill"
         case .freeAgency:      return "signature"
+        case .reviewRoster:    return "chart.bar.doc.horizontal"
         case .draft:           return "list.clipboard.fill"
         case .otas:            return "figure.run"
         case .trainingCamp:    return "tent.fill"

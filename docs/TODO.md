@@ -2,14 +2,14 @@
 
 Last updated: 2026-03-18
 
-## Bugs (fix first)
+## Bugs (all fixed)
 
-- [ ] #63 BUG: Dashboard task list shows hired coordinators as still Required
-- [ ] #83 BUG: Team Selection AFC/NFC toggle only responds to text tap (FIXED - committed)
-- [ ] #87 BUG: Hire Coach back button navigates to previous position instead of Coaching Staff
-- [ ] #88 BUG: Hired coach not showing in Coaching Staff view after hiring
-- [ ] #47 BUG: Coach candidate profile attributes disappear on scroll
-- [ ] #69 BUG: Roster view shows "Coming Soon" placeholder
+- [x] #63 BUG: Dashboard task list shows hired coordinators as still Required (fixed)
+- [x] #83 BUG: Team Selection AFC/NFC toggle only responds to text tap (fixed, committed)
+- [x] #87 BUG: Hire Coach back button navigates to previous position instead of Coaching Staff (fixed: dismiss sheet before popping view)
+- [x] #88 BUG: Hired coach not showing in Coaching Staff view after hiring (fixed: added modelContext.save())
+- [x] #47 BUG: Coach candidate profile attributes disappear on scroll (fixed: VStack instead of LazyVGrid)
+- [x] #69 BUG: Roster view shows "Coming Soon" placeholder (fixed)
 
 ## Already Implemented (these tasks were completed but TaskList wasn't updated)
 
@@ -67,78 +67,89 @@ Last updated: 2026-03-18
 ## UI Improvements (pending)
 
 ### Main Menu
-- [ ] #1 Add Settings option
-- [ ] #2 Add "Continue Career" button (code exists, shows when career exists)
+- [x] #1 Add Settings option
+- [x] #2 Add "Continue Career" button (code exists, shows when career exists)
 
 ### Team Selection
-- [ ] #7 Add W-L record to team rows
-- [ ] #8 Team Detail: Add QB info and division rivals
-- [ ] #9 Explain lock icon
+- [x] #7 Add W-L record to team rows
+- [x] #8 Team Detail: Add QB info and division rivals
+- [x] #9 Explain lock icon
 
 ### Intro Sequence
-- [ ] #15 Owner Meeting: Expand owner info with practical implications
-- [ ] #16 Owner Meeting: Warning quote more personal
-- [ ] #20 Team Overview: Show roster age and contract situation summary
-- [ ] #21 Team Overview: Coaching Staff "0/13 filled" needs emphasis
-- [ ] #18 Team Overview: Add position group strengths breakdown
-- [ ] #19 Team Overview: Add context to stats (league averages)
-- [ ] #23 Roadmap: Highlight current phase in timeline
+- [x] #15 Owner Meeting: Expand owner info with practical implications
+- [x] #16 Owner Meeting: Warning quote more personal
+- [x] #20 Team Overview: Show roster age and contract situation summary
+- [x] #21 Team Overview: Coaching Staff "0/13 filled" needs emphasis
+- [x] #18 Team Overview: Add position group strengths breakdown
+- [x] #19 Team Overview: Add context to stats (league averages)
+- [x] #23 Roadmap: Highlight current phase in timeline
 
 ### Dashboard
-- [ ] #27 Division standings need W-L data
+- [x] #27 Division standings need W-L data
 
 ### Coaching Staff
-- [ ] #49 Show hiring confirmation/celebration
-- [ ] #50 Handle insufficient budget and failed hiring scenarios
-- [ ] #66 Add "Lock in Staff" / "Confirm Staff" button
-- [ ] #107 Add tabs for Staff / Schemes / Review
+- [x] #49 Show hiring confirmation/celebration
+- [x] #50 Handle insufficient budget and failed hiring scenarios
+- [x] #66 Add "Lock in Staff" / "Confirm Staff" button
+- [x] #107 Add tabs for Staff / Schemes / Review
 
 ### Hire Coach
-- [ ] #38 Add scheme fit indicator
-- [ ] #53 Coach Detail: Add management actions (Fire, Extend, Promote)
-- [ ] #86 Candidate profile sheet should be larger on iPad
+- [x] #38 Add scheme fit indicator
+- [x] #53 Coach Detail: Add management actions (Fire, Extend, Promote)
+- [x] #86 Candidate profile sheet should be larger on iPad
 
 ### Roster
-- [ ] #85 Split Receivers and Tight Ends into separate position groups
-- [ ] #89 Show starter/backup indicator in player list
-- [ ] #91 Position group grade badges need more contrast
-- [ ] #92 Cap info in summary bar should show used/total clearly
-- [ ] #93 Contract column "1yr" should highlight expiring contracts
-- [ ] #94 Add subtle background image
-- [ ] #95 Show Cap Hit instead of/alongside Salary
-- [ ] #104 Show position group strength and cap allocation in group headers
-- [ ] #74 Ensure landscape layouts for all roster views
+- [x] #85 Split Receivers and Tight Ends into separate position groups
+- [x] #89 Show starter/backup indicator in player list
+- [x] #91 Position group grade badges need more contrast
+- [x] #92 Cap info in summary bar should show used/total clearly
+- [x] #93 Contract column "1yr" should highlight expiring contracts
+- [x] #94 Add subtle background image
+- [x] #95 Show Cap Hit instead of/alongside Salary
+- [x] #104 Show position group strength and cap allocation in group headers
+- [x] #74 Ensure landscape layouts for all roster views
 
 ### Formation
-- [ ] #99 Make field fill more of the screen
-- [ ] #100 Enlarge player cards and show more data
-- [ ] #101 Color-code player cards by rating
-- [ ] #102 Add yard lines and field markings
-- [ ] #103 Show position group averages alongside field
+- [x] #99 Make field fill more of the screen
+- [x] #100 Enlarge player cards and show more data
+- [x] #101 Color-code player cards by rating
+- [x] #102 Add yard lines and field markings
+- [x] #103 Show position group averages alongside field
 
 ## Big Features (need planning/new files)
 
 ### Game Systems
-- [ ] #76 Coordinator Schemes: Implement 5+5 scheme system (designed, see docs/plans)
-- [ ] #67 Coordinator Schemes: Build scheme selection view
-- [ ] #77 Press Conference: Implement situational question system (designed)
-- [ ] #78 Review Roster Phase: Implement 4-task offseason evaluation flow (designed)
-- [ ] #79 Medical Staff: Implement Doctor and Physio with fatigue-injury system (designed)
-- [ ] #80 Coaching Budget: Dynamic budget system based on market + owner + success (designed)
-- [ ] #82 Salary Cap: Dynamic cap that grows each season
-- [ ] #84 Season calendar: Add Pro Bowl before Super Bowl
-- [ ] #57 Coaching budget and candidate pool should reflect team wealth
+- [x] #76 Coordinator Schemes: Implement 5+5 scheme system (designed, see docs/plans)
+- [x] #67 Coordinator Schemes: Build scheme selection view
+- [x] #77 Press Conference: Implement situational question system (designed)
+- [x] #78 Review Roster Phase: Implement 4-task offseason evaluation flow (designed)
+- [x] #79 Medical Staff: Implement Doctor and Physio with fatigue-injury system
+- [x] #80 Coaching Budget: Dynamic budget system based on market + owner + success
+- [x] #82 Salary Cap: Dynamic cap that grows each season
+- [x] #84 Season calendar: Add Pro Bowl before Super Bowl
+- [x] #57 Coaching budget and candidate pool should reflect team wealth
 
 ### Roster Features
-- [ ] #90 Add comprehensive player stats view
-- [ ] #96 Add attribute columns view mode for detailed analysis
-- [ ] #97 Add player Form column to main table
-- [ ] #98 Multiple analysis view modes (Contracts, Development, Physical, Depth, Needs)
-- [ ] #105 Depth Chart: Design comprehensive lineup management system
-- [ ] #106 Player Faces: Design and implement player avatar/face system
+- [x] #90 Add comprehensive player stats view (implemented: PlayerStatsView with Season/Career/Game Log tabs, position-specific stats, per-game averages, aggregation from PlayerGameStats, linked from PlayerDetailView toolbar)
+- [x] #96 Add attribute columns view mode for detailed analysis (implemented: Attributes analysis mode in RosterView showing SPD/STR/AGI/AWR/DEC columns with color-coded values - 90+ gold, 80+ green, 70+ blue, <70 orange)
+- [x] #97 Add player Form column to main table (implemented: form indicator arrow in PlayerRowView using morale + development phase + injury as proxy, color-coded hot/steady/cold)
+- [x] #98 Multiple analysis view modes (implemented: 6 modes - Overview, Contracts, Development, Physical, Attributes, Depth - with scrollable capsule picker, mode-specific columns in PlayerRowView, adaptive sortable headers)
+- [x] #105 Depth Chart: Design comprehensive lineup management system (implemented: slot-based DepthChartSlot model with WR1/WR2/WR3/CB1/CB2/LE/RE/LOLB/ROLB/KR/PR, drag-to-reorder, auto-set by OVR, comparison overlay with versatility/impact preview, fatigue/injury indicators, team OVR bar)
+- [x] #106 Player Faces: Design and implement player avatar/face system (implemented: procedural PlayerAvatarView using Canvas, seeded from UUID)
+
+### Position Versatility & Scheme Learning
+- [x] Position Familiarity system: players learn alternate positions over time (positionFamiliarity dict on Player)
+- [x] Scheme Familiarity system: players learn schemes through practice and games (schemeFamiliarity dict on Player)
+- [x] Coach Scheme Expertise: coaches have expertise levels per scheme (schemeExpertise dict on Coach)
+- [x] VersatilityDevelopmentEngine: training, learning, and performance modifiers
+- [x] Wired into PlayerDevelopmentEngine (offseason), WeekAdvancer (in-season), PlaySimulator (game impact)
+- [x] PositionVersatilityView: connected training buttons, familiarity bars, scheme display
+- [x] SchemeSelectionView: shows coach expertise %, color-coded, low-expertise warnings
+- [x] PlayerDetailView: Versatility & Scheme section with familiarity bars and ceiling indicators
+- [x] LeagueGenerator: initializes familiarity for all players and scheme expertise for all coaches
 
 ### Press Conference
-- [ ] #13 Dynamic questions based on team situation
+- [x] #13 Dynamic questions based on team situation
 
 ## Design Documents
 

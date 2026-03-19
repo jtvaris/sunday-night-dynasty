@@ -426,9 +426,10 @@ struct CalendarSidebarView: View {
         case .coachingChanges: return 7
         case .combine:         return 8
         case .freeAgency:      return 9
-        case .draft:           return 10
-        case .otas:            return 11
-        case .trainingCamp:    return 12
+        case .reviewRoster:    return 10
+        case .draft:           return 11
+        case .otas:            return 12
+        case .trainingCamp:    return 13
         }
     }
 }

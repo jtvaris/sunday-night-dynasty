@@ -63,6 +63,8 @@ enum TaskDestination: String, Codable, CaseIterable {
     case ownerMeeting
     case lockerRoom
     case inbox
+    case rosterEvaluation
+    case franchiseTag
 }
 
 // MARK: - Task Generator
@@ -79,7 +81,7 @@ enum TaskGenerator {
         let order: Int          // 1-based position in the season cycle
     }
 
-    static let totalPhases = 13
+    static let totalPhases = 14
 
     static func phaseInfo(for phase: SeasonPhase) -> PhaseInfo {
         switch phase {
@@ -107,59 +109,65 @@ enum TaskGenerator {
                 description: "Prospects showcase their athletic ability. Scout, interview, and build your Big Board.",
                 order: 4
             )
+        case .reviewRoster:
+            return PhaseInfo(
+                name: "Review Roster",
+                description: "Evaluate your roster, apply franchise tags, and identify needs before free agency opens.",
+                order: 5
+            )
         case .freeAgency:
             return PhaseInfo(
                 name: "Free Agency",
                 description: "Re-sign your own players and pursue free agents to address roster needs.",
-                order: 5
+                order: 6
             )
         case .draft:
             return PhaseInfo(
                 name: "NFL Draft",
                 description: "Select the next generation of talent for your franchise.",
-                order: 6
+                order: 7
             )
         case .otas:
             return PhaseInfo(
                 name: "OTAs",
                 description: "Organize team activities, set your depth chart, and pair mentors with young players.",
-                order: 7
+                order: 8
             )
         case .trainingCamp:
             return PhaseInfo(
                 name: "Training Camp",
                 description: "Players compete for roster spots. Evaluate development and position battles.",
-                order: 8
+                order: 9
             )
         case .preseason:
             return PhaseInfo(
                 name: "Preseason",
                 description: "Exhibition games let you evaluate young talent before final roster decisions.",
-                order: 9
+                order: 10
             )
         case .rosterCuts:
             return PhaseInfo(
                 name: "Roster Cuts",
                 description: "Trim the roster to 53 players and set your practice squad.",
-                order: 10
+                order: 11
             )
         case .regularSeason:
             return PhaseInfo(
                 name: "Regular Season",
                 description: "Compete across 18 weeks for a playoff berth. Manage injuries, trades, and game plans.",
-                order: 11
+                order: 12
             )
         case .tradeDeadline:
             return PhaseInfo(
                 name: "Trade Deadline",
                 description: "Last chance to make trades this season. Buy or sell based on your record.",
-                order: 12
+                order: 13
             )
         case .playoffs:
             return PhaseInfo(
                 name: "Playoffs",
                 description: "Win or go home. Prepare your game plan and manage your roster for each round.",
-                order: 13
+                order: 14
             )
         }
     }
@@ -218,6 +226,8 @@ enum TaskGenerator {
             return combineTasks()
         case .freeAgency:
             return freeAgencyTasks(hasExpiringContracts: hasExpiringContracts)
+        case .reviewRoster:
+            return reviewRosterTasks()
         case .draft:
             return draftTasks(isDraftComplete: isDraftComplete)
         case .otas:
@@ -434,6 +444,51 @@ enum TaskGenerator {
         ))
 
         return tasks
+    }
+
+    private static func reviewRosterTasks() -> [GameTask] {
+        [
+            GameTask(
+                phase: .reviewRoster,
+                title: "Review Position Group Grades",
+                description: "Check which position groups need depth and which are strengths.",
+                icon: "chart.bar.doc.horizontal",
+                destination: .rosterEvaluation,
+                isRequired: true
+            ),
+            GameTask(
+                phase: .reviewRoster,
+                title: "Analyze Contract Situations",
+                description: "Review expiring contracts, overpaid and underpaid players.",
+                icon: "dollarsign.circle.fill",
+                destination: .rosterEvaluation,
+                isRequired: true
+            ),
+            GameTask(
+                phase: .reviewRoster,
+                title: "Franchise Tag Decisions",
+                description: "Apply franchise tag to keep key players from hitting free agency.",
+                icon: "tag.fill",
+                destination: .franchiseTag,
+                isRequired: true
+            ),
+            GameTask(
+                phase: .reviewRoster,
+                title: "Check Salary Cap Outlook",
+                description: "Review cap space projections and budget for upcoming free agency.",
+                icon: "chart.pie.fill",
+                destination: .capOverview,
+                isRequired: false
+            ),
+            GameTask(
+                phase: .reviewRoster,
+                title: "Set Roster Priorities",
+                description: "Identify your biggest needs heading into the draft.",
+                icon: "list.bullet.clipboard.fill",
+                destination: .rosterEvaluation,
+                isRequired: false
+            ),
+        ]
     }
 
     private static func draftTasks(isDraftComplete: Bool) -> [GameTask] {

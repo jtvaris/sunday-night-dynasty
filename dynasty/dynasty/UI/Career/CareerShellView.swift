@@ -29,6 +29,10 @@ struct CareerShellView: View {
     /// Accumulated inbox messages across all phase transitions.
     @State var inboxMessages: [InboxMessage] = []
 
+    /// Pending weekly press conference questions (shown after advancing a regular-season week).
+    @State private var pendingPressQuestions: [PressQuestion]?
+    @State private var showWeeklyPressConference = false
+
     var body: some View {
         VStack(spacing: 0) {
             // Persistent top navigation bar
@@ -114,6 +118,18 @@ struct CareerShellView: View {
             .presentationDetents([.large, .medium])
             .presentationDragIndicator(.visible)
         }
+        .fullScreenCover(isPresented: $showWeeklyPressConference) {
+            if let questions = pendingPressQuestions {
+                WeeklyPressConferenceView(
+                    questions: questions,
+                    career: career,
+                    onComplete: { result in
+                        applyPressConferenceEffects(result)
+                        showWeeklyPressConference = false
+                    }
+                )
+            }
+        }
     }
 
     // MARK: - Advance Week
@@ -123,6 +139,30 @@ struct CareerShellView: View {
         WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
         // Reload data so the dashboard picks up the new state
         loadShellData()
+
+        // Check for pending press conference
+        if let questions = WeekAdvancer.pendingPressConference {
+            pendingPressQuestions = questions
+            showWeeklyPressConference = true
+            WeekAdvancer.pendingPressConference = nil
+        }
+    }
+
+    // MARK: - Press Conference Effects
+
+    /// Apply the effects from a weekly press conference result to career state.
+    private func applyPressConferenceEffects(_ result: PressConferenceResult) {
+        // Owner satisfaction (clamped 0-100, stored on Owner)
+        if let ownerObj = team?.owner {
+            ownerObj.satisfaction = min(100, max(0,
+                ownerObj.satisfaction + result.totalEffects.ownerSatisfaction))
+        }
+
+        // Legacy points and media reputation (via LegacyTracker helper)
+        career.legacy.applyPressConferenceResult(result, season: career.currentSeason)
+
+        // Save changes
+        try? modelContext.save()
     }
 
     // MARK: - Navigation Destinations
@@ -132,7 +172,8 @@ struct CareerShellView: View {
         case depthChart, gamePlan, coachingStaff, hireCoach
         case prospectList, bigBoard, capOverview, freeAgency
         case contractTimeline, mentoring, trades, news
-        case ownerMeeting, lockerRoom, inbox
+        case ownerMeeting, lockerRoom, inbox, rosterEvaluation
+        case franchiseTag
     }
 
     @ViewBuilder
@@ -166,11 +207,13 @@ struct CareerShellView: View {
                     refreshTaskCompletionStatus()
                 }
         case .scouting:
-            ScoutingHubView(career: career)
-                .onAppear {
-                    markTaskVisited(for: .scouting)
-                    refreshTaskCompletionStatus()
-                }
+            NavigationStack {
+                ScoutingHubView(career: career)
+            }
+            .onAppear {
+                markTaskVisited(for: .scouting)
+                refreshTaskCompletionStatus()
+            }
         case .cap, .capOverview:
             CapOverviewView(career: career)
                 .onAppear {
@@ -190,27 +233,35 @@ struct CareerShellView: View {
                     refreshTaskCompletionStatus()
                 }
         case .coachingStaff, .hireCoach:
-            CoachingStaffView(career: career)
-                .onAppear {
-                    markTaskVisited(for: .coachingStaff)
-                    markTaskVisited(for: .hireCoach)
-                    refreshTaskCompletionStatus()
-                }
-                .onDisappear {
-                    refreshTaskCompletionStatus()
-                }
+            // Wrap in NavigationStack so HireCoachView NavigationLinks push
+            // within this scope, not the parent stack. Fixes back-button routing.
+            NavigationStack {
+                CoachingStaffView(career: career)
+            }
+            .onAppear {
+                markTaskVisited(for: .coachingStaff)
+                markTaskVisited(for: .hireCoach)
+                refreshTaskCompletionStatus()
+            }
+            .onDisappear {
+                refreshTaskCompletionStatus()
+            }
         case .prospectList:
-            ScoutingHubView(career: career)
-                .onAppear {
-                    markTaskVisited(for: .prospectList)
-                    refreshTaskCompletionStatus()
-                }
+            NavigationStack {
+                ScoutingHubView(career: career)
+            }
+            .onAppear {
+                markTaskVisited(for: .prospectList)
+                refreshTaskCompletionStatus()
+            }
         case .bigBoard:
-            ScoutingHubView(career: career)
-                .onAppear {
-                    markTaskVisited(for: .bigBoard)
-                    refreshTaskCompletionStatus()
-                }
+            NavigationStack {
+                ScoutingHubView(career: career)
+            }
+            .onAppear {
+                markTaskVisited(for: .bigBoard)
+                refreshTaskCompletionStatus()
+            }
         case .freeAgency:
             FreeAgencyView(career: career)
                 .onAppear {
@@ -261,6 +312,18 @@ struct CareerShellView: View {
                     handleTaskNavigation(destination)
                 }
             )
+        case .rosterEvaluation:
+            RosterEvaluationView(career: career)
+                .onAppear {
+                    markTaskVisited(for: .rosterEvaluation)
+                    refreshTaskCompletionStatus()
+                }
+        case .franchiseTag:
+            FranchiseTagView(career: career)
+                .onAppear {
+                    markTaskVisited(for: .franchiseTag)
+                    refreshTaskCompletionStatus()
+                }
         }
     }
 
@@ -290,6 +353,8 @@ struct CareerShellView: View {
         case .ownerMeeting:       shellDest = .ownerMeeting
         case .lockerRoom:         shellDest = .lockerRoom
         case .inbox:              shellDest = .inbox
+        case .rosterEvaluation:   shellDest = .rosterEvaluation
+        case .franchiseTag:       shellDest = .franchiseTag
         }
 
         // Dismiss calendar, then navigate
@@ -363,6 +428,14 @@ struct CareerShellView: View {
             case "Review free agent market":
                 if task.status == .inProgress { currentTasks[index].status = .done }
             case "Review expiring contracts":
+                if task.status == .inProgress { currentTasks[index].status = .done }
+
+            // Review Roster — visit-based completion
+            case "Review Position Group Grades",
+                 "Analyze Contract Situations",
+                 "Check Salary Cap Outlook",
+                 "Set Roster Priorities",
+                 "Franchise Tag Decisions":
                 if task.status == .inProgress { currentTasks[index].status = .done }
 
             // Draft — "Enter the Draft" completed when draft view visited

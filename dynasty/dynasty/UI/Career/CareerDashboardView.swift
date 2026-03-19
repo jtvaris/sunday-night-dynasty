@@ -19,6 +19,7 @@ struct CareerDashboardView: View {
     @State private var coachCount: Int = 0
     @State private var headCoach: Coach?
     @State private var divisionTeams: [Team] = []
+    @State private var divisionRecords: [StandingsRecord] = []
     @State private var upcomingGames: [Game] = []
     @State private var lastGame: Game?
     @State private var allTeamsByID: [UUID: Team] = [:]
@@ -683,31 +684,49 @@ struct CareerDashboardView: View {
                     Text("Team")
                         .frame(width: 40, alignment: .leading)
                     Spacer()
-                    Text("W")
-                        .frame(width: 24)
-                    Text("L")
-                        .frame(width: 24)
+                    Text("W-L")
+                        .frame(width: 48, alignment: .trailing)
+                    Text("PCT")
+                        .frame(width: 40, alignment: .trailing)
                 }
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(Color.textTertiary)
                 .textCase(.uppercase)
 
-                ForEach(divisionTeams.sorted(by: { $0.wins > $1.wins }), id: \.id) { t in
-                    let isMyTeam = t.id == team?.id
+                ForEach(Array(divisionRecords.enumerated()), id: \.element.id) { index, record in
+                    let t = allTeamsByID[record.teamID]
+                    let isMyTeam = record.teamID == team?.id
+                    let isLeader = index == 0
+                    let wl = record.ties > 0
+                        ? "\(record.wins)-\(record.losses)-\(record.ties)"
+                        : "\(record.wins)-\(record.losses)"
+                    let pct = record.winPercentage
+                    let pctStr = pct == 1.0 ? "1.000" : String(format: ".%03d", Int((pct * 1000).rounded()))
+
                     HStack {
-                        Text(t.abbreviation)
-                            .font(.system(size: 11, weight: isMyTeam ? .heavy : .medium))
-                            .foregroundStyle(isMyTeam ? Color.accentGold : Color.textSecondary)
-                            .frame(width: 40, alignment: .leading)
+                        HStack(spacing: 4) {
+                            if isLeader {
+                                Image(systemName: "crown.fill")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(Color.accentGold)
+                                    .frame(width: 10)
+                            } else {
+                                Spacer().frame(width: 10)
+                            }
+                            Text(t?.abbreviation ?? "???")
+                                .font(.system(size: 11, weight: isMyTeam ? .heavy : .medium))
+                                .foregroundStyle(isMyTeam ? Color.accentGold : Color.textSecondary)
+                        }
+                        .frame(width: 54, alignment: .leading)
                         Spacer()
-                        Text("\(t.wins)")
-                            .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        Text(wl)
+                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
                             .foregroundStyle(isMyTeam ? Color.textPrimary : Color.textSecondary)
-                            .frame(width: 24)
-                        Text("\(t.losses)")
-                            .font(.system(size: 11, weight: .medium).monospacedDigit())
-                            .foregroundStyle(isMyTeam ? Color.textPrimary : Color.textSecondary)
-                            .frame(width: 24)
+                            .frame(width: 48, alignment: .trailing)
+                        Text(pctStr)
+                            .font(.system(size: 10, weight: .regular).monospacedDigit())
+                            .foregroundStyle(Color.textTertiary)
+                            .frame(width: 40, alignment: .trailing)
                     }
                     .padding(.vertical, 3)
                     .padding(.horizontal, 6)
@@ -1206,10 +1225,15 @@ struct CareerDashboardView: View {
 
     private var divisionRank: String {
         guard let myTeam = team else { return "\u{2014}" }
+        if !divisionRecords.isEmpty {
+            if let idx = divisionRecords.firstIndex(where: { $0.teamID == myTeam.id }) {
+                return "#\(idx + 1)"
+            }
+        }
+        // Fallback to simple wins sort when records aren't available yet
         let sorted = divisionTeams.sorted { $0.wins > $1.wins }
         if let idx = sorted.firstIndex(where: { $0.id == myTeam.id }) {
-            let rank = idx + 1
-            return "#\(rank)"
+            return "#\(idx + 1)"
         }
         return "\u{2014}"
     }
@@ -1222,6 +1246,8 @@ struct CareerDashboardView: View {
             return ["Scouting", "Draft"]
         case .freeAgency:
             return ["Free Agency", "Salary Cap"]
+        case .reviewRoster:
+            return ["Roster", "Salary Cap"]
         case .draft:
             return ["Draft", "Scouting"]
         case .otas, .trainingCamp:
@@ -1285,6 +1311,17 @@ struct CareerDashboardView: View {
             $0.seasonYear == seasonYear
         })
         let allGames = (try? modelContext.fetch(gameDescriptor)) ?? []
+
+        // Division standings from calculated records (proper NFL tiebreakers)
+        if let myTeam = team {
+            let allRecords = StandingsCalculator.calculate(games: allGames, teams: allTeams)
+            divisionRecords = StandingsCalculator.divisionStandings(
+                records: allRecords,
+                teams: allTeams,
+                conference: myTeam.conference,
+                division: myTeam.division
+            )
+        }
 
         let myGames = allGames.filter {
             $0.homeTeamID == teamID || $0.awayTeamID == teamID

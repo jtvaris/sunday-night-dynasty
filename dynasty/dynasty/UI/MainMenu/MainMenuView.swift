@@ -4,6 +4,7 @@ import SwiftData
 struct MainMenuView: View {
 
     @Query(sort: \Career.currentSeason, order: .reverse) private var careers: [Career]
+    @State private var showSettings = false
 
     var body: some View {
         GeometryReader { geo in
@@ -56,6 +57,9 @@ struct MainMenuView: View {
         }
         .ignoresSafeArea()
         .toolbar(.hidden, for: .navigationBar)
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+        }
     }
 
     // MARK: - Subviews
@@ -85,17 +89,38 @@ struct MainMenuView: View {
 
     private var buttonsBlock: some View {
         VStack(spacing: 16) {
-            NavigationLink(destination: NewCareerView()) {
-                MenuButton(title: "New Career", icon: "plus.circle.fill", isPrimary: true)
-            }
-            .accessibilityLabel("New Career")
-
-            if !careers.isEmpty {
-                NavigationLink(destination: CareerListView()) {
-                    MenuButton(title: "Continue Career", icon: "play.circle.fill", isPrimary: false)
+            if let mostRecentCareer = careers.first {
+                // Continue Career is the primary action when a saved career exists
+                NavigationLink(destination: CareerShellView(career: mostRecentCareer)) {
+                    MenuButton(title: "Continue Career", icon: "play.circle.fill", isPrimary: true)
                 }
                 .accessibilityLabel("Continue Career")
+
+                NavigationLink(destination: NewCareerView()) {
+                    MenuButton(title: "New Career", icon: "plus.circle.fill", isPrimary: false)
+                }
+                .accessibilityLabel("New Career")
+
+                if careers.count > 1 {
+                    NavigationLink(destination: CareerListView()) {
+                        MenuButton(title: "All Careers", icon: "list.bullet", isPrimary: false)
+                    }
+                    .accessibilityLabel("All Careers")
+                }
+            } else {
+                // No saved careers — New Career is the primary action
+                NavigationLink(destination: NewCareerView()) {
+                    MenuButton(title: "New Career", icon: "plus.circle.fill", isPrimary: true)
+                }
+                .accessibilityLabel("New Career")
             }
+
+            Button {
+                showSettings = true
+            } label: {
+                MenuButton(title: "Settings", icon: "gearshape.fill", isPrimary: false)
+            }
+            .accessibilityLabel("Settings")
         }
         .padding(.horizontal, 40)
         .padding(.bottom, 24)

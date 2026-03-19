@@ -56,7 +56,7 @@ enum VersatilityRating: Int, Comparable, CaseIterable {
 // MARK: - VersatilityEngine (Local Logic)
 
 /// Pure-function logic for computing position versatility from player attributes.
-private enum VersatilityEngine {
+enum VersatilityEngine {
 
     /// Returns all positions where a player has at least Unconvincing viability.
     static func viablePositions(for player: Player) -> [(Position, VersatilityRating)] {
@@ -208,12 +208,17 @@ struct PositionVersatilityView: View {
         .task { loadPlayers() }
         .alert("Start Position Training", isPresented: $showTrainAlert) {
             Button("Begin Training") {
-                // Training engine integration point
+                if let player = selectedPlayer, let pos = trainTargetPosition {
+                    player.trainingPosition = pos
+                    try? modelContext.save()
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             if let player = selectedPlayer, let pos = trainTargetPosition {
-                Text("Train \(player.fullName) at \(pos.rawValue)? This is a slow conversion process that takes multiple seasons to show results.")
+                let ceiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: pos)
+                let current = player.familiarity(at: pos)
+                Text("Train \(player.fullName) at \(pos.rawValue)?\nCurrent: \(current)% / Ceiling: \(ceiling)%\nThis is a slow process that takes multiple seasons.")
             }
         }
     }
@@ -296,6 +301,33 @@ struct PositionVersatilityView: View {
                 .buttonStyle(.plain)
             }
 
+            // Training status badge
+            if let trainingPos = player.trainingPosition, trainingPos != player.position {
+                HStack(spacing: 6) {
+                    Image(systemName: "figure.run")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentGold)
+                    Text("Training at \(trainingPos.rawValue)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.accentGold)
+                    Spacer()
+                    Button {
+                        player.trainingPosition = nil
+                        try? modelContext.save()
+                    } label: {
+                        Text("Stop")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(Color.danger)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.danger.opacity(0.15), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(8)
+                .background(Color.accentGold.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            }
+
             Divider().overlay(Color.surfaceBorder)
 
             if viablePositions.isEmpty {
@@ -307,12 +339,16 @@ struct PositionVersatilityView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.textSecondary)
 
-                FlowLayout(spacing: 8) {
-                    ForEach(viablePositions, id: \.0) { pos, rating in
-                        Button {
-                            trainTargetPosition = pos
-                            showTrainAlert = true
-                        } label: {
+                ForEach(viablePositions, id: \.0) { pos, rating in
+                    let familiarity = player.familiarity(at: pos)
+                    let ceiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: pos)
+                    let isTraining = player.trainingPosition == pos
+
+                    Button {
+                        trainTargetPosition = pos
+                        showTrainAlert = true
+                    } label: {
+                        VStack(spacing: 6) {
                             HStack(spacing: 6) {
                                 Text(pos.rawValue)
                                     .font(.caption.weight(.bold))
@@ -320,29 +356,112 @@ struct PositionVersatilityView: View {
                                 Text(rating.label)
                                     .font(.caption2)
                                     .foregroundStyle(rating.color)
+                                if isTraining {
+                                    Text("TRAINING")
+                                        .font(.system(size: 8, weight: .black))
+                                        .foregroundStyle(Color.accentGold)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
+                                        .background(Color.accentGold.opacity(0.2), in: Capsule())
+                                }
+                                Spacer()
+                                Text("\(familiarity)%")
+                                    .font(.caption.weight(.bold).monospacedDigit())
+                                    .foregroundStyle(rating.color)
                                 Image(systemName: "arrow.clockwise.circle")
                                     .font(.caption2)
                                     .foregroundStyle(Color.accentBlue)
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(rating.color.opacity(0.12))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .strokeBorder(rating.color.opacity(0.4), lineWidth: 1)
-                                    )
-                            )
+
+                            // Familiarity bar with ceiling indicator
+                            GeometryReader { geo in
+                                let barWidth = geo.size.width
+                                ZStack(alignment: .leading) {
+                                    // Background track
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(Color.backgroundTertiary)
+                                        .frame(height: 6)
+                                    // Current familiarity fill
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(rating.color)
+                                        .frame(width: barWidth * CGFloat(familiarity) / 100.0, height: 6)
+                                    // Ceiling marker (dotted line)
+                                    Rectangle()
+                                        .fill(Color.textTertiary)
+                                        .frame(width: 1.5, height: 10)
+                                        .offset(x: barWidth * CGFloat(ceiling) / 100.0 - 0.75)
+                                }
+                            }
+                            .frame(height: 10)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("\(pos.rawValue), \(rating.label). Tap to train at this position.")
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(isTraining ? Color.accentGold.opacity(0.08) : rating.color.opacity(0.08))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .strokeBorder(
+                                            isTraining ? Color.accentGold.opacity(0.4) : rating.color.opacity(0.3),
+                                            lineWidth: 1
+                                        )
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(pos.rawValue), \(rating.label), \(familiarity)% familiarity. Tap to train.")
+                }
+            }
+
+            // Scheme familiarity section
+            Divider().overlay(Color.surfaceBorder)
+
+            Text("Scheme Familiarity")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.textSecondary)
+
+            let schemeFams = player.schemeFamiliarity.sorted { $0.value > $1.value }
+            if schemeFams.isEmpty {
+                Text("No scheme experience yet.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            } else {
+                ForEach(schemeFams, id: \.key) { scheme, familiarity in
+                    HStack(spacing: 8) {
+                        Text(scheme)
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                            .frame(width: 80, alignment: .leading)
+
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Color.backgroundTertiary)
+                                    .frame(height: 6)
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(schemeFamiliarityColor(familiarity))
+                                    .frame(width: geo.size.width * CGFloat(familiarity) / 100.0, height: 6)
+                            }
+                        }
+                        .frame(height: 6)
+
+                        Text("\(familiarity)%")
+                            .font(.caption2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(schemeFamiliarityColor(familiarity))
+                            .frame(width: 36, alignment: .trailing)
                     }
                 }
             }
         }
         .padding(16)
         .cardBackground()
+    }
+
+    private func schemeFamiliarityColor(_ value: Int) -> Color {
+        if value >= 80 { return .accentGold }
+        if value >= 60 { return .success }
+        if value >= 40 { return .accentBlue }
+        return .danger
     }
 
     // MARK: - Matrix Card

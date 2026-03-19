@@ -292,14 +292,30 @@ private struct CompactTeamRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Team logo placeholder
-            TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 36)
+            // Team logo placeholder (with lock overlay if locked)
+            ZStack(alignment: .bottomTrailing) {
+                TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 36)
 
-            // Team name + city
+                if preview.isLocked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(3)
+                        .background(Circle().fill(Color.textTertiary))
+                        .offset(x: 4, y: 4)
+                }
+            }
+
+            // Team name + city + record
             VStack(alignment: .leading, spacing: 2) {
-                Text(team.name)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Color.textPrimary)
+                HStack(spacing: 6) {
+                    Text(team.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text(preview.lastSeasonRecord)
+                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
                 Text(team.city)
                     .font(.system(size: 11))
                     .foregroundStyle(Color.textSecondary)
@@ -367,7 +383,7 @@ private struct CompactTeamRow: View {
                 )
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(team.city) \(team.name), \(preview.situation), difficulty \(preview.difficulty) of 5")
+        .accessibilityLabel("\(team.city) \(team.name), \(preview.lastSeasonRecord), \(preview.situation), difficulty \(preview.difficulty) of 5\(preview.isLocked ? ", locked" : "")")
     }
 }
 
@@ -711,6 +727,10 @@ private struct TeamDetailSheet: View {
             Text("\(team.conference.rawValue) \(team.division.rawValue)")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(Color.textSecondary)
+
+            Text("Last Season: \(preview.lastSeasonRecord)")
+                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                .foregroundStyle(Color.textTertiary)
         }
         .padding(.top, isLandscape ? 12 : 24)
     }
@@ -810,6 +830,92 @@ private struct TeamDetailSheet: View {
         .cardBackground()
     }
 
+    // MARK: - Starting QB Card
+
+    private var startingQBCard: some View {
+        VStack(spacing: 8) {
+            sectionLabel("Starting Quarterback")
+
+            HStack(spacing: 12) {
+                Image(systemName: "figure.american.football")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Color.accentGold)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(preview.startingQBName)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text("QB")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.textSecondary)
+                }
+
+                Spacer()
+
+                VStack(spacing: 2) {
+                    Text("\(preview.startingQBOverall)")
+                        .font(.system(size: 22, weight: .black))
+                        .foregroundStyle(Color.forRating(preview.startingQBOverall))
+                    Text("OVR")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .cardBackground()
+    }
+
+    // MARK: - Division Rivals Card
+
+    private var divisionRivals: [NFLTeamDefinition] {
+        NFLTeamData.allTeams.filter {
+            $0.conference == team.conference
+            && $0.division == team.division
+            && $0.abbreviation != team.abbreviation
+        }
+    }
+
+    private var divisionRivalsCard: some View {
+        VStack(spacing: 8) {
+            sectionLabel("Division Rivals")
+
+            VStack(spacing: 6) {
+                ForEach(divisionRivals, id: \.abbreviation) { rival in
+                    let rivalPreview = rival.preview
+                    HStack(spacing: 10) {
+                        TeamLogoPlaceholder(abbreviation: rival.abbreviation, size: 28)
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("\(rival.city) \(rival.name)")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Color.textPrimary)
+                            Text(rivalPreview.lastSeasonRecord)
+                                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                                .foregroundStyle(Color.textTertiary)
+                        }
+
+                        Spacer()
+
+                        Text(rivalPreview.situation.uppercased())
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Color.textSecondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule()
+                                    .fill(Color.surfaceBorder)
+                            )
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .cardBackground()
+    }
+
     private var coachingBudgetCard: some View {
         VStack(spacing: 8) {
             sectionLabel("Coaching Budget")
@@ -831,16 +937,46 @@ private struct TeamDetailSheet: View {
         .cardBackground()
     }
 
+    // MARK: - Locked Team Banner
+
+    @ViewBuilder
+    private var lockedBanner: some View {
+        if preview.isLocked {
+            HStack(spacing: 8) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.warning)
+                Text("Complete one full season to unlock this team")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.warning.opacity(0.1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.warning.opacity(0.3), lineWidth: 1)
+                    )
+            )
+        }
+    }
+
     // MARK: - Portrait Layout
 
     private var portraitDetailContent: some View {
         VStack(spacing: 24) {
             detailHeader
+            lockedBanner
             difficultySituationRow
+            startingQBCard
             ownerExpectationsCard
             marketMediaCard
             statsRow
             coachingBudgetCard
+            divisionRivalsCard
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 32)
@@ -853,14 +989,17 @@ private struct TeamDetailSheet: View {
     private var landscapeDetailContent: some View {
         VStack(spacing: 16) {
             detailHeader
+            lockedBanner
             difficultySituationRow
 
             let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
             LazyVGrid(columns: columns, spacing: 12) {
+                startingQBCard
                 ownerExpectationsCard
                 marketMediaCard
                 coachingBudgetCard
                 statsRow
+                divisionRivalsCard
             }
         }
         .padding(.horizontal, 24)

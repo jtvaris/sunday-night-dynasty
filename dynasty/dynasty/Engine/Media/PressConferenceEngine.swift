@@ -216,9 +216,36 @@ enum PressConferenceEngine {
             }
         }
 
-        // Situational question
+        // Situational question — pick the most relevant one
         let totalGames = team.wins + team.losses
-        if totalGames >= 10 && team.wins >= 7 {
+
+        // Compute a simple streak estimate from recent record context.
+        // Positive = winning streak, negative = losing streak.
+        let streakEstimate: Int = {
+            guard let won = lastGameResult else { return 0 }
+            // Use win % as a proxy: teams winning > 75% likely on a streak
+            let winPct = totalGames > 0 ? Double(team.wins) / Double(totalGames) : 0.5
+            if won && winPct >= 0.7 { return max(3, team.wins - team.losses) }
+            if !won && winPct <= 0.3 { return min(-3, team.wins - team.losses) }
+            return won ? 1 : -1
+        }()
+
+        if week == 1 {
+            // Season opener
+            questions.append(generateSeasonOpenerQuestion(team: team))
+        } else if week == 18 {
+            // Season finale
+            questions.append(generateSeasonFinaleQuestion(team: team))
+        } else if week == 8 || week == 9 {
+            // Trade deadline window
+            questions.append(generateTradeDeadlineQuestion(team: team))
+        } else if streakEstimate >= 3 {
+            // Winning streak (3+)
+            questions.append(generateWinningStreakQuestion(team: team))
+        } else if streakEstimate <= -3 {
+            // Losing streak (3+)
+            questions.append(generateLosingStreakQuestion(team: team))
+        } else if totalGames >= 10 && team.wins >= 7 {
             questions.append(generatePlayoffPushQuestion(team: team))
         } else if totalGames >= 8 && team.losses > team.wins {
             questions.append(generateStruggleQuestion(team: team))
@@ -958,6 +985,287 @@ enum PressConferenceEngine {
                         mediaPerception: -5,
                         legacyPoints: 0,
                         fanExcitement: 0
+                    )
+                ),
+            ]
+        )
+    }
+
+    // MARK: - Situational Question Generators
+
+    private static func generateWinningStreakQuestion(team: Team) -> PressQuestion {
+        let r = randomReporter()
+
+        return PressQuestion(
+            reporterName: r.name,
+            outlet: r.outlet,
+            question: "The \(team.name) are on a hot streak. What's driving this run?",
+            responses: [
+                PressResponse(
+                    text: "We built this roster to win. It's no surprise -- this is what we expected.",
+                    tone: .confident,
+                    mediaReaction: "\(r.outlet): \"\(team.name) boss expected nothing less than dominance.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 5,
+                        mediaPerception: 10,
+                        legacyPoints: 3,
+                        fanExcitement: 10
+                    )
+                ),
+                PressResponse(
+                    text: "The players deserve all the credit. They've been grinding every single day.",
+                    tone: .humble,
+                    mediaReaction: "\(r.outlet): \"Selfless leadership fueling the \(team.name) surge.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 15,
+                        mediaPerception: 5,
+                        legacyPoints: 2,
+                        fanExcitement: 5
+                    )
+                ),
+                PressResponse(
+                    text: "We're not satisfied yet. Winning streaks don't mean anything in January.",
+                    tone: .aggressive,
+                    mediaReaction: "\(r.outlet): \"Even on a roll, \(team.name) front office wants more.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: -5,
+                        mediaPerception: 10,
+                        legacyPoints: 2,
+                        fanExcitement: 0
+                    )
+                ),
+            ]
+        )
+    }
+
+    private static func generateLosingStreakQuestion(team: Team) -> PressQuestion {
+        let r = randomReporter()
+
+        return PressQuestion(
+            reporterName: r.name,
+            outlet: r.outlet,
+            question: "The losses keep piling up. Is there a plan to turn things around?",
+            responses: [
+                PressResponse(
+                    text: "Absolutely. We know what the issues are and we're addressing them.",
+                    tone: .confident,
+                    mediaReaction: "\(r.outlet): \"\(team.name) insists the turnaround is coming.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 10,
+                        mediaPerception: 5,
+                        legacyPoints: 2,
+                        fanExcitement: 5
+                    )
+                ),
+                PressResponse(
+                    text: "We need to look in the mirror. Everyone. Starting with me.",
+                    tone: .humble,
+                    mediaReaction: "\(r.outlet): \"\(team.name) leader takes accountability amid losing streak.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 10,
+                        mediaPerception: 10,
+                        legacyPoints: 3,
+                        fanExcitement: 0
+                    )
+                ),
+                PressResponse(
+                    text: "Changes are coming. I can promise you that.",
+                    tone: .aggressive,
+                    mediaReaction: "\(r.outlet): \"SHAKEUP? \(team.name) boss hints at major changes.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: -15,
+                        mediaPerception: 20,
+                        legacyPoints: 2,
+                        fanExcitement: 5
+                    )
+                ),
+                PressResponse(
+                    text: "Rome wasn't built in a day. We're building something here.",
+                    tone: .diplomatic,
+                    mediaReaction: "\(r.outlet): \"Patience is the message in \(team.city) despite struggles.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: -5,
+                        playerMorale: 5,
+                        mediaPerception: 0,
+                        legacyPoints: 1,
+                        fanExcitement: -10
+                    )
+                ),
+            ]
+        )
+    }
+
+    private static func generateTradeDeadlineQuestion(team: Team) -> PressQuestion {
+        let r = randomReporter()
+
+        return PressQuestion(
+            reporterName: r.name,
+            outlet: r.outlet,
+            question: "The trade deadline is approaching. Are the \(team.name) buyers or sellers?",
+            responses: [
+                PressResponse(
+                    text: "We're all-in. If there's a move that makes us better, we're making it.",
+                    tone: .confident,
+                    mediaReaction: "\(r.outlet): \"\(team.name) going for it at the trade deadline!\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 10,
+                        mediaPerception: 15,
+                        legacyPoints: 3,
+                        fanExcitement: 15
+                    )
+                ),
+                PressResponse(
+                    text: "We're evaluating. We won't mortgage the future for a rental.",
+                    tone: .diplomatic,
+                    mediaReaction: "\(r.outlet): \"\(team.name) taking measured approach to deadline.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 0,
+                        mediaPerception: 5,
+                        legacyPoints: 1,
+                        fanExcitement: 0
+                    )
+                ),
+                PressResponse(
+                    text: "We're listening to offers on everyone. Nobody is untouchable.",
+                    tone: .aggressive,
+                    mediaReaction: "\(r.outlet): \"FIRE SALE? \(team.name) open for business at the deadline.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 0,
+                        playerMorale: -15,
+                        mediaPerception: 20,
+                        legacyPoints: 2,
+                        fanExcitement: -5
+                    )
+                ),
+                PressResponse(
+                    text: "I'm not going to tip my hand. You'll see what we do on deadline day.",
+                    tone: .funny,
+                    mediaReaction: "\(r.outlet): \"\(team.name) keeping trade plans close to the vest.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 0,
+                        playerMorale: 5,
+                        mediaPerception: 5,
+                        legacyPoints: 1,
+                        fanExcitement: 5
+                    )
+                ),
+            ]
+        )
+    }
+
+    private static func generateSeasonOpenerQuestion(team: Team) -> PressQuestion {
+        let r = randomReporter()
+
+        return PressQuestion(
+            reporterName: r.name,
+            outlet: r.outlet,
+            question: "Opening day is here. What are the expectations for the \(team.name) this season?",
+            responses: [
+                PressResponse(
+                    text: "We're here to compete for a championship. Anything less is a failure.",
+                    tone: .confident,
+                    mediaReaction: "\(r.outlet): \"Championship or bust for the \(team.name)!\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 5,
+                        mediaPerception: 10,
+                        legacyPoints: 5,
+                        fanExcitement: 15
+                    )
+                ),
+                PressResponse(
+                    text: "We want to improve every week and see where the season takes us.",
+                    tone: .humble,
+                    mediaReaction: "\(r.outlet): \"\(team.name) taking it one step at a time.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 5,
+                        mediaPerception: 5,
+                        legacyPoints: 1,
+                        fanExcitement: 0
+                    )
+                ),
+                PressResponse(
+                    text: "The offseason work is done. Now it's time to let the football do the talking.",
+                    tone: .diplomatic,
+                    mediaReaction: "\(r.outlet): \"Confidence in \(team.city) as the new season kicks off.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 10,
+                        mediaPerception: 5,
+                        legacyPoints: 2,
+                        fanExcitement: 5
+                    )
+                ),
+            ]
+        )
+    }
+
+    private static func generateSeasonFinaleQuestion(team: Team) -> PressQuestion {
+        let r = randomReporter()
+        let madePlayoffs = (team.wins + team.losses) > 0 && team.wins >= 9
+
+        return PressQuestion(
+            reporterName: r.name,
+            outlet: r.outlet,
+            question: madePlayoffs
+                ? "Final week of the regular season. How does this team feel heading into the playoffs?"
+                : "The regular season is wrapping up. How do you evaluate this year?",
+            responses: [
+                PressResponse(
+                    text: madePlayoffs
+                        ? "We're battle-tested. Bring on the playoffs."
+                        : "There were growing pains, but the foundation is stronger now.",
+                    tone: .confident,
+                    mediaReaction: madePlayoffs
+                        ? "\(r.outlet): \"\(team.name) ready for the postseason stage.\""
+                        : "\(r.outlet): \"\(team.name) boss sees progress despite the record.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: madePlayoffs ? 5 : 0,
+                        playerMorale: 10,
+                        mediaPerception: 5,
+                        legacyPoints: madePlayoffs ? 3 : 1,
+                        fanExcitement: madePlayoffs ? 10 : 0
+                    )
+                ),
+                PressResponse(
+                    text: madePlayoffs
+                        ? "One game at a time. That mentality got us here."
+                        : "I owe the fans better. We'll work harder this offseason.",
+                    tone: .humble,
+                    mediaReaction: madePlayoffs
+                        ? "\(r.outlet): \"Focused mindset from \(team.city) heading into January.\""
+                        : "\(r.outlet): \"\(team.name) leader vows to do better next year.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: madePlayoffs ? 5 : 5,
+                        mediaPerception: 5,
+                        legacyPoints: 2,
+                        fanExcitement: madePlayoffs ? 5 : -5
+                    )
+                ),
+                PressResponse(
+                    text: madePlayoffs
+                        ? "The regular season was just the appetizer. The real show starts now."
+                        : "I've already started making calls. Big changes are coming.",
+                    tone: .aggressive,
+                    mediaReaction: madePlayoffs
+                        ? "\(r.outlet): \"\(team.name) treating playoffs as their true stage.\""
+                        : "\(r.outlet): \"Offseason overhaul incoming in \(team.city)?\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: madePlayoffs ? 5 : 0,
+                        playerMorale: madePlayoffs ? 5 : -10,
+                        mediaPerception: 15,
+                        legacyPoints: madePlayoffs ? 3 : 2,
+                        fanExcitement: madePlayoffs ? 15 : 5
                     )
                 ),
             ]

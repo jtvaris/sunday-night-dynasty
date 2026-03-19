@@ -2,19 +2,38 @@ import SwiftUI
 
 struct RosterView: View {
     let players: [Player]
+    /// The team's current salary cap in thousands. Falls back to 255_000 if not provided.
+    var teamSalaryCap: Int = 255_000
+
+    // MARK: - Environment
+
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    /// True when in landscape on iPad (regular width, compact height) or wide layout.
+    private var isLandscape: Bool {
+        verticalSizeClass == .compact || (horizontalSizeClass == .regular && verticalSizeClass == .compact)
+    }
+
+    /// True when on iPad with regular width (both orientations).
+    private var isWideLayout: Bool {
+        horizontalSizeClass == .regular
+    }
 
     // MARK: - State
 
     @State private var selectedSide: RosterFilter = .all
     @State private var sortOrder: RosterSort = .overall
     @State private var viewMode: RosterViewMode = .list
+    @State private var analysisMode: RosterAnalysisMode = .overview
 
     // MARK: - Position Groups (NFL-style names)
 
     private static let offenseGroups: [PositionGroup] = [
         PositionGroup(name: "QB Room", positions: [.QB]),
         PositionGroup(name: "Backfield", positions: [.RB, .FB]),
-        PositionGroup(name: "Receivers", positions: [.WR, .TE]),
+        PositionGroup(name: "Wide Receivers", positions: [.WR]),
+        PositionGroup(name: "Tight Ends", positions: [.TE]),
         PositionGroup(name: "Offensive Line", positions: [.LT, .LG, .C, .RG, .RT]),
     ]
 
@@ -77,18 +96,51 @@ struct RosterView: View {
         }
     }
 
+    // MARK: - Depth Index Helper
+
+    /// Computes a depth index for a player within their position group,
+    /// based on overall rating rank. 0 = starter, 1 = backup, etc.
+    private func depthIndex(for player: Player, in groupPlayers: [Player]) -> Int {
+        let sorted = groupPlayers
+            .filter { $0.position == player.position }
+            .sorted { $0.overall > $1.overall }
+        return sorted.firstIndex(where: { $0.id == player.id }) ?? sorted.count
+    }
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
+            // Subtle locker room background image (#94)
+            GeometryReader { geo in
+                Image("BgLockerRoom2")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(0.12)
+            }
+            .ignoresSafeArea()
+            .overlay(
+                LinearGradient(
+                    colors: [Color.backgroundPrimary.opacity(0.6), Color.clear, Color.backgroundPrimary.opacity(0.8)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+
             VStack(spacing: 0) {
-                RosterSummaryBar(players: players)
+                RosterSummaryBar(players: players, teamSalaryCap: teamSalaryCap)
 
                 viewModePicker
                     .padding(.horizontal)
                     .padding(.vertical, 8)
 
                 if viewMode == .list {
+                    analysisModePicker
+                        .padding(.horizontal)
+                        .padding(.bottom, 6)
+
                     listContent
                 } else {
                     formationContent
@@ -118,6 +170,45 @@ struct RosterView: View {
         .pickerStyle(.segmented)
     }
 
+    // MARK: - Analysis Mode Picker (#96, #98)
+
+    private var analysisModePicker: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(RosterAnalysisMode.allCases) { mode in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            analysisMode = mode
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: mode.icon)
+                                .font(.system(size: 10))
+                            Text(mode.label)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .foregroundStyle(analysisMode == mode ? Color.backgroundPrimary : Color.textSecondary)
+                        .background(
+                            analysisMode == mode ? Color.accentGold : Color.backgroundTertiary,
+                            in: Capsule()
+                        )
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(
+                                    analysisMode == mode ? Color.accentGold : Color.surfaceBorder,
+                                    lineWidth: 1
+                                )
+                        )
+                    }
+                    .accessibilityLabel("Analysis mode: \(mode.label)")
+                }
+            }
+        }
+    }
+
     // MARK: - List Content
 
     private var listContent: some View {
@@ -130,7 +221,11 @@ struct RosterView: View {
                     Section {
                         ForEach(groupPlayers) { player in
                             NavigationLink(destination: PlayerDetailView(player: player)) {
-                                PlayerRowView(player: player)
+                                PlayerRowView(
+                                    player: player,
+                                    depthIndex: depthIndex(for: player, in: groupPlayers),
+                                    analysisMode: analysisMode
+                                )
                             }
                             .listRowBackground(Color.backgroundSecondary)
                         }
@@ -151,12 +246,10 @@ struct RosterView: View {
 
     private var sortableHeader: some View {
         HStack(spacing: 0) {
-            sortButton("POS", sort: .position, width: 44)
+            sortButton("POS", sort: .position, width: isWideLayout ? 56 : 44)
             sortButton("NAME", sort: .name, width: nil)
             Spacer()
-            sortButton("AGE", sort: .age, width: 36)
-            sortButton("OVR", sort: .overall, width: 40)
-            sortButton("SAL", sort: .salary, width: 52)
+            analysisHeaderColumns
         }
         .font(.caption2)
         .fontWeight(.semibold)
@@ -164,6 +257,74 @@ struct RosterView: View {
         .padding(.horizontal, 4)
         .listRowBackground(Color.backgroundPrimary)
         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+    }
+
+    @ViewBuilder
+    private var analysisHeaderColumns: some View {
+        switch analysisMode {
+        case .overview:
+            Group {
+                sortButton("AGE", sort: .age, width: 28)
+                headerLabel("FRM", width: 16)
+                sortButton("OVR", sort: .overall, width: 36)
+                headerLabel("DEV", width: 14)
+                sortButton("SAL", sort: .salary, width: 48)
+                headerLabel("YRS", width: 26)
+                headerLabel("MRL", width: 14)
+                headerLabel("HP", width: 20)
+            }
+        case .contracts:
+            Group {
+                sortButton("SAL", sort: .salary, width: 48)
+                headerLabel("CAP", width: 48)
+                headerLabel("YRS", width: 30)
+                headerLabel("FA", width: 36)
+                sortButton("OVR", sort: .overall, width: 28)
+            }
+        case .development:
+            Group {
+                sortButton("AGE", sort: .age, width: 28)
+                sortButton("OVR", sort: .overall, width: 28)
+                headerLabel("POT", width: 36)
+                headerLabel("DEV", width: 14)
+                headerLabel("PHS", width: 44)
+                headerLabel("FRM", width: 16)
+                headerLabel("WE", width: 28)
+            }
+        case .physical:
+            Group {
+                headerLabel("SPD", width: 30)
+                headerLabel("STR", width: 30)
+                headerLabel("STA", width: 30)
+                headerLabel("DUR", width: 30)
+                headerLabel("HP", width: 20)
+                sortButton("OVR", sort: .overall, width: 28)
+            }
+        case .attributes:
+            Group {
+                headerLabel("SPD", width: 28)
+                headerLabel("STR", width: 28)
+                headerLabel("AGI", width: 28)
+                headerLabel("AWR", width: 28)
+                headerLabel("DEC", width: 28)
+                sortButton("OVR", sort: .overall, width: 28)
+            }
+        case .depth:
+            Group {
+                headerLabel("RNK", width: 24)
+                headerLabel("ROLE", width: 48)
+                sortButton("OVR", sort: .overall, width: 28)
+                sortButton("AGE", sort: .age, width: 24)
+                headerLabel("HP", width: 20)
+                headerLabel("FRM", width: 16)
+            }
+        }
+    }
+
+    private func headerLabel(_ title: String, width: CGFloat) -> some View {
+        Text(title)
+            .frame(width: width, alignment: .center)
+            .foregroundStyle(Color.textTertiary)
     }
 
     private func sortButton(_ title: String, sort: RosterSort, width: CGFloat?) -> some View {
@@ -188,31 +349,61 @@ struct RosterView: View {
 
     private var formationContent: some View {
         ScrollView {
-            switch selectedSide {
-            case .offense, .all:
-                FormationView(
-                    title: "Offense",
-                    players: players.filter { $0.position.side == .offense },
-                    layout: .offense
-                )
-            default:
-                EmptyView()
-            }
+            let useColumns = isLandscape && selectedSide == .all
+            if useColumns {
+                // Side-by-side layout in landscape when showing all
+                HStack(alignment: .top, spacing: 12) {
+                    VStack {
+                        FormationView(
+                            title: "Offense",
+                            players: players.filter { $0.position.side == .offense },
+                            layout: .offense
+                        )
+                    }
+                    .frame(maxWidth: .infinity)
 
-            if selectedSide == .defense || selectedSide == .all {
-                FormationView(
-                    title: "Defense",
-                    players: players.filter { $0.position.side == .defense },
-                    layout: .defense
-                )
-            }
+                    VStack {
+                        FormationView(
+                            title: "Defense",
+                            players: players.filter { $0.position.side == .defense },
+                            layout: .defense
+                        )
+                        FormationView(
+                            title: "Special Teams",
+                            players: players.filter { $0.position.side == .specialTeams },
+                            layout: .specialTeams
+                        )
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .padding(.horizontal)
+            } else {
+                switch selectedSide {
+                case .offense, .all:
+                    FormationView(
+                        title: "Offense",
+                        players: players.filter { $0.position.side == .offense },
+                        layout: .offense
+                    )
+                default:
+                    EmptyView()
+                }
 
-            if selectedSide == .specialTeams || selectedSide == .all {
-                FormationView(
-                    title: "Special Teams",
-                    players: players.filter { $0.position.side == .specialTeams },
-                    layout: .specialTeams
-                )
+                if selectedSide == .defense || selectedSide == .all {
+                    FormationView(
+                        title: "Defense",
+                        players: players.filter { $0.position.side == .defense },
+                        layout: .defense
+                    )
+                }
+
+                if selectedSide == .specialTeams || selectedSide == .all {
+                    FormationView(
+                        title: "Special Teams",
+                        players: players.filter { $0.position.side == .specialTeams },
+                        layout: .specialTeams
+                    )
+                }
             }
         }
     }
@@ -226,7 +417,7 @@ struct RosterView: View {
             }
         }
         .pickerStyle(.segmented)
-        .frame(minWidth: 320, maxWidth: 400)
+        .frame(minWidth: 320, maxWidth: isWideLayout ? 500 : 400)
     }
 
     private var sortMenu: some View {
@@ -269,6 +460,11 @@ struct PositionGroupHeader: View {
         return players.reduce(0) { $0 + $1.overall } / players.count
     }
 
+    private var averageOVRDecimal: Double {
+        guard !players.isEmpty else { return 0 }
+        return Double(players.reduce(0) { $0 + $1.overall }) / Double(players.count)
+    }
+
     private var injuredCount: Int {
         players.filter { $0.isInjured }.count
     }
@@ -282,16 +478,36 @@ struct PositionGroupHeader: View {
 
     private var letterGrade: (letter: String, color: Color) {
         switch averageOVR {
-        case 85...:   return ("A", .success)
-        case 75..<85: return ("B", .accentGold)
-        case 65..<75: return ("C", .warning)
-        case 55..<65: return ("D", .danger)
+        case 90...:   return ("A+", .success)
+        case 85..<90: return ("A", .success)
+        case 80..<85: return ("A-", .success)
+        case 77..<80: return ("B+", .accentGold)
+        case 75..<77: return ("B", .accentGold)
+        case 72..<75: return ("B-", .accentGold)
+        case 69..<72: return ("C+", .warning)
+        case 65..<69: return ("C", .warning)
+        case 60..<65: return ("C-", .warning)
+        case 55..<60: return ("D", .danger)
         default:      return ("F", .danger)
         }
     }
 
+    /// Total cap allocation for this position group in thousands.
+    private var totalCapAllocation: Int {
+        players.reduce(0) { $0 + $1.annualSalary }
+    }
+
+    private var formattedCap: String {
+        let millions = Double(totalCapAllocation) / 1000.0
+        if millions >= 1.0 {
+            return String(format: "$%.1fM", millions)
+        } else {
+            return "$\(totalCapAllocation)K"
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             // Group name
             Text(group.name)
                 .font(.subheadline)
@@ -300,31 +516,41 @@ struct PositionGroupHeader: View {
 
             Spacer()
 
-            // Letter grade badge
-            Text(letterGrade.letter)
-                .font(.caption)
-                .fontWeight(.heavy)
-                .foregroundStyle(letterGrade.color)
-                .frame(width: 20, height: 20)
-                .background(letterGrade.color.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-
-            // Average OVR
-            HStack(spacing: 3) {
-                Text("AVG")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textTertiary)
-                Text("\(averageOVR)")
+            // Letter grade badge with average (e.g. "A- (82.3)")
+            HStack(spacing: 4) {
+                Text(letterGrade.letter)
                     .font(.caption)
-                    .fontWeight(.bold)
+                    .fontWeight(.heavy)
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .frame(minWidth: 22, maxWidth: 28, minHeight: 22, maxHeight: 22)
+                    .background(letterGrade.color, in: RoundedRectangle(cornerRadius: 5))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .strokeBorder(letterGrade.color.opacity(0.6), lineWidth: 1)
+                    )
+
+                Text(String(format: "%.1f", averageOVRDecimal))
+                    .font(.caption2)
+                    .fontWeight(.semibold)
                     .monospacedDigit()
                     .foregroundStyle(Color.forRating(averageOVR))
             }
 
+            // Cap allocation
+            Text(formattedCap)
+                .font(.caption2)
+                .fontWeight(.semibold)
+                .monospacedDigit()
+                .foregroundStyle(Color.textSecondary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+
             // Depth indicator
-            HStack(spacing: 4) {
+            HStack(spacing: 3) {
                 Circle()
                     .fill(depthStatus.color)
-                    .frame(width: 8, height: 8)
+                    .frame(width: 7, height: 7)
                 Text(depthStatus.label)
                     .font(.caption2)
                     .foregroundStyle(depthStatus.color)

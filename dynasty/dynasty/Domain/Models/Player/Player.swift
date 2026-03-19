@@ -24,6 +24,21 @@ final class Player {
     var fatigue: Int
     var isInjured: Bool
     var injuryWeeksRemaining: Int
+    var injuryType: InjuryType?
+    var injuryWeeksOriginal: Int
+
+    /// Position familiarity: how well this player knows each position (0-100).
+    /// Primary position starts at 100. Alternate positions grow through training.
+    /// Key: Position.rawValue, Value: 0-100 proficiency
+    var positionFamiliarity: [String: Int] = [:]
+
+    /// Scheme familiarity: how well this player knows each scheme (0-100).
+    /// Grows through practice and games under a coordinator running that scheme.
+    /// Key: scheme rawValue (e.g., "WestCoast"), Value: 0-100
+    var schemeFamiliarity: [String: Int] = [:]
+
+    /// The alternate position currently being trained (if any).
+    var trainingPosition: Position?
 
     /// Optional relationship to a Team via its ID.
     var teamID: UUID?
@@ -31,6 +46,9 @@ final class Player {
     var contractYearsRemaining: Int
     /// Annual salary in thousands (e.g., 15000 = $15M).
     var annualSalary: Int
+
+    /// Whether this player has been franchise-tagged for the current season.
+    var isFranchiseTagged: Bool
 
     // MARK: - Computed Properties
 
@@ -43,6 +61,17 @@ final class Player {
         let physicalAvg = physical.average
         let mentalAvg = mental.average
         return Int((physicalAvg * 0.6 + mentalAvg * 0.4).rounded())
+    }
+
+    /// Get familiarity for a specific position (defaults to 0, primary is always 100).
+    func familiarity(at position: Position) -> Int {
+        if position == self.position { return 100 }
+        return positionFamiliarity[position.rawValue] ?? 0
+    }
+
+    /// Get familiarity for a specific scheme (defaults to 0).
+    func schemeFam(for scheme: String) -> Int {
+        return schemeFamiliarity[scheme] ?? 0
     }
 
     // MARK: - Init
@@ -63,9 +92,12 @@ final class Player {
         fatigue: Int = 0,
         isInjured: Bool = false,
         injuryWeeksRemaining: Int = 0,
+        injuryType: InjuryType? = nil,
+        injuryWeeksOriginal: Int = 0,
         teamID: UUID? = nil,
         contractYearsRemaining: Int = 4,
-        annualSalary: Int = 750
+        annualSalary: Int = 750,
+        isFranchiseTagged: Bool = false
     ) {
         self.id = id
         self.firstName = firstName
@@ -82,8 +114,11 @@ final class Player {
         self.fatigue = fatigue
         self.isInjured = isInjured
         self.injuryWeeksRemaining = injuryWeeksRemaining
+        self.injuryType = injuryType
+        self.injuryWeeksOriginal = injuryWeeksOriginal
         self.teamID = teamID
         self.contractYearsRemaining = contractYearsRemaining
         self.annualSalary = annualSalary
+        self.isFranchiseTagged = isFranchiseTagged
     }
 }

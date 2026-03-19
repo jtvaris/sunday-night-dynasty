@@ -53,12 +53,28 @@ enum GameSimulator {
     /// management, momentum shifts, fatigue accumulation, morale/personality modifiers,
     /// and optional overtime. After the game concludes it compiles a ``BoxScore``,
     /// per-player ``PlayerGameStats``, and selects an MVP.
-    static func simulate(homeTeam: Team, awayTeam: Team) -> GameResult {
+    static func simulate(
+        homeTeam: Team,
+        awayTeam: Team,
+        homeCoaches: [Coach] = [],
+        awayCoaches: [Coach] = []
+    ) -> GameResult {
         // -----------------------------------------------------------------
         // 1. Setup
         // -----------------------------------------------------------------
         let homePlayers = homeTeam.players
         let awayPlayers = awayTeam.players
+
+        // Extract team schemes from coaching staff
+        let homeOC = homeCoaches.first { $0.role == .offensiveCoordinator }
+        let homeDC = homeCoaches.first { $0.role == .defensiveCoordinator }
+        let homeOffScheme = homeOC?.offensiveScheme
+        let homeDefScheme = homeDC?.defensiveScheme
+
+        let awayOC = awayCoaches.first { $0.role == .offensiveCoordinator }
+        let awayDC = awayCoaches.first { $0.role == .defensiveCoordinator }
+        let awayOffScheme = awayOC?.offensiveScheme
+        let awayDefScheme = awayDC?.defensiveScheme
 
         var momentum: Double = homeFieldMomentum // slight home advantage
         var quarter = 1
@@ -113,7 +129,9 @@ enum GameSimulator {
                 quarter: quarter,
                 timeRemaining: timeRemaining,
                 momentum: homeHasPossession ? momentum : -momentum,
-                teamID: offenseTeamID
+                teamID: offenseTeamID,
+                offensiveScheme: homeHasPossession ? homeOffScheme : awayOffScheme,
+                defensiveScheme: homeHasPossession ? awayDefScheme : homeDefScheme
             )
 
             let drive = driveResult.drive
@@ -247,7 +265,11 @@ enum GameSimulator {
                 allDrives: &allDrives,
                 allHighlights: &allHighlights,
                 homeTimeOfPossession: &homeTimeOfPossession,
-                awayTimeOfPossession: &awayTimeOfPossession
+                awayTimeOfPossession: &awayTimeOfPossession,
+                homeOffScheme: homeOffScheme,
+                homeDefScheme: homeDefScheme,
+                awayOffScheme: awayOffScheme,
+                awayDefScheme: awayDefScheme
             )
             homeScore += otResult.homeOTPoints
             awayScore += otResult.awayOTPoints
@@ -315,7 +337,11 @@ enum GameSimulator {
         allDrives: inout [DriveResult],
         allHighlights: inout [PlayResult],
         homeTimeOfPossession: inout Int,
-        awayTimeOfPossession: inout Int
+        awayTimeOfPossession: inout Int,
+        homeOffScheme: OffensiveScheme? = nil,
+        homeDefScheme: DefensiveScheme? = nil,
+        awayOffScheme: OffensiveScheme? = nil,
+        awayDefScheme: DefensiveScheme? = nil
     ) -> OvertimeResult {
         var homeOTPoints = 0
         var awayOTPoints = 0
@@ -340,7 +366,9 @@ enum GameSimulator {
                 quarter: overtimeQuarter,
                 timeRemaining: otTimeRemaining,
                 momentum: homeHasPossession ? momentum : -momentum,
-                teamID: otOffenseTeamID
+                teamID: otOffenseTeamID,
+                offensiveScheme: homeHasPossession ? homeOffScheme : awayOffScheme,
+                defensiveScheme: homeHasPossession ? awayDefScheme : homeDefScheme
             )
 
             let drive = driveResult.drive

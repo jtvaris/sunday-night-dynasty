@@ -33,7 +33,9 @@ enum DriveSimulator {
         quarter: Int,
         timeRemaining: Int,
         momentum: Double,
-        teamID: UUID
+        teamID: UUID,
+        offensiveScheme: OffensiveScheme? = nil,
+        defensiveScheme: DefensiveScheme? = nil
     ) -> DriveSimulationResult {
         var plays: [PlayResult] = []
         var currentDown = 1
@@ -77,7 +79,9 @@ enum DriveSimulator {
                 quarter: currentQuarter,
                 timeRemaining: currentTime,
                 momentum: momentum,
-                playNumber: playNumber
+                playNumber: playNumber,
+                offensiveScheme: offensiveScheme,
+                defensiveScheme: defensiveScheme
             )
 
             // Store the play with current clock values

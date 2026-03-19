@@ -16,7 +16,7 @@ enum LeagueGenerator {
     ]
     // Total: 3+3+1+6+3+2+2+2+2+1+4+3+4+3+5+2+2+1+1+1+1+1 = 53
 
-    /// All 13 coaching roles, one per staff member.
+    /// All 15 coaching roles, one per staff member.
     private static let coachingStaffRoles: [CoachRole] = [
         .headCoach,
         .assistantHeadCoach,
@@ -30,7 +30,9 @@ enum LeagueGenerator {
         .dlCoach,
         .lbCoach,
         .dbCoach,
-        .strengthCoach
+        .strengthCoach,
+        .teamDoctor,
+        .physio
     ]
 
     // MARK: - Owner Names
@@ -120,8 +122,9 @@ enum LeagueGenerator {
                 owner: owner
             )
 
-            // Create 53-man roster with realistic salary tiers
-            let teamPlayers = generateRoster(teamID: team.id)
+            // Create 53-man roster with realistic salary tiers.
+            // Pass the team abbreviation so the starting QB matches the TeamPreview data.
+            let teamPlayers = generateRoster(teamID: team.id, teamAbbreviation: teamDef.abbreviation)
             team.players = teamPlayers
 
             // Bug fix #1: Set cap usage to sum of all player salaries
@@ -130,10 +133,18 @@ enum LeagueGenerator {
             allPlayers.append(contentsOf: teamPlayers)
 
             // Create coaching staff (12 coaches)
+            var teamCoaches: [Coach] = []
             for role in coachingStaffRoles {
                 let coach = generateCoach(role: role, teamID: team.id)
                 allCoaches.append(coach)
+                teamCoaches.append(coach)
             }
+
+            // Initialize scheme expertise for coaches
+            initializeSchemeExpertise(for: teamCoaches)
+
+            // Initialize position and scheme familiarity for players
+            initializePlayerFamiliarity(players: teamPlayers, coaches: teamCoaches)
 
             allTeams.append(team)
         }
@@ -246,16 +257,32 @@ enum LeagueGenerator {
     }
 
     /// Generates a full 53-man roster with realistic salary tiers.
+    /// The starting QB uses the name and target overall from the TeamPreview data
+    /// so the roster matches what the player saw on the Team Selection screen.
     /// Total salary targets ~$200-230M (80-90% of $255M cap).
-    private static func generateRoster(teamID: UUID) -> [Player] {
+    private static func generateRoster(teamID: UUID, teamAbbreviation: String) -> [Player] {
         var players: [Player] = []
         var depthChart: [Position: Int] = [:]
+
+        // Look up the team's preview to get the named starting QB
+        let preview = NFLTeamData.previews[teamAbbreviation]
 
         for (position, count) in rosterBlueprint {
             for _ in 0..<count {
                 let depthIndex = depthChart[position, default: 0]
-                let player = generatePlayer(position: position, teamID: teamID, depthIndex: depthIndex)
-                players.append(player)
+
+                // For the starting QB (depthIndex 0), use the named QB from TeamPreview
+                if position == .QB && depthIndex == 0, let preview = preview {
+                    let player = generateNamedQB(
+                        previewName: preview.startingQBName,
+                        targetOverall: preview.startingQBOverall,
+                        teamID: teamID
+                    )
+                    players.append(player)
+                } else {
+                    let player = generatePlayer(position: position, teamID: teamID, depthIndex: depthIndex)
+                    players.append(player)
+                }
                 depthChart[position] = depthIndex + 1
             }
         }
@@ -300,6 +327,91 @@ enum LeagueGenerator {
             contractYearsRemaining: contractYears,
             annualSalary: salary
         )
+    }
+
+    /// Creates the starting QB using the name and target overall from TeamPreview.
+    /// The preview name format is "F. Last" (e.g., "P. Mahomes") or "C.J. Stroud".
+    private static func generateNamedQB(previewName: String, targetOverall: Int, teamID: UUID) -> Player {
+        // Parse the preview name: split on last space to get firstName and lastName.
+        // Examples: "P. Mahomes" -> ("P.", "Mahomes"), "C.J. Stroud" -> ("C.J.", "Stroud")
+        let parts = previewName.split(separator: " ", maxSplits: .max, omittingEmptySubsequences: true)
+        let firstName: String
+        let lastName: String
+        if parts.count >= 2 {
+            firstName = parts.dropLast().joined(separator: " ")
+            lastName = String(parts.last!)
+        } else {
+            firstName = String(parts.first ?? "J.")
+            lastName = "Doe"
+        }
+
+        // Generate physical and mental attributes that produce the target overall.
+        // Overall = physical.average * 0.6 + mental.average * 0.4
+        // We generate attributes centered around the target with some variance.
+        let physical = attributesForTarget(target: targetOverall, count: 6, variance: 5)
+        let mental = attributesForTarget(target: targetOverall, count: 6, variance: 5)
+
+        let physicalAttrs = PhysicalAttributes(
+            speed: physical[0], acceleration: physical[1], strength: physical[2],
+            agility: physical[3], stamina: physical[4], durability: physical[5]
+        )
+        let mentalAttrs = MentalAttributes(
+            awareness: mental[0], decisionMaking: mental[1], clutch: mental[2],
+            workEthic: mental[3], coachability: mental[4], leadership: mental[5]
+        )
+
+        let posAttrs = randomPositionAttributes(for: .QB)
+        let personality = PlayerPersonality(
+            archetype: PersonalityArchetype.allCases.randomElement()!,
+            motivation: Motivation.allCases.randomElement()!
+        )
+
+        // Franchise QB age: typically 24-32 for a starter
+        let age: Int
+        if targetOverall >= 85 {
+            age = Int.random(in: 25...32)  // Elite QBs are in their prime
+        } else if targetOverall >= 75 {
+            age = Int.random(in: 24...30)
+        } else {
+            age = Int.random(in: 22...28)  // Young or developing
+        }
+        let yearsPro = max(1, age - Int.random(in: 21...23))
+        let salary = realisticSalary(for: .QB, yearsPro: yearsPro, depthIndex: 0)
+        let contractYears = realisticContractYears(yearsPro: yearsPro, age: age)
+
+        return Player(
+            firstName: firstName,
+            lastName: lastName,
+            position: .QB,
+            age: age,
+            yearsPro: yearsPro,
+            physical: physicalAttrs,
+            mental: mentalAttrs,
+            positionAttributes: posAttrs,
+            personality: personality,
+            teamID: teamID,
+            contractYearsRemaining: contractYears,
+            annualSalary: salary
+        )
+    }
+
+    /// Generates an array of attribute values that average to approximately the target.
+    /// Each value is clamped to 40-99 and has slight random variance.
+    private static func attributesForTarget(target: Int, count: Int, variance: Int) -> [Int] {
+        var values = (0..<count).map { _ in
+            let v = target + Int.random(in: -variance...variance)
+            return min(99, max(40, v))
+        }
+        // Adjust to hit the target average more precisely
+        let currentAvg = values.reduce(0, +) / count
+        let diff = target - currentAvg
+        if diff != 0 {
+            // Spread the difference across attributes
+            for i in 0..<min(abs(diff), count) {
+                values[i] = min(99, max(40, values[i] + (diff > 0 ? 1 : -1)))
+            }
+        }
+        return values
     }
 
     private static func generateCoach(role: CoachRole, teamID: UUID) -> Coach {
@@ -456,6 +568,95 @@ enum LeagueGenerator {
         } else {
             // Veteran stars — expiring contracts create drama
             return Int.random(in: 1...2)
+        }
+    }
+
+    // MARK: - Player Familiarity Initialization
+
+    /// Sets initial position and scheme familiarity for generated players.
+    private static func initializePlayerFamiliarity(players: [Player], coaches: [Coach]) {
+        let oc = coaches.first { $0.role == .offensiveCoordinator }
+        let dc = coaches.first { $0.role == .defensiveCoordinator }
+
+        for player in players {
+            // Primary position always 100
+            player.positionFamiliarity[player.position.rawValue] = 100
+
+            // Veterans get some secondary position familiarity
+            if player.yearsPro >= 3 {
+                let viablePositions = VersatilityEngine.viablePositions(for: player)
+                for (pos, rating) in viablePositions where rating >= .unconvincing && pos != player.position {
+                    let maxFam = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: pos)
+                    let startFam = Int.random(in: 10...min(maxFam, 20 + player.yearsPro * 5))
+                    player.positionFamiliarity[pos.rawValue] = startFam
+                }
+            }
+
+            // Scheme familiarity from team's current coordinator schemes
+            if let offScheme = oc?.offensiveScheme, player.position.side == .offense {
+                player.schemeFamiliarity[offScheme.rawValue] = Int.random(in: 55...85)
+            }
+            if let defScheme = dc?.defensiveScheme, player.position.side == .defense {
+                player.schemeFamiliarity[defScheme.rawValue] = Int.random(in: 55...85)
+            }
+        }
+    }
+
+    // MARK: - Coach Scheme Expertise Initialization
+
+    /// Sets initial scheme expertise for generated coaches.
+    private static func initializeSchemeExpertise(for coaches: [Coach]) {
+        for coach in coaches {
+            var expertise: [String: Int] = [:]
+
+            // Primary offensive scheme: high expertise
+            if let offScheme = coach.offensiveScheme {
+                expertise[offScheme.rawValue] = Int.random(in: 75...95)
+                for related in schemeFamilyMembers(offScheme) where related != offScheme {
+                    expertise[related.rawValue] = Int.random(in: 40...65)
+                }
+            }
+
+            // Primary defensive scheme: high expertise
+            if let defScheme = coach.defensiveScheme {
+                expertise[defScheme.rawValue] = Int.random(in: 75...95)
+                for related in schemeFamilyMembers(defScheme) where related != defScheme {
+                    expertise[related.rawValue] = Int.random(in: 40...65)
+                }
+            }
+
+            // Adaptability gives higher baseline for unknown schemes
+            let baselineBonus = Int(Double(coach.adaptability) / 99.0 * 15.0)
+            for scheme in OffensiveScheme.allCases where expertise[scheme.rawValue] == nil {
+                expertise[scheme.rawValue] = 15 + baselineBonus + Int.random(in: 0...10)
+            }
+            for scheme in DefensiveScheme.allCases where expertise[scheme.rawValue] == nil {
+                expertise[scheme.rawValue] = 15 + baselineBonus + Int.random(in: 0...10)
+            }
+
+            coach.schemeExpertise = expertise
+        }
+    }
+
+    /// Returns schemes in the same "family" as the given offensive scheme.
+    private static func schemeFamilyMembers(_ scheme: OffensiveScheme) -> [OffensiveScheme] {
+        switch scheme {
+        case .westCoast, .airRaid, .proPassing, .spread:
+            return [.westCoast, .airRaid, .proPassing, .spread]
+        case .powerRun, .shanahan, .option, .rpo:
+            return [.powerRun, .shanahan, .option, .rpo]
+        }
+    }
+
+    /// Returns schemes in the same "family" as the given defensive scheme.
+    private static func schemeFamilyMembers(_ scheme: DefensiveScheme) -> [DefensiveScheme] {
+        switch scheme {
+        case .pressMan, .base43:
+            return [.pressMan, .base43]
+        case .cover3, .tampa2, .base34:
+            return [.cover3, .tampa2, .base34]
+        case .multiple, .hybrid:
+            return [.multiple, .hybrid]
         }
     }
 

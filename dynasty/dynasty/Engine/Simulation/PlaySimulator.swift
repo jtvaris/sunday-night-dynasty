@@ -27,14 +27,17 @@ enum PlaySimulator {
         quarter: Int,
         timeRemaining: Int,
         momentum: Double,
-        playNumber: Int
+        playNumber: Int,
+        offensiveScheme: OffensiveScheme? = nil,
+        defensiveScheme: DefensiveScheme? = nil
     ) -> PlayResult {
         let playCall = decidePlayCall(
             down: down,
             distance: distance,
             yardLine: yardLine,
             quarter: quarter,
-            timeRemaining: timeRemaining
+            timeRemaining: timeRemaining,
+            offensiveScheme: offensiveScheme
         )
 
         switch playCall {
@@ -48,7 +51,9 @@ enum PlaySimulator {
                 quarter: quarter,
                 timeRemaining: timeRemaining,
                 momentum: momentum,
-                playNumber: playNumber
+                playNumber: playNumber,
+                offensiveScheme: offensiveScheme,
+                defensiveScheme: defensiveScheme
             )
         case .run:
             return simulateRunPlay(
@@ -60,7 +65,9 @@ enum PlaySimulator {
                 quarter: quarter,
                 timeRemaining: timeRemaining,
                 momentum: momentum,
-                playNumber: playNumber
+                playNumber: playNumber,
+                offensiveScheme: offensiveScheme,
+                defensiveScheme: defensiveScheme
             )
         case .punt:
             return simulatePunt(
@@ -112,7 +119,9 @@ enum PlaySimulator {
                 quarter: quarter,
                 timeRemaining: timeRemaining,
                 momentum: momentum,
-                playNumber: playNumber
+                playNumber: playNumber,
+                offensiveScheme: offensiveScheme,
+                defensiveScheme: defensiveScheme
             )
         }
     }
@@ -125,21 +134,37 @@ enum PlaySimulator {
         distance: Int,
         yardLine: Int,
         quarter: Int,
-        timeRemaining: Int
+        timeRemaining: Int,
+        offensiveScheme: OffensiveScheme? = nil
     ) -> PlayType {
         let yardsToEndzone = 100 - yardLine
         let isTwoMinuteDrill = quarter == 4 && timeRemaining <= 120
         let fieldGoalRange = yardsToEndzone <= 45
 
+        // Scheme pass bias: shifts pass probability up (pass-heavy) or down (run-heavy)
+        let schemePassBias: Double = {
+            guard let scheme = offensiveScheme else { return 0.0 }
+            switch scheme {
+            case .airRaid:    return 0.15   // Heavy pass
+            case .proPassing: return 0.10   // Pass-leaning
+            case .westCoast:  return 0.08   // Pass-leaning
+            case .spread:     return 0.05   // Slight pass
+            case .rpo:        return 0.0    // Balanced
+            case .shanahan:   return -0.10  // Run-leaning
+            case .option:     return -0.12  // Run-leaning
+            case .powerRun:   return -0.15  // Heavy run
+            }
+        }()
+
         // 4th down decisions
         if down == 4 {
             // Go for it on 4th & short near the goal line
             if distance <= 2 && yardsToEndzone <= 5 {
-                return coinFlip(0.5) ? .pass : .run
+                return coinFlip(0.5 + schemePassBias) ? .pass : .run
             }
             // Go for it in desperation (late game, trailing assumed from two-minute drill)
             if isTwoMinuteDrill && yardsToEndzone > 45 {
-                return coinFlip(0.7) ? .pass : .run
+                return coinFlip(0.7 + schemePassBias * 0.5) ? .pass : .run
             }
             // Field goal if in range
             if fieldGoalRange {
@@ -149,31 +174,31 @@ enum PlaySimulator {
             return .punt
         }
 
-        // Two-minute drill: heavily favor passing
+        // Two-minute drill: heavily favor passing (scheme has reduced impact)
         if isTwoMinuteDrill {
-            return coinFlip(0.85) ? .pass : .run
+            return coinFlip(clamp(0.85 + schemePassBias * 0.3, min: 0.70, max: 0.95)) ? .pass : .run
         }
 
-        // Normal play calling by down and distance
+        // Normal play calling by down and distance, with scheme bias applied
         switch down {
         case 1:
-            return coinFlip(0.55) ? .pass : .run
+            return coinFlip(clamp(0.55 + schemePassBias, min: 0.25, max: 0.80)) ? .pass : .run
         case 2:
             if distance >= 7 {
-                return coinFlip(0.65) ? .pass : .run
+                return coinFlip(clamp(0.65 + schemePassBias, min: 0.35, max: 0.85)) ? .pass : .run
             } else {
-                return coinFlip(0.50) ? .pass : .run
+                return coinFlip(clamp(0.50 + schemePassBias, min: 0.25, max: 0.75)) ? .pass : .run
             }
         case 3:
             if distance <= 3 {
-                return coinFlip(0.50) ? .pass : .run
+                return coinFlip(clamp(0.50 + schemePassBias, min: 0.25, max: 0.75)) ? .pass : .run
             } else if distance >= 7 {
-                return coinFlip(0.80) ? .pass : .run
+                return coinFlip(clamp(0.80 + schemePassBias * 0.5, min: 0.60, max: 0.95)) ? .pass : .run
             } else {
-                return coinFlip(0.65) ? .pass : .run
+                return coinFlip(clamp(0.65 + schemePassBias, min: 0.35, max: 0.85)) ? .pass : .run
             }
         default:
-            return coinFlip(0.55) ? .pass : .run
+            return coinFlip(clamp(0.55 + schemePassBias, min: 0.25, max: 0.80)) ? .pass : .run
         }
     }
 
@@ -188,11 +213,25 @@ enum PlaySimulator {
         quarter: Int,
         timeRemaining: Int,
         momentum: Double,
-        playNumber: Int
+        playNumber: Int,
+        offensiveScheme: OffensiveScheme? = nil,
+        defensiveScheme: DefensiveScheme? = nil
     ) -> PlayResult {
         let qb = findQB(in: offensePlayers)
         let qbAttrs = qbAttributes(for: qb)
         let momentumBoost = momentum * 0.05
+
+        // Scheme fit modifiers: offensive scheme boosts/penalizes yards, defensive scheme reduces them
+        let offSchemeFit = schemeFitModifier(
+            players: offensePlayers,
+            offensiveScheme: offensiveScheme,
+            defensiveScheme: nil
+        )
+        let defSchemeFit = schemeFitModifier(
+            players: defensePlayers,
+            offensiveScheme: nil,
+            defensiveScheme: defensiveScheme
+        )
 
         // --- Pass Protection Check ---
         let olPassBlock = averageAttribute(
@@ -326,6 +365,10 @@ enum PlaySimulator {
             let yacBonus = yardsAfterCatch(for: target, momentum: momentum)
             var totalYards = targetYards + yacBonus
 
+            // Apply scheme fit modifiers: offense fit boosts yards, defense fit reduces them
+            let schemeYardAdjustment = Double(totalYards) * (offSchemeFit - defSchemeFit)
+            totalYards += Int(schemeYardAdjustment.rounded())
+
             // Cap yards at endzone
             let yardsToEndzone = 100 - yardLine
             if totalYards >= yardsToEndzone {
@@ -402,11 +445,25 @@ enum PlaySimulator {
         quarter: Int,
         timeRemaining: Int,
         momentum: Double,
-        playNumber: Int
+        playNumber: Int,
+        offensiveScheme: OffensiveScheme? = nil,
+        defensiveScheme: DefensiveScheme? = nil
     ) -> PlayResult {
         let rb = findRB(in: offensePlayers)
         let rbAttrs = rbAttributes(for: rb)
         let momentumBoost = momentum * 0.05
+
+        // Scheme fit modifiers
+        let offSchemeFit = schemeFitModifier(
+            players: offensePlayers,
+            offensiveScheme: offensiveScheme,
+            defensiveScheme: nil
+        )
+        let defSchemeFit = schemeFitModifier(
+            players: defensePlayers,
+            offensiveScheme: nil,
+            defensiveScheme: defensiveScheme
+        )
 
         // --- Run Blocking vs Defensive Front ---
         let olRunBlock = averageAttribute(
@@ -429,6 +486,10 @@ enum PlaySimulator {
         let visionBonus = Double(rbAttrs.vision) / 100.0 * 2.0
         let elusivenessBonus = Double(rbAttrs.elusiveness) / 100.0 * 1.5
         var totalYards = Int((baseYards + visionBonus + elusivenessBonus + blockingAdvantage * 3.0 + momentumBoost * 2.0).rounded())
+
+        // Apply scheme fit modifiers: offense fit boosts yards, defense fit reduces them
+        let schemeYardAdjustment = Double(totalYards) * (offSchemeFit - defSchemeFit)
+        totalYards += Int(schemeYardAdjustment.rounded())
 
         // --- Breakaway Run Check ---
         let rbSpeed = Double(rb.physical.speed)
@@ -1074,6 +1135,46 @@ enum PlaySimulator {
             return "\(rb.fullName) breaks free for a \(yards)-yard run\(firstDownText)!"
         }
         return "\(rb.fullName) rushes for \(yards) yards\(firstDownText)."
+    }
+
+    // MARK: - Scheme Fit Helpers
+
+    /// Calculates a scheme fit modifier for a group of players.
+    /// Returns a value typically in the range -0.05 to +0.10, representing the
+    /// percentage adjustment to yard calculations based on how well players fit their scheme.
+    private static func schemeFitModifier(
+        players: [Player],
+        offensiveScheme: OffensiveScheme?,
+        defensiveScheme: DefensiveScheme?
+    ) -> Double {
+        guard offensiveScheme != nil || defensiveScheme != nil else { return 0.0 }
+        guard !players.isEmpty else { return 0.0 }
+
+        let avgFit = players.reduce(0.0) { sum, player in
+            sum + CoachingEngine.schemeFit(
+                player: player,
+                offensiveScheme: offensiveScheme,
+                defensiveScheme: defensiveScheme
+            )
+        } / Double(players.count)
+
+        // Apply scheme familiarity modifier: players who haven't learned the scheme perform worse
+        let avgSchemeModifier = players.reduce(0.0) { sum, player in
+            let schemeName: String?
+            if player.position.side == .offense {
+                schemeName = offensiveScheme?.rawValue
+            } else {
+                schemeName = defensiveScheme?.rawValue
+            }
+            let modifier = schemeName.map {
+                VersatilityDevelopmentEngine.schemePerformanceModifier(player: player, scheme: $0)
+            } ?? 1.0
+            return sum + modifier
+        } / Double(players.count)
+
+        // Map 0.0-1.0 fit to a -0.05 to +0.10 modifier, then scale by scheme familiarity
+        // 0.5 fit = 0.0 modifier (neutral), 1.0 fit = +0.10, 0.0 fit = -0.05
+        return (avgFit - 0.5) * 0.2 * avgSchemeModifier
     }
 
     // MARK: - Utility Functions

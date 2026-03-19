@@ -26,6 +26,9 @@ final class Owner {
     /// Derived from spendingWillingness when the owner is created.
     var coachingBudget: Int
 
+    /// Previous season's coaching budget in thousands, for showing budget change in UI.
+    var previousCoachingBudget: Int
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -35,7 +38,8 @@ final class Owner {
         meddling: Int = 30,
         prefersWinNow: Bool = false,
         satisfaction: Int = 70,
-        coachingBudget: Int = 20_000
+        coachingBudget: Int = 20_000,
+        previousCoachingBudget: Int = 0
     ) {
         self.id = id
         self.name = name
@@ -46,5 +50,6 @@ final class Owner {
         self.prefersWinNow = prefersWinNow
         self.satisfaction = satisfaction
         self.coachingBudget = coachingBudget
+        self.previousCoachingBudget = previousCoachingBudget
     }
 }

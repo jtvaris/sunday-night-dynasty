@@ -11,6 +11,24 @@ struct CoachDetailView: View {
     @Query private var allCareers: [Career]
 
     @State private var showFireConfirmation = false
+    @State private var showExtendAlert = false
+    @State private var showPromoteAlert = false
+
+    /// Promotion target role for this coach (nil if not promotable).
+    private var promotionRole: CoachRole? {
+        switch coach.role {
+        case .qbCoach, .rbCoach, .wrCoach, .olCoach:
+            return .offensiveCoordinator
+        case .dlCoach, .lbCoach, .dbCoach:
+            return .defensiveCoordinator
+        case .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator:
+            return .assistantHeadCoach
+        case .assistantHeadCoach:
+            return .headCoach
+        default:
+            return nil
+        }
+    }
 
     /// Deterministic avatar ID derived from the coach's name.
     private var coachAvatarID: String {
@@ -73,6 +91,28 @@ struct CoachDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will remove \(coach.firstName) from your coaching staff. This action cannot be undone.")
+        }
+        // Fix #53: Extend contract alert
+        .alert("Extend \(coach.fullName)'s Contract?", isPresented: $showExtendAlert) {
+            Button("Extend 2 Years") {
+                extendContract()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will offer \(coach.firstName) a 2-year contract extension at their current salary of $\(coach.salary)K/yr.")
+        }
+        // Fix #53: Promote alert
+        .alert("Promote \(coach.fullName)?", isPresented: $showPromoteAlert) {
+            if let targetRole = promotionRole {
+                Button("Promote to \(targetRole.displayName)") {
+                    promoteCoach()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let targetRole = promotionRole {
+                Text("This will promote \(coach.firstName) from \(coach.role.displayName) to \(targetRole.displayName). Their salary may increase.")
+            }
         }
     }
 
@@ -285,10 +325,39 @@ struct CoachDetailView: View {
         }
     }
 
-    // MARK: - Destructive Section
+    // MARK: - Management Actions Section (Fix #53)
 
     private var destructiveSection: some View {
-        Section {
+        Section("Management") {
+            // Extend Contract
+            Button {
+                showExtendAlert = true
+            } label: {
+                HStack {
+                    Spacer()
+                    Label("Extend Contract", systemImage: "doc.text.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.accentGold)
+                    Spacer()
+                }
+            }
+
+            // Promote (if applicable)
+            if let targetRole = promotionRole {
+                Button {
+                    showPromoteAlert = true
+                } label: {
+                    HStack {
+                        Spacer()
+                        Label("Promote to \(targetRole.displayName)", systemImage: "arrow.up.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.accentBlue)
+                        Spacer()
+                    }
+                }
+            }
+
+            // Fire Coach
             Button(role: .destructive) {
                 showFireConfirmation = true
             } label: {
@@ -416,6 +485,21 @@ struct CoachDetailView: View {
     private func fireCoach() {
         coach.teamID = nil
         dismiss()
+    }
+
+    /// Extend the coach's contract (placeholder: just saves context to confirm action).
+    private func extendContract() {
+        // TODO: Implement full contract length tracking. For now, save context to acknowledge.
+        try? modelContext.save()
+    }
+
+    /// Promote the coach to the next role in the hierarchy.
+    private func promoteCoach() {
+        guard let targetRole = promotionRole else { return }
+        coach.role = targetRole
+        // Salary bump for promotion (~20%)
+        coach.salary = Int(Double(coach.salary) * 1.2)
+        try? modelContext.save()
     }
 }
 

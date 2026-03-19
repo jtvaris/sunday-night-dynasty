@@ -33,9 +33,19 @@ final class Coach {
     /// Auto-generated coaching background / history blurb.
     var background: String
 
+    /// Scheme expertise: how well this coach knows/teaches each scheme (0-100).
+    /// Primary scheme starts at 80-95. Related schemes start at 40-60.
+    /// Key: scheme rawValue, Value: 0-100
+    var schemeExpertise: [String: Int] = [:]
+
     var personality: PersonalityArchetype
     var teamID: UUID?
     var yearsExperience: Int
+
+    /// Get expertise for a specific scheme (baseline 20 for unknown schemes).
+    func expertise(for scheme: String) -> Int {
+        return schemeExpertise[scheme] ?? 20
+    }
 
     var fullName: String {
         "\(firstName) \(lastName)"

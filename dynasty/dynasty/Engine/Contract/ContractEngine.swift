@@ -172,4 +172,36 @@ enum ContractEngine {
         guard !topFive.isEmpty else { return 0 }
         return topFive.reduce(0, +) / topFive.count
     }
+
+    /// Apply franchise tag to a player. Sets their salary to the tag value
+    /// and marks them as franchise-tagged for the season.
+    static func applyFranchiseTag(
+        player: Player,
+        tagValue: Int,
+        team: Team
+    ) {
+        let previousSalary = player.annualSalary
+
+        player.contractYearsRemaining = 1
+        player.annualSalary = tagValue
+        player.isFranchiseTagged = true
+
+        // Update team cap: remove old salary, add new tag salary
+        team.currentCapUsage = team.currentCapUsage - previousSalary + tagValue
+    }
+
+    /// Remove franchise tag from a player. Reverts them to an expiring contract.
+    static func removeFranchiseTag(
+        player: Player,
+        team: Team
+    ) {
+        let tagSalary = player.annualSalary
+
+        player.isFranchiseTagged = false
+        player.contractYearsRemaining = 0
+        player.annualSalary = 0
+
+        // Free up the tag salary from team cap
+        team.currentCapUsage -= tagSalary
+    }
 }

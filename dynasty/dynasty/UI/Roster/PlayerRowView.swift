@@ -4,17 +4,21 @@ struct PlayerRowView: View {
     let player: Player
     /// Depth chart index: 0 = starter, 1 = backup, 2+ = 3rd string. nil = unknown.
     var depthIndex: Int? = nil
+    /// Optional detailed contract for cap hit display.
+    var contract: Contract? = nil
+    /// Analysis view mode that determines which columns to show.
+    var analysisMode: RosterAnalysisMode = .overview
 
     var body: some View {
         HStack(spacing: 6) {
-            // 1. Position badge
+            // Always show: Position badge + Depth + Avatar + Name
             positionBadge
 
-            // 2. Depth indicator
             depthIndicator
-                .frame(width: 10, alignment: .center)
+                .frame(width: 14, alignment: .center)
 
-            // 3. Name
+            PlayerAvatarView(player: player, size: 28)
+
             Text(player.fullName)
                 .font(.subheadline)
                 .fontWeight(.semibold)
@@ -24,54 +28,306 @@ struct PlayerRowView: View {
 
             Spacer(minLength: 2)
 
-            // 4. Age
+            // Mode-specific columns
+            switch analysisMode {
+            case .overview:
+                overviewColumns
+            case .contracts:
+                contractColumns
+            case .development:
+                developmentColumns
+            case .physical:
+                physicalColumns
+            case .attributes:
+                attributeColumns
+            case .depth:
+                depthColumns
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    // MARK: - Overview Columns (default)
+
+    private var overviewColumns: some View {
+        Group {
+            // Age
             Text("\(player.age)")
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
                 .frame(width: 24, alignment: .center)
 
-            // 5. Cap Hit (salary)
-            Text(formattedCapHit)
-                .font(.caption2)
-                .fontWeight(.medium)
-                .monospacedDigit()
-                .foregroundStyle(Color.textSecondary)
-                .frame(width: 44, alignment: .trailing)
+            // Form indicator (#97)
+            formColumn
 
-            // 6. Contract years remaining (final year highlighted)
-            contractYearsLabel
-                .frame(width: 26, alignment: .center)
-
-            // 7. OVR (large, color-coded)
+            // OVR (large, color-coded)
             Text("\(player.overall)")
                 .font(.callout.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
                 .frame(width: 32, alignment: .center)
 
-            // 8. Development arrow
+            // Development arrow
             developmentArrow
                 .frame(width: 14, alignment: .center)
 
-            // 9. Salary
-            Text(formattedSalary)
-                .font(.system(size: 9))
-                .monospacedDigit()
-                .foregroundStyle(Color.textTertiary)
-                .frame(width: 40, alignment: .trailing)
+            // Cap Hit
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(formattedCapHit)
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .monospacedDigit()
+                    .foregroundStyle(Color.textSecondary)
+                if showsSeparateCapHit {
+                    Text("cap")
+                        .font(.system(size: 7))
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+            .frame(width: 44, alignment: .trailing)
 
-            // 10. Morale icon
+            // Contract years remaining
+            contractYearsLabel
+                .frame(width: 26, alignment: .center)
+
+            // Morale icon
             moraleIndicator
                 .frame(width: 14, alignment: .center)
 
-            // 11. Health status
+            // Health status
             healthIndicator
                 .frame(width: 20, alignment: .center)
         }
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityText)
+    }
+
+    // MARK: - Contract Columns
+
+    private var contractColumns: some View {
+        Group {
+            // Base Salary
+            Text(formattedSalary)
+                .font(.caption)
+                .fontWeight(.medium)
+                .monospacedDigit()
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 48, alignment: .trailing)
+
+            // Cap Hit
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(formattedCapHit)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(Color.accentGold)
+                Text("cap")
+                    .font(.system(size: 7))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .frame(width: 48, alignment: .trailing)
+
+            // Years remaining
+            contractYearsLabel
+                .frame(width: 30, alignment: .center)
+
+            // Free agent year estimate
+            Text("FA \(player.age + player.contractYearsRemaining)")
+                .font(.system(size: 9, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(player.contractYearsRemaining <= 1 ? Color.warning : Color.textTertiary)
+                .frame(width: 36, alignment: .center)
+
+            // OVR for context
+            Text("\(player.overall)")
+                .font(.caption.monospacedDigit())
+                .fontWeight(.bold)
+                .foregroundStyle(Color.forRating(player.overall))
+                .frame(width: 28, alignment: .center)
+        }
+    }
+
+    // MARK: - Development Columns
+
+    private var developmentColumns: some View {
+        Group {
+            // Age
+            Text("\(player.age)")
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 24, alignment: .center)
+
+            // OVR
+            Text("\(player.overall)")
+                .font(.caption.monospacedDigit())
+                .fontWeight(.bold)
+                .foregroundStyle(Color.forRating(player.overall))
+                .frame(width: 28, alignment: .center)
+
+            // Potential (hidden value shown as fuzzy label)
+            Text(potentialLabel)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Color.accentGold)
+                .frame(width: 36, alignment: .center)
+
+            // Development arrow
+            developmentArrow
+                .frame(width: 14, alignment: .center)
+
+            // Phase label
+            Text(developmentPhaseLabel)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(developmentTrend.color)
+                .frame(width: 44, alignment: .center)
+
+            // Form
+            formColumn
+
+            // Work ethic indicator
+            colorCodedMiniAttribute(value: player.mental.workEthic, label: "WE")
+                .frame(width: 28, alignment: .center)
+        }
+    }
+
+    // MARK: - Physical Columns
+
+    private var physicalColumns: some View {
+        Group {
+            colorCodedMiniAttribute(value: player.physical.speed, label: "SPD")
+                .frame(width: 30, alignment: .center)
+            colorCodedMiniAttribute(value: player.physical.strength, label: "STR")
+                .frame(width: 30, alignment: .center)
+            colorCodedMiniAttribute(value: player.physical.stamina, label: "STA")
+                .frame(width: 30, alignment: .center)
+            colorCodedMiniAttribute(value: player.physical.durability, label: "DUR")
+                .frame(width: 30, alignment: .center)
+
+            // Health
+            healthIndicator
+                .frame(width: 20, alignment: .center)
+
+            // OVR
+            Text("\(player.overall)")
+                .font(.caption.monospacedDigit())
+                .fontWeight(.bold)
+                .foregroundStyle(Color.forRating(player.overall))
+                .frame(width: 28, alignment: .center)
+        }
+    }
+
+    // MARK: - Attribute Columns
+
+    private var attributeColumns: some View {
+        Group {
+            colorCodedMiniAttribute(value: player.physical.speed, label: "SPD")
+                .frame(width: 28, alignment: .center)
+            colorCodedMiniAttribute(value: player.physical.strength, label: "STR")
+                .frame(width: 28, alignment: .center)
+            colorCodedMiniAttribute(value: player.physical.agility, label: "AGI")
+                .frame(width: 28, alignment: .center)
+            colorCodedMiniAttribute(value: player.mental.awareness, label: "AWR")
+                .frame(width: 28, alignment: .center)
+            colorCodedMiniAttribute(value: player.mental.decisionMaking, label: "DEC")
+                .frame(width: 28, alignment: .center)
+
+            // OVR
+            Text("\(player.overall)")
+                .font(.caption.monospacedDigit())
+                .fontWeight(.bold)
+                .foregroundStyle(Color.forRating(player.overall))
+                .frame(width: 28, alignment: .center)
+        }
+    }
+
+    // MARK: - Depth Columns
+
+    private var depthColumns: some View {
+        Group {
+            // Starter/Backup badge (larger)
+            Text(depthBadgeText)
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundStyle(depthIndex == 0 ? Color.backgroundPrimary : depthColor)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(
+                    depthIndex == 0
+                        ? AnyShapeStyle(depthColor)
+                        : AnyShapeStyle(depthColor.opacity(0.2)),
+                    in: RoundedRectangle(cornerRadius: 3)
+                )
+
+            // Depth label
+            Text(depthLabel)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(depthColor)
+                .frame(width: 48, alignment: .leading)
+
+            // OVR
+            Text("\(player.overall)")
+                .font(.caption.monospacedDigit())
+                .fontWeight(.bold)
+                .foregroundStyle(Color.forRating(player.overall))
+                .frame(width: 28, alignment: .center)
+
+            // Age
+            Text("\(player.age)")
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 24, alignment: .center)
+
+            // Health
+            healthIndicator
+                .frame(width: 20, alignment: .center)
+
+            // Form
+            formColumn
+        }
+    }
+
+    // MARK: - Form Column (#97)
+
+    private var formColumn: some View {
+        let form = playerFormIndicator(for: player)
+        return Text(form.symbol)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(form.color)
+            .frame(width: 16, alignment: .center)
+            .accessibilityLabel("Form \(formAccessibilityLabel)")
+    }
+
+    private var formAccessibilityLabel: String {
+        let form = playerFormIndicator(for: player)
+        switch form.symbol {
+        case "\u{2191}": return "hot"
+        case "\u{2192}": return "steady"
+        default:         return "cold"
+        }
+    }
+
+    // MARK: - Mini Attribute Helper
+
+    private func colorCodedMiniAttribute(value: Int, label: String) -> some View {
+        VStack(spacing: 0) {
+            Text("\(value)")
+                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .foregroundStyle(analysisAttributeColor(for: value))
+            Text(label)
+                .font(.system(size: 7, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
+        }
+    }
+
+    /// Color coding for attribute columns: 90+ gold, 80+ green, 70+ blue, below 70 orange/red.
+    private func analysisAttributeColor(for value: Int) -> Color {
+        switch value {
+        case 90...:   return .accentGold
+        case 80..<90: return .success
+        case 70..<80: return .accentBlue
+        default:      return .warning
+        }
     }
 
     // MARK: - Subviews
@@ -87,24 +343,50 @@ struct PlayerRowView: View {
     }
 
     private var depthIndicator: some View {
-        Circle()
-            .fill(depthColor)
-            .frame(width: 8, height: 8)
+        Text(depthBadgeText)
+            .font(.system(size: 8, weight: .heavy))
+            .foregroundStyle(depthIndex == 0 ? Color.backgroundPrimary : depthColor)
+            .frame(width: 14, height: 14)
+            .background(
+                depthIndex == 0
+                    ? AnyShapeStyle(depthColor)
+                    : AnyShapeStyle(depthColor.opacity(0.2)),
+                in: RoundedRectangle(cornerRadius: 3)
+            )
             .accessibilityLabel(depthLabel)
+    }
+
+    private var depthBadgeText: String {
+        switch depthIndex {
+        case 0:         return "S"
+        case 1:         return "B"
+        case let n?:    return "\(min(n + 1, 9))"
+        case nil:       return "-"
+        }
+    }
+
+    private var isExpiringContract: Bool {
+        player.contractYearsRemaining <= 1
     }
 
     private var contractYearsLabel: some View {
         Text("\(player.contractYearsRemaining)yr")
-            .font(.system(size: 9, weight: .semibold))
+            .font(.system(size: 9, weight: .bold))
             .monospacedDigit()
-            .foregroundStyle(player.contractYearsRemaining <= 1 ? Color.warning : Color.textTertiary)
-            .padding(.horizontal, 2)
-            .padding(.vertical, 1)
+            .foregroundStyle(isExpiringContract ? Color.backgroundPrimary : Color.textTertiary)
+            .padding(.horizontal, 3)
+            .padding(.vertical, 2)
             .background(
-                player.contractYearsRemaining <= 1
-                    ? Color.warning.opacity(0.15)
+                isExpiringContract
+                    ? Color.warning
                     : Color.clear,
                 in: RoundedRectangle(cornerRadius: 3)
+            )
+            .overlay(
+                isExpiringContract
+                    ? RoundedRectangle(cornerRadius: 3)
+                        .strokeBorder(Color.warning.opacity(0.6), lineWidth: 1)
+                    : nil
             )
     }
 
@@ -173,21 +455,31 @@ struct PlayerRowView: View {
         }
     }
 
+    /// Cap hit from the detailed Contract model (if available), otherwise falls back to annualSalary.
+    private var capHitValue: Int {
+        contract?.capHit ?? player.annualSalary
+    }
+
     private var formattedCapHit: String {
-        let millions = Double(player.annualSalary) / 1000.0
-        if millions >= 1.0 {
-            return String(format: "$%.1fM", millions)
-        } else {
-            return "$\(player.annualSalary)K"
-        }
+        formatSalary(capHitValue)
     }
 
     private var formattedSalary: String {
-        let millions = Double(player.annualSalary) / 1000.0
+        formatSalary(player.annualSalary)
+    }
+
+    /// Returns true when the contract provides a distinct cap hit that differs from base salary.
+    private var showsSeparateCapHit: Bool {
+        guard let contract else { return false }
+        return contract.capHit != player.annualSalary
+    }
+
+    private func formatSalary(_ value: Int) -> String {
+        let millions = Double(value) / 1000.0
         if millions >= 1.0 {
             return String(format: "$%.1fM", millions)
         } else {
-            return "$\(player.annualSalary)K"
+            return "$\(value)K"
         }
     }
 
@@ -229,6 +521,28 @@ struct PlayerRowView: View {
         }
     }
 
+    private var potentialLabel: String {
+        let pot = player.truePotential
+        switch pot {
+        case 90...:   return "Elite"
+        case 80..<90: return "Star"
+        case 70..<80: return "Good"
+        case 60..<70: return "Avg"
+        default:      return "Low"
+        }
+    }
+
+    private var developmentPhaseLabel: String {
+        let peak = player.position.peakAgeRange
+        if player.age < peak.lowerBound {
+            return "Rising"
+        } else if peak.contains(player.age) {
+            return "Prime"
+        } else {
+            return "Decline"
+        }
+    }
+
     private var accessibilityText: String {
         var parts = [
             player.fullName,
@@ -243,6 +557,43 @@ struct PlayerRowView: View {
             parts.append("injured \(player.injuryWeeksRemaining) weeks")
         }
         return parts.joined(separator: ", ")
+    }
+}
+
+// MARK: - Roster Analysis Mode (#96, #98)
+
+/// Analysis view modes for the roster list. Each mode adjusts which columns
+/// PlayerRowView displays, enabling different analytical perspectives.
+enum RosterAnalysisMode: String, CaseIterable, Identifiable {
+    case overview
+    case contracts
+    case development
+    case physical
+    case attributes
+    case depth
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .overview:    return "Overview"
+        case .contracts:   return "Contracts"
+        case .development: return "Development"
+        case .physical:    return "Physical"
+        case .attributes:  return "Attributes"
+        case .depth:       return "Depth"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .overview:    return "list.bullet"
+        case .contracts:   return "dollarsign.circle"
+        case .development: return "chart.line.uptrend.xyaxis"
+        case .physical:    return "figure.run"
+        case .attributes:  return "slider.horizontal.3"
+        case .depth:       return "person.3.sequence"
+        }
     }
 }
 
@@ -310,7 +661,7 @@ func overallColor(for value: Int) -> Color {
             )),
             personality: PlayerPersonality(archetype: .loneWolf, motivation: .stats),
             isInjured: true, injuryWeeksRemaining: 4, contractYearsRemaining: 2, annualSalary: 30000
-        ), depthIndex: 1)
+        ), depthIndex: 1, analysisMode: .contracts)
         PlayerRowView(player: Player(
             firstName: "Myles",
             lastName: "Garrett",
@@ -322,7 +673,7 @@ func overallColor(for value: Int) -> Color {
             )),
             personality: PlayerPersonality(archetype: .quietProfessional, motivation: .winning),
             contractYearsRemaining: 4, annualSalary: 25000
-        ), depthIndex: 2)
+        ), depthIndex: 2, analysisMode: .attributes)
         PlayerRowView(player: Player(
             firstName: "Justin",
             lastName: "Tucker",
@@ -332,6 +683,6 @@ func overallColor(for value: Int) -> Color {
             positionAttributes: .kicking(KickingAttributes(kickPower: 95, kickAccuracy: 98)),
             personality: PlayerPersonality(archetype: .steadyPerformer, motivation: .loyalty),
             contractYearsRemaining: 1, annualSalary: 6000
-        ), depthIndex: 0)
+        ), depthIndex: 0, analysisMode: .physical)
     }
 }

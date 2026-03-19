@@ -3,6 +3,8 @@ import SwiftUI
 /// Always-visible summary bar at the top of the Roster view showing key team stats.
 struct RosterSummaryBar: View {
     let players: [Player]
+    /// The team's current salary cap in thousands. Falls back to 255_000 if not provided.
+    var teamSalaryCap: Int = 255_000
 
     private var totalCount: Int { players.count }
     private var healthyCount: Int { players.filter { !$0.isInjured }.count }
@@ -17,9 +19,30 @@ struct RosterSummaryBar: View {
         players.reduce(0) { $0 + $1.annualSalary }
     }
 
+    /// Salary cap ceiling in thousands (e.g., 255000 = $255M).
+    private var salaryCap: Int { teamSalaryCap }
+
     private var formattedCapUsed: String {
         let millions = Double(totalCapUsed) / 1000.0
         return String(format: "$%.0fM", millions)
+    }
+
+    private var formattedCapTotal: String {
+        let millions = Double(salaryCap) / 1000.0
+        return String(format: "$%.0fM", millions)
+    }
+
+    private var capUsageRatio: Double {
+        guard salaryCap > 0 else { return 0 }
+        return min(Double(totalCapUsed) / Double(salaryCap), 1.0)
+    }
+
+    private var capColor: Color {
+        switch capUsageRatio {
+        case 0.9...:  return .danger
+        case 0.75..<0.9: return .warning
+        default:      return .accentGold
+        }
     }
 
     private var rosterStrength: Int {
@@ -66,11 +89,45 @@ struct RosterSummaryBar: View {
 
             divider
 
-            summaryItem(
-                label: "Cap Used",
-                value: "\(formattedCapUsed) / $255M",
-                color: .textSecondary
-            )
+            // Salary cap with progress bar
+            VStack(spacing: 3) {
+                HStack(spacing: 0) {
+                    Text(formattedCapUsed)
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .monospacedDigit()
+                        .foregroundStyle(capColor)
+                    Text(" / ")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                    Text(formattedCapTotal)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .monospacedDigit()
+                        .foregroundStyle(Color.textSecondary)
+                }
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+                // Progress bar
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.backgroundTertiary)
+                            .frame(height: 4)
+                        Capsule()
+                            .fill(capColor)
+                            .frame(width: geo.size.width * capUsageRatio, height: 4)
+                    }
+                }
+                .frame(height: 4)
+                .padding(.horizontal, 8)
+
+                Text("Salary Cap")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .frame(maxWidth: .infinity)
 
             divider
 

@@ -203,6 +203,16 @@ enum NewsGenerator {
                 ))
             }
 
+        case .reviewRoster:
+            items.append(NewsItem(
+                headline: "Teams evaluate rosters ahead of the draft",
+                body: "With free agency winding down, front offices are turning their attention to draft preparation. Identifying roster holes now will shape draft strategy.",
+                category: .teamRanking,
+                week: 0,
+                season: season,
+                sentiment: .neutral
+            ))
+
         case .draft:
             items.append(NewsItem(
                 headline: "Draft day arrives: who will go first overall?",

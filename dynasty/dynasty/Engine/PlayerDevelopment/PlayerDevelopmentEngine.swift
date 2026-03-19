@@ -87,6 +87,49 @@ enum PlayerDevelopmentEngine {
 
         // Distribute mental points randomly across mental attributes.
         distributeMentalPoints(player: player, points: mentalPoints, ceiling: ceiling)
+
+        // --- Position Training (offseason = full intensity) ---
+        if let trainingPos = player.trainingPosition, trainingPos != player.position {
+            let posCoach = coaches.first { coach in
+                CoachingEngine.positionRoleMatch(coachRole: coach.role, playerPosition: trainingPos)
+            }
+            let posGain = VersatilityDevelopmentEngine.trainPosition(
+                player: player,
+                targetPosition: trainingPos,
+                positionCoach: posCoach,
+                practiceIntensity: 1.0
+            )
+            let key = trainingPos.rawValue
+            let current = player.positionFamiliarity[key] ?? 0
+            let posCeiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: trainingPos)
+            player.positionFamiliarity[key] = min(posCeiling, current + posGain)
+        }
+
+        // --- Scheme Learning (offseason = full intensity) ---
+        let oc = coaches.first { $0.role == .offensiveCoordinator }
+        let dc = coaches.first { $0.role == .defensiveCoordinator }
+
+        if let offScheme = oc?.offensiveScheme, player.position.side == .offense {
+            let gain = VersatilityDevelopmentEngine.learnScheme(
+                player: player,
+                scheme: offScheme.rawValue,
+                coordinator: oc,
+                practiceIntensity: 1.0
+            )
+            let current = player.schemeFamiliarity[offScheme.rawValue] ?? 0
+            player.schemeFamiliarity[offScheme.rawValue] = min(100, current + gain)
+        }
+
+        if let defScheme = dc?.defensiveScheme, player.position.side == .defense {
+            let gain = VersatilityDevelopmentEngine.learnScheme(
+                player: player,
+                scheme: defScheme.rawValue,
+                coordinator: dc,
+                practiceIntensity: 1.0
+            )
+            let current = player.schemeFamiliarity[defScheme.rawValue] ?? 0
+            player.schemeFamiliarity[defScheme.rawValue] = min(100, current + gain)
+        }
     }
 
     // MARK: - 2. In-Season Experience

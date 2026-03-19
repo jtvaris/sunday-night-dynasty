@@ -15,27 +15,91 @@ private func colorForAttribute(_ value: Int) -> Color {
 struct PlayerDetailView: View {
     let player: Player
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    /// True when in landscape on iPad.
+    private var isLandscape: Bool {
+        verticalSizeClass == .compact
+    }
+
+    /// True for iPad regular-width layouts.
+    private var isWideLayout: Bool {
+        horizontalSizeClass == .regular
+    }
+
+    /// Number of columns for attribute grids: 3 in landscape, 2 on wide, 1 on compact.
+    private var attributeColumns: Int {
+        if isLandscape { return 3 }
+        if isWideLayout { return 2 }
+        return 1
+    }
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            List {
-                playerHeader
-                overviewSection
-                contractDetailSection
-                developmentSection
-                physicalSection
-                mentalSection
-                positionAttributesSection
-                personalitySection
-                schemeFitSection
+            if isLandscape {
+                // Landscape: two-column master layout
+                HStack(alignment: .top, spacing: 0) {
+                    // Left column: header + overview + contract
+                    List {
+                        playerHeader
+                        overviewSection
+                        contractDetailSection
+                        developmentSection
+                        versatilitySection
+                    }
+                    .scrollContentBackground(.hidden)
+                    .listStyle(.insetGrouped)
+                    .frame(maxWidth: .infinity)
+
+                    // Right column: attributes + personality + scheme
+                    List {
+                        physicalAttributesGrid
+                        mentalAttributesGrid
+                        positionAttributesGridSection
+                        personalitySection
+                        schemeFitSection
+                    }
+                    .scrollContentBackground(.hidden)
+                    .listStyle(.insetGrouped)
+                    .frame(maxWidth: .infinity)
+                }
+            } else {
+                List {
+                    playerHeader
+                    overviewSection
+                    contractDetailSection
+                    developmentSection
+                    versatilitySection
+                    if isWideLayout {
+                        // Wide portrait: use grid layout for attributes
+                        physicalAttributesGrid
+                        mentalAttributesGrid
+                        positionAttributesGridSection
+                    } else {
+                        physicalSection
+                        mentalSection
+                        positionAttributesSection
+                    }
+                    personalitySection
+                    schemeFitSection
+                }
+                .scrollContentBackground(.hidden)
+                .listStyle(.insetGrouped)
             }
-            .scrollContentBackground(.hidden)
-            .listStyle(.insetGrouped)
         }
         .navigationTitle(player.fullName)
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                NavigationLink(destination: PlayerStatsView(player: player, seasonStats: [])) {
+                    Label("Stats", systemImage: "chart.bar.fill")
+                }
+            }
+        }
     }
 
     // MARK: - Player Header Card
@@ -44,6 +108,9 @@ struct PlayerDetailView: View {
         Section {
             VStack(spacing: 12) {
                 HStack(spacing: 16) {
+                    // Player avatar
+                    PlayerAvatarView(player: player, size: 80)
+
                     // Large OVR circle
                     ZStack {
                         Circle()
@@ -427,6 +494,132 @@ struct PlayerDetailView: View {
         .listRowBackground(Color.backgroundSecondary)
     }
 
+    // MARK: - Versatility & Scheme Familiarity Section
+
+    private var versatilitySection: some View {
+        Section("Versatility & Scheme") {
+            // Position familiarity bars for non-zero alternate positions
+            let altPositions = player.positionFamiliarity
+                .filter { $0.key != player.position.rawValue && $0.value > 0 }
+                .sorted { $0.value > $1.value }
+
+            if !altPositions.isEmpty || player.trainingPosition != nil {
+                // Training status
+                if let trainingPos = player.trainingPosition, trainingPos != player.position {
+                    HStack(spacing: 6) {
+                        Image(systemName: "figure.run")
+                            .font(.caption)
+                            .foregroundStyle(Color.accentGold)
+                        Text("Training: \(trainingPos.rawValue)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentGold)
+                        Spacer()
+                        let familiarity = player.familiarity(at: trainingPos)
+                        let ceiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: trainingPos)
+                        Text("\(familiarity)/\(ceiling)")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Color.accentGold)
+                    }
+                }
+
+                // Alternate position familiarity bars
+                ForEach(altPositions, id: \.key) { posKey, familiarity in
+                    if let pos = Position(rawValue: posKey) {
+                        let ceiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: pos)
+                        HStack(spacing: 8) {
+                            Text(posKey)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(Color.textPrimary)
+                                .frame(width: 30, alignment: .leading)
+
+                            GeometryReader { geo in
+                                let barWidth = geo.size.width
+                                ZStack(alignment: .leading) {
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(Color.backgroundTertiary)
+                                        .frame(height: 6)
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(versatilityBarColor(familiarity))
+                                        .frame(width: barWidth * CGFloat(familiarity) / 100.0, height: 6)
+                                    // Ceiling marker
+                                    Rectangle()
+                                        .fill(Color.textTertiary)
+                                        .frame(width: 1.5, height: 10)
+                                        .offset(x: barWidth * CGFloat(ceiling) / 100.0 - 0.75)
+                                }
+                            }
+                            .frame(height: 10)
+
+                            Text("\(familiarity)%")
+                                .font(.caption2.weight(.bold).monospacedDigit())
+                                .foregroundStyle(versatilityBarColor(familiarity))
+                                .frame(width: 36, alignment: .trailing)
+                        }
+                    }
+                }
+            } else {
+                Text("No alternate position experience")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            }
+
+            // Scheme familiarity bars
+            let schemeFams = player.schemeFamiliarity
+                .filter { $0.value > 0 }
+                .sorted { $0.value > $1.value }
+
+            if !schemeFams.isEmpty {
+                Divider().overlay(Color.surfaceBorder)
+
+                Text("Scheme Familiarity")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textSecondary)
+
+                ForEach(schemeFams, id: \.key) { scheme, familiarity in
+                    HStack(spacing: 8) {
+                        Text(scheme)
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                            .frame(width: 80, alignment: .leading)
+                            .lineLimit(1)
+
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Color.backgroundTertiary)
+                                    .frame(height: 6)
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(schemeFamColor(familiarity))
+                                    .frame(width: geo.size.width * CGFloat(familiarity) / 100.0, height: 6)
+                            }
+                        }
+                        .frame(height: 6)
+
+                        Text("\(familiarity)%")
+                            .font(.caption2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(schemeFamColor(familiarity))
+                            .frame(width: 36, alignment: .trailing)
+                    }
+                }
+            }
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private func versatilityBarColor(_ value: Int) -> Color {
+        if value >= 80 { return .accentGold }
+        if value >= 60 { return .success }
+        if value >= 40 { return .accentBlue }
+        return .warning
+    }
+
+    private func schemeFamColor(_ value: Int) -> Color {
+        if value >= 80 { return .accentGold }
+        if value >= 60 { return .success }
+        if value >= 40 { return .accentBlue }
+        return .danger
+    }
+
     // MARK: - Scheme Fit Section
 
     private var schemeFitSection: some View {
@@ -459,6 +652,129 @@ struct PlayerDetailView: View {
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    // MARK: - Grid Attribute Sections (iPad / landscape)
+
+    private var physicalAttributesGrid: some View {
+        Section("Physical Attributes") {
+            attributeGrid([
+                ("Speed",        player.physical.speed),
+                ("Acceleration", player.physical.acceleration),
+                ("Strength",     player.physical.strength),
+                ("Agility",      player.physical.agility),
+                ("Stamina",      player.physical.stamina),
+                ("Durability",   player.physical.durability),
+            ])
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private var mentalAttributesGrid: some View {
+        Section("Mental Attributes") {
+            attributeGrid([
+                ("Awareness",       player.mental.awareness),
+                ("Decision Making",  player.mental.decisionMaking),
+                ("Clutch",           player.mental.clutch),
+                ("Work Ethic",       player.mental.workEthic),
+                ("Coachability",     player.mental.coachability),
+                ("Leadership",       player.mental.leadership),
+            ])
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    @ViewBuilder
+    private var positionAttributesGridSection: some View {
+        switch player.positionAttributes {
+        case .quarterback(let a):
+            Section("Quarterback Skills") {
+                attributeGrid([
+                    ("Arm Strength", a.armStrength), ("Accuracy Short", a.accuracyShort),
+                    ("Accuracy Mid", a.accuracyMid), ("Accuracy Deep", a.accuracyDeep),
+                    ("Pocket Presence", a.pocketPresence), ("Scrambling", a.scrambling),
+                ])
+            }.listRowBackground(Color.backgroundSecondary)
+        case .wideReceiver(let a):
+            Section("Receiver Skills") {
+                attributeGrid([
+                    ("Route Running", a.routeRunning), ("Catching", a.catching),
+                    ("Release", a.release), ("Spectacular Catch", a.spectacularCatch),
+                ])
+            }.listRowBackground(Color.backgroundSecondary)
+        case .runningBack(let a):
+            Section("Running Back Skills") {
+                attributeGrid([
+                    ("Vision", a.vision), ("Elusiveness", a.elusiveness),
+                    ("Break Tackle", a.breakTackle), ("Receiving", a.receiving),
+                ])
+            }.listRowBackground(Color.backgroundSecondary)
+        case .tightEnd(let a):
+            Section("Tight End Skills") {
+                attributeGrid([
+                    ("Blocking", a.blocking), ("Catching", a.catching),
+                    ("Route Running", a.routeRunning), ("Speed", a.speed),
+                ])
+            }.listRowBackground(Color.backgroundSecondary)
+        case .offensiveLine(let a):
+            Section("Offensive Line Skills") {
+                attributeGrid([
+                    ("Run Block", a.runBlock), ("Pass Block", a.passBlock),
+                    ("Pull", a.pull), ("Anchor", a.anchor),
+                ])
+            }.listRowBackground(Color.backgroundSecondary)
+        case .defensiveLine(let a):
+            Section("Defensive Line Skills") {
+                attributeGrid([
+                    ("Pass Rush", a.passRush), ("Block Shedding", a.blockShedding),
+                    ("Power Moves", a.powerMoves), ("Finesse Moves", a.finesseMoves),
+                ])
+            }.listRowBackground(Color.backgroundSecondary)
+        case .linebacker(let a):
+            Section("Linebacker Skills") {
+                attributeGrid([
+                    ("Tackling", a.tackling), ("Zone Coverage", a.zoneCoverage),
+                    ("Man Coverage", a.manCoverage), ("Blitzing", a.blitzing),
+                ])
+            }.listRowBackground(Color.backgroundSecondary)
+        case .defensiveBack(let a):
+            Section("Defensive Back Skills") {
+                attributeGrid([
+                    ("Man Coverage", a.manCoverage), ("Zone Coverage", a.zoneCoverage),
+                    ("Press", a.press), ("Ball Skills", a.ballSkills),
+                ])
+            }.listRowBackground(Color.backgroundSecondary)
+        case .kicking(let a):
+            Section("Kicking Skills") {
+                attributeGrid([
+                    ("Kick Power", a.kickPower), ("Kick Accuracy", a.kickAccuracy),
+                ])
+            }.listRowBackground(Color.backgroundSecondary)
+        }
+    }
+
+    private func attributeGrid(_ attributes: [(String, Int)]) -> some View {
+        let cols = attributeColumns
+        let gridColumns = Array(repeating: GridItem(.flexible(), spacing: 12), count: cols)
+        return LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 8) {
+            ForEach(attributes, id: \.0) { attr in
+                HStack(spacing: 6) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(colorForAttribute(attr.1))
+                        .frame(width: 3, height: 16)
+                    Text(attr.0)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(attr.1)")
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                        .foregroundStyle(colorForAttribute(attr.1))
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     // MARK: - Helpers

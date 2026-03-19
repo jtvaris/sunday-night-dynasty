@@ -1,6 +1,14 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Staff Tab Selection
+
+enum StaffTab: String, CaseIterable {
+    case staff = "Staff"
+    case schemes = "Schemes"
+    case review = "Review"
+}
+
 struct CoachingStaffView: View {
 
     let career: Career
@@ -9,6 +17,21 @@ struct CoachingStaffView: View {
     @Query private var allCoaches: [Coach]
     @Query private var allScouts: [Scout]
     @Query private var allOwners: [Owner]
+    @Query private var allPlayers: [Player]
+
+    // MARK: - Tab State (#107)
+    @State private var selectedTab: StaffTab = .staff
+
+    // MARK: - Hiring Confirmation State (#49)
+    @State private var recentHireMessage: String?
+
+    // MARK: - Lock-in Confirmation (#66)
+    @State private var showLockInConfirmation: Bool = false
+    @State private var showIncompleteStaffWarning: Bool = false
+
+    // MARK: - Scheme Selection State (#67)
+    @State private var showOffensiveSchemeSelection: Bool = false
+    @State private var showDefensiveSchemeSelection: Bool = false
 
     /// Coaches filtered to this team, derived from @Query result.
     private var coaches: [Coach] {
@@ -20,6 +43,24 @@ struct CoachingStaffView: View {
     private var scouts: [Scout] {
         guard let teamID = career.teamID else { return [] }
         return allScouts.filter { $0.teamID == teamID }
+    }
+
+    /// Players on this team's roster.
+    private var rosterPlayers: [Player] {
+        guard let teamID = career.teamID else { return [] }
+        return allPlayers.filter { $0.teamID == teamID }
+    }
+
+    /// Offensive players on the roster.
+    private var offensivePlayers: [Player] {
+        rosterPlayers.filter { $0.position.side == .offense }
+            .sorted { $0.position.rawValue < $1.position.rawValue }
+    }
+
+    /// Defensive players on the roster.
+    private var defensivePlayers: [Player] {
+        rosterPlayers.filter { $0.position.side == .defense }
+            .sorted { $0.position.rawValue < $1.position.rawValue }
     }
 
     /// The team's owner (for budget info).
@@ -76,6 +117,13 @@ struct CoachingStaffView: View {
             .sorted { $0.role.sortOrder < $1.role.sortOrder }
     }
 
+    // MARK: - Medical staff
+
+    private var medicalStaff: [Coach] {
+        coaches.filter { [.teamDoctor, .physio].contains($0.role) }
+            .sorted { $0.role.sortOrder < $1.role.sortOrder }
+    }
+
     // MARK: - Scouting department
 
     private var chiefScout: Scout? {
@@ -106,6 +154,32 @@ struct CoachingStaffView: View {
 
     // MARK: - Hiring priority & budget helpers
 
+    /// Whether the budget is over (negative remaining).
+    private var isBudgetOverspent: Bool {
+        remainingBudget < 0
+    }
+
+    /// Required roles that must be filled before locking in staff.
+    private var requiredCoachRoles: [CoachRole] {
+        if career.role == .gmAndHeadCoach {
+            return [.offensiveCoordinator, .defensiveCoordinator]
+        } else {
+            return [.headCoach, .offensiveCoordinator, .defensiveCoordinator]
+        }
+    }
+
+    /// Whether all required coaching positions are filled.
+    private var allRequiredRolesFilled: Bool {
+        let filledRoles = Set(coaches.map { $0.role })
+        return requiredCoachRoles.allSatisfy { filledRoles.contains($0) }
+    }
+
+    /// Missing required roles for display in the warning.
+    private var missingRequiredRoles: [CoachRole] {
+        let filledRoles = Set(coaches.map { $0.role })
+        return requiredCoachRoles.filter { !filledRoles.contains($0) }
+    }
+
     /// Whether the device is in iPad portrait (regular width) for 2-column layout.
     private var isIPadPortrait: Bool {
         horizontalSizeClass == .regular
@@ -129,6 +203,8 @@ struct CoachingStaffView: View {
         case .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator:
             return .high
         case .qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach, .strengthCoach:
+            return .recommended
+        case .teamDoctor, .physio:
             return .recommended
         default:
             return .normal
@@ -160,6 +236,8 @@ struct CoachingStaffView: View {
         case .lbCoach:        return "Improves LB development"
         case .dbCoach:        return "Improves DB development"
         case .strengthCoach:  return "Improves conditioning & injury prevention"
+        case .teamDoctor:     return "Reduces injury risk by up to 30%"
+        case .physio:         return "Speeds recovery by up to 25%"
         default:              return nil
         }
     }
@@ -229,10 +307,139 @@ struct CoachingStaffView: View {
                     .ignoresSafeArea()
                 )
 
+            VStack(spacing: 0) {
+                // MARK: - Tab Bar (#107)
+                staffTabBar
+
+                // Tab content
+                switch selectedTab {
+                case .staff:
+                    staffTabContent
+                case .schemes:
+                    schemesTabContent
+                case .review:
+                    reviewTabContent
+                }
+            }
+
+            // MARK: - Hiring Confirmation Toast (#49)
+            if let message = recentHireMessage {
+                VStack {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(Color.success)
+                        Text(message)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.textPrimary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.success.opacity(0.15))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .strokeBorder(Color.success.opacity(0.4), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+
+                    Spacer()
+                }
+            }
+        }
+        .navigationTitle("Coaching Staff")
+        .navigationBarTitleDisplayMode(.large)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        // MARK: - Lock-in Confirmation Alert (#66)
+        .alert("Confirm Staff", isPresented: $showLockInConfirmation) {
+            Button("Confirm & Advance") {
+                career.currentPhase = .combine
+                try? modelContext.save()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Lock in your coaching staff and advance to the Combine phase? You won't be able to make coaching changes until next offseason.")
+        }
+        .alert("Incomplete Staff", isPresented: $showIncompleteStaffWarning) {
+            Button("Lock in Anyway") {
+                career.currentPhase = .combine
+                try? modelContext.save()
+            }
+            Button("Go Back", role: .cancel) { }
+        } message: {
+            Text("You still have vacant positions: \(missingRequiredRoles.map { $0.displayName }.joined(separator: ", ")). Are you sure you want to proceed without filling them?")
+        }
+    }
+
+    // MARK: - Tab Bar (#107)
+
+    private var staffTabBar: some View {
+        HStack(spacing: 0) {
+            ForEach(StaffTab.allCases, id: \.self) { tab in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedTab = tab
+                    }
+                } label: {
+                    VStack(spacing: 6) {
+                        Text(tab.rawValue)
+                            .font(.subheadline.weight(selectedTab == tab ? .bold : .medium))
+                            .foregroundStyle(selectedTab == tab ? Color.accentGold : Color.textTertiary)
+
+                        Rectangle()
+                            .fill(selectedTab == tab ? Color.accentGold : Color.clear)
+                            .frame(height: 2)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .background(Color.backgroundSecondary)
+    }
+
+    // MARK: - Staff Tab Content
+
+    private var staffTabContent: some View {
+        ZStack(alignment: .bottom) {
             List {
                 // MARK: - Budget Header
                 Section {
                     budgetHeaderView
+
+                    // Fix #50: Over-budget warning banner
+                    if isBudgetOverspent {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(Color.danger)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Over Budget")
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(Color.danger)
+                                Text("You are $\(formatBudget(abs(remainingBudget)))M over the coaching budget. Release staff or reduce salaries to proceed.")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.textSecondary)
+                            }
+                        }
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.danger.opacity(0.1))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .strokeBorder(Color.danger.opacity(0.3), lineWidth: 1)
+                                )
+                        )
+                    }
                 } header: {
                     Text("Staff Budget")
                 }
@@ -408,6 +615,32 @@ struct CoachingStaffView: View {
                     .listRowBackground(Color.backgroundSecondary)
                 }
 
+                // MARK: - Medical Staff (#79)
+                Section {
+                    let medRoles: [CoachRole] = [.teamDoctor, .physio]
+                    ForEach(medRoles, id: \.self) { role in
+                        if let coach = coaches.first(where: { $0.role == role }) {
+                            NavigationLink {
+                                CoachDetailView(coach: coach)
+                            } label: {
+                                CoachRowWithDescriptionView(coach: coach)
+                            }
+                        } else {
+                            vacantRow(role: role)
+                        }
+                    }
+                } header: {
+                    HStack(spacing: 6) {
+                        Text("4")
+                            .font(.system(size: 10, weight: .black))
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .frame(width: 18, height: 18)
+                            .background(Circle().fill(Color.accentGold))
+                        Text("Medical Staff")
+                    }
+                }
+                .listRowBackground(Color.backgroundSecondary)
+
                 // MARK: - Scouting Department
                 Section {
                     // Chief Scout
@@ -428,7 +661,7 @@ struct CoachingStaffView: View {
                     }
                 } header: {
                     HStack(spacing: 6) {
-                        Text("4")
+                        Text("5")
                             .font(.system(size: 10, weight: .black))
                             .foregroundStyle(Color.backgroundPrimary)
                             .frame(width: 18, height: 18)
@@ -437,16 +670,630 @@ struct CoachingStaffView: View {
                     }
                 }
                 .listRowBackground(Color.backgroundSecondary)
+
+                // Bottom spacer so Lock In button doesn't overlap last row
+                if career.currentPhase == .coachingChanges {
+                    Section {
+                        Color.clear.frame(height: 70)
+                    }
+                    .listRowBackground(Color.clear)
+                }
             }
             .scrollContentBackground(.hidden)
             .listStyle(.insetGrouped)
+
+            // MARK: - Lock In Staff Button (#66)
+            if career.currentPhase == .coachingChanges {
+                lockInStaffButton
+            }
         }
-        .navigationTitle("Coaching Staff")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbarColorScheme(.dark, for: .navigationBar)
+    }
+
+    // MARK: - Schemes Tab Content (#107, #76)
+
+    private var schemesTabContent: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                // Offensive Scheme Card
+                offensiveSchemeCard
+
+                // Offensive Roster Fit
+                if let oc = coaches.first(where: { $0.role == .offensiveCoordinator }),
+                   let scheme = oc.offensiveScheme {
+                    schemeRosterFitSection(
+                        title: "OFFENSIVE ROSTER FIT",
+                        scheme: scheme.displayName,
+                        coordinatorName: oc.fullName,
+                        players: offensivePlayers,
+                        offensiveScheme: scheme,
+                        defensiveScheme: nil
+                    )
+                }
+
+                // Defensive Scheme Card
+                defensiveSchemeCard
+
+                // Defensive Roster Fit
+                if let dc = coaches.first(where: { $0.role == .defensiveCoordinator }),
+                   let scheme = dc.defensiveScheme {
+                    schemeRosterFitSection(
+                        title: "DEFENSIVE ROSTER FIT",
+                        scheme: scheme.displayName,
+                        coordinatorName: dc.fullName,
+                        players: defensivePlayers,
+                        offensiveScheme: nil,
+                        defensiveScheme: scheme
+                    )
+                }
+
+                // Scheme Impact Info
+                schemeImpactCard
+            }
+            .padding(16)
+        }
+        .sheet(isPresented: $showOffensiveSchemeSelection) {
+            if let oc = coaches.first(where: { $0.role == .offensiveCoordinator }) {
+                SchemeSelectionView(
+                    coordinator: oc,
+                    players: offensivePlayers,
+                    isOffensive: true
+                )
+            }
+        }
+        .sheet(isPresented: $showDefensiveSchemeSelection) {
+            if let dc = coaches.first(where: { $0.role == .defensiveCoordinator }) {
+                SchemeSelectionView(
+                    coordinator: dc,
+                    players: defensivePlayers,
+                    isOffensive: false
+                )
+            }
+        }
+    }
+
+    // MARK: - Offensive Scheme Card
+
+    private var offensiveSchemeCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("OFFENSIVE SCHEME")
+                .font(.system(size: 11, weight: .black))
+                .tracking(1.5)
+                .foregroundStyle(Color.accentGold)
+
+            if let oc = coaches.first(where: { $0.role == .offensiveCoordinator }),
+               let scheme = oc.offensiveScheme {
+                HStack(spacing: 12) {
+                    Image(systemName: "football.fill")
+                        .font(.title2)
+                        .foregroundStyle(Color.accentBlue)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(scheme.displayName)
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(Color.textPrimary)
+                        Text("Set by OC \(oc.fullName)")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                        Text(offensiveSchemeDescription(scheme))
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    Spacer()
+                    Button {
+                        showOffensiveSchemeSelection = true
+                    } label: {
+                        Text("Change")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentGold)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.accentGold.opacity(0.5), lineWidth: 1)
+                            )
+                    }
+                }
+            } else {
+                HStack(spacing: 12) {
+                    Image(systemName: "football")
+                        .font(.title2)
+                        .foregroundStyle(Color.textTertiary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("No Offensive Scheme")
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(Color.textTertiary)
+                        Text("Hire an Offensive Coordinator to set your offensive scheme")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
+    // MARK: - Defensive Scheme Card
+
+    private var defensiveSchemeCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("DEFENSIVE SCHEME")
+                .font(.system(size: 11, weight: .black))
+                .tracking(1.5)
+                .foregroundStyle(Color.accentGold)
+
+            if let dc = coaches.first(where: { $0.role == .defensiveCoordinator }),
+               let scheme = dc.defensiveScheme {
+                HStack(spacing: 12) {
+                    Image(systemName: "shield.fill")
+                        .font(.title2)
+                        .foregroundStyle(Color.danger)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(scheme.displayName)
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(Color.textPrimary)
+                        Text("Set by DC \(dc.fullName)")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                        Text(defensiveSchemeDescription(scheme))
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    Spacer()
+                    Button {
+                        showDefensiveSchemeSelection = true
+                    } label: {
+                        Text("Change")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentGold)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.accentGold.opacity(0.5), lineWidth: 1)
+                            )
+                    }
+                }
+            } else {
+                HStack(spacing: 12) {
+                    Image(systemName: "shield")
+                        .font(.title2)
+                        .foregroundStyle(Color.textTertiary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("No Defensive Scheme")
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(Color.textTertiary)
+                        Text("Hire a Defensive Coordinator to set your defensive scheme")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
+    // MARK: - Scheme Roster Fit Section
+
+    private func schemeRosterFitSection(
+        title: String,
+        scheme: String,
+        coordinatorName: String?,
+        players: [Player],
+        offensiveScheme: OffensiveScheme?,
+        defensiveScheme: DefensiveScheme?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 11, weight: .black))
+                .tracking(1.5)
+                .foregroundStyle(Color.accentGold)
+
+            if players.isEmpty {
+                Text("No players on roster for this side of the ball.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            } else {
+                // Player fit bars
+                ForEach(players.prefix(15), id: \.id) { player in
+                    let fitScore = CoachingEngine.schemeFit(
+                        player: player,
+                        offensiveScheme: offensiveScheme,
+                        defensiveScheme: defensiveScheme
+                    )
+                    let fitPercent = Int(fitScore * 100)
+                    let fitColor = schemeFitColor(fitPercent)
+
+                    HStack(spacing: 8) {
+                        Text(player.position.rawValue)
+                            .font(.system(size: 10, weight: .bold).monospacedDigit())
+                            .foregroundStyle(Color.textTertiary)
+                            .frame(width: 28, alignment: .leading)
+
+                        Text(player.fullName)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Color.textPrimary)
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        // Progress bar
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.backgroundTertiary)
+                                    .frame(height: 8)
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(fitColor)
+                                    .frame(width: max(0, geo.size.width * fitScore), height: 8)
+                            }
+                        }
+                        .frame(width: 80, height: 8)
+
+                        Text("\(fitPercent)%")
+                            .font(.system(size: 10, weight: .bold).monospacedDigit())
+                            .foregroundStyle(fitColor)
+                            .frame(width: 32, alignment: .trailing)
+                    }
+                }
+
+                // Average fit
+                Divider().overlay(Color.surfaceBorder)
+
+                let avgFit = players.reduce(0.0) { sum, player in
+                    sum + CoachingEngine.schemeFit(
+                        player: player,
+                        offensiveScheme: offensiveScheme,
+                        defensiveScheme: defensiveScheme
+                    )
+                } / max(1.0, Double(players.count))
+                let avgPercent = Int(avgFit * 100)
+                let avgColor = schemeFitColor(avgPercent)
+
+                HStack {
+                    Text("Average Fit")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer()
+                    Text("\(avgPercent)%")
+                        .font(.subheadline.weight(.bold).monospacedDigit())
+                        .foregroundStyle(avgColor)
+                    Text(schemeFitLabel(avgPercent))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(avgColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(avgColor.opacity(0.15))
+                        )
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
+    // MARK: - Scheme Impact Card
+
+    private var schemeImpactCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("SCHEME IMPACT")
+                .font(.system(size: 11, weight: .black))
+                .tracking(1.5)
+                .foregroundStyle(Color.accentGold)
+
+            VStack(alignment: .leading, spacing: 6) {
+                schemeImpactRow(
+                    icon: "sportscourt.fill",
+                    text: "Your offensive scheme affects play calling tendencies during games."
+                )
+                schemeImpactRow(
+                    icon: "chart.line.uptrend.xyaxis",
+                    text: "Players with high scheme fit perform better in game simulations."
+                )
+                schemeImpactRow(
+                    icon: "arrow.up.forward.circle.fill",
+                    text: "Players with high scheme fit develop faster in the offseason."
+                )
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
+    private func schemeImpactRow(icon: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundStyle(Color.accentGold.opacity(0.7))
+                .frame(width: 14)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+        }
+    }
+
+    // MARK: - Scheme Fit Helpers
+
+    private func schemeFitColor(_ percent: Int) -> Color {
+        if percent >= 80 { return Color.success }
+        if percent >= 60 { return Color.accentGold }
+        return Color.danger
+    }
+
+    private func schemeFitLabel(_ percent: Int) -> String {
+        if percent >= 80 { return "Great" }
+        if percent >= 60 { return "Good" }
+        if percent >= 40 { return "Fair" }
+        return "Poor"
+    }
+
+    // MARK: - Review Tab Content (#107)
+
+    private var reviewTabContent: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                // Staff Overview
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("STAFF OVERVIEW")
+                        .font(.system(size: 11, weight: .black))
+                        .tracking(1.5)
+                        .foregroundStyle(Color.accentGold)
+
+                    HStack(spacing: 20) {
+                        reviewStatBadge(value: "\(coaches.count)", label: "Coaches", color: .accentGold)
+                        reviewStatBadge(value: "\(scouts.count)", label: "Scouts", color: .accentBlue)
+                        reviewStatBadge(value: "\(vacantCoachRoles.count)", label: "Vacant", color: vacantCoachRoles.isEmpty ? .success : .warning)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .cardBackground()
+
+                // Budget Summary
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("BUDGET SUMMARY")
+                        .font(.system(size: 11, weight: .black))
+                        .tracking(1.5)
+                        .foregroundStyle(Color.accentGold)
+
+                    HStack {
+                        Text("Total Budget")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        Text("$\(formatBudget(coachingBudget))M")
+                            .font(.subheadline.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Color.textPrimary)
+                    }
+
+                    HStack {
+                        Text("Coaching Salaries")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        Text("$\(formatBudget(totalCoachSalaryUsed))M")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(Color.textPrimary)
+                    }
+
+                    HStack {
+                        Text("Scouting Salaries")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        Text("$\(formatBudget(totalScoutSalaryUsed))M")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(Color.textPrimary)
+                    }
+
+                    Divider().overlay(Color.surfaceBorder)
+
+                    HStack {
+                        Text("Remaining")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(Color.textPrimary)
+                        Spacer()
+                        Text("$\(formatBudget(remainingBudget))M")
+                            .font(.headline.weight(.bold).monospacedDigit())
+                            .foregroundStyle(remainingBudget >= 0 ? Color.success : Color.danger)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .cardBackground()
+
+                // Staff Ratings
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("STAFF RATINGS")
+                        .font(.system(size: 11, weight: .black))
+                        .tracking(1.5)
+                        .foregroundStyle(Color.accentGold)
+
+                    if coaches.isEmpty {
+                        Text("No coaching staff hired yet.")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                    } else {
+                        ForEach(coaches.sorted(by: { $0.role.sortOrder < $1.role.sortOrder })) { coach in
+                            let ovr = coachOverall(coach)
+                            HStack(spacing: 10) {
+                                Text(coach.role.abbreviation)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Color.backgroundPrimary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(coach.role.badgeColor, in: RoundedRectangle(cornerRadius: 4))
+                                    .frame(width: 36)
+
+                                Text(coach.fullName)
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.textPrimary)
+                                    .lineLimit(1)
+
+                                Spacer()
+
+                                Text("\(ovr)")
+                                    .font(.system(size: 16, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(Color.forRating(ovr))
+                            }
+
+                            if coach.id != coaches.sorted(by: { $0.role.sortOrder < $1.role.sortOrder }).last?.id {
+                                Divider().overlay(Color.surfaceBorder.opacity(0.4))
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .cardBackground()
+
+                // Readiness Check
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("READINESS CHECK")
+                        .font(.system(size: 11, weight: .black))
+                        .tracking(1.5)
+                        .foregroundStyle(Color.accentGold)
+
+                    readinessRow(label: "Head Coach", filled: career.role == .gmAndHeadCoach || headCoach != nil)
+                    readinessRow(label: "Offensive Coordinator", filled: coaches.contains(where: { $0.role == .offensiveCoordinator }))
+                    readinessRow(label: "Defensive Coordinator", filled: coaches.contains(where: { $0.role == .defensiveCoordinator }))
+                    readinessRow(label: "Special Teams Coordinator", filled: coaches.contains(where: { $0.role == .specialTeamsCoordinator }))
+                    readinessRow(label: "Budget Within Limits", filled: !isBudgetOverspent)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .cardBackground()
+            }
+            .padding(16)
+        }
+    }
+
+    // MARK: - Lock In Staff Button (#66)
+
+    private var lockInStaffButton: some View {
+        VStack(spacing: 0) {
+            Divider().overlay(Color.surfaceBorder)
+
+            Button {
+                if isBudgetOverspent {
+                    // Do nothing -- button is disabled
+                } else if !allRequiredRolesFilled {
+                    showIncompleteStaffWarning = true
+                } else {
+                    showLockInConfirmation = true
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                    Text("Lock in Staff & Advance")
+                        .font(.headline.weight(.bold))
+                }
+                .foregroundStyle(isBudgetOverspent ? Color.textTertiary : Color.backgroundPrimary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(isBudgetOverspent ? Color.backgroundTertiary : Color.accentGold)
+                )
+            }
+            .disabled(isBudgetOverspent)
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color.backgroundPrimary.opacity(0.95))
+        }
+    }
+
+    // MARK: - Review Tab Helpers
+
+    private func reviewStatBadge(value: String, label: String, color: Color) -> some View {
+        VStack(spacing: 4) {
+            Text(value)
+                .font(.system(size: 22, weight: .black).monospacedDigit())
+                .foregroundStyle(color)
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .frame(width: 72, height: 56)
+        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func readinessRow(label: String, filled: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: filled ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 14))
+                .foregroundStyle(filled ? Color.success : Color.textTertiary)
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(filled ? Color.textPrimary : Color.textTertiary)
+            Spacer()
+        }
+    }
+
+    private func coachOverall(_ coach: Coach) -> Int {
+        let sum = coach.playCalling + coach.playerDevelopment + coach.gamePlanning
+            + coach.scoutingAbility + coach.recruiting + coach.motivation
+            + coach.discipline + coach.adaptability + coach.mediaHandling
+            + coach.contractNegotiation + coach.moraleInfluence + coach.reputation
+        return sum / 12
+    }
+
+    // MARK: - Scheme Descriptions
+
+    private func offensiveSchemeDescription(_ scheme: OffensiveScheme) -> String {
+        switch scheme {
+        case .westCoast:  return "Short-to-intermediate passing with high-percentage throws and run-after-catch emphasis."
+        case .airRaid:    return "Spread formations with four- and five-wide sets, emphasizing the vertical passing game."
+        case .spread:     return "Space the field with spread formations, using both run and pass to exploit matchups."
+        case .powerRun:   return "Downhill running attack with pulling guards and fullback leads."
+        case .shanahan:   return "Outside zone running scheme with play-action boots and misdirection."
+        case .proPassing: return "Pro-style balanced attack with multiple formations and under-center play-action."
+        case .rpo:        return "Run-pass option plays that let the QB read the defense post-snap."
+        case .option:     return "Triple-option and read-option concepts emphasizing athletic QBs."
+        }
+    }
+
+    private func defensiveSchemeDescription(_ scheme: DefensiveScheme) -> String {
+        switch scheme {
+        case .base34:   return "3-4 base with versatile OLBs who can rush and drop into coverage."
+        case .base43:   return "4-3 base with four down linemen generating the pass rush."
+        case .cover3:   return "Cover 3 zone with three deep defenders and four underneath zones."
+        case .pressMan: return "Aggressive press-man coverage at the line with tight man-to-man assignments."
+        case .tampa2:   return "Tampa 2 zone with a fast MLB dropping into deep middle coverage."
+        case .multiple: return "Multiple fronts and coverages that disguise the defense pre-snap."
+        case .hybrid:   return "Hybrid defense blending 3-4 and 4-3 principles with positionless players."
+        }
+    }
+
+    // MARK: - Hiring Toast Trigger (#49)
+
+    /// Call this when returning from a hiring screen to show confirmation toast.
+    func showHiringConfirmation(coachName: String, roleName: String) {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            recentHireMessage = "\(coachName) hired as \(roleName)!"
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            withAnimation(.easeOut(duration: 0.4)) {
+                recentHireMessage = nil
+            }
+        }
     }
 
     // MARK: - Budget Header
+
+    /// Budget change from previous season (in thousands).
+    private var budgetChange: Int? {
+        guard let prev = owner?.previousCoachingBudget, prev > 0 else { return nil }
+        return coachingBudget - prev
+    }
 
     @ViewBuilder
     private var budgetHeaderView: some View {
@@ -456,9 +1303,18 @@ struct CoachingStaffView: View {
                     Text("Coaching Budget")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.textPrimary)
-                    Text("$\(formatBudget(totalStaffSalaryUsed))M / $\(formatBudget(coachingBudget))M used")
-                        .font(.caption)
-                        .foregroundStyle(remainingBudget >= 0 ? Color.textSecondary : Color.danger)
+                    HStack(spacing: 4) {
+                        Text("$\(formatBudget(totalStaffSalaryUsed))M / $\(formatBudget(coachingBudget))M used")
+                            .font(.caption)
+                            .foregroundStyle(remainingBudget >= 0 ? Color.textSecondary : Color.danger)
+
+                        // Show budget change from last season (#80)
+                        if let change = budgetChange, change != 0 {
+                            Text(change > 0 ? "(+$\(formatBudget(change))M)" : "(-$\(formatBudget(abs(change)))M)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(change > 0 ? Color.success : Color.danger)
+                        }
+                    }
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
@@ -599,7 +1455,9 @@ struct CoachingStaffView: View {
     private var headCoachVacantRow: some View {
         if let teamID = career.teamID {
             NavigationLink {
-                HireCoachView(role: .headCoach, teamID: teamID, remainingBudget: remainingBudget)
+                HireCoachView(role: .headCoach, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, role in
+                    showHiringConfirmation(coachName: name, roleName: role)
+                })
             } label: {
                 VStack(spacing: 10) {
                     HStack {
@@ -643,7 +1501,9 @@ struct CoachingStaffView: View {
     private func vacantRow(role: CoachRole) -> some View {
         if let teamID = career.teamID {
             NavigationLink {
-                HireCoachView(role: role, teamID: teamID, remainingBudget: remainingBudget)
+                HireCoachView(role: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
+                    showHiringConfirmation(coachName: name, roleName: roleName)
+                })
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -1107,6 +1967,8 @@ extension CoachRole {
         case .lbCoach:                 return "LB Coach"
         case .dbCoach:                 return "DB Coach"
         case .strengthCoach:           return "Strength & Conditioning"
+        case .teamDoctor:              return "Team Doctor"
+        case .physio:                  return "Physiotherapist"
         }
     }
 
@@ -1125,6 +1987,8 @@ extension CoachRole {
         case .lbCoach:                 return "LB"
         case .dbCoach:                 return "DB"
         case .strengthCoach:           return "S&C"
+        case .teamDoctor:              return "DOC"
+        case .physio:                  return "PHY"
         }
     }
 
@@ -1143,6 +2007,8 @@ extension CoachRole {
         case .lbCoach:                 return 10
         case .dbCoach:                 return 11
         case .strengthCoach:           return 12
+        case .teamDoctor:              return 13
+        case .physio:                  return 14
         }
     }
 
@@ -1161,6 +2027,8 @@ extension CoachRole {
         case .lbCoach:                 return "Develops linebackers and run-fit assignments"
         case .dbCoach:                 return "Develops defensive backs and coverage skills"
         case .strengthCoach:           return "Manages conditioning, injury prevention, and recovery"
+        case .teamDoctor:              return "Reduces injury risk and speeds diagnosis for faster return to play"
+        case .physio:                  return "Speeds injury recovery and improves weekly fatigue management"
         }
     }
 
@@ -1171,6 +2039,7 @@ extension CoachRole {
         case .offensiveCoordinator:    return .accentBlue
         case .defensiveCoordinator:    return .danger
         case .specialTeamsCoordinator: return .success
+        case .teamDoctor, .physio:     return .accentBlue.opacity(0.7)
         default:                       return .backgroundTertiary
         }
     }
@@ -1217,5 +2086,5 @@ extension DefensiveScheme {
             capMode: .simple
         ))
     }
-    .modelContainer(for: [Career.self, Coach.self, Scout.self, Owner.self], inMemory: true)
+    .modelContainer(for: [Career.self, Coach.self, Scout.self, Owner.self, Player.self], inMemory: true)
 }

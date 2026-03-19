@@ -6,9 +6,12 @@ struct HireCoachView: View {
     let role: CoachRole
     let teamID: UUID
     let remainingBudget: Int
+    var onHired: ((String, String) -> Void)?
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+
+    @Query private var allCoaches: [Coach]
 
     @State private var candidates: [Coach] = []
     @State private var hiredCoachID: UUID?
@@ -16,6 +19,11 @@ struct HireCoachView: View {
     @State private var sortAscending: Bool = false
     @State private var selectedCandidate: Coach?
     @State private var showAffordableOnly: Bool = false
+
+    /// The team's head coach, used to determine current team scheme for fit indicator.
+    private var teamHeadCoach: Coach? {
+        allCoaches.first { $0.teamID == teamID && $0.role == .headCoach }
+    }
 
     // MARK: - Sort Column
 
@@ -134,6 +142,9 @@ struct HireCoachView: View {
                 isHired: hiredCoachID == candidate.id,
                 onHire: { hire(candidate) }
             )
+            // Fix #86: Make candidate profile sheet larger on iPad
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -176,6 +187,11 @@ struct HireCoachView: View {
             headerButton("Name", column: .name, width: nil, alignment: .leading)
             headerButton("Age", column: .age, width: 34)
             headerButton("Scheme", column: .scheme, width: 62)
+            // Fix #38: Scheme fit column header
+            if teamHeadCoach != nil {
+                Text("Fit")
+                    .frame(width: 32)
+            }
             headerButton("OVR", column: .ovr, width: 36)
             headerButton("Play", column: .play, width: 36)
             headerButton("Dev", column: .dev, width: 36)
@@ -249,6 +265,27 @@ struct HireCoachView: View {
                     .minimumScaleFactor(0.7)
                     .frame(width: 62)
 
+                // Fix #38: Scheme fit indicator
+                if teamHeadCoach != nil {
+                    Group {
+                        if let fit = schemeFit(for: candidate) {
+                            Circle()
+                                .fill(fit.color)
+                                .frame(width: 8, height: 8)
+                                .overlay(
+                                    Circle()
+                                        .strokeBorder(fit.color.opacity(0.5), lineWidth: 1)
+                                )
+                                .accessibilityLabel("Scheme fit: \(fit.label)")
+                        } else {
+                            Text("--")
+                                .font(.system(size: 8))
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                    }
+                    .frame(width: 32)
+                }
+
                 // OVR numeric
                 Text("\(ovr)")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -314,6 +351,54 @@ struct HireCoachView: View {
         return "--"
     }
 
+    // MARK: - Scheme Fit (Fix #38)
+
+    /// Determines how well a candidate's scheme fits the team's current scheme (via HC).
+    /// Returns (color, label) for the fit indicator.
+    private func schemeFit(for candidate: Coach) -> (color: Color, label: String)? {
+        guard let hc = teamHeadCoach else { return nil }
+
+        // Compare offensive schemes
+        if let candidateOff = candidate.offensiveScheme {
+            if let hcOff = hc.offensiveScheme {
+                if candidateOff == hcOff {
+                    return (.success, "Great")
+                }
+                // Similar scheme families
+                let passingSchemes: Set<OffensiveScheme> = [.westCoast, .airRaid, .proPassing, .spread]
+                let runSchemes: Set<OffensiveScheme> = [.powerRun, .shanahan, .option, .rpo]
+                if (passingSchemes.contains(candidateOff) && passingSchemes.contains(hcOff))
+                    || (runSchemes.contains(candidateOff) && runSchemes.contains(hcOff)) {
+                    return (.warning, "OK")
+                }
+                return (.danger, "Poor")
+            }
+            return nil // HC has no offensive scheme set
+        }
+
+        // Compare defensive schemes
+        if let candidateDef = candidate.defensiveScheme {
+            if let hcDef = hc.defensiveScheme {
+                if candidateDef == hcDef {
+                    return (.success, "Great")
+                }
+                // Similar scheme families
+                let frontSchemes: Set<DefensiveScheme> = [.base34, .base43]
+                let coverageSchemes: Set<DefensiveScheme> = [.cover3, .tampa2, .pressMan]
+                let flexSchemes: Set<DefensiveScheme> = [.multiple, .hybrid]
+                if (frontSchemes.contains(candidateDef) && frontSchemes.contains(hcDef))
+                    || (coverageSchemes.contains(candidateDef) && coverageSchemes.contains(hcDef))
+                    || (flexSchemes.contains(candidateDef) && flexSchemes.contains(hcDef)) {
+                    return (.warning, "OK")
+                }
+                return (.danger, "Poor")
+            }
+            return nil // HC has no defensive scheme set
+        }
+
+        return nil
+    }
+
     private func salaryFormatted(_ thousands: Int) -> String {
         let millions = Double(thousands) / 1_000.0
         return String(format: "$%.1fM", millions)
@@ -340,8 +425,20 @@ struct HireCoachView: View {
         modelContext.insert(candidate)
         hiredCoachID = candidate.id
 
+        // Fix #88: Save context before dismissing so CoachingStaffView's @Query refreshes
+        try? modelContext.save()
+
+        // Fix #49: Notify parent about the hire for toast display
+        let hiredName = candidate.fullName
+        let hiredRole = role.displayName
+
+        // Fix #87: Dismiss sheet first, then pop HireCoachView after sheet animation completes
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            dismiss()
+            selectedCandidate = nil  // Close the sheet
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                onHired?(hiredName, hiredRole)
+                dismiss()
+            }
         }
     }
 }

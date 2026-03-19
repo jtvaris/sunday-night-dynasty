@@ -185,6 +185,70 @@ private struct OwnerMeetingStep: View {
         }
     }
 
+    // MARK: - #15 Practical Implications
+
+    private var patienceImplication: String {
+        guard let patience = owner?.patience else { return "" }
+        switch patience {
+        case 1...3:  return "You'll need to win fast — there's no room for a long rebuild."
+        case 4...6:  return "You have a reasonable window, but steady progress is expected each year."
+        case 7...10: return "You have time to build through the draft and develop young talent."
+        default:     return ""
+        }
+    }
+
+    private var visionImplication: String {
+        guard let owner = owner else { return "" }
+        if owner.prefersWinNow {
+            return "Expect pressure for immediate playoff contention. Prioritize proven veterans in free agency."
+        } else {
+            return "The owner supports a long-term plan. Draft picks and player development are valued over quick fixes."
+        }
+    }
+
+    private var budgetImplication: String {
+        guard let spending = owner?.spendingWillingness else { return "" }
+        switch spending {
+        case 1...30:  return "Don't expect big free agent signings — you'll need to build through the draft."
+        case 31...60: return "Modest free agency budget available. Be strategic with your spending."
+        case 61...80: return "Significant resources available for roster upgrades in free agency."
+        default:      return "Money is no object. The owner will back any move you want to make."
+        }
+    }
+
+    private var meddlingImplication: String {
+        guard let meddling = owner?.meddling else { return "" }
+        switch meddling {
+        case 1...30:  return "Full autonomy — the owner trusts your football judgment completely."
+        case 31...60: return "The owner may weigh in on major decisions but generally stays out of the way."
+        case 61...80: return "Expect the owner to have opinions on key signings and draft picks."
+        default:      return "The owner will frequently override your decisions. Pick your battles carefully."
+        }
+    }
+
+    // MARK: - #16 Personal Warning Quote
+
+    private var personalWarningQuote: String {
+        guard let owner = owner else { return "" }
+        let name = owner.name.components(separatedBy: " ").first ?? owner.name
+
+        if owner.prefersWinNow && owner.patience <= 3 {
+            return "\"I didn't buy this team to lose. I want a championship, and I want it now.\" — \(name)"
+        } else if owner.prefersWinNow && owner.meddling > 60 {
+            return "\"I'll be watching every move you make. My fans deserve winners.\" — \(name)"
+        } else if owner.prefersWinNow {
+            return "\"I believe in winning. Show me results and you'll have everything you need.\" — \(name)"
+        } else if owner.patience >= 7 {
+            return "\"Take your time and build this the right way. I'm not going anywhere.\" — \(name)"
+        } else if owner.meddling > 60 {
+            return "\"I trust you, but I like to stay close to the operation. Don't shut me out.\" — \(name)"
+        } else if owner.spendingWillingness < 30 {
+            return "\"Be smart with the money. Every dollar has to count around here.\" — \(name)"
+        } else {
+            return "\"Just give me a team the city can be proud of. That's all I ask.\" — \(name)"
+        }
+    }
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -247,7 +311,7 @@ private struct OwnerMeetingStep: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                // Owner personality traits
+                // Owner personality traits + practical implications (#15)
                 if showTraits, let owner = owner {
                     VStack(spacing: 16) {
                         // Vision
@@ -256,6 +320,7 @@ private struct OwnerMeetingStep: View {
                             label: "Owner's Vision",
                             value: owner.prefersWinNow ? "Win Now" : "Build for the Future"
                         )
+                        ImplicationRow(text: visionImplication)
 
                         // Patience
                         InfoRow(
@@ -263,6 +328,7 @@ private struct OwnerMeetingStep: View {
                             label: "Patience",
                             value: "Expects results within \(patienceDescription) seasons"
                         )
+                        ImplicationRow(text: patienceImplication)
 
                         // Spending
                         InfoRow(
@@ -270,6 +336,15 @@ private struct OwnerMeetingStep: View {
                             label: "Free Agency Budget",
                             value: spendingLevel
                         )
+                        ImplicationRow(text: budgetImplication)
+
+                        // Meddling / Involvement
+                        InfoRow(
+                            icon: "person.badge.key.fill",
+                            label: "Involvement",
+                            value: owner.meddling < 25 ? "Hands Off" : owner.meddling < 50 ? "Occasionally Involved" : owner.meddling < 75 ? "Frequently Involved" : "Highly Controlling"
+                        )
+                        ImplicationRow(text: meddlingImplication)
                     }
                     .padding(20)
                     .cardBackground()
@@ -296,22 +371,23 @@ private struct OwnerMeetingStep: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
-                // Meddling warning
-                if showWarning, let owner = owner, owner.meddling > 60 {
+                // Personal owner quote (#16)
+                if showWarning, let _ = owner {
                     HStack(spacing: 12) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(Color.warning)
-                        Text("\"I like to be involved in decisions. Don't be surprised to hear from me.\"")
+                        Image(systemName: "quote.opening")
+                            .font(.title3)
+                            .foregroundStyle(Color.accentGold.opacity(0.7))
+                        Text(personalWarningQuote)
                             .font(.subheadline.italic())
                             .foregroundStyle(Color.textSecondary)
                     }
                     .padding(16)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.warning.opacity(0.08))
+                            .fill(Color.accentGold.opacity(0.06))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .strokeBorder(Color.warning.opacity(0.2), lineWidth: 1)
+                                    .strokeBorder(Color.accentGold.opacity(0.2), lineWidth: 1)
                             )
                     )
                     .padding(.horizontal, 24)
@@ -359,6 +435,7 @@ private struct TeamOverviewStep: View {
 
     @State private var showHeader = false
     @State private var showRoster = false
+    @State private var showPositionGrades = false
     @State private var showCap = false
     @State private var showDraft = false
 
@@ -386,6 +463,93 @@ private struct TeamOverviewStep: View {
     private var filledCoachingSlots: Int {
         coaches.count
     }
+
+    // MARK: - #20 Roster Age & Contract Summary
+
+    private var averageAge: Double {
+        guard !players.isEmpty else { return 0 }
+        return Double(players.map(\.age).reduce(0, +)) / Double(players.count)
+    }
+
+    private var expiringContracts: Int {
+        players.filter { $0.contractYearsRemaining <= 1 }.count
+    }
+
+    // MARK: - #18 Position Group Grades
+
+    private struct PositionGroupGrade: Identifiable {
+        let id = UUID()
+        let name: String
+        let grade: String
+        let average: Int
+        let color: Color
+    }
+
+    /// Maps positions to position group names for grading.
+    private static func positionGroupName(for position: Position) -> String {
+        switch position {
+        case .QB: return "QB"
+        case .RB, .FB: return "RB"
+        case .WR: return "WR"
+        case .TE: return "TE"
+        case .LT, .LG, .C, .RG, .RT: return "OL"
+        case .DE, .DT: return "DL"
+        case .OLB, .MLB: return "LB"
+        case .CB, .FS, .SS: return "DB"
+        case .K, .P: return "ST"
+        }
+    }
+
+    private static func gradeForAverage(_ avg: Int) -> String {
+        switch avg {
+        case 90...:    return "A+"
+        case 85...89:  return "A"
+        case 80...84:  return "A-"
+        case 77...79:  return "B+"
+        case 73...76:  return "B"
+        case 70...72:  return "B-"
+        case 67...69:  return "C+"
+        case 63...66:  return "C"
+        case 60...62:  return "C-"
+        case 55...59:  return "D+"
+        case 50...54:  return "D"
+        default:       return "F"
+        }
+    }
+
+    private static func colorForGrade(_ avg: Int) -> Color {
+        switch avg {
+        case 80...:   return Color.success
+        case 70...79: return Color.accentGold
+        case 60...69: return Color.warning
+        default:      return Color.danger
+        }
+    }
+
+    private var positionGroupGrades: [PositionGroupGrade] {
+        guard !players.isEmpty else { return [] }
+        let grouped = Dictionary(grouping: players, by: { Self.positionGroupName(for: $0.position) })
+        let order = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "ST"]
+        return order.compactMap { groupName in
+            guard let groupPlayers = grouped[groupName], !groupPlayers.isEmpty else { return nil }
+            let avg = groupPlayers.map(\.overall).reduce(0, +) / groupPlayers.count
+            return PositionGroupGrade(
+                name: groupName,
+                grade: Self.gradeForAverage(avg),
+                average: avg,
+                color: Self.colorForGrade(avg)
+            )
+        }
+    }
+
+    // MARK: - #19 League Average Context
+
+    /// Approximate league averages for context display.
+    private static let leagueAverages: [(label: String, keyPath: String, leagueAvg: Int)] = [
+        ("Team Overall", "overall", 72),
+        ("Average Age", "age", 26),
+        ("Roster Size", "rosterSize", 53),
+    ]
 
     /// Total coaching staff positions expected (HC + OC + DC + STC + position coaches).
     private var totalCoachingSlots: Int { CoachRole.allCases.count }
@@ -455,14 +619,41 @@ private struct TeamOverviewStep: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                // Roster snapshot
+                // Roster snapshot + #20 age/contract summary + #21 coaching emphasis + #19 league averages
                 if showRoster {
                     VStack(alignment: .leading, spacing: 14) {
                         SectionLabel(text: "ROSTER")
 
                         StatRow(label: "Total Players", value: "\(players.count)")
-                        StatRow(label: "Average Overall", value: "\(averageOverall)",
-                                valueColor: Color.forRating(averageOverall))
+
+                        // #19: Overall with league average context
+                        ComparisonStatRow(
+                            label: "Average Overall",
+                            value: averageOverall,
+                            leagueAvg: 72,
+                            format: { "\($0)" }
+                        )
+
+                        // #20: Average roster age
+                        HStack {
+                            Text("Average Age")
+                                .font(.subheadline)
+                                .foregroundStyle(Color.textSecondary)
+                            Spacer()
+                            Text(String(format: "%.1f", averageAge))
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                            Text("(Avg: 26.0)")
+                                .font(.caption)
+                                .foregroundStyle(averageAge > 27.5 ? Color.warning : averageAge < 25.0 ? Color.success : Color.textTertiary)
+                        }
+
+                        // #20: Expiring contracts
+                        StatRow(
+                            label: "Expiring Contracts",
+                            value: "\(expiringContracts) player\(expiringContracts == 1 ? "" : "s")",
+                            valueColor: expiringContracts > 15 ? Color.danger : expiringContracts > 8 ? Color.warning : Color.textPrimary
+                        )
 
                         if let best = bestPlayer {
                             StatRow(label: "Best Player",
@@ -472,8 +663,38 @@ private struct TeamOverviewStep: View {
 
                         StatRow(label: "Weakest Group", value: weakestPositionGroup)
 
-                        StatRow(label: "Coaching Staff",
-                                value: "\(filledCoachingSlots) / \(totalCoachingSlots) filled")
+                        Divider().overlay(Color.surfaceBorder)
+
+                        // #21: Coaching Staff vacancy with emphasis
+                        HStack(spacing: 12) {
+                            Image(systemName: "person.3.fill")
+                                .foregroundStyle(filledCoachingSlots < totalCoachingSlots ? Color.warning : Color.success)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Coaching Staff")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.textSecondary)
+                                if filledCoachingSlots == 0 {
+                                    Text("0 / \(totalCoachingSlots) filled")
+                                        .font(.title3.weight(.bold))
+                                        .foregroundStyle(Color.danger)
+                                } else {
+                                    Text("\(filledCoachingSlots) / \(totalCoachingSlots) filled")
+                                        .font(.title3.weight(.bold))
+                                        .foregroundStyle(filledCoachingSlots < totalCoachingSlots ? Color.warning : Color.success)
+                                }
+                            }
+                            Spacer()
+                            if filledCoachingSlots < totalCoachingSlots {
+                                Text("\(totalCoachingSlots - filledCoachingSlots) VACANT")
+                                    .font(.caption.weight(.black))
+                                    .foregroundStyle(Color.backgroundPrimary)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(
+                                        Capsule().fill(filledCoachingSlots == 0 ? Color.danger : Color.warning)
+                                    )
+                            }
+                        }
                     }
                     .padding(20)
                     .cardBackground()
@@ -481,7 +702,48 @@ private struct TeamOverviewStep: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
-                // Cap situation
+                // #18: Position Group Strengths Breakdown
+                if showPositionGrades, !positionGroupGrades.isEmpty {
+                    VStack(alignment: .leading, spacing: 14) {
+                        SectionLabel(text: "POSITION GROUP STRENGTHS")
+
+                        LazyVGrid(columns: [
+                            GridItem(.flexible()),
+                            GridItem(.flexible()),
+                            GridItem(.flexible())
+                        ], spacing: 10) {
+                            ForEach(positionGroupGrades) { group in
+                                VStack(spacing: 6) {
+                                    Text(group.grade)
+                                        .font(.title2.weight(.black))
+                                        .foregroundStyle(group.color)
+                                    Text(group.name)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(Color.textSecondary)
+                                    Text("\(group.average) OVR")
+                                        .font(.system(size: 10).monospacedDigit())
+                                        .foregroundStyle(Color.textTertiary)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(group.color.opacity(0.08))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10)
+                                                .strokeBorder(group.color.opacity(0.2), lineWidth: 1)
+                                        )
+                                )
+                            }
+                        }
+                    }
+                    .padding(20)
+                    .cardBackground()
+                    .padding(.horizontal, 24)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+
+                // Cap situation with league average context (#19)
                 if showCap {
                     VStack(alignment: .leading, spacing: 14) {
                         SectionLabel(text: "SALARY CAP")
@@ -505,8 +767,26 @@ private struct TeamOverviewStep: View {
                         }
                         .frame(height: 8)
 
-                        StatRow(label: "Available", value: capAvailableFormatted,
-                                valueColor: team.availableCap > 0 ? Color.success : Color.danger)
+                        // #19: Available cap with league average comparison
+                        HStack {
+                            Text("Available")
+                                .font(.subheadline)
+                                .foregroundStyle(Color.textSecondary)
+                            Spacer()
+                            Text(capAvailableFormatted)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(team.availableCap > 0 ? Color.success : Color.danger)
+                            // League average cap space ~$25M = 25_000K
+                            let aboveAvg = team.availableCap > 25_000
+                            Image(systemName: aboveAvg ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(aboveAvg ? Color.success : Color.danger)
+                        }
+
+                        // #20: Cap space context
+                        Text("League Avg Cap Space: ~$25.0M")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
                     }
                     .padding(20)
                     .cardBackground()
@@ -566,8 +846,9 @@ private struct TeamOverviewStep: View {
     private func runAnimations() {
         withAnimation(.easeOut(duration: 0.5).delay(0.2)) { showHeader = true }
         withAnimation(.easeOut(duration: 0.5).delay(0.7)) { showRoster = true }
-        withAnimation(.easeOut(duration: 0.5).delay(1.2)) { showCap = true }
-        withAnimation(.easeOut(duration: 0.5).delay(1.7)) { showDraft = true }
+        withAnimation(.easeOut(duration: 0.5).delay(1.2)) { showPositionGrades = true }
+        withAnimation(.easeOut(duration: 0.5).delay(1.7)) { showCap = true }
+        withAnimation(.easeOut(duration: 0.5).delay(2.2)) { showDraft = true }
     }
 }
 
@@ -610,34 +891,68 @@ private struct YourRoadmapStep: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(Self.offseasonCalendarEntries.enumerated()), id: \.offset) { index, entry in
+                    let isCurrent = index == 0
+                    let isFuture = index > 0
+
                     HStack(alignment: .top, spacing: 12) {
-                        // Timeline connector
+                        // Timeline connector (#23)
                         VStack(spacing: 0) {
-                            Circle()
-                                .fill(index == 0 ? Color.accentGold : Color.textTertiary.opacity(0.5))
-                                .frame(width: index == 0 ? 10 : 8, height: index == 0 ? 10 : 8)
+                            ZStack {
+                                if isCurrent {
+                                    Circle()
+                                        .fill(Color.accentGold.opacity(0.25))
+                                        .frame(width: 20, height: 20)
+                                }
+                                Circle()
+                                    .fill(isCurrent ? Color.accentGold : Color.textTertiary.opacity(0.3))
+                                    .frame(width: isCurrent ? 12 : 8, height: isCurrent ? 12 : 8)
+                            }
 
                             if index < Self.offseasonCalendarEntries.count - 1 {
                                 Rectangle()
-                                    .fill(Color.surfaceBorder)
+                                    .fill(isCurrent ? Color.accentGold.opacity(0.4) : Color.surfaceBorder)
                                     .frame(width: 2)
                                     .frame(maxHeight: .infinity)
                             }
                         }
-                        .frame(width: 16)
+                        .frame(width: 20)
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.name)
-                                .font(.subheadline.weight(index == 0 ? .bold : .medium))
-                                .foregroundStyle(index == 0 ? Color.accentGold : Color.textPrimary)
+                            HStack(spacing: 8) {
+                                Text(entry.name)
+                                    .font(isCurrent ? .subheadline.weight(.bold) : .subheadline.weight(.medium))
+                                    .foregroundStyle(isCurrent ? Color.accentGold : isFuture ? Color.textPrimary.opacity(0.6) : Color.textPrimary)
+
+                                if isCurrent {
+                                    Text("CURRENT")
+                                        .font(.system(size: 9, weight: .black))
+                                        .foregroundStyle(Color.backgroundPrimary)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Capsule().fill(Color.accentGold))
+                                }
+                            }
                             Text(entry.description)
                                 .font(.caption)
-                                .foregroundStyle(Color.textSecondary)
+                                .foregroundStyle(isCurrent ? Color.textSecondary : Color.textTertiary)
                         }
 
                         Spacer()
                     }
-                    .padding(.vertical, 6)
+                    .padding(.vertical, isCurrent ? 10 : 6)
+                    .padding(.horizontal, isCurrent ? 10 : 0)
+                    .background(
+                        Group {
+                            if isCurrent {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.accentGold.opacity(0.06))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .strokeBorder(Color.accentGold.opacity(0.2), lineWidth: 1)
+                                    )
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -981,6 +1296,54 @@ private struct TaskRow: View {
             Text(text)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(Color.textPrimary)
+        }
+    }
+}
+
+/// Shows a subtle implication/tip below an InfoRow (#15).
+private struct ImplicationRow: View {
+    let text: String
+
+    var body: some View {
+        if !text.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.turn.down.right")
+                    .font(.caption2)
+                    .foregroundStyle(Color.accentGold.opacity(0.6))
+                Text(text)
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.leading, 38)
+        }
+    }
+}
+
+/// Stat row that shows a value compared to a league average, with green/red indicator (#19).
+private struct ComparisonStatRow: View {
+    let label: String
+    let value: Int
+    let leagueAvg: Int
+    let format: (Int) -> String
+
+    private var isAbove: Bool { value >= leagueAvg }
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(Color.textSecondary)
+            Spacer()
+            Text(format(value))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.forRating(value))
+            Text("(Avg: \(format(leagueAvg)))")
+                .font(.caption)
+                .foregroundStyle(Color.textTertiary)
+            Image(systemName: isAbove ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+                .font(.caption)
+                .foregroundStyle(isAbove ? Color.success : Color.danger)
         }
     }
 }

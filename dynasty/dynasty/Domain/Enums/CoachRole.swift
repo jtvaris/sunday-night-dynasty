@@ -14,4 +14,6 @@ enum CoachRole: String, Codable, CaseIterable {
     case lbCoach                 = "LBCoach"
     case dbCoach                 = "DBCoach"
     case strengthCoach           = "StrengthCoach"
+    case teamDoctor              = "TeamDoctor"
+    case physio                  = "Physio"
 }

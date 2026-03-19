@@ -6,6 +6,7 @@ enum SeasonPhase: String, Codable, CaseIterable {
     case coachingChanges = "CoachingChanges"
     case combine         = "Combine"
     case freeAgency      = "FreeAgency"
+    case reviewRoster    = "ReviewRoster"
     case draft           = "Draft"
     case otas            = "OTAs"
     case trainingCamp    = "TrainingCamp"
