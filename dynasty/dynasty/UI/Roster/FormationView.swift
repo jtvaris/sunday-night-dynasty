@@ -160,16 +160,16 @@ struct FormationView: View {
 
     private func fieldBackground(width: CGFloat, height: CGFloat) -> some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.05, green: 0.15, blue: 0.05),
-                            Color(red: 0.04, green: 0.12, blue: 0.04),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
+            // Dark atmospheric field background
+            Image("BgFormationField")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: width, height: height)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.black.opacity(0.3))
                 )
 
             // Yard line markings every 10 yards (#102)
