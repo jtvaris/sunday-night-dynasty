@@ -8,7 +8,9 @@ struct ScoutingHubView: View {
     @State private var selectedTab: ScoutingTab = .scouts
     @State private var scouts: [Scout] = []
     @State private var prospects: [CollegeProspect] = []
+    @State private var teamPlayers: [Player] = []
     @State private var showHireScout = false
+    @State private var nextYearProspects: [ScoutingEngine.NextYearProspect] = []
 
     private let maxScouts = 8
 
@@ -40,12 +42,26 @@ struct ScoutingHubView: View {
     // MARK: - Tab Picker
 
     private var tabPicker: some View {
-        Picker("Section", selection: $selectedTab) {
-            ForEach(ScoutingTab.allCases) { tab in
-                Text(tab.label).tag(tab)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(ScoutingTab.allCases) { tab in
+                    Button {
+                        selectedTab = tab
+                    } label: {
+                        Text(tab.label)
+                            .font(.system(size: 13, weight: selectedTab == tab ? .bold : .medium))
+                            .foregroundStyle(selectedTab == tab ? Color.backgroundPrimary : Color.textSecondary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(selectedTab == tab ? Color.accentGold : Color.backgroundTertiary)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
-        .pickerStyle(.segmented)
     }
 
     // MARK: - Tab Content
@@ -63,9 +79,15 @@ struct ScoutingHubView: View {
         case .prospects:
             ProspectListView(career: career, prospects: prospects)
         case .bigBoard:
-            BigBoardView(career: career, prospects: prospects)
+            BigBoardView(career: career, prospects: prospects, teamRoster: teamPlayers)
+        case .combine:
+            CombineResultsView(career: career, prospects: prospects)
+        case .mockDraft:
+            MockDraftView(career: career, prospects: prospects)
         case .proDays:
             ProDayListView(career: career, scouts: scouts, prospects: $prospects, onRefresh: loadData)
+        case .nextYear:
+            NextYearClassPreview(career: career, prospects: nextYearProspects)
         }
     }
 
@@ -83,6 +105,15 @@ struct ScoutingHubView: View {
             predicate: #Predicate { $0.isDeclaringForDraft == true }
         )
         prospects = (try? modelContext.fetch(prospectDesc)) ?? []
+
+        let playerDesc = FetchDescriptor<Player>(
+            predicate: #Predicate { $0.teamID == teamID }
+        )
+        teamPlayers = (try? modelContext.fetch(playerDesc)) ?? []
+
+        if nextYearProspects.isEmpty {
+            nextYearProspects = ScoutingEngine.generateNextYearPreview()
+        }
     }
 
     private func fireScout(_ scout: Scout) {
@@ -98,7 +129,10 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
     case scouts     = "scouts"
     case prospects  = "prospects"
     case bigBoard   = "bigBoard"
+    case combine    = "combine"
+    case mockDraft  = "mockDraft"
     case proDays    = "proDays"
+    case nextYear   = "nextYear"
 
     var id: String { rawValue }
 
@@ -107,7 +141,10 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
         case .scouts:    return "Scout Team"
         case .prospects: return "Prospects"
         case .bigBoard:  return "Big Board"
+        case .combine:   return "Combine"
+        case .mockDraft: return "Mock Draft"
         case .proDays:   return "Pro Days"
+        case .nextYear:  return "Next Year"
         }
     }
 }
@@ -350,6 +387,103 @@ private struct ProDayCollegeRow: View {
                     }
                 }
             }
+        }
+    }
+}
+
+// MARK: - Next Year's Class Preview
+
+struct NextYearClassPreview: View {
+    let career: Career
+    let prospects: [ScoutingEngine.NextYearProspect]
+
+    var body: some View {
+        List {
+            Section {
+                HStack(spacing: 8) {
+                    Image(systemName: "eye.fill")
+                        .foregroundStyle(Color.accentGold)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Early Look \u{2014} \(career.currentSeason + 1) Draft Class")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.textPrimary)
+                        Text("Full scouting begins next season")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+            }
+            .listRowBackground(Color.backgroundSecondary)
+
+            Section("Top Prospects") {
+                ForEach(Array(prospects.enumerated()), id: \.element.id) { index, prospect in
+                    nextYearProspectRow(rank: index + 1, prospect: prospect)
+                }
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        }
+        .scrollContentBackground(.hidden)
+        .listStyle(.insetGrouped)
+    }
+
+    private func nextYearProspectRow(rank: Int, prospect: ScoutingEngine.NextYearProspect) -> some View {
+        HStack(spacing: 10) {
+            Text("\(rank)")
+                .font(.system(size: 14, weight: .heavy).monospacedDigit())
+                .foregroundStyle(rank <= 3 ? Color.accentGold : Color.textTertiary)
+                .frame(width: 28, alignment: .trailing)
+
+            Text(prospect.position.rawValue)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.textPrimary)
+                .frame(width: 32, height: 22)
+                .background(positionColor(prospect.position), in: RoundedRectangle(cornerRadius: 4))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(prospect.fullName)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(prospect.college)
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                    Text("·")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    Text(prospect.classYear)
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+
+            Spacer()
+
+            Text(prospect.projectedGrade)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(projectedGradeColor(prospect.projectedGrade))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(projectedGradeColor(prospect.projectedGrade).opacity(0.12))
+                )
+        }
+    }
+
+    private func positionColor(_ position: Position) -> Color {
+        switch position.side {
+        case .offense:      return .accentBlue
+        case .defense:      return .danger
+        case .specialTeams: return .accentGold
+        }
+    }
+
+    private func projectedGradeColor(_ grade: String) -> Color {
+        switch grade {
+        case "Top 10 Pick": return .accentGold
+        case "1st Round":   return .success
+        default:            return .textSecondary
         }
     }
 }

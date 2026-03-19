@@ -17,13 +17,13 @@ enum ScoutingEngine {
 
     // MARK: - Position Distribution
 
-    /// Target distribution for a ~250-player draft class.
+    /// Target distribution for a ~350-player draft class.
     private static let positionDistribution: [(Position, Int)] = [
-        (.QB, 30), (.RB, 20), (.FB, 5), (.WR, 35), (.TE, 15),
-        (.LT, 10), (.LG, 10), (.C, 8), (.RG, 8), (.RT, 10),
-        (.DE, 18), (.DT, 16), (.OLB, 14), (.MLB, 12),
-        (.CB, 16), (.FS, 10), (.SS, 8),
-        (.K, 6), (.P, 5)
+        (.QB, 42), (.RB, 28), (.FB, 7), (.WR, 49), (.TE, 21),
+        (.LT, 14), (.LG, 14), (.C, 11), (.RG, 11), (.RT, 14),
+        (.DE, 25), (.DT, 22), (.OLB, 20), (.MLB, 17),
+        (.CB, 22), (.FS, 14), (.SS, 11),
+        (.K, 8), (.P, 7)
     ]
 
     // MARK: - Height/Weight Ranges per Position (inches, pounds)
@@ -53,7 +53,7 @@ enum ScoutingEngine {
     // MARK: - Prospect Generation
 
     /// Generates a full draft class of college prospects.
-    static func generateDraftClass(count: Int = 250) -> [CollegeProspect] {
+    static func generateDraftClass(count: Int = 350) -> [CollegeProspect] {
         var prospects: [CollegeProspect] = []
 
         // Scale distribution to requested count
@@ -322,8 +322,10 @@ enum ScoutingEngine {
         prospect: CollegeProspect,
         phase: ScoutingPhase
     ) -> ScoutingReport {
-        // 1. Noise range based on scout accuracy
-        let errorRange = max(2, Int(15.0 * (1.0 - Double(scout.accuracy) / 100.0)))
+        // 1. Noise range based on scout accuracy (with familiarity bonus)
+        let familiarityBonus = scout.seasonsInRole >= 2 ? 5 : 0
+        let effectiveBaseAccuracy = min(99, scout.accuracy + familiarityBonus)
+        let errorRange = max(2, Int(15.0 * (1.0 - Double(effectiveBaseAccuracy) / 100.0)))
 
         // Position specialization bonus
         var accuracyBonus = 0
@@ -1601,7 +1603,9 @@ enum ScoutingEngine {
             for prospect in toEvaluate {
                 // Chief Scout gets +10% accuracy bonus
                 let chiefBonus = scout.scoutRole.isChief ? 10 : 0
-                var effectiveAccuracy = min(99, scout.accuracy + chiefBonus)
+                // Familiarity bonus: scouts with 2+ seasons in role know their region better
+                let familiarityBonus = scout.seasonsInRole >= 2 ? 5 : 0
+                var effectiveAccuracy = min(99, scout.accuracy + chiefBonus + familiarityBonus)
 
                 // Position specialization bonus
                 if let spec = scout.positionSpecialization, spec == prospect.position {
@@ -1744,6 +1748,87 @@ enum ScoutingEngine {
         }
     }
 
+    // MARK: - Declaration Period
+
+    /// Simulates the draft declaration period: ~70 underclassmen declare, ~5-10 withdraw,
+    /// all seniors auto-declare. Returns news items for top declarations and withdrawals.
+    static func generateDeclarations(
+        prospects: inout [CollegeProspect]
+    ) -> [(name: String, isDeclaration: Bool, headline: String)] {
+        var newsItems: [(name: String, isDeclaration: Bool, headline: String)] = []
+
+        // Separate seniors (age 22+) and underclassmen (age < 22)
+        let seniorAge = 22
+
+        // 1. All seniors auto-declare
+        for i in prospects.indices where prospects[i].age >= seniorAge {
+            prospects[i].isDeclaringForDraft = true
+        }
+
+        // 2. Underclassmen: ~70 declare based on talent (higher overall = more likely)
+        var underclassmenIndices = prospects.indices.filter { prospects[$0].age < seniorAge }
+        underclassmenIndices.sort { prospects[$0].trueOverall > prospects[$1].trueOverall }
+
+        var declarationCount = 0
+        let targetDeclarations = Int.random(in: 65...75)
+
+        for i in underclassmenIndices {
+            guard declarationCount < targetDeclarations else { break }
+
+            // Higher-rated underclassmen are more likely to declare
+            let declareChance: Int
+            let overall = prospects[i].trueOverall
+            if overall >= 80 { declareChance = 95 }
+            else if overall >= 70 { declareChance = 75 }
+            else if overall >= 60 { declareChance = 40 }
+            else { declareChance = 15 }
+
+            if Int.random(in: 1...100) <= declareChance {
+                prospects[i].isDeclaringForDraft = true
+                declarationCount += 1
+
+                // Track top declarations for news
+                if newsItems.filter({ $0.isDeclaration }).count < 5 {
+                    let pos = prospects[i].position.rawValue
+                    newsItems.append((
+                        name: prospects[i].fullName,
+                        isDeclaration: true,
+                        headline: "\(prospects[i].college) \(pos) \(prospects[i].fullName) declares for draft"
+                    ))
+                }
+            } else {
+                prospects[i].isDeclaringForDraft = false
+            }
+        }
+
+        // 3. Withdrawals: ~5-10 declared underclassmen change their mind
+        let withdrawalCount = Int.random(in: 5...10)
+        let declaredUnderclassmen = prospects.indices.filter {
+            prospects[$0].age < seniorAge && prospects[$0].isDeclaringForDraft && prospects[$0].trueOverall < 75
+        }.shuffled()
+
+        for i in declaredUnderclassmen.prefix(withdrawalCount) {
+            prospects[i].isDeclaringForDraft = false
+            let pos = prospects[i].position.rawValue
+            newsItems.append((
+                name: prospects[i].fullName,
+                isDeclaration: false,
+                headline: "Top \(pos) \(prospects[i].fullName) returns to \(prospects[i].college) for senior year"
+            ))
+        }
+
+        return newsItems
+    }
+
+    // MARK: - UDFA Pool
+
+    /// Returns undrafted prospects sorted by trueOverall (best first) for UDFA signing.
+    static func getUDFAPool(prospects: [CollegeProspect]) -> [CollegeProspect] {
+        return prospects
+            .filter { $0.isDeclaringForDraft && $0.mockDraftPickNumber == nil }
+            .sorted { $0.trueOverall > $1.trueOverall }
+    }
+
     // MARK: - Pre-Scouted Data (First Season)
 
     /// Generate pre-scouted data for first season (simulates previous GM's scouting work).
@@ -1870,5 +1955,76 @@ enum ScoutingEngine {
             }
             // Remaining prospects (rank >= 250): no scouted data
         }
+    }
+
+    // MARK: - Next Year's Draft Class Preview
+
+    /// A lightweight preview prospect for next year's draft class.
+    /// No detailed attributes -- just name, position, college, and a rough projected grade.
+    struct NextYearProspect: Identifiable {
+        let id = UUID()
+        let firstName: String
+        let lastName: String
+        let position: Position
+        let college: String
+        let classYear: String        // "Junior" or "Sophomore"
+        let projectedGrade: String   // "Top 10 Pick", "1st Round", "Day 2"
+
+        var fullName: String { "\(firstName) \(lastName)" }
+    }
+
+    /// Generates top ~25 prospects for NEXT year's draft class.
+    ///
+    /// These are early buzz projections with only surface-level info:
+    /// name, position, college, class year, and a rough projected grade.
+    /// Full scouting begins next season.
+    ///
+    /// - Parameter count: Number of preview prospects to generate (default 25).
+    /// - Returns: An array of `NextYearProspect` sorted by projected grade.
+    static func generateNextYearPreview(count: Int = 25) -> [NextYearProspect] {
+        var prospects: [NextYearProspect] = []
+
+        // Position distribution for the preview (heavy on premium positions)
+        let previewPositions: [Position] = [
+            .QB, .QB, .QB,
+            .WR, .WR, .WR,
+            .DE, .DE,
+            .CB, .CB,
+            .OLB, .OLB,
+            .LT, .LT,
+            .RB, .RB,
+            .TE,
+            .DT, .DT,
+            .MLB,
+            .FS, .SS,
+            .WR, .RG, .C
+        ]
+
+        let gradeDistribution: [String] = [
+            "Top 10 Pick", "Top 10 Pick", "Top 10 Pick",
+            "1st Round", "1st Round", "1st Round", "1st Round", "1st Round",
+            "1st Round", "1st Round",
+            "Day 2", "Day 2", "Day 2", "Day 2", "Day 2",
+            "Day 2", "Day 2", "Day 2", "Day 2", "Day 2",
+            "Day 2", "Day 2", "Day 2", "Day 2", "Day 2"
+        ]
+
+        for i in 0..<min(count, previewPositions.count) {
+            let name = RandomNameGenerator.randomName()
+            let college = colleges.randomElement()!
+            let classYear = i < 8 ? "Junior" : (Bool.random() ? "Junior" : "Sophomore")
+            let grade = i < gradeDistribution.count ? gradeDistribution[i] : "Day 2"
+
+            prospects.append(NextYearProspect(
+                firstName: name.first,
+                lastName: name.last,
+                position: previewPositions[i],
+                college: college,
+                classYear: classYear,
+                projectedGrade: grade
+            ))
+        }
+
+        return prospects
     }
 }

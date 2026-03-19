@@ -683,13 +683,38 @@ enum WeekAdvancer {
                 }
             }
 
+            // Increment scout seasonsInRole for familiarity bonus
+            let allScouts = fetchAllScouts(modelContext: modelContext)
+            for scout in allScouts {
+                scout.seasonsInRole += 1
+            }
+
+            // Declaration period: underclassmen declare or withdraw from draft
+            if !currentDraftClass.isEmpty {
+                let declarationNews = ScoutingEngine.generateDeclarations(prospects: &currentDraftClass)
+                for item in declarationNews {
+                    let sentiment: NewsSentiment = item.isDeclaration ? .neutral : .positive
+                    let category: NewsCategory = .draft
+                    lastNewsItems.append(NewsItem(
+                        headline: item.headline,
+                        body: item.isDeclaration
+                            ? "\(item.name) has officially declared for the upcoming NFL Draft, forgoing remaining college eligibility."
+                            : "\(item.name) has decided to withdraw from the draft and return to college for another season.",
+                        category: category,
+                        week: 0,
+                        season: career.currentSeason,
+                        sentiment: sentiment
+                    ))
+                }
+            }
+
             lastInboxMessages.append(contentsOf: newMessages)
 
-            lastNewsItems = NewsGenerator.generateOffseasonNews(
+            lastNewsItems.append(contentsOf: NewsGenerator.generateOffseasonNews(
                 phase: .coachingChanges,
                 career: career,
                 teams: teams
-            )
+            ))
 
         case .combine:
             // Generate draft class if not yet generated
@@ -828,7 +853,55 @@ enum WeekAdvancer {
             )
 
         case .otas:
-            // Nothing special — just generate phase news
+            // UDFA signing: AI teams auto-sign ~12 UDFAs each, present pool to player
+            if !currentDraftClass.isEmpty {
+                let udfaPool = ScoutingEngine.getUDFAPool(prospects: currentDraftClass)
+                let aiTeams = teams.filter { $0.id != career.teamID }
+
+                // AI teams each sign ~12 UDFAs from the pool
+                var signedIDs = Set<UUID>()
+                for team in aiTeams {
+                    let available = udfaPool.filter { !signedIDs.contains($0.id) }
+                    // Pick ~12 UDFAs weighted toward positional need
+                    let toSign = Array(available.prefix(max(8, Int.random(in: 10...14))))
+                    for prospect in toSign {
+                        signedIDs.insert(prospect.id)
+                        // Convert prospect to player signed by this AI team
+                        let player = Player(
+                            firstName: prospect.firstName,
+                            lastName: prospect.lastName,
+                            position: prospect.position,
+                            age: prospect.age,
+                            physical: prospect.truePhysical,
+                            mental: prospect.trueMental,
+                            positionAttributes: prospect.truePositionAttributes,
+                            personality: prospect.truePersonality,
+                            truePotential: prospect.truePotential,
+                            teamID: team.id,
+                            contractYearsRemaining: 3,
+                            annualSalary: Int.random(in: 600...900)
+                        )
+                        modelContext.insert(player)
+                    }
+                }
+
+                // Generate inbox message about UDFA pool for the player's team
+                let playerUDFAs = udfaPool.filter { !signedIDs.contains($0.id) }
+                if !playerUDFAs.isEmpty, career.teamID != nil {
+                    let topNames = playerUDFAs.prefix(5).map {
+                        "\($0.fullName) (\($0.position.rawValue))"
+                    }.joined(separator: ", ")
+                    let message = InboxMessage(
+                        sender: .scout(name: "Scouting Department"),
+                        subject: "UDFA Prospects Available",
+                        body: "There are \(playerUDFAs.count) undrafted free agents available for signing. Top prospects: \(topNames).",
+                        date: "Offseason - OTAs, Season \(career.currentSeason)",
+                        category: .staffUpdate
+                    )
+                    lastInboxMessages.append(message)
+                }
+            }
+
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .otas,
                 career: career,

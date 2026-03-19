@@ -65,7 +65,24 @@ final class CollegeProspect {
     /// The team abbreviation projected to draft this prospect in the latest mock.
     var mockDraftTeam: String?
 
+    // MARK: - Prospect Flag
+
+    var prospectFlag: ProspectFlag = ProspectFlag.none
+
     // MARK: - Computed Properties
+
+    /// 6-tier scouting classification based on scouted overall rating.
+    var scoutedTier: Int {
+        guard let ovr = scoutedOverall else { return 6 }
+        switch ovr {
+        case 85...99: return 1  // Blue Chip
+        case 75...84: return 2  // First Rounder
+        case 65...74: return 3  // Day Two
+        case 55...64: return 4  // Day Three
+        case 45...54: return 5  // Priority FA
+        default:      return 6  // Draftable
+        }
+    }
 
     /// Interest level based on how many teams have shown interest.
     var interestLevel: String {
@@ -163,4 +180,10 @@ final class CollegeProspect {
         self.mockDraftPickNumber = mockDraftPickNumber
         self.mockDraftTeam = mockDraftTeam
     }
+}
+
+// MARK: - Prospect Flag
+
+enum ProspectFlag: String, Codable {
+    case none, mustHave, sleeper, avoid
 }

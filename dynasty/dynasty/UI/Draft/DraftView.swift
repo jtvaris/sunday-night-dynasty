@@ -57,6 +57,10 @@ struct DraftView: View {
     @State private var showDraftSummary: Bool = false
     /// Simulated on-the-clock countdown value.
     @State private var clockSeconds: Int = 120
+    /// Fan reactions (social media feed) after each player pick.
+    @State private var fanReactions: [String] = []
+    /// Whether the fan reactions panel is visible.
+    @State private var showFanReactions: Bool = false
 
     // MARK: - Computed
 
@@ -153,6 +157,11 @@ struct DraftView: View {
             onTheClockCard
             if isPlayerTurn && !staffRecommendations.isEmpty {
                 warRoomPanel
+            }
+            if horizontalSizeClass != .regular && showFanReactions && !fanReactions.isEmpty {
+                fanReactionsFeed
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
             }
             Divider().overlay(Color.surfaceBorder)
             draftBoardScrollView
@@ -490,7 +499,7 @@ struct DraftView: View {
     private var warRoomSidebarContent: some View {
         ScrollView {
             VStack(spacing: 12) {
-                if staffRecommendations.isEmpty {
+                if staffRecommendations.isEmpty && fanReactions.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "person.3.fill")
                             .font(.system(size: 36))
@@ -506,9 +515,80 @@ struct DraftView: View {
                         staffRecommendationCard(rec)
                     }
                 }
+
+                // Fan Reactions Feed
+                if !fanReactions.isEmpty {
+                    fanReactionsFeed
+                }
             }
             .padding(12)
         }
+    }
+
+    // MARK: - Fan Reactions Feed
+
+    /// Social media feed shown in the war room after the player's picks.
+    private var fanReactionsFeed: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.accentBlue)
+                Text("FAN REACTIONS")
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundStyle(Color.accentBlue)
+                    .tracking(1.5)
+                Spacer()
+            }
+            .padding(.bottom, 4)
+
+            ForEach(Array(fanReactions.enumerated()), id: \.offset) { index, reaction in
+                HStack(alignment: .top, spacing: 8) {
+                    Circle()
+                        .fill(fanAvatarColor(index))
+                        .frame(width: 24, height: 24)
+                        .overlay(
+                            Text(fanHandle(index).prefix(1).uppercased())
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(Color.backgroundPrimary)
+                        )
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("@\(fanHandle(index))")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.textTertiary)
+                        Text(reaction)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Color.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 4)
+
+                if index < fanReactions.count - 1 {
+                    Divider().overlay(Color.surfaceBorder.opacity(0.5))
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.backgroundTertiary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private func fanAvatarColor(_ index: Int) -> Color {
+        let colors: [Color] = [.accentBlue, .accentGold, .success, .danger, .warning]
+        return colors[index % colors.count]
+    }
+
+    private func fanHandle(_ index: Int) -> String {
+        let handles = ["GridironFan42", "DraftNerd88", "NFLHotTakes", "PickMaster", "CheeseheadLarry"]
+        return handles[index % handles.count]
     }
 
     private var bigBoardSidebar: some View {
@@ -737,6 +817,14 @@ struct DraftView: View {
 
         // Refresh team needs after picking.
         if isPlayerPick {
+            // Generate fan reactions for the player's pick
+            fanReactions = DraftEngine.generateFanReaction(
+                prospect: prospect,
+                pickNumber: pick.pickNumber,
+                teamNeeds: pickingNeeds,
+                gmName: career.playerName
+            )
+            showFanReactions = true
             refreshTeamNeeds()
         }
     }

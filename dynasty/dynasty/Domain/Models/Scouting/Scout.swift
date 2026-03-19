@@ -22,6 +22,10 @@ final class Scout {
     /// Number of Pro Days attended this year (max 5 per scout).
     var proDaysAttended: Int = 0
 
+    /// How many seasons this scout has been in their current role/region.
+    /// Scouts with 2+ seasons get a familiarity accuracy bonus.
+    var seasonsInRole: Int = 0
+
     // MARK: - Computed Properties
 
     var fullName: String {

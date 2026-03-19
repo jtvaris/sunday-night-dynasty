@@ -537,6 +537,114 @@ enum DraftEngine {
         return needs.sorted { $0.value > $1.value }.prefix(limit).map(\.key)
     }
 
+    // MARK: - Trade Value Helpers
+
+    /// NFL-style trade value chart (simplified).
+    /// Uses the piecewise `pickValue(_:)` internally.
+    static func tradeValue(forPick pickNumber: Int) -> Int {
+        pickValue(pickNumber)
+    }
+
+    /// Evaluate if a trade is fair (within 15% of equal value).
+    ///
+    /// - Parameters:
+    ///   - offering: Pick numbers the offering side is sending.
+    ///   - receiving: Pick numbers the receiving side is sending.
+    /// - Returns: Total value for each side and whether the trade is within 15%.
+    static func evaluateTradeValue(
+        offering: [Int],
+        receiving: [Int]
+    ) -> (offerValue: Int, receiveValue: Int, isFair: Bool) {
+        let offerValue = offering.reduce(0) { $0 + pickValue($1) }
+        let receiveValue = receiving.reduce(0) { $0 + pickValue($1) }
+        let maxVal = max(offerValue, receiveValue, 1)
+        let diff = abs(offerValue - receiveValue)
+        let isFair = Double(diff) / Double(maxVal) <= 0.15
+        return (offerValue: offerValue, receiveValue: receiveValue, isFair: isFair)
+    }
+
+    // MARK: - Fan Reactions / Social Media
+
+    /// Generates 3-5 social media style fan reactions for a draft pick.
+    ///
+    /// - Parameters:
+    ///   - prospect: The college prospect who was drafted.
+    ///   - pickNumber: The overall pick number (1-224).
+    ///   - teamNeeds: Positions the drafting team needs most.
+    ///   - gmName: The player's GM name (for personalized tweets).
+    /// - Returns: An array of 3-5 fan reaction strings.
+    static func generateFanReaction(
+        prospect: CollegeProspect,
+        pickNumber: Int,
+        teamNeeds: [Position],
+        gmName: String = "GM"
+    ) -> [String] {
+        let actualRound = ((pickNumber - 1) / 32) + 1
+        let projectedRound = prospect.draftProjection ?? actualRound
+        let roundDelta = actualRound - projectedRound
+        let needsMatch = teamNeeds.contains(prospect.position)
+        let pos = prospect.position.rawValue
+        let name = prospect.lastName
+
+        var pool: [String] = []
+
+        // Great value + fills a need
+        if roundDelta >= 1 && needsMatch {
+            pool.append("LETS GOOO! Perfect pick! \u{1F525}")
+            pool.append("Steal of the draft! \(name) at \(pos)! \u{1F4AA}")
+            pool.append("I literally screamed. \(name) was my #1 choice \u{1F389}")
+        }
+
+        // Good value pick
+        if roundDelta >= 1 {
+            pool.append("How did \(name) fall to us?? Christmas came early \u{1F381}")
+            pool.append("Great value. \(name) is gonna be a problem \u{1F60F}")
+        }
+
+        // Fills a need
+        if needsMatch {
+            pool.append("Finally addressing \(pos)! About time \u{1F64F}")
+            pool.append("We NEEDED a \(pos) so badly. Smart pick \u{2705}")
+        }
+
+        // Reach pick
+        if roundDelta < -1 {
+            pool.append("Who?? Never heard of this guy \u{1F610}")
+            pool.append("This is a REACH. Could've gotten him way later \u{1F926}")
+            pool.append("I'm gonna be sick. What are we doing?? \u{1F922}")
+        }
+
+        // Moderate reach
+        if roundDelta == -1 {
+            pool.append("Hmm, bit of a reach but I trust the process \u{1F914}")
+            pool.append("Slight reach imo but let's see \u{1F440}")
+        }
+
+        // Neutral / trust the GM
+        pool.append("In \(gmName) we trust \u{1F4AA}")
+        pool.append("Welcome to the squad \(name)! \u{1F3C8}")
+
+        // QB-specific reactions
+        if prospect.position == .QB {
+            if needsMatch {
+                pool.append("FRANCHISE QB!! \u{1F451}")
+            } else {
+                pool.append("Another QB? What about the defense?? \u{1F620}")
+            }
+        }
+
+        // Missed opportunity reactions (if QB was a need but they didn't draft one)
+        if teamNeeds.first == .QB && prospect.position != .QB {
+            pool.append("Trade up for a QB! Why didn't we!? \u{1F624}")
+            pool.append("So we're just gonna ignore the QB situation huh \u{1F644}")
+        }
+
+        // Pick 3-5 unique reactions
+        pool.shuffle()
+        let count = min(pool.count, Int.random(in: 3...5))
+        return Array(pool.prefix(count))
+    }
+
     // MARK: - Private Helpers
 
     /// Returns a human-readable round name.

@@ -206,6 +206,9 @@ struct TradeOfferView: View {
 
             Divider().overlay(Color.surfaceBorder)
 
+            // Compact summary line
+            tradeValueSummaryLine
+
             // Value bar
             GeometryReader { geo in
                 let total = max(offer.totalOfferedValue + offer.totalRequestedValue, 1)
@@ -259,9 +262,78 @@ struct TradeOfferView: View {
                         .foregroundStyle(Color.danger)
                 }
             }
+
+            // Fairness indicator
+            tradeValueFairnessIndicator
         }
         .padding(16)
         .cardBackground()
+    }
+
+    /// One-line summary: "Their offer: X pts | Your pick value: Y pts | Difference: Z"
+    private var tradeValueSummaryLine: some View {
+        let delta = offer.valueDelta
+        let deltaColor: Color = delta >= 0 ? .success : .danger
+        let deltaSign = delta >= 0 ? "+" : ""
+
+        return HStack(spacing: 6) {
+            Text("Their offer:")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.textSecondary)
+            Text(formatValue(offer.totalOfferedValue))
+                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                .foregroundStyle(Color.success)
+
+            Text("|")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.textTertiary)
+
+            Text("Your pick value:")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.textSecondary)
+            Text(formatValue(offer.totalRequestedValue))
+                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                .foregroundStyle(Color.danger)
+
+            Text("|")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.textTertiary)
+
+            Text("Diff: \(deltaSign)\(formatValue(delta))")
+                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                .foregroundStyle(deltaColor)
+        }
+    }
+
+    /// Shows whether the trade is considered fair based on the 15% threshold.
+    private var tradeValueFairnessIndicator: some View {
+        let offeringPicks = offer.assetsOffered.map(\.value)
+        let receivingPicks = offer.assetsRequested.map(\.value)
+        let evaluation = DraftEngine.evaluateTradeValue(
+            offering: offeringPicks,
+            receiving: receivingPicks
+        )
+        let delta = offer.valueDelta
+
+        return HStack(spacing: 8) {
+            Image(systemName: evaluation.isFair ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(evaluation.isFair ? Color.success : (delta >= 0 ? Color.success : Color.danger))
+
+            Text(evaluation.isFair
+                 ? "Fair trade — values within 15%"
+                 : (delta >= 0 ? "Great deal for you" : "Bad deal — you are overpaying"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(evaluation.isFair ? Color.success : (delta >= 0 ? Color.success : Color.danger))
+
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill((evaluation.isFair ? Color.success : (delta >= 0 ? Color.success : Color.danger)).opacity(0.08))
+        )
     }
 
     // MARK: - Action Buttons
