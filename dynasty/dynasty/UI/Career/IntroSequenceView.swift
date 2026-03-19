@@ -841,13 +841,25 @@ private struct TeamOverviewStep: View {
                                 .font(.subheadline)
                                 .foregroundStyle(Color.textSecondary)
                         } else {
-                            // Compact single-row format: "Rd1 #13 | Rd2 #45 | ..."
                             let sortedPicks = draftPicks.sorted { $0.round < $1.round || ($0.round == $1.round && $0.pickNumber < $1.pickNumber) }
-                            let pickSummary = sortedPicks.map { "Rd\($0.round) #\($0.pickNumber)" }.joined(separator: " | ")
-                            Text(pickSummary)
-                                .font(.subheadline.weight(.medium).monospacedDigit())
-                                .foregroundStyle(Color.textPrimary)
-                                .fixedSize(horizontal: false, vertical: true)
+                            let columns = [GridItem(.adaptive(minimum: 80), spacing: 8)]
+                            LazyVGrid(columns: columns, spacing: 8) {
+                                ForEach(sortedPicks, id: \.id) { pick in
+                                    Text("Rd\(pick.round) #\(pick.pickNumber)")
+                                        .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                                        .foregroundStyle(Color.textPrimary)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .fill(Color.backgroundSecondary)
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 6)
+                                                        .strokeBorder(Color.surfaceBorder, lineWidth: 0.5)
+                                                )
+                                        )
+                                }
+                            }
 
                             Text("\(draftPicks.count) pick\(draftPicks.count == 1 ? "" : "s") total")
                                 .font(.caption)

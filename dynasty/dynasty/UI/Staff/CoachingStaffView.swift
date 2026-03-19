@@ -39,6 +39,9 @@ struct CoachingStaffView: View {
     @State private var isMedicalExpanded: Bool = true
     @State private var isScoutingExpanded: Bool = true
 
+    // MARK: - Hire Navigation State
+    @State private var hireRole: CoachRole?
+
     /// Coaches filtered to this team, derived from @Query result.
     private var coaches: [Coach] {
         guard let teamID = career.teamID else { return [] }
@@ -421,6 +424,13 @@ struct CoachingStaffView: View {
         .navigationTitle("Coaching Staff")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .navigationDestination(item: $hireRole) { role in
+            if let teamID = career.teamID {
+                HireCoachView(role: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
+                    showHiringConfirmation(coachName: name, roleName: roleName)
+                })
+            }
+        }
         // MARK: - Lock-in Confirmation Alert (#66)
         .alert("Confirm Staff", isPresented: $showLockInConfirmation) {
             Button("Confirm & Advance") {
@@ -1640,53 +1650,49 @@ struct CoachingStaffView: View {
 
     @ViewBuilder
     private func compactVacantCard(role: CoachRole) -> some View {
-        if let teamID = career.teamID {
-            NavigationLink {
-                HireCoachView(role: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
-                    showHiringConfirmation(coachName: name, roleName: roleName)
-                })
-            } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(role.abbreviation)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Color.textTertiary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 3))
-
-                        Spacer()
-
-                        Image(systemName: "plus.circle")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color.accentGold)
-                    }
-
-                    Text(role.displayName)
-                        .font(.caption.weight(.medium))
+        Button {
+            hireRole = role
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(role.abbreviation)
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(Color.textTertiary)
-                        .lineLimit(1)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 3))
 
-                    // #51: Impact hint in compact card
-                    if let impact = hiringImpactDescription(for: role) {
-                        Text(impact)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.success)
-                            .lineLimit(1)
-                    }
+                    Spacer()
 
-                    Text(estimatedSalaryRange(for: role))
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.textTertiary)
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.accentGold)
                 }
-                .padding(8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.accentGold.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                )
+
+                Text(role.displayName)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(1)
+
+                // #51: Impact hint in compact card
+                if let impact = hiringImpactDescription(for: role) {
+                    Text(impact)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.success)
+                        .lineLimit(1)
+                }
+
+                Text(estimatedSalaryRange(for: role))
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.textTertiary)
             }
-            .buttonStyle(.plain)
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.accentGold.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            )
         }
+        .buttonStyle(.plain)
     }
 
     /// Returns a color based on the chemistry score.
@@ -1702,12 +1708,9 @@ struct CoachingStaffView: View {
 
     @ViewBuilder
     private var headCoachVacantRow: some View {
-        if let teamID = career.teamID {
-            NavigationLink {
-                HireCoachView(role: .headCoach, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, role in
-                    showHiringConfirmation(coachName: name, roleName: role)
-                })
-            } label: {
+        Button {
+            hireRole = .headCoach
+        } label: {
                 VStack(spacing: 10) {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
@@ -1742,18 +1745,15 @@ struct CoachingStaffView: View {
                 .padding(.vertical, 6)
             }
         }
-    }
+
 
     // MARK: - Vacant row
 
     @ViewBuilder
     private func vacantRow(role: CoachRole) -> some View {
-        if let teamID = career.teamID {
-            NavigationLink {
-                HireCoachView(role: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
-                    showHiringConfirmation(coachName: name, roleName: roleName)
-                })
-            } label: {
+        Button {
+            hireRole = role
+        } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
@@ -1813,7 +1813,6 @@ struct CoachingStaffView: View {
                 .padding(.vertical, 4)
             }
         }
-    }
 
     // MARK: - Scout Row
 
