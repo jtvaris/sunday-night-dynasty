@@ -43,6 +43,9 @@ struct CoachingStaffView: View {
     @State private var hireRole: CoachRole?
     @State private var hireScoutRole: ScoutRole?
 
+    // MARK: - Detail Navigation State
+    @State private var selectedCoachID: UUID?
+
     /// Coaches filtered to this team, derived from @Query result.
     private var coaches: [Coach] {
         guard let teamID = career.teamID else { return [] }
@@ -439,6 +442,11 @@ struct CoachingStaffView: View {
                 })
             }
         }
+        .navigationDestination(item: $selectedCoachID) { coachID in
+            if let coach = allCoaches.first(where: { $0.id == coachID }) {
+                CoachDetailView(coach: coach)
+            }
+        }
         // MARK: - Lock-in Confirmation Alert (#66)
         .alert("Confirm Staff", isPresented: $showLockInConfirmation) {
             Button("Confirm & Advance") {
@@ -552,8 +560,8 @@ struct CoachingStaffView: View {
                     if career.role == .gmAndHeadCoach {
                         playerAsHeadCoachRow
                     } else if let hc = headCoach {
-                        NavigationLink {
-                            CoachDetailView(coach: hc)
+                        Button {
+                            selectedCoachID = hc.id
                         } label: {
                             HeadCoachCardView(coach: hc, menteeCount: coaches.filter { $0.mentorCoachID == hc.id }.count)
                         }
@@ -640,8 +648,8 @@ struct CoachingStaffView: View {
                         ], spacing: 10) {
                             ForEach(posRoles, id: \.self) { role in
                                 if let coach = coaches.first(where: { $0.role == role }) {
-                                    NavigationLink {
-                                        CoachDetailView(coach: coach)
+                                    Button {
+                                        selectedCoachID = coach.id
                                     } label: {
                                         compactCoachCard(coach: coach)
                                     }
@@ -683,8 +691,8 @@ struct CoachingStaffView: View {
                                     let medRoles: [CoachRole] = [.teamDoctor, .physio]
                                     ForEach(medRoles, id: \.self) { role in
                                         if let coach = coaches.first(where: { $0.role == role }) {
-                                            NavigationLink {
-                                                CoachDetailView(coach: coach)
+                                            Button {
+                                                selectedCoachID = coach.id
                                             } label: {
                                                 compactCoachCard(coach: coach)
                                             }
@@ -757,8 +765,8 @@ struct CoachingStaffView: View {
                             let medRoles: [CoachRole] = [.teamDoctor, .physio]
                             ForEach(medRoles, id: \.self) { role in
                                 if let coach = coaches.first(where: { $0.role == role }) {
-                                    NavigationLink {
-                                        CoachDetailView(coach: coach)
+                                    Button {
+                                        selectedCoachID = coach.id
                                     } label: {
                                         compactCoachCard(coach: coach)
                                     }
@@ -1579,8 +1587,8 @@ struct CoachingStaffView: View {
 
     @ViewBuilder
     private func coachRowWithChemistry(coach: Coach) -> some View {
-        NavigationLink {
-            CoachDetailView(coach: coach)
+        Button {
+            selectedCoachID = coach.id
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 CoachRowWithDescriptionView(coach: coach)
@@ -1598,6 +1606,7 @@ struct CoachingStaffView: View {
                 }
             }
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Compact Coach Card (#50)

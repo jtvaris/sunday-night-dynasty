@@ -112,7 +112,7 @@ struct HireScoutView: View {
             }
         }
         .navigationTitle("Hire \(scoutRole.displayName)")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
             if candidates.isEmpty {
