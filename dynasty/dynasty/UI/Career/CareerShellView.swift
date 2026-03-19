@@ -419,6 +419,12 @@ struct CareerShellView: View {
 
     /// Checks actual game state against tasks and marks them done when the
     /// underlying condition is satisfied (e.g., coach hired, roster trimmed).
+    ///
+    /// IMPORTANT: Tasks should only auto-complete when a verifiable game-state
+    /// condition is met (e.g., a coach was actually hired, the roster count
+    /// dropped to 53). Merely visiting a screen should NOT auto-complete tasks.
+    /// Phase transitions happen ONLY when the user taps the explicit "Advance"
+    /// button, so we must not inflate task completion status here.
     func refreshTaskCompletionStatus() {
         guard let teamID = career.teamID else { return }
 
@@ -441,7 +447,7 @@ struct CareerShellView: View {
             let task = currentTasks[index]
 
             switch task.title {
-            // Coaching Changes
+            // Coaching Changes — verified by actual game state (coach exists)
             case "Hire Head Coach":
                 if hasHC { currentTasks[index].status = .done }
             case "Hire Offensive Coordinator":
@@ -449,36 +455,15 @@ struct CareerShellView: View {
             case "Hire Defensive Coordinator":
                 if hasDC { currentTasks[index].status = .done }
 
-            // Combine — "Review Combine results" is completed by visiting scouting
-            case "Review Combine results":
-                if task.status == .inProgress { currentTasks[index].status = .done }
-
-            // Free Agency — visit-based completion
-            case "Review free agent market":
-                if task.status == .inProgress { currentTasks[index].status = .done }
-            case "Review expiring contracts":
-                if task.status == .inProgress { currentTasks[index].status = .done }
-
-            // Review Roster — visit-based completion
-            case "Review Position Group Grades",
-                 "Analyze Contract Situations",
-                 "Check Salary Cap Outlook",
-                 "Set Roster Priorities",
-                 "Franchise Tag Decisions":
-                if task.status == .inProgress { currentTasks[index].status = .done }
-
-            // Draft — "Enter the Draft" completed when draft view visited
-            case "Enter the Draft":
-                if task.status == .inProgress { currentTasks[index].status = .done }
-
-            // OTAs — "Set depth chart" completed by visiting
-            case "Set depth chart":
-                if task.status == .inProgress { currentTasks[index].status = .done }
-
-            // Roster Cuts — check if roster <= 53
+            // Roster Cuts — verified by actual game state (roster count)
             case _ where task.title.contains("Finalize 53-man roster"):
                 if rosterCount <= 53 { currentTasks[index].status = .done }
 
+            // All other tasks: do NOT auto-complete based on visit status.
+            // The user must explicitly tap "Advance" to progress the phase.
+            // Visiting a screen only marks the task as .inProgress (via
+            // markTaskVisited), which gives visual feedback without
+            // triggering phase advancement.
             default:
                 break
             }

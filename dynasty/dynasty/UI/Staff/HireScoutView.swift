@@ -6,6 +6,7 @@ struct HireScoutView: View {
     let scoutRole: ScoutRole
     let teamID: UUID
     let remainingBudget: Int
+    var onHired: ((String, String) -> Void)?
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -142,7 +143,14 @@ struct HireScoutView: View {
         modelContext.insert(candidate)
         hiredScoutID = candidate.id
 
+        // Save context before dismissing so CoachingStaffView's @Query refreshes
+        try? modelContext.save()
+
+        let hiredName = candidate.fullName
+        let hiredRole = scoutRole.displayName
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            onHired?(hiredName, hiredRole)
             dismiss()
         }
     }

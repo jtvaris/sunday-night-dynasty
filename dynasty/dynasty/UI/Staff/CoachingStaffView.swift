@@ -41,6 +41,7 @@ struct CoachingStaffView: View {
 
     // MARK: - Hire Navigation State
     @State private var hireRole: CoachRole?
+    @State private var hireScoutRole: ScoutRole?
 
     /// Coaches filtered to this team, derived from @Query result.
     private var coaches: [Coach] {
@@ -427,6 +428,13 @@ struct CoachingStaffView: View {
         .navigationDestination(item: $hireRole) { role in
             if let teamID = career.teamID {
                 HireCoachView(role: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
+                    showHiringConfirmation(coachName: name, roleName: roleName)
+                })
+            }
+        }
+        .navigationDestination(item: $hireScoutRole) { role in
+            if let teamID = career.teamID {
+                HireScoutView(scoutRole: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
                     showHiringConfirmation(coachName: name, roleName: roleName)
                 })
             }
@@ -1869,59 +1877,57 @@ struct CoachingStaffView: View {
 
     @ViewBuilder
     private func scoutVacantRow(role: ScoutRole) -> some View {
-        if let teamID = career.teamID {
-            NavigationLink {
-                HireScoutView(scoutRole: role, teamID: teamID, remainingBudget: remainingBudget)
-            } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(role.displayName)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(Color.textTertiary)
-
-                            // #53: Priority badge consistent with coach vacant rows
-                            switch scoutHiringPriority(for: role) {
-                            case .high:
-                                Text("High Priority")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.danger, in: Capsule())
-                            case .recommended:
-                                Text("Recommended")
-                                    .font(.system(size: 9, weight: .semibold))
-                                    .foregroundStyle(Color.warning)
-                            case .normal:
-                                EmptyView()
-                            }
-                        }
-
-                        Text("Vacant \u{2014} Tap to hire")
-                            .font(.caption)
-                            .foregroundStyle(Color.accentGold)
-
-                        // #53: Salary range
-                        Text(estimatedScoutSalaryRange(for: role))
-                            .font(.system(size: 10))
+        Button {
+            hireScoutRole = role
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(role.displayName)
+                            .font(.subheadline.weight(.medium))
                             .foregroundStyle(Color.textTertiary)
 
-                        // #53: Hiring impact
-                        HStack(spacing: 4) {
-                            Image(systemName: "chart.line.uptrend.xyaxis")
-                                .font(.system(size: 8))
-                            Text(scoutHiringImpact(for: role))
-                                .font(.system(size: 10, weight: .semibold))
+                        // #53: Priority badge consistent with coach vacant rows
+                        switch scoutHiringPriority(for: role) {
+                        case .high:
+                            Text("High Priority")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.danger, in: Capsule())
+                        case .recommended:
+                            Text("Recommended")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Color.warning)
+                        case .normal:
+                            EmptyView()
                         }
-                        .foregroundStyle(Color.success)
                     }
-                    Spacer()
-                    Image(systemName: "plus.circle")
+
+                    Text("Vacant \u{2014} Tap to hire")
+                        .font(.caption)
                         .foregroundStyle(Color.accentGold)
+
+                    // #53: Salary range
+                    Text(estimatedScoutSalaryRange(for: role))
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+
+                    // #53: Hiring impact
+                    HStack(spacing: 4) {
+                        Image(systemName: "chart.line.uptrend.xyaxis")
+                            .font(.system(size: 8))
+                        Text(scoutHiringImpact(for: role))
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(Color.success)
                 }
-                .padding(.vertical, 4)
+                Spacer()
+                Image(systemName: "plus.circle")
+                    .foregroundStyle(Color.accentGold)
             }
+            .padding(.vertical, 4)
         }
     }
 }
