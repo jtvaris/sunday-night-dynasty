@@ -10,6 +10,18 @@
 
 ---
 
+## Design Decisions (from brainstorming session 2026-03-19)
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Potential visibility** | Fuzzy text labels ("High Ceiling", "Limited Upside", "Unknown") | Adds mystery without requiring separate scouting system. No raw numbers shown. |
+| **Development speed** | Three-factor: HC mentoring (primary) + role + potential | HC/AHC quality is the biggest lever. Good HC + high potential = 3-4 seasons, bad HC + low potential = 8+ seasons. Creates strategic depth in HC hiring. |
+| **Poaching** | HC-promotion houkutus (NFL-realistic) | Coordinators with OVR 75+ get HC interview calls from other teams. Player CANNOT block HC promotions (NFL rule). Other lateral poaching is minimal. |
+| **Hierarchy depth** | 4 layers: HC → AHC → Coordinator → Position Coach | All four affect player development with stacking multipliers. Complex but matches real NFL. |
+| **Coaching tree UI** | List + badge (not visual tree) | Show "Developed under [Name]" + list of mentees + badge showing tree size. Full visual tree deferred to later update. |
+
+---
+
 ## 1. Coach Hidden Potential System
 
 ### Design
@@ -30,7 +42,19 @@ Every coach receives a hidden `potential` attribute (1-100) at generation time. 
 | 51-60 | 40-70 | Late career, limited upside |
 | 61+ | 30-60 | Near retirement, declining ceiling |
 
-**Scouting interaction:** The player cannot see `potential` directly. A future scouting system could reveal a "development outlook" rating (e.g., "High Ceiling", "Limited Upside") based on a fuzzy read of potential, similar to how player potential is scouted.
+**Visibility:** The player sees a fuzzy text label, NOT the raw number:
+
+| Potential Range | Label | Color |
+|----------------|-------|-------|
+| 85-99 | "Elite Ceiling" | Gold |
+| 70-84 | "High Ceiling" | Green |
+| 55-69 | "Solid Ceiling" | Blue |
+| 40-54 | "Limited Upside" | Orange |
+| 0-39 | "Low Ceiling" | Red |
+
+Labels are shown on the coach's detail view. Accuracy of the label is NOT perfect — there's a ±10 noise factor applied at display time, so a coach with potential 68 might show "High Ceiling" or "Limited Upside" depending on the roll. This maintains some mystery.
+
+After 2+ seasons on your team, the label becomes accurate (±3 noise). You learn your own coaches over time.
 
 ---
 
@@ -58,12 +82,21 @@ Replace the current random 1-3 attribute improvement in `CoachingEngine.developC
 | Super Bowl appearance | +40 | Ultimate stage |
 | Super Bowl win | +60 | Championship experience |
 
-**Mentoring XP (from HC and AHC):**
+**Mentoring XP (from HC and AHC) — HC IS THE PRIMARY LEVER:**
 | Source | XP Multiplier | Notes |
 |--------|--------------|-------|
-| HC leadership attribute | 0.8x-1.3x | HC with leadership 80+ = 1.3x multiplier on all coach XP |
-| AHC teaching bonus | +0-15% | AHC playerDevelopment attribute adds secondary multiplier |
-| Coordinator mentoring | +0-10% | Coordinator playerDevelopment affects position coaches under them |
+| HC leadership attribute | 0.6x-1.5x | **Biggest factor.** HC with leadership 90 = 1.5x, HC with leadership 30 = 0.6x. Elite HC doubles development speed vs bad HC. |
+| AHC teaching bonus | +0-20% | AHC playerDevelopment attribute adds secondary multiplier |
+| Coordinator mentoring | +0-15% | Coordinator playerDevelopment affects position coaches under them |
+
+**Example development timelines (Position Coach OVR 45, Potential 90):**
+| HC Quality | AHC Quality | Time to OVR 65 | Time to OVR 75 |
+|-----------|------------|----------------|----------------|
+| Elite (leadership 90) | Good (dev 75) | ~2.5 seasons | ~5 seasons |
+| Good (leadership 70) | Average (dev 55) | ~4 seasons | ~7 seasons |
+| Poor (leadership 35) | None | ~7 seasons | ~12+ seasons |
+
+This makes hiring a great HC the most impactful long-term decision in the game.
 
 ### XP to Attribute Conversion
 
@@ -290,6 +323,33 @@ var coachingTreeIDs: [UUID] = []
 /// Season and team where this coach was mentored.
 var mentorshipOrigin: String?  // e.g., "2025 Chicago Bears"
 ```
+
+### HC Promotion Poaching (Aggressive — NFL Realistic)
+
+During the offseason (coachingChanges phase), teams with HC vacancies will pursue your coordinators:
+
+**Eligibility:** Coordinator with OVR 70+ gets interview requests. OVR 80+ gets multiple.
+
+**Flow:**
+1. News alert: "[Team] requests permission to interview [Your OC] for Head Coach opening"
+2. NFL rule: you CANNOT block HC interviews (Rooney Rule era)
+3. If the coordinator accepts: they leave your team. Their position becomes vacant.
+4. You receive a compensatory 3rd round draft pick (NFL rule for losing coaches to HC jobs)
+5. Inbox message with narrative impact
+
+**Acceptance factors:**
+- Coordinator's ambition/motivation attribute (high = more likely to leave)
+- Offering team's prestige and budget
+- Your team's recent success (winning coordinators are less likely to leave)
+- Salary increase (HC pays 5-15x more than coordinator)
+
+**Prevention:** You cannot block it, but you CAN:
+- Promote the coordinator to AHC (higher salary, less likely to leave for lateral HC role)
+- Keep winning (coordinators on championship teams are slightly less likely to leave)
+
+This creates the NFL's real "success tax" — the better your staff, the more likely you lose them.
+
+---
 
 ### Coaching Tree Effects
 
