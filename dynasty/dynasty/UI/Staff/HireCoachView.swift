@@ -19,10 +19,16 @@ struct HireCoachView: View {
     @State private var sortAscending: Bool = false
     @State private var selectedCandidate: Coach?
     @State private var showAffordableOnly: Bool = false
+    @State private var schemeFilter: String = "All"
 
     /// The team's head coach, used to determine current team scheme for fit indicator.
     private var teamHeadCoach: Coach? {
         allCoaches.first { $0.teamID == teamID && $0.role == .headCoach }
+    }
+
+    /// The current coach in the role being hired for (Fix #63: comparison).
+    private var currentCoach: Coach? {
+        allCoaches.first { $0.teamID == teamID && $0.role == role }
     }
 
     // MARK: - Sort Column
@@ -36,6 +42,7 @@ struct HireCoachView: View {
         case dev     = "Dev"
         case game    = "Game"
         case salary  = "Salary"
+        case value   = "Value"
     }
 
     // MARK: - Helpers
@@ -48,13 +55,52 @@ struct HireCoachView: View {
         return sum / 12
     }
 
+    /// Fix #60: Value score — skill-to-salary ratio normalized to a label.
+    private func valueScore(_ coach: Coach) -> (label: String, color: Color) {
+        let ovr = coachOverall(coach)
+        let salaryM = max(Double(coach.salary) / 1000.0, 0.1)
+        let ratio = Double(ovr) / salaryM  // Higher = better value
+        if ratio >= 40 { return ("Great", .success) }
+        if ratio >= 25 { return ("Good", .accentBlue) }
+        if ratio >= 15 { return ("Fair", .warning) }
+        return ("Poor", .danger)
+    }
+
+    private func valueRatio(_ coach: Coach) -> Double {
+        let ovr = coachOverall(coach)
+        let salaryM = max(Double(coach.salary) / 1000.0, 0.1)
+        return Double(ovr) / salaryM
+    }
+
+    /// Fix #56: Top-3 candidate indices in the current sorted list.
+    private var top3IDs: Set<UUID> {
+        // Rank by OVR regardless of current sort
+        let byOVR = filteredCandidates.sorted { coachOverall($0) > coachOverall($1) }
+        return Set(byOVR.prefix(3).map { $0.id })
+    }
+
+    /// Available scheme names for the filter dropdown (Fix #58).
+    private var availableSchemes: [String] {
+        var schemes = Set<String>()
+        for c in candidates {
+            if let o = c.offensiveScheme { schemes.insert(o.displayName) }
+            if let d = c.defensiveScheme { schemes.insert(d.displayName) }
+        }
+        return ["All"] + schemes.sorted()
+    }
+
     // MARK: - Filtered & Sorted Candidates
 
     private var filteredCandidates: [Coach] {
+        var list = candidates
         if showAffordableOnly {
-            return candidates.filter { $0.salary <= remainingBudget }
+            list = list.filter { $0.salary <= remainingBudget }
         }
-        return candidates
+        // Fix #58: Scheme filter
+        if schemeFilter != "All" {
+            list = list.filter { schemeLabel($0) == schemeFilter }
+        }
+        return list
     }
 
     private var sortedCandidates: [Coach] {
@@ -69,6 +115,7 @@ struct HireCoachView: View {
         case .dev:     sorted = list.sorted { $0.playerDevelopment > $1.playerDevelopment }
         case .game:    sorted = list.sorted { $0.gamePlanning > $1.gamePlanning }
         case .salary:  sorted = list.sorted { $0.salary < $1.salary }
+        case .value:   sorted = list.sorted { valueRatio($0) > valueRatio($1) }
         }
         return sortAscending ? sorted.reversed() : sorted
     }
@@ -140,9 +187,14 @@ struct HireCoachView: View {
                 candidate: candidate,
                 remainingBudget: remainingBudget,
                 isHired: hiredCoachID == candidate.id,
+                headCoach: teamHeadCoach,
+                currentCoach: currentCoach,
+                candidateRank: candidateRank(for: candidate),
+                totalCandidates: filteredCandidates.count,
+                schemeFitResult: schemeFit(for: candidate),
                 onHire: { hire(candidate) }
             )
-            // Fix #86: Make candidate profile sheet larger on iPad
+            // Fix #71: Use full screen cover on iPad for max space
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
@@ -151,32 +203,90 @@ struct HireCoachView: View {
     // MARK: - Budget Header
 
     private var budgetHeader: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Budget Remaining")
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
-                Text("$\(formatBudget(remainingBudget))M")
-                    .font(.headline.weight(.bold).monospacedDigit())
-                    .foregroundStyle(remainingBudget > 0 ? Color.success : Color.danger)
-            }
-            Spacer()
+        VStack(spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Budget Remaining")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    Text("$\(formatBudget(remainingBudget))M")
+                        .font(.headline.weight(.bold).monospacedDigit())
+                        .foregroundStyle(remainingBudget > 0 ? Color.success : Color.danger)
+                }
+                Spacer()
 
-            // Fix #39: Affordable-only toggle
-            Toggle(isOn: $showAffordableOnly) {
-                Text("Affordable")
-                    .font(.caption2)
+                // Fix #58: Scheme filter dropdown
+                Menu {
+                    ForEach(availableSchemes, id: \.self) { scheme in
+                        Button {
+                            schemeFilter = scheme
+                        } label: {
+                            HStack {
+                                Text(scheme)
+                                if schemeFilter == scheme {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                            .font(.system(size: 12))
+                        Text(schemeFilter == "All" ? "Scheme" : schemeFilter)
+                            .font(.caption2.weight(.medium))
+                    }
+                    .foregroundStyle(schemeFilter == "All" ? Color.textSecondary : Color.accentGold)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 6))
+                }
+
+                Spacer().frame(width: 8)
+
+                // Fix #39: Affordable-only toggle
+                Toggle(isOn: $showAffordableOnly) {
+                    Text("Affordable")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textSecondary)
+                }
+                .toggleStyle(.switch)
+                .tint(Color.accentGold)
+                .fixedSize()
+
+                Spacer().frame(width: 16)
+
+                Text("\(filteredCandidates.count) candidates")
+                    .font(.caption)
                     .foregroundStyle(Color.textSecondary)
             }
-            .toggleStyle(.switch)
-            .tint(Color.accentGold)
-            .fixedSize()
 
-            Spacer().frame(width: 16)
-
-            Text("\(filteredCandidates.count) candidates")
-                .font(.caption)
-                .foregroundStyle(Color.textSecondary)
+            // Fix #63: Current coach comparison bar
+            if let current = currentCoach {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Replacing:")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(current.fullName)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text("OVR \(coachOverall(current))")
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Color.forRating(coachOverall(current)))
+                    Text("\u{00B7}")
+                        .foregroundStyle(Color.textTertiary)
+                    Text(salaryFormatted(current.salary))
+                        .font(.caption2.weight(.medium).monospacedDigit())
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(Color.accentGold.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+            }
         }
     }
 
@@ -197,6 +307,8 @@ struct HireCoachView: View {
             headerButton("Dev", column: .dev, width: 36)
             headerButton("Game", column: .game, width: 36)
             headerButton("Salary", column: .salary, width: 56)
+            // Fix #60: Value column
+            headerButton("Val", column: .value, width: 40)
             // Status column
             Text("")
                 .frame(width: 30)
@@ -233,21 +345,44 @@ struct HireCoachView: View {
         let isOverBudget = candidate.salary > remainingBudget
         let isHired = hiredCoachID == candidate.id
         let ovr = coachOverall(candidate)
+        let isTop3 = top3IDs.contains(candidate.id)
+        let val = valueScore(candidate)
+        // Fix #63: OVR delta vs current coach
+        let ovrDelta: Int? = currentCoach.map { coachOverall(candidate) - coachOverall($0) }
 
         return Button {
             selectedCandidate = candidate
         } label: {
             HStack(spacing: 0) {
-                // Name
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(candidate.fullName)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(isOverBudget ? Color.textTertiary : Color.textPrimary)
-                        .lineLimit(1)
-                    // One overall star rating
-                    Text(CoachingEngine.starString(for: ovr))
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.accentGold)
+                // Fix #55: Larger name area with personality + top-3 badge
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text(candidate.fullName)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(isOverBudget ? Color.textTertiary : Color.textPrimary)
+                            .lineLimit(1)
+                        // Fix #56: Best Available badge for top 3
+                        if isTop3 {
+                            Text("TOP")
+                                .font(.system(size: 7, weight: .black))
+                                .foregroundStyle(Color.backgroundPrimary)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 3))
+                        }
+                    }
+                    HStack(spacing: 4) {
+                        // Fix #59: Coaching personality
+                        Text(candidate.personality.displayName)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(Color.accentBlue)
+                        // Fix #63: OVR delta vs current
+                        if let delta = ovrDelta {
+                            Text(delta >= 0 ? "+\(delta)" : "\(delta)")
+                                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                .foregroundStyle(delta > 0 ? Color.success : delta < 0 ? Color.danger : Color.textTertiary)
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -314,6 +449,12 @@ struct HireCoachView: View {
                     .foregroundStyle(isOverBudget ? Color.danger : Color.textSecondary)
                     .frame(width: 56)
 
+                // Fix #60: Value badge
+                Text(val.label)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(val.color)
+                    .frame(width: 40)
+
                 // Status indicator
                 Group {
                     if isHired {
@@ -338,9 +479,28 @@ struct HireCoachView: View {
         }
         .buttonStyle(.plain)
         .opacity(isOverBudget ? 0.6 : 1.0)
-        .background(isHired ? Color.success.opacity(0.06) : Color.clear)
+        .background(
+            Group {
+                if isHired {
+                    Color.success.opacity(0.06)
+                } else if isTop3 {
+                    // Fix #56: Subtle gold highlight for top 3
+                    Color.accentGold.opacity(0.04)
+                } else {
+                    Color.clear
+                }
+            }
+        )
+        // Fix #56: Gold left border for top 3
+        .overlay(alignment: .leading) {
+            if isTop3 {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Color.accentGold)
+                    .frame(width: 3)
+            }
+        }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(candidate.fullName), age \(candidate.age), overall \(ovr), salary \(candidate.salary) thousand")
+        .accessibilityLabel("\(candidate.fullName), \(candidate.personality.displayName), age \(candidate.age), overall \(ovr), salary \(candidate.salary) thousand, value \(val.label)")
     }
 
     // MARK: - Helpers
@@ -409,6 +569,15 @@ struct HireCoachView: View {
         return String(format: "%.1f", millions)
     }
 
+    /// Fix #67: Candidate ranking by OVR among filtered list.
+    private func candidateRank(for candidate: Coach) -> Int {
+        let byOVR = filteredCandidates.sorted { coachOverall($0) > coachOverall($1) }
+        if let idx = byOVR.firstIndex(where: { $0.id == candidate.id }) {
+            return idx + 1
+        }
+        return 0
+    }
+
     // MARK: - Hire Action
 
     private func hire(_ candidate: Coach) {
@@ -449,6 +618,11 @@ private struct CandidateDetailSheet: View {
     let candidate: Coach
     let remainingBudget: Int
     let isHired: Bool
+    let headCoach: Coach?
+    let currentCoach: Coach?
+    let candidateRank: Int
+    let totalCandidates: Int
+    let schemeFitResult: (color: Color, label: String)?
     let onHire: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -457,10 +631,15 @@ private struct CandidateDetailSheet: View {
     @State private var proposedYears: Int = 3
     @State private var negotiationResult: NegotiationResult?
 
-    init(candidate: Coach, remainingBudget: Int, isHired: Bool, onHire: @escaping () -> Void) {
+    init(candidate: Coach, remainingBudget: Int, isHired: Bool, headCoach: Coach?, currentCoach: Coach?, candidateRank: Int, totalCandidates: Int, schemeFitResult: (color: Color, label: String)?, onHire: @escaping () -> Void) {
         self.candidate = candidate
         self.remainingBudget = remainingBudget
         self.isHired = isHired
+        self.headCoach = headCoach
+        self.currentCoach = currentCoach
+        self.candidateRank = candidateRank
+        self.totalCandidates = totalCandidates
+        self.schemeFitResult = schemeFitResult
         self.onHire = onHire
         self._proposedSalary = State(initialValue: Double(candidate.salary))
     }
@@ -475,8 +654,23 @@ private struct CandidateDetailSheet: View {
         return min(0.9, discount * 1.8)
     }
 
+    /// Fix #69: Acceptance likelihood label that updates with salary slider.
+    private var acceptanceLikelihood: (label: String, color: Color) {
+        let chance = 1.0 - rejectionChance
+        if chance >= 0.95 { return ("Very High", .success) }
+        if chance >= 0.75 { return ("High", .success) }
+        if chance >= 0.50 { return ("Medium", .warning) }
+        if chance >= 0.25 { return ("Low", .danger) }
+        return ("Very Low", .danger)
+    }
+
     private var isOverBudget: Bool {
         Int(proposedSalary) > remainingBudget
+    }
+
+    /// Fix #65: Budget remaining after this hire.
+    private var budgetAfterHire: Int {
+        remainingBudget - Int(proposedSalary)
     }
 
     private func coachOverall(_ coach: Coach) -> Int {
@@ -487,13 +681,66 @@ private struct CandidateDetailSheet: View {
         return sum / 12
     }
 
+    /// Fix #68: Personality effect descriptions.
+    private var personalityEffects: [(effect: String, icon: String)] {
+        switch candidate.personality {
+        case .teamLeader:        return [("Player morale +5%", "arrow.up"), ("Team chemistry +3%", "person.2")]
+        case .loneWolf:          return [("Individual skill dev +8%", "figure.walk"), ("Team chemistry -3%", "person.2.slash")]
+        case .feelPlayer:        return [("Adaptability +5%", "arrow.triangle.2.circlepath"), ("Consistency -3%", "waveform.path")]
+        case .steadyPerformer:   return [("Consistency +5%", "equal.circle"), ("Development stability +3%", "chart.line.flattrend.xyaxis")]
+        case .dramaQueen:        return [("Media handling +8%", "mic.fill"), ("Locker room drama risk +5%", "exclamationmark.bubble")]
+        case .quietProfessional: return [("Discipline +5%", "checkmark.shield"), ("Media handling -3%", "mic.slash")]
+        case .mentor:            return [("Player development +8%", "graduationcap"), ("Young player growth +5%", "figure.and.child.holdinghands")]
+        case .fieryCompetitor:   return [("Motivation +8%", "flame"), ("Discipline risk +3%", "exclamationmark.triangle")]
+        case .classClown:        return [("Morale boost +5%", "face.smiling"), ("Discipline -3%", "exclamationmark.triangle")]
+        }
+    }
+
+    /// Fix #70: Pre-hire chemistry prediction with HC.
+    private var chemistryPrediction: (label: String, color: Color, description: String) {
+        guard let hc = headCoach else {
+            return ("Unknown", .textTertiary, "No Head Coach on staff to evaluate chemistry.")
+        }
+
+        // Simple personality compatibility matrix
+        let compatiblePairs: Set<Set<String>> = [
+            ["TeamLeader", "QuietProfessional"],
+            ["Mentor", "SteadyPerformer"],
+            ["FieryCompetitor", "TeamLeader"],
+            ["Mentor", "TeamLeader"],
+            ["QuietProfessional", "SteadyPerformer"],
+        ]
+        let clashingPairs: Set<Set<String>> = [
+            ["DramaQueen", "QuietProfessional"],
+            ["FieryCompetitor", "DramaQueen"],
+            ["LoneWolf", "TeamLeader"],
+            ["ClassClown", "FieryCompetitor"],
+        ]
+
+        let pair: Set<String> = [candidate.personality.rawValue, hc.personality.rawValue]
+
+        if candidate.personality == hc.personality {
+            return ("Neutral", .warning, "Same personality type (\(hc.personality.displayName)) — may overlap rather than complement.")
+        }
+        if compatiblePairs.contains(pair) {
+            return ("Strong", .success, "\(candidate.personality.displayName) and \(hc.personality.displayName) complement each other well.")
+        }
+        if clashingPairs.contains(pair) {
+            return ("Weak", .danger, "\(candidate.personality.displayName) may clash with HC's \(hc.personality.displayName) style.")
+        }
+        return ("Average", .textSecondary, "No strong synergy or conflict expected with \(hc.personality.displayName) HC.")
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
                 Color.backgroundPrimary.ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 20) {
+                    VStack(spacing: 16) {
+                        // Fix #67: Candidate ranking badge
+                        rankingBadge
+
                         // Profile header
                         profileHeader
 
@@ -506,24 +753,35 @@ private struct CandidateDetailSheet: View {
                             hiredBanner
                         }
 
-                        // All attributes (Fix #47: use VStack instead of LazyVGrid)
-                        attributesCard
-
-                        // Background story
-                        if !candidate.background.isEmpty {
-                            backgroundCard
+                        // Fix #63: Comparison to current coach
+                        if let current = currentCoach {
+                            comparisonCard(current: current)
                         }
 
-                        // Chemistry preview
-                        chemistryCard
-
-                        // Negotiation section
-                        negotiationCard
+                        // Two-column layout for cards
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(spacing: 12) {
+                                // All attributes
+                                attributesCard
+                                // Background story
+                                if !candidate.background.isEmpty {
+                                    backgroundCard
+                                }
+                            }
+                            VStack(spacing: 12) {
+                                // Fix #66: Scheme fit analysis
+                                schemeFitCard
+                                // Fix #68 + #70: Coaching style & chemistry
+                                coachingStyleCard
+                                // Negotiation section
+                                negotiationCard
+                            }
+                        }
 
                         Spacer(minLength: 20)
                     }
-                    .padding(20)
-                    .frame(maxWidth: 720)
+                    .padding(16)
+                    .frame(maxWidth: 900)
                     .frame(maxWidth: .infinity)
                 }
             }
@@ -534,6 +792,28 @@ private struct CandidateDetailSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
+            }
+        }
+    }
+
+    // MARK: - Ranking Badge (Fix #67)
+
+    private var rankingBadge: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "number")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.accentGold)
+            Text("Ranked #\(candidateRank) of \(totalCandidates) candidates")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.textSecondary)
+            Spacer()
+            if candidateRank <= 3 {
+                Text("Best Available")
+                    .font(.system(size: 10, weight: .black))
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 4))
             }
         }
     }
@@ -591,6 +871,20 @@ private struct CandidateDetailSheet: View {
                 if let def = candidate.defensiveScheme {
                     schemeTag(def.displayName, color: .danger)
                 }
+
+                // Fix #66: Scheme fit badge in header
+                if let fit = schemeFitResult {
+                    HStack(spacing: 4) {
+                        Circle().fill(fit.color).frame(width: 8, height: 8)
+                        Text(fit.label)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(fit.color)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(fit.color.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
+                }
+
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
                     Text("Asking Salary")
@@ -606,11 +900,10 @@ private struct CandidateDetailSheet: View {
         .cardBackground()
     }
 
-    // MARK: - Quick Hire Button (Fix #43: prominent gold button at top)
+    // MARK: - Quick Hire Button (Fix #43 + #65: budget impact)
 
     private var quickHireButton: some View {
         Button {
-            // Use asking salary directly for quick hire
             proposedSalary = askingSalary
             proposedYears = 3
             makeOffer()
@@ -621,7 +914,8 @@ private struct CandidateDetailSheet: View {
                 VStack(spacing: 2) {
                     Text("Offer Contract")
                         .font(.headline.weight(.bold))
-                    Text("at asking salary \(salaryFormatted(candidate.salary))/yr")
+                    // Fix #65: Budget impact
+                    Text("at \(salaryFormatted(candidate.salary))/yr \u{00B7} Budget after: $\(formatBudget(remainingBudget - candidate.salary))M")
                         .font(.caption2)
                         .opacity(0.8)
                 }
@@ -661,7 +955,88 @@ private struct CandidateDetailSheet: View {
         )
     }
 
-    // MARK: - Attributes Card (Fix #47: VStack grid instead of LazyVGrid to prevent disappearing)
+    // MARK: - Comparison Card (Fix #63)
+
+    private func comparisonCard(current: Coach) -> some View {
+        let curOVR = coachOverall(current)
+        let newOVR = coachOverall(candidate)
+        let delta = newOVR - curOVR
+
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("VS CURRENT \(candidate.role.displayName.uppercased())")
+                .font(.system(size: 11, weight: .black))
+                .tracking(1.5)
+                .foregroundStyle(Color.accentGold)
+
+            HStack(spacing: 16) {
+                // Current
+                VStack(spacing: 4) {
+                    Text(current.fullName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                    Text("\(curOVR)")
+                        .font(.system(size: 18, weight: .black).monospacedDigit())
+                        .foregroundStyle(Color.forRating(curOVR))
+                    Text(salaryFormatted(current.salary))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .frame(maxWidth: .infinity)
+
+                // Arrow with delta
+                VStack(spacing: 2) {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(delta >= 0 ? "+\(delta)" : "\(delta)")
+                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .foregroundStyle(delta > 0 ? Color.success : delta < 0 ? Color.danger : Color.textTertiary)
+                }
+
+                // New candidate
+                VStack(spacing: 4) {
+                    Text(candidate.fullName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    Text("\(newOVR)")
+                        .font(.system(size: 18, weight: .black).monospacedDigit())
+                        .foregroundStyle(Color.forRating(newOVR))
+                    Text(salaryFormatted(candidate.salary))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .frame(maxWidth: .infinity)
+            }
+
+            // Key attribute comparison
+            let comparisons: [(String, Int, Int)] = [
+                ("Play Calling", current.playCalling, candidate.playCalling),
+                ("Player Dev", current.playerDevelopment, candidate.playerDevelopment),
+                ("Game Plan", current.gamePlanning, candidate.gamePlanning),
+                ("Motivation", current.motivation, candidate.motivation),
+            ]
+            HStack(spacing: 6) {
+                ForEach(comparisons, id: \.0) { name, curVal, newVal in
+                    let d = newVal - curVal
+                    VStack(spacing: 2) {
+                        Text(name)
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(Color.textTertiary)
+                        Text(d >= 0 ? "+\(d)" : "\(d)")
+                            .font(.system(size: 10, weight: .bold).monospacedDigit())
+                            .foregroundStyle(d > 0 ? Color.success : d < 0 ? Color.danger : Color.textTertiary)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .padding(16)
+        .cardBackground()
+    }
+
+    // MARK: - Attributes Card (Fix #64: color-coded)
 
     private var attributesCard: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -685,7 +1060,6 @@ private struct CandidateDetailSheet: View {
                 ("Reputation", candidate.reputation),
             ]
 
-            // Fix #47: Use plain VStack with manual two-column rows instead of LazyVGrid.
             VStack(spacing: 8) {
                 ForEach(0..<(attrs.count / 2), id: \.self) { rowIndex in
                     let left = attrs[rowIndex * 2]
@@ -701,12 +1075,17 @@ private struct CandidateDetailSheet: View {
         .cardBackground()
     }
 
+    /// Fix #64: Color-coded attribute cells with tier label.
     private func attributeCell(name: String, value: Int) -> some View {
-        HStack(spacing: 6) {
+        let tierLabel = attributeTierLabel(value)
+        return HStack(spacing: 6) {
             Text(name)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Color.textSecondary)
             Spacer()
+            Text(tierLabel)
+                .font(.system(size: 7, weight: .semibold))
+                .foregroundStyle(Color.forRating(value).opacity(0.8))
             Text("\(value)")
                 .font(.system(size: 16, weight: .bold).monospacedDigit())
                 .foregroundStyle(Color.forRating(value))
@@ -716,8 +1095,18 @@ private struct CandidateDetailSheet: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color.backgroundTertiary.opacity(0.5))
+                .fill(Color.forRating(value).opacity(0.06))
         )
+    }
+
+    /// Tier label for attribute value (Fix #64).
+    private func attributeTierLabel(_ value: Int) -> String {
+        if value >= 90 { return "Elite" }
+        if value >= 80 { return "Great" }
+        if value >= 70 { return "Good" }
+        if value >= 60 { return "Avg" }
+        if value >= 50 { return "Below" }
+        return "Poor"
     }
 
     // MARK: - Background Card
@@ -738,29 +1127,91 @@ private struct CandidateDetailSheet: View {
         .cardBackground()
     }
 
-    // MARK: - Chemistry Card
+    // MARK: - Scheme Fit Card (Fix #66)
 
-    private var chemistryCard: some View {
+    private var schemeFitCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("STAFF CHEMISTRY")
+            Text("SCHEME FIT")
                 .font(.system(size: 11, weight: .black))
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
-            Text("How this candidate fits with the existing coaching staff personality dynamics.")
-                .font(.caption)
-                .foregroundStyle(Color.textTertiary)
+            if let fit = schemeFitResult, let hc = headCoach {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(fit.color)
+                        .frame(width: 14, height: 14)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Scheme Compatibility: \(fit.label)")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(fit.color)
+                        let hcScheme = hc.offensiveScheme?.displayName ?? hc.defensiveScheme?.displayName ?? "Unknown"
+                        let candScheme = candidate.offensiveScheme?.displayName ?? candidate.defensiveScheme?.displayName ?? "Unknown"
+                        Text("HC runs \(hcScheme) \u{00B7} Candidate prefers \(candScheme)")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+            } else if headCoach == nil {
+                Text("No Head Coach on staff to compare schemes.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            } else {
+                Text("No scheme data available for comparison.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
 
-            HStack(spacing: 12) {
-                Image(systemName: "person.2.fill")
-                    .font(.system(size: 18))
+    // MARK: - Coaching Style & Chemistry Card (Fix #68 + #70)
+
+    private var coachingStyleCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("COACHING STYLE")
+                .font(.system(size: 11, weight: .black))
+                .tracking(1.5)
+                .foregroundStyle(Color.accentGold)
+
+            // Personality
+            HStack(spacing: 8) {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 14))
                     .foregroundStyle(Color.accentBlue)
+                Text(candidate.personality.displayName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+            }
 
+            // Fix #68: Style effects
+            ForEach(personalityEffects, id: \.effect) { item in
+                HStack(spacing: 6) {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                        .frame(width: 16)
+                    Text(item.effect)
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+
+            Divider().overlay(Color.surfaceBorder)
+
+            // Fix #70: Chemistry prediction with HC
+            let chem = chemistryPrediction
+            HStack(spacing: 8) {
+                Image(systemName: "person.2.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(chem.color)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Personality: \(candidate.personality.displayName)")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Color.textPrimary)
-                    Text("Chemistry is evaluated against your head coach after hiring.")
+                    Text("HC Chemistry: \(chem.label)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(chem.color)
+                    Text(chem.description)
                         .font(.caption)
                         .foregroundStyle(Color.textTertiary)
                 }
@@ -811,6 +1262,25 @@ private struct CandidateDetailSheet: View {
                         .foregroundStyle(Color.textTertiary)
                 }
             }
+
+            // Fix #69: Acceptance likelihood
+            HStack(spacing: 8) {
+                Image(systemName: "gauge.medium")
+                    .foregroundStyle(acceptanceLikelihood.color)
+                Text("Acceptance: \(acceptanceLikelihood.label)")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(acceptanceLikelihood.color)
+                Spacer()
+                // Fix #65: Budget after hire
+                Text("Budget after: $\(formatBudget(budgetAfterHire))M")
+                    .font(.caption.weight(.medium).monospacedDigit())
+                    .foregroundStyle(budgetAfterHire >= 0 ? Color.textSecondary : Color.danger)
+            }
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.backgroundTertiary.opacity(0.5))
+            )
 
             // Contract years
             VStack(alignment: .leading, spacing: 8) {
@@ -882,7 +1352,7 @@ private struct CandidateDetailSheet: View {
                 )
             }
 
-            // Make Offer button (Fix #43: large gold button)
+            // Make Offer button
             if !isHired && negotiationResult?.accepted != true {
                 Button {
                     makeOffer()
@@ -890,12 +1360,18 @@ private struct CandidateDetailSheet: View {
                     HStack(spacing: 8) {
                         Image(systemName: "handshake.fill")
                             .font(.system(size: 16, weight: .semibold))
-                        Text("Offer Contract")
-                            .font(.headline.weight(.bold))
+                        VStack(spacing: 2) {
+                            Text("Offer Contract")
+                                .font(.headline.weight(.bold))
+                            // Fix #65: Budget impact on offer button
+                            Text("Budget after hire: $\(formatBudget(budgetAfterHire))M remaining")
+                                .font(.caption2)
+                                .opacity(0.8)
+                        }
                     }
                     .foregroundStyle(Color.backgroundPrimary)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 52)
+                    .frame(height: 56)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
                             .fill(isOverBudget ? Color.backgroundTertiary : Color.accentGold)
@@ -935,7 +1411,6 @@ private struct CandidateDetailSheet: View {
                     ? "\(candidate.firstName) accepted your below-market offer of \(salaryFormatted(Int(proposedSalary)))/yr for \(proposedYears) years."
                     : "\(candidate.firstName) is pleased with the offer of \(salaryFormatted(Int(proposedSalary)))/yr for \(proposedYears) years."
             )
-            // Update salary to negotiated amount before hiring
             candidate.salary = Int(proposedSalary)
             onHire()
         } else {
@@ -951,6 +1426,11 @@ private struct CandidateDetailSheet: View {
     private func salaryFormatted(_ thousands: Int) -> String {
         let millions = Double(thousands) / 1_000.0
         return String(format: "$%.1fM", millions)
+    }
+
+    private func formatBudget(_ thousands: Int) -> String {
+        let millions = Double(thousands) / 1_000.0
+        return String(format: "%.1f", millions)
     }
 
     private func schemeTag(_ text: String, color: Color) -> some View {

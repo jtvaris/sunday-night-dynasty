@@ -1,12 +1,12 @@
 import Foundation
 
 enum SeasonPhase: String, Codable, CaseIterable {
-    case superBowl       = "SuperBowl"
     case proBowl         = "ProBowl"
+    case superBowl       = "SuperBowl"
     case coachingChanges = "CoachingChanges"
+    case reviewRoster    = "ReviewRoster"
     case combine         = "Combine"
     case freeAgency      = "FreeAgency"
-    case reviewRoster    = "ReviewRoster"
     case draft           = "Draft"
     case otas            = "OTAs"
     case trainingCamp    = "TrainingCamp"

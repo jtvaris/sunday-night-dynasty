@@ -756,7 +756,7 @@ enum WeekAdvancer {
     /// Returns the phase that immediately follows `phase` in the annual calendar.
     ///
     /// Full offseason → preseason chain (matches NFL calendar):
-    /// playoffs → proBowl → superBowl → coachingChanges → combine → reviewRoster →
+    /// playoffs → proBowl → superBowl → coachingChanges → reviewRoster → combine →
     /// freeAgency → draft → otas → trainingCamp → preseason → rosterCuts → regularSeason
     ///
     /// In-season transitions are handled by the regular-season / playoff
@@ -765,9 +765,9 @@ enum WeekAdvancer {
         switch phase {
         case .proBowl:          return .superBowl
         case .superBowl:        return .coachingChanges
-        case .coachingChanges:  return .combine
-        case .combine:          return .reviewRoster
-        case .reviewRoster:     return .freeAgency
+        case .coachingChanges:  return .reviewRoster
+        case .reviewRoster:     return .combine
+        case .combine:          return .freeAgency
         case .freeAgency:       return .draft
         case .draft:            return .otas
         case .otas:             return .trainingCamp

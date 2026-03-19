@@ -355,7 +355,7 @@ private struct CompactTeamRow: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(preview.estimatedCapSpace > 30 ? Color.success : preview.estimatedCapSpace > 15 ? Color.accentGold : Color.warning)
             }
-            .frame(width: 44)
+            .frame(width: 52)
 
             // Owner patience icon + seasons
             VStack(spacing: 1) {
@@ -366,11 +366,12 @@ private struct CompactTeamRow: View {
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
-            .frame(width: 30)
+            .frame(width: 38)
 
             Image(systemName: "chevron.right")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(Color.textTertiary)
+                .frame(width: 16)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)

@@ -11,8 +11,8 @@ struct TimelineStripView: View {
     // Ordered list of all phases in calendar sequence
     private static let orderedPhases: [SeasonPhase] = [
         .coachingChanges,
-        .combine,
         .reviewRoster,
+        .combine,
         .freeAgency,
         .draft,
         .otas,

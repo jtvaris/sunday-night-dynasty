@@ -20,11 +20,12 @@ struct TopNavigationBar: View {
     }
 
     enum BookmarkDestination {
-        case roster, schedule, standings, draft, scouting, cap
+        case roster, schedule, standings, draft, scouting, cap, coachingStaff
     }
 
     static let defaultBookmarks: [Bookmark] = [
         Bookmark(icon: "person.3.fill", label: "Roster", destination: .roster),
+        Bookmark(icon: "person.2.fill", label: "Staff", destination: .coachingStaff),
         Bookmark(icon: "calendar", label: "Schedule", destination: .schedule),
         Bookmark(icon: "list.number", label: "Standings", destination: .standings),
         Bookmark(icon: "list.clipboard.fill", label: "Draft", destination: .draft),

@@ -33,6 +33,12 @@ struct CoachingStaffView: View {
     @State private var showOffensiveSchemeSelection: Bool = false
     @State private var showDefensiveSchemeSelection: Bool = false
 
+    // MARK: - Collapsible Section State (#80)
+    @State private var isCoordinatorsExpanded: Bool = true
+    @State private var isPositionCoachesExpanded: Bool = true
+    @State private var isMedicalExpanded: Bool = true
+    @State private var isScoutingExpanded: Bool = true
+
     /// Coaches filtered to this team, derived from @Query result.
     private var coaches: [Coach] {
         guard let teamID = career.teamID else { return [] }
@@ -185,6 +191,17 @@ struct CoachingStaffView: View {
         horizontalSizeClass == .regular
     }
 
+    /// Whether the Schemes tab is available (requires at least one coordinator).
+    private var isSchemesTabAvailable: Bool {
+        coaches.contains(where: { $0.role == .offensiveCoordinator }) ||
+        coaches.contains(where: { $0.role == .defensiveCoordinator })
+    }
+
+    /// Whether the Review tab is available (requires at least one hire).
+    private var isReviewTabAvailable: Bool {
+        !coaches.isEmpty || !scouts.isEmpty
+    }
+
     /// Priority level for a vacant coaching role.
     private enum HiringPriority {
         case high, recommended, normal
@@ -239,6 +256,55 @@ struct CoachingStaffView: View {
         case .teamDoctor:     return "Reduces injury risk by up to 30%"
         case .physio:         return "Speeds recovery by up to 25%"
         default:              return nil
+        }
+    }
+
+    /// Estimated salary range for a scout role.
+    private func estimatedScoutSalaryRange(for role: ScoutRole) -> String {
+        switch role {
+        case .chiefScout:
+            return "~$200-600K/yr"
+        default:
+            return "~$80-250K/yr"
+        }
+    }
+
+    /// Hiring impact description for a scout role.
+    private func scoutHiringImpact(for role: ScoutRole) -> String {
+        switch role {
+        case .chiefScout:
+            return "+15% draft evaluation accuracy"
+        default:
+            return "+5% regional prospect coverage"
+        }
+    }
+
+    /// Hiring priority for a scout role.
+    private func scoutHiringPriority(for role: ScoutRole) -> HiringPriority {
+        switch role {
+        case .chiefScout: return .high
+        default: return .recommended
+        }
+    }
+
+    /// Hiring impact description for a coaching role (#51).
+    private func hiringImpactDescription(for role: CoachRole) -> String? {
+        switch role {
+        case .offensiveCoordinator:    return "+12% offensive efficiency"
+        case .defensiveCoordinator:    return "+12% defensive efficiency"
+        case .specialTeamsCoordinator: return "+8% special teams performance"
+        case .qbCoach:                 return "+10% QB development speed"
+        case .rbCoach:                 return "+10% RB development speed"
+        case .wrCoach:                 return "+10% WR development speed"
+        case .olCoach:                 return "+10% OL development speed"
+        case .dlCoach:                 return "+10% DL development speed"
+        case .lbCoach:                 return "+10% LB development speed"
+        case .dbCoach:                 return "+10% DB development speed"
+        case .strengthCoach:           return "-15% injury risk across roster"
+        case .teamDoctor:              return "-30% injury severity"
+        case .physio:                  return "+25% recovery speed"
+        case .assistantHeadCoach:      return "+5% staff chemistry bonus"
+        case .headCoach:               return "+15% overall team performance"
         }
     }
 
@@ -381,24 +447,42 @@ struct CoachingStaffView: View {
     private var staffTabBar: some View {
         HStack(spacing: 0) {
             ForEach(StaffTab.allCases, id: \.self) { tab in
+                let isLocked = (tab == .schemes && !isSchemesTabAvailable) ||
+                               (tab == .review && !isReviewTabAvailable)
+                let isSelected = selectedTab == tab
+
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        selectedTab = tab
+                    if !isLocked {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedTab = tab
+                        }
                     }
                 } label: {
                     VStack(spacing: 6) {
-                        Text(tab.rawValue)
-                            .font(.subheadline.weight(selectedTab == tab ? .bold : .medium))
-                            .foregroundStyle(selectedTab == tab ? Color.accentGold : Color.textTertiary)
+                        HStack(spacing: 4) {
+                            if isLocked {
+                                Image(systemName: "lock.fill")
+                                    .font(.system(size: 9))
+                            }
+                            Text(tab.rawValue)
+                                .font(.subheadline.weight(isSelected ? .bold : .medium))
+                        }
+                        .foregroundStyle(
+                            isSelected ? Color.accentGold :
+                            isLocked ? Color.textTertiary.opacity(0.5) :
+                            Color.textSecondary
+                        )
 
                         Rectangle()
-                            .fill(selectedTab == tab ? Color.accentGold : Color.clear)
+                            .fill(isSelected ? Color.accentGold : Color.clear)
                             .frame(height: 2)
                     }
                     .frame(maxWidth: .infinity)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .opacity(isLocked ? 0.5 : 1.0)
+                .accessibilityHint(isLocked ? "Hire coordinators to unlock" : "")
             }
         }
         .padding(.horizontal, 16)
@@ -415,7 +499,7 @@ struct CoachingStaffView: View {
                 Section {
                     budgetHeaderView
 
-                    // Fix #50: Over-budget warning banner
+                    // Over-budget warning banner
                     if isBudgetOverspent {
                         HStack(spacing: 8) {
                             Image(systemName: "exclamationmark.triangle.fill")
@@ -448,7 +532,6 @@ struct CoachingStaffView: View {
                 // Head Coach -- prominent card
                 Section {
                     if career.role == .gmAndHeadCoach {
-                        // Player IS the HC — show "You" card
                         playerAsHeadCoachRow
                     } else if let hc = headCoach {
                         NavigationLink {
@@ -496,87 +579,18 @@ struct CoachingStaffView: View {
                 }
                 .listRowBackground(Color.backgroundSecondary)
 
-                if isIPadPortrait {
-                    // MARK: - 2-Column Layout (iPad Portrait)
-                    Section {
-                        HStack(alignment: .top, spacing: 16) {
-                            // Left column: Coordinators
-                            VStack(alignment: .leading, spacing: 0) {
-                                HStack(spacing: 6) {
-                                    Text("2")
-                                        .font(.system(size: 10, weight: .black))
-                                        .foregroundStyle(Color.backgroundPrimary)
-                                        .frame(width: 18, height: 18)
-                                        .background(Circle().fill(Color.accentGold))
-                                    Text("Coordinators")
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(Color.textSecondary)
-                                }
-                                .padding(.bottom, 8)
-
-                                let coordRoles: [CoachRole] = [.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator]
-                                ForEach(coordRoles, id: \.self) { role in
-                                    if let coach = coaches.first(where: { $0.role == role }) {
-                                        coachRowWithChemistry(coach: coach)
-                                        Divider().padding(.vertical, 4)
-                                    } else {
-                                        vacantRow(role: role)
-                                        Divider().padding(.vertical, 4)
-                                    }
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-
-                            Divider()
-
-                            // Right column: Position Coaches
-                            VStack(alignment: .leading, spacing: 0) {
-                                HStack(spacing: 6) {
-                                    Text("3")
-                                        .font(.system(size: 10, weight: .black))
-                                        .foregroundStyle(Color.backgroundPrimary)
-                                        .frame(width: 18, height: 18)
-                                        .background(Circle().fill(Color.accentGold))
-                                    Text("Position Coaches")
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(Color.textSecondary)
-                                }
-                                .padding(.bottom, 8)
-
-                                let posRoles: [CoachRole] = [.qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach, .strengthCoach]
-                                ForEach(posRoles, id: \.self) { role in
-                                    if let coach = coaches.first(where: { $0.role == role }) {
-                                        NavigationLink {
-                                            CoachDetailView(coach: coach)
-                                        } label: {
-                                            CoachRowWithDescriptionView(coach: coach)
-                                        }
-                                        Divider().padding(.vertical, 4)
-                                    } else {
-                                        vacantRow(role: role)
-                                        Divider().padding(.vertical, 4)
-                                    }
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
-                    } header: {
-                        Text("Coaching Staff")
-                    }
-                    .listRowBackground(Color.backgroundSecondary)
-                } else {
-                    // MARK: - Single-Column Layout (Compact)
-                    // Coordinators
-                    Section {
+                // MARK: - Coordinators (#80 collapsible)
+                Section {
+                    DisclosureGroup(isExpanded: $isCoordinatorsExpanded) {
                         let coordRoles: [CoachRole] = [.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator]
-                        ForEach(Array(coordRoles.enumerated()), id: \.element) { _, role in
+                        ForEach(coordRoles, id: \.self) { role in
                             if let coach = coaches.first(where: { $0.role == role }) {
                                 coachRowWithChemistry(coach: coach)
                             } else {
                                 vacantRow(role: role)
                             }
                         }
-                    } header: {
+                    } label: {
                         HStack(spacing: 6) {
                             Text("2")
                                 .font(.system(size: 10, weight: .black))
@@ -584,25 +598,43 @@ struct CoachingStaffView: View {
                                 .frame(width: 18, height: 18)
                                 .background(Circle().fill(Color.accentGold))
                             Text("Coordinators")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                            Spacer()
+                            let filledCount = coaches.filter { [CoachRole.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator].contains($0.role) }.count
+                            Text("\(filledCount)/3")
+                                .font(.caption.weight(.medium).monospacedDigit())
+                                .foregroundStyle(filledCount == 3 ? Color.success : Color.warning)
                         }
                     }
-                    .listRowBackground(Color.backgroundSecondary)
+                    .tint(Color.accentGold)
+                }
+                .listRowBackground(Color.backgroundSecondary)
 
-                    // Position Coaches
-                    Section {
+                // MARK: - Position Coaches (#50 compact grid, #80 collapsible)
+                Section {
+                    DisclosureGroup(isExpanded: $isPositionCoachesExpanded) {
                         let posRoles: [CoachRole] = [.qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach, .strengthCoach]
-                        ForEach(posRoles, id: \.self) { role in
-                            if let coach = coaches.first(where: { $0.role == role }) {
-                                NavigationLink {
-                                    CoachDetailView(coach: coach)
-                                } label: {
-                                    CoachRowWithDescriptionView(coach: coach)
+                        // #50: Compact 2-column grid of cards
+                        LazyVGrid(columns: [
+                            GridItem(.flexible(), spacing: 10),
+                            GridItem(.flexible(), spacing: 10)
+                        ], spacing: 10) {
+                            ForEach(posRoles, id: \.self) { role in
+                                if let coach = coaches.first(where: { $0.role == role }) {
+                                    NavigationLink {
+                                        CoachDetailView(coach: coach)
+                                    } label: {
+                                        compactCoachCard(coach: coach)
+                                    }
+                                    .buttonStyle(.plain)
+                                } else {
+                                    compactVacantCard(role: role)
                                 }
-                            } else {
-                                vacantRow(role: role)
                             }
                         }
-                    } header: {
+                        .padding(.vertical, 4)
+                    } label: {
                         HStack(spacing: 6) {
                             Text("3")
                                 .font(.system(size: 10, weight: .black))
@@ -610,66 +642,161 @@ struct CoachingStaffView: View {
                                 .frame(width: 18, height: 18)
                                 .background(Circle().fill(Color.accentGold))
                             Text("Position Coaches")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                            Spacer()
+                            let filledCount = positionCoaches.count
+                            Text("\(filledCount)/8")
+                                .font(.caption.weight(.medium).monospacedDigit())
+                                .foregroundStyle(filledCount == 8 ? Color.success : Color.textTertiary)
                         }
+                    }
+                    .tint(Color.accentGold)
+                }
+                .listRowBackground(Color.backgroundSecondary)
+
+                // MARK: - Medical & Scouting (#54 side-by-side on iPad, #80 collapsible)
+                if isIPadPortrait {
+                    Section {
+                        HStack(alignment: .top, spacing: 16) {
+                            // Left column: Medical Staff
+                            VStack(alignment: .leading, spacing: 0) {
+                                DisclosureGroup(isExpanded: $isMedicalExpanded) {
+                                    let medRoles: [CoachRole] = [.teamDoctor, .physio]
+                                    ForEach(medRoles, id: \.self) { role in
+                                        if let coach = coaches.first(where: { $0.role == role }) {
+                                            NavigationLink {
+                                                CoachDetailView(coach: coach)
+                                            } label: {
+                                                compactCoachCard(coach: coach)
+                                            }
+                                            .buttonStyle(.plain)
+                                        } else {
+                                            compactVacantCard(role: role)
+                                        }
+                                        if role != .physio {
+                                            Divider().padding(.vertical, 4)
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Text("4")
+                                            .font(.system(size: 10, weight: .black))
+                                            .foregroundStyle(Color.backgroundPrimary)
+                                            .frame(width: 18, height: 18)
+                                            .background(Circle().fill(Color.accentGold))
+                                        Text("Medical Staff")
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(Color.textPrimary)
+                                    }
+                                }
+                                .tint(Color.accentGold)
+                            }
+                            .frame(maxWidth: .infinity)
+
+                            Divider()
+
+                            // Right column: Scouting Department
+                            VStack(alignment: .leading, spacing: 0) {
+                                DisclosureGroup(isExpanded: $isScoutingExpanded) {
+                                    if let chief = chiefScout {
+                                        scoutRow(scout: chief)
+                                    } else {
+                                        scoutVacantRow(role: .chiefScout)
+                                    }
+                                    let regionalRoles: [ScoutRole] = [.regionalScout1, .regionalScout2, .regionalScout3, .regionalScout4, .regionalScout5]
+                                    ForEach(regionalRoles, id: \.self) { role in
+                                        if let scout = scouts.first(where: { $0.scoutRole == role }) {
+                                            scoutRow(scout: scout)
+                                        } else {
+                                            scoutVacantRow(role: role)
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Text("5")
+                                            .font(.system(size: 10, weight: .black))
+                                            .foregroundStyle(Color.backgroundPrimary)
+                                            .frame(width: 18, height: 18)
+                                            .background(Circle().fill(Color.accentGold))
+                                        Text("Scouting")
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(Color.textPrimary)
+                                    }
+                                }
+                                .tint(Color.accentGold)
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                    } header: {
+                        Text("Support Staff")
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+                } else {
+                    // MARK: - Medical Staff (single column, collapsible)
+                    Section {
+                        DisclosureGroup(isExpanded: $isMedicalExpanded) {
+                            let medRoles: [CoachRole] = [.teamDoctor, .physio]
+                            ForEach(medRoles, id: \.self) { role in
+                                if let coach = coaches.first(where: { $0.role == role }) {
+                                    NavigationLink {
+                                        CoachDetailView(coach: coach)
+                                    } label: {
+                                        compactCoachCard(coach: coach)
+                                    }
+                                    .buttonStyle(.plain)
+                                } else {
+                                    compactVacantCard(role: role)
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text("4")
+                                    .font(.system(size: 10, weight: .black))
+                                    .foregroundStyle(Color.backgroundPrimary)
+                                    .frame(width: 18, height: 18)
+                                    .background(Circle().fill(Color.accentGold))
+                                Text("Medical Staff")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Color.textPrimary)
+                            }
+                        }
+                        .tint(Color.accentGold)
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+
+                    // MARK: - Scouting Department (single column, collapsible)
+                    Section {
+                        DisclosureGroup(isExpanded: $isScoutingExpanded) {
+                            if let chief = chiefScout {
+                                scoutRow(scout: chief)
+                            } else {
+                                scoutVacantRow(role: .chiefScout)
+                            }
+                            let regionalRoles: [ScoutRole] = [.regionalScout1, .regionalScout2, .regionalScout3, .regionalScout4, .regionalScout5]
+                            ForEach(regionalRoles, id: \.self) { role in
+                                if let scout = scouts.first(where: { $0.scoutRole == role }) {
+                                    scoutRow(scout: scout)
+                                } else {
+                                    scoutVacantRow(role: role)
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text("5")
+                                    .font(.system(size: 10, weight: .black))
+                                    .foregroundStyle(Color.backgroundPrimary)
+                                    .frame(width: 18, height: 18)
+                                    .background(Circle().fill(Color.accentGold))
+                                Text("Scouting Department")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Color.textPrimary)
+                            }
+                        }
+                        .tint(Color.accentGold)
                     }
                     .listRowBackground(Color.backgroundSecondary)
                 }
-
-                // MARK: - Medical Staff (#79)
-                Section {
-                    let medRoles: [CoachRole] = [.teamDoctor, .physio]
-                    ForEach(medRoles, id: \.self) { role in
-                        if let coach = coaches.first(where: { $0.role == role }) {
-                            NavigationLink {
-                                CoachDetailView(coach: coach)
-                            } label: {
-                                CoachRowWithDescriptionView(coach: coach)
-                            }
-                        } else {
-                            vacantRow(role: role)
-                        }
-                    }
-                } header: {
-                    HStack(spacing: 6) {
-                        Text("4")
-                            .font(.system(size: 10, weight: .black))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .frame(width: 18, height: 18)
-                            .background(Circle().fill(Color.accentGold))
-                        Text("Medical Staff")
-                    }
-                }
-                .listRowBackground(Color.backgroundSecondary)
-
-                // MARK: - Scouting Department
-                Section {
-                    // Chief Scout
-                    if let chief = chiefScout {
-                        scoutRow(scout: chief)
-                    } else {
-                        scoutVacantRow(role: .chiefScout)
-                    }
-
-                    // Regional Scouts (5 slots)
-                    let regionalRoles: [ScoutRole] = [.regionalScout1, .regionalScout2, .regionalScout3, .regionalScout4, .regionalScout5]
-                    ForEach(regionalRoles, id: \.self) { role in
-                        if let scout = scouts.first(where: { $0.scoutRole == role }) {
-                            scoutRow(scout: scout)
-                        } else {
-                            scoutVacantRow(role: role)
-                        }
-                    }
-                } header: {
-                    HStack(spacing: 6) {
-                        Text("5")
-                            .font(.system(size: 10, weight: .black))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .frame(width: 18, height: 18)
-                            .background(Circle().fill(Color.accentGold))
-                        Text("Scouting Department")
-                    }
-                }
-                .listRowBackground(Color.backgroundSecondary)
 
                 // Bottom spacer so Lock In button doesn't overlap last row
                 if career.currentPhase == .coachingChanges {
@@ -1180,6 +1307,21 @@ struct CoachingStaffView: View {
         VStack(spacing: 0) {
             Divider().overlay(Color.surfaceBorder)
 
+            // #52: Show warning text when required coordinators not hired
+            if !allRequiredRolesFilled && !isBudgetOverspent {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.warning)
+                    Text("Missing: \(missingRequiredRoles.map { $0.displayName }.joined(separator: ", "))")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.warning)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 2)
+            }
+
             Button {
                 if isBudgetOverspent {
                     // Do nothing -- button is disabled
@@ -1190,17 +1332,17 @@ struct CoachingStaffView: View {
                 }
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: "lock.fill")
+                    Image(systemName: isBudgetOverspent ? "lock.slash.fill" : allRequiredRolesFilled ? "lock.fill" : "exclamationmark.triangle.fill")
                         .font(.system(size: 16, weight: .semibold))
-                    Text("Lock in Staff & Advance")
+                    Text(allRequiredRolesFilled ? "Lock in Staff & Advance" : "Lock in Anyway")
                         .font(.headline.weight(.bold))
                 }
-                .foregroundStyle(isBudgetOverspent ? Color.textTertiary : Color.backgroundPrimary)
+                .foregroundStyle(isBudgetOverspent ? Color.textTertiary : allRequiredRolesFilled ? Color.backgroundPrimary : Color.backgroundPrimary)
                 .frame(maxWidth: .infinity)
                 .frame(height: 52)
                 .background(
                     RoundedRectangle(cornerRadius: 14)
-                        .fill(isBudgetOverspent ? Color.backgroundTertiary : Color.accentGold)
+                        .fill(isBudgetOverspent ? Color.backgroundTertiary : allRequiredRolesFilled ? Color.accentGold : Color.warning)
                 )
             }
             .disabled(isBudgetOverspent)
@@ -1440,6 +1582,113 @@ struct CoachingStaffView: View {
         }
     }
 
+    // MARK: - Compact Coach Card (#50)
+
+    @ViewBuilder
+    private func compactCoachCard(coach: Coach) -> some View {
+        let keyAttr: (name: String, value: Int) = {
+            switch coach.role {
+            case .headCoach, .assistantHeadCoach, .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator:
+                return ("PC", coach.playCalling)
+            default:
+                return ("Dev", coach.playerDevelopment)
+            }
+        }()
+
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(coach.role.abbreviation)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(coach.role.badgeColor, in: RoundedRectangle(cornerRadius: 3))
+
+                Spacer()
+
+                Text("\(keyAttr.value)")
+                    .font(.system(size: 14, weight: .bold).monospacedDigit())
+                    .foregroundStyle(Color.forRating(keyAttr.value))
+            }
+
+            Text(coach.fullName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+
+            HStack(spacing: 4) {
+                Text("\(coach.yearsExperience)yr")
+                    .font(.system(size: 9).monospacedDigit())
+                Text("\u{00B7}")
+                Text("$\(coach.salary)K")
+                    .font(.system(size: 9).monospacedDigit())
+            }
+            .foregroundStyle(Color.textTertiary)
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.surfaceBorder.opacity(0.5), lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Compact Vacant Card (#50)
+
+    @ViewBuilder
+    private func compactVacantCard(role: CoachRole) -> some View {
+        if let teamID = career.teamID {
+            NavigationLink {
+                HireCoachView(role: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
+                    showHiringConfirmation(coachName: name, roleName: roleName)
+                })
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(role.abbreviation)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.textTertiary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 3))
+
+                        Spacer()
+
+                        Image(systemName: "plus.circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.accentGold)
+                    }
+
+                    Text(role.displayName)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.textTertiary)
+                        .lineLimit(1)
+
+                    // #51: Impact hint in compact card
+                    if let impact = hiringImpactDescription(for: role) {
+                        Text(impact)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.success)
+                            .lineLimit(1)
+                    }
+
+                    Text(estimatedSalaryRange(for: role))
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.accentGold.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     /// Returns a color based on the chemistry score.
     private func chemistryColor(for score: Double) -> Color {
         switch score {
@@ -1545,6 +1794,17 @@ struct CoachingStaffView: View {
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(Color.accentBlue.opacity(0.8))
                         }
+
+                        // #51: Hiring impact on team performance
+                        if let impact = hiringImpactDescription(for: role) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "chart.line.uptrend.xyaxis")
+                                    .font(.system(size: 8))
+                                Text(impact)
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .foregroundStyle(Color.success)
+                        }
                     }
                     Spacer()
                     Image(systemName: "plus.circle")
@@ -1616,12 +1876,46 @@ struct CoachingStaffView: View {
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(role.displayName)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Color.textTertiary)
+                        HStack(spacing: 6) {
+                            Text(role.displayName)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Color.textTertiary)
+
+                            // #53: Priority badge consistent with coach vacant rows
+                            switch scoutHiringPriority(for: role) {
+                            case .high:
+                                Text("High Priority")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.danger, in: Capsule())
+                            case .recommended:
+                                Text("Recommended")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(Color.warning)
+                            case .normal:
+                                EmptyView()
+                            }
+                        }
+
                         Text("Vacant \u{2014} Tap to hire")
                             .font(.caption)
                             .foregroundStyle(Color.accentGold)
+
+                        // #53: Salary range
+                        Text(estimatedScoutSalaryRange(for: role))
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.textTertiary)
+
+                        // #53: Hiring impact
+                        HStack(spacing: 4) {
+                            Image(systemName: "chart.line.uptrend.xyaxis")
+                                .font(.system(size: 8))
+                            Text(scoutHiringImpact(for: role))
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundStyle(Color.success)
                     }
                     Spacer()
                     Image(systemName: "plus.circle")

@@ -22,10 +22,14 @@ struct RosterView: View {
 
     // MARK: - State
 
-    @State private var selectedSide: RosterFilter = .all
+    @State private var selectedSide: RosterFilter = .offense
     @State private var sortOrder: RosterSort = .overall
+    @State private var sortAscending: Bool = false
     @State private var viewMode: RosterViewMode = .list
     @State private var analysisMode: RosterAnalysisMode = .overview
+    /// Custom depth ordering per position. When a user promotes/demotes a player,
+    /// their manual ordering is stored here and takes priority over OVR-based sorting.
+    @State private var customDepthOrder: [Position: [UUID]] = [:]
 
     // MARK: - Position Groups (NFL-style names)
 
@@ -52,8 +56,6 @@ struct RosterView: View {
     private var filteredPlayers: [Player] {
         let filtered: [Player]
         switch selectedSide {
-        case .all:
-            filtered = players
         case .offense:
             filtered = players.filter { $0.position.side == .offense }
         case .defense:
@@ -62,31 +64,30 @@ struct RosterView: View {
             filtered = players.filter { $0.position.side == .specialTeams }
         }
 
+        let asc = sortAscending
         switch sortOrder {
         case .overall:
-            return filtered.sorted { $0.overall > $1.overall }
+            return filtered.sorted { asc ? $0.overall < $1.overall : $0.overall > $1.overall }
         case .position:
             return filtered.sorted {
                 let sideOrder = positionSideOrder($0.position.side, $1.position.side)
-                if sideOrder != 0 { return sideOrder < 0 }
+                if sideOrder != 0 { return asc ? sideOrder > 0 : sideOrder < 0 }
                 let posOrder = Position.allCases.firstIndex(of: $0.position)! -
                                Position.allCases.firstIndex(of: $1.position)!
-                if posOrder != 0 { return posOrder < 0 }
+                if posOrder != 0 { return asc ? posOrder > 0 : posOrder < 0 }
                 return $0.overall > $1.overall
             }
         case .age:
-            return filtered.sorted { $0.age < $1.age }
+            return filtered.sorted { asc ? $0.age > $1.age : $0.age < $1.age }
         case .salary:
-            return filtered.sorted { $0.annualSalary > $1.annualSalary }
+            return filtered.sorted { asc ? $0.annualSalary < $1.annualSalary : $0.annualSalary > $1.annualSalary }
         case .name:
-            return filtered.sorted { $0.lastName < $1.lastName }
+            return filtered.sorted { asc ? $0.lastName > $1.lastName : $0.lastName < $1.lastName }
         }
     }
 
     private var activeGroups: [PositionGroup] {
         switch selectedSide {
-        case .all:
-            return Self.offenseGroups + Self.defenseGroups + Self.specialTeamsGroups
         case .offense:
             return Self.offenseGroups
         case .defense:
@@ -98,13 +99,60 @@ struct RosterView: View {
 
     // MARK: - Depth Index Helper
 
-    /// Computes a depth index for a player within their position group,
-    /// based on overall rating rank. 0 = starter, 1 = backup, etc.
+    /// Computes a depth index for a player within their position group.
+    /// Uses custom ordering if available, otherwise falls back to OVR-based ranking.
     private func depthIndex(for player: Player, in groupPlayers: [Player]) -> Int {
-        let sorted = groupPlayers
-            .filter { $0.position == player.position }
-            .sorted { $0.overall > $1.overall }
+        let posPlayers = groupPlayers.filter { $0.position == player.position }
+        if let customOrder = customDepthOrder[player.position] {
+            if let idx = customOrder.firstIndex(of: player.id) {
+                return idx
+            }
+        }
+        let sorted = posPlayers.sorted { $0.overall > $1.overall }
         return sorted.firstIndex(where: { $0.id == player.id }) ?? sorted.count
+    }
+
+    /// Returns all players at a given position sorted by custom depth or OVR.
+    private func depthSortedPlayers(at position: Position, from groupPlayers: [Player]) -> [Player] {
+        let posPlayers = groupPlayers.filter { $0.position == position }
+        if let customOrder = customDepthOrder[position] {
+            return posPlayers.sorted { a, b in
+                let idxA = customOrder.firstIndex(of: a.id) ?? Int.max
+                let idxB = customOrder.firstIndex(of: b.id) ?? Int.max
+                return idxA < idxB
+            }
+        }
+        return posPlayers.sorted { $0.overall > $1.overall }
+    }
+
+    /// Handles a depth change request: moves a player to a new depth index at their position.
+    private func handleDepthChange(player: Player, newIndex: Int, groupPlayers: [Player]) {
+        let position = player.position
+        let posPlayers = groupPlayers.filter { $0.position == position }
+
+        // Build current ordered list (custom or OVR-based)
+        var ordered: [UUID]
+        if let existing = customDepthOrder[position] {
+            // Start from existing custom order, adding any missing players
+            let existingSet = Set(existing)
+            let newIDs = posPlayers.filter { !existingSet.contains($0.id) }
+                .sorted { $0.overall > $1.overall }
+                .map { $0.id }
+            ordered = existing + newIDs
+            // Remove players no longer in the group
+            let validIDs = Set(posPlayers.map { $0.id })
+            ordered = ordered.filter { validIDs.contains($0) }
+        } else {
+            ordered = posPlayers.sorted { $0.overall > $1.overall }.map { $0.id }
+        }
+
+        guard let currentIndex = ordered.firstIndex(of: player.id) else { return }
+        let clampedNew = max(0, min(newIndex, ordered.count - 1))
+        guard clampedNew != currentIndex else { return }
+
+        ordered.remove(at: currentIndex)
+        ordered.insert(player.id, at: clampedNew)
+        customDepthOrder[position] = ordered
     }
 
     var body: some View {
@@ -220,11 +268,18 @@ struct RosterView: View {
                 if !groupPlayers.isEmpty {
                     Section {
                         ForEach(groupPlayers) { player in
+                            let posPlayers = groupPlayers.filter { $0.position == player.position }
                             NavigationLink(destination: PlayerDetailView(player: player)) {
                                 PlayerRowView(
                                     player: player,
                                     depthIndex: depthIndex(for: player, in: groupPlayers),
-                                    analysisMode: analysisMode
+                                    analysisMode: analysisMode,
+                                    positionGroupCount: posPlayers.count,
+                                    onDepthChange: { newIndex in
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            handleDepthChange(player: player, newIndex: newIndex, groupPlayers: groupPlayers)
+                                        }
+                                    }
                                 )
                             }
                             .listRowBackground(Color.backgroundSecondary)
@@ -264,59 +319,59 @@ struct RosterView: View {
         switch analysisMode {
         case .overview:
             Group {
-                sortButton("AGE", sort: .age, width: 28)
-                headerLabel("FRM", width: 16)
-                sortButton("OVR", sort: .overall, width: 36)
-                headerLabel("DEV", width: 14)
-                sortButton("SAL", sort: .salary, width: 48)
-                headerLabel("YRS", width: 26)
-                headerLabel("MRL", width: 14)
-                headerLabel("HP", width: 20)
+                sortButton("Age", sort: .age, width: 32)
+                headerLabel("Form", width: 24)
+                sortButton("OVR", sort: .overall, width: 40)
+                headerLabel("Dev", width: 20)
+                sortButton("Salary", sort: .salary, width: 52)
+                headerLabel("Yrs", width: 30)
+                headerLabel("Morale", width: 24)
+                headerLabel("Health", width: 28)
             }
         case .contracts:
             Group {
-                sortButton("SAL", sort: .salary, width: 48)
-                headerLabel("CAP", width: 48)
-                headerLabel("YRS", width: 30)
-                headerLabel("FA", width: 36)
-                sortButton("OVR", sort: .overall, width: 28)
+                sortButton("Salary", sort: .salary, width: 52)
+                headerLabel("Cap", width: 52)
+                headerLabel("Yrs", width: 34)
+                headerLabel("FA", width: 40)
+                sortButton("OVR", sort: .overall, width: 32)
             }
         case .development:
             Group {
-                sortButton("AGE", sort: .age, width: 28)
-                sortButton("OVR", sort: .overall, width: 28)
-                headerLabel("POT", width: 36)
-                headerLabel("DEV", width: 14)
-                headerLabel("PHS", width: 44)
-                headerLabel("FRM", width: 16)
-                headerLabel("WE", width: 28)
+                sortButton("Age", sort: .age, width: 32)
+                sortButton("OVR", sort: .overall, width: 32)
+                headerLabel("Pot", width: 40)
+                headerLabel("Dev", width: 20)
+                headerLabel("Phase", width: 48)
+                headerLabel("Form", width: 24)
+                headerLabel("WE", width: 32)
             }
         case .physical:
             Group {
-                headerLabel("SPD", width: 30)
-                headerLabel("STR", width: 30)
-                headerLabel("STA", width: 30)
-                headerLabel("DUR", width: 30)
-                headerLabel("HP", width: 20)
-                sortButton("OVR", sort: .overall, width: 28)
+                headerLabel("SPD", width: 34)
+                headerLabel("STR", width: 34)
+                headerLabel("STA", width: 34)
+                headerLabel("DUR", width: 34)
+                headerLabel("Health", width: 28)
+                sortButton("OVR", sort: .overall, width: 32)
             }
         case .attributes:
             Group {
-                headerLabel("SPD", width: 28)
-                headerLabel("STR", width: 28)
-                headerLabel("AGI", width: 28)
-                headerLabel("AWR", width: 28)
-                headerLabel("DEC", width: 28)
-                sortButton("OVR", sort: .overall, width: 28)
+                headerLabel("SPD", width: 32)
+                headerLabel("STR", width: 32)
+                headerLabel("AGI", width: 32)
+                headerLabel("AWR", width: 32)
+                headerLabel("DEC", width: 32)
+                sortButton("OVR", sort: .overall, width: 32)
             }
         case .depth:
             Group {
-                headerLabel("RNK", width: 24)
-                headerLabel("ROLE", width: 48)
-                sortButton("OVR", sort: .overall, width: 28)
-                sortButton("AGE", sort: .age, width: 24)
-                headerLabel("HP", width: 20)
-                headerLabel("FRM", width: 16)
+                headerLabel("Rank", width: 28)
+                headerLabel("Role", width: 52)
+                sortButton("OVR", sort: .overall, width: 32)
+                sortButton("Age", sort: .age, width: 28)
+                headerLabel("Health", width: 28)
+                headerLabel("Form", width: 24)
             }
         }
     }
@@ -330,14 +385,19 @@ struct RosterView: View {
     private func sortButton(_ title: String, sort: RosterSort, width: CGFloat?) -> some View {
         Button {
             withAnimation(.easeInOut(duration: 0.2)) {
-                sortOrder = sort
+                if sortOrder == sort {
+                    sortAscending.toggle()
+                } else {
+                    sortOrder = sort
+                    sortAscending = false
+                }
             }
         } label: {
             HStack(spacing: 2) {
                 Text(title)
                 if sortOrder == sort {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8))
+                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
                 }
             }
             .frame(width: width, alignment: .center)
@@ -349,61 +409,25 @@ struct RosterView: View {
 
     private var formationContent: some View {
         ScrollView {
-            let useColumns = isLandscape && selectedSide == .all
-            if useColumns {
-                // Side-by-side layout in landscape when showing all
-                HStack(alignment: .top, spacing: 12) {
-                    VStack {
-                        FormationView(
-                            title: "Offense",
-                            players: players.filter { $0.position.side == .offense },
-                            layout: .offense
-                        )
-                    }
-                    .frame(maxWidth: .infinity)
-
-                    VStack {
-                        FormationView(
-                            title: "Defense",
-                            players: players.filter { $0.position.side == .defense },
-                            layout: .defense
-                        )
-                        FormationView(
-                            title: "Special Teams",
-                            players: players.filter { $0.position.side == .specialTeams },
-                            layout: .specialTeams
-                        )
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .padding(.horizontal)
-            } else {
-                switch selectedSide {
-                case .offense, .all:
-                    FormationView(
-                        title: "Offense",
-                        players: players.filter { $0.position.side == .offense },
-                        layout: .offense
-                    )
-                default:
-                    EmptyView()
-                }
-
-                if selectedSide == .defense || selectedSide == .all {
-                    FormationView(
-                        title: "Defense",
-                        players: players.filter { $0.position.side == .defense },
-                        layout: .defense
-                    )
-                }
-
-                if selectedSide == .specialTeams || selectedSide == .all {
-                    FormationView(
-                        title: "Special Teams",
-                        players: players.filter { $0.position.side == .specialTeams },
-                        layout: .specialTeams
-                    )
-                }
+            switch selectedSide {
+            case .offense:
+                FormationView(
+                    title: "Offense",
+                    players: players.filter { $0.position.side == .offense },
+                    layout: .offense
+                )
+            case .defense:
+                FormationView(
+                    title: "Defense",
+                    players: players.filter { $0.position.side == .defense },
+                    layout: .defense
+                )
+            case .specialTeams:
+                FormationView(
+                    title: "Special Teams",
+                    players: players.filter { $0.position.side == .specialTeams },
+                    layout: .specialTeams
+                )
             }
         }
     }
@@ -411,26 +435,62 @@ struct RosterView: View {
     // MARK: - Toolbar Components
 
     private var filterPicker: some View {
-        Picker("Filter", selection: $selectedSide) {
+        HStack(spacing: 0) {
             ForEach(RosterFilter.allCases) { filter in
-                Text(filter.label).tag(filter)
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedSide = filter
+                    }
+                } label: {
+                    Text(filter.label)
+                        .font(.subheadline)
+                        .fontWeight(selectedSide == filter ? .bold : .medium)
+                        .foregroundStyle(selectedSide == filter ? Color.backgroundPrimary : Color.textPrimary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .background(
+                            selectedSide == filter ? Color.accentGold : Color.backgroundTertiary,
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 8))
             }
         }
-        .pickerStyle(.segmented)
-        .frame(minWidth: 320, maxWidth: isWideLayout ? 500 : 400)
+        .padding(3)
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 10))
+        .frame(minWidth: 280, maxWidth: isWideLayout ? 420 : 360)
     }
 
     private var sortMenu: some View {
         Menu {
-            Picker("Sort by", selection: $sortOrder) {
-                ForEach(RosterSort.allCases) { sort in
-                    Label(sort.label, systemImage: sort.icon).tag(sort)
+            ForEach(RosterSort.allCases) { sort in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if sortOrder == sort {
+                            sortAscending.toggle()
+                        } else {
+                            sortOrder = sort
+                            sortAscending = false
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Label(sort.label, systemImage: sort.icon)
+                        if sortOrder == sort {
+                            Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                        }
+                    }
                 }
             }
         } label: {
-            Label("Sort", systemImage: "arrow.up.arrow.down")
+            HStack(spacing: 4) {
+                Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                Text(sortOrder.label)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+            }
         }
-        .accessibilityLabel("Sort roster, currently by \(sortOrder.label)")
+        .accessibilityLabel("Sort roster, currently by \(sortOrder.label) \(sortAscending ? "ascending" : "descending")")
     }
 
     // MARK: - Helpers
@@ -605,13 +665,12 @@ enum DepthStatus {
 // MARK: - Supporting Enums
 
 enum RosterFilter: String, CaseIterable, Identifiable {
-    case all, offense, defense, specialTeams
+    case offense, defense, specialTeams
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .all:          return "All"
         case .offense:      return "Offense"
         case .defense:      return "Defense"
         case .specialTeams: return "Spec. Teams"

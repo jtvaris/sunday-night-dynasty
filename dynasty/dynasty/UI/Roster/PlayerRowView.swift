@@ -8,6 +8,10 @@ struct PlayerRowView: View {
     var contract: Contract? = nil
     /// Analysis view mode that determines which columns to show.
     var analysisMode: RosterAnalysisMode = .overview
+    /// Total number of players at this position (used for promote/demote bounds).
+    var positionGroupCount: Int = 0
+    /// Called when the user requests a depth change. Parameter is the new depth index.
+    var onDepthChange: ((Int) -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 6) {
@@ -58,7 +62,7 @@ struct PlayerRowView: View {
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 24, alignment: .center)
+                .frame(width: 32, alignment: .center)
 
             // Form indicator (#97)
             formColumn
@@ -68,11 +72,11 @@ struct PlayerRowView: View {
                 .font(.callout.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 32, alignment: .center)
+                .frame(width: 40, alignment: .center)
 
             // Development arrow
             developmentArrow
-                .frame(width: 14, alignment: .center)
+                .frame(width: 20, alignment: .center)
 
             // Cap Hit
             VStack(alignment: .trailing, spacing: 0) {
@@ -87,19 +91,19 @@ struct PlayerRowView: View {
                         .foregroundStyle(Color.textTertiary)
                 }
             }
-            .frame(width: 44, alignment: .trailing)
+            .frame(width: 52, alignment: .trailing)
 
             // Contract years remaining
             contractYearsLabel
-                .frame(width: 26, alignment: .center)
+                .frame(width: 30, alignment: .center)
 
             // Morale icon
             moraleIndicator
-                .frame(width: 14, alignment: .center)
+                .frame(width: 24, alignment: .center)
 
             // Health status
             healthIndicator
-                .frame(width: 20, alignment: .center)
+                .frame(width: 28, alignment: .center)
         }
     }
 
@@ -113,7 +117,7 @@ struct PlayerRowView: View {
                 .fontWeight(.medium)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 48, alignment: .trailing)
+                .frame(width: 52, alignment: .trailing)
 
             // Cap Hit
             VStack(alignment: .trailing, spacing: 0) {
@@ -126,25 +130,25 @@ struct PlayerRowView: View {
                     .font(.system(size: 7))
                     .foregroundStyle(Color.textTertiary)
             }
-            .frame(width: 48, alignment: .trailing)
+            .frame(width: 52, alignment: .trailing)
 
             // Years remaining
             contractYearsLabel
-                .frame(width: 30, alignment: .center)
+                .frame(width: 34, alignment: .center)
 
             // Free agent year estimate
             Text("FA \(player.age + player.contractYearsRemaining)")
                 .font(.system(size: 9, weight: .medium))
                 .monospacedDigit()
                 .foregroundStyle(player.contractYearsRemaining <= 1 ? Color.warning : Color.textTertiary)
-                .frame(width: 36, alignment: .center)
+                .frame(width: 40, alignment: .center)
 
             // OVR for context
             Text("\(player.overall)")
                 .font(.caption.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
         }
     }
 
@@ -157,37 +161,37 @@ struct PlayerRowView: View {
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 24, alignment: .center)
+                .frame(width: 32, alignment: .center)
 
             // OVR
             Text("\(player.overall)")
                 .font(.caption.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
 
             // Potential (hidden value shown as fuzzy label)
             Text(potentialLabel)
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(Color.accentGold)
-                .frame(width: 36, alignment: .center)
+                .frame(width: 40, alignment: .center)
 
             // Development arrow
             developmentArrow
-                .frame(width: 14, alignment: .center)
+                .frame(width: 20, alignment: .center)
 
             // Phase label
             Text(developmentPhaseLabel)
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(developmentTrend.color)
-                .frame(width: 44, alignment: .center)
+                .frame(width: 48, alignment: .center)
 
             // Form
             formColumn
 
             // Work ethic indicator
             colorCodedMiniAttribute(value: player.mental.workEthic, label: "WE")
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
         }
     }
 
@@ -196,24 +200,24 @@ struct PlayerRowView: View {
     private var physicalColumns: some View {
         Group {
             colorCodedMiniAttribute(value: player.physical.speed, label: "SPD")
-                .frame(width: 30, alignment: .center)
+                .frame(width: 34, alignment: .center)
             colorCodedMiniAttribute(value: player.physical.strength, label: "STR")
-                .frame(width: 30, alignment: .center)
+                .frame(width: 34, alignment: .center)
             colorCodedMiniAttribute(value: player.physical.stamina, label: "STA")
-                .frame(width: 30, alignment: .center)
+                .frame(width: 34, alignment: .center)
             colorCodedMiniAttribute(value: player.physical.durability, label: "DUR")
-                .frame(width: 30, alignment: .center)
+                .frame(width: 34, alignment: .center)
 
             // Health
             healthIndicator
-                .frame(width: 20, alignment: .center)
+                .frame(width: 28, alignment: .center)
 
             // OVR
             Text("\(player.overall)")
                 .font(.caption.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
         }
     }
 
@@ -222,22 +226,22 @@ struct PlayerRowView: View {
     private var attributeColumns: some View {
         Group {
             colorCodedMiniAttribute(value: player.physical.speed, label: "SPD")
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
             colorCodedMiniAttribute(value: player.physical.strength, label: "STR")
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
             colorCodedMiniAttribute(value: player.physical.agility, label: "AGI")
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
             colorCodedMiniAttribute(value: player.mental.awareness, label: "AWR")
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
             colorCodedMiniAttribute(value: player.mental.decisionMaking, label: "DEC")
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
 
             // OVR
             Text("\(player.overall)")
                 .font(.caption.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
         }
     }
 
@@ -262,25 +266,25 @@ struct PlayerRowView: View {
             Text(depthLabel)
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(depthColor)
-                .frame(width: 48, alignment: .leading)
+                .frame(width: 52, alignment: .leading)
 
             // OVR
             Text("\(player.overall)")
                 .font(.caption.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
 
             // Age
             Text("\(player.age)")
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 24, alignment: .center)
+                .frame(width: 28, alignment: .center)
 
             // Health
             healthIndicator
-                .frame(width: 20, alignment: .center)
+                .frame(width: 28, alignment: .center)
 
             // Form
             formColumn
@@ -292,9 +296,9 @@ struct PlayerRowView: View {
     private var formColumn: some View {
         let form = playerFormIndicator(for: player)
         return Text(form.symbol)
-            .font(.system(size: 12, weight: .bold))
+            .font(.system(size: 18, weight: .bold))
             .foregroundStyle(form.color)
-            .frame(width: 16, alignment: .center)
+            .frame(width: 24, alignment: .center)
             .accessibilityLabel("Form \(formAccessibilityLabel)")
     }
 
@@ -342,18 +346,50 @@ struct PlayerRowView: View {
             .accessibilityLabel("\(player.position.rawValue), \(player.position.side.rawValue)")
     }
 
+    @ViewBuilder
     private var depthIndicator: some View {
-        Text(depthBadgeText)
-            .font(.system(size: 8, weight: .heavy))
-            .foregroundStyle(depthIndex == 0 ? Color.backgroundPrimary : depthColor)
-            .frame(width: 14, height: 14)
-            .background(
-                depthIndex == 0
-                    ? AnyShapeStyle(depthColor)
-                    : AnyShapeStyle(depthColor.opacity(0.2)),
-                in: RoundedRectangle(cornerRadius: 3)
-            )
-            .accessibilityLabel(depthLabel)
+        if let onDepthChange, let currentIndex = depthIndex, positionGroupCount > 1 {
+            Menu {
+                if currentIndex > 0 {
+                    Button {
+                        onDepthChange(currentIndex - 1)
+                    } label: {
+                        Label("Promote to \(depthRoleLabel(for: currentIndex - 1))", systemImage: "arrow.up")
+                    }
+                }
+                if currentIndex < positionGroupCount - 1 {
+                    Button {
+                        onDepthChange(currentIndex + 1)
+                    } label: {
+                        Label("Demote to \(depthRoleLabel(for: currentIndex + 1))", systemImage: "arrow.down")
+                    }
+                }
+            } label: {
+                Text(depthBadgeText)
+                    .font(.system(size: 8, weight: .heavy))
+                    .foregroundStyle(depthIndex == 0 ? Color.backgroundPrimary : depthColor)
+                    .frame(width: 14, height: 14)
+                    .background(
+                        depthIndex == 0
+                            ? AnyShapeStyle(depthColor)
+                            : AnyShapeStyle(depthColor.opacity(0.2)),
+                        in: RoundedRectangle(cornerRadius: 3)
+                    )
+            }
+            .accessibilityLabel("\(depthLabel), tap to change")
+        } else {
+            Text(depthBadgeText)
+                .font(.system(size: 8, weight: .heavy))
+                .foregroundStyle(depthIndex == 0 ? Color.backgroundPrimary : depthColor)
+                .frame(width: 14, height: 14)
+                .background(
+                    depthIndex == 0
+                        ? AnyShapeStyle(depthColor)
+                        : AnyShapeStyle(depthColor.opacity(0.2)),
+                    in: RoundedRectangle(cornerRadius: 3)
+                )
+                .accessibilityLabel(depthLabel)
+        }
     }
 
     private var depthBadgeText: String {
@@ -392,7 +428,7 @@ struct PlayerRowView: View {
 
     private var moraleIndicator: some View {
         Image(systemName: moraleSystemImage)
-            .font(.system(size: 10))
+            .font(.system(size: 16))
             .foregroundStyle(moraleColor)
             .accessibilityLabel("Morale \(moraleLabel)")
     }
@@ -400,18 +436,18 @@ struct PlayerRowView: View {
     private var healthIndicator: some View {
         Group {
             if player.isInjured {
-                HStack(spacing: 1) {
+                HStack(spacing: 2) {
                     Image(systemName: "cross.circle.fill")
-                        .font(.system(size: 10))
+                        .font(.system(size: 14))
                         .foregroundStyle(Color.danger)
                     Text("\(player.injuryWeeksRemaining)")
-                        .font(.system(size: 8))
+                        .font(.system(size: 10, weight: .bold))
                         .monospacedDigit()
                         .foregroundStyle(Color.danger)
                 }
             } else {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: 14))
                     .foregroundStyle(Color.success)
             }
         }
@@ -422,7 +458,7 @@ struct PlayerRowView: View {
         Group {
             let trend = developmentTrend
             Image(systemName: trend.icon)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(trend.color)
         }
         .accessibilityLabel("Development \(developmentTrend.label)")
@@ -452,6 +488,15 @@ struct PlayerRowView: View {
         case 1:     return "Backup"
         case 2:     return "Third string"
         default:    return "Reserve"
+        }
+    }
+
+    private func depthRoleLabel(for index: Int) -> String {
+        switch index {
+        case 0:  return "Starter"
+        case 1:  return "Backup"
+        case 2:  return "3rd String"
+        default: return "#\(index + 1)"
         }
     }
 

@@ -382,12 +382,9 @@ struct CoachDetailView: View {
         }
     }
 
-    /// Color-codes attribute values based on tier thresholds.
+    /// Fix #64: Color-codes attribute values like Player Detail (green 80+, gold 70+, orange 60+, red below).
     private func attributeColor(_ value: Int) -> Color {
-        if value >= 80 { return .green }
-        if value >= 60 { return Color.accentGold }
-        if value >= 50 { return .orange }
-        return .red
+        Color.forRating(value)
     }
 
     /// Human-readable tier label for an attribute value.

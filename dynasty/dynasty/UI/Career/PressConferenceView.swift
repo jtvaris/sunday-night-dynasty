@@ -153,11 +153,15 @@ struct PressConferenceView: View {
     // MARK: - Questioning Phase
 
     private var questioningContent: some View {
+        GeometryReader { geometry in
         ScrollView {
             VStack(spacing: 0) {
-                // Top bar
+                // Top bar with current stats (#61)
                 questioningHeader
                     .padding(.top, 16)
+
+                currentStatsBar
+                    .padding(.top, 12)
 
                 if currentQuestionIndex < questions.count {
                     let question = questions[currentQuestionIndex]
@@ -165,13 +169,13 @@ struct PressConferenceView: View {
                     // Reporter + question
                     if showReporter {
                         reporterCard(question: question)
-                            .padding(.top, 24)
+                            .padding(.top, 20)
                             .transition(.opacity.combined(with: .move(edge: .top)))
                     }
 
-                    // Response cards
+                    // Response cards — wider and taller for iPad
                     if showResponses {
-                        VStack(spacing: 12) {
+                        VStack(spacing: 14) {
                             ForEach(Array(question.responses.enumerated()), id: \.element.id) { index, response in
                                 responseCard(response: response, index: index)
                             }
@@ -193,33 +197,86 @@ struct PressConferenceView: View {
             }
             .frame(maxWidth: 900)
             .frame(maxWidth: .infinity)
+            .frame(minHeight: geometry.size.height)
         }
         .scrollIndicators(.hidden)
+        }
+    }
+
+    // MARK: - #61 Current Stats Bar
+
+    /// Shows the player's current baseline stats so they know where they stand before choosing.
+    private var currentStatsBar: some View {
+        HStack(spacing: 0) {
+            statBarItem(
+                icon: "star.fill",
+                label: "Legacy",
+                value: "\(career.legacy.totalPoints)",
+                color: Color.accentGold
+            )
+            statBarItem(
+                icon: "newspaper.fill",
+                label: "Media",
+                value: "\(career.legacy.mediaReputation)",
+                color: career.legacy.mediaReputation >= 0 ? Color.success : Color.danger
+            )
+            if let ownerObj = owner {
+                statBarItem(
+                    icon: "building.2.fill",
+                    label: "Owner",
+                    value: "\(ownerObj.satisfaction)%",
+                    color: ownerObj.satisfaction >= 50 ? Color.success : Color.danger
+                )
+            }
+        }
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+        )
+        .padding(.horizontal, 20)
+    }
+
+    private func statBarItem(icon: String, label: String, value: String, color: Color) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(color)
+            Text(value)
+                .font(.subheadline.weight(.bold).monospacedDigit())
+                .foregroundStyle(Color.textPrimary)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var questioningHeader: some View {
         VStack(spacing: 12) {
-            // Progress dots
-            HStack(spacing: 8) {
-                ForEach(0..<questions.count, id: \.self) { i in
-                    Circle()
-                        .fill(i < currentQuestionIndex ? Color.accentGold :
-                              i == currentQuestionIndex ? Color.accentGold.opacity(0.8) :
-                              Color.textTertiary.opacity(0.3))
-                        .frame(width: i == currentQuestionIndex ? 10 : 7,
-                               height: i == currentQuestionIndex ? 10 : 7)
-                        .animation(.easeInOut(duration: 0.3), value: currentQuestionIndex)
-                }
-            }
-
             Text("PRESS CONFERENCE")
                 .font(.system(size: 11, weight: .black))
                 .tracking(4)
                 .foregroundStyle(Color.accentGold)
 
             Text("Question \(currentQuestionIndex + 1) of \(questions.count)")
-                .font(.caption)
-                .foregroundStyle(Color.textTertiary)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(Color.textPrimary)
+
+            // Segmented progress bar
+            HStack(spacing: 4) {
+                ForEach(0..<questions.count, id: \.self) { i in
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(i <= currentQuestionIndex ? Color.accentGold : Color.textTertiary.opacity(0.2))
+                        .frame(height: 6)
+                        .animation(.easeInOut(duration: 0.3), value: currentQuestionIndex)
+                }
+            }
+            .padding(.horizontal, 40)
         }
     }
 
@@ -279,44 +336,39 @@ struct PressConferenceView: View {
         let isDisabled = selectedResponseIndex != nil && !isSelected
 
         return Button(action: { selectResponse(index: index) }) {
-            VStack(alignment: .leading, spacing: 10) {
-                // Tone badge + effect hints
-                HStack(spacing: 8) {
-                    // Tone badge
-                    HStack(spacing: 4) {
-                        Image(systemName: response.tone.icon)
-                            .font(.caption2)
-                        Text(response.tone.label)
-                            .font(.caption.weight(.bold))
-                    }
-                    .foregroundStyle(toneColor(response.tone))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(toneColor(response.tone).opacity(0.15))
-                    )
-
-                    Spacer()
-
-                    // Small effect preview icons
-                    effectPreview(effects: response.effects)
+            VStack(alignment: .leading, spacing: 12) {
+                // Tone badge
+                HStack(spacing: 4) {
+                    Image(systemName: response.tone.icon)
+                        .font(.caption)
+                    Text(response.tone.label)
+                        .font(.subheadline.weight(.bold))
                 }
+                .foregroundStyle(toneColor(response.tone))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(toneColor(response.tone).opacity(0.15))
+                )
 
                 // Response text
                 Text("\"\(response.text)\"")
-                    .font(.subheadline.weight(.medium))
+                    .font(.body.weight(.medium))
                     .foregroundStyle(isDisabled ? Color.textTertiary : Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
+
+                // Effect preview pills
+                effectPreview(effects: response.effects)
             }
-            .padding(16)
+            .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 14)
                     .fill(isSelected ? toneColor(response.tone).opacity(0.12) : Color.backgroundSecondary)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12)
+                        RoundedRectangle(cornerRadius: 14)
                             .strokeBorder(
                                 isSelected ? toneColor(response.tone).opacity(0.6) : Color.surfaceBorder,
                                 lineWidth: isSelected ? 2 : 1
@@ -333,28 +385,41 @@ struct PressConferenceView: View {
     private func effectPreview(effects: PressEffects) -> some View {
         HStack(spacing: 6) {
             if effects.ownerSatisfaction != 0 {
-                effectDot(icon: "building.2.fill", value: effects.ownerSatisfaction)
+                effectPill(icon: "building.2.fill", label: "Owner", value: effects.ownerSatisfaction)
             }
             if effects.playerMorale != 0 {
-                effectDot(icon: "person.3.fill", value: effects.playerMorale)
+                effectPill(icon: "person.3.fill", label: "Morale", value: effects.playerMorale)
             }
             if effects.fanExcitement != 0 {
-                effectDot(icon: "hands.clap.fill", value: effects.fanExcitement)
+                effectPill(icon: "hands.clap.fill", label: "Fans", value: effects.fanExcitement)
             }
             if effects.mediaPerception != 0 {
-                effectDot(icon: "newspaper.fill", value: effects.mediaPerception)
+                effectPill(icon: "newspaper.fill", label: "Media", value: effects.mediaPerception)
             }
         }
     }
 
-    private func effectDot(icon: String, value: Int) -> some View {
-        HStack(spacing: 3) {
+    private func effectPill(icon: String, label: String, value: Int) -> some View {
+        let pillColor = value > 0 ? Color.success : Color.danger
+        return HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 11))
-            Text(value > 0 ? "+" : "-")
-                .font(.system(size: 12, weight: .bold))
+                .font(.caption2)
+            Text(label)
+                .font(.caption2.weight(.medium))
+            Text(value > 0 ? "+\(value)" : "\(value)")
+                .font(.caption2.weight(.bold))
         }
-        .foregroundStyle(value > 0 ? Color.success : value < 0 ? Color.danger : Color.textTertiary)
+        .foregroundStyle(pillColor)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(pillColor.opacity(0.12))
+                .overlay(
+                    Capsule()
+                        .strokeBorder(pillColor.opacity(0.3), lineWidth: 1)
+                )
+        )
     }
 
     private var mediaReactionBanner: some View {

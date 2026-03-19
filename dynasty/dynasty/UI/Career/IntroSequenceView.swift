@@ -483,6 +483,8 @@ private struct TeamOverviewStep: View {
         let grade: String
         let average: Int
         let color: Color
+        let playerCount: Int
+        let need: String // e.g. "need starter", "need depth", "" if fine
     }
 
     /// Maps positions to position group names for grading.
@@ -526,6 +528,24 @@ private struct TeamOverviewStep: View {
         }
     }
 
+    /// Ideal minimum roster counts per position group.
+    private static let idealGroupSize: [String: Int] = [
+        "QB": 3, "RB": 4, "WR": 6, "TE": 3, "OL": 9,
+        "DL": 6, "LB": 6, "DB": 8, "ST": 2
+    ]
+
+    private static func needLabel(groupName: String, count: Int, avg: Int) -> String {
+        let ideal = idealGroupSize[groupName] ?? 4
+        if count < ideal && avg < 70 {
+            return "Need starter"
+        } else if count < ideal {
+            return "Need depth"
+        } else if avg < 65 {
+            return "Need upgrade"
+        }
+        return ""
+    }
+
     private var positionGroupGrades: [PositionGroupGrade] {
         guard !players.isEmpty else { return [] }
         let grouped = Dictionary(grouping: players, by: { Self.positionGroupName(for: $0.position) })
@@ -533,11 +553,14 @@ private struct TeamOverviewStep: View {
         return order.compactMap { groupName in
             guard let groupPlayers = grouped[groupName], !groupPlayers.isEmpty else { return nil }
             let avg = groupPlayers.map(\.overall).reduce(0, +) / groupPlayers.count
+            let count = groupPlayers.count
             return PositionGroupGrade(
                 name: groupName,
                 grade: Self.gradeForAverage(avg),
                 average: avg,
-                color: Self.colorForGrade(avg)
+                color: Self.colorForGrade(avg),
+                playerCount: count,
+                need: Self.needLabel(groupName: groupName, count: count, avg: avg)
             )
         }
     }
@@ -715,17 +738,31 @@ private struct TeamOverviewStep: View {
                             ForEach(positionGroupGrades) { group in
                                 VStack(spacing: 6) {
                                     Text(group.grade)
-                                        .font(.title2.weight(.black))
+                                        .font(.title.weight(.black))
                                         .foregroundStyle(group.color)
                                     Text(group.name)
-                                        .font(.caption.weight(.semibold))
+                                        .font(.subheadline.weight(.bold))
                                         .foregroundStyle(Color.textSecondary)
                                     Text("\(group.average) OVR")
-                                        .font(.system(size: 10).monospacedDigit())
+                                        .font(.subheadline.monospacedDigit())
                                         .foregroundStyle(Color.textTertiary)
+                                    Text("\(group.playerCount) players")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(Color.textTertiary)
+                                    if !group.need.isEmpty {
+                                        Text(group.need)
+                                            .font(.caption2.weight(.bold))
+                                            .foregroundStyle(Color.backgroundPrimary)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 3)
+                                            .background(
+                                                Capsule().fill(group.need.contains("starter") ? Color.danger : Color.warning)
+                                            )
+                                    }
                                 }
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 4)
                                 .background(
                                     RoundedRectangle(cornerRadius: 10)
                                         .fill(group.color.opacity(0.08))

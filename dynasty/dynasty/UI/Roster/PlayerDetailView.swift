@@ -14,9 +14,16 @@ private func colorForAttribute(_ value: Int) -> Color {
 
 struct PlayerDetailView: View {
     let player: Player
+    /// All players at the same position in the league, used for ranking context.
+    var leaguePlayers: [Player] = []
+    /// Season stats for inline summary.
+    var seasonStats: [PlayerGameStats] = []
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    @State private var showCutConfirmation = false
+    @State private var showPositionChange = false
 
     /// True when in landscape on iPad.
     private var isLandscape: Bool {
@@ -42,13 +49,15 @@ struct PlayerDetailView: View {
             if isLandscape {
                 // Landscape: two-column master layout
                 HStack(alignment: .top, spacing: 0) {
-                    // Left column: header + overview + contract
+                    // Left column: header + compact info + actions
                     List {
                         playerHeader
-                        overviewSection
-                        contractDetailSection
-                        developmentSection
+                        compactOverviewContractRow
+                        compactDevelopmentRow
+                        seasonStatsSummarySection
+                        actionButtonsSection
                         versatilitySection
+                        injuryHistorySection
                     }
                     .scrollContentBackground(.hidden)
                     .listStyle(.insetGrouped)
@@ -66,23 +75,38 @@ struct PlayerDetailView: View {
                     .listStyle(.insetGrouped)
                     .frame(maxWidth: .infinity)
                 }
+            } else if isWideLayout {
+                // iPad portrait: two-column grid for compact sections
+                List {
+                    playerHeader
+                    compactOverviewContractRow
+                    compactDevelopmentRow
+                    seasonStatsSummarySection
+                    tradeValueSection
+                    actionButtonsSection
+                    versatilitySection
+                    injuryHistorySection
+                    physicalAttributesGrid
+                    mentalAttributesGrid
+                    positionAttributesGridSection
+                    personalitySection
+                    schemeFitSection
+                }
+                .scrollContentBackground(.hidden)
+                .listStyle(.insetGrouped)
             } else {
                 List {
                     playerHeader
-                    overviewSection
-                    contractDetailSection
-                    developmentSection
+                    compactOverviewContractRow
+                    compactDevelopmentRow
+                    seasonStatsSummarySection
+                    tradeValueSection
+                    actionButtonsSection
                     versatilitySection
-                    if isWideLayout {
-                        // Wide portrait: use grid layout for attributes
-                        physicalAttributesGrid
-                        mentalAttributesGrid
-                        positionAttributesGridSection
-                    } else {
-                        physicalSection
-                        mentalSection
-                        positionAttributesSection
-                    }
+                    injuryHistorySection
+                    physicalSection
+                    mentalSection
+                    positionAttributesSection
                     personalitySection
                     schemeFitSection
                 }
@@ -95,10 +119,21 @@ struct PlayerDetailView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                NavigationLink(destination: PlayerStatsView(player: player, seasonStats: [])) {
+                NavigationLink(destination: PlayerStatsView(player: player, seasonStats: seasonStats)) {
                     Label("Stats", systemImage: "chart.bar.fill")
                 }
             }
+        }
+        .alert("Release Player", isPresented: $showCutConfirmation) {
+            Button("Release", role: .destructive) {
+                // Release action handled by parent
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to release \(player.fullName)? This will remove them from your roster and incur a dead cap hit.")
+        }
+        .sheet(isPresented: $showPositionChange) {
+            positionChangeSheet
         }
     }
 
@@ -111,19 +146,27 @@ struct PlayerDetailView: View {
                     // Player avatar
                     PlayerAvatarView(player: player, size: 80)
 
-                    // Large OVR circle
-                    ZStack {
-                        Circle()
-                            .strokeBorder(Color.forRating(player.overall), lineWidth: 3)
-                            .frame(width: 64, height: 64)
-                        VStack(spacing: 0) {
-                            Text("\(player.overall)")
-                                .font(.title2.monospacedDigit())
-                                .fontWeight(.bold)
-                                .foregroundStyle(Color.forRating(player.overall))
-                            Text("OVR")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundStyle(Color.textTertiary)
+                    // Large OVR circle with ranking
+                    VStack(spacing: 4) {
+                        ZStack {
+                            Circle()
+                                .strokeBorder(Color.forRating(player.overall), lineWidth: 3)
+                                .frame(width: 64, height: 64)
+                            VStack(spacing: 0) {
+                                Text("\(player.overall)")
+                                    .font(.title2.monospacedDigit())
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(Color.forRating(player.overall))
+                                Text("OVR")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(Color.textTertiary)
+                            }
+                        }
+                        // League ranking (#33)
+                        if let rankInfo = leagueRanking {
+                            Text(rankInfo)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Color.accentGold)
                         }
                     }
 
@@ -147,6 +190,15 @@ struct PlayerDetailView: View {
                         }
                         .font(.caption)
                         .foregroundStyle(Color.textSecondary)
+
+                        // Trade value indicator (#37)
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.left.arrow.right")
+                                .font(.system(size: 9))
+                            Text("Trade Value: \(tradeValueLabel)")
+                                .font(.caption2.weight(.semibold))
+                        }
+                        .foregroundStyle(tradeValueColor)
                     }
 
                     Spacer()
@@ -202,113 +254,132 @@ struct PlayerDetailView: View {
             .frame(width: 1, height: 24)
     }
 
-    // MARK: - Overview Section
+    // MARK: - Compact Overview + Contract (#39, #31)
 
-    private var overviewSection: some View {
-        Section("Overview") {
-            LabeledContent("Position") {
-                positionLabel
+    /// Combined Overview and Contract as a compact horizontal card layout.
+    private var compactOverviewContractRow: some View {
+        Section {
+            if isWideLayout || isLandscape {
+                // Side-by-side on iPad (#31)
+                HStack(alignment: .top, spacing: 16) {
+                    compactOverviewCard
+                    compactContractCard
+                }
+                .padding(.vertical, 4)
+            } else {
+                VStack(spacing: 12) {
+                    compactOverviewCard
+                    compactContractCard
+                }
+                .padding(.vertical, 4)
             }
-            LabeledContent("Age") {
-                Text("\(player.age)")
-                    .monospacedDigit()
-                    .foregroundStyle(Color.textPrimary)
-            }
-            LabeledContent("Experience") {
-                Text(player.yearsPro == 0 ? "Rookie" : "\(player.yearsPro) year\(player.yearsPro == 1 ? "" : "s") pro")
-                    .monospacedDigit()
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private var compactOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: "person.text.rectangle")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentGold)
+                Text("Overview")
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(Color.textSecondary)
             }
-            ColorCodedAttributeRow(name: "Overall", value: player.overall)
-            LabeledContent("Morale") {
-                HStack(spacing: 6) {
-                    moraleIcon
-                    Text(moraleLabel)
-                        .foregroundStyle(moraleColor)
-                }
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
+                compactInfoPill(label: "OVR", value: "\(player.overall)", color: Color.forRating(player.overall))
+                compactInfoPill(label: "Morale", value: moraleShortLabel, color: moraleColor)
+                compactInfoPill(label: "Age", value: "\(player.age)", color: .textPrimary)
+                compactInfoPill(label: "Exp", value: player.yearsPro == 0 ? "R" : "\(player.yearsPro)yr", color: .textSecondary)
             }
-            .accessibilityLabel("Morale, \(moraleLabel)")
+
             if player.isInjured {
-                LabeledContent("Status") {
-                    Label("Injured -- \(player.injuryWeeksRemaining) wk\(player.injuryWeeksRemaining == 1 ? "" : "s")", systemImage: "cross.circle.fill")
-                        .monospacedDigit()
-                        .foregroundStyle(Color.danger)
+                HStack(spacing: 4) {
+                    Image(systemName: "cross.circle.fill")
+                        .font(.caption2)
+                    Text("Injured -- \(player.injuryWeeksRemaining) wk\(player.injuryWeeksRemaining == 1 ? "" : "s")")
+                        .font(.caption2.weight(.semibold))
                 }
+                .foregroundStyle(Color.danger)
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Contract Detail Section
-
-    private var contractDetailSection: some View {
-        Section("Contract") {
-            LabeledContent("Years Remaining") {
-                HStack(spacing: 4) {
-                    Text("\(player.contractYearsRemaining)")
-                        .monospacedDigit()
-                        .fontWeight(.semibold)
-                        .foregroundStyle(player.contractYearsRemaining <= 1 ? Color.warning : Color.textPrimary)
-                    if player.contractYearsRemaining <= 1 {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption2)
-                            .foregroundStyle(Color.warning)
-                    }
-                }
-            }
-            LabeledContent("Annual Salary") {
-                Text(formattedSalary)
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
+    private var compactContractCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: "doc.text")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentGold)
+                Text("Contract")
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(Color.textSecondary)
             }
-            LabeledContent("Market Value Est.") {
-                Text(estimatedMarketValue)
-                    .fontWeight(.medium)
-                    .monospacedDigit()
-                    .foregroundStyle(marketValueComparison.color)
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
+                compactInfoPill(
+                    label: "Years",
+                    value: "\(player.contractYearsRemaining)",
+                    color: player.contractYearsRemaining <= 1 ? .warning : .textPrimary
+                )
+                compactInfoPill(label: "Salary", value: formattedSalary, color: .textSecondary)
+                compactInfoPill(label: "Market", value: estimatedMarketValue, color: marketValueComparison.color)
+                compactInfoPill(label: "Value", value: marketValueComparison.label, color: marketValueComparison.color)
             }
-            LabeledContent("Value Assessment") {
+
+            if player.isFranchiseTagged {
                 HStack(spacing: 4) {
-                    Image(systemName: marketValueComparison.icon)
-                        .font(.caption)
-                    Text(marketValueComparison.label)
-                        .font(.subheadline)
+                    Image(systemName: "tag.fill")
+                        .font(.caption2)
+                    Text("Franchise Tagged")
+                        .font(.caption2.weight(.semibold))
                 }
-                .foregroundStyle(marketValueComparison.color)
+                .foregroundStyle(Color.accentGold)
             }
         }
-        .listRowBackground(Color.backgroundSecondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Development Projection Section
+    private func compactInfoPill(label: String, value: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.system(size: 9))
+                .foregroundStyle(Color.textTertiary)
+            Spacer()
+            Text(value)
+                .font(.caption2.weight(.bold).monospacedDigit())
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+    }
 
-    private var developmentSection: some View {
-        Section("Development") {
-            LabeledContent("Peak Age Range") {
-                Text("\(player.position.peakAgeRange.lowerBound)-\(player.position.peakAgeRange.upperBound)")
-                    .monospacedDigit()
-                    .foregroundStyle(Color.textSecondary)
-            }
-            LabeledContent("Current Phase") {
+    // MARK: - Compact Development (#39)
+
+    private var compactDevelopmentRow: some View {
+        Section {
+            VStack(spacing: 8) {
                 HStack(spacing: 4) {
                     Image(systemName: developmentPhase.icon)
                         .font(.caption)
+                        .foregroundStyle(developmentPhase.color)
+                    Text("Development")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer()
                     Text(developmentPhase.label)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(developmentPhase.color)
+                    Text("Peak \(player.position.peakAgeRange.lowerBound)-\(player.position.peakAgeRange.upperBound)")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
                 }
-                .foregroundStyle(developmentPhase.color)
-            }
-            LabeledContent("Trajectory") {
-                Text(trajectoryDescription)
-                    .font(.subheadline)
-                    .foregroundStyle(Color.textSecondary)
-            }
 
-            // Visual age timeline
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Career Timeline")
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
+                // Compact career timeline
                 GeometryReader { geo in
                     let width = geo.size.width
                     let minAge = 21
@@ -319,43 +390,373 @@ struct PlayerDetailView: View {
                     let currentPos = CGFloat(player.age - minAge) / range
 
                     ZStack(alignment: .leading) {
-                        // Full bar
                         Capsule()
                             .fill(Color.backgroundTertiary)
-                            .frame(height: 8)
-
-                        // Peak range
+                            .frame(height: 6)
                         Capsule()
                             .fill(Color.success.opacity(0.4))
-                            .frame(width: (peakEnd - peakStart) * width, height: 8)
+                            .frame(width: (peakEnd - peakStart) * width, height: 6)
                             .offset(x: peakStart * width)
-
-                        // Current age marker
                         Circle()
                             .fill(developmentPhase.color)
-                            .frame(width: 12, height: 12)
-                            .offset(x: min(max(currentPos * width - 6, 0), width - 12))
+                            .frame(width: 10, height: 10)
+                            .offset(x: min(max(currentPos * width - 5, 0), width - 10))
                     }
                 }
-                .frame(height: 12)
+                .frame(height: 10)
 
-                HStack {
-                    Text("21")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.textTertiary)
-                    Spacer()
-                    Text("Peak: \(player.position.peakAgeRange.lowerBound)-\(player.position.peakAgeRange.upperBound)")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.success)
-                    Spacer()
-                    Text("40")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.textTertiary)
+                Text(trajectoryDescription)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 4)
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    // MARK: - Season Stats Summary (#36)
+
+    @ViewBuilder
+    private var seasonStatsSummarySection: some View {
+        let totals = aggregatedSeasonStats
+        let gamesPlayed = seasonStats.count
+
+        if gamesPlayed > 0 {
+            Section("Season Stats") {
+                HStack(spacing: 0) {
+                    seasonQuickStat(label: "GP", value: "\(gamesPlayed)")
+
+                    switch player.position {
+                    case .QB:
+                        quickStatDivider
+                        seasonQuickStat(label: "Pass Yds", value: "\(totals.passingYards)")
+                        quickStatDivider
+                        seasonQuickStat(label: "TD", value: "\(totals.passingTDs)", highlight: true)
+                        quickStatDivider
+                        seasonQuickStat(label: "INT", value: "\(totals.interceptions)", negative: totals.interceptions > 5)
+                        quickStatDivider
+                        seasonQuickStat(label: "Rating", value: String(format: "%.1f", totals.passerRating))
+
+                    case .RB, .FB:
+                        quickStatDivider
+                        seasonQuickStat(label: "Rush Yds", value: "\(totals.rushingYards)")
+                        quickStatDivider
+                        seasonQuickStat(label: "Rush TD", value: "\(totals.rushingTDs)", highlight: true)
+                        quickStatDivider
+                        seasonQuickStat(label: "Y/A", value: String(format: "%.1f", totals.yardsPerCarry))
+
+                    case .WR, .TE:
+                        quickStatDivider
+                        seasonQuickStat(label: "Rec", value: "\(totals.receptions)")
+                        quickStatDivider
+                        seasonQuickStat(label: "Rec Yds", value: "\(totals.receivingYards)")
+                        quickStatDivider
+                        seasonQuickStat(label: "Rec TD", value: "\(totals.receivingTDs)", highlight: true)
+
+                    case .DE, .DT, .OLB, .MLB:
+                        quickStatDivider
+                        seasonQuickStat(label: "Tackles", value: "\(totals.tackles)")
+                        quickStatDivider
+                        seasonQuickStat(label: "Sacks", value: String(format: "%.1f", totals.sacks), highlight: totals.sacks > 0)
+                        quickStatDivider
+                        seasonQuickStat(label: "FF", value: "\(totals.forcedFumbles)")
+
+                    case .CB, .FS, .SS:
+                        quickStatDivider
+                        seasonQuickStat(label: "Tackles", value: "\(totals.tackles)")
+                        quickStatDivider
+                        seasonQuickStat(label: "INT", value: "\(totals.interceptionsCaught)", highlight: totals.interceptionsCaught > 0)
+                        quickStatDivider
+                        seasonQuickStat(label: "Sacks", value: String(format: "%.1f", totals.sacks))
+
+                    case .K, .P:
+                        quickStatDivider
+                        seasonQuickStat(label: "FGM", value: "\(totals.fieldGoalsMade)")
+                        quickStatDivider
+                        seasonQuickStat(label: "FGA", value: "\(totals.fieldGoalsAttempted)")
+
+                    default:
+                        EmptyView()
+                    }
+                }
+                .padding(.vertical, 6)
+                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        }
+    }
+
+    private func seasonQuickStat(label: String, value: String, highlight: Bool = false, negative: Bool = false) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(
+                    negative ? Color.danger :
+                    highlight ? Color.success :
+                    Color.textPrimary
+                )
+            Text(label)
+                .font(.system(size: 8))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var aggregatedSeasonStats: PlayerGameStats {
+        var total = PlayerGameStats(playerID: player.id, playerName: player.fullName, position: player.position)
+        for game in seasonStats {
+            total.passingYards += game.passingYards
+            total.passingTDs += game.passingTDs
+            total.interceptions += game.interceptions
+            total.completions += game.completions
+            total.attempts += game.attempts
+            total.rushingYards += game.rushingYards
+            total.rushingTDs += game.rushingTDs
+            total.carries += game.carries
+            total.receivingYards += game.receivingYards
+            total.receivingTDs += game.receivingTDs
+            total.receptions += game.receptions
+            total.targets += game.targets
+            total.tackles += game.tackles
+            total.sacks += game.sacks
+            total.forcedFumbles += game.forcedFumbles
+            total.interceptionsCaught += game.interceptionsCaught
+            total.fieldGoalsMade += game.fieldGoalsMade
+            total.fieldGoalsAttempted += game.fieldGoalsAttempted
+        }
+        return total
+    }
+
+    // MARK: - Trade Value Section (#37)
+
+    private var tradeValueSection: some View {
+        Section("Trade Value") {
+            HStack(spacing: 12) {
+                VStack(spacing: 4) {
+                    Image(systemName: "arrow.left.arrow.right.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(tradeValueColor)
+                    Text(tradeValueLabel)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(tradeValueColor)
+                }
+                .frame(width: 80)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    tradeValueFactorRow(label: "Overall", detail: "\(player.overall) OVR", positive: player.overall >= 75)
+                    tradeValueFactorRow(label: "Age", detail: "\(player.age)yr", positive: player.age < player.position.peakAgeRange.upperBound)
+                    tradeValueFactorRow(label: "Contract", detail: "\(player.contractYearsRemaining)yr / \(formattedSalary)", positive: marketValueComparison != .overpaid)
                 }
             }
             .padding(.vertical, 4)
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private func tradeValueFactorRow(label: String, detail: String, positive: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: positive ? "plus.circle.fill" : "minus.circle.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(positive ? Color.success : Color.danger)
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Color.textSecondary)
+            Spacer()
+            Text(detail)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(Color.textTertiary)
+        }
+    }
+
+    // MARK: - Action Buttons (#35)
+
+    private var actionButtonsSection: some View {
+        Section("Actions") {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                actionButton(label: "Set as Starter", icon: "star.fill", color: .accentGold)
+                actionButton(label: "Extend Contract", icon: "doc.badge.plus", color: .accentBlue)
+                actionButton(label: "Propose Trade", icon: "arrow.left.arrow.right", color: .success)
+                Button {
+                    showCutConfirmation = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "scissors")
+                            .font(.caption)
+                        Text("Cut / Release")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(Color.danger)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.danger.opacity(0.3), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    showPositionChange = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.triangle.swap")
+                            .font(.caption)
+                        Text("Change Position")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(Color.warning)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.warning.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.warning.opacity(0.3), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.vertical, 4)
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private func actionButton(label: String, icon: String, color: Color) -> some View {
+        Button {
+            // Action handled by parent via callbacks
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.caption)
+                Text(label)
+                    .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(color)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(color.opacity(0.3), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Injury History Section (#38)
+
+    private var injuryHistorySection: some View {
+        Section("Injury History") {
+            if player.isInjured, let injuryType = player.injuryType {
+                HStack(spacing: 8) {
+                    Image(systemName: "cross.circle.fill")
+                        .foregroundStyle(Color.danger)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Current: \(injuryType.rawValue)")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Color.danger)
+                        Text("\(player.injuryWeeksRemaining) of \(player.injuryWeeksOriginal) weeks remaining")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    Spacer()
+                    // Recovery progress
+                    let progress = player.injuryWeeksOriginal > 0
+                        ? Double(player.injuryWeeksOriginal - player.injuryWeeksRemaining) / Double(player.injuryWeeksOriginal)
+                        : 0.0
+                    CircularProgressView(progress: progress, color: .danger)
+                        .frame(width: 32, height: 32)
+                }
+            } else if !player.isInjured {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.success)
+                    Text("Healthy")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.success)
+                    Spacer()
+                    // Durability indicator
+                    VStack(spacing: 2) {
+                        Text("\(player.physical.durability)")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(colorForAttribute(player.physical.durability))
+                        Text("Durability")
+                            .font(.system(size: 8))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+            }
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    // MARK: - Position Change Sheet (#41)
+
+    private var positionChangeSheet: some View {
+        NavigationStack {
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
+                List {
+                    Section {
+                        HStack(spacing: 8) {
+                            positionLabel
+                            Text("Current Position")
+                                .font(.caption)
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                    } header: {
+                        Text("Current")
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+
+                    Section {
+                        let viablePositions = VersatilityEngine.viablePositions(for: player)
+                            .filter { $0.0 != player.position }
+
+                        if viablePositions.isEmpty {
+                            Text("No viable alternate positions based on current attributes.")
+                                .font(.caption)
+                                .foregroundStyle(Color.textTertiary)
+                        } else {
+                            ForEach(viablePositions, id: \.0) { pos, rating in
+                                let familiarity = player.familiarity(at: pos)
+                                let ceiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: pos)
+                                Button {
+                                    player.trainingPosition = pos
+                                    showPositionChange = false
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Text(pos.rawValue)
+                                            .font(.caption.weight(.bold))
+                                            .foregroundStyle(Color.textPrimary)
+                                            .frame(width: 30, alignment: .leading)
+                                        Text(rating.label)
+                                            .font(.caption2)
+                                            .foregroundStyle(rating.color)
+                                            .frame(width: 80, alignment: .leading)
+                                        Spacer()
+                                        Text("\(familiarity)%")
+                                            .font(.caption2.weight(.bold).monospacedDigit())
+                                            .foregroundStyle(rating.color)
+                                        Text("(max \(ceiling)%)")
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(Color.textTertiary)
+                                        Image(systemName: "arrow.right.circle")
+                                            .font(.caption)
+                                            .foregroundStyle(Color.accentBlue)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    } header: {
+                        Text("Convert To")
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+                }
+                .scrollContentBackground(.hidden)
+                .listStyle(.insetGrouped)
+            }
+            .navigationTitle("Change Position")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showPositionChange = false }
+                }
+            }
+        }
     }
 
     // MARK: - Physical Section
@@ -497,13 +898,23 @@ struct PlayerDetailView: View {
     // MARK: - Versatility & Scheme Familiarity Section
 
     private var versatilitySection: some View {
-        Section("Versatility & Scheme") {
-            // Position familiarity bars for non-zero alternate positions
-            let altPositions = player.positionFamiliarity
-                .filter { $0.key != player.position.rawValue && $0.value > 0 }
-                .sorted { $0.value > $1.value }
+        Section("Position Versatility") {
+            // Primary position at 100%
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    Text(player.position.rawValue)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+                        .frame(width: 30, alignment: .leading)
+                    Text("Primary")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Color.accentGold)
+                    Spacer()
+                    Text("100%")
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Color.accentGold)
+                }
 
-            if !altPositions.isEmpty || player.trainingPosition != nil {
                 // Training status
                 if let trainingPos = player.trainingPosition, trainingPos != player.position {
                     HStack(spacing: 6) {
@@ -520,27 +931,54 @@ struct PlayerDetailView: View {
                             .font(.caption.weight(.bold).monospacedDigit())
                             .foregroundStyle(Color.accentGold)
                     }
+                    .padding(6)
+                    .background(Color.accentGold.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
                 }
 
-                // Alternate position familiarity bars
-                ForEach(altPositions, id: \.key) { posKey, familiarity in
-                    if let pos = Position(rawValue: posKey) {
-                        let ceiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: pos)
-                        HStack(spacing: 8) {
-                            Text(posKey)
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(Color.textPrimary)
-                                .frame(width: 30, alignment: .leading)
+                Divider().overlay(Color.surfaceBorder)
 
+                // All viable alternate positions with explanation (#32, #40)
+                let allViable = VersatilityEngine.viablePositions(for: player)
+                    .filter { $0.0 != player.position }
+
+                if allViable.isEmpty {
+                    Text("No viable alternate positions for this player's attributes.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                } else {
+                    ForEach(allViable, id: \.0) { pos, rating in
+                        let familiarity = player.familiarity(at: pos)
+                        let ceiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: pos)
+                        VStack(spacing: 4) {
+                            HStack(spacing: 8) {
+                                Text(pos.rawValue)
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(Color.textPrimary)
+                                    .frame(width: 30, alignment: .leading)
+
+                                Text(rating.label)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(rating.color)
+
+                                Spacer()
+
+                                Text("\(familiarity)%")
+                                    .font(.caption2.weight(.bold).monospacedDigit())
+                                    .foregroundStyle(familiarity > 0 ? versatilityBarColor(familiarity) : Color.textTertiary)
+                            }
+
+                            // Familiarity bar with ceiling
                             GeometryReader { geo in
                                 let barWidth = geo.size.width
                                 ZStack(alignment: .leading) {
                                     RoundedRectangle(cornerRadius: 2)
                                         .fill(Color.backgroundTertiary)
                                         .frame(height: 6)
-                                    RoundedRectangle(cornerRadius: 2)
-                                        .fill(versatilityBarColor(familiarity))
-                                        .frame(width: barWidth * CGFloat(familiarity) / 100.0, height: 6)
+                                    if familiarity > 0 {
+                                        RoundedRectangle(cornerRadius: 2)
+                                            .fill(versatilityBarColor(familiarity))
+                                            .frame(width: barWidth * CGFloat(familiarity) / 100.0, height: 6)
+                                    }
                                     // Ceiling marker
                                     Rectangle()
                                         .fill(Color.textTertiary)
@@ -550,17 +988,14 @@ struct PlayerDetailView: View {
                             }
                             .frame(height: 10)
 
-                            Text("\(familiarity)%")
-                                .font(.caption2.weight(.bold).monospacedDigit())
-                                .foregroundStyle(versatilityBarColor(familiarity))
-                                .frame(width: 36, alignment: .trailing)
+                            // Explanation of why this alternate position exists (#32)
+                            Text(versatilityExplanation(from: player.position, to: pos, rating: rating))
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.textTertiary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }
-            } else {
-                Text("No alternate position experience")
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
             }
 
             // Scheme familiarity bars
@@ -814,6 +1249,15 @@ struct PlayerDetailView: View {
         }
     }
 
+    private var moraleShortLabel: String {
+        switch player.morale {
+        case 85...: return "Great"
+        case 70..<85: return "Good"
+        case 55..<70: return "OK"
+        default:    return "Low"
+        }
+    }
+
     private var moraleLabel: String {
         switch player.morale {
         case 85...: return "Excellent (\(player.morale))"
@@ -968,6 +1412,105 @@ struct PlayerDetailView: View {
         default:      return "Raw"
         }
     }
+
+    // MARK: - League Ranking (#33)
+
+    /// Returns a ranking string like "#3 QB" or "Top 12%" if league players are provided.
+    private var leagueRanking: String? {
+        let samePos = leaguePlayers.filter { $0.position == player.position }
+        guard samePos.count > 1 else { return nil }
+        let sorted = samePos.sorted { $0.overall > $1.overall }
+        guard let rank = sorted.firstIndex(where: { $0.id == player.id }) else { return nil }
+        let position = rank + 1
+        let total = sorted.count
+        let pct = Int((Double(position) / Double(total)) * 100)
+        if position <= 5 {
+            return "#\(position) \(player.position.rawValue)"
+        } else {
+            return "Top \(pct)% \(player.position.rawValue)"
+        }
+    }
+
+    // MARK: - Trade Value (#37)
+
+    private var tradeValueLabel: String {
+        let score = tradeValueScore
+        switch score {
+        case 90...:  return "1st Round Pick"
+        case 75..<90: return "2nd Round Pick"
+        case 60..<75: return "3rd Round Pick"
+        case 45..<60: return "4th-5th Round Pick"
+        case 30..<45: return "Late Round Pick"
+        case 15..<30: return "Conditional Pick"
+        default:      return "Minimal Value"
+        }
+    }
+
+    private var tradeValueColor: Color {
+        let score = tradeValueScore
+        switch score {
+        case 75...:  return .accentGold
+        case 50..<75: return .success
+        case 25..<50: return .textSecondary
+        default:      return .textTertiary
+        }
+    }
+
+    /// Score 0-100 combining OVR, age, contract value.
+    private var tradeValueScore: Int {
+        var score = Double(player.overall)
+
+        // Age factor
+        let peak = player.position.peakAgeRange
+        if peak.contains(player.age) {
+            score *= 1.0
+        } else if player.age < peak.lowerBound {
+            score *= 1.05 // Young upside
+        } else {
+            let yearsOver = player.age - peak.upperBound
+            score *= max(0.5, 1.0 - Double(yearsOver) * 0.1)
+        }
+
+        // Contract factor: bargain deals increase trade value
+        if marketValueComparison == .bargain { score *= 1.1 }
+        else if marketValueComparison == .overpaid { score *= 0.8 }
+
+        // Injury penalty
+        if player.isInjured { score *= 0.7 }
+
+        return min(100, max(0, Int(score)))
+    }
+
+    // MARK: - Versatility Explanation (#32)
+
+    private func versatilityExplanation(from primary: Position, to alt: Position, rating: VersatilityRating) -> String {
+        let ceilingPct = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: alt)
+
+        switch (primary, alt) {
+        case (.QB, .WR):
+            return "Athletic QB can line up as WR in trick plays. Max ceiling: \(ceilingPct)%."
+        case (.WR, .TE), (.TE, .WR):
+            return "Size/speed combo allows flex between WR and TE. Max ceiling: \(ceilingPct)%."
+        case (.RB, .FB), (.FB, .RB):
+            return "Backfield versatility between RB and FB roles. Max ceiling: \(ceilingPct)%."
+        case (.FS, .SS), (.SS, .FS):
+            return "Safety interchangeability based on athleticism. Max ceiling: \(ceilingPct)%."
+        case (.CB, .FS), (.CB, .SS), (.FS, .CB), (.SS, .CB):
+            return "DB versatility across secondary positions. Max ceiling: \(ceilingPct)%."
+        case (.OLB, .MLB), (.MLB, .OLB):
+            return "Linebacker scheme flexibility (3-4/4-3). Max ceiling: \(ceilingPct)%."
+        case (.DE, .OLB), (.OLB, .DE):
+            return "Edge versatility for 3-4/4-3 scheme conversions. Max ceiling: \(ceilingPct)%."
+        case (.DE, .DT), (.DT, .DE):
+            return "D-line position shift based on size/speed profile. Max ceiling: \(ceilingPct)%."
+        case _ where primary.side == .offense && alt.side == .offense
+            && [Position.LT, .LG, .C, .RG, .RT].contains(primary)
+            && [Position.LT, .LG, .C, .RG, .RT].contains(alt):
+            return "O-line interoperability across positions. Max ceiling: \(ceilingPct)%."
+        default:
+            return "\(rating.label) fit based on physical attributes. Max ceiling: \(ceilingPct)%."
+        }
+    }
 }
 
 // MARK: - Market Value Assessment
@@ -1074,6 +1617,28 @@ struct ColorCodedAttributeRow: View {
             }
         }
         .accessibilityLabel("\(name), \(value), \(ratingLabel)")
+    }
+}
+
+// MARK: - Circular Progress View (injury recovery)
+
+/// Small circular progress indicator used for injury recovery progress.
+private struct CircularProgressView: View {
+    let progress: Double
+    let color: Color
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(color.opacity(0.2), lineWidth: 3)
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Text("\(Int(progress * 100))%")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(color)
+        }
     }
 }
 

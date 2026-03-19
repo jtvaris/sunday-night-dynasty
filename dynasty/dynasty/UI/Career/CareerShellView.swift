@@ -170,6 +170,7 @@ struct CareerShellView: View {
     enum ShellDestination: Hashable {
         case roster, schedule, standings, draft, scouting, cap
         case depthChart, gamePlan, coachingStaff, hireCoach
+        case hireHC, hireOC, hireDC
         case prospectList, bigBoard, capOverview, freeAgency
         case contractTimeline, mentoring, trades, news
         case ownerMeeting, lockerRoom, inbox, rosterEvaluation
@@ -233,11 +234,7 @@ struct CareerShellView: View {
                     refreshTaskCompletionStatus()
                 }
         case .coachingStaff, .hireCoach:
-            // Wrap in NavigationStack so HireCoachView NavigationLinks push
-            // within this scope, not the parent stack. Fixes back-button routing.
-            NavigationStack {
-                CoachingStaffView(career: career)
-            }
+            CoachingStaffView(career: career)
             .onAppear {
                 markTaskVisited(for: .coachingStaff)
                 markTaskVisited(for: .hireCoach)
@@ -246,6 +243,12 @@ struct CareerShellView: View {
             .onDisappear {
                 refreshTaskCompletionStatus()
             }
+        case .hireHC:
+            hireCoachDestination(role: .headCoach, taskDestination: .hireHC)
+        case .hireOC:
+            hireCoachDestination(role: .offensiveCoordinator, taskDestination: .hireOC)
+        case .hireDC:
+            hireCoachDestination(role: .defensiveCoordinator, taskDestination: .hireDC)
         case .prospectList:
             NavigationStack {
                 ScoutingHubView(career: career)
@@ -327,6 +330,35 @@ struct CareerShellView: View {
         }
     }
 
+    // MARK: - Hire Coach Destination Helper
+
+    /// Creates a HireCoachView destination for a specific coaching role.
+    @ViewBuilder
+    private func hireCoachDestination(role: CoachRole, taskDestination: TaskDestination) -> some View {
+        NavigationStack {
+            if let teamID = career.teamID {
+                let budget = team?.owner?.coachingBudget ?? 0
+                let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+                let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
+                let usedBudget = coaches.reduce(0) { $0 + $1.salary }
+                HireCoachView(
+                    role: role,
+                    teamID: teamID,
+                    remainingBudget: budget - usedBudget
+                )
+            } else {
+                Text("No team selected")
+            }
+        }
+        .onAppear {
+            markTaskVisited(for: taskDestination)
+            refreshTaskCompletionStatus()
+        }
+        .onDisappear {
+            refreshTaskCompletionStatus()
+        }
+    }
+
     // MARK: - Task Navigation
 
     /// Maps a `TaskDestination` to a `ShellDestination` and navigates there.
@@ -340,6 +372,9 @@ struct CareerShellView: View {
         case .standings:          shellDest = .standings
         case .coachingStaff:      shellDest = .coachingStaff
         case .hireCoach:          shellDest = .hireCoach
+        case .hireHC:             shellDest = .hireHC
+        case .hireOC:             shellDest = .hireOC
+        case .hireDC:             shellDest = .hireDC
         case .scouting:           shellDest = .scouting
         case .prospectList:       shellDest = .prospectList
         case .bigBoard:           shellDest = .bigBoard
@@ -461,12 +496,13 @@ struct CareerShellView: View {
     private func handleBookmarkNavigation(_ bookmark: TopNavigationBar.BookmarkDestination) {
         let dest: ShellDestination
         switch bookmark {
-        case .roster:    dest = .roster
-        case .schedule:  dest = .schedule
-        case .standings: dest = .standings
-        case .draft:     dest = .draft
-        case .scouting:  dest = .scouting
-        case .cap:       dest = .cap
+        case .roster:        dest = .roster
+        case .schedule:      dest = .schedule
+        case .standings:     dest = .standings
+        case .draft:         dest = .draft
+        case .scouting:      dest = .scouting
+        case .cap:           dest = .cap
+        case .coachingStaff: dest = .coachingStaff
         }
         // Reset to root then push the destination
         navigationPath = NavigationPath()

@@ -50,6 +50,9 @@ enum TaskDestination: String, Codable, CaseIterable {
     case standings
     case coachingStaff
     case hireCoach
+    case hireHC
+    case hireOC
+    case hireDC
     case scouting
     case prospectList
     case bigBoard
@@ -85,16 +88,16 @@ enum TaskGenerator {
 
     static func phaseInfo(for phase: SeasonPhase) -> PhaseInfo {
         switch phase {
-        case .superBowl:
-            return PhaseInfo(
-                name: "Super Bowl",
-                description: "The championship game caps off the season. Review results and league awards.",
-                order: 1
-            )
         case .proBowl:
             return PhaseInfo(
                 name: "Pro Bowl",
                 description: "All-star festivities and end-of-season recognition.",
+                order: 1
+            )
+        case .superBowl:
+            return PhaseInfo(
+                name: "Super Bowl",
+                description: "The championship game caps off the season. Review results and league awards.",
                 order: 2
             )
         case .coachingChanges:
@@ -103,16 +106,16 @@ enum TaskGenerator {
                 description: "Evaluate your coaching staff and fill any vacancies before the offseason ramps up.",
                 order: 3
             )
-        case .combine:
-            return PhaseInfo(
-                name: "NFL Combine",
-                description: "Prospects showcase their athletic ability. Scout, interview, and build your Big Board.",
-                order: 4
-            )
         case .reviewRoster:
             return PhaseInfo(
                 name: "Review Roster",
                 description: "Evaluate your roster, apply franchise tags, and identify needs before free agency opens.",
+                order: 4
+            )
+        case .combine:
+            return PhaseInfo(
+                name: "NFL Combine",
+                description: "Prospects showcase their athletic ability. Scout, interview, and build your Big Board.",
                 order: 5
             )
         case .freeAgency:
@@ -311,7 +314,7 @@ enum TaskGenerator {
                 title: "Hire Head Coach",
                 description: "Your team has no head coach. Hire one before moving on.",
                 icon: "person.badge.plus",
-                destination: .hireCoach,
+                destination: .hireHC,
                 isRequired: true
             ))
         }
@@ -322,7 +325,7 @@ enum TaskGenerator {
                 title: "Hire Offensive Coordinator",
                 description: "Your team needs an offensive coordinator to run the offense.",
                 icon: "person.badge.plus",
-                destination: .hireCoach,
+                destination: .hireOC,
                 isRequired: true
             ))
         }
@@ -333,7 +336,7 @@ enum TaskGenerator {
                 title: "Hire Defensive Coordinator",
                 description: "Your team needs a defensive coordinator to run the defense.",
                 icon: "person.badge.plus",
-                destination: .hireCoach,
+                destination: .hireDC,
                 isRequired: true
             ))
         }

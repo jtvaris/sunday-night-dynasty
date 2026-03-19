@@ -23,6 +23,14 @@ struct CareerDashboardView: View {
     @State private var upcomingGames: [Game] = []
     @State private var lastGame: Game?
     @State private var allTeamsByID: [UUID: Team] = [:]
+    @State private var players: [Player] = []
+    @State private var startingQB: Player?
+    @State private var bestPlayer: Player?
+    @State private var expiringContractPlayers: [Player] = []
+    @State private var positionGroupGrades: [(group: String, grade: String, avgOVR: Int)] = []
+    @State private var teamMorale: Int = 70
+    @State private var previousSeasonRecord: String?
+    @State private var previousSeasonYear: Int?
 
     /// Game summary sheet after advancing a week.
     @State private var showGameSummary = false
@@ -148,6 +156,16 @@ struct CareerDashboardView: View {
                                 .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                         )
                     divisionStandingsSection
+                        .padding(12)
+                        .background(Color.backgroundSecondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                        )
+
+                    // Schedule below standings (#15: fill empty space)
+                    scheduleSection
                         .padding(12)
                         .background(Color.backgroundSecondary)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -298,6 +316,7 @@ struct CareerDashboardView: View {
     private var timelineNodes: [(label: String, month: String, phase: SeasonPhase?, weekNum: Int?)] {
         var nodes: [(String, String, SeasonPhase?, Int?)] = [
             ("Coaching", "Feb", .coachingChanges, nil),
+            ("Review", "Feb", .reviewRoster, nil),
             ("Combine", "Mar", .combine, nil),
             ("Free Agency", "Mar", .freeAgency, nil),
             ("Draft", "Apr", .draft, nil),
@@ -447,7 +466,7 @@ struct CareerDashboardView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(Capsule().fill(Color.accentBlue))
+                    .background(Capsule().fill(Color.accentGold))
                 }
                 .buttonStyle(.plain)
             }
@@ -508,7 +527,7 @@ struct CareerDashboardView: View {
                             } label: {
                                 Text("\(filtered.count - 5) more message\(filtered.count - 5 == 1 ? "" : "s")")
                                     .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(Color.accentBlue)
+                                    .foregroundStyle(Color.accentGold)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 10)
                             }
@@ -595,12 +614,30 @@ struct CareerDashboardView: View {
 
     private var centerTilesGrid: some View {
         LazyVGrid(columns: tileColumns, spacing: 12) {
-            teamTile
-            rosterTile
-            staffTile
-            scoutingTile
-            capTile
-            lockerRoomTile
+            // Row 1: Team + Roster (equalized height)
+            teamTile.frame(minHeight: 160)
+            rosterTile.frame(minHeight: 160)
+
+            // Row 2: Staff + Scouting (equalized height)
+            staffTile.frame(minHeight: 150)
+            scoutingTile.frame(minHeight: 150)
+
+            // Row 3: Salary Cap + Locker Room (equalized height)
+            capTile.frame(minHeight: 160)
+            lockerRoomTile.frame(minHeight: 160)
+
+            // Row 4: Key Players + Position Strengths
+            keyPlayersTile
+            positionStrengthsTile
+
+            // Row 5: Expiring Contracts + Owner Expectations
+            expiringContractsTile
+            ownerExpectationsTile
+
+            // Previous season summary (season 2+)
+            if previousSeasonRecord != nil {
+                previousSeasonTile
+            }
 
             // Contextual tiles
             if career.currentPhase == .draft || career.currentPhase == .combine {
@@ -929,25 +966,50 @@ struct CareerDashboardView: View {
             ScoutingHubView(career: career)
         } label: {
             DashboardTile(icon: "magnifyingglass", title: "Scouting", highlighted: currentPhaseHighlightedTiles.contains("Scouting")) {
-                VStack(alignment: .leading, spacing: 4) {
-                    let topProspect = WeekAdvancer.currentDraftClass.first
-                    if let prospect = topProspect {
-                        Text("\(prospect.firstName) \(prospect.lastName)")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Color.textPrimary)
-                            .lineLimit(1)
-                        Text("\(prospect.position.rawValue) \u{2014} \(prospect.college)")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color.textSecondary)
-                            .lineLimit(1)
+                VStack(alignment: .leading, spacing: 6) {
+                    let draftClass = WeekAdvancer.currentDraftClass
+                    if draftClass.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: "person.badge.magnifyingglass")
+                                .font(.system(size: 16))
+                                .foregroundStyle(Color.textTertiary)
+                            Text("Hire scouts to begin scouting")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.textSecondary)
+                        }
                     } else {
-                        Text("No prospects scouted")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.textSecondary)
+                        // Top prospect
+                        if let prospect = draftClass.first {
+                            HStack(spacing: 4) {
+                                Text("#1")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Color.accentGold)
+                                Text("\(prospect.firstName) \(prospect.lastName)")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(Color.textPrimary)
+                                    .lineLimit(1)
+                            }
+                            Text("\(prospect.position.rawValue) \u{2014} \(prospect.college)")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color.textSecondary)
+                                .lineLimit(1)
+                        }
+
+                        // Prospect count by side
+                        let offenseCount = draftClass.filter { $0.position.side == .offense }.count
+                        let defenseCount = draftClass.filter { $0.position.side == .defense }.count
+                        HStack(spacing: 12) {
+                            Text("\(draftClass.count) total")
+                                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(Color.textPrimary)
+                            Text("OFF \(offenseCount)")
+                                .font(.system(size: 9, weight: .medium).monospacedDigit())
+                                .foregroundStyle(Color.textTertiary)
+                            Text("DEF \(defenseCount)")
+                                .font(.system(size: 9, weight: .medium).monospacedDigit())
+                                .foregroundStyle(Color.textTertiary)
+                        }
                     }
-                    Text("\(WeekAdvancer.currentDraftClass.count) prospects")
-                        .font(.system(size: 10).monospacedDigit())
-                        .foregroundStyle(Color.textTertiary)
                 }
             }
         }
@@ -961,42 +1023,59 @@ struct CareerDashboardView: View {
             CapOverviewView(career: career)
         } label: {
             DashboardTile(icon: "dollarsign.circle.fill", title: "Salary Cap", highlighted: currentPhaseHighlightedTiles.contains("Salary Cap")) {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     if let t = team {
                         let usedFraction = t.salaryCap > 0
                             ? Double(t.currentCapUsage) / Double(t.salaryCap)
                             : 0
 
-                        HStack {
+                        HStack(alignment: .firstTextBaseline) {
                             Text("Used")
                                 .font(.system(size: 10))
                                 .foregroundStyle(Color.textSecondary)
                             Spacer()
                             Text(formatCap(t.currentCapUsage))
-                                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                                .font(.system(size: 16, weight: .bold).monospacedDigit())
                                 .foregroundStyle(Color.textPrimary)
                         }
 
+                        // Larger progress bar
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
-                                RoundedRectangle(cornerRadius: 3)
+                                RoundedRectangle(cornerRadius: 5)
                                     .fill(Color.backgroundTertiary)
-                                    .frame(height: 6)
-                                RoundedRectangle(cornerRadius: 3)
+                                    .frame(height: 12)
+                                RoundedRectangle(cornerRadius: 5)
                                     .fill(capBarColor(usedFraction))
-                                    .frame(width: geo.size.width * min(usedFraction, 1.0), height: 6)
+                                    .frame(width: geo.size.width * min(usedFraction, 1.0), height: 12)
+                                // Percentage label inside bar
+                                Text("\(Int(usedFraction * 100))%")
+                                    .font(.system(size: 8, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(.white.opacity(0.9))
+                                    .padding(.leading, 4)
                             }
                         }
-                        .frame(height: 6)
+                        .frame(height: 12)
 
-                        HStack {
+                        HStack(alignment: .firstTextBaseline) {
                             Text("Available")
                                 .font(.system(size: 10))
                                 .foregroundStyle(Color.textSecondary)
                             Spacer()
                             Text(formatCap(t.availableCap))
-                                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                                .font(.system(size: 16, weight: .bold).monospacedDigit())
                                 .foregroundStyle(t.availableCap > 0 ? Color.success : Color.danger)
+                        }
+
+                        // Total cap line
+                        HStack {
+                            Text("Total Cap")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.textTertiary)
+                            Spacer()
+                            Text(formatCap(t.salaryCap))
+                                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                                .foregroundStyle(Color.textTertiary)
                         }
                     } else {
                         Text("No cap data")
@@ -1016,36 +1095,317 @@ struct CareerDashboardView: View {
             LockerRoomView(career: career)
         } label: {
             DashboardTile(icon: "heart.fill", title: "Locker Room") {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
+                    // Chemistry label with dynamic text
                     HStack {
                         Text("Chemistry")
                             .font(.system(size: 10))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
-                        Text("Good")
+                        Text(moraleLabel(teamMorale))
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(Color.success)
+                            .foregroundStyle(moraleColor(teamMorale))
                     }
 
+                    // Visual morale bar (larger)
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 3)
+                            RoundedRectangle(cornerRadius: 5)
                                 .fill(Color.backgroundTertiary)
-                                .frame(height: 6)
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(Color.success)
-                                .frame(width: geo.size.width * 0.7, height: 6)
+                                .frame(height: 12)
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(moraleColor(teamMorale))
+                                .frame(width: geo.size.width * (Double(teamMorale) / 100.0), height: 12)
                         }
                     }
-                    .frame(height: 6)
+                    .frame(height: 12)
 
-                    Text("Morale: 70%")
-                        .font(.system(size: 10).monospacedDigit())
-                        .foregroundStyle(Color.textSecondary)
+                    // Morale percentage
+                    HStack {
+                        Text("Team Morale")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        Text("\(teamMorale)%")
+                            .font(.system(size: 14, weight: .bold).monospacedDigit())
+                            .foregroundStyle(moraleColor(teamMorale))
+                    }
+
+                    // Star players morale indicator
+                    if let qb = startingQB {
+                        HStack(spacing: 4) {
+                            Text("QB")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(Color.accentGold)
+                            Text(qb.lastName)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Color.textSecondary)
+                                .lineLimit(1)
+                            Spacer()
+                            Image(systemName: qb.morale >= 70 ? "face.smiling" : (qb.morale >= 40 ? "face.dashed" : "cloud.rain"))
+                                .font(.system(size: 10))
+                                .foregroundStyle(moraleColor(qb.morale))
+                        }
+                    }
                 }
             }
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Key Players Tile (#18)
+
+    private var keyPlayersTile: some View {
+        NavigationLink {
+            RosterViewWrapper(career: career)
+        } label: {
+            DashboardTile(icon: "star.fill", title: "Key Players") {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let qb = startingQB {
+                        HStack(spacing: 4) {
+                            Text("QB1")
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundStyle(Color.accentGold)
+                                .frame(width: 28, alignment: .leading)
+                            Text(qb.fullName)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
+                            Spacer()
+                            Text("\(qb.overall)")
+                                .font(.system(size: 14, weight: .bold).monospacedDigit())
+                                .foregroundStyle(Color.forRating(qb.overall))
+                        }
+                    } else {
+                        Text("No starting QB")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.textSecondary)
+                    }
+
+                    if let best = bestPlayer, best.id != startingQB?.id {
+                        Divider().overlay(Color.surfaceBorder.opacity(0.4))
+                        HStack(spacing: 4) {
+                            Text("MVP")
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundStyle(Color.accentGold)
+                                .frame(width: 28, alignment: .leading)
+                            Text(best.fullName)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
+                            Spacer()
+                            Text("\(best.overall)")
+                                .font(.system(size: 14, weight: .bold).monospacedDigit())
+                                .foregroundStyle(Color.forRating(best.overall))
+                        }
+                        Text(best.position.rawValue)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Position Group Strengths Tile (#17)
+
+    private var positionStrengthsTile: some View {
+        NavigationLink {
+            RosterViewWrapper(career: career)
+        } label: {
+            DashboardTile(icon: "chart.bar.fill", title: "Position Grades") {
+                VStack(alignment: .leading, spacing: 4) {
+                    if positionGroupGrades.isEmpty {
+                        Text("No roster data")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.textSecondary)
+                    } else {
+                        // Show in two columns
+                        let halfCount = (positionGroupGrades.count + 1) / 2
+                        let leftCol = Array(positionGroupGrades.prefix(halfCount))
+                        let rightCol = Array(positionGroupGrades.dropFirst(halfCount))
+                        HStack(alignment: .top, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                ForEach(leftCol, id: \.group) { item in
+                                    positionGradeRow(item)
+                                }
+                            }
+                            VStack(alignment: .leading, spacing: 3) {
+                                ForEach(rightCol, id: \.group) { item in
+                                    positionGradeRow(item)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func positionGradeRow(_ item: (group: String, grade: String, avgOVR: Int)) -> some View {
+        HStack(spacing: 4) {
+            Text(item.group)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 30, alignment: .leading)
+            Text(item.grade)
+                .font(.system(size: 12, weight: .bold).monospacedDigit())
+                .foregroundStyle(Color.forRating(item.avgOVR))
+        }
+    }
+
+    // MARK: - Expiring Contracts Tile (#19)
+
+    private var expiringContractsTile: some View {
+        NavigationLink {
+            CapOverviewView(career: career)
+        } label: {
+            DashboardTile(icon: "clock.badge.exclamationmark", title: "Contracts") {
+                VStack(alignment: .leading, spacing: 6) {
+                    if expiringContractPlayers.isEmpty {
+                        Text("No expiring contracts")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.textSecondary)
+                    } else {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("\(expiringContractPlayers.count)")
+                                .font(.system(size: 20, weight: .bold).monospacedDigit())
+                                .foregroundStyle(Color.warning)
+                            Text("expiring contract\(expiringContractPlayers.count == 1 ? "" : "s")")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.textSecondary)
+                        }
+
+                        // Show top 3 names
+                        let topExpiring = Array(expiringContractPlayers.sorted { $0.overall > $1.overall }.prefix(3))
+                        ForEach(topExpiring, id: \.id) { player in
+                            HStack(spacing: 4) {
+                                Text(player.position.rawValue)
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(Color.accentGold)
+                                Text(player.lastName)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(Color.textPrimary)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(formatCap(player.annualSalary))
+                                    .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(Color.textTertiary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Owner Expectations Tile (#20)
+
+    private var ownerExpectationsTile: some View {
+        NavigationLink {
+            OwnerMeetingView(career: career)
+        } label: {
+            DashboardTile(icon: "building.2.fill", title: "Owner") {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let owner = team?.owner {
+                        Text(owner.name)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Color.textPrimary)
+                            .lineLimit(1)
+
+                        HStack {
+                            Text("Patience")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color.textSecondary)
+                            Spacer()
+                            // Patience shown as visual pips (1-10)
+                            HStack(spacing: 2) {
+                                ForEach(0..<10, id: \.self) { i in
+                                    Circle()
+                                        .fill(i < owner.patience ? Color.accentGold : Color.backgroundTertiary)
+                                        .frame(width: 6, height: 6)
+                                }
+                            }
+                        }
+
+                        HStack {
+                            Text("Satisfaction")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color.textSecondary)
+                            Spacer()
+                            Text("\(owner.satisfaction)%")
+                                .font(.system(size: 12, weight: .bold).monospacedDigit())
+                                .foregroundStyle(satisfactionColor(owner.satisfaction))
+                        }
+
+                        HStack {
+                            Text("Style")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color.textSecondary)
+                            Spacer()
+                            Text(owner.prefersWinNow ? "Win Now" : "Rebuild OK")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(owner.prefersWinNow ? Color.warning : Color.success)
+                        }
+                    } else {
+                        Text("No owner data")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Previous Season Summary Tile (#73)
+
+    private var previousSeasonTile: some View {
+        DashboardTile(icon: "clock.arrow.circlepath", title: "Last Season") {
+            VStack(alignment: .leading, spacing: 6) {
+                if let record = previousSeasonRecord, let year = previousSeasonYear {
+                    Text("Season \(year)")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(record)
+                            .font(.system(size: 18, weight: .bold).monospacedDigit())
+                            .foregroundStyle(Color.textPrimary)
+                        Spacer()
+                        if career.championships > 0 {
+                            HStack(spacing: 3) {
+                                Image(systemName: "trophy.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Color.accentGold)
+                                Text("\(career.championships)")
+                                    .font(.system(size: 12, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(Color.accentGold)
+                            }
+                        }
+                    }
+
+                    HStack(spacing: 12) {
+                        if career.playoffAppearances > 0 {
+                            HStack(spacing: 3) {
+                                Image(systemName: "flag.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(Color.success)
+                                Text("\(career.playoffAppearances) playoff\(career.playoffAppearances == 1 ? "" : "s")")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(Color.textSecondary)
+                            }
+                        }
+                        Text("Career: \(career.totalWins)-\(career.totalLosses)")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Contextual Tiles
@@ -1161,6 +1521,35 @@ struct CareerDashboardView: View {
                 .foregroundStyle(satisfactionColor(satisfaction))
                 .frame(width: 32, alignment: .trailing)
         }
+    }
+
+    private func moraleLabel(_ morale: Int) -> String {
+        if morale >= 80 { return "Excellent" }
+        if morale >= 60 { return "Good" }
+        if morale >= 40 { return "Neutral" }
+        if morale >= 20 { return "Poor" }
+        return "Toxic"
+    }
+
+    private func moraleColor(_ morale: Int) -> Color {
+        if morale >= 70 { return Color.success }
+        if morale >= 40 { return Color.warning }
+        return Color.danger
+    }
+
+    private func gradeForOVR(_ ovr: Int) -> String {
+        if ovr >= 90 { return "A+" }
+        if ovr >= 85 { return "A" }
+        if ovr >= 80 { return "A-" }
+        if ovr >= 77 { return "B+" }
+        if ovr >= 73 { return "B" }
+        if ovr >= 70 { return "B-" }
+        if ovr >= 67 { return "C+" }
+        if ovr >= 63 { return "C" }
+        if ovr >= 60 { return "C-" }
+        if ovr >= 55 { return "D+" }
+        if ovr >= 50 { return "D" }
+        return "F"
     }
 
     private func capBarColor(_ fraction: Double) -> Color {
@@ -1288,9 +1677,25 @@ struct CareerDashboardView: View {
         // My team
         team = allTeamsByID[teamID]
 
-        // Roster count
+        // Roster count and players
         let playerDescriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
-        rosterCount = (try? modelContext.fetchCount(playerDescriptor)) ?? 0
+        players = (try? modelContext.fetch(playerDescriptor)) ?? []
+        rosterCount = players.count
+
+        // Key players (#18)
+        startingQB = players.filter { $0.position == .QB }.max(by: { $0.overall < $1.overall })
+        bestPlayer = players.max(by: { $0.overall < $1.overall })
+
+        // Expiring contracts (#19)
+        expiringContractPlayers = players.filter { $0.contractYearsRemaining <= 1 }
+
+        // Team morale (#82) — average of all player morale
+        if !players.isEmpty {
+            teamMorale = players.reduce(0) { $0 + $1.morale } / players.count
+        }
+
+        // Position group grades (#17)
+        positionGroupGrades = calculatePositionGroupGrades(players: players)
 
         // Coach count + head coach
         let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
@@ -1335,6 +1740,59 @@ struct CareerDashboardView: View {
             .filter { $0.isPlayed }
             .sorted { $0.week > $1.week }
             .first
+
+        // Previous season summary (#73)
+        let prevYear = career.currentSeason - 1
+        if prevYear >= 1 {
+            let prevGameDescriptor = FetchDescriptor<Game>(predicate: #Predicate {
+                $0.seasonYear == prevYear
+            })
+            let prevGames = (try? modelContext.fetch(prevGameDescriptor)) ?? []
+            let prevMyGames = prevGames.filter {
+                ($0.homeTeamID == teamID || $0.awayTeamID == teamID) && $0.isPlayed
+            }
+            if !prevMyGames.isEmpty {
+                var w = 0, l = 0
+                for game in prevMyGames {
+                    guard let hs = game.homeScore, let aws = game.awayScore else { continue }
+                    let isHome = game.homeTeamID == teamID
+                    let won = isHome ? hs > aws : aws > hs
+                    if won { w += 1 } else { l += 1 }
+                }
+                previousSeasonRecord = "\(w)-\(l)"
+                previousSeasonYear = prevYear
+            } else {
+                previousSeasonRecord = nil
+                previousSeasonYear = nil
+            }
+        } else {
+            previousSeasonRecord = nil
+            previousSeasonYear = nil
+        }
+    }
+
+    /// Calculate average OVR by position group and return a letter grade.
+    private func calculatePositionGroupGrades(players: [Player]) -> [(group: String, grade: String, avgOVR: Int)] {
+        let groups: [(label: String, positions: [Position])] = [
+            ("QB", [.QB]),
+            ("RB", [.RB, .FB]),
+            ("WR", [.WR]),
+            ("TE", [.TE]),
+            ("OL", [.LT, .LG, .C, .RG, .RT]),
+            ("DL", [.DE, .DT]),
+            ("LB", [.OLB, .MLB]),
+            ("CB", [.CB]),
+            ("S", [.FS, .SS]),
+        ]
+
+        var results: [(group: String, grade: String, avgOVR: Int)] = []
+        for group in groups {
+            let groupPlayers = players.filter { group.positions.contains($0.position) }
+            guard !groupPlayers.isEmpty else { continue }
+            let avgOVR = groupPlayers.reduce(0) { $0 + $1.overall } / groupPlayers.count
+            results.append((group: group.label, grade: gradeForOVR(avgOVR), avgOVR: avgOVR))
+        }
+        return results
     }
 }
 

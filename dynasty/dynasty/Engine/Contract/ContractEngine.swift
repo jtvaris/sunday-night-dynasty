@@ -25,13 +25,36 @@ enum ContractEngine {
 
     /// Estimate the annual market value (in thousands) a player would command
     /// on the open market based on position, age, and overall rating.
+    ///
+    /// The salary cap is ~$255M; a franchise QB earns $45-55M (18-22% of cap).
+    /// A 77 OVR starting QB in their prime should command ~$18-22M.
+    /// Scale: value in thousands (e.g. 20_000 = $20M/yr).
     static func estimateMarketValue(player: Player) -> Int {
         let overall = player.overall
         let position = player.position
         let age = player.age
 
-        // Base value from overall rating (exponential curve rewards elite talent)
-        var value: Double = pow(Double(overall) / 100.0, 2.5) * 30_000
+        // Tiered base value from overall rating (in thousands).
+        // Uses a piecewise curve so the jump from 75 to 90+ is dramatic,
+        // reflecting how elite talent commands exponentially more money.
+        let normalizedOVR = Double(overall)
+        let baseValue: Double
+        if normalizedOVR >= 90 {
+            // Elite tier: $25M–$35M base before position multiplier
+            baseValue = 25_000 + (normalizedOVR - 90.0) * 1_000
+        } else if normalizedOVR >= 80 {
+            // Starter tier: $10M–$25M
+            baseValue = 10_000 + (normalizedOVR - 80.0) * 1_500
+        } else if normalizedOVR >= 70 {
+            // Solid contributor: $3M–$10M
+            baseValue = 3_000 + (normalizedOVR - 70.0) * 700
+        } else if normalizedOVR >= 60 {
+            // Depth/rotational: $1M–$3M
+            baseValue = 1_000 + (normalizedOVR - 60.0) * 200
+        } else {
+            // Fringe / practice squad: $750K–$1M
+            baseValue = 750 + max(0, normalizedOVR - 50.0) * 25
+        }
 
         // Position multiplier: QBs get the largest premium
         let positionMultiplier: Double = {
@@ -60,18 +83,18 @@ enum ContractEngine {
                 return 0.6
             }
         }()
-        value *= positionMultiplier
+        var value = baseValue * positionMultiplier
 
         // Age adjustment: discount once the player is past peak years
         let peakRange = position.peakAgeRange
         if age > peakRange.upperBound {
             let yearsOver = age - peakRange.upperBound
-            let agePenalty = 1.0 - (Double(yearsOver) * 0.08)
+            let agePenalty = 1.0 - (Double(yearsOver) * 0.10)
             value *= max(agePenalty, 0.3)
         } else if age < peakRange.lowerBound {
             // Young players on rookie-scale pay: slight discount for inexperience
             let yearsUnder = peakRange.lowerBound - age
-            let youthDiscount = 1.0 - (Double(yearsUnder) * 0.04)
+            let youthDiscount = 1.0 - (Double(yearsUnder) * 0.05)
             value *= max(youthDiscount, 0.6)
         }
 

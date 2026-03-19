@@ -18,11 +18,11 @@ struct TimelineTasksPanel: View {
     // MARK: - Ordered Phases
 
     private static let orderedPhases: [SeasonPhase] = [
-        .superBowl,
         .proBowl,
+        .superBowl,
         .coachingChanges,
-        .combine,
         .reviewRoster,
+        .combine,
         .freeAgency,
         .draft,
         .otas,
@@ -524,7 +524,7 @@ struct TimelineTasksPanel: View {
         case .coachingChanges: return "Feb"
         case .combine:         return "Feb\u{2013}Mar"
         case .freeAgency:      return "Mar"
-        case .reviewRoster:    return "Mar\u{2013}Apr"
+        case .reviewRoster:    return "Feb"
         case .draft:           return "Apr"
         case .otas:            return "May"
         case .trainingCamp:    return "Jul\u{2013}Aug"

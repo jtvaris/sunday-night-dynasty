@@ -421,12 +421,12 @@ struct CalendarSidebarView: View {
         case .regularSeason:   return 2
         case .tradeDeadline:   return 3
         case .playoffs:        return 4
-        case .superBowl:       return 5
-        case .proBowl:         return 6
+        case .proBowl:         return 5
+        case .superBowl:       return 6
         case .coachingChanges: return 7
-        case .combine:         return 8
-        case .freeAgency:      return 9
-        case .reviewRoster:    return 10
+        case .reviewRoster:    return 8
+        case .combine:         return 9
+        case .freeAgency:      return 10
         case .draft:           return 11
         case .otas:            return 12
         case .trainingCamp:    return 13
