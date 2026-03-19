@@ -799,12 +799,17 @@ enum TaskGenerator {
 
     // MARK: - Helpers
 
-    /// Returns the count of incomplete required tasks.
+    /// Returns the count of required tasks that have not been started.
+    /// A task is considered "started" once it reaches `.inProgress` (visited)
+    /// or `.done` (verified by game state). Only `.todo` tasks block advancement.
     static func incompleteRequiredCount(in tasks: [GameTask]) -> Int {
-        tasks.filter { $0.isRequired && $0.status != .done }.count
+        tasks.filter { $0.isRequired && $0.status == .todo }.count
     }
 
-    /// Returns true when all required tasks are marked done.
+    /// Returns true when all required tasks have been at least started
+    /// (`.inProgress` or `.done`). The user must still tap the explicit
+    /// "Advance" button to transition phases -- this only controls whether
+    /// the button is enabled.
     static func allRequiredComplete(in tasks: [GameTask]) -> Bool {
         incompleteRequiredCount(in: tasks) == 0
     }
