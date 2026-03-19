@@ -90,6 +90,7 @@ struct BigBoardView: View {
             } else {
                 List {
                     recommendationsSection
+                    depthAnalysisSection
                     ForEach(tieredBoard, id: \.tier) { tierGroup in
                         Section {
                             ForEach(tierGroup.prospects) { prospect in
@@ -175,6 +176,82 @@ struct BigBoardView: View {
             Label("Recommendations", systemImage: "lightbulb.fill")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(Color.accentGold)
+                .textCase(nil)
+        }
+    }
+
+    // MARK: - Depth Analysis (#227)
+
+    /// Position needs mapped to how many are on the board vs how many are needed.
+    private var positionDepthItems: [(position: Position, onBoard: Int, needed: Int)] {
+        teamNeeds.map { pos in
+            let onBoard = scoutedProspects.filter { $0.position == pos }.count
+            // Estimate need count from roster deficit (1-3 range).
+            let rosterCount = teamRoster.filter { $0.position == pos }.count
+            let idealCounts: [Position: Int] = [
+                .QB: 2, .RB: 3, .FB: 1, .WR: 5, .TE: 3,
+                .LT: 2, .LG: 2, .C: 2, .RG: 2, .RT: 2,
+                .DE: 4, .DT: 3, .OLB: 4, .MLB: 2,
+                .CB: 5, .FS: 2, .SS: 2, .K: 1, .P: 1
+            ]
+            let ideal = idealCounts[pos] ?? 2
+            let needed = max(1, ideal - rosterCount)
+            return (position: pos, onBoard: onBoard, needed: needed)
+        }
+    }
+
+    private var mediaTopProspect: CollegeProspect? {
+        // Media board = sorted by draftProjection (lowest = best).
+        prospects
+            .filter { $0.draftProjection != nil }
+            .sorted { ($0.draftProjection ?? Int.max) < ($1.draftProjection ?? Int.max) }
+            .first
+    }
+
+    private var depthAnalysisSection: some View {
+        Section {
+            // Position depth summary
+            ForEach(positionDepthItems, id: \.position) { item in
+                HStack(spacing: 8) {
+                    Text(item.position.rawValue)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+                        .frame(width: 32)
+
+                    let sufficient = item.onBoard >= item.needed
+                    Text("\(item.onBoard) on board (need \(item.needed))")
+                        .font(.caption)
+                        .foregroundStyle(sufficient ? Color.success : Color.warning)
+
+                    Text(sufficient ? "\u{2713}" : "\u{26A0}\u{FE0F}")
+                        .font(.caption)
+                }
+                .listRowBackground(Color.backgroundSecondary)
+            }
+
+            // Your #1 vs Media #1 comparison
+            if let myTop = orderedBoard.first, let mediaTop = mediaTopProspect {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentBlue)
+
+                    if myTop.id == mediaTop.id {
+                        Text("Your #1 matches media consensus: **\(myTop.fullName)**")
+                            .font(.caption)
+                            .foregroundStyle(Color.textPrimary)
+                    } else {
+                        Text("Your #1: **\(myTop.fullName)** vs Media #1: **\(mediaTop.fullName)**")
+                            .font(.caption)
+                            .foregroundStyle(Color.textPrimary)
+                    }
+                }
+                .listRowBackground(Color.backgroundSecondary)
+            }
+        } header: {
+            Label("Position Depth Analysis", systemImage: "chart.bar.fill")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.accentBlue)
                 .textCase(nil)
         }
     }

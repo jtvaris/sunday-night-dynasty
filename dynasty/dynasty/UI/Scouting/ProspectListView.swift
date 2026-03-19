@@ -42,6 +42,19 @@ struct ProspectListView: View {
         }
     }
 
+    /// Pre-computed position ranks keyed by prospect ID.
+    private var positionRanks: [UUID: Int] {
+        var ranks: [UUID: Int] = [:]
+        let byPosition = Dictionary(grouping: prospects.filter { $0.scoutedOverall != nil }, by: \.position)
+        for (_, group) in byPosition {
+            let sorted = group.sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
+            for (index, p) in sorted.enumerated() {
+                ranks[p.id] = index + 1
+            }
+        }
+        return ranks
+    }
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -52,7 +65,7 @@ struct ProspectListView: View {
                 List {
                     ForEach(displayed) { prospect in
                         NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
-                            ProspectRowView(prospect: prospect)
+                            ProspectRowView(prospect: prospect, positionRank: positionRanks[prospect.id])
                         }
                         .listRowBackground(Color.backgroundSecondary)
                     }
@@ -120,6 +133,7 @@ struct ProspectListView: View {
 
 struct ProspectRowView: View {
     let prospect: CollegeProspect
+    var positionRank: Int? = nil
 
     private var isScouted: Bool { prospect.scoutedOverall != nil }
 
@@ -128,9 +142,24 @@ struct ProspectRowView: View {
             positionBadge
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(prospect.fullName)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(Color.textPrimary)
+                HStack(spacing: 6) {
+                    Text(prospect.fullName)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Color.textPrimary)
+
+                    Text("Age \(prospect.age)")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+
+                    if prospect.combineInvite {
+                        Text("COMBINE")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.accentGold, in: Capsule())
+                    }
+                }
 
                 HStack(spacing: 6) {
                     Text(prospect.college)
@@ -144,6 +173,18 @@ struct ProspectRowView: View {
                     Text(heightWeightLabel)
                         .font(.caption)
                         .foregroundStyle(Color.textTertiary)
+
+                    Text("·")
+                        .foregroundStyle(Color.textTertiary)
+                        .font(.caption)
+
+                    interestBadge
+
+                    Text("·")
+                        .foregroundStyle(Color.textTertiary)
+                        .font(.caption)
+
+                    reportCountLabel
                 }
             }
 
@@ -151,7 +192,14 @@ struct ProspectRowView: View {
 
             VStack(alignment: .trailing, spacing: 4) {
                 overallBadge
-                gradeLabel
+                HStack(spacing: 4) {
+                    if let rank = positionRank {
+                        Text("#\(rank) \(prospect.position.rawValue)")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(rank <= 3 ? Color.accentGold : Color.textTertiary)
+                    }
+                    gradeLabel
+                }
             }
         }
         .padding(.vertical, 4)
@@ -200,6 +248,29 @@ struct ProspectRowView: View {
                     .foregroundStyle(Color.textTertiary)
             }
         }
+    }
+
+    // MARK: - Interest & Reports (#224)
+
+    private var interestBadge: some View {
+        let level = prospect.interestLevel
+        let color: Color
+        switch level {
+        case "Hot":  color = .danger
+        case "Warm": color = .warning
+        case "Cold": color = .accentBlue
+        default:     color = .textTertiary
+        }
+        return Text(level == "Unknown" ? "---" : level)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(color)
+    }
+
+    private var reportCountLabel: some View {
+        let count = prospect.scoutingReports.count
+        return Text(count > 0 ? "\(count) report\(count == 1 ? "" : "s")" : "Unscouted")
+            .font(.caption2)
+            .foregroundStyle(count > 0 ? Color.textSecondary : Color.textTertiary)
     }
 
     // MARK: - Helpers

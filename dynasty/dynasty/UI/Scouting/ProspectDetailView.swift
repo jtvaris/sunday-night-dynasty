@@ -11,6 +11,7 @@ struct ProspectDetailView: View {
     @State private var showSendScout = false
     @State private var showInterviewResult = false
     @State private var interviewResult: (personality: PersonalityArchetype, footballIQ: Int, characterNotes: [String])?
+    @State private var positionRank: Int?
 
     // MARK: - Derived
 
@@ -31,6 +32,9 @@ struct ProspectDetailView: View {
 
             List {
                 headerSection
+                collegeProductionSection
+                schemeFitSection
+                riskFlagsSection
                 combineSection
                 if prospect.interviewCompleted { interviewResultsSection }
                 if isScouted { scoutingReportSection }
@@ -43,7 +47,7 @@ struct ProspectDetailView: View {
         .navigationTitle(prospect.fullName)
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .task { loadScouts(); loadCoaches() }
+        .task { loadScouts(); loadCoaches(); loadPositionRank() }
         .sheet(isPresented: $showSendScout) {
             SendScoutSheet(prospect: prospect, scouts: scouts, scoutingPhase: currentScoutingPhase)
         }
@@ -64,9 +68,23 @@ struct ProspectDetailView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(prospect.college)
-                        .font(.headline)
-                        .foregroundStyle(Color.textSecondary)
+                    HStack(spacing: 8) {
+                        Text(prospect.college)
+                            .font(.headline)
+                            .foregroundStyle(Color.textSecondary)
+
+                        if let rank = positionRank {
+                            Text("#\(rank) \(prospect.position.rawValue) in class")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(rank <= 3 ? Color.accentGold : Color.textSecondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill((rank <= 3 ? Color.accentGold : Color.textSecondary).opacity(0.15))
+                                )
+                        }
+                    }
 
                     HStack(spacing: 16) {
                         ProspectInfoPill(label: "Age", value: "\(prospect.age)")
@@ -106,12 +124,44 @@ struct ProspectDetailView: View {
 
     private var combineSection: some View {
         Section("Physical Measurables") {
-            MeasurableRow(label: "40-Yard Dash",   value: prospect.fortyTime.map { String(format: "%.2f sec", $0) })
-            MeasurableRow(label: "Bench Press",    value: prospect.benchPress.map { "\($0) reps" })
-            MeasurableRow(label: "Vertical Jump",  value: prospect.verticalJump.map { String(format: "%.1f in", $0) })
-            MeasurableRow(label: "Broad Jump",     value: prospect.broadJump.map { "\($0) in" })
-            MeasurableRow(label: "Shuttle",        value: prospect.shuttleTime.map { String(format: "%.2f sec", $0) })
-            MeasurableRow(label: "3-Cone Drill",   value: prospect.coneDrill.map { String(format: "%.2f sec", $0) })
+            let bm = CombineBenchmarks.benchmarks(for: prospect.position)
+            let pos = prospect.position.rawValue
+
+            CombineMeasurableRow(label: "40-Yard Dash",
+                                 value: prospect.fortyTime.map { String(format: "%.2f sec", $0) },
+                                 percentile: prospect.fortyTime.map { CombineBenchmarks.percentile(value: $0, benchmark: bm.fortyYard) },
+                                 posLabel: pos,
+                                 recordNote: prospect.fortyTime.flatMap { nearRecordNote(value: $0, record: CombineBenchmarks.records.fortyYard.value, name: CombineBenchmarks.records.fortyYard.name, lowerIsBetter: true, format: "%.2f") })
+
+            CombineMeasurableRow(label: "Bench Press",
+                                 value: prospect.benchPress.map { "\($0) reps" },
+                                 percentile: prospect.benchPress.map { CombineBenchmarks.percentile(value: Double($0), benchmark: bm.benchPress) },
+                                 posLabel: pos,
+                                 recordNote: prospect.benchPress.flatMap { nearRecordNote(value: Double($0), record: Double(CombineBenchmarks.records.benchPress.value), name: CombineBenchmarks.records.benchPress.name, lowerIsBetter: false, format: "%.0f") })
+
+            CombineMeasurableRow(label: "Vertical Jump",
+                                 value: prospect.verticalJump.map { String(format: "%.1f in", $0) },
+                                 percentile: prospect.verticalJump.map { CombineBenchmarks.percentile(value: $0, benchmark: bm.verticalJump) },
+                                 posLabel: pos,
+                                 recordNote: prospect.verticalJump.flatMap { nearRecordNote(value: $0, record: CombineBenchmarks.records.verticalJump.value, name: CombineBenchmarks.records.verticalJump.name, lowerIsBetter: false, format: "%.1f") })
+
+            CombineMeasurableRow(label: "Broad Jump",
+                                 value: prospect.broadJump.map { "\($0) in" },
+                                 percentile: prospect.broadJump.map { CombineBenchmarks.percentile(value: Double($0), benchmark: bm.broadJump) },
+                                 posLabel: pos,
+                                 recordNote: prospect.broadJump.flatMap { nearRecordNote(value: Double($0), record: Double(CombineBenchmarks.records.broadJump.value), name: CombineBenchmarks.records.broadJump.name, lowerIsBetter: false, format: "%.0f") })
+
+            CombineMeasurableRow(label: "Shuttle",
+                                 value: prospect.shuttleTime.map { String(format: "%.2f sec", $0) },
+                                 percentile: prospect.shuttleTime.map { CombineBenchmarks.percentile(value: $0, benchmark: bm.shuttle) },
+                                 posLabel: pos,
+                                 recordNote: prospect.shuttleTime.flatMap { nearRecordNote(value: $0, record: CombineBenchmarks.records.shuttle.value, name: CombineBenchmarks.records.shuttle.name, lowerIsBetter: true, format: "%.2f") })
+
+            CombineMeasurableRow(label: "3-Cone Drill",
+                                 value: prospect.coneDrill.map { String(format: "%.2f sec", $0) },
+                                 percentile: prospect.coneDrill.map { CombineBenchmarks.percentile(value: $0, benchmark: bm.threeCone) },
+                                 posLabel: pos,
+                                 recordNote: prospect.coneDrill.flatMap { nearRecordNote(value: $0, record: CombineBenchmarks.records.threeCone.value, name: CombineBenchmarks.records.threeCone.name, lowerIsBetter: true, format: "%.2f") })
 
             if !hasCombine {
                 HStack {
@@ -124,6 +174,19 @@ struct ProspectDetailView: View {
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// Returns a "Near record!" note if the value is within 5% of the all-time record.
+    private func nearRecordNote(value: Double, record: Double, name: String, lowerIsBetter: Bool, format: String) -> String? {
+        let threshold = record * 0.05
+        let isNear: Bool
+        if lowerIsBetter {
+            isNear = value <= record + threshold
+        } else {
+            isNear = value >= record - threshold
+        }
+        guard isNear else { return nil }
+        return "Near record! (\(String(format: format, record)) by \(name))"
     }
 
     // MARK: - Scouting Report Section
@@ -211,6 +274,334 @@ struct ProspectDetailView: View {
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    // MARK: - College Production Section
+
+    @ViewBuilder
+    private var collegeProductionSection: some View {
+        Section("College Production") {
+            HStack(spacing: 20) {
+                ProspectInfoPill(label: "Height", value: heightLabel)
+                ProspectInfoPill(label: "Weight", value: "\(prospect.weight) lbs")
+                ProspectInfoPill(label: "Age", value: "\(prospect.age)")
+            }
+
+            if isScouted {
+                collegeFlavorStats
+            }
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    @ViewBuilder
+    private var collegeFlavorStats: some View {
+        switch prospect.truePositionAttributes {
+        case .quarterback(let qb):
+            HStack(spacing: 14) {
+                flavorStat(label: "Arm", value: qb.armStrength)
+                flavorStat(label: "Acc (S)", value: qb.accuracyShort)
+                flavorStat(label: "Acc (D)", value: qb.accuracyDeep)
+                flavorStat(label: "Pocket", value: qb.pocketPresence)
+            }
+        case .wideReceiver(let wr):
+            HStack(spacing: 14) {
+                flavorStat(label: "Route", value: wr.routeRunning)
+                flavorStat(label: "Catch", value: wr.catching)
+                flavorStat(label: "Release", value: wr.release)
+            }
+        case .runningBack(let rb):
+            HStack(spacing: 14) {
+                flavorStat(label: "Vision", value: rb.vision)
+                flavorStat(label: "Elusiv", value: rb.elusiveness)
+                flavorStat(label: "Recv", value: rb.receiving)
+            }
+        case .defensiveBack(let db):
+            HStack(spacing: 14) {
+                flavorStat(label: "Man", value: db.manCoverage)
+                flavorStat(label: "Zone", value: db.zoneCoverage)
+                flavorStat(label: "Press", value: db.press)
+            }
+        case .linebacker(let lb):
+            HStack(spacing: 14) {
+                flavorStat(label: "Tackle", value: lb.tackling)
+                flavorStat(label: "Zone", value: lb.zoneCoverage)
+                flavorStat(label: "Blitz", value: lb.blitzing)
+            }
+        case .defensiveLine(let dl):
+            HStack(spacing: 14) {
+                flavorStat(label: "Pass Rush", value: dl.passRush)
+                flavorStat(label: "Shed", value: dl.blockShedding)
+                flavorStat(label: "Power", value: dl.powerMoves)
+            }
+        case .offensiveLine(let ol):
+            HStack(spacing: 14) {
+                flavorStat(label: "Run Blk", value: ol.runBlock)
+                flavorStat(label: "Pass Blk", value: ol.passBlock)
+                flavorStat(label: "Anchor", value: ol.anchor)
+            }
+        case .tightEnd(let te):
+            HStack(spacing: 14) {
+                flavorStat(label: "Block", value: te.blocking)
+                flavorStat(label: "Catch", value: te.catching)
+                flavorStat(label: "Route", value: te.routeRunning)
+            }
+        case .kicking(let k):
+            HStack(spacing: 14) {
+                flavorStat(label: "Power", value: k.kickPower)
+                flavorStat(label: "Accuracy", value: k.kickAccuracy)
+            }
+        }
+    }
+
+    private func flavorStat(label: String, value: Int) -> some View {
+        VStack(spacing: 2) {
+            Text("\(value)")
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(Color.forRating(value))
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+        }
+    }
+
+    // MARK: - Scheme Fit Section
+
+    @ViewBuilder
+    private var schemeFitSection: some View {
+        if isScouted, let fit = evaluateSchemeFit() {
+            Section("Scheme Fit") {
+                HStack(spacing: 10) {
+                    Image(systemName: schemeFitIcon(fit))
+                        .font(.title3)
+                        .foregroundStyle(schemeFitColor(fit))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Scheme Fit: \(fit)")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(schemeFitColor(fit))
+                        Text(schemeFitExplanation(fit))
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                    Spacer()
+                    Text(fit)
+                        .font(.caption.weight(.heavy))
+                        .foregroundStyle(schemeFitColor(fit))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(schemeFitColor(fit).opacity(0.15))
+                        )
+                }
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        }
+    }
+
+    private func evaluateSchemeFit() -> String? {
+        let oc = coaches.first(where: { $0.role == .offensiveCoordinator })
+        let dc = coaches.first(where: { $0.role == .defensiveCoordinator })
+
+        if prospect.position.side == .offense, let scheme = oc?.offensiveScheme {
+            return offensiveSchemeFit(scheme: scheme)
+        } else if prospect.position.side == .defense, let scheme = dc?.defensiveScheme {
+            return defensiveSchemeFit(scheme: scheme)
+        }
+        return nil
+    }
+
+    private func offensiveSchemeFit(scheme: OffensiveScheme) -> String {
+        var score = 0
+        let physical = prospect.truePhysical
+
+        switch prospect.truePositionAttributes {
+        case .quarterback(let qb):
+            switch scheme {
+            case .airRaid, .spread:
+                score = (qb.accuracyShort + qb.accuracyDeep + qb.armStrength) / 3
+            case .westCoast, .proPassing:
+                score = (qb.accuracyShort + qb.accuracyMid + qb.pocketPresence) / 3
+            case .powerRun, .shanahan:
+                score = (qb.pocketPresence + qb.scrambling + physical.strength) / 3
+            case .rpo, .option:
+                score = (qb.scrambling + physical.speed + qb.accuracyShort) / 3
+            }
+        case .wideReceiver(let wr):
+            switch scheme {
+            case .airRaid, .spread:
+                score = (wr.routeRunning + wr.catching + physical.speed) / 3
+            case .westCoast, .proPassing:
+                score = (wr.routeRunning + wr.catching + wr.release) / 3
+            case .powerRun, .shanahan:
+                score = (physical.strength + wr.release + physical.speed) / 3
+            default:
+                score = (wr.routeRunning + wr.catching) / 2
+            }
+        case .runningBack(let rb):
+            switch scheme {
+            case .powerRun:
+                score = (rb.breakTackle + rb.vision + physical.strength) / 3
+            case .shanahan:
+                score = (rb.vision + rb.elusiveness + physical.speed) / 3
+            case .westCoast, .spread:
+                score = (rb.receiving + rb.elusiveness + rb.vision) / 3
+            default:
+                score = (rb.vision + rb.elusiveness) / 2
+            }
+        case .offensiveLine(let ol):
+            switch scheme {
+            case .powerRun:
+                score = (ol.runBlock + ol.anchor + physical.strength) / 3
+            case .airRaid, .proPassing, .westCoast:
+                score = (ol.passBlock + ol.anchor + physical.strength) / 3
+            case .shanahan:
+                score = (ol.pull + ol.runBlock + physical.agility) / 3
+            default:
+                score = (ol.runBlock + ol.passBlock) / 2
+            }
+        case .tightEnd(let te):
+            switch scheme {
+            case .airRaid, .spread, .westCoast:
+                score = (te.catching + te.routeRunning + te.speed) / 3
+            case .powerRun, .shanahan:
+                score = (te.blocking + te.speed + physical.strength) / 3
+            default:
+                score = (te.catching + te.blocking) / 2
+            }
+        default:
+            score = 65
+        }
+        return schemeFitLabel(score)
+    }
+
+    private func defensiveSchemeFit(scheme: DefensiveScheme) -> String {
+        var score = 0
+        let physical = prospect.truePhysical
+
+        switch prospect.truePositionAttributes {
+        case .defensiveBack(let db):
+            switch scheme {
+            case .pressMan:
+                score = (db.manCoverage + db.press + physical.speed) / 3
+            case .cover3, .tampa2:
+                score = (db.zoneCoverage + db.ballSkills + physical.speed) / 3
+            case .multiple, .hybrid:
+                score = (db.manCoverage + db.zoneCoverage + db.press) / 3
+            default:
+                score = (db.manCoverage + db.zoneCoverage) / 2
+            }
+        case .linebacker(let lb):
+            switch scheme {
+            case .base34:
+                score = (lb.tackling + lb.blitzing + physical.strength) / 3
+            case .base43:
+                score = (lb.tackling + lb.zoneCoverage + physical.speed) / 3
+            case .tampa2:
+                score = (lb.zoneCoverage + physical.speed + lb.tackling) / 3
+            case .cover3:
+                score = (lb.zoneCoverage + lb.tackling + physical.speed) / 3
+            default:
+                score = (lb.tackling + lb.zoneCoverage) / 2
+            }
+        case .defensiveLine(let dl):
+            switch scheme {
+            case .base43:
+                score = (dl.passRush + dl.powerMoves + physical.strength) / 3
+            case .base34:
+                score = (dl.blockShedding + dl.powerMoves + physical.strength) / 3
+            case .multiple, .hybrid:
+                score = (dl.passRush + dl.finesseMoves + physical.agility) / 3
+            default:
+                score = (dl.passRush + dl.blockShedding) / 2
+            }
+        default:
+            score = 65
+        }
+        return schemeFitLabel(score)
+    }
+
+    private func schemeFitLabel(_ score: Int) -> String {
+        switch score {
+        case 75...:  return "Good"
+        case 55..<75: return "Fair"
+        default:      return "Poor"
+        }
+    }
+
+    private func schemeFitColor(_ fit: String) -> Color {
+        switch fit {
+        case "Good": return .success
+        case "Fair": return .warning
+        default:     return .danger
+        }
+    }
+
+    private func schemeFitIcon(_ fit: String) -> String {
+        switch fit {
+        case "Good": return "checkmark.circle.fill"
+        case "Fair": return "minus.circle.fill"
+        default:     return "xmark.circle.fill"
+        }
+    }
+
+    private func schemeFitExplanation(_ fit: String) -> String {
+        switch fit {
+        case "Good": return "Attributes align well with your coordinator's scheme."
+        case "Fair": return "Decent fit but may need development in the scheme."
+        default:     return "Skill set doesn't match scheme requirements well."
+        }
+    }
+
+    // MARK: - Risk Flags Section
+
+    @ViewBuilder
+    private var riskFlagsSection: some View {
+        let flags = collectRiskFlags()
+        if !flags.isEmpty {
+            Section("Risk Flags") {
+                ForEach(flags, id: \.self) { flag in
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(Color.danger)
+                        Text(flag)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textPrimary)
+                    }
+                }
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        }
+    }
+
+    private func collectRiskFlags() -> [String] {
+        var flags: [String] = []
+
+        if let iq = prospect.interviewFootballIQ, iq < 50 {
+            flags.append("Low Football IQ (\(iq)) -- may struggle with complex playbook")
+        }
+
+        let concernWords = ["concern", "issue", "trouble", "red flag", "questionable",
+                           "immature", "selfish", "lazy", "undisciplined", "attitude"]
+        if let notes = prospect.interviewCharacterNotes {
+            for note in notes {
+                let lower = note.lowercased()
+                if concernWords.contains(where: { lower.contains($0) }) {
+                    flags.append("Character concern: \(note)")
+                }
+            }
+        }
+
+        if isScouted && prospect.truePhysical.durability < 50 {
+            flags.append("Durability concern -- injury-prone profile")
+        }
+
+        if isScouted && prospect.trueMental.workEthic < 45 {
+            flags.append("Poor work ethic -- development may stall")
+        }
+
+        return flags
     }
 
     // MARK: - Draft Section
@@ -383,6 +774,17 @@ struct ProspectDetailView: View {
         coaches = (try? modelContext.fetch(desc)) ?? []
     }
 
+    private func loadPositionRank() {
+        let desc = FetchDescriptor<CollegeProspect>()
+        guard let all = try? modelContext.fetch(desc) else { return }
+        let ranked = all
+            .filter { $0.position == prospect.position && $0.scoutedOverall != nil }
+            .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
+        if let idx = ranked.firstIndex(where: { $0.id == prospect.id }) {
+            positionRank = idx + 1
+        }
+    }
+
     private func performInterview() {
         // Use best scout's personalityRead or HC's motivation as interviewer quality
         let interviewerQuality: Int
@@ -441,6 +843,80 @@ private struct MeasurableRow: View {
                 .font(.body.monospacedDigit())
                 .foregroundStyle(value != nil ? Color.textPrimary : Color.textTertiary)
         }
+    }
+}
+
+private struct CombineMeasurableRow: View {
+    let label: String
+    let value: String?
+    let percentile: Int?
+    let posLabel: String
+    var recordNote: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label)
+                    .font(.body)
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+                if let value {
+                    HStack(spacing: 8) {
+                        Text(value)
+                            .font(.body.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(Color.textPrimary)
+
+                        if let pct = percentile {
+                            Text("\(ordinal(pct)) %ile for \(posLabel)")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(percentileColor(pct))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(percentileColor(pct).opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                        }
+                    }
+                } else {
+                    Text("—")
+                        .font(.body.monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+
+            if let note = recordNote {
+                HStack(spacing: 4) {
+                    Image(systemName: "flame.fill")
+                        .font(.caption2)
+                        .foregroundStyle(Color.accentGold)
+                    Text(note)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(Color.accentGold)
+                }
+            }
+        }
+    }
+
+    private func ordinal(_ n: Int) -> String {
+        let suffix: String
+        let ones = n % 10
+        let tens = (n / 10) % 10
+        if tens == 1 {
+            suffix = "th"
+        } else {
+            switch ones {
+            case 1: suffix = "st"
+            case 2: suffix = "nd"
+            case 3: suffix = "rd"
+            default: suffix = "th"
+            }
+        }
+        return "\(n)\(suffix)"
+    }
+
+    private func percentileColor(_ pct: Int) -> Color {
+        if pct >= 90 { return .accentGold }
+        if pct >= 70 { return .success }
+        if pct >= 40 { return .textPrimary }
+        return .warning
     }
 }
 

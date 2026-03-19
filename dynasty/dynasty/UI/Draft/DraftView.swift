@@ -131,6 +131,8 @@ struct DraftView: View {
                     availableProspects: availableProspects,
                     pickNumber: pick.pickNumber,
                     round: pick.round,
+                    teamNeeds: teamNeeds,
+                    teamCoaches: teamCoaches,
                     onDraft: { prospect in
                         completePick(pick: pick, prospect: prospect)
                     }
@@ -140,6 +142,8 @@ struct DraftView: View {
         .sheet(item: $pendingTradeOffer) { displayOffer in
             TradeOfferView(
                 offer: displayOffer,
+                availableProspects: availableProspects,
+                teamNeeds: teamNeeds,
                 onAccept: { acceptTradeOffer(displayOffer) },
                 onDecline: { pendingTradeOffer = nil }
             )
@@ -155,6 +159,9 @@ struct DraftView: View {
         VStack(spacing: 0) {
             draftHeader
             onTheClockCard
+            if !teamNeeds.isEmpty {
+                teamNeedsStrip
+            }
             if isPlayerTurn && !staffRecommendations.isEmpty {
                 warRoomPanel
             }
@@ -165,6 +172,89 @@ struct DraftView: View {
             }
             Divider().overlay(Color.surfaceBorder)
             draftBoardScrollView
+        }
+    }
+
+    // MARK: - Team Needs Strip
+
+    /// Compact pills showing top positional needs, with green checkmarks for addressed needs.
+    private var teamNeedsStrip: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.accentGold)
+                Text("TEAM NEEDS")
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundStyle(Color.accentGold)
+                    .tracking(1.5)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(teamNeeds.prefix(5).enumerated()), id: \.element) { index, position in
+                            let addressed = isNeedAddressed(position)
+                            HStack(spacing: 4) {
+                                if addressed {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Color.success)
+                                }
+                                Text("\(index + 1). \(position.rawValue)")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(addressed ? Color.success : Color.textPrimary)
+                                Text("(\(needGradeLabel(position)))")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(addressed ? Color.success.opacity(0.7) : Color.textTertiary)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(addressed ? Color.success.opacity(0.12) : Color.backgroundTertiary)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .strokeBorder(addressed ? Color.success.opacity(0.3) : Color.surfaceBorder, lineWidth: 1)
+                                    )
+                            )
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color.backgroundSecondary)
+            .overlay(
+                Rectangle()
+                    .fill(Color.surfaceBorder)
+                    .frame(height: 1),
+                alignment: .bottom
+            )
+        }
+    }
+
+    /// Whether a need position was addressed by drafting a player at that position.
+    private func isNeedAddressed(_ position: Position) -> Bool {
+        guard let teamID = career.teamID else { return false }
+        let playerPicks = allPicks.filter { $0.currentTeamID == teamID && $0.isComplete }
+        return playerPicks.contains { $0.playerPosition == position.rawValue }
+    }
+
+    /// Returns a letter grade for the roster at the given position.
+    private func needGradeLabel(_ position: Position) -> String {
+        guard let teamID = career.teamID else { return "?" }
+        let roster = fetchRoster(for: teamID)
+        let posPlayers = roster.filter { $0.position == position }
+        guard !posPlayers.isEmpty else { return "F" }
+        let avg = posPlayers.map(\.overall).reduce(0, +) / posPlayers.count
+        switch avg {
+        case 85...:  return "A"
+        case 80..<85: return "B+"
+        case 75..<80: return "B"
+        case 70..<75: return "C+"
+        case 65..<70: return "C"
+        case 60..<65: return "C-"
+        case 55..<60: return "D"
+        default:      return "F"
         }
     }
 

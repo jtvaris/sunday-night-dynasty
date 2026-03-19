@@ -193,30 +193,51 @@ struct CombineResultsView: View {
                 .frame(width: 110, alignment: .leading)
 
             drillCell(value: prospect.fortyTime.map { String(format: "%.2f", $0) },
-                      tier: prospect.fortyTime.map { fortyTier($0) }, width: 60)
+                      tier: prospect.fortyTime.map { fortyTier($0) }, width: 60,
+                      percentile: prospect.fortyTime.map { drillPercentile($0, \.fortyYard, prospect.position) })
 
             drillCell(value: prospect.benchPress.map { "\($0)" },
-                      tier: prospect.benchPress.map { benchTier($0) }, width: 60)
+                      tier: prospect.benchPress.map { benchTier($0) }, width: 60,
+                      percentile: prospect.benchPress.map { drillPercentile(Double($0), \.benchPress, prospect.position) })
 
             drillCell(value: prospect.verticalJump.map { String(format: "%.1f", $0) },
-                      tier: prospect.verticalJump.map { verticalTier($0) }, width: 60)
+                      tier: prospect.verticalJump.map { verticalTier($0) }, width: 60,
+                      percentile: prospect.verticalJump.map { drillPercentile($0, \.verticalJump, prospect.position) })
 
             drillCell(value: prospect.broadJump.map { "\($0)" },
-                      tier: prospect.broadJump.map { broadTier($0) }, width: 60)
+                      tier: prospect.broadJump.map { broadTier($0) }, width: 60,
+                      percentile: prospect.broadJump.map { drillPercentile(Double($0), \.broadJump, prospect.position) })
 
             drillCell(value: prospect.coneDrill.map { String(format: "%.2f", $0) },
-                      tier: prospect.coneDrill.map { coneTier($0) }, width: 66)
+                      tier: prospect.coneDrill.map { coneTier($0) }, width: 66,
+                      percentile: prospect.coneDrill.map { drillPercentile($0, \.threeCone, prospect.position) })
 
             drillCell(value: prospect.shuttleTime.map { String(format: "%.2f", $0) },
-                      tier: prospect.shuttleTime.map { shuttleTier($0) }, width: 66)
+                      tier: prospect.shuttleTime.map { shuttleTier($0) }, width: 66,
+                      percentile: prospect.shuttleTime.map { drillPercentile($0, \.shuttle, prospect.position) })
         }
     }
 
-    private func drillCell(value: String?, tier: DrillTier?, width: CGFloat) -> some View {
-        Text(value ?? "--")
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(tier?.color ?? Color.textTertiary)
-            .frame(width: width)
+    private func drillCell(value: String?, tier: DrillTier?, width: CGFloat, percentile: Int? = nil) -> some View {
+        VStack(spacing: 1) {
+            Text(value ?? "--")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(tier?.color ?? Color.textTertiary)
+
+            if let pct = percentile {
+                Text("\(pct)th")
+                    .font(.system(size: 8, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(percentileColor(pct))
+            }
+        }
+        .frame(width: width)
+    }
+
+    private func percentileColor(_ pct: Int) -> Color {
+        if pct >= 90 { return .accentGold }
+        if pct >= 70 { return .success }
+        if pct >= 40 { return .textPrimary }
+        return .warning
     }
 
     // MARK: - Empty State
@@ -248,6 +269,13 @@ struct CombineResultsView: View {
         case .defense:      return .danger
         case .specialTeams: return .accentGold
         }
+    }
+
+    // MARK: - Percentile Helper
+
+    private func drillPercentile(_ value: Double, _ keyPath: KeyPath<CombineBenchmarks.PositionBenchmarks, CombineBenchmarks.DrillBenchmark>, _ position: Position) -> Int {
+        let benchmarks = CombineBenchmarks.benchmarks(for: position)
+        return CombineBenchmarks.percentile(value: value, benchmark: benchmarks[keyPath: keyPath])
     }
 
     // MARK: - Sorting Helpers

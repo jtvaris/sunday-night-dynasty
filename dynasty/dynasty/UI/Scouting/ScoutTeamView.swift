@@ -9,6 +9,27 @@ struct ScoutTeamView: View {
     @State private var scoutToFire: Scout?
     @State private var showFireConfirmation = false
 
+    // MARK: - Budget Computed Properties (#232)
+
+    private var totalScoutSalary: Int {
+        scouts.reduce(0) { $0 + $1.salary }
+    }
+
+    private var formattedTotalSalary: String {
+        if totalScoutSalary >= 1000 {
+            return String(format: "$%.1fM", Double(totalScoutSalary) / 1000.0)
+        }
+        return "$\(totalScoutSalary)K"
+    }
+
+    /// The most common specialization among scouts, if any.
+    private var dominantSpecialization: Position? {
+        let specs = scouts.compactMap(\.positionSpecialization)
+        guard !specs.isEmpty else { return nil }
+        let counts = Dictionary(grouping: specs) { $0 }.mapValues(\.count)
+        return counts.max(by: { $0.value < $1.value })?.key
+    }
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -17,6 +38,25 @@ struct ScoutTeamView: View {
                 emptyState
             } else {
                 List {
+                    // Budget impact summary (#232)
+                    Section {
+                        HStack(spacing: 8) {
+                            Image(systemName: "dollarsign.circle")
+                                .foregroundStyle(Color.accentGold)
+                                .font(.caption)
+                            Text("Scout salaries: \(formattedTotalSalary) of coaching budget")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                            Spacer()
+                            if let spec = dominantSpecialization {
+                                Text("\(spec.rawValue) Specialist: +10% accuracy on \(spec.rawValue) evaluations")
+                                    .font(.caption2)
+                                    .foregroundStyle(Color.success)
+                            }
+                        }
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+
                     ForEach(scouts) { scout in
                         NavigationLink(destination: ScoutDetailView(scout: scout)) {
                             ScoutRowView(scout: scout)
@@ -115,6 +155,12 @@ struct ScoutRowView: View {
                         Text("Exp. \(scout.experience) yr\(scout.experience == 1 ? "" : "s")")
                             .font(.caption)
                             .foregroundStyle(Color.textSecondary)
+
+                        if let spec = scout.positionSpecialization {
+                            Text("+10% on \(spec.rawValue)")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(Color.success)
+                        }
                     }
                 }
 
@@ -137,10 +183,42 @@ struct ScoutRowView: View {
                 ScoutStatBar(label: "Personality Read", value: scout.personalityRead)
                 ScoutStatBar(label: "Potential Read",   value: scout.potentialRead)
             }
+
+            // Reports & Pro Days summary (#232)
+            HStack(spacing: 12) {
+                HStack(spacing: 4) {
+                    Image(systemName: "doc.text")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                    Text("~\(estimatedReports) reports")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textSecondary)
+                }
+
+                HStack(spacing: 4) {
+                    Image(systemName: "mappin.and.ellipse")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                    Text("\(scout.proDaysAttended)/5 Pro Days")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textSecondary)
+                }
+
+                Spacer()
+            }
         }
         .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
+    }
+
+    // MARK: - Reports Estimate (#232)
+
+    /// Estimate reports generated based on experience, pro days, and role.
+    private var estimatedReports: Int {
+        let base = scout.experience * 3
+        let proDayReports = scout.proDaysAttended * 4
+        return base + proDayReports
     }
 
     // MARK: - Subviews

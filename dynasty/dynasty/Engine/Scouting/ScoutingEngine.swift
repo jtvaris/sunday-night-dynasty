@@ -2028,3 +2028,175 @@ enum ScoutingEngine {
         return prospects
     }
 }
+
+// MARK: - Combine Benchmarks
+
+struct CombineBenchmarks {
+    struct DrillBenchmark {
+        let elite: Double
+        let average: Double
+        let poor: Double
+        let lowerIsBetter: Bool  // true for timed drills
+    }
+
+    struct PositionBenchmarks {
+        let fortyYard: DrillBenchmark
+        let benchPress: DrillBenchmark
+        let verticalJump: DrillBenchmark
+        let broadJump: DrillBenchmark
+        let threeCone: DrillBenchmark
+        let shuttle: DrillBenchmark
+    }
+
+    // All-time records
+    static let records = (
+        fortyYard: (value: 4.21, name: "Xavier Worthy", year: 2024),
+        benchPress: (value: 49, name: "Stephen Paea", year: 2011),
+        verticalJump: (value: 46.0, name: "Gerald Sensabaugh", year: 2005),
+        broadJump: (value: 147, name: "Byron Jones", year: 2015),
+        threeCone: (value: 6.28, name: "Jordan Thomas", year: 2018),
+        shuttle: (value: 3.75, name: "Dunta Robinson", year: 2004)
+    )
+
+    static func benchmarks(for position: Position) -> PositionBenchmarks {
+        switch position {
+        case .QB:
+            return PositionBenchmarks(
+                fortyYard: DrillBenchmark(elite: 4.35, average: 4.87, poor: 5.20, lowerIsBetter: true),
+                benchPress: DrillBenchmark(elite: 26, average: 18, poor: 10, lowerIsBetter: false),
+                verticalJump: DrillBenchmark(elite: 40.5, average: 32.0, poor: 26.0, lowerIsBetter: false),
+                broadJump: DrillBenchmark(elite: 129, average: 111, poor: 98, lowerIsBetter: false),
+                threeCone: DrillBenchmark(elite: 6.55, average: 7.15, poor: 7.55, lowerIsBetter: true),
+                shuttle: DrillBenchmark(elite: 3.98, average: 4.45, poor: 4.80, lowerIsBetter: true)
+            )
+        case .RB, .FB:
+            return PositionBenchmarks(
+                fortyYard: DrillBenchmark(elite: 4.24, average: 4.53, poor: 4.72, lowerIsBetter: true),
+                benchPress: DrillBenchmark(elite: 36, average: 20, poor: 12, lowerIsBetter: false),
+                verticalJump: DrillBenchmark(elite: 43, average: 35, poor: 29, lowerIsBetter: false),
+                broadJump: DrillBenchmark(elite: 135, average: 121, poor: 110, lowerIsBetter: false),
+                threeCone: DrillBenchmark(elite: 6.50, average: 6.95, poor: 7.30, lowerIsBetter: true),
+                shuttle: DrillBenchmark(elite: 3.93, average: 4.25, poor: 4.50, lowerIsBetter: true)
+            )
+        case .WR:
+            return PositionBenchmarks(
+                fortyYard: DrillBenchmark(elite: 4.21, average: 4.48, poor: 4.65, lowerIsBetter: true),
+                benchPress: DrillBenchmark(elite: 27, average: 15, poor: 8, lowerIsBetter: false),
+                verticalJump: DrillBenchmark(elite: 45, average: 36, poor: 30, lowerIsBetter: false),
+                broadJump: DrillBenchmark(elite: 132, average: 120, poor: 110, lowerIsBetter: false),
+                threeCone: DrillBenchmark(elite: 6.42, average: 6.85, poor: 7.15, lowerIsBetter: true),
+                shuttle: DrillBenchmark(elite: 3.81, average: 4.30, poor: 4.55, lowerIsBetter: true)
+            )
+        case .TE:
+            return PositionBenchmarks(
+                fortyYard: DrillBenchmark(elite: 4.40, average: 4.70, poor: 4.92, lowerIsBetter: true),
+                benchPress: DrillBenchmark(elite: 35, average: 21, poor: 14, lowerIsBetter: false),
+                verticalJump: DrillBenchmark(elite: 43.5, average: 33, poor: 27, lowerIsBetter: false),
+                broadJump: DrillBenchmark(elite: 134, average: 116, poor: 106, lowerIsBetter: false),
+                threeCone: DrillBenchmark(elite: 6.73, average: 7.15, poor: 7.50, lowerIsBetter: true),
+                shuttle: DrillBenchmark(elite: 4.01, average: 4.40, poor: 4.65, lowerIsBetter: true)
+            )
+        case .LT, .LG, .C, .RG, .RT:
+            return PositionBenchmarks(
+                fortyYard: DrillBenchmark(elite: 4.71, average: 5.26, poor: 5.55, lowerIsBetter: true),
+                benchPress: DrillBenchmark(elite: 45, average: 26, poor: 18, lowerIsBetter: false),
+                verticalJump: DrillBenchmark(elite: 38.5, average: 28, poor: 22, lowerIsBetter: false),
+                broadJump: DrillBenchmark(elite: 121, average: 104, poor: 94, lowerIsBetter: false),
+                threeCone: DrillBenchmark(elite: 7.06, average: 7.80, poor: 8.30, lowerIsBetter: true),
+                shuttle: DrillBenchmark(elite: 4.14, average: 4.65, poor: 5.10, lowerIsBetter: true)
+            )
+        case .DE:
+            return PositionBenchmarks(
+                fortyYard: DrillBenchmark(elite: 4.36, average: 4.80, poor: 5.05, lowerIsBetter: true),
+                benchPress: DrillBenchmark(elite: 38, average: 23, poor: 16, lowerIsBetter: false),
+                verticalJump: DrillBenchmark(elite: 41.5, average: 33, poor: 27, lowerIsBetter: false),
+                broadJump: DrillBenchmark(elite: 134, average: 117, poor: 106, lowerIsBetter: false),
+                threeCone: DrillBenchmark(elite: 6.70, average: 7.25, poor: 7.60, lowerIsBetter: true),
+                shuttle: DrillBenchmark(elite: 4.00, average: 4.40, poor: 4.65, lowerIsBetter: true)
+            )
+        case .DT:
+            return PositionBenchmarks(
+                fortyYard: DrillBenchmark(elite: 4.49, average: 5.06, poor: 5.35, lowerIsBetter: true),
+                benchPress: DrillBenchmark(elite: 49, average: 29, poor: 21, lowerIsBetter: false),
+                verticalJump: DrillBenchmark(elite: 37.5, average: 29.5, poor: 24, lowerIsBetter: false),
+                broadJump: DrillBenchmark(elite: 125, average: 107, poor: 96, lowerIsBetter: false),
+                threeCone: DrillBenchmark(elite: 7.07, average: 7.55, poor: 7.95, lowerIsBetter: true),
+                shuttle: DrillBenchmark(elite: 4.21, average: 4.65, poor: 4.95, lowerIsBetter: true)
+            )
+        case .OLB, .MLB:
+            return PositionBenchmarks(
+                fortyYard: DrillBenchmark(elite: 4.38, average: 4.68, poor: 4.90, lowerIsBetter: true),
+                benchPress: DrillBenchmark(elite: 41, average: 22, poor: 14, lowerIsBetter: false),
+                verticalJump: DrillBenchmark(elite: 42.5, average: 34, poor: 28, lowerIsBetter: false),
+                broadJump: DrillBenchmark(elite: 138, average: 120, poor: 108, lowerIsBetter: false),
+                threeCone: DrillBenchmark(elite: 6.45, average: 7.10, poor: 7.50, lowerIsBetter: true),
+                shuttle: DrillBenchmark(elite: 3.96, average: 4.25, poor: 4.55, lowerIsBetter: true)
+            )
+        case .CB:
+            return PositionBenchmarks(
+                fortyYard: DrillBenchmark(elite: 4.23, average: 4.48, poor: 4.62, lowerIsBetter: true),
+                benchPress: DrillBenchmark(elite: 27, average: 15, poor: 8, lowerIsBetter: false),
+                verticalJump: DrillBenchmark(elite: 45, average: 36.5, poor: 30, lowerIsBetter: false),
+                broadJump: DrillBenchmark(elite: 147, average: 126, poor: 114, lowerIsBetter: false),
+                threeCone: DrillBenchmark(elite: 6.48, average: 6.90, poor: 7.20, lowerIsBetter: true),
+                shuttle: DrillBenchmark(elite: 3.81, average: 4.20, poor: 4.45, lowerIsBetter: true)
+            )
+        case .FS, .SS:
+            return PositionBenchmarks(
+                fortyYard: DrillBenchmark(elite: 4.29, average: 4.54, poor: 4.72, lowerIsBetter: true),
+                benchPress: DrillBenchmark(elite: 32, average: 17, poor: 10, lowerIsBetter: false),
+                verticalJump: DrillBenchmark(elite: 44, average: 36, poor: 30, lowerIsBetter: false),
+                broadJump: DrillBenchmark(elite: 146, average: 122, poor: 110, lowerIsBetter: false),
+                threeCone: DrillBenchmark(elite: 6.56, average: 6.90, poor: 7.20, lowerIsBetter: true),
+                shuttle: DrillBenchmark(elite: 3.90, average: 4.25, poor: 4.50, lowerIsBetter: true)
+            )
+        case .K, .P:
+            // Use safety benchmarks as fallback
+            return PositionBenchmarks(
+                fortyYard: DrillBenchmark(elite: 4.29, average: 4.54, poor: 4.72, lowerIsBetter: true),
+                benchPress: DrillBenchmark(elite: 32, average: 17, poor: 10, lowerIsBetter: false),
+                verticalJump: DrillBenchmark(elite: 44, average: 36, poor: 30, lowerIsBetter: false),
+                broadJump: DrillBenchmark(elite: 146, average: 122, poor: 110, lowerIsBetter: false),
+                threeCone: DrillBenchmark(elite: 6.56, average: 6.90, poor: 7.20, lowerIsBetter: true),
+                shuttle: DrillBenchmark(elite: 3.90, average: 4.25, poor: 4.50, lowerIsBetter: true)
+            )
+        }
+    }
+
+    /// Calculate percentile (0-100) for a drill value at a position.
+    static func percentile(value: Double, benchmark: DrillBenchmark) -> Int {
+        if benchmark.lowerIsBetter {
+            // Lower is better (timed drills): elite=95th, avg=50th, poor=15th
+            if value <= benchmark.elite {
+                return min(99, Int(95 + (benchmark.elite - value) / 0.05 * 2))
+            }
+            if value <= benchmark.average {
+                return 50 + Int(45 * (benchmark.average - value) / (benchmark.average - benchmark.elite))
+            }
+            if value <= benchmark.poor {
+                return 15 + Int(35 * (benchmark.poor - value) / (benchmark.poor - benchmark.average))
+            }
+            return max(1, Int(15 * (benchmark.poor + 0.3 - value) / 0.3))
+        } else {
+            // Higher is better (bench, jumps)
+            if value >= benchmark.elite {
+                return min(99, Int(95 + (value - benchmark.elite) / 2.0 * 2))
+            }
+            if value >= benchmark.average {
+                return 50 + Int(45 * (value - benchmark.average) / (benchmark.elite - benchmark.average))
+            }
+            if value >= benchmark.poor {
+                return 15 + Int(35 * (value - benchmark.poor) / (benchmark.average - benchmark.poor))
+            }
+            return max(1, Int(15 * value / benchmark.poor))
+        }
+    }
+
+    /// Color for a percentile value.
+    static func percentileColor(_ pct: Int) -> String {
+        if pct >= 90 { return "gold" }
+        if pct >= 70 { return "green" }
+        if pct >= 40 { return "white" }
+        return "orange"
+    }
+}

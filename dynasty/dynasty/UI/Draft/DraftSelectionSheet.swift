@@ -30,6 +30,8 @@ struct DraftSelectionSheet: View {
     let availableProspects: [CollegeProspect]
     let pickNumber: Int
     let round: Int
+    let teamNeeds: [Position]
+    let teamCoaches: [Coach]
     let onDraft: (CollegeProspect) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -89,6 +91,7 @@ struct DraftSelectionSheet: View {
 
                 VStack(spacing: 0) {
                     pickHeader
+                    teamNeedsBar
                     filterBar
                     sortBar
                     prospectList
@@ -160,6 +163,48 @@ struct DraftSelectionSheet: View {
                 .frame(height: 2),
             alignment: .bottom
         )
+    }
+
+    // MARK: - Team Needs Bar
+
+    private var teamNeedsBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                Text("Needs:")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.accentGold)
+
+                ForEach(teamNeedPositions, id: \.self) { position in
+                    Text(position.rawValue)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.accentGold.opacity(0.12))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .strokeBorder(Color.accentGold.opacity(0.3), lineWidth: 1)
+                                )
+                        )
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+        }
+        .background(Color.backgroundSecondary)
+        .overlay(
+            Rectangle()
+                .fill(Color.surfaceBorder)
+                .frame(height: 1),
+            alignment: .bottom
+        )
+    }
+
+    /// Top 5 team needs passed in from DraftView.
+    private var teamNeedPositions: [Position] {
+        Array(teamNeeds.prefix(5))
     }
 
     // MARK: - Filter Bar
@@ -277,92 +322,242 @@ struct DraftSelectionSheet: View {
     }
 
     private func prospectRow(_ prospect: CollegeProspect) -> some View {
-        HStack(spacing: 12) {
-            // Position badge
-            Text(prospect.position.rawValue)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(Color.textPrimary)
-                .frame(width: 36, height: 28)
-                .background(positionColor(prospect.position), in: RoundedRectangle(cornerRadius: 4))
-
-            // Name + college
-            VStack(alignment: .leading, spacing: 2) {
-                Text(prospect.fullName)
-                    .font(.body.weight(.semibold))
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                // Position badge
+                Text(prospect.position.rawValue)
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(Color.textPrimary)
-                    .lineLimit(1)
-                HStack(spacing: 6) {
-                    Text(prospect.college)
-                        .font(.caption)
-                        .foregroundStyle(Color.textSecondary)
-                    if let proj = prospect.draftProjection {
-                        Text("·")
-                            .foregroundStyle(Color.textTertiary)
+                    .frame(width: 36, height: 28)
+                    .background(positionColor(prospect.position), in: RoundedRectangle(cornerRadius: 4))
+
+                // Name + college
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(prospect.fullName)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(prospect.college)
                             .font(.caption)
-                        Text("Rd \(proj) projection")
-                            .font(.caption)
-                            .foregroundStyle(Color.textTertiary)
+                            .foregroundStyle(Color.textSecondary)
+                        if let proj = prospect.draftProjection {
+                            Text("Rd \(proj)")
+                                .font(.caption)
+                                .foregroundStyle(Color.textTertiary)
+                        }
                     }
                 }
-            }
 
-            Spacer()
+                Spacer()
 
-            // Grade & overall
-            VStack(alignment: .trailing, spacing: 3) {
-                if let overall = prospect.scoutedOverall {
-                    Text("\(overall)")
-                        .font(.callout.weight(.bold).monospacedDigit())
-                        .foregroundStyle(Color.forRating(overall))
-                } else {
-                    Text("?")
-                        .font(.callout.weight(.bold))
-                        .foregroundStyle(Color.textTertiary)
+                // Value indicator + Scheme fit
+                VStack(alignment: .trailing, spacing: 3) {
+                    valueIndicatorBadge(for: prospect)
+                    schemeFitBadge(for: prospect)
                 }
-                if let grade = prospect.scoutGrade {
-                    Text(grade)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentGold)
-                }
-            }
-            .frame(minWidth: 36)
 
-            // Detail / Draft buttons
-            HStack(spacing: 8) {
-                NavigationLink {
-                    ProspectDetailView(career: career, prospect: prospect)
-                } label: {
-                    Text("View")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentBlue)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.accentBlue.opacity(0.12))
-                        )
+                // Grade & overall
+                VStack(alignment: .trailing, spacing: 3) {
+                    if let overall = prospect.scoutedOverall {
+                        Text("\(overall)")
+                            .font(.callout.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Color.forRating(overall))
+                    } else {
+                        Text("?")
+                            .font(.callout.weight(.bold))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    if let grade = prospect.scoutGrade {
+                        Text(grade)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentGold)
+                    }
                 }
-                .buttonStyle(.plain)
+                .frame(minWidth: 36)
 
-                Button {
-                    selectedProspect = prospect
-                    showConfirmation = true
-                } label: {
-                    Text("Draft")
-                        .font(.caption.weight(.heavy))
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.accentGold)
-                        )
+                // Detail / Draft buttons
+                HStack(spacing: 8) {
+                    NavigationLink {
+                        ProspectDetailView(career: career, prospect: prospect)
+                    } label: {
+                        Text("View")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentBlue)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.accentBlue.opacity(0.12))
+                            )
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        selectedProspect = prospect
+                        showConfirmation = true
+                    } label: {
+                        Text("Draft")
+                            .font(.caption.weight(.heavy))
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.accentGold)
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
         .padding(.vertical, 8)
         .contentShape(Rectangle())
+    }
+
+    // MARK: - Value / Scheme Fit Indicators
+
+    /// Shows REACH / VALUE / STEAL based on prospect's mock draft pick vs current pick.
+    @ViewBuilder
+    private func valueIndicatorBadge(for prospect: CollegeProspect) -> some View {
+        let result = computeValueIndicator(for: prospect)
+        if let result {
+            Text(result.label)
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundStyle(result.color)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(result.color.opacity(0.15))
+                )
+        }
+    }
+
+    private func computeValueIndicator(for prospect: CollegeProspect) -> (label: String, color: Color)? {
+        if let mockPick = prospect.mockDraftPickNumber {
+            let delta = mockPick - pickNumber
+            if delta >= 10 { return ("STEAL", .success) }
+            if delta <= -10 { return ("REACH", .danger) }
+            return ("VALUE", .accentGold)
+        } else if let projRound = prospect.draftProjection {
+            let currentRound = ((pickNumber - 1) / 32) + 1
+            let delta = projRound - currentRound
+            if delta >= 1 { return ("STEAL", .success) }
+            if delta <= -1 { return ("REACH", .danger) }
+            return ("VALUE", .accentGold)
+        }
+        return nil
+    }
+
+    /// Shows Good/Fair/Poor scheme fit based on team's coordinators.
+    @ViewBuilder
+    private func schemeFitBadge(for prospect: CollegeProspect) -> some View {
+        if prospect.scoutedOverall != nil, let fit = evaluateSchemeFit(for: prospect) {
+            Text(fit)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(schemeFitColor(fit))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(schemeFitColor(fit).opacity(0.15))
+                )
+        }
+    }
+
+    private func evaluateSchemeFit(for prospect: CollegeProspect) -> String? {
+        let oc = teamCoaches.first(where: { $0.role == .offensiveCoordinator })
+        let dc = teamCoaches.first(where: { $0.role == .defensiveCoordinator })
+
+        if prospect.position.side == .offense, let scheme = oc?.offensiveScheme {
+            return schemeFitLabel(offensiveScore(prospect, scheme: scheme))
+        } else if prospect.position.side == .defense, let scheme = dc?.defensiveScheme {
+            return schemeFitLabel(defensiveScore(prospect, scheme: scheme))
+        }
+        return nil
+    }
+
+    private func offensiveScore(_ prospect: CollegeProspect, scheme: OffensiveScheme) -> Int {
+        let phys = prospect.truePhysical
+        switch prospect.truePositionAttributes {
+        case .quarterback(let qb):
+            switch scheme {
+            case .airRaid, .spread: return (qb.accuracyShort + qb.accuracyDeep + qb.armStrength) / 3
+            case .westCoast, .proPassing: return (qb.accuracyShort + qb.accuracyMid + qb.pocketPresence) / 3
+            case .powerRun, .shanahan: return (qb.pocketPresence + qb.scrambling + phys.strength) / 3
+            case .rpo, .option: return (qb.scrambling + phys.speed + qb.accuracyShort) / 3
+            }
+        case .wideReceiver(let wr):
+            switch scheme {
+            case .airRaid, .spread: return (wr.routeRunning + wr.catching + phys.speed) / 3
+            case .westCoast, .proPassing: return (wr.routeRunning + wr.catching + wr.release) / 3
+            default: return (wr.routeRunning + wr.catching) / 2
+            }
+        case .runningBack(let rb):
+            switch scheme {
+            case .powerRun: return (rb.breakTackle + rb.vision + phys.strength) / 3
+            case .shanahan: return (rb.vision + rb.elusiveness + phys.speed) / 3
+            default: return (rb.vision + rb.elusiveness) / 2
+            }
+        case .offensiveLine(let ol):
+            switch scheme {
+            case .powerRun: return (ol.runBlock + ol.anchor + phys.strength) / 3
+            case .airRaid, .proPassing, .westCoast: return (ol.passBlock + ol.anchor + phys.strength) / 3
+            default: return (ol.runBlock + ol.passBlock) / 2
+            }
+        case .tightEnd(let te):
+            switch scheme {
+            case .airRaid, .spread, .westCoast: return (te.catching + te.routeRunning + te.speed) / 3
+            case .powerRun, .shanahan: return (te.blocking + te.speed + phys.strength) / 3
+            default: return (te.catching + te.blocking) / 2
+            }
+        default: return 65
+        }
+    }
+
+    private func defensiveScore(_ prospect: CollegeProspect, scheme: DefensiveScheme) -> Int {
+        let phys = prospect.truePhysical
+        switch prospect.truePositionAttributes {
+        case .defensiveBack(let db):
+            switch scheme {
+            case .pressMan: return (db.manCoverage + db.press + phys.speed) / 3
+            case .cover3, .tampa2: return (db.zoneCoverage + db.ballSkills + phys.speed) / 3
+            case .multiple, .hybrid: return (db.manCoverage + db.zoneCoverage + db.press) / 3
+            default: return (db.manCoverage + db.zoneCoverage) / 2
+            }
+        case .linebacker(let lb):
+            switch scheme {
+            case .base34: return (lb.tackling + lb.blitzing + phys.strength) / 3
+            case .base43: return (lb.tackling + lb.zoneCoverage + phys.speed) / 3
+            case .tampa2, .cover3: return (lb.zoneCoverage + phys.speed + lb.tackling) / 3
+            default: return (lb.tackling + lb.zoneCoverage) / 2
+            }
+        case .defensiveLine(let dl):
+            switch scheme {
+            case .base43: return (dl.passRush + dl.powerMoves + phys.strength) / 3
+            case .base34: return (dl.blockShedding + dl.powerMoves + phys.strength) / 3
+            case .multiple, .hybrid: return (dl.passRush + dl.finesseMoves + phys.agility) / 3
+            default: return (dl.passRush + dl.blockShedding) / 2
+            }
+        default: return 65
+        }
+    }
+
+    private func schemeFitLabel(_ score: Int) -> String {
+        switch score {
+        case 75...: return "Good"
+        case 55..<75: return "Fair"
+        default: return "Poor"
+        }
+    }
+
+    private func schemeFitColor(_ fit: String) -> Color {
+        switch fit {
+        case "Good": return .success
+        case "Fair": return .warning
+        default: return .danger
+        }
     }
 
     // MARK: - Helpers
@@ -423,6 +618,8 @@ struct DraftSelectionSheet: View {
         availableProspects: prospects,
         pickNumber: 1,
         round: 1,
+        teamNeeds: [.CB, .DE, .SS],
+        teamCoaches: [],
         onDraft: { _ in }
     )
     .modelContainer(for: [Career.self, CollegeProspect.self], inMemory: true)

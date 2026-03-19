@@ -19,9 +19,13 @@ struct ScoutingHubView: View {
             Color.backgroundPrimary.ignoresSafeArea()
 
             VStack(spacing: 0) {
+                overviewMetrics
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
+
                 tabPicker
                     .padding(.horizontal, 20)
-                    .padding(.top, 16)
                     .padding(.bottom, 12)
 
                 Divider()
@@ -37,6 +41,108 @@ struct ScoutingHubView: View {
         .sheet(isPresented: $showHireScout, onDismiss: { loadData() }) {
             HireScoutSheet(career: career)
         }
+    }
+
+    // MARK: - Overview Metrics (#223)
+
+    private var scoutCountColor: Color {
+        if scouts.count >= 6 { return .success }
+        if scouts.count >= 3 { return .accentGold }
+        return .danger
+    }
+
+    private var scoutedCount: Int {
+        prospects.filter { $0.scoutedOverall != nil }.count
+    }
+
+    private var scoutedPercentage: Int {
+        guard !prospects.isEmpty else { return 0 }
+        return Int((Double(scoutedCount) / Double(prospects.count) * 100).rounded())
+    }
+
+    private var topProspect: CollegeProspect? {
+        prospects
+            .filter { $0.scoutedOverall != nil }
+            .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
+            .first
+    }
+
+    private var phaseLabel: String {
+        switch career.currentPhase {
+        case .combine:      return "NFL Combine"
+        case .freeAgency:   return "Free Agency"
+        case .draft:        return "NFL Draft"
+        case .regularSeason: return "Regular Season"
+        default:            return career.currentPhase.rawValue
+        }
+    }
+
+    private var overviewMetrics: some View {
+        HStack(spacing: 0) {
+            // Scouts hired
+            metricItem(
+                icon: "person.3.fill",
+                label: "Scouts: \(scouts.count)/\(maxScouts) hired",
+                color: scoutCountColor
+            )
+
+            metricDivider
+
+            // Scouted percentage
+            metricItem(
+                icon: "doc.text.magnifyingglass",
+                label: "Scouted: \(scoutedPercentage)% of prospects",
+                color: .accentBlue
+            )
+
+            metricDivider
+
+            // Top prospect
+            if let top = topProspect, let ovr = top.scoutedOverall {
+                metricItem(
+                    icon: "star.fill",
+                    label: "Top: \(top.lastName) (OVR \(ovr))",
+                    color: .accentGold
+                )
+            } else {
+                metricItem(
+                    icon: "star",
+                    label: "Top: None scouted",
+                    color: .textTertiary
+                )
+            }
+
+            metricDivider
+
+            // Current phase
+            metricItem(
+                icon: "calendar",
+                label: "Phase: \(phaseLabel)",
+                color: .textSecondary
+            )
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func metricItem(icon: String, label: String, color: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.caption2)
+                .foregroundStyle(color)
+            Text(label)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var metricDivider: some View {
+        Rectangle()
+            .fill(Color.surfaceBorder)
+            .frame(width: 1, height: 16)
     }
 
     // MARK: - Tab Picker

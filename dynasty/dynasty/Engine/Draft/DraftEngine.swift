@@ -439,6 +439,8 @@ enum DraftEngine {
         let message: String
         let prospectID: UUID
         let icon: String
+        /// Detailed reasoning explaining why this prospect is recommended.
+        var reason: String = ""
     }
 
     /// Generates 2-3 coaching staff recommendations based on team needs and available prospects.
@@ -466,20 +468,26 @@ enum DraftEngine {
             .first
 
         if let prospect = bestOffensive {
-            let ocName = coaches.first(where: { $0.role == .offensiveCoordinator })
-            let title = ocName.map { "\($0.lastName), OC" } ?? "Offensive Coordinator"
+            let oc = coaches.first(where: { $0.role == .offensiveCoordinator })
+            let title = oc.map { "\($0.lastName), OC" } ?? "Offensive Coordinator"
             let needsMatch = offensiveNeeds.contains(prospect.position)
             let message: String
+            let reason: String
+            let schemeName = oc?.offensiveScheme.map { "\($0)" } ?? "our offense"
             if needsMatch {
                 message = "We need to address \(prospect.position.rawValue). \(prospect.fullName) is the best available and fills a real gap."
+                let posGrade = gradeForPositionGroup(prospect.position, needs: teamNeeds)
+                reason = "Your \(prospect.position.rawValue) corps is weak (\(posGrade) grade). \(prospect.fullName) fits \(schemeName) and can start Day 1."
             } else {
                 message = "\(prospect.fullName) is the best offensive talent on the board. Too good to pass up at \(prospect.position.rawValue)."
+                reason = "\(prospect.fullName) is a premium talent at \(prospect.position.rawValue). Even without an immediate need, this caliber of player elevates \(schemeName)."
             }
             recommendations.append(StaffRecommendation(
                 staffTitle: title,
                 message: message,
                 prospectID: prospect.id,
-                icon: "sportscourt.fill"
+                icon: "sportscourt.fill",
+                reason: reason
             ))
         }
 
@@ -492,20 +500,30 @@ enum DraftEngine {
             .first
 
         if let prospect = bestDefensive, prospect.id != bestOffensive?.id {
-            let dcName = coaches.first(where: { $0.role == .defensiveCoordinator })
-            let title = dcName.map { "\($0.lastName), DC" } ?? "Defensive Coordinator"
+            let dc = coaches.first(where: { $0.role == .defensiveCoordinator })
+            let title = dc.map { "\($0.lastName), DC" } ?? "Defensive Coordinator"
             let needsMatch = defensiveNeeds.contains(prospect.position)
             let message: String
+            let reason: String
             if needsMatch {
                 message = "There's a talented \(prospect.position.rawValue) still on the board. \(prospect.fullName) can transform our defense."
+                let isPassRusher = prospect.position == .DE || prospect.position == .OLB
+                if isPassRusher {
+                    reason = "Pass rush is your biggest defensive need. \(prospect.fullName) projects as an immediate edge threat in our scheme."
+                } else {
+                    let posGrade = gradeForPositionGroup(prospect.position, needs: teamNeeds)
+                    reason = "Your \(prospect.position.rawValue) group grades out at \(posGrade). \(prospect.fullName) fills a critical gap and can compete for a starting role."
+                }
             } else {
                 message = "\(prospect.fullName) is an elite \(prospect.position.rawValue) prospect. He'd be an instant impact player on this defense."
+                reason = "\(prospect.fullName) is too talented to pass up. Best defensive player on the board regardless of need."
             }
             recommendations.append(StaffRecommendation(
                 staffTitle: title,
                 message: message,
                 prospectID: prospect.id,
-                icon: "shield.fill"
+                icon: "shield.fill",
+                reason: reason
             ))
         }
 
@@ -520,11 +538,13 @@ enum DraftEngine {
             let scoutName = coaches.first(where: { $0.role == .headCoach })
             let title = scoutName.map { "Scout (\($0.lastName)'s staff)" } ?? "Chief Scout"
             let message = "\(prospect.fullName) is my sleeper pick. Our scouts had him rated higher than the public boards. He's got serious upside at \(prospect.position.rawValue)."
+            let reason = "\(prospect.fullName) is my sleeper. His combine numbers don't match his tape \u{2014} he plays faster than he tests. Potential ceiling is elite."
             recommendations.append(StaffRecommendation(
                 staffTitle: title,
                 message: message,
                 prospectID: prospect.id,
-                icon: "binoculars.fill"
+                icon: "binoculars.fill",
+                reason: reason
             ))
         }
 
@@ -646,6 +666,18 @@ enum DraftEngine {
     }
 
     // MARK: - Private Helpers
+
+    /// Returns a letter grade for a position group based on how high the need is.
+    private static func gradeForPositionGroup(_ position: Position, needs: [Position]) -> String {
+        guard let index = needs.firstIndex(of: position) else { return "B" }
+        switch index {
+        case 0: return "D"
+        case 1: return "C-"
+        case 2: return "C"
+        case 3: return "C+"
+        default: return "B-"
+        }
+    }
 
     /// Returns a human-readable round name.
     private static func roundName(_ round: Int) -> String {

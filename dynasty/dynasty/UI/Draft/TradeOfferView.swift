@@ -61,6 +61,8 @@ struct DraftTradeOfferDisplay: Identifiable {
 struct TradeOfferView: View {
 
     let offer: DraftTradeOfferDisplay
+    let availableProspects: [CollegeProspect]
+    let teamNeeds: [Position]
     let onAccept: () -> Void
     let onDecline: () -> Void
 
@@ -87,6 +89,7 @@ struct TradeOfferView: View {
                             accentColor: .danger
                         )
                         valueComparisonCard
+                        strategicContextCard
                         actionButtons
                     }
                     .padding(24)
@@ -336,6 +339,166 @@ struct TradeOfferView: View {
         )
     }
 
+    // MARK: - Strategic Context Card
+
+    private var strategicContextCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "lightbulb.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.accentGold)
+                Text("Strategic Analysis")
+                    .font(.headline)
+                    .foregroundStyle(Color.textPrimary)
+            }
+
+            Divider().overlay(Color.surfaceBorder)
+
+            // Show likely available prospects at the new pick position
+            if let newPickNumber = offer.assetsOffered.first.flatMap({ extractPickNumber($0) }) {
+                let likelyAvailable = prospectsLikelyAvailable(at: newPickNumber)
+                if !likelyAvailable.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("At pick #\(newPickNumber), likely available:")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.textSecondary)
+
+                        ForEach(likelyAvailable, id: \.id) { prospect in
+                            HStack(spacing: 8) {
+                                Text(prospect.position.rawValue)
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(Color.textPrimary)
+                                    .frame(width: 30, height: 20)
+                                    .background(prospectPositionColor(prospect.position), in: RoundedRectangle(cornerRadius: 4))
+                                Text(prospect.fullName)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(Color.textPrimary)
+                                Spacer()
+                                if let ovr = prospect.scoutedOverall {
+                                    Text("\(ovr)")
+                                        .font(.subheadline.weight(.bold).monospacedDigit())
+                                        .foregroundStyle(Color.forRating(ovr))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Needs impact analysis
+                if !teamNeeds.isEmpty {
+                    Divider().overlay(Color.surfaceBorder)
+                    needsImpactView(newPickNumber: newPickNumber)
+                }
+            }
+        }
+        .padding(16)
+        .cardBackground()
+    }
+
+    /// Estimates which top prospects might still be available at the given pick number.
+    private func prospectsLikelyAvailable(at pickNumber: Int) -> [CollegeProspect] {
+        // Use mock draft pick numbers to estimate who will be gone
+        let sorted = availableProspects
+            .filter { $0.scoutedOverall != nil }
+            .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
+
+        // Prospects with a mock draft pick number at or after this pick are likely available
+        let likelyAvailable = sorted.filter { prospect in
+            if let mockPick = prospect.mockDraftPickNumber {
+                return mockPick >= pickNumber - 3 // Allow some variance
+            }
+            // If no mock data, use projection round
+            if let projRound = prospect.draftProjection {
+                let projMinPick = (projRound - 1) * 32 + 1
+                return projMinPick >= pickNumber - 10
+            }
+            return true // Unranked prospects likely available
+        }
+
+        return Array(likelyAvailable.prefix(3))
+    }
+
+    /// Shows how trading affects your top positional needs.
+    @ViewBuilder
+    private func needsImpactView(newPickNumber: Int) -> some View {
+        let topNeed = teamNeeds.first
+        let likelyAvailable = prospectsLikelyAvailable(at: newPickNumber)
+        let topNeedStillAvailable = topNeed.map { need in
+            likelyAvailable.contains { $0.position == need }
+        } ?? false
+
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Needs Impact")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.textSecondary)
+
+            if let topNeed {
+                if topNeedStillAvailable {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(Color.success)
+                        Text("Top \(topNeed.rawValue) prospect likely still available at #\(newPickNumber)")
+                            .font(.caption)
+                            .foregroundStyle(Color.success)
+                    }
+                } else {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(Color.warning)
+                        Text("Moving to #\(newPickNumber) -- top \(topNeed.rawValue) prospect likely gone by then")
+                            .font(.caption)
+                            .foregroundStyle(Color.warning)
+                    }
+                }
+            }
+
+            // Show which needs might still be addressable
+            let addressableNeeds = teamNeeds.prefix(3).filter { need in
+                likelyAvailable.contains { $0.position == need }
+            }
+            if !addressableNeeds.isEmpty {
+                HStack(spacing: 4) {
+                    Text("Addressable needs:")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    ForEach(addressableNeeds, id: \.self) { pos in
+                        Text(pos.rawValue)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.success)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.success.opacity(0.12))
+                            )
+                    }
+                }
+            }
+        }
+    }
+
+    /// Extracts the pick number from a trade asset's detail string.
+    private func extractPickNumber(_ asset: DraftTradeAsset) -> Int? {
+        // Parse "Pick #42  ·  580 pts" format
+        let detail = asset.detail ?? ""
+        if let range = detail.range(of: "#") {
+            let afterHash = detail[range.upperBound...]
+            let digits = afterHash.prefix(while: { $0.isNumber })
+            return Int(digits)
+        }
+        return nil
+    }
+
+    private func prospectPositionColor(_ position: Position) -> Color {
+        switch position.side {
+        case .offense:      return .accentBlue
+        case .defense:      return .danger
+        case .specialTeams: return .accentGold
+        }
+    }
+
     // MARK: - Action Buttons
 
     private var actionButtons: some View {
@@ -421,6 +584,8 @@ struct TradeOfferView: View {
             ],
             domainOffer: domainOffer
         ),
+        availableProspects: [],
+        teamNeeds: [.CB, .DE, .SS],
         onAccept: {},
         onDecline: {}
     )
