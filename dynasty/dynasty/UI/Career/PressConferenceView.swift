@@ -207,6 +207,7 @@ struct PressConferenceView: View {
 
     /// Shows the player's current baseline stats so they know where they stand before choosing.
     private var currentStatsBar: some View {
+        VStack(spacing: 0) {
         HStack(spacing: 0) {
             statBarItem(
                 icon: "star.fill",
@@ -220,10 +221,11 @@ struct PressConferenceView: View {
                 value: "\(career.legacy.mediaReputation)",
                 color: career.legacy.mediaReputation >= 0 ? Color.success : Color.danger
             )
+            // #117: Renamed from "Comp" to "Satisfaction" for clarity
             if let ownerObj = owner {
                 statBarItem(
                     icon: "building.2.fill",
-                    label: "Owner",
+                    label: "Satisfaction",
                     value: "\(ownerObj.satisfaction)%",
                     color: ownerObj.satisfaction >= 50 ? Color.success : Color.danger
                 )
@@ -239,6 +241,15 @@ struct PressConferenceView: View {
                 )
         )
         .padding(.horizontal, 20)
+
+        // #119: Guidance text explaining what stats matter
+        Text("Owner affects job security  \u{00B7}  Media shapes public narrative  \u{00B7}  Legacy affects career rating")
+            .font(.caption2)
+            .foregroundStyle(Color.textTertiary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 20)
+            .padding(.top, 4)
+        }
     }
 
     private func statBarItem(icon: String, label: String, value: String, color: Color) -> some View {
@@ -399,25 +410,38 @@ struct PressConferenceView: View {
         }
     }
 
+    // #116: Larger pill fonts; #118: Intensity scaling for negative effects
     private func effectPill(icon: String, label: String, value: Int) -> some View {
-        let pillColor = value > 0 ? Color.success : Color.danger
+        let pillColor: Color = {
+            if value > 0 { return Color.success }
+            // Intensity scaling: light red for small negatives, dark red for large
+            let absVal = abs(value)
+            if absVal >= 6 {
+                return Color.danger
+            } else {
+                return Color.danger.opacity(0.65)
+            }
+        }()
+        let pillScale: CGFloat = value < 0 ? (abs(value) >= 6 ? 1.1 : 1.0) : 1.0
+
         return HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.caption2)
+                .font(.caption)
             Text(label)
-                .font(.caption2.weight(.medium))
+                .font(.caption.weight(.medium))
             Text(value > 0 ? "+\(value)" : "\(value)")
-                .font(.caption2.weight(.bold))
+                .font(.caption.weight(.bold))
         }
         .foregroundStyle(pillColor)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .scaleEffect(pillScale)
         .background(
             Capsule()
                 .fill(pillColor.opacity(0.12))
                 .overlay(
                     Capsule()
-                        .strokeBorder(pillColor.opacity(0.3), lineWidth: 1)
+                        .strokeBorder(pillColor.opacity(0.3), lineWidth: value < 0 && abs(value) >= 6 ? 1.5 : 1)
                 )
         )
     }
@@ -501,7 +525,7 @@ struct PressConferenceView: View {
                 .cardBackground()
                 .padding(.horizontal, 20)
 
-                // Media perception
+                // #121: Media perception with subtitle explaining what it affects
                 VStack(alignment: .leading, spacing: 12) {
                     Text("MEDIA PERCEPTION")
                         .font(.system(size: 12, weight: .black))
@@ -520,15 +544,38 @@ struct PressConferenceView: View {
                             Text(mediaPerceptionLabel(for: result.dominantTone))
                                 .font(.headline.weight(.bold))
                                 .foregroundStyle(Color.textPrimary)
+                            // #121: Explain what media perception affects
+                            Text("Shapes free agent interest, fan engagement, and media coverage tone")
+                                .font(.caption2)
+                                .foregroundStyle(Color.textTertiary)
                         }
                     }
 
-                    // Effect summary
-                    HStack(spacing: 16) {
-                        effectSummaryItem(icon: "building.2.fill", label: "Owner", value: result.totalEffects.ownerSatisfaction)
-                        effectSummaryItem(icon: "person.3.fill", label: "Morale", value: result.totalEffects.playerMorale)
-                        effectSummaryItem(icon: "hands.clap.fill", label: "Fans", value: result.totalEffects.fanExcitement)
-                        effectSummaryItem(icon: "star.fill", label: "Legacy", value: result.totalEffects.legacyPoints)
+                    // #123: Show answer pattern (tone distribution)
+                    answerPatternView(result: result)
+
+                    // #120 & #122: Effect summary with larger numbers and final values
+                    HStack(spacing: 12) {
+                        effectSummaryItem(
+                            icon: "building.2.fill", label: "Owner",
+                            value: result.totalEffects.ownerSatisfaction,
+                            baseline: owner?.satisfaction ?? 50, suffix: "%"
+                        )
+                        effectSummaryItem(
+                            icon: "person.3.fill", label: "Morale",
+                            value: result.totalEffects.playerMorale,
+                            baseline: nil, suffix: ""
+                        )
+                        effectSummaryItem(
+                            icon: "hands.clap.fill", label: "Fans",
+                            value: result.totalEffects.fanExcitement,
+                            baseline: nil, suffix: ""
+                        )
+                        effectSummaryItem(
+                            icon: "star.fill", label: "Legacy",
+                            value: result.totalEffects.legacyPoints,
+                            baseline: career.legacy.totalPoints, suffix: ""
+                        )
                     }
                     .padding(.top, 8)
                 }
@@ -602,21 +649,73 @@ struct PressConferenceView: View {
         .scrollIndicators(.hidden)
     }
 
-    private func effectSummaryItem(icon: String, label: String, value: Int) -> some View {
-        VStack(spacing: 6) {
+    // #120: Larger stat numbers; #122: Show final values not just deltas
+    private func effectSummaryItem(
+        icon: String, label: String, value: Int,
+        baseline: Int? = nil, suffix: String = ""
+    ) -> some View {
+        let color: Color = value > 0 ? Color.success : value < 0 ? Color.danger : Color.textTertiary
+
+        return VStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.caption)
-                .foregroundStyle(value > 0 ? Color.success : value < 0 ? Color.danger : Color.textTertiary)
+                .font(.subheadline)
+                .foregroundStyle(color)
 
             Text(value > 0 ? "+\(value)" : "\(value)")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(value > 0 ? Color.success : value < 0 ? Color.danger : Color.textTertiary)
+                .font(.title3.weight(.bold).monospacedDigit())
+                .foregroundStyle(color)
+
+            // #122: Show "baseline -> final" when baseline is available
+            if let base = baseline {
+                Text("\(base)\(suffix) \u{2192} \(base + value)\(suffix)")
+                    .font(.caption2.weight(.medium).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+            }
 
             Text(label)
-                .font(.system(size: 9))
+                .font(.caption2)
                 .foregroundStyle(Color.textTertiary)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    // #123: Show answer pattern — tone distribution from chosen responses
+    private func answerPatternView(result: PressConferenceResult) -> some View {
+        let toneCounts: [(tone: ResponseTone, count: Int)] = {
+            var counts: [ResponseTone: Int] = [:]
+            for response in result.selectedResponses {
+                counts[response.tone, default: 0] += 1
+            }
+            return counts
+                .sorted { $0.value > $1.value }
+                .map { (tone: $0.key, count: $0.value) }
+        }()
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("YOUR APPROACH")
+                .font(.system(size: 10, weight: .bold))
+                .tracking(1.5)
+                .foregroundStyle(Color.textTertiary)
+
+            HStack(spacing: 8) {
+                ForEach(toneCounts, id: \.tone) { item in
+                    HStack(spacing: 4) {
+                        Image(systemName: item.tone.icon)
+                            .font(.caption2)
+                        Text("\(item.count) \(item.tone.label)")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(toneColor(item.tone))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(toneColor(item.tone).opacity(0.12))
+                    )
+                }
+            }
+        }
+        .padding(.top, 4)
     }
 
     // MARK: - Actions

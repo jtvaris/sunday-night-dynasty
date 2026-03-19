@@ -56,12 +56,8 @@ struct AvatarSelectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Male coaches
-            Text("Male")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(Color.textTertiary)
-                .textCase(.uppercase)
-                .tracking(0.5)
+            // Male coaches — #109: subtler divider style
+            genderDivider(label: "Male")
 
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(CoachAvatars.maleAvatars) { avatar in
@@ -69,12 +65,8 @@ struct AvatarSelectionView: View {
                 }
             }
 
-            // Female coaches
-            Text("Female")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(Color.textTertiary)
-                .textCase(.uppercase)
-                .tracking(0.5)
+            // Female coaches — #109: subtler divider style
+            genderDivider(label: "Female")
                 .padding(.top, 4)
 
             LazyVGrid(columns: columns, spacing: 12) {
@@ -102,8 +94,9 @@ struct AvatarSelectionView: View {
             .scaleEffect(selectedAvatarID == avatar.id ? 1.1 : 1.0)
             .animation(.spring(response: 0.3), value: selectedAvatarID)
 
+            // #105: larger avatar name
             Text(avatar.name)
-                .font(.caption2.weight(.medium))
+                .font(.caption.weight(.medium))
                 .foregroundStyle(selectedAvatarID == avatar.id ? Color.accentGold : Color.textSecondary)
                 .lineLimit(1)
         }
@@ -112,6 +105,25 @@ struct AvatarSelectionView: View {
         .accessibilityAddTraits(selectedAvatarID == avatar.id ? [.isButton, .isSelected] : .isButton)
         .onTapGesture {
             selectedAvatarID = avatar.id
+        }
+    }
+
+    // #109: Thin divider with label instead of bold header
+    private func genderDivider(label: String) -> some View {
+        HStack(spacing: 8) {
+            Rectangle()
+                .fill(Color.surfaceBorder)
+                .frame(height: 1)
+                .frame(maxWidth: 20)
+
+            Text(label)
+                .font(.caption2.weight(.regular))
+                .foregroundStyle(Color.textTertiary)
+
+            Rectangle()
+                .fill(Color.surfaceBorder)
+                .frame(height: 1)
+                .frame(maxWidth: .infinity)
         }
     }
 }

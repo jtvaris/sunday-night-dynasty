@@ -26,6 +26,9 @@ struct CareerDashboardView: View {
     @State private var players: [Player] = []
     @State private var startingQB: Player?
     @State private var bestPlayer: Player?
+    @State private var bestDefensivePlayer: Player?
+    @State private var coachingBudgetRemaining: Int = 0
+    @State private var coachingBudgetTotal: Int = 0
     @State private var expiringContractPlayers: [Player] = []
     @State private var positionGroupGrades: [(group: String, grade: String, avgOVR: Int)] = []
     @State private var teamMorale: Int = 70
@@ -155,25 +158,21 @@ struct CareerDashboardView: View {
                             RoundedRectangle(cornerRadius: 10)
                                 .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                         )
-                    divisionStandingsSection
-                        .padding(12)
-                        .background(Color.backgroundSecondary)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                        )
-
-                    // Schedule below standings (#15: fill empty space)
-                    scheduleSection
-                        .padding(12)
-                        .background(Color.backgroundSecondary)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                        )
-                        .padding(.bottom, 16)
+                    // Division + Upcoming combined to reduce gap (#143)
+                    VStack(spacing: 0) {
+                        divisionStandingsSection
+                            .padding(12)
+                        Divider().overlay(Color.surfaceBorder.opacity(0.4))
+                        scheduleSection
+                            .padding(12)
+                    }
+                    .background(Color.backgroundSecondary)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                    )
+                    .padding(.bottom, 16)
                 }
                 .padding(12)
             }
@@ -953,6 +952,28 @@ struct CareerDashboardView: View {
                         }
                     }
                     .frame(height: 5)
+
+                    // Coaching budget remaining (#147)
+                    if coachingBudgetTotal > 0 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "dollarsign.square.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(coachingBudgetRemaining > 5000 ? Color.success : coachingBudgetRemaining > 2000 ? Color.accentGold : Color.warning)
+                            Text("Budget")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.textTertiary)
+                            Spacer()
+                            Text(formatCap(coachingBudgetRemaining))
+                                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                                .foregroundStyle(coachingBudgetRemaining > 5000 ? Color.success : coachingBudgetRemaining > 2000 ? Color.accentGold : Color.warning)
+                            Text("/")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.textTertiary)
+                            Text(formatCap(coachingBudgetTotal))
+                                .font(.system(size: 9, weight: .medium).monospacedDigit())
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                    }
                 }
             }
         }
@@ -1160,52 +1181,49 @@ struct CareerDashboardView: View {
             RosterViewWrapper(career: career)
         } label: {
             DashboardTile(icon: "star.fill", title: "Key Players") {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     if let qb = startingQB {
-                        HStack(spacing: 4) {
-                            Text("QB1")
-                                .font(.system(size: 9, weight: .heavy))
-                                .foregroundStyle(Color.accentGold)
-                                .frame(width: 28, alignment: .leading)
-                            Text(qb.fullName)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(Color.textPrimary)
-                                .lineLimit(1)
-                            Spacer()
-                            Text("\(qb.overall)")
-                                .font(.system(size: 14, weight: .bold).monospacedDigit())
-                                .foregroundStyle(Color.forRating(qb.overall))
-                        }
+                        keyPlayerRow(label: "QB1", player: qb)
                     } else {
                         Text("No starting QB")
                             .font(.system(size: 11))
                             .foregroundStyle(Color.textSecondary)
                     }
 
-                    if let best = bestPlayer, best.id != startingQB?.id {
+                    // Best defensive player (#144)
+                    if let defPlayer = bestDefensivePlayer, defPlayer.id != startingQB?.id {
                         Divider().overlay(Color.surfaceBorder.opacity(0.4))
-                        HStack(spacing: 4) {
-                            Text("MVP")
-                                .font(.system(size: 9, weight: .heavy))
-                                .foregroundStyle(Color.accentGold)
-                                .frame(width: 28, alignment: .leading)
-                            Text(best.fullName)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(Color.textPrimary)
-                                .lineLimit(1)
-                            Spacer()
-                            Text("\(best.overall)")
-                                .font(.system(size: 14, weight: .bold).monospacedDigit())
-                                .foregroundStyle(Color.forRating(best.overall))
-                        }
-                        Text(best.position.rawValue)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(Color.textTertiary)
+                        keyPlayerRow(label: defPlayer.position.rawValue, player: defPlayer)
+                    }
+
+                    // Best overall if different from QB and defensive star (#144)
+                    if let best = bestPlayer,
+                       best.id != startingQB?.id,
+                       best.id != bestDefensivePlayer?.id {
+                        Divider().overlay(Color.surfaceBorder.opacity(0.4))
+                        keyPlayerRow(label: "MVP", player: best)
                     }
                 }
             }
         }
         .buttonStyle(.plain)
+    }
+
+    private func keyPlayerRow(label: String, player: Player) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundStyle(Color.accentGold)
+                .frame(width: 28, alignment: .leading)
+            Text(player.fullName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+            Spacer()
+            Text("\(player.overall)")
+                .font(.system(size: 14, weight: .bold).monospacedDigit())
+                .foregroundStyle(Color.forRating(player.overall))
+        }
     }
 
     // MARK: - Position Group Strengths Tile (#17)
@@ -1221,19 +1239,21 @@ struct CareerDashboardView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(Color.textSecondary)
                     } else {
+                        // Find weakest group (#146)
+                        let weakestGroup = positionGroupGrades.min(by: { $0.avgOVR < $1.avgOVR })?.group
                         // Show in two columns
                         let halfCount = (positionGroupGrades.count + 1) / 2
                         let leftCol = Array(positionGroupGrades.prefix(halfCount))
                         let rightCol = Array(positionGroupGrades.dropFirst(halfCount))
                         HStack(alignment: .top, spacing: 8) {
-                            VStack(alignment: .leading, spacing: 3) {
+                            VStack(alignment: .leading, spacing: 4) {
                                 ForEach(leftCol, id: \.group) { item in
-                                    positionGradeRow(item)
+                                    positionGradeRow(item, isWeakest: item.group == weakestGroup)
                                 }
                             }
-                            VStack(alignment: .leading, spacing: 3) {
+                            VStack(alignment: .leading, spacing: 4) {
                                 ForEach(rightCol, id: \.group) { item in
-                                    positionGradeRow(item)
+                                    positionGradeRow(item, isWeakest: item.group == weakestGroup)
                                 }
                             }
                         }
@@ -1244,15 +1264,31 @@ struct CareerDashboardView: View {
         .buttonStyle(.plain)
     }
 
-    private func positionGradeRow(_ item: (group: String, grade: String, avgOVR: Int)) -> some View {
-        HStack(spacing: 4) {
+    private func positionGradeRow(_ item: (group: String, grade: String, avgOVR: Int), isWeakest: Bool = false) -> some View {
+        HStack(spacing: 6) {
             Text(item.group)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 30, alignment: .leading)
+                .frame(width: 28, alignment: .leading)
             Text(item.grade)
-                .font(.system(size: 12, weight: .bold).monospacedDigit())
-                .foregroundStyle(Color.forRating(item.avgOVR))
+                .font(.system(size: 14, weight: .black).monospacedDigit())
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.forRating(item.avgOVR))
+                )
+            if isWeakest {
+                Text("NEED")
+                    .font(.system(size: 7, weight: .heavy))
+                    .foregroundStyle(Color.danger)
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 1)
+                    .background(
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color.danger.opacity(0.15))
+                    )
+            }
         }
     }
 
@@ -1278,18 +1314,27 @@ struct CareerDashboardView: View {
                                 .foregroundStyle(Color.textSecondary)
                         }
 
-                        // Show top 3 names
+                        // Show top 3 names sorted by OVR, with star alert (#145)
                         let topExpiring = Array(expiringContractPlayers.sorted { $0.overall > $1.overall }.prefix(3))
                         ForEach(topExpiring, id: \.id) { player in
+                            let isStar = player.overall >= 80
                             HStack(spacing: 4) {
+                                if isStar {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.system(size: 8))
+                                        .foregroundStyle(Color.warning)
+                                }
                                 Text(player.position.rawValue)
                                     .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(Color.accentGold)
+                                    .foregroundStyle(isStar ? Color.warning : Color.accentGold)
                                 Text(player.lastName)
-                                    .font(.system(size: 10, weight: .medium))
+                                    .font(.system(size: 10, weight: isStar ? .bold : .medium))
                                     .foregroundStyle(Color.textPrimary)
                                     .lineLimit(1)
                                 Spacer()
+                                Text("\(player.overall)")
+                                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(Color.forRating(player.overall))
                                 Text(formatCap(player.annualSalary))
                                     .font(.system(size: 9, weight: .semibold).monospacedDigit())
                                     .foregroundStyle(Color.textTertiary)
@@ -1682,9 +1727,10 @@ struct CareerDashboardView: View {
         players = (try? modelContext.fetch(playerDescriptor)) ?? []
         rosterCount = players.count
 
-        // Key players (#18)
+        // Key players (#18, #144)
         startingQB = players.filter { $0.position == .QB }.max(by: { $0.overall < $1.overall })
         bestPlayer = players.max(by: { $0.overall < $1.overall })
+        bestDefensivePlayer = players.filter { $0.position.side == .defense }.max(by: { $0.overall < $1.overall })
 
         // Expiring contracts (#19)
         expiringContractPlayers = players.filter { $0.contractYearsRemaining <= 1 }
@@ -1702,6 +1748,12 @@ struct CareerDashboardView: View {
         let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
         coachCount = coaches.count
         headCoach = coaches.first(where: { $0.role == .headCoach })
+
+        // Coaching budget (#147)
+        let budgetTotal = team?.owner?.coachingBudget ?? 0
+        let salaryUsed = coaches.reduce(0) { $0 + $1.salary }
+        coachingBudgetTotal = budgetTotal
+        coachingBudgetRemaining = budgetTotal - salaryUsed
 
         // Division teams
         if let myTeam = team {

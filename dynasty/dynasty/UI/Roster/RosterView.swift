@@ -30,6 +30,11 @@ struct RosterView: View {
     /// Custom depth ordering per position. When a user promotes/demotes a player,
     /// their manual ordering is stored here and takes priority over OVR-based sorting.
     @State private var customDepthOrder: [Position: [UUID]] = [:]
+    @State private var positionPickerPlayer: Player? = nil
+    @State private var starterPickerPosition: Position? = nil
+
+    /// Track whether the user has seen the sort hint.
+    @AppStorage("rosterSortHintSeen") private var sortHintSeen: Bool = false
 
     // MARK: - Position Groups (NFL-style names)
 
@@ -95,6 +100,20 @@ struct RosterView: View {
         case .specialTeams:
             return Self.specialTeamsGroups
         }
+    }
+
+    /// Name of the weakest position group on the current side (lowest average OVR).
+    private var weakestGroupName: String? {
+        var worst: (name: String, avg: Double)? = nil
+        for group in activeGroups {
+            let groupPlayers = filteredPlayers.filter { group.positions.contains($0.position) }
+            guard !groupPlayers.isEmpty else { continue }
+            let avg = Double(groupPlayers.reduce(0) { $0 + $1.overall }) / Double(groupPlayers.count)
+            if worst == nil || avg < worst!.avg {
+                worst = (group.name, avg)
+            }
+        }
+        return worst?.name
     }
 
     // MARK: - Depth Index Helper
@@ -196,6 +215,12 @@ struct RosterView: View {
             }
         }
         .navigationTitle("Roster (\(players.count))")
+        .sheet(item: $positionPickerPlayer) { player in
+            positionPickerSheet(for: player)
+        }
+        .sheet(item: $starterPickerPosition) { position in
+            starterPickerSheet(for: position)
+        }
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -279,6 +304,12 @@ struct RosterView: View {
                                         withAnimation(.easeInOut(duration: 0.2)) {
                                             handleDepthChange(player: player, newIndex: newIndex, groupPlayers: groupPlayers)
                                         }
+                                    },
+                                    onPositionBadgeTap: {
+                                        positionPickerPlayer = player
+                                    },
+                                    onStarterBadgeTap: {
+                                        starterPickerPosition = player.position
                                     }
                                 )
                             }
@@ -287,7 +318,8 @@ struct RosterView: View {
                     } header: {
                         PositionGroupHeader(
                             group: group,
-                            players: groupPlayers
+                            players: groupPlayers,
+                            isWeakest: group.name == weakestGroupName
                         )
                     }
                 }
@@ -300,15 +332,31 @@ struct RosterView: View {
     // MARK: - Sortable Header
 
     private var sortableHeader: some View {
-        HStack(spacing: 0) {
-            sortButton("POS", sort: .position, width: isWideLayout ? 56 : 44)
-            sortButton("NAME", sort: .name, width: nil)
-            Spacer()
-            analysisHeaderColumns
+        VStack(spacing: 4) {
+            if !sortHintSeen {
+                HStack(spacing: 4) {
+                    Image(systemName: "hand.tap")
+                        .font(.system(size: 9))
+                    Text("Tap column headers to sort")
+                        .font(.system(size: 9, weight: .medium))
+                }
+                .foregroundStyle(Color.accentGold)
+                .onAppear {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                        withAnimation { sortHintSeen = true }
+                    }
+                }
+            }
+            HStack(spacing: 0) {
+                sortButton("POS", sort: .position, width: isWideLayout ? 56 : 44)
+                sortButton("NAME", sort: .name, width: nil)
+                Spacer()
+                analysisHeaderColumns
+            }
+            .font(.caption2)
+            .fontWeight(.semibold)
+            .foregroundStyle(Color.textTertiary)
         }
-        .font(.caption2)
-        .fontWeight(.semibold)
-        .foregroundStyle(Color.textTertiary)
         .padding(.horizontal, 4)
         .listRowBackground(Color.backgroundPrimary)
         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
@@ -435,7 +483,7 @@ struct RosterView: View {
     // MARK: - Toolbar Components
 
     private var filterPicker: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 4) {
             ForEach(RosterFilter.allCases) { filter in
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
@@ -444,13 +492,19 @@ struct RosterView: View {
                 } label: {
                     Text(filter.label)
                         .font(.subheadline)
-                        .fontWeight(selectedSide == filter ? .bold : .medium)
-                        .foregroundStyle(selectedSide == filter ? Color.backgroundPrimary : Color.textPrimary)
+                        .fontWeight(selectedSide == filter ? .heavy : .medium)
+                        .foregroundStyle(selectedSide == filter ? Color.backgroundPrimary : Color.textSecondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 7)
                         .background(
-                            selectedSide == filter ? Color.accentGold : Color.backgroundTertiary,
+                            selectedSide == filter ? Color.accentGold : Color.clear,
                             in: RoundedRectangle(cornerRadius: 8)
+                        )
+                        .overlay(
+                            selectedSide == filter
+                                ? nil
+                                : RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                         )
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 8))
@@ -493,6 +547,114 @@ struct RosterView: View {
         .accessibilityLabel("Sort roster, currently by \(sortOrder.label) \(sortAscending ? "ascending" : "descending")")
     }
 
+    // MARK: - Position Picker Sheet (#175)
+
+    private func positionPickerSheet(for player: Player) -> some View {
+        NavigationStack {
+            List {
+                let eligible = Position.allCases.filter { pos in
+                    pos == player.position || player.familiarity(at: pos) > 0
+                }
+                ForEach(eligible) { pos in
+                    Button {
+                        // In a real implementation this would update the player's position
+                        positionPickerPlayer = nil
+                    } label: {
+                        HStack {
+                            Text(pos.rawValue)
+                                .font(.headline)
+                                .fontWeight(.bold)
+                                .foregroundStyle(Color.textPrimary)
+                            Spacer()
+                            if pos == player.position {
+                                Text("Current")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.accentGold)
+                            } else {
+                                Text("\(player.familiarity(at: pos))%")
+                                    .font(.caption)
+                                    .monospacedDigit()
+                                    .foregroundStyle(Color.forRating(player.familiarity(at: pos)))
+                            }
+                        }
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.backgroundPrimary)
+            .navigationTitle("Change Position — \(player.fullName)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { positionPickerPlayer = nil }
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    // MARK: - Starter Picker Sheet (#198)
+
+    private func starterPickerSheet(for position: Position) -> some View {
+        let candidates = players
+            .filter { $0.position == position }
+            .sorted { $0.overall > $1.overall }
+
+        return NavigationStack {
+            List {
+                ForEach(candidates) { player in
+                    Button {
+                        // Promote the tapped player to starter
+                        let groupPlayers = players.filter { $0.position.side == position.side }
+                        handleDepthChange(player: player, newIndex: 0, groupPlayers: groupPlayers)
+                        starterPickerPosition = nil
+                    } label: {
+                        HStack(spacing: 8) {
+                            PlayerAvatarView(player: player, size: 32)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(player.fullName)
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(Color.textPrimary)
+                                Text(depthRoleLabel(for: depthIndex(for: player, in: candidates)))
+                                    .font(.caption)
+                                    .foregroundStyle(Color.textTertiary)
+                            }
+                            Spacer()
+                            Text("\(player.overall)")
+                                .font(.title3.monospacedDigit())
+                                .fontWeight(.bold)
+                                .foregroundStyle(Color.forRating(player.overall))
+                        }
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.backgroundPrimary)
+            .navigationTitle("Set Starter — \(position.rawValue)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { starterPickerPosition = nil }
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func depthRoleLabel(for index: Int) -> String {
+        switch index {
+        case 0:  return "Starter"
+        case 1:  return "Backup"
+        case 2:  return "3rd String"
+        default: return "#\(index + 1)"
+        }
+    }
+
     // MARK: - Helpers
 
     private func positionSideOrder(_ a: PositionSide, _ b: PositionSide) -> Int {
@@ -514,6 +676,7 @@ struct PositionGroup: Identifiable {
 struct PositionGroupHeader: View {
     let group: PositionGroup
     let players: [Player]
+    var isWeakest: Bool = false
 
     private var averageOVR: Int {
         guard !players.isEmpty else { return 0 }
@@ -573,6 +736,16 @@ struct PositionGroupHeader: View {
                 .font(.subheadline)
                 .fontWeight(.bold)
                 .foregroundStyle(Color.textPrimary)
+
+            if isWeakest {
+                Text("Biggest Need")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color.danger)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.danger.opacity(0.15), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.danger.opacity(0.4), lineWidth: 1))
+            }
 
             Spacer()
 

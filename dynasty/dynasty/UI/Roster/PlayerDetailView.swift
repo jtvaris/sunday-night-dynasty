@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 // MARK: - Attribute Color Helper
 
@@ -12,12 +13,45 @@ private func colorForAttribute(_ value: Int) -> Color {
     }
 }
 
+// MARK: - Position Compatibility Matrix (#176)
+
+/// Defines which positions a player can realistically convert to based on football sense.
+/// Only positions in this map are shown as viable; others are hidden as unrealistic.
+private let positionCompatibilityMap: [Position: Set<Position>] = [
+    .QB:  [.WR, .RB],
+    .WR:  [.RB, .CB, .FS, .SS, .TE],
+    .RB:  [.WR, .FB, .FS, .SS],
+    .FB:  [.RB, .TE],
+    .TE:  [.WR, .FB],
+    .LT:  [.LG, .RT, .RG, .C],
+    .LG:  [.LT, .C, .RG, .RT],
+    .C:   [.LG, .RG],
+    .RG:  [.LG, .C, .RT, .LT],
+    .RT:  [.RG, .LT, .LG, .C],
+    .DE:  [.OLB, .DT],
+    .DT:  [.DE],
+    .OLB: [.DE, .MLB, .SS],
+    .MLB: [.OLB, .SS],
+    .CB:  [.FS, .SS, .WR],
+    .FS:  [.SS, .CB, .OLB, .WR],
+    .SS:  [.FS, .CB, .OLB],
+    .K:   [.P],
+    .P:   [.K],
+]
+
+/// Returns true if converting from `primary` to `target` is a realistic football move.
+private func isRealisticConversion(from primary: Position, to target: Position) -> Bool {
+    guard let compatible = positionCompatibilityMap[primary] else { return false }
+    return compatible.contains(target)
+}
+
 struct PlayerDetailView: View {
     let player: Player
-    /// All players at the same position in the league, used for ranking context.
-    var leaguePlayers: [Player] = []
     /// Season stats for inline summary.
     var seasonStats: [PlayerGameStats] = []
+
+    // #178: Use @Query to fetch all players for league ranking context
+    @Query private var allLeaguePlayers: [Player]
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -422,8 +456,8 @@ struct PlayerDetailView: View {
         let totals = aggregatedSeasonStats
         let gamesPlayed = seasonStats.count
 
-        if gamesPlayed > 0 {
-            Section("Season Stats") {
+        Section("Season Stats") {
+            if gamesPlayed > 0 {
                 HStack(spacing: 0) {
                     seasonQuickStat(label: "GP", value: "\(gamesPlayed)")
 
@@ -482,9 +516,18 @@ struct PlayerDetailView: View {
                 }
                 .padding(.vertical, 6)
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
+            } else {
+                // #179: Show message when no season stats available
+                HStack(spacing: 8) {
+                    Image(systemName: "chart.bar")
+                        .foregroundStyle(Color.textTertiary)
+                    Text("No stats recorded this season")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
             }
-            .listRowBackground(Color.backgroundSecondary)
         }
+        .listRowBackground(Color.backgroundSecondary)
     }
 
     private func seasonQuickStat(label: String, value: String, highlight: Bool = false, negative: Bool = false) -> some View {
@@ -659,13 +702,19 @@ struct PlayerDetailView: View {
                     CircularProgressView(progress: progress, color: .danger)
                         .frame(width: 32, height: 32)
                 }
-            } else if !player.isInjured {
+            } else {
+                // #180: Show "No injury history" with durability rating
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(Color.success)
-                    Text("Healthy")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.success)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("No injury history")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.success)
+                        Text("Durability: \(player.physical.durability)")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
+                    }
                     Spacer()
                     // Durability indicator
                     VStack(spacing: 2) {
@@ -701,18 +750,20 @@ struct PlayerDetailView: View {
                     }
                     .listRowBackground(Color.backgroundSecondary)
 
+                    // #176/#177: Filter by position compatibility matrix, label as Developing/Can Learn
                     Section {
                         let viablePositions = VersatilityEngine.viablePositions(for: player)
-                            .filter { $0.0 != player.position }
+                            .filter { $0.0 != player.position && isRealisticConversion(from: player.position, to: $0.0) }
 
                         if viablePositions.isEmpty {
-                            Text("No viable alternate positions based on current attributes.")
+                            Text("No viable alternate positions for this player's position group.")
                                 .font(.caption)
                                 .foregroundStyle(Color.textTertiary)
                         } else {
                             ForEach(viablePositions, id: \.0) { pos, rating in
                                 let familiarity = player.familiarity(at: pos)
                                 let ceiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: pos)
+                                let statusLabel = familiarity > 0 ? "Developing" : "Can Learn"
                                 Button {
                                     player.trainingPosition = pos
                                     showPositionChange = false
@@ -722,10 +773,10 @@ struct PlayerDetailView: View {
                                             .font(.caption.weight(.bold))
                                             .foregroundStyle(Color.textPrimary)
                                             .frame(width: 30, alignment: .leading)
-                                        Text(rating.label)
-                                            .font(.caption2)
-                                            .foregroundStyle(rating.color)
-                                            .frame(width: 80, alignment: .leading)
+                                        Text(statusLabel)
+                                            .font(.caption2.weight(.medium))
+                                            .foregroundStyle(familiarity > 0 ? Color.accentGold : Color.accentBlue)
+                                            .frame(width: 70, alignment: .leading)
                                         Spacer()
                                         Text("\(familiarity)%")
                                             .font(.caption2.weight(.bold).monospacedDigit())
@@ -763,12 +814,13 @@ struct PlayerDetailView: View {
 
     private var physicalSection: some View {
         Section("Physical Attributes") {
-            ColorCodedAttributeRow(name: "Speed",        value: player.physical.speed)
-            ColorCodedAttributeRow(name: "Acceleration", value: player.physical.acceleration)
-            ColorCodedAttributeRow(name: "Strength",     value: player.physical.strength)
-            ColorCodedAttributeRow(name: "Agility",      value: player.physical.agility)
-            ColorCodedAttributeRow(name: "Stamina",      value: player.physical.stamina)
-            ColorCodedAttributeRow(name: "Durability",   value: player.physical.durability)
+            // #184: Trend arrows (no previous season data yet, show "---")
+            AttributeRowWithTrend(name: "Speed",        value: player.physical.speed,        previousValue: nil)
+            AttributeRowWithTrend(name: "Acceleration", value: player.physical.acceleration, previousValue: nil)
+            AttributeRowWithTrend(name: "Strength",     value: player.physical.strength,     previousValue: nil)
+            AttributeRowWithTrend(name: "Agility",      value: player.physical.agility,      previousValue: nil)
+            AttributeRowWithTrend(name: "Stamina",      value: player.physical.stamina,      previousValue: nil)
+            AttributeRowWithTrend(name: "Durability",   value: player.physical.durability,   previousValue: nil)
         }
         .listRowBackground(Color.backgroundSecondary)
     }
@@ -777,12 +829,13 @@ struct PlayerDetailView: View {
 
     private var mentalSection: some View {
         Section("Mental Attributes") {
-            ColorCodedAttributeRow(name: "Awareness",       value: player.mental.awareness)
-            ColorCodedAttributeRow(name: "Decision Making",  value: player.mental.decisionMaking)
-            ColorCodedAttributeRow(name: "Clutch",           value: player.mental.clutch)
-            ColorCodedAttributeRow(name: "Work Ethic",       value: player.mental.workEthic)
-            ColorCodedAttributeRow(name: "Coachability",     value: player.mental.coachability)
-            ColorCodedAttributeRow(name: "Leadership",       value: player.mental.leadership)
+            // #184: Trend arrows (no previous season data yet, show "---")
+            AttributeRowWithTrend(name: "Awareness",       value: player.mental.awareness,      previousValue: nil)
+            AttributeRowWithTrend(name: "Decision Making",  value: player.mental.decisionMaking, previousValue: nil)
+            AttributeRowWithTrend(name: "Clutch",           value: player.mental.clutch,          previousValue: nil)
+            AttributeRowWithTrend(name: "Work Ethic",       value: player.mental.workEthic,      previousValue: nil)
+            AttributeRowWithTrend(name: "Coachability",     value: player.mental.coachability,    previousValue: nil)
+            AttributeRowWithTrend(name: "Leadership",       value: player.mental.leadership,      previousValue: nil)
         }
         .listRowBackground(Color.backgroundSecondary)
     }
@@ -793,13 +846,15 @@ struct PlayerDetailView: View {
     private var positionAttributesSection: some View {
         switch player.positionAttributes {
         case .quarterback(let attrs):
+            // #182: QB skills with league average context
+            let avgAttrs = qbLeagueAverages
             Section("Quarterback Skills") {
-                ColorCodedAttributeRow(name: "Arm Strength",    value: attrs.armStrength)
-                ColorCodedAttributeRow(name: "Accuracy Short",  value: attrs.accuracyShort)
-                ColorCodedAttributeRow(name: "Accuracy Mid",    value: attrs.accuracyMid)
-                ColorCodedAttributeRow(name: "Accuracy Deep",   value: attrs.accuracyDeep)
-                ColorCodedAttributeRow(name: "Pocket Presence", value: attrs.pocketPresence)
-                ColorCodedAttributeRow(name: "Scrambling",      value: attrs.scrambling)
+                AttributeRowWithContext(name: "Arm Strength",    value: attrs.armStrength,    avg: avgAttrs.armStrength)
+                AttributeRowWithContext(name: "Accuracy Short",  value: attrs.accuracyShort,  avg: avgAttrs.accuracyShort)
+                AttributeRowWithContext(name: "Accuracy Mid",    value: attrs.accuracyMid,    avg: avgAttrs.accuracyMid)
+                AttributeRowWithContext(name: "Accuracy Deep",   value: attrs.accuracyDeep,   avg: avgAttrs.accuracyDeep)
+                AttributeRowWithContext(name: "Pocket Presence", value: attrs.pocketPresence, avg: avgAttrs.pocketPresence)
+                AttributeRowWithContext(name: "Scrambling",      value: attrs.scrambling,     avg: avgAttrs.scrambling)
             }
             .listRowBackground(Color.backgroundSecondary)
 
@@ -879,8 +934,22 @@ struct PlayerDetailView: View {
 
     private var personalitySection: some View {
         Section("Personality") {
-            LabeledContent("Archetype", value: archetypeDisplayName)
-            LabeledContent("Motivation", value: player.personality.motivation.rawValue)
+            // Archetype with explanation (#183)
+            VStack(alignment: .leading, spacing: 4) {
+                LabeledContent("Archetype", value: archetypeDisplayName)
+                Text(archetypeEffectDescription)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+            }
+
+            // Motivation with explanation (#183)
+            VStack(alignment: .leading, spacing: 4) {
+                LabeledContent("Motivation", value: player.personality.motivation.rawValue)
+                Text(motivationEffectDescription)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+            }
+
             if player.personality.isMentor {
                 Label("Mentor influence on team", systemImage: "person.2.fill")
                     .font(.footnote)
@@ -937,18 +1006,19 @@ struct PlayerDetailView: View {
 
                 Divider().overlay(Color.surfaceBorder)
 
-                // All viable alternate positions with explanation (#32, #40)
+                // #176/#177: Filter by compatibility matrix, label Developing vs Can Learn
                 let allViable = VersatilityEngine.viablePositions(for: player)
-                    .filter { $0.0 != player.position }
+                    .filter { $0.0 != player.position && isRealisticConversion(from: player.position, to: $0.0) }
 
                 if allViable.isEmpty {
-                    Text("No viable alternate positions for this player's attributes.")
+                    Text("No viable alternate positions for this player's position group.")
                         .font(.caption)
                         .foregroundStyle(Color.textTertiary)
                 } else {
                     ForEach(allViable, id: \.0) { pos, rating in
                         let familiarity = player.familiarity(at: pos)
                         let ceiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: pos)
+                        let statusLabel = familiarity > 0 ? "Developing" : "Can Learn"
                         VStack(spacing: 4) {
                             HStack(spacing: 8) {
                                 Text(pos.rawValue)
@@ -956,9 +1026,9 @@ struct PlayerDetailView: View {
                                     .foregroundStyle(Color.textPrimary)
                                     .frame(width: 30, alignment: .leading)
 
-                                Text(rating.label)
+                                Text(statusLabel)
                                     .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(rating.color)
+                                    .foregroundStyle(familiarity > 0 ? Color.accentGold : Color.accentBlue)
 
                                 Spacer()
 
@@ -998,43 +1068,55 @@ struct PlayerDetailView: View {
                 }
             }
 
-            // Scheme familiarity bars
-            let schemeFams = player.schemeFamiliarity
-                .filter { $0.value > 0 }
-                .sorted { $0.value > $1.value }
+            // #181: Show ALL relevant schemes, not just learned ones
+            Divider().overlay(Color.surfaceBorder)
 
-            if !schemeFams.isEmpty {
-                Divider().overlay(Color.surfaceBorder)
+            Text("Scheme Familiarity")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.textSecondary)
 
-                Text("Scheme Familiarity")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.textSecondary)
+            let allSchemes: [(String, Int)] = {
+                let schemeNames: [String]
+                switch player.position.side {
+                case .offense:
+                    schemeNames = OffensiveScheme.allCases.map(\.rawValue)
+                case .defense:
+                    schemeNames = DefensiveScheme.allCases.map(\.rawValue)
+                case .specialTeams:
+                    // Special teams players show both offensive and defensive schemes
+                    schemeNames = OffensiveScheme.allCases.map(\.rawValue) + DefensiveScheme.allCases.map(\.rawValue)
+                }
+                return schemeNames.map { name in
+                    (name, player.schemeFamiliarity[name] ?? 0)
+                }.sorted { $0.1 > $1.1 }
+            }()
 
-                ForEach(schemeFams, id: \.key) { scheme, familiarity in
-                    HStack(spacing: 8) {
-                        Text(scheme)
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                            .frame(width: 80, alignment: .leading)
-                            .lineLimit(1)
+            ForEach(allSchemes, id: \.0) { scheme, familiarity in
+                HStack(spacing: 8) {
+                    Text(scheme)
+                        .font(.caption)
+                        .foregroundStyle(familiarity > 0 ? Color.textSecondary : Color.textTertiary)
+                        .frame(width: 80, alignment: .leading)
+                        .lineLimit(1)
 
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(Color.backgroundTertiary)
-                                    .frame(height: 6)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Color.backgroundTertiary)
+                                .frame(height: 6)
+                            if familiarity > 0 {
                                 RoundedRectangle(cornerRadius: 2)
                                     .fill(schemeFamColor(familiarity))
                                     .frame(width: geo.size.width * CGFloat(familiarity) / 100.0, height: 6)
                             }
                         }
-                        .frame(height: 6)
-
-                        Text("\(familiarity)%")
-                            .font(.caption2.weight(.bold).monospacedDigit())
-                            .foregroundStyle(schemeFamColor(familiarity))
-                            .frame(width: 36, alignment: .trailing)
                     }
+                    .frame(height: 6)
+
+                    Text("\(familiarity)%")
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(familiarity > 0 ? schemeFamColor(familiarity) : Color.textTertiary)
+                        .frame(width: 36, alignment: .trailing)
                 }
             }
         }
@@ -1123,11 +1205,16 @@ struct PlayerDetailView: View {
     private var positionAttributesGridSection: some View {
         switch player.positionAttributes {
         case .quarterback(let a):
+            // #182: QB grid with league averages
+            let avg = qbLeagueAverages
             Section("Quarterback Skills") {
-                attributeGrid([
-                    ("Arm Strength", a.armStrength), ("Accuracy Short", a.accuracyShort),
-                    ("Accuracy Mid", a.accuracyMid), ("Accuracy Deep", a.accuracyDeep),
-                    ("Pocket Presence", a.pocketPresence), ("Scrambling", a.scrambling),
+                attributeGridWithAvg([
+                    ("Arm Strength", a.armStrength, avg.armStrength),
+                    ("Accuracy Short", a.accuracyShort, avg.accuracyShort),
+                    ("Accuracy Mid", a.accuracyMid, avg.accuracyMid),
+                    ("Accuracy Deep", a.accuracyDeep, avg.accuracyDeep),
+                    ("Pocket Presence", a.pocketPresence, avg.pocketPresence),
+                    ("Scrambling", a.scrambling, avg.scrambling),
                 ])
             }.listRowBackground(Color.backgroundSecondary)
         case .wideReceiver(let a):
@@ -1212,6 +1299,34 @@ struct PlayerDetailView: View {
         .padding(.vertical, 4)
     }
 
+    /// #182: Grid variant that shows league average next to each attribute value.
+    private func attributeGridWithAvg(_ attributes: [(String, Int, Int)]) -> some View {
+        let cols = attributeColumns
+        let gridColumns = Array(repeating: GridItem(.flexible(), spacing: 12), count: cols)
+        return LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 8) {
+            ForEach(attributes, id: \.0) { attr in
+                HStack(spacing: 6) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(colorForAttribute(attr.1))
+                        .frame(width: 3, height: 16)
+                    Text(attr.0)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(attr.1)")
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                        .foregroundStyle(colorForAttribute(attr.1))
+                    Text("(\(attr.2))")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
     // MARK: - Helpers
 
     private var positionLabel: some View {
@@ -1286,16 +1401,32 @@ struct PlayerDetailView: View {
     }
 
     private var archetypeDisplayName: String {
+        player.personality.archetype.displayName
+    }
+
+    // #183: Archetype effect descriptions
+    private var archetypeEffectDescription: String {
         switch player.personality.archetype {
-        case .teamLeader:        return "Team Leader"
-        case .loneWolf:          return "Lone Wolf"
-        case .feelPlayer:        return "Feel Player"
-        case .steadyPerformer:   return "Steady Performer"
-        case .dramaQueen:        return "Drama Queen"
-        case .quietProfessional: return "Quiet Professional"
-        case .mentor:            return "Mentor"
-        case .fieryCompetitor:   return "Fiery Competitor"
-        case .classClown:        return "Class Clown"
+        case .teamLeader:        return "Boosts team morale; rallies teammates in tough games"
+        case .loneWolf:          return "Self-motivated; less affected by team chemistry"
+        case .feelPlayer:        return "Performance varies with mood; streaky in big moments"
+        case .steadyPerformer:   return "Consistent in pressure situations; rarely has off days"
+        case .dramaQueen:        return "Creates media drama; can disrupt locker room if unhappy"
+        case .quietProfessional: return "Steady presence; does not seek spotlight but delivers"
+        case .mentor:            return "Accelerates development of younger teammates"
+        case .fieryCompetitor:   return "Elevated play in rivalries; risk of penalties when frustrated"
+        case .classClown:        return "Keeps locker room loose; may lack focus in preparation"
+        }
+    }
+
+    // #183: Motivation effect descriptions
+    private var motivationEffectDescription: String {
+        switch player.personality.motivation {
+        case .money:   return "Motivated by contract value; morale drops if underpaid"
+        case .winning: return "Thrives on winning; morale suffers during losing streaks"
+        case .stats:   return "Wants volume and usage; unhappy if production drops"
+        case .loyalty: return "Values long-term commitment; bonus morale for extensions"
+        case .fame:    return "Motivated by media attention; prefers big-market teams"
         }
     }
 
@@ -1413,11 +1544,11 @@ struct PlayerDetailView: View {
         }
     }
 
-    // MARK: - League Ranking (#33)
+    // MARK: - League Ranking (#33, #178)
 
-    /// Returns a ranking string like "#3 QB" or "Top 12%" if league players are provided.
+    /// Returns a ranking string like "#3 QB" or "Top 12%" using @Query data.
     private var leagueRanking: String? {
-        let samePos = leaguePlayers.filter { $0.position == player.position }
+        let samePos = allLeaguePlayers.filter { $0.position == player.position }
         guard samePos.count > 1 else { return nil }
         let sorted = samePos.sorted { $0.overall > $1.overall }
         guard let rank = sorted.firstIndex(where: { $0.id == player.id }) else { return nil }
@@ -1479,6 +1610,37 @@ struct PlayerDetailView: View {
         if player.isInjured { score *= 0.7 }
 
         return min(100, max(0, Int(score)))
+    }
+
+    // MARK: - QB League Averages (#182)
+
+    /// Compute average QB attributes across all QBs in the league for context display.
+    private var qbLeagueAverages: QBAttributes {
+        let qbs = allLeaguePlayers.filter { $0.position == .QB }
+        guard !qbs.isEmpty else {
+            return QBAttributes(armStrength: 70, accuracyShort: 70, accuracyMid: 70,
+                                accuracyDeep: 70, pocketPresence: 70, scrambling: 70)
+        }
+        var totalArm = 0, totalShort = 0, totalMid = 0, totalDeep = 0, totalPocket = 0, totalScramble = 0
+        for qb in qbs {
+            if case .quarterback(let a) = qb.positionAttributes {
+                totalArm += a.armStrength
+                totalShort += a.accuracyShort
+                totalMid += a.accuracyMid
+                totalDeep += a.accuracyDeep
+                totalPocket += a.pocketPresence
+                totalScramble += a.scrambling
+            }
+        }
+        let count = qbs.count
+        return QBAttributes(
+            armStrength: totalArm / count,
+            accuracyShort: totalShort / count,
+            accuracyMid: totalMid / count,
+            accuracyDeep: totalDeep / count,
+            pocketPresence: totalPocket / count,
+            scrambling: totalScramble / count
+        )
     }
 
     // MARK: - Versatility Explanation (#32)
@@ -1642,6 +1804,89 @@ private struct CircularProgressView: View {
     }
 }
 
+// MARK: - Attribute Row with Trend Arrow (#184)
+
+/// Displays attribute with a trend arrow showing change from last season.
+/// If no previous data exists, shows "---" indicator.
+struct AttributeRowWithTrend: View {
+    let name: String
+    let value: Int
+    let previousValue: Int?
+
+    private var attributeColor: Color {
+        colorForAttribute(value)
+    }
+
+    private var trendIndicator: (symbol: String, color: Color) {
+        guard let prev = previousValue else {
+            return ("---", .textTertiary)
+        }
+        let diff = value - prev
+        if diff > 0 {
+            return ("+\(diff)", .success)
+        } else if diff < 0 {
+            return ("\(diff)", .danger)
+        } else {
+            return ("=", .textTertiary)
+        }
+    }
+
+    var body: some View {
+        LabeledContent(name) {
+            HStack(spacing: 6) {
+                // Color bar indicator
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(attributeColor)
+                    .frame(width: 3, height: 16)
+
+                Text("\(value)")
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(attributeColor)
+
+                // Trend arrow
+                Text(trendIndicator.symbol)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(trendIndicator.color)
+                    .frame(width: 28, alignment: .trailing)
+            }
+        }
+    }
+}
+
+// MARK: - Attribute Row with League Average Context (#182)
+
+/// Displays attribute value alongside league position average for context.
+struct AttributeRowWithContext: View {
+    let name: String
+    let value: Int
+    let avg: Int
+
+    private var attributeColor: Color {
+        colorForAttribute(value)
+    }
+
+    var body: some View {
+        LabeledContent(name) {
+            HStack(spacing: 6) {
+                // Color bar indicator
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(attributeColor)
+                    .frame(width: 3, height: 16)
+
+                Text("\(value)")
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(attributeColor)
+
+                Text("(Avg: \(avg))")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+    }
+}
+
 // MARK: - Legacy AttributeRow (kept for backward compatibility)
 
 struct AttributeRow: View {
@@ -1681,4 +1926,5 @@ struct AttributeRow: View {
             annualSalary: 45000
         ))
     }
+    .modelContainer(for: Player.self, inMemory: true)
 }

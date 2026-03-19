@@ -249,6 +249,31 @@ struct CoachingStaffView: View {
         }
     }
 
+    /// Minimum salary estimate (in thousands) for a vacant coaching role.
+    private func estimatedMinimumSalary(for role: CoachRole) -> Int {
+        switch role {
+        case .headCoach:                                          return 3_000
+        case .assistantHeadCoach:                                 return 1_000
+        case .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator: return 2_000
+        default:                                                  return 500
+        }
+    }
+
+    /// Minimum salary estimate (in thousands) for a vacant scout role.
+    private func estimatedMinimumScoutSalary(for role: ScoutRole) -> Int {
+        switch role {
+        case .chiefScout: return 200
+        default:          return 80
+        }
+    }
+
+    /// #155: Estimated minimum cost to fill all vacant positions.
+    private var estimatedMinimumToFillAll: Int {
+        let coachCost = vacantCoachRoles.reduce(0) { $0 + estimatedMinimumSalary(for: $1) }
+        let scoutCost = vacantScoutRoles.reduce(0) { $0 + estimatedMinimumScoutSalary(for: $1) }
+        return coachCost + scoutCost
+    }
+
     /// Description of what position group a position coach improves.
     private func positionGroupBoost(for role: CoachRole) -> String? {
         switch role {
@@ -448,14 +473,15 @@ struct CoachingStaffView: View {
             }
         }
         // MARK: - Lock-in Confirmation Alert (#66)
-        .alert("Confirm Staff", isPresented: $showLockInConfirmation) {
-            Button("Confirm & Advance") {
+        // #169: Confirmation dialog before phase change
+        .alert("Advance to Review Roster?", isPresented: $showLockInConfirmation) {
+            Button("Advance") {
                 career.currentPhase = .combine
                 try? modelContext.save()
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Lock in your coaching staff and advance to the Combine phase? You won't be able to make coaching changes until next offseason.")
+            Text("Lock in your coaching staff and advance. You won't be able to make coaching changes until next offseason.")
         }
         .alert("Incomplete Staff", isPresented: $showIncompleteStaffWarning) {
             Button("Lock in Anyway") {
@@ -1335,17 +1361,47 @@ struct CoachingStaffView: View {
 
             // #52: Show warning text when required coordinators not hired
             if !allRequiredRolesFilled && !isBudgetOverspent {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.warning)
-                    Text("Missing: \(missingRequiredRoles.map { $0.displayName }.joined(separator: ", "))")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.warning)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.warning)
+                        Text("Missing: \(missingRequiredRoles.map { $0.displayName }.joined(separator: ", "))")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Color.warning)
+                    }
+                    // #154: Explain consequences of locking in without coordinators
+                    Text("Without coordinators: -20% offense/defense efficiency, slower player development")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.danger)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 2)
+            }
+
+            // #155: Show minimum cost to fill all vacant positions
+            if (!vacantCoachRoles.isEmpty || !vacantScoutRoles.isEmpty) && !isBudgetOverspent {
+                Text("Est. minimum to fill all: ~$\(String(format: "%.1f", Double(estimatedMinimumToFillAll) / 1_000.0))M")
+                    .font(.system(size: 10, weight: .medium).monospacedDigit())
+                    .foregroundStyle(estimatedMinimumToFillAll <= remainingBudget ? Color.textSecondary : Color.warning)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+            }
+
+            // #156: Suggest hiring priority order
+            if !vacantCoachRoles.isEmpty && !isBudgetOverspent {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("1. Coordinators (biggest impact)")
+                        .foregroundStyle(vacantCoachRoles.contains(where: { [.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator].contains($0) }) ? Color.textSecondary : Color.success)
+                    Text("2. Position coaches")
+                        .foregroundStyle(Color.textTertiary)
+                    Text("3. Support staff")
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .font(.system(size: 9, weight: .medium))
+                .padding(.horizontal, 16)
+                .padding(.top, 2)
             }
 
             Button {

@@ -12,6 +12,10 @@ struct PlayerRowView: View {
     var positionGroupCount: Int = 0
     /// Called when the user requests a depth change. Parameter is the new depth index.
     var onDepthChange: ((Int) -> Void)? = nil
+    /// Called when the user taps the position badge to change position (#175).
+    var onPositionBadgeTap: (() -> Void)? = nil
+    /// Called when the user taps the starter badge to pick a new starter (#198).
+    var onStarterBadgeTap: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 6) {
@@ -23,12 +27,33 @@ struct PlayerRowView: View {
 
             PlayerAvatarView(player: player, size: 28)
 
-            Text(player.fullName)
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundStyle(Color.textPrimary)
-                .lineLimit(1)
-                .frame(minWidth: 80, alignment: .leading)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(player.fullName)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+
+                // Status badges — full text for clarity (#171, #172)
+                HStack(spacing: 4) {
+                    if isExpiringContract {
+                        Text("Trade Watch")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(Color.warning)
+                    }
+                    if isHighCapInvestment {
+                        Text("Invested")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(Color.accentGold)
+                    }
+                    if player.isFranchiseTagged {
+                        Text("Franchise")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(Color.danger)
+                    }
+                }
+            }
+            .frame(minWidth: 80, alignment: .leading)
 
             Spacer(minLength: 2)
 
@@ -249,18 +274,19 @@ struct PlayerRowView: View {
 
     private var depthColumns: some View {
         Group {
-            // Starter/Backup badge (larger)
-            Text(depthBadgeText)
-                .font(.system(size: 9, weight: .heavy))
-                .foregroundStyle(depthIndex == 0 ? Color.backgroundPrimary : depthColor)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(
-                    depthIndex == 0
-                        ? AnyShapeStyle(depthColor)
-                        : AnyShapeStyle(depthColor.opacity(0.2)),
-                    in: RoundedRectangle(cornerRadius: 3)
-                )
+            // Starter/Backup badge (larger) — tappable to pick starter (#198)
+            Group {
+                if depthIndex == 0, let onStarterBadgeTap {
+                    Button {
+                        onStarterBadgeTap()
+                    } label: {
+                        starterBadgeContent
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    starterBadgeContent
+                }
+            }
 
             // Depth label
             Text(depthLabel)
@@ -289,6 +315,22 @@ struct PlayerRowView: View {
             // Form
             formColumn
         }
+    }
+
+    // MARK: - Starter Badge Content (#198)
+
+    private var starterBadgeContent: some View {
+        Text(depthBadgeText)
+            .font(.system(size: 9, weight: .heavy))
+            .foregroundStyle(depthIndex == 0 ? Color.backgroundPrimary : depthColor)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                depthIndex == 0
+                    ? AnyShapeStyle(depthColor)
+                    : AnyShapeStyle(depthColor.opacity(0.2)),
+                in: RoundedRectangle(cornerRadius: 3)
+            )
     }
 
     // MARK: - Form Column (#97)
@@ -337,13 +379,34 @@ struct PlayerRowView: View {
     // MARK: - Subviews
 
     private var positionBadge: some View {
+        Group {
+            if let onPositionBadgeTap {
+                Button {
+                    onPositionBadgeTap()
+                } label: {
+                    positionBadgeContent
+                }
+                .buttonStyle(.plain)
+            } else {
+                positionBadgeContent
+            }
+        }
+    }
+
+    private var positionBadgeContent: some View {
         Text(player.position.rawValue)
             .font(.caption2)
             .fontWeight(.bold)
             .foregroundStyle(Color.textPrimary)
             .frame(width: 36, height: 24)
             .background(positionColor, in: RoundedRectangle(cornerRadius: 4))
-            .accessibilityLabel("\(player.position.rawValue), \(player.position.side.rawValue)")
+            .overlay(
+                onPositionBadgeTap != nil
+                    ? RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(Color.textTertiary.opacity(0.5), lineWidth: 1)
+                    : nil
+            )
+            .accessibilityLabel("\(player.position.rawValue), \(player.position.side.rawValue)\(onPositionBadgeTap != nil ? ", tap to change" : "")")
     }
 
     @ViewBuilder
@@ -403,6 +466,11 @@ struct PlayerRowView: View {
 
     private var isExpiringContract: Bool {
         player.contractYearsRemaining <= 1
+    }
+
+    /// True when the player has a high cap commitment ($15M+ annual salary).
+    private var isHighCapInvestment: Bool {
+        player.annualSalary >= 15000
     }
 
     private var contractYearsLabel: some View {

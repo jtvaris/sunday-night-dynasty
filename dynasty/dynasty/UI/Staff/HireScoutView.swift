@@ -14,6 +14,7 @@ struct HireScoutView: View {
     @State private var candidates: [Scout] = []
     @State private var hiredScoutID: UUID?
     @State private var sortOption: SortOption = .accuracy
+    @State private var showAffordableOnly: Bool = false
 
     enum SortOption: String, CaseIterable {
         case accuracy      = "Accuracy"
@@ -21,16 +22,48 @@ struct HireScoutView: View {
         case personality    = "Personality Read"
         case salary         = "Salary"
         case experience     = "Experience"
+        case value          = "Value"
+    }
+
+    private var filteredCandidates: [Scout] {
+        if showAffordableOnly {
+            return candidates.filter { $0.salary <= remainingBudget }
+        }
+        return candidates
     }
 
     private var sortedCandidates: [Scout] {
+        let list = filteredCandidates
         switch sortOption {
-        case .accuracy:    return candidates.sorted { $0.accuracy > $1.accuracy }
-        case .potential:   return candidates.sorted { $0.potentialRead > $1.potentialRead }
-        case .personality: return candidates.sorted { $0.personalityRead > $1.personalityRead }
-        case .salary:      return candidates.sorted { $0.salary < $1.salary }
-        case .experience:  return candidates.sorted { $0.experience > $1.experience }
+        case .accuracy:    return list.sorted { $0.accuracy > $1.accuracy }
+        case .potential:   return list.sorted { $0.potentialRead > $1.potentialRead }
+        case .personality: return list.sorted { $0.personalityRead > $1.personalityRead }
+        case .salary:      return list.sorted { $0.salary < $1.salary }
+        case .experience:  return list.sorted { $0.experience > $1.experience }
+        case .value:       return list.sorted { scoutValueRatio($0) > scoutValueRatio($1) }
         }
+    }
+
+    /// Value ratio for scouts (accuracy-to-salary).
+    private func scoutValueRatio(_ scout: Scout) -> Double {
+        let avg = Double(scout.accuracy + scout.potentialRead + scout.personalityRead) / 3.0
+        let salaryM = max(Double(scout.salary) / 1_000.0, 0.01)
+        return avg / salaryM
+    }
+
+    /// Value label for a scout.
+    private func scoutValueLabel(_ scout: Scout) -> (label: String, color: Color) {
+        let ratio = scoutValueRatio(scout)
+        if ratio >= 400 { return ("Great", .success) }
+        if ratio >= 250 { return ("Good", .accentGold) }
+        if ratio >= 150 { return ("Fair", .warning) }
+        return ("Poor", .danger)
+    }
+
+    /// Top 3 scout IDs by accuracy.
+    private var top3ScoutIDs: Set<UUID> {
+        let byAcc = filteredCandidates.sorted { $0.accuracy > $1.accuracy }
+        return Set(byAcc.prefix(3).map { $0.id })
     }
 
     var body: some View {
@@ -50,37 +83,17 @@ struct HireScoutView: View {
 
             LinearGradient(
                 colors: [
-                    Color.backgroundPrimary.opacity(0.6),
-                    Color.backgroundPrimary.opacity(0.8)
+                    Color.backgroundPrimary.opacity(0.85),
+                    Color.backgroundPrimary.opacity(0.5),
+                    Color.backgroundPrimary.opacity(0.85)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
 
-            List {
-                Section {
-                    ForEach(sortedCandidates) { candidate in
-                        ScoutCandidateRow(
-                            candidate: candidate,
-                            isHired: hiredScoutID == candidate.id,
-                            isOverBudget: candidate.salary > remainingBudget
-                        ) {
-                            hire(candidate)
-                        }
-                    }
-                } header: {
-                    Text("\(candidates.count) Available Candidates")
-                } footer: {
-                    Text("Select a scout to add them to your scouting department.")
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
-                }
-                .listRowBackground(Color.backgroundSecondary)
-            }
-            .scrollContentBackground(.hidden)
-            .listStyle(.insetGrouped)
-            .safeAreaInset(edge: .top) {
+            VStack(spacing: 0) {
+                // Budget header (matching HireCoachView style)
                 VStack(spacing: 8) {
                     Text(scoutRole.roleDescription)
                         .font(.caption)
@@ -97,6 +110,19 @@ struct HireScoutView: View {
                                 .foregroundStyle(remainingBudget > 0 ? Color.success : Color.danger)
                         }
                         Spacer()
+
+                        // Affordable-only toggle (matching HireCoachView)
+                        Toggle(isOn: $showAffordableOnly) {
+                            Text("Affordable")
+                                .font(.caption2)
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                        .toggleStyle(.switch)
+                        .tint(Color.accentGold)
+                        .fixedSize()
+
+                        Spacer().frame(width: 12)
+
                         Picker("Sort", selection: $sortOption) {
                             ForEach(SortOption.allCases, id: \.self) { option in
                                 Text(option.rawValue).tag(option)
@@ -104,15 +130,44 @@ struct HireScoutView: View {
                         }
                         .pickerStyle(.menu)
                         .tint(Color.accentGold)
+
+                        Spacer().frame(width: 12)
+
+                        Text("\(filteredCandidates.count) candidates")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
                     }
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(.ultraThinMaterial)
+                .background(Color.backgroundSecondary)
+
+                Divider().overlay(Color.surfaceBorder)
+
+                // Candidate list
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(sortedCandidates) { candidate in
+                            ScoutCandidateRow(
+                                candidate: candidate,
+                                isHired: hiredScoutID == candidate.id,
+                                isOverBudget: candidate.salary > remainingBudget,
+                                isTop3: top3ScoutIDs.contains(candidate.id),
+                                valueLabel: scoutValueLabel(candidate)
+                            ) {
+                                hire(candidate)
+                            }
+
+                            Divider()
+                                .overlay(Color.surfaceBorder.opacity(0.4))
+                                .padding(.horizontal, 12)
+                        }
+                    }
+                }
             }
         }
         .navigationTitle("Hire \(scoutRole.displayName)")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
             if candidates.isEmpty {
@@ -162,84 +217,133 @@ private struct ScoutCandidateRow: View {
     let candidate: Scout
     let isHired: Bool
     let isOverBudget: Bool
+    let isTop3: Bool
+    let valueLabel: (label: String, color: Color)
     let onHire: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Top row: name + salary + hire button
-            HStack(alignment: .top) {
+        Button(action: onHire) {
+            HStack(spacing: 0) {
+                // Name + meta
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(candidate.fullName)
-                        .font(.headline)
-                        .foregroundStyle(isOverBudget ? Color.textTertiary : Color.textPrimary)
+                    HStack(spacing: 4) {
+                        Text(candidate.fullName)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(isOverBudget ? Color.textTertiary : Color.textPrimary)
+                            .lineLimit(1)
+
+                        // Top 3 badge
+                        if isTop3 {
+                            Text("TOP")
+                                .font(.system(size: 7, weight: .black))
+                                .foregroundStyle(Color.backgroundPrimary)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 3))
+                        }
+                    }
 
                     HStack(spacing: 6) {
-                        Text("\(candidate.experience) yr\(candidate.experience == 1 ? "" : "s") exp")
+                        Text("\(candidate.experience) yr\(candidate.experience == 1 ? "" : "s")")
+                            .font(.system(size: 9).monospacedDigit())
                         if let spec = candidate.positionSpecialization {
-                            Text("\u{00B7}")
-                            Text("Specializes: \(spec.rawValue)")
+                            Text(spec.rawValue)
+                                .font(.system(size: 9, weight: .medium))
                                 .foregroundStyle(Color.accentBlue)
                         }
-                        Text("\u{00B7}")
-                        Text("$\(candidate.salary)K/yr")
-                            .foregroundStyle(isOverBudget ? Color.danger : Color.accentGold)
-                            .fontWeight(.semibold)
                     }
-                    .font(.caption)
-                    .foregroundStyle(Color.textSecondary)
+                    .foregroundStyle(Color.textTertiary)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Spacer()
+                // Accuracy
+                VStack(spacing: 2) {
+                    Text("\(candidate.accuracy)")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Color.forRating(candidate.accuracy))
+                    Text("Acc")
+                        .font(.system(size: 8))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .frame(width: 36)
 
-                Button(action: onHire) {
+                // Potential Read
+                VStack(spacing: 2) {
+                    Text("\(candidate.potentialRead)")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Color.forRating(candidate.potentialRead))
+                    Text("Pot")
+                        .font(.system(size: 8))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .frame(width: 36)
+
+                // Personality Read
+                VStack(spacing: 2) {
+                    Text("\(candidate.personalityRead)")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Color.forRating(candidate.personalityRead))
+                    Text("Pers")
+                        .font(.system(size: 8))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .frame(width: 36)
+
+                // Salary
+                Text("$\(candidate.salary)K")
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(isOverBudget ? Color.danger : Color.textSecondary)
+                    .frame(width: 52)
+
+                // Value badge
+                Text(valueLabel.label)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(valueLabel.color)
+                    .frame(width: 36)
+
+                // Status indicator
+                Group {
                     if isHired {
-                        Label("Hired", systemImage: "checkmark.circle.fill")
-                            .font(.subheadline.weight(.semibold))
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 14))
                             .foregroundStyle(Color.success)
                     } else if isOverBudget {
-                        Text("Over Budget")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Color.danger)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                        Image(systemName: "xmark.circle")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.danger.opacity(0.5))
                     } else {
-                        Text("Hire")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 8))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.textTertiary)
                     }
                 }
-                .disabled(isHired || isOverBudget)
-                .animation(.easeInOut(duration: 0.2), value: isHired)
+                .frame(width: 30)
             }
-
-            // Star ratings
-            HStack(spacing: 0) {
-                starCell(label: "Accuracy", value: candidate.accuracy)
-                starCell(label: "Potential Read", value: candidate.potentialRead)
-                starCell(label: "Personality", value: candidate.personalityRead)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isHired || isOverBudget)
+        .opacity(isOverBudget ? 0.6 : 1.0)
+        .background(
+            Group {
+                if isHired {
+                    Color.success.opacity(0.06)
+                } else if isTop3 {
+                    Color.accentGold.opacity(0.04)
+                } else {
+                    Color.clear
+                }
             }
-            .opacity(isOverBudget ? 0.5 : 1.0)
+        )
+        .overlay(alignment: .leading) {
+            if isTop3 {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Color.accentGold)
+                    .frame(width: 3)
+            }
         }
-        .padding(.vertical, 6)
-        .opacity(isOverBudget ? 0.7 : 1.0)
-    }
-
-    private func starCell(label: String, value: Int) -> some View {
-        VStack(spacing: 2) {
-            Text(CoachingEngine.starString(for: value))
-                .font(.system(size: 10))
-                .foregroundStyle(Color.accentGold)
-            Text(label)
-                .font(.system(size: 9))
-                .foregroundStyle(Color.textTertiary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity)
     }
 }
 

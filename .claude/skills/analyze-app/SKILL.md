@@ -141,17 +141,19 @@ For each screenshot evaluate:
 | **Information Density** | Right amount? Key info prominent? Secondary info subdued? Empty states? |
 | **Platform Feel** | iPad-native? Uses screen space well? Navigation feels right? |
 
-### Game Design Analysis (5 checks)
+### Game Design Analysis (5 checks) — EQUALLY IMPORTANT AS VISUAL
 
-For each screen also evaluate from a **game management simulation** perspective:
+**This analysis is NOT optional.** For each screen, evaluate from a **game management simulation** perspective with the same rigor as visual analysis. Every finding here MUST become a todo.
 
-| Check | What to look for |
-|-------|-----------------|
-| **Essential Data** | Does the screen show ALL information a GM/HC needs to make decisions? |
-| **Decision Support** | Can the player compare options? Are trade-offs visible? |
-| **Feedback** | Does the screen show consequences of past decisions? Trends? |
-| **Immersion** | Does it feel like running an NFL franchise? Atmosphere? |
-| **Flow** | Can the player quickly do what they came here to do? Minimal friction? |
+| Check | What to look for | Example findings |
+|-------|-----------------|-----------------|
+| **Essential Data** | Does the screen show ALL information a GM/HC needs to make decisions? | "Missing expiring contracts count", "No QB name/OVR on dashboard" |
+| **Decision Support** | Can the player compare options? Are trade-offs visible? Rankings? Context? | "No league ranking for OVR", "Can't compare candidates side-by-side" |
+| **Feedback** | Does the screen show consequences of past decisions? Trends? History? | "No previous season summary", "No injury history" |
+| **Immersion** | Does it feel like running an NFL franchise? Atmosphere? Narrative? | "Dashboard feels like admin panel, not GM office" |
+| **Flow** | Can the player quickly do what they came here to do? Actions available? Navigation? | "No action buttons on player detail", "Can't swap starters from roster" |
+
+**Decision Support is the most important check** — if a player can't make informed decisions from the screen, the game fails at its core purpose.
 
 #### Essential Data Per Screen Type
 
@@ -174,10 +176,15 @@ Format findings as a structured report:
 2. [High] Description...
 3. [Medium] Description...
 
-### Game Data Issues
+### Game Design Issues
 1. [Missing] Data X needed for decision Y
 2. [Improve] Data Z should be more prominent
 3. [Add] Feature W would help player flow
+
+### Decision Support Issues
+1. [Missing] Cannot compare X — need Y data visible
+2. [Missing] No way to perform action Z from this screen
+3. [Improve] Trade-offs not visible for decision W
 
 ### Recommendation
 Quick summary of what needs to change.
@@ -185,12 +192,20 @@ Quick summary of what needs to change.
 
 Ask user: **"Hyva? Aloitetaanko korjaukset?"**
 
-### Create Todos & Dispatch
+### Create Todos — MANDATORY
 
-After user approval:
+**CRITICAL RULE: EVERY finding MUST become a TaskCreate todo.** Do not skip any finding from any category (Visual, Game Design, Decision Support). After presenting findings:
 
-1. **TaskCreate** for each fix, grouped by screen
-2. **Dispatch background Agent** (subagent_type: general-purpose) with:
+1. **Immediately create a TaskCreate for EVERY item** in Visual Issues, Game Design Issues, and Decision Support Issues — no exceptions
+2. Prefix todo subjects with category: "Fix:" for visual, "Game:" for game design, "Bug:" for bugs
+3. After creating all todos, **verify completeness**: re-read the analysis report and confirm every numbered item has a corresponding todo
+4. If the user adds their own observations, create todos for those too — immediately, not later
+
+### Dispatch Fixes (Optional)
+
+After todos are created, optionally dispatch agents:
+
+1. **Dispatch background Agent** (subagent_type: general-purpose) with:
    - The specific fixes to make
    - File paths to modify
    - Clear acceptance criteria
@@ -241,3 +256,15 @@ This skill is designed to be **resumed across sessions**. At the start of any se
 - Never modify screens not currently being reviewed
 - Ask user before making game design changes (data additions)
 - Visual-only fixes can be dispatched without asking
+
+## CRITICAL: Todo Completeness Verification
+
+After analyzing each screen AND after creating todos, perform this verification:
+
+1. **Count findings**: Count every numbered item in Visual Issues + Game Design Issues + Decision Support Issues
+2. **Count todos**: Count every TaskCreate that was called for this screen
+3. **Compare**: If finding count != todo count, identify the missing ones and create them immediately
+4. **User observations**: When the user adds their own observations (at any point during the conversation), create todos for ALL of them immediately — do not wait until the next screen
+5. **End-of-session audit**: Before finishing analysis of all screens, do a final pass: re-read ALL analysis reports and verify every single finding has a corresponding todo. List any gaps and fill them.
+
+**Zero tolerance for missing todos.** Every finding, every user observation, every improvement suggestion = a todo.

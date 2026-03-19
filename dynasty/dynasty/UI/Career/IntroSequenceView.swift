@@ -189,10 +189,19 @@ private struct OwnerMeetingStep: View {
 
     private var patienceImplication: String {
         guard let patience = owner?.patience else { return "" }
+        let leagueAvg = 5
+        let comparison: String
+        if patience < leagueAvg - 1 {
+            comparison = "Less patient than most owners"
+        } else if patience > leagueAvg + 1 {
+            comparison = "More patient than most owners"
+        } else {
+            comparison = "About average patience"
+        }
         switch patience {
-        case 1...3:  return "You'll need to win fast — there's no room for a long rebuild."
-        case 4...6:  return "You have a reasonable window, but steady progress is expected each year."
-        case 7...10: return "You have time to build through the draft and develop young talent."
+        case 1...3:  return "League avg: \(leagueAvg) seasons — \(comparison). Win fast or face consequences."
+        case 4...6:  return "League avg: \(leagueAvg) seasons — \(comparison). Steady progress expected each year."
+        case 7...10: return "League avg: \(leagueAvg) seasons — \(comparison). Time to build through the draft."
         default:     return ""
         }
     }
@@ -200,26 +209,28 @@ private struct OwnerMeetingStep: View {
     private var visionImplication: String {
         guard let owner = owner else { return "" }
         if owner.prefersWinNow {
-            return "Expect pressure for immediate playoff contention. Prioritize proven veterans in free agency."
+            return "Prioritizes free agency spending, expects playoff contention. Veterans favored over draft-and-develop."
         } else {
-            return "The owner supports a long-term plan. Draft picks and player development are valued over quick fixes."
+            return "Supports a long-term plan. Draft picks and player development are valued over quick fixes."
         }
     }
 
     private var budgetImplication: String {
-        guard let spending = owner?.spendingWillingness else { return "" }
-        switch spending {
-        case 1...30:  return "Don't expect big free agent signings — you'll need to build through the draft."
-        case 31...60: return "Modest free agency budget available. Be strategic with your spending."
-        case 61...80: return "Significant resources available for roster upgrades in free agency."
-        default:      return "Money is no object. The owner will back any move you want to make."
+        guard let owner = owner else { return "" }
+        let budgetM = String(format: "$%.1fM", Double(owner.coachingBudget) / 1_000.0)
+        let leagueAvgM = "$20.0M"
+        switch owner.spendingWillingness {
+        case 1...30:  return "Budget: \(budgetM) (league avg: \(leagueAvgM)). Build through the draft — free agency will be tight."
+        case 31...60: return "Budget: \(budgetM) (league avg: \(leagueAvgM)). Modest spending — be strategic with signings."
+        case 61...80: return "Budget: \(budgetM) (league avg: \(leagueAvgM)). Significant resources for roster upgrades."
+        default:      return "Budget: \(budgetM) (league avg: \(leagueAvgM)). Money is no object — the owner backs any move."
         }
     }
 
     private var meddlingImplication: String {
         guard let meddling = owner?.meddling else { return "" }
         switch meddling {
-        case 1...30:  return "Full autonomy — the owner trusts your football judgment completely."
+        case 1...30:  return "Full autonomy on roster decisions. The owner trusts your football judgment completely."
         case 31...60: return "The owner may weigh in on major decisions but generally stays out of the way."
         case 61...80: return "Expect the owner to have opinions on key signings and draft picks."
         default:      return "The owner will frequently override your decisions. Pick your battles carefully."
@@ -276,7 +287,7 @@ private struct OwnerMeetingStep: View {
         GeometryReader { geometry in
         ScrollView {
             VStack(spacing: 24) {
-                Spacer().frame(height: 20)
+                Spacer().frame(height: 8)
 
                 // Meeting header
                 if showHeader {
@@ -304,7 +315,7 @@ private struct OwnerMeetingStep: View {
                                 .foregroundStyle(Color.textPrimary)
 
                             Text("Owner, \(team.fullName)")
-                                .font(.subheadline)
+                                .font(.body)
                                 .foregroundStyle(Color.textSecondary)
                         }
                     }
@@ -373,13 +384,25 @@ private struct OwnerMeetingStep: View {
 
                 // Personal owner quote (#16)
                 if showWarning, let _ = owner {
-                    HStack(spacing: 12) {
-                        Image(systemName: "quote.opening")
-                            .font(.title3)
-                            .foregroundStyle(Color.accentGold.opacity(0.7))
-                        Text(personalWarningQuote)
-                            .font(.subheadline.italic())
-                            .foregroundStyle(Color.textSecondary)
+                    VStack(spacing: 12) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "quote.opening")
+                                .font(.title3)
+                                .foregroundStyle(Color.accentGold.opacity(0.7))
+                            Text(personalWarningQuote)
+                                .font(.subheadline.italic())
+                                .foregroundStyle(Color.textSecondary)
+                        }
+
+                        // #129: Consequences warning
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(Color.warning)
+                            Text("Failure may result in: budget cuts, forced trades, or termination")
+                                .font(.caption)
+                                .foregroundStyle(Color.textTertiary)
+                        }
                     }
                     .padding(16)
                     .background(
@@ -448,16 +471,23 @@ private struct TeamOverviewStep: View {
         players.max(by: { $0.overall < $1.overall })
     }
 
-    /// Position group with the lowest average overall.
+    /// Top 3 players by overall rating.
+    private var topPlayers: [Player] {
+        Array(players.sorted { $0.overall > $1.overall }.prefix(3))
+    }
+
+    /// Position group with the lowest average overall, including grade and OVR.
     private var weakestPositionGroup: String {
         guard !players.isEmpty else { return "N/A" }
-        let grouped = Dictionary(grouping: players, by: { $0.position.side })
+        let grouped = Dictionary(grouping: players, by: { Self.positionGroupName(for: $0.position) })
         guard let weakest = grouped.min(by: {
             let avg0 = $0.value.map(\.overall).reduce(0, +) / max($0.value.count, 1)
             let avg1 = $1.value.map(\.overall).reduce(0, +) / max($1.value.count, 1)
             return avg0 < avg1
         }) else { return "N/A" }
-        return weakest.key.rawValue
+        let avg = weakest.value.map(\.overall).reduce(0, +) / max(weakest.value.count, 1)
+        let grade = Self.gradeForAverage(avg)
+        return "\(weakest.key) (\(grade), \(avg) OVR)"
     }
 
     private var filledCoachingSlots: Int {
@@ -678,10 +708,24 @@ private struct TeamOverviewStep: View {
                             valueColor: expiringContracts > 15 ? Color.danger : expiringContracts > 8 ? Color.warning : Color.textPrimary
                         )
 
-                        if let best = bestPlayer {
-                            StatRow(label: "Best Player",
-                                    value: "\(best.fullName) (\(best.position.rawValue)) - \(best.overall) OVR",
-                                    valueColor: Color.forRating(best.overall))
+                        // #133: Top 3 key players
+                        if !topPlayers.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Key Players")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(Color.textSecondary)
+                                ForEach(topPlayers, id: \.id) { player in
+                                    HStack {
+                                        Text("\(player.fullName)")
+                                            .font(.subheadline.weight(.medium))
+                                            .foregroundStyle(Color.textPrimary)
+                                        Spacer()
+                                        Text("\(player.position.rawValue) — \(player.overall) OVR")
+                                            .font(.subheadline.monospacedDigit())
+                                            .foregroundStyle(Color.forRating(player.overall))
+                                    }
+                                }
+                            }
                         }
 
                         StatRow(label: "Weakest Group", value: weakestPositionGroup)
@@ -707,16 +751,6 @@ private struct TeamOverviewStep: View {
                                 }
                             }
                             Spacer()
-                            if filledCoachingSlots < totalCoachingSlots {
-                                Text("\(totalCoachingSlots - filledCoachingSlots) VACANT")
-                                    .font(.caption.weight(.black))
-                                    .foregroundStyle(Color.backgroundPrimary)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(
-                                        Capsule().fill(filledCoachingSlots == 0 ? Color.danger : Color.warning)
-                                    )
-                            }
                         }
                     }
                     .padding(20)
@@ -746,9 +780,12 @@ private struct TeamOverviewStep: View {
                                     Text("\(group.average) OVR")
                                         .font(.subheadline.monospacedDigit())
                                         .foregroundStyle(Color.textTertiary)
-                                    Text("\(group.playerCount) players")
+                                    // #131/#134: Show count vs ideal with color
+                                    let ideal = Self.idealGroupSize[group.name] ?? 4
+                                    let staffColor: Color = group.playerCount >= ideal ? .success : group.playerCount >= ideal - 1 ? .warning : .danger
+                                    Text("\(group.playerCount)/\(ideal) players")
                                         .font(.caption.weight(.medium))
-                                        .foregroundStyle(Color.textTertiary)
+                                        .foregroundStyle(staffColor)
                                     if !group.need.isEmpty {
                                         Text(group.need)
                                             .font(.caption2.weight(.bold))
@@ -845,6 +882,14 @@ private struct TeamOverviewStep: View {
                             let columns = [GridItem(.adaptive(minimum: 80), spacing: 8)]
                             LazyVGrid(columns: columns, spacing: 8) {
                                 ForEach(sortedPicks, id: \.id) { pick in
+                                    let pickColor: Color = {
+                                        switch pick.round {
+                                        case 1: return Color.accentGold
+                                        case 2, 3: return Color.success
+                                        case 4, 5: return Color(red: 0.3, green: 0.5, blue: 0.9)
+                                        default: return Color.textTertiary
+                                        }
+                                    }()
                                     Text("Rd\(pick.round) #\(pick.pickNumber)")
                                         .font(.system(size: 13, weight: .semibold).monospacedDigit())
                                         .foregroundStyle(Color.textPrimary)
@@ -852,10 +897,10 @@ private struct TeamOverviewStep: View {
                                         .padding(.vertical, 6)
                                         .background(
                                             RoundedRectangle(cornerRadius: 6)
-                                                .fill(Color.backgroundSecondary)
+                                                .fill(pickColor.opacity(0.12))
                                                 .overlay(
                                                     RoundedRectangle(cornerRadius: 6)
-                                                        .strokeBorder(Color.surfaceBorder, lineWidth: 0.5)
+                                                        .strokeBorder(pickColor.opacity(0.4), lineWidth: 1)
                                                 )
                                         )
                                 }
@@ -914,20 +959,21 @@ private struct YourRoadmapStep: View {
     private struct CalendarEntry {
         let name: String
         let description: String
+        let duration: String
+        let isMandatory: Bool
     }
 
     private static let offseasonCalendarEntries: [CalendarEntry] = [
-        CalendarEntry(name: "Coaching Changes", description: "Hire/fire coaching staff, build your team"),
-        CalendarEntry(name: "Roster Evaluation", description: "Assess your players, identify needs"),
-        CalendarEntry(name: "NFL Combine", description: "Scout draft prospects, evaluate measurables"),
-        CalendarEntry(name: "Free Agency", description: "Sign free agents, re-sign your own players"),
-        CalendarEntry(name: "NFL Draft", description: "Select new talent across 7 rounds"),
-        CalendarEntry(name: "Undrafted Free Agents", description: "Sign overlooked prospects"),
-        CalendarEntry(name: "OTAs", description: "Set depth chart, assign mentoring pairs"),
-        CalendarEntry(name: "Training Camp", description: "Player development, position battles"),
-        CalendarEntry(name: "Preseason", description: "Evaluate young players in live action"),
-        CalendarEntry(name: "Roster Cuts", description: "Cut to 53-man roster"),
-        CalendarEntry(name: "Regular Season", description: "18 weeks of football"),
+        CalendarEntry(name: "Coaching Changes", description: "Hire and fire coaches, set coordinator schemes, build your staff", duration: "Feb", isMandatory: true),
+        CalendarEntry(name: "Roster Evaluation", description: "Review every player, identify positional needs, plan your offseason strategy", duration: "Feb", isMandatory: true),
+        CalendarEntry(name: "NFL Combine", description: "Scout draft prospects, evaluate measurables, update your draft board", duration: "Late Feb", isMandatory: false),
+        CalendarEntry(name: "Free Agency", description: "Sign free agents, re-sign your own players, fill roster gaps", duration: "Mar", isMandatory: true),
+        CalendarEntry(name: "NFL Draft & UDFAs", description: "Select new talent across 7 rounds, then sign undrafted free agents", duration: "Late Apr", isMandatory: true),
+        CalendarEntry(name: "OTAs", description: "Set depth chart, assign mentoring pairs, install playbook basics", duration: "May-Jun", isMandatory: false),
+        CalendarEntry(name: "Training Camp", description: "Player development, position battles, final roster decisions", duration: "Jul-Aug", isMandatory: true),
+        CalendarEntry(name: "Preseason", description: "Evaluate young players and bubble roster candidates in live games", duration: "Aug", isMandatory: false),
+        CalendarEntry(name: "Roster Cuts", description: "Cut to 53-man roster — tough decisions on borderline players", duration: "Late Aug", isMandatory: true),
+        CalendarEntry(name: "Regular Season", description: "18 weeks of football — manage injuries, trades, and weekly gameplans", duration: "Sep-Jan", isMandatory: true),
     ]
 
     private var calendarCard: some View {
@@ -941,10 +987,12 @@ private struct YourRoadmapStep: View {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(Self.offseasonCalendarEntries.enumerated()), id: \.offset) { index, entry in
                     let isCurrent = index == 0
-                    let isFuture = index > 0
+                    let totalEntries = Self.offseasonCalendarEntries.count
+                    // #137: Fade distant phases progressively
+                    let distanceFade: Double = isCurrent ? 1.0 : max(0.4, 1.0 - Double(index) * 0.08)
 
-                    HStack(alignment: .top, spacing: 12) {
-                        // Timeline connector (#23)
+                    HStack(alignment: .top, spacing: 14) {
+                        // Timeline connector
                         VStack(spacing: 0) {
                             ZStack {
                                 if isCurrent {
@@ -957,7 +1005,7 @@ private struct YourRoadmapStep: View {
                                     .frame(width: isCurrent ? 12 : 8, height: isCurrent ? 12 : 8)
                             }
 
-                            if index < Self.offseasonCalendarEntries.count - 1 {
+                            if index < totalEntries - 1 {
                                 Rectangle()
                                     .fill(isCurrent ? Color.accentGold.opacity(0.4) : Color.surfaceBorder)
                                     .frame(width: 2)
@@ -966,11 +1014,11 @@ private struct YourRoadmapStep: View {
                         }
                         .frame(width: 20)
 
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 8) {
                                 Text(entry.name)
                                     .font(isCurrent ? .subheadline.weight(.bold) : .subheadline.weight(.medium))
-                                    .foregroundStyle(isCurrent ? Color.accentGold : isFuture ? Color.textPrimary.opacity(0.6) : Color.textPrimary)
+                                    .foregroundStyle(isCurrent ? Color.accentGold : Color.textPrimary)
 
                                 if isCurrent {
                                     Text("CURRENT")
@@ -980,16 +1028,38 @@ private struct YourRoadmapStep: View {
                                         .padding(.vertical, 2)
                                         .background(Capsule().fill(Color.accentGold))
                                 }
+
+                                // #140: Mandatory vs optional badge
+                                if !isCurrent {
+                                    Text(entry.isMandatory ? "REQUIRED" : "OPTIONAL")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(entry.isMandatory ? Color.textSecondary : Color.textTertiary)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 2)
+                                        .background(
+                                            Capsule()
+                                                .fill(entry.isMandatory ? Color.backgroundSecondary : Color.backgroundSecondary.opacity(0.5))
+                                        )
+                                }
                             }
+
+                            // #139: Expanded description
                             Text(entry.description)
                                 .font(.caption)
                                 .foregroundStyle(isCurrent ? Color.textSecondary : Color.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            // #138: Duration label
+                            Text(entry.duration)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Color.textTertiary)
                         }
 
                         Spacer()
                     }
-                    .padding(.vertical, isCurrent ? 10 : 6)
-                    .padding(.horizontal, isCurrent ? 10 : 0)
+                    .padding(.vertical, isCurrent ? 10 : 7)
+                    .padding(.horizontal, isCurrent ? 10 : 6)
+                    .opacity(distanceFade)
                     .background(
                         Group {
                             if isCurrent {
@@ -1058,22 +1128,22 @@ private struct YourRoadmapStep: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                // Single responsive layout: stacked vertically, constrained width
+                // #136: Wider layout with reduced padding
                 if showCalendar {
                     calendarCard
-                        .padding(.horizontal, 24)
+                        .padding(.horizontal, 16)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
                 if showTasks {
                     tasksCard
-                        .padding(.horizontal, 24)
+                        .padding(.horizontal, 16)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
                 Spacer().frame(height: 80)
             }
-            .frame(maxWidth: 800)
+            .frame(maxWidth: 900)
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)

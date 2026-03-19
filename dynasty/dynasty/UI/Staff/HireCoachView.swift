@@ -20,6 +20,8 @@ struct HireCoachView: View {
     @State private var selectedCandidate: Coach?
     @State private var showAffordableOnly: Bool = false
     @State private var schemeFilter: String = "All"
+    @State private var showValueLegend: Bool = false
+    @State private var showSchemeTip: Bool = false
 
     /// The team's head coach, used to determine current team scheme for fit indicator.
     private var teamHeadCoach: Coach? {
@@ -150,26 +152,31 @@ struct HireCoachView: View {
 
                 Divider().overlay(Color.surfaceBorder)
 
-                // Sticky column headers
-                tableHeaderRow
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.backgroundTertiary.opacity(0.6))
+                // #149: Horizontally scrollable table for cramped columns
+                ScrollView(.horizontal, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        // Sticky column headers
+                        tableHeaderRow
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.backgroundTertiary.opacity(0.6))
 
-                Divider().overlay(Color.surfaceBorder)
+                        Divider().overlay(Color.surfaceBorder)
 
-                // Candidate rows
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(sortedCandidates) { candidate in
-                            candidateRow(candidate)
+                        // Candidate rows
+                        ScrollView(.vertical) {
+                            LazyVStack(spacing: 0) {
+                                ForEach(sortedCandidates) { candidate in
+                                    candidateRow(candidate)
 
-                            Divider()
-                                .overlay(Color.surfaceBorder.opacity(0.4))
-                                .padding(.horizontal, 12)
+                                    Divider()
+                                        .overlay(Color.surfaceBorder.opacity(0.4))
+                                        .padding(.horizontal, 12)
+                                }
+                            }
                         }
                     }
-                    .frame(maxWidth: .infinity)
+                    .frame(minWidth: 620)
                 }
             }
         }
@@ -182,7 +189,8 @@ struct HireCoachView: View {
                 candidates = CoachingEngine.generateCoachCandidates(role: role, count: count)
             }
         }
-        .sheet(item: $selectedCandidate) { candidate in
+        // #157: Full screen cover on iPad for max space
+        .fullScreenCover(item: $selectedCandidate) { candidate in
             CandidateDetailSheet(
                 candidate: candidate,
                 remainingBudget: remainingBudget,
@@ -194,9 +202,6 @@ struct HireCoachView: View {
                 schemeFitResult: schemeFit(for: candidate),
                 onHire: { hire(candidate) }
             )
-            // Fix #71: Use full screen cover on iPad for max space
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
         }
     }
 
@@ -261,6 +266,50 @@ struct HireCoachView: View {
                     .foregroundStyle(Color.textSecondary)
             }
 
+            // #153: Value column legend
+            if showValueLegend {
+                HStack(spacing: 12) {
+                    Image(systemName: "info.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Val = skill-to-salary ratio: Great = high skill/low salary, Poor = low skill/high salary")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer()
+                    Button { showValueLegend = false } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+                .padding(8)
+                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 6))
+            }
+
+            // #151: Scheme info tooltip
+            if showSchemeTip, let first = sortedCandidates.first {
+                let label = schemeLabel(first)
+                let desc = schemeDescription(label)
+                if !desc.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: "info.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.accentBlue)
+                        Text("\(label): \(desc)")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        Button { showSchemeTip = false } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                    }
+                    .padding(8)
+                    .background(Color.accentBlue.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                }
+            }
+
             // Fix #63: Current coach comparison bar
             if let current = currentCoach {
                 HStack(spacing: 8) {
@@ -296,9 +345,21 @@ struct HireCoachView: View {
         HStack(spacing: 0) {
             headerButton("Name", column: .name, width: nil, alignment: .leading)
             headerButton("Age", column: .age, width: 34)
-            headerButton("Scheme", column: .scheme, width: 62)
+            // #151: Scheme column with info button
+            Button {
+                showSchemeTip.toggle()
+            } label: {
+                HStack(spacing: 2) {
+                    Text("Scheme")
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 7))
+                        .foregroundStyle(Color.accentBlue.opacity(0.6))
+                }
+                .frame(width: 62)
+            }
+            .foregroundStyle(sortColumn == .scheme ? Color.accentGold : Color.textTertiary)
             // Fix #38: Scheme fit column header
-            if teamHeadCoach != nil {
+            if teamHeadCoach != nil || !candidates.isEmpty {
                 Text("Fit")
                     .frame(width: 32)
             }
@@ -307,8 +368,19 @@ struct HireCoachView: View {
             headerButton("Dev", column: .dev, width: 36)
             headerButton("Game", column: .game, width: 36)
             headerButton("Salary", column: .salary, width: 56)
-            // Fix #60: Value column
-            headerButton("Val", column: .value, width: 40)
+            // Fix #60 + #153: Value column with info legend
+            Button {
+                showValueLegend.toggle()
+            } label: {
+                HStack(spacing: 2) {
+                    Text("Val")
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 7))
+                        .foregroundStyle(Color.accentGold.opacity(0.6))
+                }
+                .frame(width: 40)
+            }
+            .foregroundStyle(sortColumn == .value ? Color.accentGold : Color.textTertiary)
             // Status column
             Text("")
                 .frame(width: 30)
@@ -380,10 +452,11 @@ struct HireCoachView: View {
                         }
                     }
                     HStack(spacing: 4) {
-                        // Fix #59: Coaching personality
-                        Text(candidate.personality.displayName)
+                        // Fix #59 + #148: Coaching personality — shorter labels to avoid truncation
+                        Text(candidate.personality.shortLabel)
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(Color.accentBlue)
+                            .lineLimit(1)
                         // Fix #63: OVR delta vs current
                         if let delta = ovrDelta {
                             Text(delta >= 0 ? "+\(delta)" : "\(delta)")
@@ -408,8 +481,8 @@ struct HireCoachView: View {
                     .minimumScaleFactor(0.7)
                     .frame(width: 62)
 
-                // Fix #38: Scheme fit indicator
-                if teamHeadCoach != nil {
+                // Fix #38 + #152: Scheme/roster fit indicator (shows even without HC)
+                if teamHeadCoach != nil || !candidates.isEmpty {
                     Group {
                         if let fit = schemeFit(for: candidate) {
                             Circle()
@@ -589,6 +662,37 @@ struct HireCoachView: View {
         return String(format: "%.1f", millions)
     }
 
+    /// #151: Scheme tooltip descriptions.
+    private func schemeDescription(_ label: String) -> String {
+        switch label {
+        case "West Coast":  return "Short-to-intermediate passing, high-percentage throws"
+        case "Air Raid":    return "Four/five-wide sets, vertical passing emphasis"
+        case "Spread":      return "Space the field with spread formations"
+        case "Power Run":   return "Downhill running with pulling guards"
+        case "Shanahan":    return "Outside zone running, play-action boots"
+        case "Pro Passing": return "Pro-style balanced attack, under-center play-action"
+        case "RPO":         return "Run-pass options, QB reads defense post-snap"
+        case "Option":      return "Triple/read-option, requires athletic QB"
+        case "3-4 Base":    return "Versatile OLBs who rush and drop into coverage"
+        case "4-3 Base":    return "Four down linemen generating pass rush"
+        case "Cover 3":     return "Three deep defenders, four underneath zones"
+        case "Press Man":   return "Aggressive press coverage at the line"
+        case "Tampa 2":     return "Zone coverage, requires fast MLB for deep middle"
+        case "Multiple":    return "Disguised fronts and coverages pre-snap"
+        case "Hybrid":      return "Blends 3-4/4-3 with positionless players"
+        default:            return ""
+        }
+    }
+
+    /// #160: OVR context label — league average comparison.
+    private func ovrContextLabel(_ ovr: Int) -> String {
+        if ovr >= 80 { return "Elite" }
+        if ovr >= 70 { return "Above Avg" }
+        if ovr >= 60 { return "Average" }
+        if ovr >= 50 { return "Below Avg" }
+        return "Poor"
+    }
+
     /// Fix #67: Candidate ranking by OVR among filtered list.
     private func candidateRank(for candidate: Coach) -> Int {
         let byOVR = filteredCandidates.sorted { coachOverall($0) > coachOverall($1) }
@@ -688,9 +792,30 @@ private struct CandidateDetailSheet: View {
         Int(proposedSalary) > remainingBudget
     }
 
+    /// #162: Contract length effect description.
+    private var contractLengthEffect: String {
+        switch proposedYears {
+        case 1:  return "Short deal: higher acceptance, but coach may leave soon"
+        case 2:  return "Standard short: balanced flexibility and commitment"
+        case 3:  return "Standard deal: good balance of cost and stability"
+        case 4:  return "Long deal: coach expects slight discount, higher commitment"
+        case 5:  return "Max deal: coach expects best terms, locked in long-term"
+        default: return ""
+        }
+    }
+
     /// Fix #65: Budget remaining after this hire.
     private var budgetAfterHire: Int {
         remainingBudget - Int(proposedSalary)
+    }
+
+    /// #160: OVR context label.
+    private func ovrContextLabel(_ ovr: Int) -> String {
+        if ovr >= 80 { return "Elite" }
+        if ovr >= 70 { return "Above Avg" }
+        if ovr >= 60 { return "Average" }
+        if ovr >= 50 { return "Below Avg" }
+        return "Poor"
     }
 
     private func coachOverall(_ coach: Coach) -> Int {
@@ -872,7 +997,7 @@ private struct CandidateDetailSheet: View {
 
             // Overall rating + scheme + salary summary
             HStack(spacing: 12) {
-                // Overall badge
+                // #160: Overall badge with context label
                 let ovr = coachOverall(candidate)
                 VStack(spacing: 2) {
                     Text("\(ovr)")
@@ -881,8 +1006,11 @@ private struct CandidateDetailSheet: View {
                     Text("OVR")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color.textTertiary)
+                    Text(ovrContextLabel(ovr))
+                        .font(.system(size: 7, weight: .semibold))
+                        .foregroundStyle(Color.forRating(ovr).opacity(0.8))
                 }
-                .frame(width: 48, height: 48)
+                .frame(width: 52, height: 58)
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
 
                 if let off = candidate.offensiveScheme {
@@ -1065,18 +1193,19 @@ private struct CandidateDetailSheet: View {
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
+            // #158: Full attribute names (no truncation in 2-column layout)
             let attrs: [(String, Int)] = [
                 ("Play Calling", candidate.playCalling),
-                ("Player Dev", candidate.playerDevelopment),
+                ("Player Development", candidate.playerDevelopment),
                 ("Game Planning", candidate.gamePlanning),
-                ("Scouting", candidate.scoutingAbility),
+                ("Scouting Ability", candidate.scoutingAbility),
                 ("Recruiting", candidate.recruiting),
                 ("Motivation", candidate.motivation),
                 ("Discipline", candidate.discipline),
                 ("Adaptability", candidate.adaptability),
-                ("Media", candidate.mediaHandling),
-                ("Contract Neg.", candidate.contractNegotiation),
-                ("Morale", candidate.moraleInfluence),
+                ("Media Handling", candidate.mediaHandling),
+                ("Contract Negotiation", candidate.contractNegotiation),
+                ("Morale Influence", candidate.moraleInfluence),
                 ("Reputation", candidate.reputation),
             ]
 
@@ -1173,9 +1302,27 @@ private struct CandidateDetailSheet: View {
                     }
                 }
             } else if headCoach == nil {
-                Text("No Head Coach on staff to compare schemes.")
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
+                // #159: Show candidate's scheme even without HC
+                let candScheme = candidate.offensiveScheme?.displayName ?? candidate.defensiveScheme?.displayName ?? nil
+                if let scheme = candScheme {
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(Color.textTertiary)
+                            .frame(width: 14, height: 14)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Candidate prefers: \(scheme)")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                            Text("Hire a Head Coach first for scheme compatibility rating.")
+                                .font(.caption)
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                    }
+                } else {
+                    Text("No scheme data available for comparison.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
             } else {
                 Text("No scheme data available for comparison.")
                     .font(.caption)
@@ -1206,16 +1353,17 @@ private struct CandidateDetailSheet: View {
                     .foregroundStyle(Color.textPrimary)
             }
 
-            // Fix #68: Style effects
+            // Fix #68 + #161: Style effects — green for positive, red for negative
             ForEach(personalityEffects, id: \.effect) { item in
+                let isNegative = item.effect.contains("-") || item.effect.lowercased().contains("risk")
                 HStack(spacing: 6) {
                     Image(systemName: item.icon)
                         .font(.system(size: 10))
-                        .foregroundStyle(Color.textTertiary)
+                        .foregroundStyle(isNegative ? Color.danger : Color.success)
                         .frame(width: 16)
                     Text(item.effect)
                         .font(.caption)
-                        .foregroundStyle(Color.textSecondary)
+                        .foregroundStyle(isNegative ? Color.danger : Color.success)
                 }
             }
 
@@ -1302,7 +1450,7 @@ private struct CandidateDetailSheet: View {
                     .fill(Color.backgroundTertiary.opacity(0.5))
             )
 
-            // Contract years
+            // Contract years + #162: Show contract length effect
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Contract Length")
@@ -1315,6 +1463,16 @@ private struct CandidateDetailSheet: View {
                 }
                 Stepper("Years", value: $proposedYears, in: 1...5)
                     .labelsHidden()
+
+                // #162: Contract length effect on salary/acceptance
+                HStack(spacing: 6) {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(contractLengthEffect)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.textSecondary)
+                }
             }
 
             // Rejection warning

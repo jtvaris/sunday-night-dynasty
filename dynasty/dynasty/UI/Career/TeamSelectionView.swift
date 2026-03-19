@@ -15,19 +15,37 @@ struct TeamSelectionView: View {
     @State private var isLoading = false
     @State private var selectedConference: Conference = .AFC
     @State private var detailTeam: NFLTeamDefinition?
+    @State private var situationFilter: String = "All"
+    @State private var sortMode: TeamSortMode = .division
 
     private var isLandscape: Bool { verticalSizeClass == .compact }
 
     /// All 32 NFL teams from static data.
     private let allTeams = NFLTeamData.allTeams
 
-    /// Teams for the currently selected conference, grouped by division.
+    /// Available situation filters.
+    private let situationOptions = ["All", "Rebuilding", "Rising", "Contender", "Win Now", "Dynasty"]
+
+    /// Teams for the currently selected conference, filtered and grouped/sorted.
     private var divisionsForConference: [(division: Division, teams: [NFLTeamDefinition])] {
         let conferenceTeams = allTeams.filter { $0.conference == selectedConference }
-        return Division.allCases.map { division in
-            let teams = conferenceTeams
-                .filter { $0.division == division }
-                .sorted { $0.city < $1.city }
+        let filtered = situationFilter == "All"
+            ? conferenceTeams
+            : conferenceTeams.filter { $0.preview.situation == situationFilter }
+        return Division.allCases.compactMap { division in
+            let teams: [NFLTeamDefinition]
+            let divTeams = filtered.filter { $0.division == division }
+            switch sortMode {
+            case .division:
+                teams = divTeams.sorted { $0.city < $1.city }
+            case .capSpace:
+                teams = divTeams.sorted { $0.preview.estimatedCapSpace > $1.preview.estimatedCapSpace }
+            case .difficulty:
+                teams = divTeams.sorted { $0.preview.difficulty < $1.preview.difficulty }
+            case .overall:
+                teams = divTeams.sorted { $0.preview.estimatedOVR > $1.preview.estimatedOVR }
+            }
+            guard !teams.isEmpty else { return nil }
             return (division: division, teams: teams)
         }
     }
@@ -50,7 +68,11 @@ struct TeamSelectionView: View {
                 // Conference tab picker
                 conferencePicker
                     .padding(.top, 8)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 8)
+
+                // Filter/sort bar (#115)
+                filterSortBar
+                    .padding(.bottom, 8)
 
                 // Compact table rows — all 16 teams with minimal scrolling
                 ScrollView {
@@ -130,6 +152,81 @@ struct TeamSelectionView: View {
         .navigationDestination(item: $selectedCareer) { career in
             IntroSequenceView(career: career)
         }
+    }
+
+    // MARK: - Filter/Sort Bar (#115)
+
+    private var filterSortBar: some View {
+        HStack(spacing: 12) {
+            // Situation filter
+            Menu {
+                ForEach(situationOptions, id: \.self) { option in
+                    Button {
+                        situationFilter = option
+                    } label: {
+                        HStack {
+                            Text(option)
+                            if situationFilter == option {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "line.3.horizontal.decrease")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(situationFilter == "All" ? "Filter" : situationFilter)
+                        .font(.system(size: 12, weight: .semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .foregroundStyle(situationFilter == "All" ? Color.textSecondary : Color.accentGold)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(situationFilter == "All" ? Color.backgroundSecondary : Color.accentGold.opacity(0.15))
+                        .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 0.5))
+                )
+            }
+
+            // Sort mode
+            Menu {
+                ForEach(TeamSortMode.allCases, id: \.self) { mode in
+                    Button {
+                        sortMode = mode
+                    } label: {
+                        HStack {
+                            Text(mode.label)
+                            if sortMode == mode {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(sortMode.label)
+                        .font(.system(size: 12, weight: .semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .foregroundStyle(sortMode == .division ? Color.textSecondary : Color.accentGold)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(sortMode == .division ? Color.backgroundSecondary : Color.accentGold.opacity(0.15))
+                        .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 0.5))
+                )
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 16)
     }
 
     // MARK: - Conference Picker
@@ -291,7 +388,7 @@ private struct CompactTeamRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             // Team logo placeholder (with lock overlay if locked)
             ZStack(alignment: .bottomTrailing) {
                 TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 36)
@@ -306,7 +403,7 @@ private struct CompactTeamRow: View {
                 }
             }
 
-            // Team name + city + record
+            // Team name + city + record + QB (#113)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(team.name)
@@ -316,11 +413,22 @@ private struct CompactTeamRow: View {
                         .font(.system(size: 11, weight: .medium).monospacedDigit())
                         .foregroundStyle(Color.textTertiary)
                 }
-                Text(team.city)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.textSecondary)
+                HStack(spacing: 6) {
+                    Text(team.city)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.textSecondary)
+                    Text("\u{2022}")
+                        .font(.system(size: 8))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(preview.startingQBName)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.textSecondary)
+                    Text("\(preview.startingQBOverall)")
+                        .font(.system(size: 10, weight: .bold).monospacedDigit())
+                        .foregroundStyle(Color.forRating(preview.startingQBOverall))
+                }
             }
-            .frame(minWidth: 90, alignment: .leading)
+            .frame(minWidth: 130, alignment: .leading)
 
             Spacer(minLength: 4)
 
@@ -346,18 +454,28 @@ private struct CompactTeamRow: View {
                 )
                 .frame(minWidth: 75)
 
-            // Cap space
-            VStack(spacing: 1) {
-                Text("Cap")
-                    .font(.system(size: 8, weight: .medium))
-                    .foregroundStyle(Color.textTertiary)
-                Text("$\(preview.estimatedCapSpace)M")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(preview.estimatedCapSpace > 30 ? Color.success : preview.estimatedCapSpace > 15 ? Color.accentGold : Color.warning)
+            // Cap + Budget combined column (#112, #114)
+            VStack(spacing: 2) {
+                HStack(spacing: 3) {
+                    Text("CAP")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(Color.textTertiary)
+                    Text("$\(preview.estimatedCapSpace)M")
+                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .foregroundStyle(preview.estimatedCapSpace > 30 ? Color.success : preview.estimatedCapSpace > 15 ? Color.accentGold : Color.warning)
+                }
+                HStack(spacing: 3) {
+                    Text("STF")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(Color.textTertiary)
+                    Text("$\(preview.coachingBudget)M")
+                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(preview.coachingBudget >= 18 ? Color.success : preview.coachingBudget >= 13 ? Color.accentGold : Color.warning)
+                }
             }
-            .frame(width: 52)
+            .frame(width: 64)
 
-            // Owner patience icon + seasons
+            // Owner patience icon + seasons (#112 widened)
             VStack(spacing: 1) {
                 Image(systemName: preview.ownerPatienceIcon)
                     .font(.system(size: 12))
@@ -366,7 +484,7 @@ private struct CompactTeamRow: View {
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
-            .frame(width: 38)
+            .frame(width: 42)
 
             Image(systemName: "chevron.right")
                 .font(.system(size: 10, weight: .semibold))
@@ -384,7 +502,7 @@ private struct CompactTeamRow: View {
                 )
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(team.city) \(team.name), \(preview.lastSeasonRecord), \(preview.situation), difficulty \(preview.difficulty) of 5\(preview.isLocked ? ", locked" : "")")
+        .accessibilityLabel("\(team.city) \(team.name), \(preview.lastSeasonRecord), \(preview.situation), difficulty \(preview.difficulty) of 5, QB \(preview.startingQBName) \(preview.startingQBOverall) OVR\(preview.isLocked ? ", locked" : "")")
     }
 }
 
@@ -1007,6 +1125,21 @@ private struct TeamDetailSheet: View {
         .padding(.bottom, 32)
         .frame(maxWidth: 900)
         .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Team Sort Mode (#115)
+
+private enum TeamSortMode: String, CaseIterable {
+    case division, capSpace, difficulty, overall
+
+    var label: String {
+        switch self {
+        case .division:  return "Division"
+        case .capSpace:  return "Cap Space"
+        case .difficulty: return "Difficulty"
+        case .overall:   return "Overall"
+        }
     }
 }
 
