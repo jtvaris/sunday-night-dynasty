@@ -5,10 +5,13 @@ struct ScoutingReport: Codable {
     var scoutID: UUID
     var scoutName: String
     var date: String
+    var phase: ScoutingPhase = .combine
     var overallGrade: Int
     var potentialGrade: Int
     var strengthNotes: String
     var weaknessNotes: String
     var personalityNotes: String?
     var confidenceLevel: Double
+    /// College production notes (e.g. "22 TDs this season", "3 INTs in last 4 games")
+    var productionNotes: String?
 }

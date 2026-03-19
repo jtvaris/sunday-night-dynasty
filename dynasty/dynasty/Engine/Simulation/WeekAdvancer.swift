@@ -34,6 +34,9 @@ enum WeekAdvancer {
     /// Draft picks generated for the current draft.
     static var currentDraftPicks: [DraftPick] = []
 
+    /// Latest mock draft projection (generated at midseason, combine, and pre-draft).
+    static var currentMockDraft: [ScoutingEngine.MockDraftPick] = []
+
     // MARK: - Public API
 
     /// Advances the career state by exactly one week.
@@ -164,6 +167,7 @@ enum WeekAdvancer {
         draftClassGenerated = false
         currentDraftClass = []
         currentDraftPicks = []
+        currentMockDraft = []
     }
 
     // MARK: - Private: Regular Season
@@ -407,6 +411,21 @@ enum WeekAdvancer {
             }
         }
 
+        // 8c. Generate weekly scout reports for the player's team's scouting staff
+        if let playerTeamID = career.teamID, !currentDraftClass.isEmpty {
+            let scouts = fetchAllScouts(modelContext: modelContext).filter {
+                $0.teamID == playerTeamID
+            }
+            if !scouts.isEmpty {
+                let reports = ScoutingEngine.generateWeeklyReports(
+                    scouts: scouts,
+                    prospects: currentDraftClass,
+                    week: week
+                )
+                ScoutingEngine.applyWeeklyReports(reports, to: &currentDraftClass)
+            }
+        }
+
         // Advance the week counter.
         career.currentWeek += 1
 
@@ -416,6 +435,29 @@ enum WeekAdvancer {
         if week == 8 {
             career.currentPhase = .tradeDeadline
             career.currentPhase = .regularSeason
+        }
+
+        // 9b. Midseason mock draft at week 9 (generate draft class early for projections)
+        if week == 9 {
+            if !draftClassGenerated {
+                currentDraftClass = ScoutingEngine.generateDraftClass()
+                draftClassGenerated = true
+            }
+            currentMockDraft = ScoutingEngine.generateMockDraft(
+                prospects: currentDraftClass,
+                draftPicks: currentDraftPicks,
+                teams: teams,
+                players: allPlayers
+            )
+            ScoutingEngine.updateTeamInterest(
+                prospects: &currentDraftClass,
+                teams: teams,
+                players: allPlayers
+            )
+            ScoutingEngine.applyMockDraftToProspects(
+                prospects: &currentDraftClass,
+                mockDraft: currentMockDraft
+            )
         }
 
         // 9. At season end (week 18): decrement contract years and expire contracts
@@ -654,10 +696,33 @@ enum WeekAdvancer {
             if !draftClassGenerated {
                 currentDraftClass = ScoutingEngine.generateDraftClass()
                 draftClassGenerated = true
+
+                // First season: apply pre-scouted data from previous GM's staff
+                let isFirstSeason = career.totalWins == 0 && career.totalLosses == 0
+                if isFirstSeason {
+                    ScoutingEngine.applyPreScoutedData(prospects: &currentDraftClass)
+                }
             }
 
-            // Simulate combine for all prospects
-            ScoutingEngine.simulateCombine(prospects: &currentDraftClass)
+            // Generate combine results for invited prospects (~330 of ~350)
+            ScoutingEngine.generateCombineResults(for: &currentDraftClass)
+
+            // Post-combine mock draft update
+            currentMockDraft = ScoutingEngine.generateMockDraft(
+                prospects: currentDraftClass,
+                draftPicks: currentDraftPicks,
+                teams: teams,
+                players: allPlayers
+            )
+            ScoutingEngine.updateTeamInterest(
+                prospects: &currentDraftClass,
+                teams: teams,
+                players: allPlayers
+            )
+            ScoutingEngine.applyMockDraftToProspects(
+                prospects: &currentDraftClass,
+                mockDraft: currentMockDraft
+            )
 
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .combine,
@@ -738,6 +803,23 @@ enum WeekAdvancer {
             for pick in draftPicks {
                 modelContext.insert(pick)
             }
+
+            // Pre-draft mock draft (final projection with actual draft order)
+            currentMockDraft = ScoutingEngine.generateMockDraft(
+                prospects: currentDraftClass,
+                draftPicks: draftPicks,
+                teams: teams,
+                players: allPlayers
+            )
+            ScoutingEngine.updateTeamInterest(
+                prospects: &currentDraftClass,
+                teams: teams,
+                players: allPlayers
+            )
+            ScoutingEngine.applyMockDraftToProspects(
+                prospects: &currentDraftClass,
+                mockDraft: currentMockDraft
+            )
 
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .draft,
@@ -914,6 +996,11 @@ enum WeekAdvancer {
 
     private static func fetchAllCoaches(modelContext: ModelContext) -> [Coach] {
         let descriptor = FetchDescriptor<Coach>()
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    private static func fetchAllScouts(modelContext: ModelContext) -> [Scout] {
+        let descriptor = FetchDescriptor<Scout>()
         return (try? modelContext.fetch(descriptor)) ?? []
     }
 

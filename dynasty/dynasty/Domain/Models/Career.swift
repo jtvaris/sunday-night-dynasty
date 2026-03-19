@@ -39,6 +39,12 @@ final class Career {
     /// Season goals set by the owner during the intro sequence (or generated later).
     var seasonGoals: SeasonGoals?
 
+    // MARK: - Scouting Counters
+    /// Number of combine interviews conducted this year (max 60).
+    var interviewsUsed: Int = 0
+    /// Number of personal workouts conducted this year (max 30).
+    var workoutsUsed: Int = 0
+
     // MARK: - HC-GM Relationship
     /// Persisted relationship state between the GM and their Head Coach.
     /// Only meaningful when `role == .gm`; ignored for `.gmAndHeadCoach` careers.

@@ -130,12 +130,25 @@ struct BigBoardRowView: View {
                 Text(prospect.fullName)
                     .font(.body.weight(.medium))
                     .foregroundStyle(Color.textPrimary)
-                Text(prospect.college)
-                    .font(.caption)
-                    .foregroundStyle(Color.textSecondary)
+                HStack(spacing: 6) {
+                    Text(prospect.college)
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                    if let mockPick = prospect.mockDraftPickNumber,
+                       let mockTeam = prospect.mockDraftTeam {
+                        Text("Mock: #\(mockPick) \(mockTeam)")
+                            .font(.caption2.weight(.medium).monospacedDigit())
+                            .foregroundStyle(Color.accentGold)
+                    }
+                }
             }
 
             Spacer()
+
+            // Interest indicator
+            if prospect.interestLevel != "Unknown" {
+                interestIcon
+            }
 
             // Grade and overall
             VStack(alignment: .trailing, spacing: 3) {
@@ -177,6 +190,29 @@ struct BigBoardRowView: View {
         case .defense:      return .danger
         case .specialTeams: return .accentGold
         }
+    }
+
+    private var interestIcon: some View {
+        let level = prospect.interestLevel
+        let icon: String
+        let color: Color
+        switch level {
+        case "Hot":
+            icon = "flame.fill"
+            color = .danger
+        case "Warm":
+            icon = "thermometer.medium"
+            color = .warning
+        case "Cold":
+            icon = "thermometer.snowflake"
+            color = .accentBlue
+        default:
+            icon = "questionmark.circle"
+            color = .textTertiary
+        }
+        return Image(systemName: icon)
+            .font(.caption)
+            .foregroundStyle(color)
     }
 
     private var accessibilityDescription: String {

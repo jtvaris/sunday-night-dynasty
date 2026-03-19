@@ -7,7 +7,10 @@ struct ProspectDetailView: View {
 
     @Environment(\.modelContext) private var modelContext
     @State private var scouts: [Scout] = []
+    @State private var coaches: [Coach] = []
     @State private var showSendScout = false
+    @State private var showInterviewResult = false
+    @State private var interviewResult: (personality: PersonalityArchetype, footballIQ: Int, characterNotes: [String])?
 
     // MARK: - Derived
 
@@ -18,6 +21,9 @@ struct ProspectDetailView: View {
         prospect.shuttleTime != nil || prospect.coneDrill != nil
     }
     private var isCombinePhase: Bool { career.currentPhase == .combine }
+    private var isDraftPhase: Bool { career.currentPhase == .draft }
+    private var canInterview: Bool { isCombinePhase && !prospect.interviewCompleted && career.interviewsUsed < 60 }
+    private var canWorkout: Bool { (isCombinePhase || isDraftPhase) && !prospect.proDayCompleted && career.workoutsUsed < 30 }
 
     var body: some View {
         ZStack {
@@ -26,6 +32,7 @@ struct ProspectDetailView: View {
             List {
                 headerSection
                 combineSection
+                if prospect.interviewCompleted { interviewResultsSection }
                 if isScouted { scoutingReportSection }
                 draftSection
                 actionsSection
@@ -36,9 +43,9 @@ struct ProspectDetailView: View {
         .navigationTitle(prospect.fullName)
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .task { loadScouts() }
+        .task { loadScouts(); loadCoaches() }
         .sheet(isPresented: $showSendScout) {
-            SendScoutSheet(prospect: prospect, scouts: scouts)
+            SendScoutSheet(prospect: prospect, scouts: scouts, scoutingPhase: currentScoutingPhase)
         }
     }
 
@@ -164,6 +171,48 @@ struct ProspectDetailView: View {
         .listRowBackground(Color.backgroundSecondary)
     }
 
+    // MARK: - Interview Results Section
+
+    @ViewBuilder
+    private var interviewResultsSection: some View {
+        Section("Interview Results") {
+            if let personality = prospect.scoutedPersonality {
+                LabeledContent("Personality") {
+                    Text(personality.displayName)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color.accentGold)
+                }
+            }
+
+            if let iq = prospect.interviewFootballIQ {
+                LabeledContent("Football IQ") {
+                    Text("\(iq)")
+                        .font(.body.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Color.forRating(iq))
+                }
+            }
+
+            if let notes = prospect.interviewCharacterNotes, !notes.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Character Notes")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    ForEach(notes, id: \.self) { note in
+                        HStack(spacing: 6) {
+                            Image(systemName: "person.fill.checkmark")
+                                .font(.caption)
+                                .foregroundStyle(Color.accentBlue)
+                            Text(note)
+                                .font(.subheadline)
+                                .foregroundStyle(Color.textPrimary)
+                        }
+                    }
+                }
+            }
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
     // MARK: - Draft Section
 
     private var draftSection: some View {
@@ -186,6 +235,22 @@ struct ProspectDetailView: View {
                         .foregroundStyle(Color.textTertiary)
                 }
             }
+
+            // Mock draft projection
+            if let mockPick = prospect.mockDraftPickNumber,
+               let mockTeam = prospect.mockDraftTeam {
+                LabeledContent("Mock Draft") {
+                    Text("Rd1 Pick #\(mockPick) — \(mockTeam)")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color.accentGold)
+                        .monospacedDigit()
+                }
+            }
+
+            // Team interest indicator
+            LabeledContent("Team Interest") {
+                InterestBadge(level: prospect.interestLevel)
+            }
         }
         .listRowBackground(Color.backgroundSecondary)
     }
@@ -194,27 +259,73 @@ struct ProspectDetailView: View {
 
     private var actionsSection: some View {
         Section {
-            if !isScouted {
+            Button {
+                showSendScout = true
+            } label: {
+                Label(
+                    isScouted ? "Send Another Scout (\(currentScoutingPhase.displayName))" : "Send Scout to Evaluate",
+                    systemImage: "magnifyingglass"
+                )
+                .foregroundStyle(Color.accentGold)
+            }
+
+            // Interview button (combine phase, max 60)
+            if canInterview {
                 Button {
-                    showSendScout = true
+                    performInterview()
                 } label: {
-                    Label("Send Scout to Evaluate", systemImage: "magnifyingglass")
-                        .foregroundStyle(Color.accentGold)
+                    HStack {
+                        Label("Conduct Interview", systemImage: "person.crop.circle.badge.questionmark")
+                            .foregroundStyle(Color.accentBlue)
+                        Spacer()
+                        Text("Interviews: \(career.interviewsUsed)/60 used")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+            } else if prospect.interviewCompleted {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.success)
+                        .font(.caption)
+                    Text("Interview completed")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.success)
                 }
             }
 
-            if isCombinePhase && !prospect.interviewCompleted {
+            // Personal workout button (combine/draft phase, max 30)
+            if canWorkout {
                 Button {
-                    // Interview action — hook up to engine later
+                    performWorkout()
                 } label: {
-                    Label("Schedule Interview", systemImage: "person.crop.circle.badge.questionmark")
-                        .foregroundStyle(Color.accentBlue)
+                    HStack {
+                        Label("Invite for Workout", systemImage: "figure.run")
+                            .foregroundStyle(Color.accentGold)
+                        Spacer()
+                        Text("Workouts: \(career.workoutsUsed)/30 used")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+            } else if prospect.proDayCompleted {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.success)
+                        .font(.caption)
+                    Text("Workout/Pro Day completed")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.success)
                 }
             }
 
             if isScouted {
-                Label("Fully Scouted", systemImage: "checkmark.seal.fill")
-                    .foregroundStyle(Color.success)
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundStyle(Color.success)
+                    Text("Scouted (\(prospect.scoutingReports.count) report\(prospect.scoutingReports.count == 1 ? "" : "s"))")
+                        .foregroundStyle(Color.success)
+                }
             }
         }
         .listRowBackground(Color.backgroundSecondary)
@@ -245,10 +356,60 @@ struct ProspectDetailView: View {
         }
     }
 
+    /// Maps the career's current season phase to a scouting phase for report generation.
+    private var currentScoutingPhase: ScoutingPhase {
+        switch career.currentPhase {
+        case .combine:
+            return .combine
+        case .freeAgency, .draft:
+            return .proDay
+        case .otas, .trainingCamp, .preseason, .rosterCuts:
+            return .personalWorkout
+        default:
+            // Pre-combine phases: college season or senior bowl
+            return .collegeSeason
+        }
+    }
+
     private func loadScouts() {
         guard let teamID = career.teamID else { return }
         let desc = FetchDescriptor<Scout>(predicate: #Predicate { $0.teamID == teamID })
         scouts = (try? modelContext.fetch(desc)) ?? []
+    }
+
+    private func loadCoaches() {
+        guard let teamID = career.teamID else { return }
+        let desc = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        coaches = (try? modelContext.fetch(desc)) ?? []
+    }
+
+    private func performInterview() {
+        // Use best scout's personalityRead or HC's motivation as interviewer quality
+        let interviewerQuality: Int
+        if let bestScout = scouts.max(by: { $0.personalityRead < $1.personalityRead }) {
+            interviewerQuality = bestScout.personalityRead
+        } else if let hc = coaches.first(where: { $0.role == .headCoach }) {
+            interviewerQuality = hc.motivation
+        } else {
+            interviewerQuality = 50
+        }
+
+        let result = ScoutingEngine.conductInterview(
+            prospect: prospect,
+            interviewerQuality: interviewerQuality
+        )
+        interviewResult = result
+        career.interviewsUsed += 1
+        try? modelContext.save()
+    }
+
+    private func performWorkout() {
+        ScoutingEngine.conductPersonalWorkout(
+            prospect: prospect,
+            coaches: coaches
+        )
+        career.workoutsUsed += 1
+        try? modelContext.save()
     }
 }
 
@@ -306,11 +467,51 @@ private struct StatusPill: View {
     }
 }
 
+private struct InterestBadge: View {
+    let level: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: iconName)
+                .foregroundStyle(badgeColor)
+                .font(.caption)
+            Text(level)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(badgeColor)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(badgeColor.opacity(0.15))
+        )
+    }
+
+    private var iconName: String {
+        switch level {
+        case "Hot":     return "flame.fill"
+        case "Warm":    return "thermometer.medium"
+        case "Cold":    return "thermometer.snowflake"
+        default:        return "questionmark.circle"
+        }
+    }
+
+    private var badgeColor: Color {
+        switch level {
+        case "Hot":     return .danger
+        case "Warm":    return .warning
+        case "Cold":    return .accentBlue
+        default:        return .textTertiary
+        }
+    }
+}
+
 // MARK: - Send Scout Sheet
 
 private struct SendScoutSheet: View {
     let prospect: CollegeProspect
     let scouts: [Scout]
+    let scoutingPhase: ScoutingPhase
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -332,14 +533,26 @@ private struct SendScoutSheet: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List {
-                        ForEach(scouts) { scout in
-                            Button {
-                                // Assign scout — hook up to engine later
-                                dismiss()
-                            } label: {
-                                ScoutRowView(scout: scout)
+                        Section {
+                            HStack(spacing: 8) {
+                                Image(systemName: "info.circle")
+                                    .foregroundStyle(Color.accentGold)
+                                Text("Phase: \(scoutingPhase.displayName) (Confidence: \(Int(scoutingPhase.confidenceLevel * 100))%)")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.textSecondary)
                             }
-                            .listRowBackground(Color.backgroundSecondary)
+                        }
+                        .listRowBackground(Color.backgroundSecondary)
+
+                        Section("Select a Scout") {
+                            ForEach(scouts) { scout in
+                                Button {
+                                    sendScout(scout)
+                                } label: {
+                                    ScoutRowView(scout: scout)
+                                }
+                                .listRowBackground(Color.backgroundSecondary)
+                            }
                         }
                     }
                     .scrollContentBackground(.hidden)
@@ -355,6 +568,16 @@ private struct SendScoutSheet: View {
                 }
             }
         }
+    }
+
+    private func sendScout(_ scout: Scout) {
+        let report = ScoutingEngine.generateScoutReport(
+            scout: scout,
+            prospect: prospect,
+            phase: scoutingPhase
+        )
+        ScoutingEngine.applyReport(report: report, to: prospect)
+        dismiss()
     }
 }
 

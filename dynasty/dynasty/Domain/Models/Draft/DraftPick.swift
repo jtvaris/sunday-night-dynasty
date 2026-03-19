@@ -21,6 +21,13 @@ final class DraftPick {
     var teamAbbreviation: String?
     var isComplete: Bool
 
+    /// Media draft grade for this pick (e.g. "A+", "B-", "D").
+    var mediaGrade: String?
+    /// Media headline for this pick (e.g. "Lions steal Smith in Round 2!").
+    var mediaHeadline: String?
+    /// Media commentary sentence for this pick.
+    var mediaComment: String?
+
     // MARK: - Init
 
     init(
@@ -36,7 +43,10 @@ final class DraftPick {
         playerCollege: String? = nil,
         scoutGrade: String? = nil,
         teamAbbreviation: String? = nil,
-        isComplete: Bool = false
+        isComplete: Bool = false,
+        mediaGrade: String? = nil,
+        mediaHeadline: String? = nil,
+        mediaComment: String? = nil
     ) {
         self.id = id
         self.seasonYear = seasonYear
@@ -51,5 +61,8 @@ final class DraftPick {
         self.scoutGrade = scoutGrade
         self.teamAbbreviation = teamAbbreviation
         self.isComplete = isComplete
+        self.mediaGrade = mediaGrade
+        self.mediaHeadline = mediaHeadline
+        self.mediaComment = mediaComment
     }
 }

@@ -304,6 +304,7 @@ enum ScoutingEngine {
             scoutID: scout.id,
             scoutName: scout.fullName,
             date: currentDateString(),
+            phase: .collegeSeason,
             overallGrade: scoutedOvr,
             potentialGrade: scoutedPot,
             strengthNotes: strengthNotes,
@@ -313,45 +314,368 @@ enum ScoutingEngine {
         )
     }
 
+    // MARK: - Phase-Based Scout Report Generation
+
+    /// Generate a scouting report for a prospect based on scout's abilities and the scouting phase.
+    static func generateScoutReport(
+        scout: Scout,
+        prospect: CollegeProspect,
+        phase: ScoutingPhase
+    ) -> ScoutingReport {
+        // 1. Noise range based on scout accuracy
+        let errorRange = max(2, Int(15.0 * (1.0 - Double(scout.accuracy) / 100.0)))
+
+        // Position specialization bonus
+        var accuracyBonus = 0
+        if let spec = scout.positionSpecialization, spec == prospect.position {
+            accuracyBonus = 3
+        }
+        let adjustedError = max(1, errorRange - accuracyBonus)
+
+        // 2. Scouted overall with noise
+        let overallNoise = Int.random(in: -adjustedError...adjustedError)
+        let scoutedOverall = min(99, max(1, prospect.trueOverall + overallNoise))
+
+        // 3. Scouted potential with noise based on potentialRead
+        let potentialError = max(2, Int(15.0 * (1.0 - Double(scout.potentialRead) / 100.0)))
+        let potentialNoise = Int.random(in: -potentialError...potentialError)
+        let scoutedPotential = min(99, max(1, prospect.truePotential + potentialNoise))
+
+        // 4. Personality assessment based on personalityRead
+        let personalityNotes: String?
+        let personalityRoll = Int.random(in: 1...100)
+        if personalityRoll <= scout.personalityRead {
+            personalityNotes = accuratePersonalityNote(archetype: prospect.truePersonality.archetype)
+        } else if personalityRoll <= scout.personalityRead + 25 {
+            personalityNotes = "Hard to get a clear read on personality. Seems fine on the surface."
+        } else {
+            personalityNotes = nil
+        }
+
+        // 5. Strength and weakness notes (position-appropriate, 2-3 each)
+        let strengthNotes = generatePositionStrengths(for: prospect, accuracy: scout.accuracy)
+        let weaknessNotes = generatePositionWeaknesses(for: prospect, accuracy: scout.accuracy)
+
+        // 6. Confidence level based on phase
+        let confidenceLevel = phase.confidenceLevel
+
+        // 7. Create and return the report
+        return ScoutingReport(
+            prospectID: prospect.id,
+            scoutID: scout.id,
+            scoutName: scout.fullName,
+            date: currentDateString(),
+            phase: phase,
+            overallGrade: scoutedOverall,
+            potentialGrade: scoutedPotential,
+            strengthNotes: strengthNotes,
+            weaknessNotes: weaknessNotes,
+            personalityNotes: personalityNotes,
+            confidenceLevel: confidenceLevel
+        )
+    }
+
+    /// Apply a scouting report to update prospect's visible attributes based on the best available report.
+    static func applyReport(report: ScoutingReport, to prospect: CollegeProspect) {
+        // Add report to the prospect's collection
+        prospect.scoutingReports.append(report)
+
+        // Find the report with the highest confidence
+        guard let bestReport = prospect.scoutingReports.max(by: { $0.confidenceLevel < $1.confidenceLevel }) else {
+            return
+        }
+
+        // Update prospect's visible attributes from best report
+        prospect.scoutedOverall = bestReport.overallGrade
+        prospect.scoutedPotential = bestReport.potentialGrade
+
+        // Scout grade based on best scouted overall
+        let ovr = bestReport.overallGrade
+        switch ovr {
+        case 90...99: prospect.scoutGrade = "A+"
+        case 85...89: prospect.scoutGrade = "A"
+        case 80...84: prospect.scoutGrade = "A-"
+        case 75...79: prospect.scoutGrade = "B+"
+        case 70...74: prospect.scoutGrade = "B"
+        case 65...69: prospect.scoutGrade = "B-"
+        case 60...64: prospect.scoutGrade = "C+"
+        case 55...59: prospect.scoutGrade = "C"
+        case 50...54: prospect.scoutGrade = "C-"
+        case 45...49: prospect.scoutGrade = "D+"
+        case 40...44: prospect.scoutGrade = "D"
+        default:      prospect.scoutGrade = "F"
+        }
+
+        // Use personality from the highest-confidence report that has personality notes
+        if let _ = prospect.scoutingReports
+            .filter({ $0.personalityNotes != nil })
+            .max(by: { $0.confidenceLevel < $1.confidenceLevel }) {
+            let personalityRoll = Int.random(in: 1...100)
+            if personalityRoll <= 70 {
+                prospect.scoutedPersonality = prospect.truePersonality.archetype
+            } else {
+                let wrongArchetypes = PersonalityArchetype.allCases.filter { $0 != prospect.truePersonality.archetype }
+                prospect.scoutedPersonality = wrongArchetypes.randomElement()
+            }
+        }
+    }
+
+    // MARK: - Position-Specific Note Generators
+
+    private static func generatePositionStrengths(for prospect: CollegeProspect, accuracy: Int) -> String {
+        var pool: [String] = []
+        let phys = prospect.truePhysical
+        let mental = prospect.trueMental
+        let threshold = max(65, 90 - accuracy / 3)
+
+        if phys.speed >= threshold { pool.append("Elite speed") }
+        if phys.acceleration >= threshold { pool.append("Explosive first step") }
+        if phys.strength >= threshold { pool.append("Strong at the point of attack") }
+        if phys.agility >= threshold { pool.append("Excellent lateral agility") }
+        if phys.stamina >= threshold { pool.append("High motor, plays all four quarters") }
+        if phys.durability >= threshold { pool.append("Durable, rarely misses time") }
+        if mental.awareness >= threshold { pool.append("High football IQ") }
+        if mental.decisionMaking >= threshold { pool.append("Makes good decisions under pressure") }
+        if mental.clutch >= threshold { pool.append("Performs well in big moments") }
+        if mental.leadership >= threshold { pool.append("Natural leader on the field") }
+
+        switch prospect.truePositionAttributes {
+        case .quarterback(let qb):
+            if qb.armStrength >= threshold { pool.append("Cannon arm, can make all the throws") }
+            if qb.accuracyDeep >= threshold { pool.append("Accurate deep-ball thrower") }
+            if qb.pocketPresence >= threshold { pool.append("Calm in the pocket, great pocket awareness") }
+            if qb.scrambling >= threshold { pool.append("Dangerous when he escapes the pocket") }
+        case .wideReceiver(let wr):
+            if wr.routeRunning >= threshold { pool.append("Crisp route runner") }
+            if wr.catching >= threshold { pool.append("Reliable hands") }
+            if wr.release >= threshold { pool.append("Gets off the line quickly") }
+            if wr.spectacularCatch >= threshold { pool.append("Makes highlight-reel catches") }
+        case .runningBack(let rb):
+            if rb.vision >= threshold { pool.append("Excellent vision, finds the hole") }
+            if rb.elusiveness >= threshold { pool.append("Elusive in the open field") }
+            if rb.breakTackle >= threshold { pool.append("Hard to bring down") }
+            if rb.receiving >= threshold { pool.append("Reliable receiver out of the backfield") }
+        case .tightEnd(let te):
+            if te.blocking >= threshold { pool.append("Strong inline blocker") }
+            if te.catching >= threshold { pool.append("Sure hands in traffic") }
+            if te.routeRunning >= threshold { pool.append("Runs routes like a receiver") }
+        case .offensiveLine(let ol):
+            if ol.passBlock >= threshold { pool.append("Elite pass protector") }
+            if ol.runBlock >= threshold { pool.append("Dominant run blocker") }
+            if ol.anchor >= threshold { pool.append("Great anchor against bull rushes") }
+            if ol.pull >= threshold { pool.append("Athletic puller, effective on screens") }
+        case .defensiveLine(let dl):
+            if dl.passRush >= threshold { pool.append("Disruptive pass rusher") }
+            if dl.blockShedding >= threshold { pool.append("Sheds blocks quickly") }
+            if dl.powerMoves >= threshold { pool.append("Powerful bull rush") }
+            if dl.finesseMoves >= threshold { pool.append("Refined pass-rush moves") }
+        case .linebacker(let lb):
+            if lb.tackling >= threshold { pool.append("Sure tackler") }
+            if lb.zoneCoverage >= threshold { pool.append("Reads routes well in zone") }
+            if lb.manCoverage >= threshold { pool.append("Can cover tight ends and backs") }
+            if lb.blitzing >= threshold { pool.append("Effective as a blitzer") }
+        case .defensiveBack(let db):
+            if db.manCoverage >= threshold { pool.append("Lockdown man coverage skills") }
+            if db.zoneCoverage >= threshold { pool.append("Reads the quarterback well in zone") }
+            if db.press >= threshold { pool.append("Physical at the line of scrimmage") }
+            if db.ballSkills >= threshold { pool.append("Ball hawk, creates turnovers") }
+        case .kicking(let k):
+            if k.kickPower >= threshold { pool.append("Strong leg, can hit from 55+") }
+            if k.kickAccuracy >= threshold { pool.append("Accurate and consistent") }
+        }
+
+        if pool.isEmpty {
+            pool.append("Solid overall athlete with room to grow")
+        }
+
+        pool.shuffle()
+        let count = min(pool.count, Int.random(in: 2...3))
+        return pool.prefix(count).joined(separator: ". ") + "."
+    }
+
+    private static func generatePositionWeaknesses(for prospect: CollegeProspect, accuracy: Int) -> String {
+        var pool: [String] = []
+        let phys = prospect.truePhysical
+        let mental = prospect.trueMental
+        let threshold = min(58, 45 + accuracy / 4)
+
+        if phys.speed <= threshold { pool.append("Limited top-end speed") }
+        if phys.acceleration <= threshold { pool.append("Slow off the snap") }
+        if phys.strength <= threshold { pool.append("Needs to add strength") }
+        if phys.agility <= threshold { pool.append("Stiff in the hips") }
+        if phys.stamina <= threshold { pool.append("Fades late in games") }
+        if phys.durability <= threshold { pool.append("Injury concerns") }
+        if mental.awareness <= threshold { pool.append("Can get lost on the field") }
+        if mental.decisionMaking <= threshold { pool.append("Questionable decision-making") }
+        if mental.workEthic <= threshold { pool.append("Work ethic is a concern") }
+
+        switch prospect.truePositionAttributes {
+        case .quarterback(let qb):
+            if qb.armStrength <= threshold { pool.append("Arm strength limits deep throws") }
+            if qb.accuracyDeep <= threshold { pool.append("Struggles with accuracy downfield") }
+            if qb.pocketPresence <= threshold { pool.append("Gets rattled under pressure") }
+            if qb.scrambling <= threshold { pool.append("Limited mobility outside the pocket") }
+        case .wideReceiver(let wr):
+            if wr.routeRunning <= threshold { pool.append("Route tree needs refinement") }
+            if wr.catching <= threshold { pool.append("Too many drops") }
+            if wr.release <= threshold { pool.append("Struggles to get off press coverage") }
+        case .runningBack(let rb):
+            if rb.vision <= threshold { pool.append("Needs to improve vision") }
+            if rb.elusiveness <= threshold { pool.append("Not elusive enough in space") }
+            if rb.receiving <= threshold { pool.append("Limited as a pass catcher") }
+        case .tightEnd(let te):
+            if te.blocking <= threshold { pool.append("Blocking needs work") }
+            if te.catching <= threshold { pool.append("Hands can be unreliable") }
+            if te.routeRunning <= threshold { pool.append("Route running is raw") }
+        case .offensiveLine(let ol):
+            if ol.passBlock <= threshold { pool.append("Pass protection is inconsistent") }
+            if ol.runBlock <= threshold { pool.append("Struggles to create movement in the run game") }
+            if ol.anchor <= threshold { pool.append("Gets pushed back against power") }
+        case .defensiveLine(let dl):
+            if dl.passRush <= threshold { pool.append("Limited pass-rush arsenal") }
+            if dl.blockShedding <= threshold { pool.append("Gets stuck on blocks") }
+        case .linebacker(let lb):
+            if lb.tackling <= threshold { pool.append("Misses too many tackles") }
+            if lb.zoneCoverage <= threshold { pool.append("Liability in coverage") }
+            if lb.blitzing <= threshold { pool.append("Not effective as a pass rusher") }
+        case .defensiveBack(let db):
+            if db.manCoverage <= threshold { pool.append("Gets beaten in man coverage") }
+            if db.zoneCoverage <= threshold { pool.append("Loses discipline in zone") }
+            if db.ballSkills <= threshold { pool.append("Does not create turnovers") }
+        case .kicking(let k):
+            if k.kickPower <= threshold { pool.append("Limited range") }
+            if k.kickAccuracy <= threshold { pool.append("Inconsistent accuracy") }
+        }
+
+        if pool.isEmpty {
+            pool.append("No major red flags at this time")
+        }
+
+        pool.shuffle()
+        let count = min(pool.count, Int.random(in: 2...3))
+        return pool.prefix(count).joined(separator: ". ") + "."
+    }
+
     // MARK: - Combine Simulation
 
-    /// Fills in combine results for all prospects based on true physical attributes plus variance.
-    static func simulateCombine(prospects: inout [CollegeProspect]) {
-        for i in prospects.indices {
+    /// Generate realistic combine results for invited prospects (~330 of the draft class).
+    /// Top prospects by trueOverall are invited (`combineInvite = true`).
+    /// K/P only get height/weight measured — no athletic drills.
+    /// Drill results derive from true physical attributes with position-specific
+    /// adjustments and ±2-5% random noise.
+    static func generateCombineResults(for prospects: inout [CollegeProspect]) {
+        // 1. Select top ~330 prospects by trueOverall as combine invitees
+        let inviteCount = min(330, prospects.count)
+        let sortedIndices = prospects.indices.sorted { prospects[$0].trueOverall > prospects[$1].trueOverall }
+        let invitedIndices = Set(sortedIndices.prefix(inviteCount))
+
+        for i in invitedIndices {
+            prospects[i].combineInvite = true
+        }
+
+        // 2. Generate drill results for each invitee
+        for i in invitedIndices {
+            let position = prospects[i].position
             let phys = prospects[i].truePhysical
 
-            // Determine if this prospect is a "combine warrior" or "bad tester"
+            // K/P only get height/weight measured, no combine drills
+            if position == .K || position == .P { continue }
+
             let combineModifier = combinePersonalityModifier()
+            let posGroup = positionGroup(for: position)
 
-            // 40-yard dash: faster speed = lower time. Range ~4.2 - 5.3
-            let baseForty = 5.5 - (Double(phys.speed) * 0.013)
-            let fortyVariance = Double.random(in: -0.06...0.06) + combineModifier * 0.05
-            prospects[i].fortyTime = max(4.2, min(5.5, baseForty + fortyVariance))
+            // --- 40-yard dash ---
+            // Base: speed attribute mapped to time. Higher speed = lower time.
+            // Position: QB/WR/CB fastest, OL/DL slowest, RB/LB balanced
+            let fortyBase: Double = {
+                let raw = 5.5 - (Double(phys.speed) * 0.013)
+                switch posGroup {
+                case .speedster: return raw - 0.05
+                case .bigman:    return raw + 0.15
+                case .balanced:  return raw
+                }
+            }()
+            let fortyNoise = fortyBase * Double.random(in: -0.03...0.03)
+            let fortyVariance = Double.random(in: -0.04...0.04) + combineModifier * 0.04
+            prospects[i].fortyTime = max(4.22, min(5.40, fortyBase + fortyVariance + fortyNoise))
 
-            // Bench press: correlated with strength. Range ~10 - 40 reps
-            let baseBench = Int(Double(phys.strength) * 0.35) - 5
-            let benchVariance = Int.random(in: -3...3) + Int(combineModifier * 3.0)
-            prospects[i].benchPress = max(8, min(45, baseBench + benchVariance))
+            // --- Bench press (225 lb reps) ---
+            // OL/DL: highest reps; QB/WR/CB: lightest
+            let benchBase: Int = {
+                let raw = Int(Double(phys.strength) * 0.35) - 5
+                switch posGroup {
+                case .bigman:    return raw + 8
+                case .balanced:  return raw + 2
+                case .speedster: return raw - 2
+                }
+            }()
+            let benchNoise = Int(Double(benchBase) * Double.random(in: -0.05...0.05))
+            let benchVariance = Int.random(in: -2...2) + Int(combineModifier * 2.0)
+            prospects[i].benchPress = max(8, min(45, benchBase + benchVariance + benchNoise))
 
-            // Vertical jump: correlated with acceleration and agility. Range ~25 - 45 inches
-            let baseVertical = 20.0 + Double(phys.acceleration + phys.agility) * 0.13
+            // --- Vertical jump ---
+            let vertBase = 20.0 + Double(phys.agility + phys.acceleration) * 0.13
+            let vertNoise = vertBase * Double.random(in: -0.03...0.03)
             let vertVariance = Double.random(in: -1.5...1.5) + combineModifier * 1.5
-            prospects[i].verticalJump = max(24.0, min(46.0, baseVertical + vertVariance))
+            prospects[i].verticalJump = max(24.0, min(46.0, vertBase + vertVariance + vertNoise))
 
-            // Broad jump: correlated with strength and acceleration. Range ~100 - 140 inches
-            let baseBroad = 80 + Int(Double(phys.strength + phys.acceleration) * 0.3)
-            let broadVariance = Int.random(in: -4...4) + Int(combineModifier * 3.0)
-            prospects[i].broadJump = max(95, min(145, baseBroad + broadVariance))
+            // --- Broad jump ---
+            let broadBase: Double = {
+                let raw = 80.0 + Double(phys.strength + phys.acceleration) * 0.3
+                switch posGroup {
+                case .speedster: return raw + 2.0
+                case .bigman:    return raw - 4.0
+                case .balanced:  return raw
+                }
+            }()
+            let broadNoise = Int(broadBase * Double.random(in: -0.03...0.03))
+            let broadVariance = Int.random(in: -3...3) + Int(combineModifier * 3.0)
+            prospects[i].broadJump = max(95, min(145, Int(broadBase) + broadVariance + broadNoise))
 
-            // Shuttle: correlated with agility. Range ~3.8 - 4.6 seconds
-            let baseShuttle = 4.8 - (Double(phys.agility) * 0.01)
-            let shuttleVariance = Double.random(in: -0.08...0.08) + combineModifier * 0.04
-            prospects[i].shuttleTime = max(3.7, min(4.8, baseShuttle + shuttleVariance))
+            // --- 3-cone drill ---
+            let coneBase = 7.8 - (Double(phys.agility + phys.acceleration) * 0.007)
+            let coneNoise = coneBase * Double.random(in: -0.02...0.02)
+            let coneVariance = Double.random(in: -0.08...0.08) + combineModifier * 0.04
+            prospects[i].coneDrill = max(6.40, min(7.60, coneBase + coneVariance + coneNoise))
 
-            // 3-cone drill: correlated with agility and acceleration. Range ~6.5 - 7.5 seconds
-            let baseCone = 7.8 - (Double(phys.agility + phys.acceleration) * 0.007)
-            let coneVariance = Double.random(in: -0.1...0.1) + combineModifier * 0.05
-            prospects[i].coneDrill = max(6.4, min(7.6, baseCone + coneVariance))
+            // --- Shuttle time ---
+            let shuttleBase: Double = {
+                let raw = 4.8 - (Double(phys.agility + phys.speed) * 0.005)
+                switch posGroup {
+                case .speedster: return raw - 0.05
+                case .bigman:    return raw + 0.10
+                case .balanced:  return raw
+                }
+            }()
+            let shuttleNoise = shuttleBase * Double.random(in: -0.02...0.02)
+            let shuttleVariance = Double.random(in: -0.06...0.06) + combineModifier * 0.03
+            prospects[i].shuttleTime = max(3.80, min(4.80, shuttleBase + shuttleVariance + shuttleNoise))
+        }
+    }
+
+    /// Legacy wrapper — calls generateCombineResults(for:).
+    static func simulateCombine(prospects: inout [CollegeProspect]) {
+        generateCombineResults(for: &prospects)
+    }
+
+    // MARK: - Combine Position Groups
+
+    private enum CombinePositionGroup {
+        case speedster  // QB, WR, CB — fastest 40 times
+        case bigman     // OL, DL — highest bench press, slower 40
+        case balanced   // RB, FB, TE, LB, S — balanced across drills
+    }
+
+    private static func positionGroup(for position: Position) -> CombinePositionGroup {
+        switch position {
+        case .QB, .WR, .CB:
+            return .speedster
+        case .LT, .LG, .C, .RG, .RT, .DE, .DT:
+            return .bigman
+        case .RB, .FB, .TE, .OLB, .MLB, .FS, .SS:
+            return .balanced
+        case .K, .P:
+            return .balanced  // Won't be reached (K/P excluded above)
         }
     }
 
@@ -481,6 +805,387 @@ enum ScoutingEngine {
         }
 
         return notes.joined(separator: " ")
+    }
+
+    // MARK: - Enhanced Interview System
+
+    /// Conduct an interview with a prospect at the combine. Reveals personality, footballIQ, and character notes.
+    /// - Parameters:
+    ///   - prospect: The prospect to interview (mutated in place).
+    ///   - interviewerQuality: HC or scout playCalling/motivation attribute (1-99).
+    /// - Returns: Tuple of revealed personality, footballIQ, and character notes.
+    static func conductInterview(
+        prospect: CollegeProspect,
+        interviewerQuality: Int
+    ) -> (personality: PersonalityArchetype, footballIQ: Int, characterNotes: [String]) {
+        // 1. Reveal personality with noise based on interviewer quality
+        let personalityRoll = Int.random(in: 1...100)
+        let revealedPersonality: PersonalityArchetype
+        if personalityRoll <= interviewerQuality {
+            revealedPersonality = prospect.truePersonality.archetype
+        } else {
+            // Misread: return a wrong archetype
+            let wrong = PersonalityArchetype.allCases.filter { $0 != prospect.truePersonality.archetype }
+            revealedPersonality = wrong.randomElement() ?? prospect.truePersonality.archetype
+        }
+
+        // 2. Reveal footballIQ (mental attribute average with noise)
+        let trueMentalAvg = Int(prospect.trueMental.average.rounded())
+        let maxNoise = max(1, 20 - (interviewerQuality * 20 / 100))
+        let iqNoise = Int.random(in: -maxNoise...maxNoise)
+        let footballIQ = min(99, max(1, trueMentalAvg + iqNoise))
+
+        // 3. Generate 1-3 character notes based on true attributes
+        var characterPool: [String] = []
+        let mental = prospect.trueMental
+        let personality = prospect.truePersonality
+
+        if mental.leadership >= 75 { characterPool.append("Natural leader") }
+        if mental.workEthic >= 80 { characterPool.append("High character") }
+        if mental.workEthic < 45 { characterPool.append("Off-field concerns") }
+        if mental.coachability >= 80 { characterPool.append("Extremely coachable") }
+        if mental.coachability < 40 { characterPool.append("Resistant to coaching") }
+        if mental.clutch >= 80 { characterPool.append("Clutch performer") }
+        if mental.clutch < 40 { characterPool.append("Folds under pressure") }
+        if personality.archetype == .teamLeader { characterPool.append("Team-first mentality") }
+        if personality.archetype == .dramaQueen { characterPool.append("Maturity concerns") }
+        if personality.archetype == .fieryCompetitor { characterPool.append("Intense competitor") }
+        if personality.archetype == .mentor { characterPool.append("Mature beyond his years") }
+        if personality.archetype == .loneWolf { characterPool.append("Keeps to himself") }
+
+        // Noise: poor interviewers may miss notes or get wrong read
+        if interviewerQuality < 50 && Int.random(in: 1...100) > interviewerQuality {
+            // Replace a note with a misleading one
+            let misleading = ["Seemed fine", "Hard to read", "Came across as average"]
+            characterPool.append(misleading.randomElement()!)
+        }
+
+        if characterPool.isEmpty {
+            characterPool.append("Nothing stood out, solid character")
+        }
+
+        characterPool.shuffle()
+        let noteCount = min(characterPool.count, Int.random(in: 1...3))
+        let characterNotes = Array(characterPool.prefix(noteCount))
+
+        // 4. Update prospect state
+        prospect.interviewCompleted = true
+        prospect.scoutedPersonality = revealedPersonality
+        prospect.interviewFootballIQ = footballIQ
+        prospect.interviewCharacterNotes = characterNotes
+        prospect.interviewNotes = characterNotes.joined(separator: ". ") + "."
+
+        return (personality: revealedPersonality, footballIQ: footballIQ, characterNotes: characterNotes)
+    }
+
+    // MARK: - Pro Day System
+
+    /// Send a scout to a Pro Day at a college. Generates combine-like results for all prospects at that school.
+    /// For combine invitees, allows improving one drill result. For non-invitees, generates hand-timed results.
+    /// Also generates a scout report at `.proDay` phase for each prospect.
+    static func attendProDay(
+        scout: Scout,
+        college: String,
+        prospects: inout [CollegeProspect]
+    ) {
+        let collegeIndices = prospects.indices.filter { prospects[$0].college == college }
+        guard !collegeIndices.isEmpty else { return }
+
+        for i in collegeIndices {
+            let phys = prospects[i].truePhysical
+            let position = prospects[i].position
+
+            // K/P only get height/weight — no athletic drills
+            if position == .K || position == .P {
+                prospects[i].proDayCompleted = true
+                // Still generate a scout report
+                let report = generateScoutReport(scout: scout, prospect: prospects[i], phase: .proDay)
+                applyReport(report: report, to: prospects[i])
+                continue
+            }
+
+            if prospects[i].combineInvite {
+                // Combine invitees can improve ONE drill result (athlete chooses best chance)
+                improveOneDrill(prospect: &prospects[i], physical: phys)
+            } else {
+                // Non-combine invitees: generate hand-timed results (±3% less accurate)
+                generateHandTimedResults(prospect: &prospects[i], physical: phys, position: position)
+            }
+
+            prospects[i].proDayCompleted = true
+
+            // Generate scout report at Pro Day phase
+            let report = generateScoutReport(scout: scout, prospect: prospects[i], phase: .proDay)
+            applyReport(report: report, to: prospects[i])
+        }
+
+        scout.proDaysAttended += 1
+    }
+
+    /// For combine invitees at pro day: improve their weakest drill result.
+    private static func improveOneDrill(prospect: inout CollegeProspect, physical: PhysicalAttributes) {
+        let homefieldBoost = 0.3
+
+        // Pick the drill where they underperformed most (or a random one)
+        // We'll try to improve their worst drill relative to their athletic ability
+        let drills = ["forty", "bench", "vertical", "broad", "shuttle", "cone"]
+        let drill = drills.randomElement()!
+
+        switch drill {
+        case "forty":
+            let baseForty = 5.5 - (Double(physical.speed) * 0.013)
+            let variance = Double.random(in: -0.06...0.04) - homefieldBoost * 0.03
+            let proDayForty = max(4.2, min(5.5, baseForty + variance))
+            if let existing = prospect.fortyTime {
+                prospect.fortyTime = min(existing, proDayForty)
+            }
+        case "bench":
+            let baseBench = Int(Double(physical.strength) * 0.35) - 5
+            let variance = Int.random(in: -1...4)
+            let proDayBench = max(8, min(45, baseBench + variance))
+            if let existing = prospect.benchPress {
+                prospect.benchPress = max(existing, proDayBench)
+            }
+        case "vertical":
+            let baseVert = 20.0 + Double(physical.acceleration + physical.agility) * 0.13
+            let variance = Double.random(in: -0.5...2.0)
+            let proDayVert = max(24.0, min(46.0, baseVert + variance))
+            if let existing = prospect.verticalJump {
+                prospect.verticalJump = max(existing, proDayVert)
+            }
+        case "broad":
+            let baseBroad = 80 + Int(Double(physical.strength + physical.acceleration) * 0.3)
+            let variance = Int.random(in: -1...5)
+            let proDayBroad = max(95, min(145, baseBroad + variance))
+            if let existing = prospect.broadJump {
+                prospect.broadJump = max(existing, proDayBroad)
+            }
+        case "shuttle":
+            let baseShuttle = 4.8 - (Double(physical.agility + physical.speed) * 0.005)
+            let variance = Double.random(in: -0.08...0.04)
+            let proDayShuttle = max(3.7, min(4.8, baseShuttle + variance))
+            if let existing = prospect.shuttleTime {
+                prospect.shuttleTime = min(existing, proDayShuttle)
+            }
+        case "cone":
+            let baseCone = 7.8 - (Double(physical.agility + physical.acceleration) * 0.007)
+            let variance = Double.random(in: -0.10...0.05)
+            let proDayCone = max(6.4, min(7.6, baseCone + variance))
+            if let existing = prospect.coneDrill {
+                prospect.coneDrill = min(existing, proDayCone)
+            }
+        default: break
+        }
+    }
+
+    /// For non-combine invitees at pro day: generate hand-timed results (±3% less accurate than combine).
+    private static func generateHandTimedResults(
+        prospect: inout CollegeProspect,
+        physical: PhysicalAttributes,
+        position: Position
+    ) {
+        let posGroup = positionGroup(for: position)
+        // Hand-timed = slightly favorable (no electronic precision) but noisier
+        let handTimedBias = 0.03
+
+        // 40-yard dash (hand-timed tends to be ~0.1 sec faster)
+        let fortyBase: Double = {
+            let raw = 5.5 - (Double(physical.speed) * 0.013)
+            switch posGroup {
+            case .speedster: return raw - 0.05
+            case .bigman:    return raw + 0.15
+            case .balanced:  return raw
+            }
+        }()
+        let fortyNoise = Double.random(in: -0.05...0.05)
+        prospect.fortyTime = max(4.22, min(5.40, fortyBase + fortyNoise - handTimedBias))
+
+        // Bench press
+        let benchBase: Int = {
+            let raw = Int(Double(physical.strength) * 0.35) - 5
+            switch posGroup {
+            case .bigman:    return raw + 8
+            case .balanced:  return raw + 2
+            case .speedster: return raw - 2
+            }
+        }()
+        prospect.benchPress = max(8, min(45, benchBase + Int.random(in: -3...3)))
+
+        // Vertical jump
+        let vertBase = 20.0 + Double(physical.agility + physical.acceleration) * 0.13
+        prospect.verticalJump = max(24.0, min(46.0, vertBase + Double.random(in: -2.0...2.0)))
+
+        // Broad jump
+        let broadBase: Int = {
+            let raw = 80 + Int(Double(physical.strength + physical.acceleration) * 0.3)
+            switch posGroup {
+            case .speedster: return raw + 2
+            case .bigman:    return raw - 4
+            case .balanced:  return raw
+            }
+        }()
+        prospect.broadJump = max(95, min(145, broadBase + Int.random(in: -4...4)))
+
+        // 3-cone drill
+        let coneBase = 7.8 - (Double(physical.agility + physical.acceleration) * 0.007)
+        prospect.coneDrill = max(6.40, min(7.60, coneBase + Double.random(in: -0.10...0.10)))
+
+        // Shuttle
+        let shuttleBase: Double = {
+            let raw = 4.8 - (Double(physical.agility + physical.speed) * 0.005)
+            switch posGroup {
+            case .speedster: return raw - 0.05
+            case .bigman:    return raw + 0.10
+            case .balanced:  return raw
+            }
+        }()
+        prospect.shuttleTime = max(3.80, min(4.80, shuttleBase + Double.random(in: -0.08...0.08)))
+    }
+
+    // MARK: - Personal Workout System
+
+    /// Invite a prospect for a personal workout. Highest accuracy evaluation (confidence 0.9).
+    /// Generates a scout report at `.personalWorkout` phase with scheme fit evaluation.
+    static func conductPersonalWorkout(
+        prospect: CollegeProspect,
+        coaches: [Coach]
+    ) {
+        // 1. Generate a high-confidence scout report
+        // Use the best coaching staff member's scouting ability as the basis
+        let bestScoutingAbility = coaches.map { $0.scoutingAbility }.max() ?? 50
+
+        // Create a virtual "scout" with high accuracy for the workout evaluation
+        let errorRange = max(1, Int(8.0 * (1.0 - Double(bestScoutingAbility) / 100.0)))
+
+        let overallNoise = Int.random(in: -errorRange...errorRange)
+        let scoutedOverall = min(99, max(1, prospect.trueOverall + overallNoise))
+
+        let potentialNoise = Int.random(in: -(errorRange + 2)...(errorRange + 2))
+        let scoutedPotential = min(99, max(1, prospect.truePotential + potentialNoise))
+
+        // 2. Scheme fit evaluation based on coaches
+        let schemeFitNotes = evaluateSchemeFit(prospect: prospect, coaches: coaches)
+
+        // 3. Personality read (very accurate in personal setting)
+        let personalityNotes: String?
+        if Int.random(in: 1...100) <= 85 {
+            personalityNotes = accuratePersonalityNote(archetype: prospect.truePersonality.archetype)
+                + " " + schemeFitNotes
+        } else {
+            personalityNotes = schemeFitNotes
+        }
+
+        // 4. Generate full workout report
+        let strengthNotes = generatePositionStrengths(for: prospect, accuracy: min(99, bestScoutingAbility + 15))
+        let weaknessNotes = generatePositionWeaknesses(for: prospect, accuracy: min(99, bestScoutingAbility + 15))
+
+        let report = ScoutingReport(
+            prospectID: prospect.id,
+            scoutID: UUID(), // Virtual "coaching staff" report
+            scoutName: "Coaching Staff",
+            date: currentDateString(),
+            phase: .personalWorkout,
+            overallGrade: scoutedOverall,
+            potentialGrade: scoutedPotential,
+            strengthNotes: strengthNotes,
+            weaknessNotes: weaknessNotes,
+            personalityNotes: personalityNotes,
+            confidenceLevel: 0.9
+        )
+
+        // 5. Apply report
+        prospect.scoutingReports.append(report)
+
+        // Update best scouted values
+        if let bestReport = prospect.scoutingReports.max(by: { $0.confidenceLevel < $1.confidenceLevel }) {
+            prospect.scoutedOverall = bestReport.overallGrade
+            prospect.scoutedPotential = bestReport.potentialGrade
+
+            let ovr = bestReport.overallGrade
+            switch ovr {
+            case 90...99: prospect.scoutGrade = "A+"
+            case 85...89: prospect.scoutGrade = "A"
+            case 80...84: prospect.scoutGrade = "A-"
+            case 75...79: prospect.scoutGrade = "B+"
+            case 70...74: prospect.scoutGrade = "B"
+            case 65...69: prospect.scoutGrade = "B-"
+            case 60...64: prospect.scoutGrade = "C+"
+            case 55...59: prospect.scoutGrade = "C"
+            case 50...54: prospect.scoutGrade = "C-"
+            case 45...49: prospect.scoutGrade = "D+"
+            case 40...44: prospect.scoutGrade = "D"
+            default:      prospect.scoutGrade = "F"
+            }
+        }
+
+        prospect.proDayCompleted = true
+    }
+
+    /// Evaluate how well a prospect fits the team's schemes based on coaching staff.
+    private static func evaluateSchemeFit(prospect: CollegeProspect, coaches: [Coach]) -> String {
+        var fitNotes: [String] = []
+
+        // Find the OC and DC for scheme references
+        let oc = coaches.first { $0.role == .offensiveCoordinator }
+        let dc = coaches.first { $0.role == .defensiveCoordinator }
+
+        let isOffense = [Position.QB, .RB, .FB, .WR, .TE, .LT, .LG, .C, .RG, .RT].contains(prospect.position)
+
+        if isOffense, let scheme = oc?.offensiveScheme {
+            switch prospect.truePositionAttributes {
+            case .quarterback(let qb):
+                if scheme == .westCoast && qb.accuracyShort >= 75 {
+                    fitNotes.append("Accuracy profile fits the West Coast scheme well")
+                } else if scheme == .airRaid && qb.accuracyDeep >= 70 {
+                    fitNotes.append("Deep ball ability suits the Air Raid system")
+                } else if (scheme == .spread || scheme == .option || scheme == .rpo) && qb.scrambling >= 70 {
+                    fitNotes.append("Mobility is ideal for the spread/option scheme")
+                }
+            case .runningBack(let rb):
+                if scheme == .powerRun && rb.breakTackle >= 70 {
+                    fitNotes.append("Physical runner, great fit for power run game")
+                } else if (scheme == .spread || scheme == .rpo) && rb.elusiveness >= 70 {
+                    fitNotes.append("Elusiveness works well in zone-read concepts")
+                }
+            case .wideReceiver(let wr):
+                if scheme == .westCoast && wr.routeRunning >= 70 {
+                    fitNotes.append("Route precision fits the West Coast timing game")
+                } else if scheme == .airRaid && wr.catching >= 70 {
+                    fitNotes.append("Reliable hands suit the high-volume passing attack")
+                }
+            default: break
+            }
+        } else if !isOffense, let scheme = dc?.defensiveScheme {
+            switch prospect.truePositionAttributes {
+            case .defensiveLine(let dl):
+                if scheme == .base34 && dl.passRush >= 70 {
+                    fitNotes.append("Pass rush ability fits the 3-4 front well")
+                } else if scheme == .base43 && dl.blockShedding >= 70 {
+                    fitNotes.append("Block shedding suits the 4-3 scheme")
+                }
+            case .linebacker(let lb):
+                if scheme == .base34 && lb.blitzing >= 70 {
+                    fitNotes.append("Blitzing ability ideal for 3-4 OLB role")
+                } else if scheme == .base43 && lb.zoneCoverage >= 70 {
+                    fitNotes.append("Zone coverage skills fit the 4-3 scheme well")
+                }
+            case .defensiveBack(let db):
+                if scheme == .tampa2 && db.zoneCoverage >= 70 {
+                    fitNotes.append("Zone instincts are perfect for Tampa 2")
+                } else if scheme == .cover3 && db.manCoverage >= 70 {
+                    fitNotes.append("Man coverage ability fits the Cover 3 scheme")
+                } else if scheme == .pressMan && db.press >= 70 {
+                    fitNotes.append("Press technique is ideal for the press man scheme")
+                }
+            default: break
+            }
+        }
+
+        if fitNotes.isEmpty {
+            fitNotes.append("Scheme fit is average. Versatile enough to contribute.")
+        }
+
+        return fitNotes.joined(separator: ". ") + "."
     }
 
     // MARK: - Scout Development
@@ -629,5 +1334,541 @@ enum ScoutingEngine {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: Date())
+    }
+
+    // MARK: - Mock Draft Generation
+
+    /// A single entry in a mock draft projection.
+    struct MockDraftPick {
+        let pickNumber: Int
+        let prospectID: UUID
+        let teamAbbreviation: String
+    }
+
+    /// Generate a mock draft projection for the first round (32 picks).
+    ///
+    /// Called at: midseason (week 9), entering combine phase, entering draft phase.
+    /// The mock simulates which prospect each team would take based on roster needs,
+    /// with +-3-5 pick variance to represent media imperfection.
+    ///
+    /// - Parameters:
+    ///   - prospects: All available college prospects.
+    ///   - draftPicks: Current draft pick assignments (used for team order). If empty, uses team order by wins (worst first).
+    ///   - teams: All 32 teams.
+    ///   - players: All current NFL players (used to evaluate team needs).
+    /// - Returns: Array of mock pick assignments for the first round.
+    static func generateMockDraft(
+        prospects: [CollegeProspect],
+        draftPicks: [DraftPick],
+        teams: [Team],
+        players: [Player]
+    ) -> [MockDraftPick] {
+        guard !prospects.isEmpty, !teams.isEmpty else { return [] }
+
+        // Build team pick order for round 1.
+        // If we have real draft picks, use those. Otherwise derive from standings (worst team first).
+        let teamOrder: [(pickNumber: Int, teamID: UUID, abbreviation: String)]
+
+        if !draftPicks.isEmpty {
+            let firstRound = draftPicks
+                .filter { $0.round == 1 }
+                .sorted { $0.pickNumber < $1.pickNumber }
+            let teamLookup = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
+            teamOrder = firstRound.compactMap { pick in
+                guard let team = teamLookup[pick.currentTeamID] else { return nil }
+                return (pickNumber: pick.pickNumber, teamID: team.id, abbreviation: team.abbreviation)
+            }
+        } else {
+            // Pre-draft: order by worst record first
+            let sorted = teams.sorted { ($0.wins - $0.losses) < ($1.wins - $1.losses) }
+            teamOrder = sorted.prefix(32).enumerated().map { index, team in
+                (pickNumber: index + 1, teamID: team.id, abbreviation: team.abbreviation)
+            }
+        }
+
+        guard !teamOrder.isEmpty else { return [] }
+
+        // Pre-compute team needs
+        let playersByTeam = Dictionary(grouping: players) { $0.teamID ?? UUID() }
+        var teamNeeds: [UUID: [Position: Double]] = [:]
+        for entry in teamOrder {
+            let roster = playersByTeam[entry.teamID] ?? []
+            teamNeeds[entry.teamID] = evaluateTeamNeedsForMock(roster: roster)
+        }
+
+        // Sort prospects by true overall (best first) as the base talent board
+        let sortedProspects = prospects
+            .filter { $0.isDeclaringForDraft }
+            .sorted { $0.trueOverall > $1.trueOverall }
+
+        var takenIDs = Set<UUID>()
+        var mockPicks: [MockDraftPick] = []
+
+        for entry in teamOrder {
+            let needs = teamNeeds[entry.teamID] ?? [:]
+            let available = sortedProspects.filter { !takenIDs.contains($0.id) }
+            guard !available.isEmpty else { break }
+
+            // Score each available prospect (same logic as DraftEngine.aiMakePick but with noise)
+            let scored = available.prefix(60).map { prospect -> (CollegeProspect, Double) in
+                var score = Double(prospect.trueOverall)
+
+                // Positional need boost
+                let needMultiplier = needs[prospect.position] ?? 1.0
+                score *= needMultiplier
+
+                // QB premium
+                if prospect.position == .QB && (needs[.QB] ?? 1.0) > 1.2 {
+                    score *= 1.15
+                }
+
+                // Potential factor
+                score += Double(prospect.truePotential) * 0.15
+
+                // Media noise: +-3-5 points of variance (media isn't perfect)
+                let noise = Double.random(in: -5.0...5.0)
+                score += noise
+
+                return (prospect, score)
+            }
+
+            if let best = scored.max(by: { $0.1 < $1.1 }) {
+                takenIDs.insert(best.0.id)
+                mockPicks.append(MockDraftPick(
+                    pickNumber: entry.pickNumber,
+                    prospectID: best.0.id,
+                    teamAbbreviation: entry.abbreviation
+                ))
+            }
+        }
+
+        return mockPicks
+    }
+
+    /// Updates team interest on all prospects based on positional need matching.
+    ///
+    /// Each team's top 2-3 positional needs are identified, and prospects at those
+    /// positions receive that team's ID in their `teamInterest` array.
+    static func updateTeamInterest(
+        prospects: inout [CollegeProspect],
+        teams: [Team],
+        players: [Player]
+    ) {
+        let playersByTeam = Dictionary(grouping: players) { $0.teamID ?? UUID() }
+
+        // Clear existing interest
+        for i in prospects.indices {
+            prospects[i].teamInterest = []
+        }
+
+        for team in teams {
+            let roster = playersByTeam[team.id] ?? []
+            let needs = evaluateTeamNeedsForMock(roster: roster)
+
+            // Get top 3 need positions (highest multiplier)
+            let topNeeds = needs
+                .sorted { $0.value > $1.value }
+                .prefix(3)
+                .map { $0.key }
+
+            // Add this team's interest to matching prospects
+            for i in prospects.indices where topNeeds.contains(prospects[i].position) {
+                // Only interested in prospects projected in rounds 1-3
+                if let proj = prospects[i].draftProjection, proj <= 3 {
+                    prospects[i].teamInterest.append(team.id)
+                } else if prospects[i].trueOverall >= 65 {
+                    // Also interested in high-talent prospects regardless of projection
+                    prospects[i].teamInterest.append(team.id)
+                }
+            }
+        }
+    }
+
+    /// Updates prospect mock draft annotations from mock draft results.
+    static func applyMockDraftToProspects(
+        prospects: inout [CollegeProspect],
+        mockDraft: [MockDraftPick]
+    ) {
+        // Clear previous mock annotations
+        for i in prospects.indices {
+            prospects[i].mockDraftPickNumber = nil
+            prospects[i].mockDraftTeam = nil
+        }
+
+        // Apply new mock draft data
+        for pick in mockDraft {
+            if let idx = prospects.firstIndex(where: { $0.id == pick.prospectID }) {
+                prospects[idx].mockDraftPickNumber = pick.pickNumber
+                prospects[idx].mockDraftTeam = pick.teamAbbreviation
+            }
+        }
+    }
+
+    /// Evaluates which positions a team needs most (mirrors DraftEngine logic).
+    private static func evaluateTeamNeedsForMock(roster: [Player]) -> [Position: Double] {
+        let idealCounts: [Position: Int] = [
+            .QB: 2, .RB: 3, .FB: 1, .WR: 5, .TE: 3,
+            .LT: 2, .LG: 2, .C: 2, .RG: 2, .RT: 2,
+            .DE: 4, .DT: 3, .OLB: 4, .MLB: 2,
+            .CB: 5, .FS: 2, .SS: 2,
+            .K: 1, .P: 1
+        ]
+
+        var currentCounts: [Position: Int] = [:]
+        for player in roster {
+            currentCounts[player.position, default: 0] += 1
+        }
+
+        var positionOveralls: [Position: [Int]] = [:]
+        for player in roster {
+            positionOveralls[player.position, default: []].append(player.overall)
+        }
+
+        var needs: [Position: Double] = [:]
+        for position in Position.allCases {
+            let ideal = idealCounts[position] ?? 1
+            let current = currentCounts[position] ?? 0
+            let deficit = max(0, ideal - current)
+
+            var multiplier = 1.0 + Double(deficit) * 0.15
+
+            if let overalls = positionOveralls[position], !overalls.isEmpty {
+                let avgOverall = Double(overalls.reduce(0, +)) / Double(overalls.count)
+                if avgOverall < 60.0 {
+                    multiplier += 0.2
+                } else if avgOverall < 70.0 {
+                    multiplier += 0.1
+                }
+            } else {
+                multiplier += 0.3
+            }
+
+            needs[position] = multiplier
+        }
+
+        return needs
+    }
+
+    // MARK: - Regional College Mapping
+
+    /// Maps scout roles to the colleges in their scouting region.
+    private static func colleges(forRegion role: ScoutRole) -> [String] {
+        switch role {
+        case .regionalScout1: // East — ACC / Big East
+            return ["Clemson", "Miami", "Florida State", "Virginia Tech",
+                    "Boston College", "Wake Forest", "Duke", "Pittsburgh", "Notre Dame"]
+        case .regionalScout2: // West — Pac-12 / Mountain West
+            return ["USC", "Oregon", "Washington", "UCLA", "Stanford",
+                    "Arizona State", "Colorado", "Utah"]
+        case .regionalScout3: // South — SEC / Sun Belt
+            return ["Alabama", "Georgia", "LSU", "Florida", "Tennessee",
+                    "Auburn", "Ole Miss", "Arkansas", "Kentucky", "Texas A&M"]
+        case .regionalScout4: // North — Big Ten / MAC
+            return ["Ohio State", "Michigan", "Penn State", "Wisconsin",
+                    "Michigan State", "Iowa", "Minnesota", "Illinois"]
+        case .regionalScout5: // Central — Big 12 / AAC
+            return ["Oklahoma", "Texas", "Baylor", "TCU", "North Carolina"]
+        case .chiefScout:
+            return colleges // Chief Scout can evaluate any prospect
+        }
+    }
+
+    // MARK: - Weekly Scout Reports (In-Season)
+
+    /// Generate weekly scout reports during regular season.
+    /// Each scout evaluates 3-5 prospects per week from their assigned region.
+    /// Earlier weeks have more uncertainty; later weeks provide better data.
+    static func generateWeeklyReports(
+        scouts: [Scout],
+        prospects: [CollegeProspect],
+        week: Int
+    ) -> [ScoutingReport] {
+        guard !scouts.isEmpty, !prospects.isEmpty else { return [] }
+
+        var reports: [ScoutingReport] = []
+
+        for scout in scouts {
+            let regionalColleges = colleges(forRegion: scout.scoutRole)
+            let regionalProspects = prospects.filter { regionalColleges.contains($0.college) }
+
+            guard !regionalProspects.isEmpty else { continue }
+
+            // Each scout evaluates 3-5 prospects per week
+            let evaluationCount = Int.random(in: 3...5)
+            let shuffled = regionalProspects.shuffled()
+            let toEvaluate = Array(shuffled.prefix(evaluationCount))
+
+            for prospect in toEvaluate {
+                // Chief Scout gets +10% accuracy bonus
+                let chiefBonus = scout.scoutRole.isChief ? 10 : 0
+                var effectiveAccuracy = min(99, scout.accuracy + chiefBonus)
+
+                // Position specialization bonus
+                if let spec = scout.positionSpecialization, spec == prospect.position {
+                    effectiveAccuracy = min(99, effectiveAccuracy + 10)
+                }
+
+                // Earlier weeks = more uncertainty, later weeks = better data
+                // Week 1: -15 accuracy, Week 18: +5 accuracy (linear ramp)
+                let weekModifier = Int(Double(week - 1) / 17.0 * 20.0) - 15
+                effectiveAccuracy = min(99, max(10, effectiveAccuracy + weekModifier))
+
+                // Base confidence is collegeSeason level (0.4), improved by week progression
+                let weekConfidenceBoost = Double(week) / 18.0 * 0.15
+                let baseConfidence = 0.4 + weekConfidenceBoost
+                let experienceBonus = min(0.1, Double(scout.experience) * 0.01)
+                let confidence = min(0.7, baseConfidence + experienceBonus)
+
+                // Calculate scouted overall with error margin
+                let maxError = max(1, 30 - (effectiveAccuracy * 30 / 100))
+                let overallError = Int.random(in: -maxError...maxError)
+                let scoutedOvr = min(99, max(1, prospect.trueOverall + overallError))
+
+                // Calculate scouted potential
+                let potentialMaxError = max(1, 30 - (scout.potentialRead * 30 / 100))
+                let potentialError = Int.random(in: -potentialMaxError...potentialMaxError)
+                let scoutedPot = min(99, max(1, prospect.truePotential + potentialError))
+
+                // Generate college production notes
+                let productionNotes = generateProductionNotes(for: prospect, week: week)
+
+                let strengthNotes = generateStrengthNotes(for: prospect, accuracy: effectiveAccuracy)
+                let weaknessNotes = generateWeaknessNotes(for: prospect, accuracy: effectiveAccuracy)
+                let personalityNotes = generatePersonalityNotes(for: prospect, scout: scout)
+
+                let report = ScoutingReport(
+                    prospectID: prospect.id,
+                    scoutID: scout.id,
+                    scoutName: scout.fullName,
+                    date: "Week \(week)",
+                    phase: .collegeSeason,
+                    overallGrade: scoutedOvr,
+                    potentialGrade: scoutedPot,
+                    strengthNotes: strengthNotes,
+                    weaknessNotes: weaknessNotes,
+                    personalityNotes: personalityNotes,
+                    confidenceLevel: confidence,
+                    productionNotes: productionNotes
+                )
+                reports.append(report)
+            }
+        }
+
+        return reports
+    }
+
+    /// Apply weekly scout reports: append to prospect's report list and update scouted values
+    /// using the best (highest confidence) report available.
+    static func applyWeeklyReports(_ reports: [ScoutingReport], to prospects: inout [CollegeProspect]) {
+        let reportsByProspect = Dictionary(grouping: reports, by: { $0.prospectID })
+
+        for i in prospects.indices {
+            guard let newReports = reportsByProspect[prospects[i].id] else { continue }
+
+            // Append reports
+            prospects[i].scoutingReports.append(contentsOf: newReports)
+
+            // Find the best report (highest confidence) across ALL reports for this prospect
+            guard let bestReport = prospects[i].scoutingReports.max(by: {
+                $0.confidenceLevel < $1.confidenceLevel
+            }) else { continue }
+
+            // Update scouted values from the best report
+            prospects[i].scoutedOverall = bestReport.overallGrade
+            prospects[i].scoutedPotential = bestReport.potentialGrade
+
+            // Set scout grade based on best scouted overall
+            let ovr = bestReport.overallGrade
+            switch ovr {
+            case 90...99: prospects[i].scoutGrade = "A+"
+            case 85...89: prospects[i].scoutGrade = "A"
+            case 80...84: prospects[i].scoutGrade = "A-"
+            case 75...79: prospects[i].scoutGrade = "B+"
+            case 70...74: prospects[i].scoutGrade = "B"
+            case 65...69: prospects[i].scoutGrade = "B-"
+            case 60...64: prospects[i].scoutGrade = "C+"
+            case 55...59: prospects[i].scoutGrade = "C"
+            case 50...54: prospects[i].scoutGrade = "C-"
+            case 45...49: prospects[i].scoutGrade = "D+"
+            case 40...44: prospects[i].scoutGrade = "D"
+            default:      prospects[i].scoutGrade = "F"
+            }
+        }
+    }
+
+    /// Generate college production notes based on position and week progression.
+    private static func generateProductionNotes(for prospect: CollegeProspect, week: Int) -> String {
+        let gamesPlayed = min(week, 12) // College season ~12 games
+        let overall = prospect.trueOverall
+
+        switch prospect.position {
+        case .QB:
+            let tdsPerGame = Double(overall) / 30.0
+            let totalTDs = Int(tdsPerGame * Double(gamesPlayed))
+            let totalINTs = Int(Double(gamesPlayed) * (1.0 - Double(overall) / 120.0))
+            let yards = Int(Double(gamesPlayed) * Double(overall) * 2.8)
+            return "\(totalTDs) TDs, \(totalINTs) INTs, \(yards) yards in \(gamesPlayed) games"
+        case .RB, .FB:
+            let yardsPerGame = Double(overall) * 0.9
+            let totalYards = Int(yardsPerGame * Double(gamesPlayed))
+            let tds = Int(Double(overall) / 12.0 * Double(gamesPlayed) / 4.0)
+            return "\(totalYards) rushing yards, \(tds) TDs in \(gamesPlayed) games"
+        case .WR, .TE:
+            let recPerGame = Double(overall) / 18.0
+            let totalRec = Int(recPerGame * Double(gamesPlayed))
+            let totalYards = Int(Double(totalRec) * Double(overall) / 7.0)
+            let tds = Int(Double(overall) / 15.0 * Double(gamesPlayed) / 5.0)
+            return "\(totalRec) receptions, \(totalYards) yards, \(tds) TDs in \(gamesPlayed) games"
+        case .DE, .DT:
+            let sacks = Double(overall) / 20.0 * Double(gamesPlayed) / 5.0
+            let tfls = sacks * 1.5
+            return String(format: "%.1f sacks, %.0f TFLs in %d games", sacks, tfls, gamesPlayed)
+        case .OLB, .MLB:
+            let tacklesPerGame = Double(overall) / 12.0
+            let totalTackles = Int(tacklesPerGame * Double(gamesPlayed))
+            return "\(totalTackles) tackles in \(gamesPlayed) games"
+        case .CB, .FS, .SS:
+            let ints = Int(Double(overall) / 25.0 * Double(gamesPlayed) / 6.0)
+            let pds = ints * 3 + Int.random(in: 1...4)
+            return "\(ints) INTs, \(pds) pass deflections in \(gamesPlayed) games"
+        case .LT, .LG, .C, .RG, .RT:
+            let sacked = overall >= 70 ? "zero sacks allowed" : "\(Int.random(in: 1...3)) sacks allowed"
+            return "Started all \(gamesPlayed) games, \(sacked)"
+        case .K:
+            let attempts = Int(Double(gamesPlayed) * 2.5)
+            let made = Int(Double(attempts) * Double(overall) / 110.0)
+            return "\(made)/\(attempts) FG in \(gamesPlayed) games"
+        case .P:
+            let avgYards = 38.0 + Double(overall) / 10.0
+            return String(format: "%.1f avg punt yards in %d games", avgYards, gamesPlayed)
+        }
+    }
+
+    // MARK: - Pre-Scouted Data (First Season)
+
+    /// Generate pre-scouted data for first season (simulates previous GM's scouting work).
+    /// Top 50 prospects get advanced scouting, next 100 basic, next 100 minimal, rest unknown.
+    static func applyPreScoutedData(prospects: inout [CollegeProspect]) {
+        // Sort by true overall to determine tiers
+        let sortedIndices = prospects.indices.sorted {
+            prospects[$0].trueOverall > prospects[$1].trueOverall
+        }
+
+        for (rank, idx) in sortedIndices.enumerated() {
+            if rank < 50 {
+                // Advanced scouting: within +-5 of true, accurate grade, personality/potential
+                let error = Int.random(in: -5...5)
+                let scoutedOvr = min(99, max(1, prospects[idx].trueOverall + error))
+                prospects[idx].scoutedOverall = scoutedOvr
+
+                // Accurate scout grade
+                switch scoutedOvr {
+                case 90...99: prospects[idx].scoutGrade = "A+"
+                case 85...89: prospects[idx].scoutGrade = "A"
+                case 80...84: prospects[idx].scoutGrade = "A-"
+                case 75...79: prospects[idx].scoutGrade = "B+"
+                case 70...74: prospects[idx].scoutGrade = "B"
+                case 65...69: prospects[idx].scoutGrade = "B-"
+                case 60...64: prospects[idx].scoutGrade = "C+"
+                case 55...59: prospects[idx].scoutGrade = "C"
+                case 50...54: prospects[idx].scoutGrade = "C-"
+                case 45...49: prospects[idx].scoutGrade = "D+"
+                case 40...44: prospects[idx].scoutGrade = "D"
+                default:      prospects[idx].scoutGrade = "F"
+                }
+
+                // Potential revealed with moderate accuracy (within +-8)
+                let potError = Int.random(in: -8...8)
+                prospects[idx].scoutedPotential = min(99, max(1,
+                    prospects[idx].truePotential + potError))
+
+                // Personality revealed (80% accurate)
+                if Int.random(in: 1...100) <= 80 {
+                    prospects[idx].scoutedPersonality = prospects[idx].truePersonality.archetype
+                } else {
+                    let wrong = PersonalityArchetype.allCases.filter {
+                        $0 != prospects[idx].truePersonality.archetype
+                    }
+                    prospects[idx].scoutedPersonality = wrong.randomElement()
+                }
+
+                // Generate a pre-scout report
+                let report = ScoutingReport(
+                    prospectID: prospects[idx].id,
+                    scoutID: UUID(),
+                    scoutName: "Previous Staff",
+                    date: "Pre-Season",
+                    phase: .collegeSeason,
+                    overallGrade: scoutedOvr,
+                    potentialGrade: prospects[idx].scoutedPotential ?? scoutedOvr,
+                    strengthNotes: "Thorough evaluation from previous scouting department.",
+                    weaknessNotes: "Full report on file.",
+                    personalityNotes: prospects[idx].scoutedPersonality != nil
+                        ? "Personality assessment included." : nil,
+                    confidenceLevel: 0.65,
+                    productionNotes: generateProductionNotes(for: prospects[idx], week: 12)
+                )
+                prospects[idx].scoutingReports.append(report)
+
+            } else if rank < 150 {
+                // Basic scouting: within +-10 of true, grade set (possibly inaccurate)
+                let error = Int.random(in: -10...10)
+                let scoutedOvr = min(99, max(1, prospects[idx].trueOverall + error))
+                prospects[idx].scoutedOverall = scoutedOvr
+
+                switch scoutedOvr {
+                case 90...99: prospects[idx].scoutGrade = "A+"
+                case 85...89: prospects[idx].scoutGrade = "A"
+                case 80...84: prospects[idx].scoutGrade = "A-"
+                case 75...79: prospects[idx].scoutGrade = "B+"
+                case 70...74: prospects[idx].scoutGrade = "B"
+                case 65...69: prospects[idx].scoutGrade = "B-"
+                case 60...64: prospects[idx].scoutGrade = "C+"
+                case 55...59: prospects[idx].scoutGrade = "C"
+                case 50...54: prospects[idx].scoutGrade = "C-"
+                case 45...49: prospects[idx].scoutGrade = "D+"
+                case 40...44: prospects[idx].scoutGrade = "D"
+                default:      prospects[idx].scoutGrade = "F"
+                }
+
+                let report = ScoutingReport(
+                    prospectID: prospects[idx].id,
+                    scoutID: UUID(),
+                    scoutName: "Previous Staff",
+                    date: "Pre-Season",
+                    phase: .collegeSeason,
+                    overallGrade: scoutedOvr,
+                    potentialGrade: scoutedOvr,
+                    strengthNotes: "Basic evaluation on file.",
+                    weaknessNotes: "Limited tape review.",
+                    personalityNotes: nil,
+                    confidenceLevel: 0.45,
+                    productionNotes: generateProductionNotes(for: prospects[idx], week: 8)
+                )
+                prospects[idx].scoutingReports.append(report)
+
+            } else if rank < 250 {
+                // Minimal scouting: within +-15 of true, only general info
+                let error = Int.random(in: -15...15)
+                let scoutedOvr = min(99, max(1, prospects[idx].trueOverall + error))
+                prospects[idx].scoutedOverall = scoutedOvr
+
+                let report = ScoutingReport(
+                    prospectID: prospects[idx].id,
+                    scoutID: UUID(),
+                    scoutName: "Previous Staff",
+                    date: "Pre-Season",
+                    phase: .collegeSeason,
+                    overallGrade: scoutedOvr,
+                    potentialGrade: scoutedOvr,
+                    strengthNotes: "Name on the board. Minimal evaluation.",
+                    weaknessNotes: "Needs further evaluation.",
+                    personalityNotes: nil,
+                    confidenceLevel: 0.25
+                )
+                prospects[idx].scoutingReports.append(report)
+            }
+            // Remaining prospects (rank >= 250): no scouted data
+        }
     }
 }

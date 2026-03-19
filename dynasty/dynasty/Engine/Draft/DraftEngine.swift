@@ -311,7 +311,247 @@ enum DraftEngine {
         return offers
     }
 
+    // MARK: - Media Commentary
+
+    /// Generates a media grade, headline, and comment for a draft pick.
+    ///
+    /// Compares the prospect's projected round against the actual pick to determine
+    /// whether the pick is a reach, solid, or great value. Need-match boosts the grade.
+    ///
+    /// - Parameters:
+    ///   - prospect: The college prospect who was drafted.
+    ///   - pickNumber: The overall pick number (1-224).
+    ///   - teamNeeds: Positions the drafting team needs most.
+    /// - Returns: A tuple of (grade, headline, comment).
+    static func generateMediaGrade(
+        prospect: CollegeProspect,
+        pickNumber: Int,
+        teamNeeds: [Position]
+    ) -> (grade: String, headline: String, comment: String) {
+        let gradeScale = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D", "F"]
+
+        // Determine the actual round from pick number.
+        let actualRound = ((pickNumber - 1) / 32) + 1
+
+        // Determine the projected round (draftProjection is a round number, e.g. 1, 2, 3...).
+        let projectedRound = prospect.draftProjection ?? actualRound
+
+        // Base grade index: start at B (index 4).
+        var gradeIndex = 4
+
+        // Compare projected vs actual round.
+        let roundDelta = actualRound - projectedRound
+        // Negative delta = picked earlier than projected (reach), positive = picked later (value).
+
+        if roundDelta < -1 {
+            gradeIndex += 3 // Major reach: C- or worse
+        } else if roundDelta == -1 {
+            gradeIndex += 2 // Moderate reach: C+
+        } else if roundDelta == 0 {
+            gradeIndex -= 1 // Solid pick: B+
+        } else if roundDelta == 1 {
+            gradeIndex -= 2 // Good value: A-
+        } else {
+            gradeIndex -= 3 // Great value: A or A+
+        }
+
+        // Need match bonus: picking a position of need = +1 grade (lower index).
+        if teamNeeds.contains(prospect.position) {
+            gradeIndex -= 1
+        }
+
+        // High-talent bonus: if true overall >= 80, slight boost.
+        if prospect.trueOverall >= 80 {
+            gradeIndex -= 1
+        }
+
+        // Clamp to valid range.
+        gradeIndex = max(0, min(gradeScale.count - 1, gradeIndex))
+        let grade = gradeScale[gradeIndex]
+
+        // Generate headline and comment.
+        let teamAbbr = prospect.mockDraftTeam ?? "Team"
+        let name = prospect.lastName
+        let pos = prospect.position.rawValue
+        let roundLabel = roundName(actualRound)
+
+        let headline: String
+        let comment: String
+
+        if roundDelta >= 2 {
+            // Great value
+            let headlines = [
+                "\(name) falls to \(roundLabel) — steal!",
+                "Incredible value: \(name) in \(roundLabel)!",
+                "\(pos) \(name) is a draft-day steal!"
+            ]
+            headline = headlines[pickNumber % headlines.count]
+            let comments = [
+                "\(prospect.fullName) was projected to go much earlier. This is a tremendous value pick that could pay dividends for years.",
+                "How did \(prospect.fullName) fall this far? A gift for the franchise that just landed a potential star at \(pos)."
+            ]
+            comment = comments[pickNumber % comments.count]
+        } else if roundDelta == 1 {
+            let headlines = [
+                "Nice value on \(name) in \(roundLabel)",
+                "\(name) slides just enough — solid get"
+            ]
+            headline = headlines[pickNumber % headlines.count]
+            comment = "\(prospect.fullName) was expected to go a round earlier. Getting a player of this caliber at pick \(pickNumber) is smart drafting."
+        } else if roundDelta == 0 {
+            let headlines = [
+                "\(name) goes right where expected",
+                "No surprises: \(pos) \(name) at pick \(pickNumber)"
+            ]
+            headline = headlines[pickNumber % headlines.count]
+            comment = "\(prospect.fullName) lands right at his projected slot. A consensus pick that fills a roster need."
+        } else if roundDelta == -1 {
+            let headlines = [
+                "Slight reach for \(name) at \(pickNumber)",
+                "\(name) picked a bit early?"
+            ]
+            headline = headlines[pickNumber % headlines.count]
+            comment = "\(prospect.fullName) was projected to go in the next round. A bit of a reach, but the talent is there if the coaching staff can develop him."
+        } else {
+            // Major reach
+            let headlines = [
+                "Surprising reach for \(name) at \(pickNumber)!",
+                "Eyebrows raised: \(name) goes early",
+                "Bold pick: \(pos) \(name) at \(pickNumber)"
+            ]
+            headline = headlines[pickNumber % headlines.count]
+            let comments = [
+                "\(prospect.fullName) was not expected to go this early. The front office must see something the rest of us don't.",
+                "This is a head-scratcher. \(prospect.fullName) was projected much later. A risky move that needs to pan out."
+            ]
+            comment = comments[pickNumber % comments.count]
+        }
+
+        return (grade: grade, headline: headline, comment: comment)
+    }
+
+    // MARK: - Staff Recommendations
+
+    /// A single coaching staff recommendation for a draft pick.
+    struct StaffRecommendation: Identifiable {
+        let id = UUID()
+        let staffTitle: String
+        let message: String
+        let prospectID: UUID
+        let icon: String
+    }
+
+    /// Generates 2-3 coaching staff recommendations based on team needs and available prospects.
+    ///
+    /// - Parameters:
+    ///   - availableProspects: Prospects still on the board.
+    ///   - teamNeeds: Positions the team needs most (sorted by priority).
+    ///   - coaches: The team's coaching staff.
+    /// - Returns: An array of 2-3 staff recommendations.
+    static func generateStaffRecommendations(
+        availableProspects: [CollegeProspect],
+        teamNeeds: [Position],
+        coaches: [Coach]
+    ) -> [StaffRecommendation] {
+        guard !availableProspects.isEmpty else { return [] }
+
+        var recommendations: [StaffRecommendation] = []
+
+        // Find the OC's recommendation (offensive need).
+        let offensivePositions: Set<Position> = [.QB, .RB, .FB, .WR, .TE, .LT, .LG, .C, .RG, .RT]
+        let offensiveNeeds = teamNeeds.filter { offensivePositions.contains($0) }
+        let bestOffensive = availableProspects
+            .filter { offensivePositions.contains($0.position) }
+            .sorted { ($0.scoutedOverall ?? $0.trueOverall) > ($1.scoutedOverall ?? $1.trueOverall) }
+            .first
+
+        if let prospect = bestOffensive {
+            let ocName = coaches.first(where: { $0.role == .offensiveCoordinator })
+            let title = ocName.map { "\($0.lastName), OC" } ?? "Offensive Coordinator"
+            let needsMatch = offensiveNeeds.contains(prospect.position)
+            let message: String
+            if needsMatch {
+                message = "We need to address \(prospect.position.rawValue). \(prospect.fullName) is the best available and fills a real gap."
+            } else {
+                message = "\(prospect.fullName) is the best offensive talent on the board. Too good to pass up at \(prospect.position.rawValue)."
+            }
+            recommendations.append(StaffRecommendation(
+                staffTitle: title,
+                message: message,
+                prospectID: prospect.id,
+                icon: "sportscourt.fill"
+            ))
+        }
+
+        // Find the DC's recommendation (defensive need).
+        let defensivePositions: Set<Position> = [.DE, .DT, .OLB, .MLB, .CB, .FS, .SS]
+        let defensiveNeeds = teamNeeds.filter { defensivePositions.contains($0) }
+        let bestDefensive = availableProspects
+            .filter { defensivePositions.contains($0.position) }
+            .sorted { ($0.scoutedOverall ?? $0.trueOverall) > ($1.scoutedOverall ?? $1.trueOverall) }
+            .first
+
+        if let prospect = bestDefensive, prospect.id != bestOffensive?.id {
+            let dcName = coaches.first(where: { $0.role == .defensiveCoordinator })
+            let title = dcName.map { "\($0.lastName), DC" } ?? "Defensive Coordinator"
+            let needsMatch = defensiveNeeds.contains(prospect.position)
+            let message: String
+            if needsMatch {
+                message = "There's a talented \(prospect.position.rawValue) still on the board. \(prospect.fullName) can transform our defense."
+            } else {
+                message = "\(prospect.fullName) is an elite \(prospect.position.rawValue) prospect. He'd be an instant impact player on this defense."
+            }
+            recommendations.append(StaffRecommendation(
+                staffTitle: title,
+                message: message,
+                prospectID: prospect.id,
+                icon: "shield.fill"
+            ))
+        }
+
+        // Chief Scout's sleeper pick: highest potential prospect that isn't already recommended.
+        let alreadyRecommended = Set(recommendations.map(\.prospectID))
+        let sleeperPick = availableProspects
+            .filter { !alreadyRecommended.contains($0.id) }
+            .sorted { $0.truePotential > $1.truePotential }
+            .first
+
+        if let prospect = sleeperPick {
+            let scoutName = coaches.first(where: { $0.role == .headCoach })
+            let title = scoutName.map { "Scout (\($0.lastName)'s staff)" } ?? "Chief Scout"
+            let message = "\(prospect.fullName) is my sleeper pick. Our scouts had him rated higher than the public boards. He's got serious upside at \(prospect.position.rawValue)."
+            recommendations.append(StaffRecommendation(
+                staffTitle: title,
+                message: message,
+                prospectID: prospect.id,
+                icon: "binoculars.fill"
+            ))
+        }
+
+        return recommendations
+    }
+
+    /// Returns the top team need positions sorted by priority (highest need first).
+    static func topTeamNeeds(roster: [Player], limit: Int = 5) -> [Position] {
+        let needs = evaluateTeamNeeds(roster: roster)
+        return needs.sorted { $0.value > $1.value }.prefix(limit).map(\.key)
+    }
+
     // MARK: - Private Helpers
+
+    /// Returns a human-readable round name.
+    private static func roundName(_ round: Int) -> String {
+        switch round {
+        case 1: return "Round 1"
+        case 2: return "Round 2"
+        case 3: return "Round 3"
+        case 4: return "Round 4"
+        case 5: return "Round 5"
+        case 6: return "Round 6"
+        case 7: return "Round 7"
+        default: return "Round \(round)"
+        }
+    }
 
     /// Sorts records so the worst team comes first (lowest win percentage).
     private static func worstFirst(_ lhs: StandingsRecord, _ rhs: StandingsRecord) -> Bool {

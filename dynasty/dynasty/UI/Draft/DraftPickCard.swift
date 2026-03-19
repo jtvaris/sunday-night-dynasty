@@ -7,79 +7,113 @@ struct DraftPickCard: View {
     let isPlayerTeam: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
 
-            // MARK: Pick Number Circle
-            ZStack {
-                Circle()
-                    .fill(isPlayerTeam ? Color.accentGold : Color.backgroundTertiary)
-                    .frame(width: 40, height: 40)
-                Text("\(pick.pickNumber)")
-                    .font(.system(size: 13, weight: .heavy).monospacedDigit())
-                    .foregroundStyle(isPlayerTeam ? Color.backgroundPrimary : Color.textSecondary)
-            }
+                // MARK: Pick Number Circle
+                ZStack {
+                    Circle()
+                        .fill(isPlayerTeam ? Color.accentGold : Color.backgroundTertiary)
+                        .frame(width: 40, height: 40)
+                    Text("\(pick.pickNumber)")
+                        .font(.system(size: 13, weight: .heavy).monospacedDigit())
+                        .foregroundStyle(isPlayerTeam ? Color.backgroundPrimary : Color.textSecondary)
+                }
 
-            // MARK: Round Badge
-            Text("R\(pick.round)")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(Color.textTertiary)
-                .frame(width: 24)
+                // MARK: Round Badge
+                Text("R\(pick.round)")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.textTertiary)
+                    .frame(width: 24)
 
-            // MARK: Team Abbreviation
-            Text(pick.teamAbbreviation ?? "???")
-                .font(.system(size: 14, weight: .heavy))
-                .foregroundStyle(isPlayerTeam ? Color.accentGold : Color.textPrimary)
-                .frame(width: 38, alignment: .leading)
+                // MARK: Team Abbreviation
+                Text(pick.teamAbbreviation ?? "???")
+                    .font(.system(size: 14, weight: .heavy))
+                    .foregroundStyle(isPlayerTeam ? Color.accentGold : Color.textPrimary)
+                    .frame(width: 38, alignment: .leading)
 
-            // MARK: Player Info
-            VStack(alignment: .leading, spacing: 2) {
-                Text(pick.playerName ?? "—")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
-                    .lineLimit(1)
+                // MARK: Player Info
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pick.playerName ?? "—")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
 
-                if let pos = pick.playerPosition, let college = pick.playerCollege {
-                    HStack(spacing: 6) {
-                        Text(pos)
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(Color.textPrimary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(positionColor(pos), in: RoundedRectangle(cornerRadius: 3))
+                    if let pos = pick.playerPosition, let college = pick.playerCollege {
+                        HStack(spacing: 6) {
+                            Text(pos)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(Color.textPrimary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(positionColor(pos), in: RoundedRectangle(cornerRadius: 3))
 
-                        Text(college)
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                            .lineLimit(1)
+                            Text(college)
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                                .lineLimit(1)
+                        }
                     }
                 }
-            }
 
-            Spacer()
+                Spacer()
 
-            // MARK: Scout Grade Badge
-            if let grade = pick.scoutGrade {
-                Text(grade)
-                    .font(.caption.weight(.heavy))
-                    .foregroundStyle(gradeColor(grade))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
+                // MARK: Media Grade Badge (replaces scout grade for completed picks)
+                if let mediaGrade = pick.mediaGrade {
+                    VStack(spacing: 2) {
+                        Text(mediaGrade)
+                            .font(.system(size: 14, weight: .heavy))
+                            .foregroundStyle(gradeColor(mediaGrade))
+                        Text("GRADE")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(Color.textTertiary)
+                            .tracking(0.5)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
                     .background(
-                        RoundedRectangle(cornerRadius: 5)
-                            .fill(gradeColor(grade).opacity(0.15))
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(gradeColor(pick.mediaGrade ?? "C").opacity(0.12))
                     )
+                } else if let grade = pick.scoutGrade {
+                    Text(grade)
+                        .font(.caption.weight(.heavy))
+                        .foregroundStyle(gradeColor(grade))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(gradeColor(grade).opacity(0.15))
+                        )
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            // MARK: Media Headline (shown for player team picks)
+            if isPlayerTeam, let headline = pick.mediaHeadline {
+                HStack(spacing: 6) {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.accentGold)
+                    Text(headline)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(isPlayerTeam ? Color.accentGold.opacity(0.08) : Color.backgroundSecondary)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
                         .strokeBorder(
-                            isPlayerTeam ? Color.accentGold.opacity(0.5) : Color.surfaceBorder,
-                            lineWidth: isPlayerTeam ? 1.5 : 1
+                            isPlayerTeam ? Color.accentGold : Color.surfaceBorder,
+                            lineWidth: isPlayerTeam ? 2 : 1
                         )
                 )
         )

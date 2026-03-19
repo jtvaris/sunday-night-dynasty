@@ -23,6 +23,10 @@ struct DraftView: View {
     @State private var playerTeam: Team?
     /// All teams keyed by ID for fast lookup.
     @State private var teamsByID: [UUID: Team] = [:]
+    /// Coaching staff for the player's team.
+    @State private var teamCoaches: [Coach] = []
+    /// Current team needs (positions sorted by priority).
+    @State private var teamNeeds: [Position] = []
 
     /// Index into allPicks indicating which pick is currently on the clock.
     @State private var currentPickIndex: Int = 0
@@ -32,6 +36,27 @@ struct DraftView: View {
     @State private var showSelectionSheet: Bool = false
     /// An incoming AI trade offer display model, if any.
     @State private var pendingTradeOffer: DraftTradeOfferDisplay?
+
+    // MARK: Media & War Room State
+
+    /// The latest media commentary to display as a toast.
+    @State private var mediaToast: MediaToast?
+    /// Whether the media toast is visible (for animation).
+    @State private var showMediaToast: Bool = false
+    /// Staff recommendations shown in the war room panel.
+    @State private var staffRecommendations: [DraftEngine.StaffRecommendation] = []
+    /// Whether the war room panel is expanded.
+    @State private var showWarRoom: Bool = false
+    /// The current round for round-transition banners.
+    @State private var lastAnnouncedRound: Int = 0
+    /// Whether the round transition banner is visible.
+    @State private var showRoundBanner: Bool = false
+    /// The round number to display in the banner.
+    @State private var roundBannerNumber: Int = 1
+    /// Whether to show the draft summary at the end.
+    @State private var showDraftSummary: Bool = false
+    /// Simulated on-the-clock countdown value.
+    @State private var clockSeconds: Int = 120
 
     // MARK: - Computed
 
@@ -64,11 +89,30 @@ struct DraftView: View {
                 HStack(spacing: 0) {
                     mainColumn
                     Divider().overlay(Color.surfaceBorder)
-                    bigBoardSidebar
+                    rightSidebar
                         .frame(width: 320)
                 }
             } else {
                 mainColumn
+            }
+
+            // MARK: Round Transition Banner
+            if showRoundBanner {
+                roundTransitionBanner
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    .zIndex(10)
+            }
+
+            // MARK: Media Toast Overlay
+            if showMediaToast, let toast = mediaToast {
+                VStack {
+                    Spacer()
+                    mediaToastView(toast)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 16)
+                }
+                .zIndex(5)
             }
         }
         .navigationTitle("NFL Draft \(career.currentSeason)")
@@ -96,6 +140,9 @@ struct DraftView: View {
                 onDecline: { pendingTradeOffer = nil }
             )
         }
+        .sheet(isPresented: $showDraftSummary) {
+            draftSummarySheet
+        }
     }
 
     // MARK: - Main Column
@@ -104,6 +151,9 @@ struct DraftView: View {
         VStack(spacing: 0) {
             draftHeader
             onTheClockCard
+            if isPlayerTurn && !staffRecommendations.isEmpty {
+                warRoomPanel
+            }
             Divider().overlay(Color.surfaceBorder)
             draftBoardScrollView
         }
@@ -183,6 +233,26 @@ struct DraftView: View {
             Text("Check your roster to see your new players.")
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
+
+            Button {
+                showDraftSummary = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "list.clipboard.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("View Draft Summary")
+                        .font(.system(size: 15, weight: .bold))
+                }
+                .foregroundStyle(Color.backgroundPrimary)
+                .padding(.horizontal, 20)
+                .frame(minHeight: 40)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.accentGold)
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity)
         .padding(28)
@@ -210,9 +280,28 @@ struct DraftView: View {
                     .frame(width: 8, height: 8)
             }
 
-            Text("Round \(pick.round)  ·  Pick \(pick.pickNumber)")
-                .font(.title2.weight(.bold))
-                .foregroundStyle(Color.textPrimary)
+            HStack(spacing: 16) {
+                Text("Round \(pick.round)  ·  Pick \(pick.pickNumber)")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(Color.textPrimary)
+
+                // On-the-clock timer
+                HStack(spacing: 4) {
+                    Image(systemName: "clock.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(clockSeconds <= 30 ? Color.danger : Color.accentGold)
+                    Text(String(format: "%d:%02d", clockSeconds / 60, clockSeconds % 60))
+                        .font(.system(size: 16, weight: .bold).monospacedDigit())
+                        .foregroundStyle(clockSeconds <= 30 ? Color.danger : Color.accentGold)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.backgroundTertiary)
+                )
+                .onAppear { startClockTimer() }
+            }
 
             HStack(spacing: 12) {
                 Button {
@@ -344,16 +433,99 @@ struct DraftView: View {
         }
     }
 
-    // MARK: - Big Board Sidebar (iPad)
+    // MARK: - Right Sidebar (iPad)
+
+    /// Combined sidebar with Big Board and War Room tabs on iPad.
+    private var rightSidebar: some View {
+        VStack(spacing: 0) {
+            // Tab selector
+            HStack(spacing: 0) {
+                sidebarTab(title: "Big Board", icon: "list.star", isActive: !showWarRoom) {
+                    showWarRoom = false
+                }
+                sidebarTab(title: "War Room", icon: "person.3.fill", isActive: showWarRoom) {
+                    showWarRoom = true
+                }
+            }
+            .background(Color.backgroundTertiary)
+            .overlay(
+                Rectangle()
+                    .fill(Color.surfaceBorder)
+                    .frame(height: 1),
+                alignment: .bottom
+            )
+
+            if showWarRoom {
+                warRoomSidebarContent
+            } else {
+                bigBoardContent
+            }
+        }
+        .background(Color.backgroundSecondary)
+    }
+
+    private func sidebarTab(title: String, icon: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 11))
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(isActive ? Color.accentGold : Color.textTertiary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .overlay(
+                Rectangle()
+                    .fill(isActive ? Color.accentGold : Color.clear)
+                    .frame(height: 2),
+                alignment: .bottom
+            )
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+    }
+
+    /// War room content for the iPad sidebar.
+    private var warRoomSidebarContent: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                if staffRecommendations.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "person.3.fill")
+                            .font(.system(size: 36))
+                            .foregroundStyle(Color.textTertiary)
+                        Text(isPlayerTurn ? "Staff is analyzing..." : "Waiting for your pick...")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+                } else {
+                    ForEach(staffRecommendations) { rec in
+                        staffRecommendationCard(rec)
+                    }
+                }
+            }
+            .padding(12)
+        }
+    }
 
     private var bigBoardSidebar: some View {
         VStack(spacing: 0) {
-            sidebarHeader
+            bigBoardHeader
+            bigBoardContent
+        }
+        .background(Color.backgroundSecondary)
+    }
 
-            let scoutedBoard = availableProspects
-                .filter { $0.scoutedOverall != nil }
-                .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
+    /// Big board content used both standalone and inside the tabbed sidebar.
+    private var bigBoardContent: some View {
+        let scoutedBoard = availableProspects
+            .filter { $0.scoutedOverall != nil }
+            .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
 
+        return Group {
             if scoutedBoard.isEmpty {
                 Spacer()
                 VStack(spacing: 12) {
@@ -378,10 +550,9 @@ struct DraftView: View {
                 }
             }
         }
-        .background(Color.backgroundSecondary)
     }
 
-    private var sidebarHeader: some View {
+    private var bigBoardHeader: some View {
         HStack {
             Text("Your Big Board")
                 .font(.system(size: 14, weight: .bold))
@@ -393,13 +564,6 @@ struct DraftView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Color.backgroundTertiary)
-        .overlay(
-            Rectangle()
-                .fill(Color.surfaceBorder)
-                .frame(height: 1),
-            alignment: .bottom
-        )
     }
 
     private func sidebarProspectRow(rank: Int, prospect: CollegeProspect) -> some View {
@@ -462,12 +626,20 @@ struct DraftView: View {
 
     /// Starts the AI auto-advance loop after each pick is resolved.
     private func advanceIfNeeded() {
-        guard !draftComplete else { return }
+        guard !draftComplete else {
+            // Show draft summary automatically after a short delay.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                showDraftSummary = true
+            }
+            return
+        }
         guard !isPlayerTurn else {
-            // It's the player's turn — check for incoming trade offer first
+            // It's the player's turn — generate staff recommendations and check for trade.
+            generateWarRoomRecommendations()
             considerAITradeOffer()
             return
         }
+        staffRecommendations = []
         isSimulating = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             simulateNextPick()
@@ -506,6 +678,10 @@ struct DraftView: View {
 
     /// Resolves a single pick — marks it complete and removes the prospect from the available pool.
     private func completePick(pick: DraftPick, prospect: CollegeProspect) {
+        // Determine team needs for the picking team.
+        let pickingRoster = fetchRoster(for: pick.currentTeamID)
+        let pickingNeeds = DraftEngine.topTeamNeeds(roster: pickingRoster)
+
         pick.playerID = prospect.id
         pick.playerName = prospect.fullName
         pick.playerPosition = prospect.position.rawValue
@@ -513,6 +689,16 @@ struct DraftView: View {
         pick.scoutGrade = prospect.scoutGrade
         pick.teamAbbreviation = teamAbbreviation(for: pick.currentTeamID)
         pick.isComplete = true
+
+        // Generate media grade for this pick.
+        let media = DraftEngine.generateMediaGrade(
+            prospect: prospect,
+            pickNumber: pick.pickNumber,
+            teamNeeds: pickingNeeds
+        )
+        pick.mediaGrade = media.grade
+        pick.mediaHeadline = media.headline
+        pick.mediaComment = media.comment
 
         // Convert prospect to a Player and insert into the data store
         let player = DraftEngine.convertToPlayer(
@@ -525,10 +711,34 @@ struct DraftView: View {
         // Remove from the available pool
         availableProspects.removeAll { $0.id == prospect.id }
 
+        // Show media toast.
+        let isPlayerPick = pick.currentTeamID == career.teamID
+        showMediaCommentary(
+            grade: media.grade,
+            headline: media.headline,
+            comment: media.comment,
+            playerName: prospect.fullName,
+            isPlayerPick: isPlayerPick
+        )
+
+        // Check for round transition.
+        let previousRound = pick.round
         currentPickIndex += 1
         isSimulating = false
 
-        advanceIfNeeded()
+        // Reset clock for next player pick.
+        clockSeconds = 120
+
+        if let nextPick = currentPick, nextPick.round > previousRound {
+            showRoundTransition(round: nextPick.round)
+        } else {
+            advanceIfNeeded()
+        }
+
+        // Refresh team needs after picking.
+        if isPlayerPick {
+            refreshTeamNeeds()
+        }
     }
 
     /// Player hits "Auto-Pick" — engine selects best available for their needs.
@@ -614,6 +824,13 @@ struct DraftView: View {
         teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
         if let teamID = career.teamID {
             playerTeam = teamsByID[teamID]
+
+            // Load coaching staff
+            let coachDesc = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+            teamCoaches = (try? modelContext.fetch(coachDesc)) ?? []
+
+            // Calculate initial team needs
+            refreshTeamNeeds()
         }
 
         advanceIfNeeded()
@@ -678,6 +895,378 @@ struct DraftView: View {
             domainOffer: domainOffer
         )
     }
+
+    // MARK: - War Room Panel
+
+    /// Inline war room panel shown below the on-the-clock card when it's the player's turn.
+    private var warRoomPanel: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "person.3.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.accentGold)
+                Text("WAR ROOM")
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundStyle(Color.accentGold)
+                    .tracking(1.5)
+                Spacer()
+                Text("\(staffRecommendations.count) suggestions")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(staffRecommendations) { rec in
+                        staffRecommendationCard(rec)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+            }
+        }
+        .background(
+            Color.backgroundSecondary
+                .overlay(Color.accentGold.opacity(0.03))
+        )
+        .overlay(
+            Rectangle()
+                .fill(Color.surfaceBorder)
+                .frame(height: 1),
+            alignment: .bottom
+        )
+    }
+
+    private func staffRecommendationCard(_ recommendation: DraftEngine.StaffRecommendation) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: recommendation.icon)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.accentGold)
+                Text(recommendation.staffTitle)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.accentGold)
+            }
+            Text(recommendation.message)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.textSecondary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(width: 240, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.backgroundTertiary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Media Commentary Toast
+
+    private func mediaToastView(_ toast: MediaToast) -> some View {
+        HStack(spacing: 12) {
+            // Grade circle
+            ZStack {
+                Circle()
+                    .fill(mediaGradeColor(toast.grade).opacity(0.15))
+                    .frame(width: 44, height: 44)
+                Text(toast.grade)
+                    .font(.system(size: 16, weight: .heavy))
+                    .foregroundStyle(mediaGradeColor(toast.grade))
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                if toast.isPlayerPick {
+                    Text("YOUR PICK")
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundStyle(Color.accentGold)
+                        .tracking(1)
+                }
+                Text(toast.headline)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                Text(toast.comment)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+
+            Image(systemName: "mic.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(
+                            toast.isPlayerPick ? Color.accentGold.opacity(0.5) : Color.surfaceBorder,
+                            lineWidth: toast.isPlayerPick ? 1.5 : 1
+                        )
+                )
+                .shadow(color: Color.black.opacity(0.3), radius: 12, x: 0, y: 4)
+        )
+    }
+
+    // MARK: - Round Transition Banner
+
+    private var roundTransitionBanner: some View {
+        VStack(spacing: 12) {
+            Text("ROUND \(roundBannerNumber)")
+                .font(.system(size: 36, weight: .heavy))
+                .foregroundStyle(Color.accentGold)
+                .tracking(4)
+            Text("BEGINS")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(Color.textSecondary)
+                .tracking(3)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.backgroundPrimary.opacity(0.92))
+    }
+
+    // MARK: - Draft Summary Sheet
+
+    private var draftSummarySheet: some View {
+        NavigationStack {
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
+                ScrollView {
+                    VStack(spacing: 20) {
+                        // Header
+                        VStack(spacing: 8) {
+                            Image(systemName: "trophy.fill")
+                                .font(.system(size: 40))
+                                .foregroundStyle(Color.accentGold)
+                            Text("Your Draft Class")
+                                .font(.title2.weight(.bold))
+                                .foregroundStyle(Color.textPrimary)
+
+                            let playerPicks = allPicks.filter { $0.currentTeamID == career.teamID && $0.isComplete }
+                            let avgGrade = averageGradeLabel(for: playerPicks)
+                            Text("Overall Grade: \(avgGrade)")
+                                .font(.headline)
+                                .foregroundStyle(Color.accentGold)
+                        }
+                        .padding(.top, 8)
+
+                        // Individual picks
+                        let playerPicks = allPicks.filter { $0.currentTeamID == career.teamID && $0.isComplete }
+                        ForEach(playerPicks) { pick in
+                            draftSummaryRow(pick)
+                        }
+
+                        if playerPicks.isEmpty {
+                            Text("No picks made.")
+                                .font(.subheadline)
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                    }
+                    .padding(24)
+                    .frame(maxWidth: 600)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .navigationTitle("Draft Summary")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { showDraftSummary = false }
+                }
+            }
+        }
+    }
+
+    private func draftSummaryRow(_ pick: DraftPick) -> some View {
+        HStack(spacing: 14) {
+            // Pick number
+            VStack(spacing: 2) {
+                Text("R\(pick.round)")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.textTertiary)
+                Text("#\(pick.pickNumber)")
+                    .font(.system(size: 16, weight: .heavy).monospacedDigit())
+                    .foregroundStyle(Color.accentGold)
+            }
+            .frame(width: 44)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(pick.playerName ?? "Unknown")
+                    .font(.headline)
+                    .foregroundStyle(Color.textPrimary)
+                HStack(spacing: 8) {
+                    if let pos = pick.playerPosition {
+                        Text(pos)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Color.textPrimary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: 4))
+                    }
+                    if let college = pick.playerCollege {
+                        Text(college)
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                }
+                if let headline = pick.mediaHeadline {
+                    Text(headline)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.textTertiary)
+                        .italic()
+                }
+            }
+
+            Spacer()
+
+            // Media grade
+            if let grade = pick.mediaGrade {
+                VStack(spacing: 2) {
+                    Text(grade)
+                        .font(.system(size: 20, weight: .heavy))
+                        .foregroundStyle(mediaGradeColor(grade))
+                    Text("GRADE")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Color.textTertiary)
+                        .tracking(0.5)
+                }
+                .frame(width: 50)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.accentGold.opacity(0.3), lineWidth: 1.5)
+                )
+        )
+    }
+
+    // MARK: - Media & War Room Logic
+
+    /// Shows a media toast that fades after a few seconds.
+    private func showMediaCommentary(
+        grade: String,
+        headline: String,
+        comment: String,
+        playerName: String,
+        isPlayerPick: Bool
+    ) {
+        let toast = MediaToast(
+            grade: grade,
+            headline: headline,
+            comment: comment,
+            playerName: playerName,
+            isPlayerPick: isPlayerPick
+        )
+        mediaToast = toast
+
+        withAnimation(.easeInOut(duration: 0.3)) {
+            showMediaToast = true
+        }
+
+        // Auto-dismiss: longer for player picks.
+        let delay: Double = isPlayerPick ? 5.0 : 3.0
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            if self.mediaToast?.id == toast.id {
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    showMediaToast = false
+                }
+            }
+        }
+    }
+
+    /// Shows the round transition banner then continues simulation.
+    private func showRoundTransition(round: Int) {
+        roundBannerNumber = round
+        withAnimation(.easeInOut(duration: 0.4)) {
+            showRoundBanner = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            withAnimation(.easeInOut(duration: 0.4)) {
+                showRoundBanner = false
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                advanceIfNeeded()
+            }
+        }
+    }
+
+    /// Generates coaching staff recommendations for the war room.
+    private func generateWarRoomRecommendations() {
+        staffRecommendations = DraftEngine.generateStaffRecommendations(
+            availableProspects: availableProspects,
+            teamNeeds: teamNeeds,
+            coaches: teamCoaches
+        )
+    }
+
+    /// Refreshes team needs based on current roster.
+    private func refreshTeamNeeds() {
+        guard let teamID = career.teamID else { return }
+        let roster = fetchRoster(for: teamID)
+        teamNeeds = DraftEngine.topTeamNeeds(roster: roster)
+    }
+
+    /// Starts the cosmetic on-the-clock countdown timer.
+    private func startClockTimer() {
+        clockSeconds = 120
+        func tick() {
+            guard isPlayerTurn && clockSeconds > 0 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                guard self.isPlayerTurn else { return }
+                self.clockSeconds -= 1
+                tick()
+            }
+        }
+        tick()
+    }
+
+    private func mediaGradeColor(_ grade: String) -> Color {
+        switch grade {
+        case "A+", "A":   return .success
+        case "A-", "B+":  return .accentGold
+        case "B", "B-":   return .warning
+        default:          return .danger
+        }
+    }
+
+    private func averageGradeLabel(for picks: [DraftPick]) -> String {
+        let gradeScale = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D", "F"]
+        let grades = picks.compactMap(\.mediaGrade)
+        guard !grades.isEmpty else { return "N/A" }
+        let totalIndex = grades.reduce(0) { sum, grade in
+            sum + (gradeScale.firstIndex(of: grade) ?? 4)
+        }
+        let avgIndex = min(gradeScale.count - 1, max(0, totalIndex / grades.count))
+        return gradeScale[avgIndex]
+    }
+}
+
+// MARK: - Media Toast Model
+
+/// Lightweight model for the media commentary toast overlay.
+struct MediaToast: Identifiable {
+    let id = UUID()
+    let grade: String
+    let headline: String
+    let comment: String
+    let playerName: String
+    let isPlayerPick: Bool
 }
 
 // MARK: - Preview

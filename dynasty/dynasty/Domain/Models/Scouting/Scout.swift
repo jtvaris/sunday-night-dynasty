@@ -19,6 +19,9 @@ final class Scout {
     /// The scout's role in the scouting department hierarchy.
     var scoutRole: ScoutRole
 
+    /// Number of Pro Days attended this year (max 5 per scout).
+    var proDaysAttended: Int = 0
+
     // MARK: - Computed Properties
 
     var fullName: String {

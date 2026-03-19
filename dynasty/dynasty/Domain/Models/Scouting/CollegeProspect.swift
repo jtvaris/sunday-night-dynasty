@@ -36,14 +36,46 @@ final class CollegeProspect {
     var shuttleTime: Double?
     var coneDrill: Double?
 
+    // MARK: - Scouting Reports
+
+    var scoutingReports: [ScoutingReport]
+
+    // MARK: - Interview Results
+
+    var interviewNotes: String?
+    var interviewFootballIQ: Int?
+    var interviewCharacterNotes: [String]?
+
     // MARK: - Evaluation Status
 
+    var combineInvite: Bool
     var interviewCompleted: Bool
     var proDayCompleted: Bool
     var draftProjection: Int?
     var isDeclaringForDraft: Bool
 
+    // MARK: - Team Interest & Mock Draft
+
+    /// UUIDs of teams that have shown interest based on positional need matching.
+    var teamInterest: [UUID]
+
+    /// The pick number this prospect is projected to go in the latest mock draft (nil if undrafted).
+    var mockDraftPickNumber: Int?
+
+    /// The team abbreviation projected to draft this prospect in the latest mock.
+    var mockDraftTeam: String?
+
     // MARK: - Computed Properties
+
+    /// Interest level based on how many teams have shown interest.
+    var interestLevel: String {
+        switch teamInterest.count {
+        case 0: return "Unknown"
+        case 1...2: return "Cold"
+        case 3...4: return "Warm"
+        default: return "Hot"
+        }
+    }
 
     var fullName: String {
         "\(firstName) \(lastName)"
@@ -82,10 +114,18 @@ final class CollegeProspect {
         broadJump: Int? = nil,
         shuttleTime: Double? = nil,
         coneDrill: Double? = nil,
+        scoutingReports: [ScoutingReport] = [],
+        interviewNotes: String? = nil,
+        interviewFootballIQ: Int? = nil,
+        interviewCharacterNotes: [String]? = nil,
+        combineInvite: Bool = false,
         interviewCompleted: Bool = false,
         proDayCompleted: Bool = false,
         draftProjection: Int? = nil,
-        isDeclaringForDraft: Bool = true
+        isDeclaringForDraft: Bool = true,
+        teamInterest: [UUID] = [],
+        mockDraftPickNumber: Int? = nil,
+        mockDraftTeam: String? = nil
     ) {
         self.id = id
         self.firstName = firstName
@@ -110,9 +150,17 @@ final class CollegeProspect {
         self.broadJump = broadJump
         self.shuttleTime = shuttleTime
         self.coneDrill = coneDrill
+        self.scoutingReports = scoutingReports
+        self.interviewNotes = interviewNotes
+        self.interviewFootballIQ = interviewFootballIQ
+        self.interviewCharacterNotes = interviewCharacterNotes
+        self.combineInvite = combineInvite
         self.interviewCompleted = interviewCompleted
         self.proDayCompleted = proDayCompleted
         self.draftProjection = draftProjection
         self.isDeclaringForDraft = isDeclaringForDraft
+        self.teamInterest = teamInterest
+        self.mockDraftPickNumber = mockDraftPickNumber
+        self.mockDraftTeam = mockDraftTeam
     }
 }
