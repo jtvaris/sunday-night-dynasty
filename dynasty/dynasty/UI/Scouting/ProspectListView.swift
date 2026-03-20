@@ -282,6 +282,22 @@ struct ProspectRowView: View {
                     }
 
                     riskBadge
+
+                    // Media mention indicator
+                    if let mention = prospect.combineMediaMention, !mention.isEmpty {
+                        Image(systemName: "newspaper.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(mediaColor(for: prospect))
+                            .help(mention)
+                    }
+
+                    // Interview completed indicator
+                    if prospect.interviewCompleted {
+                        Image(systemName: "bubble.left.and.bubble.right.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.accentBlue)
+                            .help("Interviewed")
+                    }
                 }
 
                 // Combine stats badges
@@ -696,6 +712,15 @@ struct ProspectRowView: View {
     private var accessibilityDescription: String {
         let overall = prospect.scoutedOverall.map { "\($0)" } ?? "unscouted"
         return "\(prospect.fullName), \(prospect.position.rawValue), \(prospect.college), overall \(overall)"
+    }
+
+    private func mediaColor(for prospect: CollegeProspect) -> Color {
+        guard let mention = prospect.combineMediaMention else { return Color.textTertiary }
+        if mention.contains("Standout") { return Color.success }
+        if mention.contains("Riser") { return Color.accentGold }
+        if mention.contains("Faller") { return Color.danger }
+        if mention.contains("Surprise") { return Color.accentBlue }
+        return Color.textSecondary
     }
 }
 
