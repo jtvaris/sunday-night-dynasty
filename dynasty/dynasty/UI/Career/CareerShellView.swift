@@ -495,6 +495,22 @@ struct CareerShellView: View {
                     currentTasks[index].status = .done
                 }
 
+            // Pro Days — completion checks
+            case "Assign scouts to Pro Days":
+                // Done if at least 1 pro day has been attended
+                let proDesc = FetchDescriptor<CollegeProspect>(
+                    predicate: #Predicate { $0.proDayCompleted == true }
+                )
+                if let count = try? modelContext.fetch(proDesc).count, count > 0 {
+                    currentTasks[index].status = .done
+                }
+
+            case "Review Pro Day results":
+                // Done if visited scouting after pro days attended
+                if currentTasks[index].status == .inProgress {
+                    currentTasks[index].status = .done
+                }
+
             // All other tasks: do NOT auto-complete based on visit status.
             // The user must explicitly tap "Advance" to progress the phase.
             // Visiting a screen only marks the task as .inProgress (via
