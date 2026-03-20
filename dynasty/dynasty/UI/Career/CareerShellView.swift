@@ -489,6 +489,12 @@ struct CareerShellView: View {
                     currentTasks[index].status = .done
                 }
 
+            // Combine — "Send scouts" is verified by UserDefaults flag
+            case "Send scouts to Combine":
+                if UserDefaults.standard.bool(forKey: "scoutsSentToCombine") {
+                    currentTasks[index].status = .done
+                }
+
             // All other tasks: do NOT auto-complete based on visit status.
             // The user must explicitly tap "Advance" to progress the phase.
             // Visiting a screen only marks the task as .inProgress (via

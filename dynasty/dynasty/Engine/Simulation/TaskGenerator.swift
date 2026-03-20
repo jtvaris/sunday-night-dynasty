@@ -366,22 +366,23 @@ enum TaskGenerator {
     private static func combineTasks() -> [GameTask] {
         [
             // #203: Reordered — 1. Assign scouts, 2. Review results, 3. Big Board, 4. Interviews
+            // REQUIRED: must send scouts before reviewing results
             GameTask(
                 phase: .combine,
                 title: "Send scouts to Combine",
                 description: "Deploy your scouting staff to evaluate prospects in person.",
                 icon: "binoculars.fill",
                 destination: .scouting,
-                isRequired: false
+                isRequired: true
             ),
-            // REQUIRED: must visit scouting at least once
+            // Unlocked after scouts are sent (checked in refreshTaskCompletionStatus)
             GameTask(
                 phase: .combine,
                 title: "Review Combine results",
                 description: "Check 40 times, bench press, and drill results for top prospects.",
                 icon: "chart.bar.fill",
                 destination: .scouting,
-                isRequired: true
+                isRequired: false
             ),
             GameTask(
                 phase: .combine,
