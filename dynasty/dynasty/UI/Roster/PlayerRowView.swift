@@ -308,7 +308,7 @@ struct PlayerRowView: View {
         Group {
             // Starter/Backup badge (larger) — tappable to pick starter (#198)
             Group {
-                if depthIndex == 0, let onStarterBadgeTap {
+                if isStarterRole, let onStarterBadgeTap {
                     Button {
                         onStarterBadgeTap()
                     } label: {
@@ -354,11 +354,11 @@ struct PlayerRowView: View {
     private var starterBadgeContent: some View {
         Text(depthBadgeText)
             .font(.system(size: 9, weight: .heavy))
-            .foregroundStyle(depthIndex == 0 ? Color.backgroundPrimary : depthColor)
+            .foregroundStyle(isStarterRole ? Color.backgroundPrimary : depthColor)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(
-                depthIndex == 0
+                isStarterRole
                     ? AnyShapeStyle(depthColor)
                     : AnyShapeStyle(depthColor.opacity(0.2)),
                 in: RoundedRectangle(cornerRadius: 3)
@@ -442,6 +442,13 @@ struct PlayerRowView: View {
     }
 
     @ViewBuilder
+    /// Whether this player is a starter based on depth index and scheme-aware starter count.
+    private var isStarterRole: Bool {
+        guard let idx = depthIndex else { return false }
+        return idx < starterCountForPosition
+    }
+
+    @ViewBuilder
     private var depthIndicator: some View {
         if let onDepthChange, let currentIndex = depthIndex, positionGroupCount > 1 {
             Menu {
@@ -462,10 +469,10 @@ struct PlayerRowView: View {
             } label: {
                 Text(depthBadgeShortText)
                     .font(.system(size: 8, weight: .heavy))
-                    .foregroundStyle(depthIndex == 0 ? Color.backgroundPrimary : depthColor)
+                    .foregroundStyle(isStarterRole ? Color.backgroundPrimary : depthColor)
                     .frame(width: 14, height: 14)
                     .background(
-                        depthIndex == 0
+                        isStarterRole
                             ? AnyShapeStyle(depthColor)
                             : AnyShapeStyle(depthColor.opacity(0.2)),
                         in: RoundedRectangle(cornerRadius: 3)
@@ -475,10 +482,10 @@ struct PlayerRowView: View {
         } else {
             Text(depthBadgeShortText)
                 .font(.system(size: 8, weight: .heavy))
-                .foregroundStyle(depthIndex == 0 ? Color.backgroundPrimary : depthColor)
+                .foregroundStyle(isStarterRole ? Color.backgroundPrimary : depthColor)
                 .frame(width: 14, height: 14)
                 .background(
-                    depthIndex == 0
+                    isStarterRole
                         ? AnyShapeStyle(depthColor)
                         : AnyShapeStyle(depthColor.opacity(0.2)),
                     in: RoundedRectangle(cornerRadius: 3)
@@ -496,12 +503,10 @@ struct PlayerRowView: View {
 
     /// Short badge text for the small depth indicator (non-depth mode).
     private var depthBadgeShortText: String {
-        switch depthIndex {
-        case 0:         return "S"
-        case 1:         return "B"
-        case let n?:    return "\(min(n + 1, 9))"
-        case nil:       return "-"
-        }
+        guard let idx = depthIndex else { return "-" }
+        if idx < starterCountForPosition { return "S" }
+        if idx < starterCountForPosition + 1 { return "B" }
+        return "\(min(idx + 1, 9))"
     }
 
     private var isExpiringContract: Bool {
@@ -583,29 +588,25 @@ struct PlayerRowView: View {
     }
 
     private var depthColor: Color {
-        switch depthIndex {
-        case 0:     return .success   // starter = green
-        case 1:     return .accentBlue // backup = blue
-        default:    return .textTertiary // 3rd string or unknown = gray
-        }
+        guard let idx = depthIndex else { return .textTertiary }
+        if idx < starterCountForPosition { return .success }       // starter = green
+        if idx < starterCountForPosition + 1 { return .accentBlue } // backup = blue
+        return .textTertiary // 3rd string or deeper = gray
     }
 
     private var depthLabel: String {
-        switch depthIndex {
-        case 0:     return "Starter"
-        case 1:     return "Backup"
-        case 2:     return "Third string"
-        default:    return "Reserve"
-        }
+        guard let idx = depthIndex else { return "Reserve" }
+        if idx < starterCountForPosition { return "Starter" }
+        if idx < starterCountForPosition + 1 { return "Backup" }
+        if idx < starterCountForPosition + 2 { return "Third string" }
+        return "Reserve"
     }
 
     private func depthRoleLabel(for index: Int) -> String {
-        switch index {
-        case 0:  return "Starter"
-        case 1:  return "Backup"
-        case 2:  return "3rd String"
-        default: return "#\(index + 1)"
-        }
+        if index < starterCountForPosition { return "Starter" }
+        if index < starterCountForPosition + 1 { return "Backup" }
+        if index < starterCountForPosition + 2 { return "3rd String" }
+        return "#\(index + 1)"
     }
 
     /// Cap hit from the detailed Contract model (if available), otherwise falls back to annualSalary.

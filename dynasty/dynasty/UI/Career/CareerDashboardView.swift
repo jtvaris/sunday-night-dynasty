@@ -2250,6 +2250,9 @@ private struct CoachingStaffReviewSheet: View {
                     .tracking(0.5)
             }
 
+            // Team scheme banner
+            teamSchemeBanner
+
             // Each coach's scheme expertise
             ForEach(coaches.sorted(by: { $0.role.sortOrder < $1.role.sortOrder }), id: \.id) { coach in
                 let expertisePairs = coach.schemeExpertise
@@ -2270,6 +2273,8 @@ private struct CoachingStaffReviewSheet: View {
                                 .foregroundStyle(Color.textPrimary)
                                 .lineLimit(1)
                             Spacer()
+                            // Scheme fit indicator
+                            schemeFitIndicator(for: coach)
                             if let scheme = coach.offensiveScheme {
                                 Text(scheme.displayName)
                                     .font(.system(size: 10, weight: .bold))
@@ -2297,6 +2302,19 @@ private struct CoachingStaffReviewSheet: View {
                                     }
                                 }
                             }
+                            .padding(.leading, 34)
+                        }
+
+                        // Mismatch warning for coordinators
+                        if let warning = schemeMismatchWarning(for: coach) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 9))
+                                Text(warning)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .lineLimit(2)
+                            }
+                            .foregroundStyle(Color.warning)
                             .padding(.leading, 34)
                         }
                     }
@@ -2344,6 +2362,119 @@ private struct CoachingStaffReviewSheet: View {
         if let off = OffensiveScheme(rawValue: rawValue) { return off.displayName }
         if let def = DefensiveScheme(rawValue: rawValue) { return def.displayName }
         return rawValue
+    }
+
+    // MARK: - Team Scheme Banner
+
+    private var teamSchemeBanner: some View {
+        HStack(spacing: 0) {
+            // Offensive scheme
+            HStack(spacing: 5) {
+                Image(systemName: "football.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.accentBlue)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("OFFENSE")
+                        .font(.system(size: 8, weight: .heavy))
+                        .foregroundStyle(Color.textTertiary)
+                        .tracking(0.3)
+                    Text(oc?.offensiveScheme?.displayName ?? "Not Set")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(oc?.offensiveScheme != nil ? Color.textPrimary : Color.textTertiary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Rectangle()
+                .fill(Color.surfaceBorder.opacity(0.5))
+                .frame(width: 1, height: 28)
+
+            // Defensive scheme
+            HStack(spacing: 5) {
+                Image(systemName: "shield.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.danger)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("DEFENSE")
+                        .font(.system(size: 8, weight: .heavy))
+                        .foregroundStyle(Color.textTertiary)
+                        .tracking(0.3)
+                    Text(dc?.defensiveScheme?.displayName ?? "Not Set")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(dc?.defensiveScheme != nil ? Color.textPrimary : Color.textTertiary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 12)
+        }
+        .padding(8)
+        .background(Color.backgroundTertiary.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(Color.surfaceBorder.opacity(0.5), lineWidth: 1)
+        )
+    }
+
+    // MARK: - Scheme Fit Indicator
+
+    /// Returns the coach's expertise level for the team's active scheme on their side.
+    private func coachTeamSchemeExpertise(_ coach: Coach) -> Int? {
+        let offensiveRoles: [CoachRole] = [.headCoach, .assistantHeadCoach, .offensiveCoordinator, .qbCoach, .rbCoach, .wrCoach, .olCoach]
+        let defensiveRoles: [CoachRole] = [.defensiveCoordinator, .dlCoach, .lbCoach, .dbCoach]
+
+        if offensiveRoles.contains(coach.role), let scheme = oc?.offensiveScheme {
+            return coach.expertise(for: scheme.rawValue)
+        } else if defensiveRoles.contains(coach.role), let scheme = dc?.defensiveScheme {
+            return coach.expertise(for: scheme.rawValue)
+        }
+        return nil
+    }
+
+    private func schemeFitColor(_ expertise: Int) -> Color {
+        if expertise >= 70 { return .success }
+        if expertise >= 40 { return .warning }
+        return .danger
+    }
+
+    @ViewBuilder
+    private func schemeFitIndicator(for coach: Coach) -> some View {
+        if let expertise = coachTeamSchemeExpertise(coach) {
+            let color = schemeFitColor(expertise)
+            HStack(spacing: 3) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 7, height: 7)
+                Text("\(expertise)")
+                    .font(.system(size: 9, weight: .bold).monospacedDigit())
+                    .foregroundStyle(color)
+            }
+        }
+    }
+
+    // MARK: - Scheme Mismatch Warnings
+
+    private func schemeMismatchWarning(for coach: Coach) -> String? {
+        // Only show warnings for OC and DC
+        if coach.role == .offensiveCoordinator,
+           let teamScheme = oc?.offensiveScheme,
+           let coachScheme = coach.offensiveScheme,
+           coachScheme != teamScheme {
+            let expertise = coach.expertise(for: teamScheme.rawValue)
+            if expertise < 40 {
+                return "\(coach.role.abbreviation) specializes in \(coachScheme.displayName) but team runs \(teamScheme.displayName)"
+            }
+        }
+        if coach.role == .defensiveCoordinator,
+           let teamScheme = dc?.defensiveScheme,
+           let coachScheme = coach.defensiveScheme,
+           coachScheme != teamScheme {
+            let expertise = coach.expertise(for: teamScheme.rawValue)
+            if expertise < 40 {
+                return "\(coach.role.abbreviation) specializes in \(coachScheme.displayName) but team runs \(teamScheme.displayName)"
+            }
+        }
+        return nil
     }
 
     // MARK: - Scheme Fit Analysis

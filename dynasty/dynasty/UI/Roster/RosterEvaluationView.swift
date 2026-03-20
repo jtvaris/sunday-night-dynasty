@@ -44,6 +44,7 @@ struct RosterEvaluationView: View {
 
     @State private var team: Team?
     @State private var players: [Player] = []
+    @State private var defensiveScheme: DefensiveScheme = .base43
 
     // MARK: - Table Sorting (#250)
     @State private var sortColumn: SortColumn = .group
@@ -294,9 +295,11 @@ struct RosterEvaluationView: View {
     private var sortedGroupRows: [GroupRowData] {
         let rows: [GroupRowData] = EvalPositionGroup.allGroups.map { group in
             let groupPlayers = players.filter { group.positions.contains($0.position) }
+            let isDefensive = group.positions.first?.side == .defense
             let grades = PositionGradeCalculator.calculatePositionGrades(
                 players: groupPlayers,
-                positions: group.positions
+                positions: group.positions,
+                scheme: isDefensive ? defensiveScheme : nil
             )
             let avgOvr = groupPlayers.isEmpty ? 0 : groupPlayers.map(\.overall).reduce(0, +) / groupPlayers.count
             let needs = assessNeeds(group: group, players: groupPlayers, grades: grades)
@@ -386,13 +389,19 @@ struct RosterEvaluationView: View {
                         sortableHeader("Cap $", column: .capAllocation, width: 72)
                     }
                     Spacer()
-                    HStack(spacing: 6) {
+                    HStack(spacing: 8) {
                         Text("Staff")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(Color.textTertiary)
-                        Text("Own")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.textTertiary)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(Color.textSecondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.textTertiary.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                        Text("You")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Color.accentGold)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.accentGold.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
                     }
                 }
                 .padding(.horizontal, 16)
@@ -1636,6 +1645,16 @@ struct RosterEvaluationView: View {
         )
         playerDesc.sortBy = [SortDescriptor(\.annualSalary, order: .reverse)]
         players = (try? modelContext.fetch(playerDesc)) ?? []
+
+        // Fetch the defensive coordinator's scheme
+        let coachDesc = FetchDescriptor<Coach>(
+            predicate: #Predicate { $0.teamID == fetchedTeamID }
+        )
+        if let coaches = try? modelContext.fetch(coachDesc),
+           let dc = coaches.first(where: { $0.role == .defensiveCoordinator }),
+           let scheme = dc.defensiveScheme {
+            defensiveScheme = scheme
+        }
     }
 }
 

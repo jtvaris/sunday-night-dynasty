@@ -59,41 +59,61 @@ struct ProspectListView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            if displayed.isEmpty {
-                emptyState
-            } else {
-                List {
-                    ForEach(displayed) { prospect in
-                        NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
-                            ProspectRowView(prospect: prospect, positionRank: positionRanks[prospect.id])
+            VStack(spacing: 0) {
+                positionFilterChips
+
+                if displayed.isEmpty {
+                    emptyState
+                } else {
+                    List {
+                        ForEach(displayed) { prospect in
+                            NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
+                                ProspectRowView(prospect: prospect, positionRank: positionRanks[prospect.id])
+                            }
+                            .listRowBackground(Color.backgroundSecondary)
                         }
-                        .listRowBackground(Color.backgroundSecondary)
                     }
+                    .scrollContentBackground(.hidden)
+                    .listStyle(.insetGrouped)
                 }
-                .scrollContentBackground(.hidden)
-                .listStyle(.insetGrouped)
             }
         }
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                positionPicker
-            }
             ToolbarItem(placement: .primaryAction) {
                 sortMenu
             }
         }
     }
 
-    // MARK: - Toolbar
+    // MARK: - Position Filter Chips
 
-    private var positionPicker: some View {
-        Picker("Position", selection: $positionFilter) {
-            ForEach(ProspectPositionFilter.allCases) { filter in
-                Text(filter.label).tag(filter)
+    private var positionFilterChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(ProspectPositionFilter.allCases) { filter in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            positionFilter = filter
+                        }
+                    } label: {
+                        Text(filter.label)
+                            .font(.subheadline.weight(positionFilter == filter ? .bold : .medium))
+                            .foregroundStyle(positionFilter == filter ? Color.backgroundPrimary : Color.textSecondary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(
+                                positionFilter == filter ? Color.accentBlue : Color.backgroundSecondary,
+                                in: Capsule()
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(positionFilter == filter ? .isSelected : [])
+                }
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         }
-        .pickerStyle(.segmented)
-        .frame(minWidth: 420)
+        .background(Color.backgroundPrimary)
     }
 
     private var sortMenu: some View {
@@ -198,6 +218,8 @@ struct ProspectRowView: View {
 
             Spacer()
 
+            projectedRoundBadge
+
             VStack(alignment: .trailing, spacing: 4) {
                 overallBadge
                 HStack(spacing: 4) {
@@ -240,16 +262,45 @@ struct ProspectRowView: View {
         .frame(width: 32, alignment: .trailing)
     }
 
+    private var projectedRoundBadge: some View {
+        let text = Self.projectedRoundText(for: prospect.draftProjection)
+        let color: Color = {
+            switch prospect.draftProjection {
+            case .some(1...5):   return .accentGold
+            case .some(6...10):  return .accentGold.opacity(0.8)
+            case .some(11...32): return .accentBlue
+            case .some(33...64): return .accentBlue.opacity(0.7)
+            case .some(65...100): return .textSecondary
+            case .some(101...150): return .textTertiary
+            case .some(151...):  return .textTertiary
+            default:             return .textTertiary
+            }
+        }()
+        return Text(text)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(color)
+            .frame(width: 72, alignment: .trailing)
+    }
+
+    static func projectedRoundText(for pick: Int?) -> String {
+        guard let pick = pick else { return "Undrafted" }
+        switch pick {
+        case 1...5:     return "Top 5"
+        case 6...10:    return "Top 10"
+        case 11...32:   return "1st Round"
+        case 33...64:   return "2nd Round"
+        case 65...100:  return "3rd Round"
+        case 101...150: return "Mid Rounds"
+        default:        return "Late Rounds"
+        }
+    }
+
     private var gradeLabel: some View {
         Group {
             if let grade = prospect.scoutGrade {
                 Text(grade)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.accentGold)
-            } else if let proj = prospect.draftProjection {
-                Text("Rd \(proj)")
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
             } else {
                 Text("Unscouted")
                     .font(.caption)

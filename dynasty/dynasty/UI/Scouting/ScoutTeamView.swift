@@ -3,8 +3,11 @@ import SwiftUI
 struct ScoutTeamView: View {
     let scouts: [Scout]
     let canHire: Bool
+    let career: Career
+    let scoutsSentToCombine: Bool
     let onHire: () -> Void
     let onFire: (Scout) -> Void
+    let onSendToCombine: () -> Void
 
     @State private var scoutToFire: Scout?
     @State private var showFireConfirmation = false
@@ -57,27 +60,37 @@ struct ScoutTeamView: View {
                     }
                     .listRowBackground(Color.backgroundSecondary)
 
-                    ForEach(scouts, id: \.id) { scout in
-                        NavigationLink(value: scout) {
-                            ScoutRowView(scout: scout)
+                    // Send Scouts to Combine button
+                    if career.currentPhase == .combine {
+                        Section {
+                            sendScoutsToCombineRow
                         }
-                        .listRowBackground(Color.backgroundSecondary)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button(role: .destructive) {
-                                scoutToFire = scout
-                                showFireConfirmation = true
-                            } label: {
-                                Label("Fire", systemImage: "person.fill.xmark")
-                            }
-                        }
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                     }
 
+                    // Table header
+                    Section {
+                        scoutTableHeader
+                            .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
+
+                        ForEach(scouts, id: \.id) { scout in
+                            ScoutTableRow(scout: scout)
+                                .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        scoutToFire = scout
+                                        showFireConfirmation = true
+                                    } label: {
+                                        Label("Fire", systemImage: "person.fill.xmark")
+                                    }
+                                }
+                        }
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
                 }
                 .scrollContentBackground(.hidden)
                 .listStyle(.insetGrouped)
-                .navigationDestination(for: Scout.self) { scout in
-                    ScoutDetailView(scout: scout)
-                }
             }
         }
         .toolbar {
@@ -104,6 +117,85 @@ struct ScoutTeamView: View {
         } message: {
             Text("This scout will be removed from your staff permanently.")
         }
+    }
+
+    // MARK: - Send Scouts to Combine Row
+
+    private var sendScoutsToCombineRow: some View {
+        Group {
+            if scoutsSentToCombine {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color.success)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Scouts at Combine")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(Color.success)
+                        Text("Results are in \u{2014} check the Combine tab")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                    Spacer()
+                }
+                .padding(12)
+                .background(Color.success.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.success.opacity(0.3), lineWidth: 1))
+            } else {
+                Button {
+                    onSendToCombine()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "binoculars.fill")
+                            .font(.title3)
+                            .foregroundStyle(Color.accentGold)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Send Scouts to NFL Combine")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(Color.textPrimary)
+                            Text("\(scouts.count) scout\(scouts.count == 1 ? "" : "s") will evaluate ~330 prospects")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                        Spacer()
+                        Image(systemName: "arrow.right.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(Color.accentGold)
+                    }
+                    .padding(12)
+                    .background(Color.accentGold.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentGold.opacity(0.3), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    // MARK: - Table Header
+
+    private var scoutTableHeader: some View {
+        HStack(spacing: 0) {
+            Text("Role")
+                .frame(width: 36, alignment: .leading)
+            Text("Name")
+                .frame(minWidth: 100, alignment: .leading)
+            Text("Spec")
+                .frame(width: 40, alignment: .center)
+            Text("ACC")
+                .frame(width: 36, alignment: .center)
+            Text("PER")
+                .frame(width: 36, alignment: .center)
+            Text("POT")
+                .frame(width: 36, alignment: .center)
+            Text("Salary")
+                .frame(width: 56, alignment: .trailing)
+            Spacer(minLength: 4)
+            Text("Focus Assignment")
+                .frame(minWidth: 180, alignment: .center)
+        }
+        .font(.caption2.weight(.bold))
+        .foregroundStyle(Color.textTertiary)
+        .padding(.vertical, 6)
     }
 
     // MARK: - Empty State
@@ -139,100 +231,82 @@ struct ScoutTeamView: View {
     }
 }
 
-// MARK: - Scout Row View
+// MARK: - Scout Table Row
 
-struct ScoutRowView: View {
+struct ScoutTableRow: View {
     @Bindable var scout: Scout
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(alignment: .top) {
-                // Name and specialization
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(scout.fullName)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(Color.textPrimary)
+        HStack(spacing: 0) {
+            // Role badge
+            Text(scout.scoutRole.abbreviation)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(scout.scoutRole.isChief ? Color.accentGold : Color.textPrimary)
+                .frame(width: 36, alignment: .leading)
 
-                    HStack(spacing: 8) {
-                        specializationBadge
-
-                        Text("Exp. \(scout.experience) yr\(scout.experience == 1 ? "" : "s")")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-
-                        if let spec = scout.positionSpecialization {
-                            Text("+10% on \(spec.rawValue)")
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(Color.success)
-                        }
-
-                        if let fp = scout.focusPosition {
-                            Text(fp.rawValue)
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(Color.accentGold)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(Color.accentGold.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-                        }
-
-                        if let fa = scout.focusAttribute {
-                            Label(fa.label, systemImage: fa.icon)
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(Color.accentBlue)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(Color.accentBlue.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-                        }
-                    }
-                }
-
-                Spacer()
-
-                // Salary
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(formattedSalary)
-                        .font(.callout.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(Color.accentGold)
-                    Text("/ year")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textTertiary)
-                }
-            }
-
-            // Stat bars
-            VStack(spacing: 6) {
-                ScoutStatBar(label: "Accuracy",         value: scout.accuracy)
-                ScoutStatBar(label: "Personality Read", value: scout.personalityRead)
-                ScoutStatBar(label: "Potential Read",   value: scout.potentialRead)
-            }
-
-            // Inline Focus Assignment (#287)
-            HStack(spacing: 4) {
-                Text("Focus:")
-                    .font(.caption2)
+            // Name
+            VStack(alignment: .leading, spacing: 1) {
+                Text(scout.fullName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                Text("\(scout.experience) yr exp")
+                    .font(.system(size: 9))
                     .foregroundStyle(Color.textTertiary)
+            }
+            .frame(minWidth: 100, alignment: .leading)
 
+            // Specialization position
+            Text(scout.positionSpecialization?.rawValue ?? "GEN")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(scout.positionSpecialization != nil ? Color.accentBlue : Color.textTertiary)
+                .frame(width: 40, alignment: .center)
+
+            // Accuracy
+            ratingCell(value: scout.accuracy)
+                .frame(width: 36, alignment: .center)
+
+            // Personality Read
+            ratingCell(value: scout.personalityRead)
+                .frame(width: 36, alignment: .center)
+
+            // Potential Read
+            ratingCell(value: scout.potentialRead)
+                .frame(width: 36, alignment: .center)
+
+            // Salary
+            Text(formattedSalary)
+                .font(.caption2.weight(.semibold).monospacedDigit())
+                .foregroundStyle(Color.accentGold)
+                .frame(width: 56, alignment: .trailing)
+
+            Spacer(minLength: 4)
+
+            // Focus assignment — prominent dropdowns
+            HStack(spacing: 6) {
                 Menu {
                     Button("All Positions") { scout.focusPosition = nil }
                     ForEach(Position.allCases, id: \.self) { pos in
                         Button(pos.rawValue) { scout.focusPosition = pos }
                     }
                 } label: {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "mappin.circle.fill")
+                            .font(.system(size: 10))
                         Text(scout.focusPosition?.rawValue ?? "All Pos.")
-                            .font(.caption2.weight(.semibold))
+                            .font(.caption.weight(.semibold))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8, weight: .bold))
                     }
                     .foregroundStyle(Color.accentGold)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Color.accentGold.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.accentGold.opacity(0.15), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.accentGold.opacity(0.3), lineWidth: 1)
+                    )
                 }
-
-                Text("|")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textTertiary)
 
                 Menu {
                     Button("General") { scout.focusAttribute = nil }
@@ -244,77 +318,38 @@ struct ScoutRowView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 4) {
+                        Image(systemName: scout.focusAttribute?.icon ?? "gearshape")
+                            .font(.system(size: 10))
                         Text(scout.focusAttribute?.label ?? "General")
-                            .font(.caption2.weight(.semibold))
+                            .font(.caption.weight(.semibold))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8, weight: .bold))
                     }
                     .foregroundStyle(Color.accentBlue)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Color.accentBlue.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.accentBlue.opacity(0.15), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.accentBlue.opacity(0.3), lineWidth: 1)
+                    )
                 }
-
-                Spacer()
             }
-
-            // Reports & Pro Days summary (#232)
-            HStack(spacing: 12) {
-                HStack(spacing: 4) {
-                    Image(systemName: "doc.text")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textTertiary)
-                    Text("~\(estimatedReports) reports")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textSecondary)
-                }
-
-                HStack(spacing: 4) {
-                    Image(systemName: "mappin.and.ellipse")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textTertiary)
-                    Text("\(scout.proDaysAttended)/5 Pro Days")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textSecondary)
-                }
-
-                Spacer()
-            }
+            .frame(minWidth: 180, alignment: .center)
         }
         .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
     }
 
-    // MARK: - Reports Estimate (#232)
-
-    /// Estimate reports generated based on experience, pro days, and role.
-    private var estimatedReports: Int {
-        let base = scout.experience * 3
-        let proDayReports = scout.proDaysAttended * 4
-        return base + proDayReports
-    }
-
-    // MARK: - Subviews
-
-    private var specializationBadge: some View {
-        let text = scout.positionSpecialization?.rawValue ?? "GEN"
-        let color: Color = scout.positionSpecialization != nil ? .accentBlue : .textTertiary
-
-        return Text(text)
-            .font(.caption2.weight(.bold))
-            .foregroundStyle(Color.textPrimary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.3), in: RoundedRectangle(cornerRadius: 4))
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(color.opacity(0.6), lineWidth: 1)
-            )
-    }
-
     // MARK: - Helpers
+
+    private func ratingCell(value: Int) -> some View {
+        Text("\(value)")
+            .font(.caption.weight(.semibold).monospacedDigit())
+            .foregroundStyle(Color.forRating(value))
+    }
 
     private var formattedSalary: String {
         if scout.salary >= 1000 {
@@ -419,6 +454,52 @@ struct ScoutDetailView: View {
     }
 }
 
+// MARK: - Scout Row View (used in scout pickers elsewhere)
+
+struct ScoutRowView: View {
+    @Bindable var scout: Scout
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(scout.scoutRole.abbreviation)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(scout.scoutRole.isChief ? Color.accentGold : Color.textPrimary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(scout.fullName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+
+                HStack(spacing: 6) {
+                    Text(scout.positionSpecialization?.rawValue ?? "Generalist")
+                        .font(.caption)
+                        .foregroundStyle(scout.positionSpecialization != nil ? Color.accentBlue : Color.textTertiary)
+                    Text("Acc \(scout.accuracy)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.forRating(scout.accuracy))
+                }
+            }
+
+            Spacer()
+
+            Text(formattedSalary)
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(Color.accentGold)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var formattedSalary: String {
+        if scout.salary >= 1000 {
+            return String(format: "$%.1fM", Double(scout.salary) / 1000.0)
+        }
+        return "$\(scout.salary)K"
+    }
+}
+
 // MARK: - Preview
 
 #Preview {
@@ -439,8 +520,15 @@ struct ScoutDetailView: View {
                 ),
             ],
             canHire: true,
+            career: Career(
+                playerName: "John Doe",
+                role: .gm,
+                capMode: .simple
+            ),
+            scoutsSentToCombine: false,
             onHire: {},
-            onFire: { _ in }
+            onFire: { _ in },
+            onSendToCombine: {}
         )
     }
 }

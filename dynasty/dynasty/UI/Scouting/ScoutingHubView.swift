@@ -274,8 +274,11 @@ struct ScoutingHubView: View {
             ScoutTeamView(
                 scouts: scouts,
                 canHire: scouts.count < maxScouts,
+                career: career,
+                scoutsSentToCombine: scoutsSentToCombine,
                 onHire: { showHireScout = true },
-                onFire: { fireScout($0) }
+                onFire: { fireScout($0) },
+                onSendToCombine: { sendScoutsToCombine() }
             )
         case .prospects:
             ProspectListView(career: career, prospects: prospects)
