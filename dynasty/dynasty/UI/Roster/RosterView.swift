@@ -595,41 +595,119 @@ struct RosterView: View {
         .presentationDetents([.medium])
     }
 
-    // MARK: - Starter Picker Sheet (#198)
+    // MARK: - Starter Picker Sheet (#198) — Rich version matching PlayerSlotPicker
 
     private func starterPickerSheet(for position: Position) -> some View {
         let candidates = players
             .filter { $0.position == position }
             .sorted { $0.overall > $1.overall }
 
+        let currentStarter = candidates.first
+
+        // Versatile players from other positions with familiarity at this position
+        let versatile = players
+            .filter { $0.position != position && $0.familiarity(at: position) > 0 }
+            .sorted { $0.familiarity(at: position) > $1.familiarity(at: position) }
+
         return NavigationStack {
             List {
-                ForEach(candidates) { player in
-                    Button {
-                        // Promote the tapped player to starter
-                        let groupPlayers = players.filter { $0.position.side == position.side }
-                        handleDepthChange(player: player, newIndex: 0, groupPlayers: groupPlayers)
-                        starterPickerPosition = nil
-                    } label: {
-                        HStack(spacing: 8) {
-                            PlayerAvatarView(player: player, size: 32)
+                // Current starter header
+                if let current = currentStarter {
+                    Section {
+                        HStack(spacing: 10) {
+                            Image(systemName: "person.fill.checkmark")
+                                .foregroundStyle(Color.accentGold)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(player.fullName)
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
+                                Text("Current: \(current.fullName)  \(current.position.rawValue)  OVR \(current.overall)")
+                                    .font(.system(size: 14, weight: .semibold))
                                     .foregroundStyle(Color.textPrimary)
-                                Text(depthRoleLabel(for: depthIndex(for: player, in: candidates)))
-                                    .font(.caption)
-                                    .foregroundStyle(Color.textTertiary)
+                                HStack(spacing: 8) {
+                                    Text("OVR \(current.overall)")
+                                        .font(.system(size: 13, weight: .bold).monospacedDigit())
+                                        .foregroundStyle(Color.forPlayerCardRating(current.overall))
+                                    Text("Age \(current.age)")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color.textTertiary)
+                                    Text(starterPickerFormatSalary(current.annualSalary))
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color.textTertiary)
+                                    if current.isInjured {
+                                        HStack(spacing: 2) {
+                                            Image(systemName: "cross.circle.fill")
+                                                .font(.system(size: 10))
+                                            Text("\(current.injuryWeeksRemaining)w")
+                                                .font(.system(size: 10))
+                                        }
+                                        .foregroundStyle(Color.danger)
+                                    }
+                                }
                             }
                             Spacer()
-                            Text("\(player.overall)")
-                                .font(.title3.monospacedDigit())
-                                .fontWeight(.bold)
-                                .foregroundStyle(Color.forRating(player.overall))
+                        }
+                        .padding(.vertical, 4)
+                        .listRowBackground(Color.backgroundSecondary)
+                    } header: {
+                        Text("Current Starter at \(position.rawValue)")
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+
+                // Same-position candidates
+                Section {
+                    if candidates.isEmpty {
+                        Text("No eligible players at \(position.rawValue)")
+                            .foregroundStyle(Color.textTertiary)
+                            .listRowBackground(Color.backgroundSecondary)
+                    } else {
+                        ForEach(candidates) { player in
+                            Button {
+                                let groupPlayers = players.filter { $0.position.side == position.side }
+                                handleDepthChange(player: player, newIndex: 0, groupPlayers: groupPlayers)
+                                starterPickerPosition = nil
+                            } label: {
+                                starterPickerRow(
+                                    player: player,
+                                    position: position,
+                                    currentStarter: currentStarter,
+                                    isVersatile: false
+                                )
+                            }
+                            .listRowBackground(Color.backgroundSecondary)
                         }
                     }
-                    .listRowBackground(Color.backgroundSecondary)
+                } header: {
+                    Text("\(position.rawValue) Players")
+                        .foregroundStyle(Color.textTertiary)
+                }
+
+                // Versatile players from other positions
+                if !versatile.isEmpty {
+                    Section {
+                        ForEach(versatile) { player in
+                            Button {
+                                // For versatile players, promote to starter depth
+                                let groupPlayers = players.filter { $0.position.side == position.side }
+                                handleDepthChange(player: player, newIndex: 0, groupPlayers: groupPlayers)
+                                starterPickerPosition = nil
+                            } label: {
+                                starterPickerRow(
+                                    player: player,
+                                    position: position,
+                                    currentStarter: currentStarter,
+                                    isVersatile: true
+                                )
+                            }
+                            .listRowBackground(Color.backgroundSecondary)
+                        }
+                    } header: {
+                        HStack {
+                            Text("Other Positions (Versatile)")
+                                .foregroundStyle(Color.textTertiary)
+                            Image(systemName: "arrow.triangle.swap")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                    }
                 }
             }
             .scrollContentBackground(.hidden)
@@ -640,10 +718,132 @@ struct RosterView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { starterPickerPosition = nil }
+                        .foregroundStyle(Color.accentGold)
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
+    }
+
+    // MARK: - Starter Picker Row
+
+    @ViewBuilder
+    private func starterPickerRow(
+        player: Player,
+        position: Position,
+        currentStarter: Player?,
+        isVersatile: Bool
+    ) -> some View {
+        HStack(spacing: 10) {
+            // OVR badge (large, color-coded)
+            VStack(spacing: 1) {
+                Text("\(player.overall)")
+                    .font(.system(size: 16, weight: .heavy).monospacedDigit())
+                    .foregroundStyle(Color.forPlayerCardRating(player.overall))
+
+                // Effective OVR for out-of-position
+                if isVersatile {
+                    let familiarity = player.familiarity(at: position)
+                    let effective = Int(Double(player.overall) * Double(familiarity) / 100.0)
+                    Text("~\(effective)")
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+            .frame(width: 36)
+
+            VStack(alignment: .leading, spacing: 2) {
+                // Name, position, age
+                Text(player.fullName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.textPrimary)
+
+                HStack(spacing: 6) {
+                    Text(player.position.rawValue)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.textSecondary)
+                    Text("Age \(player.age)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.textTertiary)
+
+                    // Salary
+                    Text(starterPickerFormatSalary(player.annualSalary))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.textTertiary)
+
+                    // Form trend arrow
+                    let trend = starterPickerTrend(for: player)
+                    Image(systemName: trend.icon)
+                        .font(.system(size: 9))
+                        .foregroundStyle(trend.color)
+
+                    // Health/injury status
+                    if player.isInjured {
+                        HStack(spacing: 2) {
+                            Image(systemName: "cross.circle.fill")
+                                .font(.system(size: 10))
+                            Text("\(player.injuryWeeksRemaining)w")
+                                .font(.system(size: 10))
+                        }
+                        .foregroundStyle(Color.danger)
+                    }
+                }
+
+                // Versatility info for out-of-position players
+                if isVersatile {
+                    let familiarity = player.familiarity(at: position)
+                    let effective = Int(Double(player.overall) * Double(familiarity) / 100.0)
+                    Text("\(player.position.rawValue) at \(position.rawValue): \(player.overall) \u{00d7} \(familiarity)% = ~\(effective) effective")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.warning)
+                }
+
+                // Comparison vs current starter
+                if let current = currentStarter, current.id != player.id {
+                    let playerOVR = isVersatile
+                        ? Int(Double(player.overall) * Double(player.familiarity(at: position)) / 100.0)
+                        : player.overall
+                    let diff = playerOVR - current.overall
+                    let diffStr = diff >= 0 ? "+\(diff)" : "\(diff)"
+                    Text("vs \(current.lastName): \(current.overall) \u{2192} \(playerOVR) (\(diffStr))")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(diff >= 0 ? Color.success : Color.danger)
+                }
+            }
+
+            Spacer()
+
+            // Current starter checkmark
+            if let current = currentStarter, current.id == player.id {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Color.accentGold)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    // MARK: - Starter Picker Helpers
+
+    private func starterPickerFormatSalary(_ thousands: Int) -> String {
+        if thousands >= 1000 {
+            let millions = Double(thousands) / 1000.0
+            if millions == Double(Int(millions)) {
+                return "$\(Int(millions))M"
+            }
+            return String(format: "$%.1fM", millions)
+        }
+        return "$\(thousands)K"
+    }
+
+    private func starterPickerTrend(for player: Player) -> DevelopmentTrend {
+        let peak = player.position.peakAgeRange
+        if player.age < peak.lowerBound {
+            return .improving
+        } else if peak.contains(player.age) {
+            return .stable
+        } else {
+            return .declining
+        }
     }
 
     private func depthRoleLabel(for index: Int) -> String {

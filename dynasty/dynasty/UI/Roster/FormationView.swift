@@ -1099,7 +1099,7 @@ enum FormationLayout: Equatable {
     var lineOfScrimmageY: CGFloat {
         switch self {
         case .offense, .offense11Personnel, .offense12Personnel, .offenseShotgun, .offenseSpread:
-            return 0.72
+            return 0.30
         case .defense, .defense43, .defense34, .defenseNickel, .defenseDime:
             return 0.28
         case .specialTeams:
@@ -1111,73 +1111,80 @@ enum FormationLayout: Equatable {
         switch self {
         case .offense, .offense11Personnel:
             return [
-                // QB
-                FormationSlot(position: .QB, label: "QB", positionIndex: 0, xPercent: 0.50, yPercent: 0.55),
-                // RB
-                FormationSlot(position: .RB, label: "RB", positionIndex: 0, xPercent: 0.50, yPercent: 0.40),
-                // FB
-                FormationSlot(position: .FB, label: "FB", positionIndex: 0, xPercent: 0.35, yPercent: 0.48),
-                // WR left + right
-                FormationSlot(position: .WR, label: "WR1", positionIndex: 0, xPercent: 0.08, yPercent: 0.72),
-                FormationSlot(position: .WR, label: "WR2", positionIndex: 1, xPercent: 0.92, yPercent: 0.72),
-                // TE
-                FormationSlot(position: .TE, label: "TE", positionIndex: 0, xPercent: 0.82, yPercent: 0.72),
-                // OL
-                FormationSlot(position: .LT, label: "LT", positionIndex: 0, xPercent: 0.28, yPercent: 0.72),
-                FormationSlot(position: .LG, label: "LG", positionIndex: 0, xPercent: 0.38, yPercent: 0.72),
-                FormationSlot(position: .C,  label: "C",  positionIndex: 0, xPercent: 0.50, yPercent: 0.72),
-                FormationSlot(position: .RG, label: "RG", positionIndex: 0, xPercent: 0.62, yPercent: 0.72),
-                FormationSlot(position: .RT, label: "RT", positionIndex: 0, xPercent: 0.72, yPercent: 0.72),
+                // WR left + right (near top, by end zone)
+                FormationSlot(position: .WR, label: "WR1", positionIndex: 0, xPercent: 0.08, yPercent: 0.25),
+                FormationSlot(position: .WR, label: "WR2", positionIndex: 1, xPercent: 0.92, yPercent: 0.25),
+                // OL line (LT on left, RT on right)
+                FormationSlot(position: .LT, label: "LT", positionIndex: 0, xPercent: 0.28, yPercent: 0.30),
+                FormationSlot(position: .LG, label: "LG", positionIndex: 0, xPercent: 0.38, yPercent: 0.30),
+                FormationSlot(position: .C,  label: "C",  positionIndex: 0, xPercent: 0.50, yPercent: 0.30),
+                FormationSlot(position: .RG, label: "RG", positionIndex: 0, xPercent: 0.62, yPercent: 0.30),
+                FormationSlot(position: .RT, label: "RT", positionIndex: 0, xPercent: 0.72, yPercent: 0.30),
+                // TE next to OL on right
+                FormationSlot(position: .TE, label: "TE", positionIndex: 0, xPercent: 0.82, yPercent: 0.30),
+                // QB behind OL
+                FormationSlot(position: .QB, label: "QB", positionIndex: 0, xPercent: 0.50, yPercent: 0.48),
+                // FB in front of RB
+                FormationSlot(position: .FB, label: "FB", positionIndex: 0, xPercent: 0.35, yPercent: 0.55),
+                // RB behind QB
+                FormationSlot(position: .RB, label: "RB", positionIndex: 0, xPercent: 0.50, yPercent: 0.62),
             ]
         case .offense12Personnel:
             return [
-                FormationSlot(position: .QB, label: "QB", positionIndex: 0, xPercent: 0.50, yPercent: 0.55),
-                FormationSlot(position: .RB, label: "RB", positionIndex: 0, xPercent: 0.50, yPercent: 0.40),
-                // 2 TE
-                FormationSlot(position: .TE, label: "TE1", positionIndex: 0, xPercent: 0.82, yPercent: 0.72),
-                FormationSlot(position: .TE, label: "TE2", positionIndex: 1, xPercent: 0.18, yPercent: 0.65),
-                // 1 WR
-                FormationSlot(position: .WR, label: "WR1", positionIndex: 0, xPercent: 0.08, yPercent: 0.72),
-                // OL
-                FormationSlot(position: .LT, label: "LT", positionIndex: 0, xPercent: 0.28, yPercent: 0.72),
-                FormationSlot(position: .LG, label: "LG", positionIndex: 0, xPercent: 0.38, yPercent: 0.72),
-                FormationSlot(position: .C,  label: "C",  positionIndex: 0, xPercent: 0.50, yPercent: 0.72),
-                FormationSlot(position: .RG, label: "RG", positionIndex: 0, xPercent: 0.62, yPercent: 0.72),
-                FormationSlot(position: .RT, label: "RT", positionIndex: 0, xPercent: 0.72, yPercent: 0.72),
+                // WR (1 wide receiver on left)
+                FormationSlot(position: .WR, label: "WR1", positionIndex: 0, xPercent: 0.08, yPercent: 0.25),
+                // OL line (LT on left, RT on right)
+                FormationSlot(position: .LT, label: "LT", positionIndex: 0, xPercent: 0.28, yPercent: 0.30),
+                FormationSlot(position: .LG, label: "LG", positionIndex: 0, xPercent: 0.38, yPercent: 0.30),
+                FormationSlot(position: .C,  label: "C",  positionIndex: 0, xPercent: 0.50, yPercent: 0.30),
+                FormationSlot(position: .RG, label: "RG", positionIndex: 0, xPercent: 0.62, yPercent: 0.30),
+                FormationSlot(position: .RT, label: "RT", positionIndex: 0, xPercent: 0.72, yPercent: 0.30),
+                // 2 TE: TE1 right of OL, TE2 left of OL
+                FormationSlot(position: .TE, label: "TE1", positionIndex: 0, xPercent: 0.82, yPercent: 0.30),
+                FormationSlot(position: .TE, label: "TE2", positionIndex: 1, xPercent: 0.18, yPercent: 0.30),
+                // QB behind OL
+                FormationSlot(position: .QB, label: "QB", positionIndex: 0, xPercent: 0.50, yPercent: 0.48),
                 // FB inline
-                FormationSlot(position: .FB, label: "FB", positionIndex: 0, xPercent: 0.35, yPercent: 0.48),
+                FormationSlot(position: .FB, label: "FB", positionIndex: 0, xPercent: 0.35, yPercent: 0.55),
+                // RB behind QB
+                FormationSlot(position: .RB, label: "RB", positionIndex: 0, xPercent: 0.50, yPercent: 0.62),
             ]
         case .offenseShotgun:
             return [
-                FormationSlot(position: .QB, label: "QB", positionIndex: 0, xPercent: 0.50, yPercent: 0.48),
-                FormationSlot(position: .RB, label: "RB", positionIndex: 0, xPercent: 0.38, yPercent: 0.48),
-                // 3 WR
-                FormationSlot(position: .WR, label: "WR1", positionIndex: 0, xPercent: 0.05, yPercent: 0.72),
-                FormationSlot(position: .WR, label: "WR2", positionIndex: 1, xPercent: 0.95, yPercent: 0.72),
-                FormationSlot(position: .WR, label: "WR3", positionIndex: 2, xPercent: 0.18, yPercent: 0.65),
-                FormationSlot(position: .TE, label: "TE", positionIndex: 0, xPercent: 0.82, yPercent: 0.72),
-                // OL
-                FormationSlot(position: .LT, label: "LT", positionIndex: 0, xPercent: 0.30, yPercent: 0.72),
-                FormationSlot(position: .LG, label: "LG", positionIndex: 0, xPercent: 0.40, yPercent: 0.72),
-                FormationSlot(position: .C,  label: "C",  positionIndex: 0, xPercent: 0.50, yPercent: 0.72),
-                FormationSlot(position: .RG, label: "RG", positionIndex: 0, xPercent: 0.60, yPercent: 0.72),
-                FormationSlot(position: .RT, label: "RT", positionIndex: 0, xPercent: 0.70, yPercent: 0.72),
+                // WR wide (near top)
+                FormationSlot(position: .WR, label: "WR1", positionIndex: 0, xPercent: 0.05, yPercent: 0.25),
+                FormationSlot(position: .WR, label: "WR2", positionIndex: 1, xPercent: 0.95, yPercent: 0.25),
+                FormationSlot(position: .WR, label: "WR3", positionIndex: 2, xPercent: 0.18, yPercent: 0.30),
+                // OL line (LT on left, RT on right)
+                FormationSlot(position: .LT, label: "LT", positionIndex: 0, xPercent: 0.28, yPercent: 0.30),
+                FormationSlot(position: .LG, label: "LG", positionIndex: 0, xPercent: 0.38, yPercent: 0.30),
+                FormationSlot(position: .C,  label: "C",  positionIndex: 0, xPercent: 0.50, yPercent: 0.30),
+                FormationSlot(position: .RG, label: "RG", positionIndex: 0, xPercent: 0.62, yPercent: 0.30),
+                FormationSlot(position: .RT, label: "RT", positionIndex: 0, xPercent: 0.72, yPercent: 0.30),
+                // TE next to OL on right
+                FormationSlot(position: .TE, label: "TE", positionIndex: 0, xPercent: 0.82, yPercent: 0.30),
+                // QB further back in shotgun
+                FormationSlot(position: .QB, label: "QB", positionIndex: 0, xPercent: 0.50, yPercent: 0.52),
+                // RB next to QB in shotgun
+                FormationSlot(position: .RB, label: "RB", positionIndex: 0, xPercent: 0.38, yPercent: 0.52),
             ]
         case .offenseSpread:
             return [
+                // 4 WR spread: WR1/WR2 wide at top, WR3/WR4 in slot at OL level
+                FormationSlot(position: .WR, label: "WR1", positionIndex: 0, xPercent: 0.05, yPercent: 0.25),
+                FormationSlot(position: .WR, label: "WR2", positionIndex: 1, xPercent: 0.95, yPercent: 0.25),
+                FormationSlot(position: .WR, label: "WR3", positionIndex: 2, xPercent: 0.15, yPercent: 0.30),
+                FormationSlot(position: .WR, label: "WR4", positionIndex: 3, xPercent: 0.85, yPercent: 0.30),
+                // OL line (LT on left, RT on right)
+                FormationSlot(position: .LT, label: "LT", positionIndex: 0, xPercent: 0.28, yPercent: 0.30),
+                FormationSlot(position: .LG, label: "LG", positionIndex: 0, xPercent: 0.38, yPercent: 0.30),
+                FormationSlot(position: .C,  label: "C",  positionIndex: 0, xPercent: 0.50, yPercent: 0.30),
+                FormationSlot(position: .RG, label: "RG", positionIndex: 0, xPercent: 0.62, yPercent: 0.30),
+                FormationSlot(position: .RT, label: "RT", positionIndex: 0, xPercent: 0.72, yPercent: 0.30),
+                // QB behind OL
                 FormationSlot(position: .QB, label: "QB", positionIndex: 0, xPercent: 0.50, yPercent: 0.48),
-                FormationSlot(position: .RB, label: "RB", positionIndex: 0, xPercent: 0.50, yPercent: 0.35),
-                // 4 WR spread
-                FormationSlot(position: .WR, label: "WR1", positionIndex: 0, xPercent: 0.05, yPercent: 0.72),
-                FormationSlot(position: .WR, label: "WR2", positionIndex: 1, xPercent: 0.95, yPercent: 0.72),
-                FormationSlot(position: .WR, label: "WR3", positionIndex: 2, xPercent: 0.15, yPercent: 0.62),
-                FormationSlot(position: .WR, label: "WR4", positionIndex: 3, xPercent: 0.85, yPercent: 0.62),
-                // OL
-                FormationSlot(position: .LT, label: "LT", positionIndex: 0, xPercent: 0.30, yPercent: 0.72),
-                FormationSlot(position: .LG, label: "LG", positionIndex: 0, xPercent: 0.40, yPercent: 0.72),
-                FormationSlot(position: .C,  label: "C",  positionIndex: 0, xPercent: 0.50, yPercent: 0.72),
-                FormationSlot(position: .RG, label: "RG", positionIndex: 0, xPercent: 0.60, yPercent: 0.72),
-                FormationSlot(position: .RT, label: "RT", positionIndex: 0, xPercent: 0.70, yPercent: 0.72),
+                // RB behind QB
+                FormationSlot(position: .RB, label: "RB", positionIndex: 0, xPercent: 0.50, yPercent: 0.58),
             ]
         case .defense, .defense43:
             // Full 4-3 defense: 11 players (#44)
