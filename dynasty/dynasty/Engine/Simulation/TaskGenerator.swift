@@ -422,50 +422,40 @@ enum TaskGenerator {
     }
 
     private static func freeAgencyTasks(hasExpiringContracts: Bool) -> [GameTask] {
-        var tasks: [GameTask] = []
-
-        // REQUIRED: review free agent market
-        tasks.append(GameTask(
-            phase: .freeAgency,
-            title: "Review free agent market",
-            description: "Visit the free agency view to see available players.",
-            icon: "person.2.fill",
-            destination: .freeAgency,
-            isRequired: true
-        ))
-
-        // REQUIRED: review expiring contracts / cap situation
-        tasks.append(GameTask(
-            phase: .freeAgency,
-            title: "Review expiring contracts",
-            description: "Check your salary cap and contract situations before spending.",
-            icon: "dollarsign.circle.fill",
-            destination: .capOverview,
-            isRequired: true
-        ))
-
-        // Optional
-        if hasExpiringContracts {
-            tasks.append(GameTask(
+        [
+            GameTask(
                 phase: .freeAgency,
-                title: "Re-sign key players",
-                description: "Lock up your core players before they test free agency.",
-                icon: "signature",
-                destination: .contractTimeline,
-                isRequired: false
-            ))
-        }
-
-        tasks.append(GameTask(
-            phase: .freeAgency,
-            title: "Sign free agents",
-            description: "Make offers to free agents who fill your team's biggest needs.",
-            icon: "person.badge.plus",
-            destination: .freeAgency,
-            isRequired: false
-        ))
-
-        return tasks
+                title: "Final Push \u{2014} Re-sign or let walk",
+                description: "Make final offers to your expiring players before the market opens.",
+                icon: "arrow.triangle.2.circlepath",
+                destination: .freeAgency,
+                isRequired: true
+            ),
+            GameTask(
+                phase: .freeAgency,
+                title: "Start New League Year",
+                description: "Advance contracts and open the free agent market.",
+                icon: "calendar.badge.clock",
+                destination: .freeAgency,
+                isRequired: true
+            ),
+            GameTask(
+                phase: .freeAgency,
+                title: "Roster & Cap compliance",
+                description: "Ensure your team is under the salary cap.",
+                icon: "dollarsign.circle.fill",
+                destination: .freeAgency,
+                isRequired: true
+            ),
+            GameTask(
+                phase: .freeAgency,
+                title: "Free agency signings",
+                description: "Browse the market and sign free agents over 6 rounds.",
+                icon: "person.badge.plus",
+                destination: .freeAgency,
+                isRequired: true
+            ),
+        ]
     }
 
     private static func reviewRosterTasks() -> [GameTask] {

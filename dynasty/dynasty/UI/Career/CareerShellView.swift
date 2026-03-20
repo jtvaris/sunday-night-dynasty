@@ -260,11 +260,26 @@ struct CareerShellView: View {
                 refreshTaskCompletionStatus()
             }
         case .freeAgency:
-            FreeAgencyView(career: career)
-                .onAppear {
-                    markTaskVisited(for: .freeAgency)
-                    refreshTaskCompletionStatus()
+            Group {
+                switch FreeAgencyStep(rawValue: career.freeAgencyStep) {
+                case .finalPush:
+                    FinalPushView(career: career)
+                case .newLeagueYear:
+                    NewLeagueYearView(career: career)
+                case .capReview:
+                    CapComplianceView(career: career)
+                case .signing:
+                    FAWeeklyView(career: career)
+                case .complete:
+                    FACompleteView(career: career)
+                default:
+                    FinalPushView(career: career)
                 }
+            }
+            .onAppear {
+                markTaskVisited(for: .freeAgency)
+                refreshTaskCompletionStatus()
+            }
         case .contractTimeline:
             ContractTimelineView(career: career)
                 .onAppear {

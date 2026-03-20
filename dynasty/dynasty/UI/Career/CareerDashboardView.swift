@@ -1537,8 +1537,28 @@ struct CareerDashboardView: View {
     }
 
     private var freeAgencyTile: some View {
-        NavigationLink {
-            FreeAgencyView(career: career)
+        let stepLabel: String = {
+            switch FreeAgencyStep(rawValue: career.freeAgencyStep) {
+            case .finalPush:    return "Final Push \u{2014} Re-sign your players"
+            case .newLeagueYear: return "New League Year \u{2014} Contracts advancing"
+            case .capReview:    return "Cap Compliance \u{2014} Get under the cap"
+            case .signing:      return "Free Agency \u{2014} \(FreeAgencyStep.roundLabel(career.freeAgencyRound)) of 6 rounds"
+            case .complete:     return "Free Agency Complete"
+            default:            return "Free Agency"
+            }
+        }()
+
+        return NavigationLink {
+            Group {
+                switch FreeAgencyStep(rawValue: career.freeAgencyStep) {
+                case .finalPush:    FinalPushView(career: career)
+                case .newLeagueYear: NewLeagueYearView(career: career)
+                case .capReview:    CapComplianceView(career: career)
+                case .signing:      FAWeeklyView(career: career)
+                case .complete:     FACompleteView(career: career)
+                default:            FinalPushView(career: career)
+                }
+            }
         } label: {
             DashboardTile(icon: "person.badge.plus", title: "Free Agency", highlighted: currentPhaseHighlightedTiles.contains("Free Agency")) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -1551,9 +1571,10 @@ struct CareerDashboardView: View {
                             .font(.system(size: 12, weight: .bold).monospacedDigit())
                             .foregroundStyle(Color.success)
                     }
-                    Text("Browse free agents")
+                    Text(stepLabel)
                         .font(.system(size: 10))
-                        .foregroundStyle(Color.textSecondary)
+                        .foregroundStyle(Color.accentGold)
+                        .lineLimit(1)
                 }
             }
         }
