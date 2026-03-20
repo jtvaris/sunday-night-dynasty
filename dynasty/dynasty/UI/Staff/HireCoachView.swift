@@ -6,6 +6,10 @@ struct HireCoachView: View {
     let role: CoachRole
     let teamID: UUID
     let remainingBudget: Int
+    /// #267: Team data for candidate quality scaling
+    var teamBudget: Int = 25_000
+    var teamWins: Int = 8
+    var teamReputation: Int = 50
     var onHired: ((String, String) -> Void)?
 
     @Environment(\.modelContext) private var modelContext
@@ -187,7 +191,14 @@ struct HireCoachView: View {
         .onAppear {
             if candidates.isEmpty {
                 let count = Int.random(in: 20...30)
-                candidates = CoachingEngine.generateCoachCandidates(role: role, count: count)
+                // #267: Pass team data so candidate quality scales with budget/prestige
+                candidates = CoachingEngine.generateCoachCandidates(
+                    role: role,
+                    count: count,
+                    teamBudget: teamBudget,
+                    teamWins: teamWins,
+                    teamReputation: teamReputation
+                )
             }
         }
         // #157: Full screen cover on iPad for max space

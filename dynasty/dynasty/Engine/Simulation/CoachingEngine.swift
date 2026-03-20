@@ -287,15 +287,28 @@ enum CoachingEngine {
     /// Generates a pool of coaching candidates available for the given role.
     /// Produces 20–30 candidates per search to populate a market of 50+ total coaches.
     ///
+    /// #267: Candidate quality scales with team budget, wins, and reputation.
+    /// Richer / more prestigious teams attract more premium candidates;
+    /// bad teams may see premium candidates decline interest.
+    ///
     /// - Parameters:
     ///   - role: The coaching role being filled.
     ///   - count: How many candidates to generate (defaults to 25).
+    ///   - teamBudget: Coaching budget in thousands (e.g. 25000 = $25M).
+    ///   - teamWins: Last season win total (0–17).
+    ///   - teamReputation: Team prestige / HC reputation (1–99).
     /// - Returns: An array of freshly created `Coach` objects not yet attached to any team.
-    static func generateCoachCandidates(role: CoachRole, count: Int = 25) -> [Coach] {
+    static func generateCoachCandidates(
+        role: CoachRole,
+        count: Int = 25,
+        teamBudget: Int = 25_000,
+        teamWins: Int = 8,
+        teamReputation: Int = 50
+    ) -> [Coach] {
         let actualCount = max(count, 20) // Floor of 20 candidates per search
 
         // #238: Determine how many premium (high-quality, expensive) candidates to include
-        let premiumCount: Int
+        var premiumCount: Int
         switch role {
         case .headCoach, .assistantHeadCoach:
             premiumCount = 3
@@ -305,8 +318,36 @@ enum CoachingEngine {
             premiumCount = 2
         }
 
+        // #267: Scale premium count by team budget
+        if teamBudget > 35_000 {
+            premiumCount += 1  // Rich teams attract extra premium candidate
+        } else if teamBudget < 15_000 {
+            premiumCount = max(1, premiumCount - 1)  // Poor teams see fewer premiums
+        }
+
+        // #267: Premium candidates may refuse bad teams
+        // For each premium slot, 40% chance they decline if team is bad
+        let isPoorTeam = teamReputation < 40 && teamWins < 5
+        var effectivePremiumIndices = Set<Int>()
+        for i in 0..<premiumCount {
+            if isPoorTeam && Double.random(in: 0...1) < 0.40 {
+                continue  // This premium candidate "isn't interested"
+            }
+            effectivePremiumIndices.insert(i)
+        }
+
+        // #267: Salary adjustment factor based on team wins
+        let salaryAdjustment: Double
+        if teamWins < 5 {
+            salaryAdjustment = 1.0 + Double.random(in: 0.10...0.15)  // 10-15% more
+        } else if teamWins > 10 {
+            salaryAdjustment = 1.0 - Double.random(in: 0.05...0.10)  // 5-10% less
+        } else {
+            salaryAdjustment = 1.0
+        }
+
         return (0..<actualCount).map { index in
-            let isPremium = index < premiumCount
+            let isPremium = effectivePremiumIndices.contains(index)
             let name = RandomNameGenerator.randomName()
 
             // Age distribution: young assistants skew lower, coordinators/HC skew older
@@ -381,7 +422,9 @@ enum CoachingEngine {
                 + attrGamePlanning + attrScouting + attrRecruiting + attrMotivation
                 + attrDiscipline + attrMedia + attrContract + attrMorale) / 12
 
-            let salary = LeagueGenerator.salaryForCoach(role: role, ovr: ovr, yearsExperience: exp)
+            // #267: Adjust asking salary based on team desirability
+            let baseSalary = LeagueGenerator.salaryForCoach(role: role, ovr: ovr, yearsExperience: exp)
+            let salary = Int(Double(baseSalary) * salaryAdjustment)
 
             let personality = PersonalityArchetype.allCases.randomElement() ?? .quietProfessional
 

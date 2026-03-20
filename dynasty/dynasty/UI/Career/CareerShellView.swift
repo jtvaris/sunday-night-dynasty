@@ -338,7 +338,10 @@ struct CareerShellView: View {
                 HireCoachView(
                     role: role,
                     teamID: teamID,
-                    remainingBudget: budget - usedBudget
+                    remainingBudget: budget - usedBudget,
+                    teamBudget: budget,
+                    teamWins: team?.wins ?? 8,
+                    teamReputation: career.reputation
                 )
             } else {
                 Text("No team selected")

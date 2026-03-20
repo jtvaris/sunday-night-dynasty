@@ -21,6 +21,7 @@ struct CoachingStaffView: View {
     @Query private var allScouts: [Scout]
     @Query private var allOwners: [Owner]
     @Query private var allPlayers: [Player]
+    @Query private var allTeams: [Team]
 
     // MARK: - Tab State (#107)
     @State private var selectedTab: StaffTab = .staff
@@ -80,6 +81,12 @@ struct CoachingStaffView: View {
         // Owner is stored on Team; find via allOwners matching our team
         // For now, use the first owner (single-team career)
         allOwners.first
+    }
+
+    /// #267: The player's team (for wins/prestige data).
+    private var team: Team? {
+        guard let teamID = career.teamID else { return nil }
+        return allTeams.first { $0.id == teamID }
     }
 
     // MARK: - Budget Calculations
@@ -469,10 +476,18 @@ struct CoachingStaffView: View {
         .sheet(item: $hireCoachRole) { role in
             NavigationStack {
                 if let teamID = career.teamID {
-                    HireCoachView(role: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
-                        hireCoachRole = nil  // Dismiss sheet
-                        showHiringConfirmation(coachName: name, roleName: roleName)
-                    })
+                    HireCoachView(
+                        role: role,
+                        teamID: teamID,
+                        remainingBudget: remainingBudget,
+                        teamBudget: coachingBudget,
+                        teamWins: team?.wins ?? 8,
+                        teamReputation: career.reputation,
+                        onHired: { name, roleName in
+                            hireCoachRole = nil  // Dismiss sheet
+                            showHiringConfirmation(coachName: name, roleName: roleName)
+                        }
+                    )
                 }
             }
         }
