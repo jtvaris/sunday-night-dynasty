@@ -75,7 +75,10 @@ struct ScoutTeamView: View {
                             .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
 
                         ForEach(scouts, id: \.id) { scout in
-                            ScoutTableRow(scout: scout)
+                            NavigationLink(value: scout) {
+                                ScoutTableRow(scout: scout)
+                            }
+                            .buttonStyle(.plain)
                                 .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     Button(role: .destructive) {
@@ -91,6 +94,9 @@ struct ScoutTeamView: View {
                 }
                 .scrollContentBackground(.hidden)
                 .listStyle(.insetGrouped)
+                .navigationDestination(for: Scout.self) { scout in
+                    ScoutDetailView(scout: scout)
+                }
             }
         }
         .toolbar {
