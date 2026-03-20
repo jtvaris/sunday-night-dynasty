@@ -259,4 +259,214 @@ enum FreeAgencyEngine {
             )
         }
     }
+
+    // MARK: - AI Bidding Per Round
+
+    struct AIBid {
+        let teamID: UUID
+        let teamAbbr: String
+        let salary: Int
+        let years: Int
+    }
+
+    /// Generate AI team offers for each free agent in a given round.
+    /// Returns a dictionary keyed by player ID with arrays of competing bids.
+    static func generateAIOffers(
+        freeAgents: [FreeAgent],
+        round: Int,
+        allTeams: [Team],
+        playerTeamID: UUID?
+    ) -> [UUID: [AIBid]] {
+        let aggression = FreeAgencyStep.aiAggression(round)
+        var offers: [UUID: [AIBid]] = [:]
+
+        // Target different OVR tiers by round
+        let targetMinOVR: Int = {
+            switch round {
+            case 1: return 85
+            case 2: return 80
+            case 3: return 75
+            case 4: return 70
+            case 5: return 65
+            default: return 60
+            }
+        }()
+
+        let aiTeams = allTeams.filter { $0.id != playerTeamID }
+
+        for fa in freeAgents {
+            guard fa.player.teamID == nil else { continue }
+            guard fa.player.overall >= targetMinOVR else { continue }
+
+            // Number of teams bidding scales with aggression and player quality
+            let qualityFactor = Double(fa.player.overall - 60) / 40.0
+            let bidCount = max(1, Int(aggression * qualityFactor * 5))
+
+            let eligibleTeams = aiTeams
+                .filter { $0.availableCap >= fa.askingPrice }
+                .shuffled()
+                .prefix(bidCount)
+
+            var bids: [AIBid] = []
+            for team in eligibleTeams {
+                let salaryMultiplier = Double.random(in: (aggression * 0.8)...(aggression * 1.1 + 0.1))
+                let offeredSalary = max(Int(Double(fa.askingPrice) * salaryMultiplier), 750)
+                bids.append(AIBid(
+                    teamID: team.id,
+                    teamAbbr: team.abbreviation,
+                    salary: offeredSalary,
+                    years: fa.desiredYears
+                ))
+            }
+
+            if !bids.isEmpty {
+                offers[fa.player.id] = bids
+            }
+        }
+
+        return offers
+    }
+
+    // MARK: - Player Decision
+
+    struct PlayerDecision {
+        let accepted: Bool
+        let chosenTeamID: UUID?
+        let chosenTeamName: String?
+        let reason: String          // ALWAYS populated
+        let salary: Int?
+        let years: Int?
+    }
+
+    /// Determine a free agent's decision given the player's offer and AI bids.
+    /// The reason is always populated explaining why the player chose or rejected.
+    static func resolvePlayerDecision(
+        player: Player,
+        playerOffer: (salary: Int, years: Int)?,
+        aiBids: [AIBid],
+        round: Int
+    ) -> PlayerDecision {
+        // Combine player offer with AI bids
+        struct Bid {
+            let teamID: UUID?
+            let teamName: String
+            let salary: Int
+            let years: Int
+            let isPlayer: Bool
+        }
+
+        var allBids: [Bid] = aiBids.map {
+            Bid(teamID: $0.teamID, teamName: $0.teamAbbr, salary: $0.salary, years: $0.years, isPlayer: false)
+        }
+
+        if let offer = playerOffer {
+            allBids.append(Bid(teamID: nil, teamName: "Your Team", salary: offer.salary, years: offer.years, isPlayer: true))
+        }
+
+        guard !allBids.isEmpty else {
+            return PlayerDecision(
+                accepted: false,
+                chosenTeamID: nil,
+                chosenTeamName: nil,
+                reason: "No offers received \u{2014} will wait for better opportunities",
+                salary: nil,
+                years: nil
+            )
+        }
+
+        // Score each bid based on player motivation
+        func scoreBid(_ bid: Bid) -> Double {
+            var score = Double(bid.salary)
+
+            switch player.personality.motivation {
+            case .money:
+                score *= 1.3  // Weighs salary heavily
+            case .winning:
+                // Would need team win data; use salary as proxy + bonus for player's team
+                score *= bid.isPlayer ? 1.15 : 1.0
+            case .stats:
+                score *= 1.05
+            case .loyalty:
+                score *= bid.isPlayer ? 1.25 : 0.9
+            case .fame:
+                score *= 1.1
+            }
+
+            // Player team loyalty bonus
+            if bid.isPlayer {
+                score *= 1.1
+            }
+
+            // Longer deals valued more by young players
+            if player.age < player.position.peakAgeRange.lowerBound {
+                score *= 1.0 + Double(bid.years) * 0.05
+            }
+
+            return score
+        }
+
+        let scoredBids = allBids.map { (bid: $0, score: scoreBid($0)) }
+        let best = scoredBids.max(by: { $0.score < $1.score })!
+
+        if best.bid.isPlayer {
+            return PlayerDecision(
+                accepted: true,
+                chosenTeamID: nil,
+                chosenTeamName: "Your Team",
+                reason: playerAcceptReason(player: player),
+                salary: best.bid.salary,
+                years: best.bid.years
+            )
+        } else {
+            return PlayerDecision(
+                accepted: false,
+                chosenTeamID: best.bid.teamID,
+                chosenTeamName: best.bid.teamName,
+                reason: playerRejectReason(player: player, chosenTeam: best.bid.teamName, salary: best.bid.salary, playerOffer: playerOffer),
+                salary: best.bid.salary,
+                years: best.bid.years
+            )
+        }
+    }
+
+    // MARK: - Decision Reasons (always visible)
+
+    private static func playerAcceptReason(player: Player) -> String {
+        switch player.personality.motivation {
+        case .money:   return "Excited about the financial commitment"
+        case .winning: return "Believes this team can compete for a championship"
+        case .stats:   return "Sees a clear path to a bigger role here"
+        case .loyalty: return "Excited to stay and build something special here"
+        case .fame:    return "Happy with the opportunity and exposure"
+        }
+    }
+
+    private static func playerRejectReason(
+        player: Player,
+        chosenTeam: String,
+        salary: Int,
+        playerOffer: (salary: Int, years: Int)?
+    ) -> String {
+        let teamLabel = chosenTeam
+
+        switch player.personality.motivation {
+        case .money:
+            if let offer = playerOffer {
+                let diff = salary - offer.salary
+                if diff > 0 {
+                    let millions = Double(diff) / 1000.0
+                    return "Chose \(teamLabel) \u{2014} offered $\(String(format: "%.1f", millions))M more per year"
+                }
+            }
+            return "Chose \(teamLabel) for a more lucrative deal"
+        case .winning:
+            return "Chose \(teamLabel) for championship contention"
+        case .stats:
+            return "Chose \(teamLabel) for a larger role and more playing time"
+        case .loyalty:
+            return "Chose \(teamLabel) to return to familiar surroundings"
+        case .fame:
+            return "Chose \(teamLabel) for the big market spotlight"
+        }
+    }
 }
