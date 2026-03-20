@@ -24,6 +24,7 @@ struct TimelineTasksPanel: View {
         .reviewRoster,
         .combine,
         .freeAgency,
+        .proDays,
         .draft,
         .otas,
         .trainingCamp,
@@ -505,6 +506,7 @@ struct TimelineTasksPanel: View {
         case .coachingChanges: return "Coaching Changes"
         case .combine:         return "NFL Combine"
         case .freeAgency:      return "Free Agency"
+        case .proDays:         return "Pro Days & Workouts"
         case .reviewRoster:    return "Review Roster"
         case .draft:           return "NFL Draft"
         case .otas:            return "OTAs"
@@ -524,6 +526,7 @@ struct TimelineTasksPanel: View {
         case .coachingChanges: return "Feb"
         case .combine:         return "Feb\u{2013}Mar"
         case .freeAgency:      return "Mar"
+        case .proDays:         return "Apr"
         case .reviewRoster:    return "Feb"
         case .draft:           return "Apr"
         case .otas:            return "May"
@@ -543,6 +546,7 @@ struct TimelineTasksPanel: View {
         case .coachingChanges: return "person.badge.key.fill"
         case .combine:         return "stopwatch.fill"
         case .freeAgency:      return "signature"
+        case .proDays:         return "figure.run"
         case .reviewRoster:    return "chart.bar.doc.horizontal"
         case .draft:           return "list.clipboard.fill"
         case .otas:            return "figure.run"

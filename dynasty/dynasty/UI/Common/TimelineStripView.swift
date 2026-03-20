@@ -14,6 +14,7 @@ struct TimelineStripView: View {
         .reviewRoster,
         .combine,
         .freeAgency,
+        .proDays,
         .draft,
         .otas,
         .trainingCamp,
@@ -178,6 +179,7 @@ struct TimelineStripView: View {
         case .coachingChanges: return "Coaching"
         case .combine:         return "Combine"
         case .freeAgency:      return "Free Agency"
+        case .proDays:         return "Pro Days"
         case .reviewRoster:    return "Review Roster"
         case .draft:           return "Draft"
         case .otas:            return "OTAs"
@@ -197,6 +199,7 @@ struct TimelineStripView: View {
         case .coachingChanges: return "Feb"
         case .combine:         return "Feb–Mar"
         case .freeAgency:      return "Mar"
+        case .proDays:         return "Apr"
         case .reviewRoster:    return "Mar–Apr"
         case .draft:           return "Apr"
         case .otas:            return "May"
@@ -216,6 +219,7 @@ struct TimelineStripView: View {
         case .coachingChanges: return "person.badge.key.fill"
         case .combine:         return "stopwatch.fill"
         case .freeAgency:      return "signature"
+        case .proDays:         return "figure.run"
         case .reviewRoster:    return "chart.bar.doc.horizontal"
         case .draft:           return "list.clipboard.fill"
         case .otas:            return "figure.run"

@@ -898,7 +898,7 @@ struct ProspectDetailView: View {
         switch career.currentPhase {
         case .combine:
             return .combine
-        case .freeAgency, .draft:
+        case .freeAgency, .proDays, .draft:
             return .proDay
         case .otas, .trainingCamp, .preseason, .rosterCuts:
             return .personalWorkout

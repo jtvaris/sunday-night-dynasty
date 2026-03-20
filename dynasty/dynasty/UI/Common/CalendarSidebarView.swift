@@ -327,6 +327,7 @@ struct CalendarSidebarView: View {
         .init(label: "Review Roster", phase: .reviewRoster),
         .init(label: "Combine", phase: .combine),
         .init(label: "Free Agency", phase: .freeAgency),
+        .init(label: "Pro Days", phase: .proDays),
         .init(label: "NFL Draft", phase: .draft),
         .init(label: "OTAs", phase: .otas),
         .init(label: "Training Camp", phase: .trainingCamp),
@@ -428,9 +429,10 @@ struct CalendarSidebarView: View {
         case .reviewRoster:    return 8
         case .combine:         return 9
         case .freeAgency:      return 10
-        case .draft:           return 11
-        case .otas:            return 12
-        case .trainingCamp:    return 13
+        case .proDays:         return 11
+        case .draft:           return 12
+        case .otas:            return 13
+        case .trainingCamp:    return 14
         }
     }
 }

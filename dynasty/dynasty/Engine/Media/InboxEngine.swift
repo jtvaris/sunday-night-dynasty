@@ -51,6 +51,11 @@ enum InboxEngine {
                 ownerName: ownerName, teamName: teamName,
                 dateString: dateString
             )
+        case .proDays:
+            return proDaysMessages(
+                ownerName: ownerName, teamName: teamName,
+                dateString: dateString
+            )
         case .draft:
             return draftMessages(
                 ownerName: ownerName, teamName: teamName,
@@ -397,6 +402,32 @@ enum InboxEngine {
             body: "With free agency behind us, this is the perfect time to assess where we stand. Grade every position group, review who's overpaid or underpaid, and set priorities heading into the draft.",
             date: dateString,
             category: .ownerDirective
+        ))
+
+        return messages
+    }
+
+    // MARK: - Pro Days
+
+    private static func proDaysMessages(
+        ownerName: String, teamName: String,
+        dateString: String
+    ) -> [InboxMessage] {
+        var messages: [InboxMessage] = []
+
+        messages.append(InboxMessage(
+            sender: .scout(name: "Director of Scouting"),
+            subject: "Pro Day Schedule Available",
+            body: """
+                The college pro day schedule is set. Our scouts are ready to attend \
+                key pro days to get a closer look at top prospects in their home \
+                environment. Assign scouts to prioritize the most important visits.
+                """,
+            date: dateString,
+            category: .draftPrep,
+            attachments: [
+                MessageAttachment(title: "View Scouting", destination: .scouting)
+            ]
         ))
 
         return messages
@@ -981,6 +1012,7 @@ enum InboxEngine {
             case .coachingChanges:  phaseName = "Coaching Changes"
             case .combine:          phaseName = "NFL Combine"
             case .freeAgency:       phaseName = "Free Agency"
+            case .proDays:          phaseName = "Pro Days & Workouts"
             case .reviewRoster:     phaseName = "Review Roster"
             case .draft:            phaseName = "NFL Draft"
             case .otas:             phaseName = "OTAs"

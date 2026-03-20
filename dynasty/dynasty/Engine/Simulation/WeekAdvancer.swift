@@ -814,6 +814,14 @@ enum WeekAdvancer {
                 teams: teams
             )
 
+        case .proDays:
+            // Pro days phase — engine work happens in scouting UI
+            lastNewsItems = NewsGenerator.generateOffseasonNews(
+                phase: .proDays,
+                career: career,
+                teams: teams
+            )
+
         case .reviewRoster:
             // Reset roster evaluation flags for the new Review Roster phase
             UserDefaults.standard.set(false, forKey: "rosterEvaluationConfirmed")
@@ -1049,7 +1057,8 @@ enum WeekAdvancer {
         case .coachingChanges:  return .reviewRoster
         case .reviewRoster:     return .combine
         case .combine:          return .freeAgency
-        case .freeAgency:       return .draft
+        case .freeAgency:       return .proDays
+        case .proDays:          return .draft
         case .draft:            return .otas
         case .otas:             return .trainingCamp
         case .trainingCamp:     return .preseason

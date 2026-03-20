@@ -166,6 +166,7 @@ struct ScoutingHubView: View {
         switch career.currentPhase {
         case .combine:      return "NFL Combine"
         case .freeAgency:   return "Free Agency"
+        case .proDays:      return "Pro Days & Workouts"
         case .draft:        return "NFL Draft"
         case .regularSeason: return "Regular Season"
         default:            return career.currentPhase.rawValue
@@ -312,7 +313,7 @@ struct ScoutingHubView: View {
 
         // Re-generate draft class if lost (app restart)
         if WeekAdvancer.currentDraftClass.isEmpty {
-            let validPhases: [SeasonPhase] = [.coachingChanges, .reviewRoster, .combine, .freeAgency, .draft, .otas]
+            let validPhases: [SeasonPhase] = [.coachingChanges, .reviewRoster, .combine, .freeAgency, .proDays, .draft, .otas]
             if validPhases.contains(career.currentPhase) {
                 WeekAdvancer.currentDraftClass = ScoutingEngine.generateDraftClass()
                 WeekAdvancer.draftClassGenerated = true
@@ -569,7 +570,7 @@ struct ProDayListView: View {
     }
 
     private var isProDayPhase: Bool {
-        career.currentPhase == .combine || career.currentPhase == .draft || career.currentPhase == .freeAgency
+        career.currentPhase == .combine || career.currentPhase == .proDays || career.currentPhase == .draft || career.currentPhase == .freeAgency
     }
 
     var body: some View {

@@ -1742,6 +1742,8 @@ struct CareerDashboardView: View {
             return ["Free Agency", "Salary Cap"]
         case .reviewRoster:
             return ["Roster", "Salary Cap"]
+        case .proDays:
+            return ["Scouting", "Draft"]
         case .draft:
             return ["Draft", "Scouting"]
         case .otas, .trainingCamp:

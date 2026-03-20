@@ -84,7 +84,7 @@ enum TaskGenerator {
         let order: Int          // 1-based position in the season cycle
     }
 
-    static let totalPhases = 14
+    static let totalPhases = 15
 
     static func phaseInfo(for phase: SeasonPhase) -> PhaseInfo {
         switch phase {
@@ -124,53 +124,59 @@ enum TaskGenerator {
                 description: "Re-sign your own players and pursue free agents to address roster needs.",
                 order: 6
             )
+        case .proDays:
+            return PhaseInfo(
+                name: "Pro Days & Workouts",
+                description: "Attend college pro days and conduct private workouts before the draft.",
+                order: 7
+            )
         case .draft:
             return PhaseInfo(
                 name: "NFL Draft",
                 description: "Select the next generation of talent for your franchise.",
-                order: 7
+                order: 8
             )
         case .otas:
             return PhaseInfo(
                 name: "OTAs",
                 description: "Organize team activities, set your depth chart, and pair mentors with young players.",
-                order: 8
+                order: 9
             )
         case .trainingCamp:
             return PhaseInfo(
                 name: "Training Camp",
                 description: "Players compete for roster spots. Evaluate development and position battles.",
-                order: 9
+                order: 10
             )
         case .preseason:
             return PhaseInfo(
                 name: "Preseason",
                 description: "Exhibition games let you evaluate young talent before final roster decisions.",
-                order: 10
+                order: 11
             )
         case .rosterCuts:
             return PhaseInfo(
                 name: "Roster Cuts",
                 description: "Trim the roster to 53 players and set your practice squad.",
-                order: 11
+                order: 12
             )
         case .regularSeason:
             return PhaseInfo(
                 name: "Regular Season",
                 description: "Compete across 18 weeks for a playoff berth. Manage injuries, trades, and game plans.",
-                order: 12
+                order: 13
             )
         case .tradeDeadline:
             return PhaseInfo(
                 name: "Trade Deadline",
                 description: "Last chance to make trades this season. Buy or sell based on your record.",
-                order: 13
+                order: 14
             )
         case .playoffs:
             return PhaseInfo(
                 name: "Playoffs",
                 description: "Win or go home. Prepare your game plan and manage your roster for each round.",
-                order: 14
+                order: 15
             )
         }
     }
@@ -229,6 +235,8 @@ enum TaskGenerator {
             return combineTasks()
         case .freeAgency:
             return freeAgencyTasks(hasExpiringContracts: hasExpiringContracts)
+        case .proDays:
+            return proDaysTasks()
         case .reviewRoster:
             return reviewRosterTasks()
         case .draft:
@@ -490,6 +498,43 @@ enum TaskGenerator {
                 description: "Identify your biggest needs heading into the draft.",
                 icon: "list.bullet.clipboard.fill",
                 destination: .rosterEvaluation,
+                isRequired: false
+            ),
+        ]
+    }
+
+    private static func proDaysTasks() -> [GameTask] {
+        [
+            GameTask(
+                phase: .proDays,
+                title: "Assign scouts to Pro Days",
+                description: "Send your scouts to college pro days to evaluate prospects in their home environment.",
+                icon: "figure.run",
+                destination: .scouting,
+                isRequired: true
+            ),
+            GameTask(
+                phase: .proDays,
+                title: "Review Pro Day results",
+                description: "Check pro day performances and compare to Combine results.",
+                icon: "chart.bar.doc.horizontal.fill",
+                destination: .scouting,
+                isRequired: true
+            ),
+            GameTask(
+                phase: .proDays,
+                title: "Conduct personal workouts",
+                description: "Invite top prospects for private workouts with your coaching staff.",
+                icon: "dumbbell.fill",
+                destination: .prospectList,
+                isRequired: false
+            ),
+            GameTask(
+                phase: .proDays,
+                title: "Finalize Big Board",
+                description: "Make your final prospect rankings before the draft.",
+                icon: "list.number",
+                destination: .bigBoard,
                 isRequired: false
             ),
         ]
