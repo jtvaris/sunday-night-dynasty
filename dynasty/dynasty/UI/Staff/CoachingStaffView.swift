@@ -689,6 +689,7 @@ struct CoachingStaffView: View {
                                         detailCoachID = coach.id
                                     } label: {
                                         compactCoachCard(coach: coach)
+                                            .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
                                 } else {
@@ -806,6 +807,7 @@ struct CoachingStaffView: View {
                                         detailCoachID = coach.id
                                     } label: {
                                         compactCoachCard(coach: coach)
+                                            .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
                                 } else {
@@ -1697,6 +1699,7 @@ struct CoachingStaffView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(Color.accentGold.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
