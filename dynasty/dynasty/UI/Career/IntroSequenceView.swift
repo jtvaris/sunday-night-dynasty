@@ -789,16 +789,22 @@ private struct TeamOverviewStep: View {
                             ForEach(positionGroupGrades) { group in
                                 VStack(spacing: 6) {
                                     // Dual grade: Starter/Depth (#235)
-                                    HStack(spacing: 3) {
+                                    HStack(spacing: 2) {
+                                        Text("S:")
+                                            .font(.system(size: 9, weight: .medium))
+                                            .foregroundStyle(Color.textTertiary)
                                         Text(group.starterGrade)
                                             .font(.title2.weight(.black))
-                                            .foregroundStyle(Color.accentBlue)
+                                            .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(group.starterGrade))
                                         Text("/")
                                             .font(.title3)
                                             .foregroundStyle(Color.textTertiary)
+                                        Text("D:")
+                                            .font(.system(size: 9, weight: .medium))
+                                            .foregroundStyle(Color.textTertiary)
                                         Text(group.depthGrade)
                                             .font(.title2.weight(.black))
-                                            .foregroundStyle(Color.warning)
+                                            .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(group.depthGrade))
                                     }
                                     Text(group.name)
                                         .font(.subheadline.weight(.bold))

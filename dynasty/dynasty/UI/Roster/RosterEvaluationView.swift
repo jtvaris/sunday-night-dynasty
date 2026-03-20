@@ -59,13 +59,20 @@ struct RosterEvaluationView: View {
     // MARK: - Roster Notes & Priorities (#245)
     @AppStorage("rosterNotes") private var rosterNotesJSON: String = "{}"
     @AppStorage("rosterPriorities") private var rosterPrioritiesJSON: String = "{}"
+    @AppStorage("rosterOwnAssessments") private var rosterOwnAssessmentsJSON: String = "{}"
     @AppStorage("rosterEvaluationConfirmed") private var rosterEvaluationConfirmed: Bool = false
     @State private var editingGroup: EvalPositionGroup?
     @State private var editingNote: String = ""
     @State private var editingPriority: String = "none"
+    @State private var editingOwnAssessment: String = "none"
 
     // #251: Expandable key decision rows
     @State private var expandedDecisions: Set<UUID> = []
+
+    // Own assessment options (#266)
+    private static let ownAssessmentOptions = [
+        "none", "Solid", "Starter needed", "Depth needed", "Upgrade needed", "Aging", "Priority"
+    ]
 
     private var rosterNotes: [String: String] {
         (try? JSONDecoder().decode([String: String].self, from: Data(rosterNotesJSON.utf8))) ?? [:]
@@ -73,10 +80,14 @@ struct RosterEvaluationView: View {
     private var rosterPriorities: [String: String] {
         (try? JSONDecoder().decode([String: String].self, from: Data(rosterPrioritiesJSON.utf8))) ?? [:]
     }
+    private var rosterOwnAssessments: [String: String] {
+        (try? JSONDecoder().decode([String: String].self, from: Data(rosterOwnAssessmentsJSON.utf8))) ?? [:]
+    }
 
-    private func saveNote(groupID: String, note: String, priority: String) {
+    private func saveNote(groupID: String, note: String, priority: String, ownAssessment: String = "none") {
         var notes = rosterNotes
         var priorities = rosterPriorities
+        var ownAssessments = rosterOwnAssessments
         if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             notes.removeValue(forKey: groupID)
         } else {
@@ -87,8 +98,14 @@ struct RosterEvaluationView: View {
         } else {
             priorities[groupID] = priority
         }
+        if ownAssessment == "none" {
+            ownAssessments.removeValue(forKey: groupID)
+        } else {
+            ownAssessments[groupID] = ownAssessment
+        }
         if let data = try? JSONEncoder().encode(notes) { rosterNotesJSON = String(data: data, encoding: .utf8) ?? "{}" }
         if let data = try? JSONEncoder().encode(priorities) { rosterPrioritiesJSON = String(data: data, encoding: .utf8) ?? "{}" }
+        if let data = try? JSONEncoder().encode(ownAssessments) { rosterOwnAssessmentsJSON = String(data: data, encoding: .utf8) ?? "{}" }
     }
 
     var body: some View {
@@ -369,9 +386,14 @@ struct RosterEvaluationView: View {
                         sortableHeader("Cap $", column: .capAllocation, width: 72)
                     }
                     Spacer()
-                    Text("Assessment")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.textTertiary)
+                    HStack(spacing: 6) {
+                        Text("Staff")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.textTertiary)
+                        Text("Own")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.textTertiary)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
@@ -394,87 +416,99 @@ struct RosterEvaluationView: View {
     private func positionGroupRow(rowData: GroupRowData) -> some View {
         let group = rowData.group
 
-        return HStack(alignment: .center) {
-            // Group label
-            Text(group.label)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(Color.textPrimary)
-                .frame(width: 44, alignment: .leading)
+        return Button {
+            editingNote = rosterNotes[group.id] ?? ""
+            editingPriority = rosterPriorities[group.id] ?? "none"
+            editingOwnAssessment = rosterOwnAssessments[group.id] ?? "none"
+            editingGroup = group
+        } label: {
+            HStack(alignment: .center) {
+                // Group label
+                Text(group.label)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Color.textPrimary)
+                    .frame(width: 44, alignment: .leading)
 
-            // Avg overall
-            Text(rowData.avgOvr == 0 ? "\u{2014}" : "\(rowData.avgOvr)")
-                .font(.subheadline.weight(.semibold).monospacedDigit())
-                .foregroundStyle(rowData.avgOvr == 0 ? Color.textTertiary : Color.forRating(rowData.avgOvr))
-                .frame(width: 64, alignment: .center)
+                // Avg overall
+                Text(rowData.avgOvr == 0 ? "\u{2014}" : "\(rowData.avgOvr)")
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(rowData.avgOvr == 0 ? Color.textTertiary : Color.forRating(rowData.avgOvr))
+                    .frame(width: 64, alignment: .center)
 
-            // Dual grade: Starter / Depth
-            HStack(spacing: 2) {
-                Text(rowData.starterGrade)
-                    .font(.caption.weight(.heavy))
-                    .foregroundStyle(.white)
-                    .frame(minWidth: 22, maxWidth: 28, minHeight: 22, maxHeight: 22)
-                    .background(PositionGradeCalculator.gradeColor(for: rowData.starterOVR), in: RoundedRectangle(cornerRadius: 5))
+                // Dual grade: Starter / Depth
+                HStack(spacing: 2) {
+                    Text("S:")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(rowData.starterGrade)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(rowData.starterGrade))
+                    Text("/")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.textTertiary)
+                    Text("D:")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(rowData.depthGrade)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(rowData.depthGrade))
+                }
+                .frame(width: 80)
 
-                Text("/")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textTertiary)
+                // iPad extra columns (#250)
+                if isIPad {
+                    Text(rowData.avgAge == 0 ? "\u{2014}" : "\(rowData.avgAge)")
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(Color.textSecondary)
+                        .frame(width: 60, alignment: .center)
 
-                Text(rowData.depthGrade)
-                    .font(.caption.weight(.heavy))
-                    .foregroundStyle(.white)
-                    .frame(minWidth: 22, maxWidth: 28, minHeight: 22, maxHeight: 22)
-                    .background(PositionGradeCalculator.gradeColor(for: rowData.depthOVR), in: RoundedRectangle(cornerRadius: 5))
-            }
-            .frame(width: 80)
+                    Text(formatMillions(rowData.capAllocation))
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(Color.textSecondary)
+                        .frame(width: 72, alignment: .center)
+                }
 
-            // iPad extra columns (#250)
-            if isIPad {
-                Text(rowData.avgAge == 0 ? "\u{2014}" : "\(rowData.avgAge)")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(Color.textSecondary)
-                    .frame(width: 60, alignment: .center)
+                Spacer()
 
-                Text(formatMillions(rowData.capAllocation))
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(Color.textSecondary)
-                    .frame(width: 72, alignment: .center)
-            }
+                // #266: Dual assessment badges — Staff (smaller, left) + Own (right, larger)
+                HStack(spacing: 4) {
+                    // Staff assessment (auto-generated, smaller)
+                    if rowData.needs.isEmpty {
+                        needBadge(label: "Solid", color: .success, small: true)
+                    } else {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            ForEach(rowData.needs.prefix(2), id: \.label) { need in
+                                needBadge(label: need.label, color: need.color, small: true)
+                            }
+                        }
+                    }
 
-            Spacer()
+                    // Own assessment (user's, slightly larger)
+                    if let ownAssessment = rosterOwnAssessments[group.id] {
+                        needBadge(label: ownAssessment, color: ownAssessmentColor(ownAssessment), small: false)
+                    }
+                }
 
-            // Needs assessment badges (stacked)
-            if rowData.needs.isEmpty {
-                needBadge(label: "Solid", color: .success)
-            } else {
-                VStack(alignment: .trailing, spacing: 3) {
-                    ForEach(rowData.needs, id: \.label) { need in
-                        needBadge(label: need.label, color: need.color)
+                // Priority dot + note indicator (#245)
+                HStack(spacing: 4) {
+                    if let priority = rosterPriorities[group.id], priority != "none" {
+                        Circle()
+                            .fill(priorityColor(priority))
+                            .frame(width: 8, height: 8)
+                    }
+                    if rosterNotes[group.id] != nil {
+                        Image(systemName: "note.text")
+                            .font(.caption)
+                            .foregroundStyle(Color.accentGold)
                     }
                 }
             }
-
-            // Priority dot + note indicator (#245)
-            HStack(spacing: 4) {
-                if let priority = rosterPriorities[group.id], priority != "none" {
-                    Circle()
-                        .fill(priorityColor(priority))
-                        .frame(width: 8, height: 8)
-                }
-                Button {
-                    editingNote = rosterNotes[group.id] ?? ""
-                    editingPriority = rosterPriorities[group.id] ?? "none"
-                    editingGroup = group
-                } label: {
-                    Image(systemName: rosterNotes[group.id] != nil ? "note.text" : "square.and.pencil")
-                        .font(.caption)
-                        .foregroundStyle(rosterNotes[group.id] != nil ? Color.accentGold : Color.textTertiary)
-                }
-                .buttonStyle(.plain)
-            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(rowData.needs.contains(where: { $0.label == "Starter needed" }) ? Color.danger.opacity(0.05) : Color.clear)
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(rowData.needs.contains(where: { $0.label == "Starter needed" }) ? Color.danger.opacity(0.05) : Color.clear)
+        .buttonStyle(.plain)
     }
 
     // MARK: - Needs Assessment
@@ -535,16 +569,28 @@ struct RosterEvaluationView: View {
         return needs
     }
 
-    private func needBadge(label: String, color: Color) -> some View {
+    private func needBadge(label: String, color: Color, small: Bool = false) -> some View {
         Text(label)
-            .font(.caption2.weight(.bold))
+            .font(small ? .system(size: 8, weight: .bold) : .caption2.weight(.bold))
             .foregroundStyle(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
+            .padding(.horizontal, small ? 4 : 6)
+            .padding(.vertical, small ? 1 : 2)
             .background(color.opacity(0.15), in: Capsule())
             .overlay(Capsule().strokeBorder(color.opacity(0.4), lineWidth: 1))
             .lineLimit(1)
-            .minimumScaleFactor(0.8)
+            .minimumScaleFactor(0.7)
+    }
+
+    private func ownAssessmentColor(_ assessment: String) -> Color {
+        switch assessment {
+        case "Solid":           return .success
+        case "Starter needed":  return .danger
+        case "Depth needed":    return .warning
+        case "Upgrade needed":  return .accentGold
+        case "Aging":           return .accentBlue
+        case "Priority":        return .danger
+        default:                return .textTertiary
+        }
     }
 
     // MARK: - Section 2: Key Decisions
@@ -1068,51 +1114,89 @@ struct RosterEvaluationView: View {
         NavigationStack {
             ZStack {
                 Color.backgroundPrimary.ignoresSafeArea()
-                VStack(spacing: 20) {
-                    // Priority picker
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Priority")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.textSecondary)
-                        Picker("Priority", selection: $editingPriority) {
-                            Text("None").tag("none")
-                            Text("Low").tag("low")
-                            Text("Medium").tag("medium")
-                            Text("High").tag("high")
-                        }
-                        .pickerStyle(.segmented)
-                    }
+                ScrollView {
+                    VStack(spacing: 20) {
+                        // #266: Your Assessment picker
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Your Assessment")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textSecondary)
 
-                    // Notes field
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Notes")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.textSecondary)
-                        TextEditor(text: $editingNote)
-                            .scrollContentBackground(.hidden)
-                            .font(.body)
-                            .foregroundStyle(Color.textPrimary)
-                            .frame(minHeight: 120)
-                            .padding(10)
-                            .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 10))
-                            .overlay(
-                                Group {
-                                    if editingNote.isEmpty {
-                                        Text("Add your evaluation notes...")
-                                            .font(.body)
-                                            .foregroundStyle(Color.textTertiary)
-                                            .padding(.horizontal, 14)
-                                            .padding(.vertical, 18)
-                                            .allowsHitTesting(false)
+                            LazyVGrid(columns: [
+                                GridItem(.flexible()),
+                                GridItem(.flexible()),
+                                GridItem(.flexible())
+                            ], spacing: 8) {
+                                ForEach(Self.ownAssessmentOptions, id: \.self) { option in
+                                    let isSelected = editingOwnAssessment == option
+                                    let displayLabel = option == "none" ? "None" : option
+                                    let badgeColor = option == "none" ? Color.textTertiary : ownAssessmentColor(option)
+
+                                    Button {
+                                        editingOwnAssessment = option
+                                    } label: {
+                                        Text(displayLabel)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(isSelected ? Color.backgroundPrimary : badgeColor)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 8)
+                                            .background(
+                                                isSelected ? badgeColor : badgeColor.opacity(0.1),
+                                                in: RoundedRectangle(cornerRadius: 8)
+                                            )
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 8)
+                                                    .strokeBorder(badgeColor.opacity(isSelected ? 1 : 0.4), lineWidth: 1)
+                                            )
                                     }
-                                },
-                                alignment: .topLeading
-                            )
-                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
 
-                    Spacer()
+                        // Priority picker
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Priority")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textSecondary)
+                            Picker("Priority", selection: $editingPriority) {
+                                Text("None").tag("none")
+                                Text("Low").tag("low")
+                                Text("Medium").tag("medium")
+                                Text("High").tag("high")
+                            }
+                            .pickerStyle(.segmented)
+                        }
+
+                        // Notes field
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Notes")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textSecondary)
+                            TextEditor(text: $editingNote)
+                                .scrollContentBackground(.hidden)
+                                .font(.body)
+                                .foregroundStyle(Color.textPrimary)
+                                .frame(minHeight: 120)
+                                .padding(10)
+                                .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 10))
+                                .overlay(
+                                    Group {
+                                        if editingNote.isEmpty {
+                                            Text("Add your evaluation notes...")
+                                                .font(.body)
+                                                .foregroundStyle(Color.textTertiary)
+                                                .padding(.horizontal, 14)
+                                                .padding(.vertical, 18)
+                                                .allowsHitTesting(false)
+                                        }
+                                    },
+                                    alignment: .topLeading
+                                )
+                        }
+                    }
+                    .padding(24)
                 }
-                .padding(24)
             }
             .navigationTitle("\(group.label) Evaluation")
             .navigationBarTitleDisplayMode(.inline)
@@ -1124,7 +1208,7 @@ struct RosterEvaluationView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        saveNote(groupID: group.id, note: editingNote, priority: editingPriority)
+                        saveNote(groupID: group.id, note: editingNote, priority: editingPriority, ownAssessment: editingOwnAssessment)
                         editingGroup = nil
                     }
                     .fontWeight(.semibold)
@@ -1132,7 +1216,7 @@ struct RosterEvaluationView: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
 

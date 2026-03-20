@@ -462,19 +462,31 @@ struct RosterView: View {
                 FormationView(
                     title: "Offense",
                     players: players.filter { $0.position.side == .offense },
-                    layout: .offense
+                    layout: .offense,
+                    onPlayerSwapped: { position, player in
+                        let groupPlayers = players.filter { $0.position.side == .offense }
+                        handleDepthChange(player: player, newIndex: 0, groupPlayers: groupPlayers)
+                    }
                 )
             case .defense:
                 FormationView(
                     title: "Defense",
                     players: players.filter { $0.position.side == .defense },
-                    layout: .defense
+                    layout: .defense,
+                    onPlayerSwapped: { position, player in
+                        let groupPlayers = players.filter { $0.position.side == .defense }
+                        handleDepthChange(player: player, newIndex: 0, groupPlayers: groupPlayers)
+                    }
                 )
             case .specialTeams:
                 FormationView(
                     title: "Special Teams",
                     players: players.filter { $0.position.side == .specialTeams },
-                    layout: .specialTeams
+                    layout: .specialTeams,
+                    onPlayerSwapped: { position, player in
+                        let groupPlayers = players.filter { $0.position.side == .specialTeams }
+                        handleDepthChange(player: player, newIndex: 0, groupPlayers: groupPlayers)
+                    }
                 )
             }
         }
@@ -916,6 +928,15 @@ enum PositionGradeCalculator {
         }
     }
 
+    /// Color for a letter grade string (A=green, B=blue, C=gold, D=orange, F=red).
+    static func gradeColorForLetter(_ grade: String) -> Color {
+        if grade.hasPrefix("A") { return .success }
+        if grade.hasPrefix("B") { return .accentBlue }
+        if grade.hasPrefix("C") { return .accentGold }
+        if grade.hasPrefix("D") { return .warning }
+        return .danger
+    }
+
     /// Calculate starter grade + depth grade for a group of positions.
     /// - Parameters:
     ///   - players: All players in the position group (e.g. all OL players).
@@ -992,25 +1013,21 @@ struct PositionGroupHeader: View {
 
             // Starter grade / Depth grade (#235)
             HStack(spacing: 2) {
-                // Starter grade (blue)
-                Text(g.starterGrade)
-                    .font(.caption)
-                    .fontWeight(.heavy)
-                    .foregroundStyle(.white)
-                    .frame(minWidth: 22, maxWidth: 28, minHeight: 22, maxHeight: 22)
-                    .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: 5))
-
-                Text("/")
-                    .font(.caption2)
+                Text("S:")
+                    .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
-
-                // Depth grade (orange/warning)
+                Text(g.starterGrade)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.starterGrade))
+                Text("/")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.textTertiary)
+                Text("D:")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
                 Text(g.depthGrade)
-                    .font(.caption)
-                    .fontWeight(.heavy)
-                    .foregroundStyle(.white)
-                    .frame(minWidth: 22, maxWidth: 28, minHeight: 22, maxHeight: 22)
-                    .background(Color.warning, in: RoundedRectangle(cornerRadius: 5))
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.depthGrade))
             }
 
             // Cap allocation

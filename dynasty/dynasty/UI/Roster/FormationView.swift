@@ -9,6 +9,10 @@ struct FormationView: View {
     let players: [Player]
     @State private var layout: FormationLayout
 
+    /// Callback fired when the user swaps a player into a formation slot.
+    /// Parameters: (position, selectedPlayer) — the caller should promote selectedPlayer to starter.
+    var onPlayerSwapped: ((Position, Player) -> Void)?
+
     /// Currently selected slot for player swap picker (#43)
     @State private var selectedSlot: FormationSlot?
     /// Whether we're picking for a backup slot (#199)
@@ -16,10 +20,15 @@ struct FormationView: View {
     /// Slot for comparison overlay (#192)
     @State private var comparisonSlot: FormationSlot?
 
-    init(title: String, players: [Player], layout: FormationLayout) {
+    /// Local custom depth ordering built from formation swaps so the formation view
+    /// reflects changes immediately (even before the parent updates).
+    @State private var localDepthOrder: [Position: [UUID]] = [:]
+
+    init(title: String, players: [Player], layout: FormationLayout, onPlayerSwapped: ((Position, Player) -> Void)? = nil) {
         self.title = title
         self.players = players
         self._layout = State(initialValue: layout)
+        self.onPlayerSwapped = onPlayerSwapped
     }
 
     var body: some View {
@@ -154,7 +163,10 @@ struct FormationView: View {
                 players: eligiblePlayers(for: slot),
                 allPlayers: players,
                 currentPlayer: playerForSlot(slot),
-                backupDepth: selectedBackupDepth
+                backupDepth: selectedBackupDepth,
+                onPlayerSelected: { player in
+                    promotePlayer(player, forSlot: slot)
+                }
             )
             .presentationDetents([.medium, .large]) // #193
         }
@@ -210,10 +222,24 @@ struct FormationView: View {
     }
 
     /// Finds the player assigned to a specific formation slot using label + positionIndex.
+    /// Respects local depth ordering from formation swaps when available.
     private func playerForSlot(_ slot: FormationSlot) -> Player? {
-        let positionPlayers = players
-            .filter { $0.position == slot.position }
-            .sorted { $0.overall > $1.overall }
+        let positionPlayers: [Player]
+        if let customOrder = localDepthOrder[slot.position] {
+            // Sort by custom order, falling back to OVR for players not in the custom list
+            let orderLookup = Dictionary(uniqueKeysWithValues: customOrder.enumerated().map { ($1, $0) })
+            positionPlayers = players
+                .filter { $0.position == slot.position }
+                .sorted { a, b in
+                    let idxA = orderLookup[a.id] ?? (Int.max - a.overall)
+                    let idxB = orderLookup[b.id] ?? (Int.max - b.overall)
+                    return idxA < idxB
+                }
+        } else {
+            positionPlayers = players
+                .filter { $0.position == slot.position }
+                .sorted { $0.overall > $1.overall }
+        }
         guard slot.positionIndex < positionPlayers.count else { return nil }
         return positionPlayers[slot.positionIndex]
     }
@@ -355,21 +381,27 @@ struct FormationView: View {
 
             ForEach(positionGroupStats, id: \.name) { group in
                 VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 2) {
                         Text(group.name)
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(Color.textSecondary)
                             .frame(width: 22, alignment: .leading)
-                        // Starter grade (blue) / Depth grade (orange) (#235)
+                        // Starter grade / Depth grade (#235)
+                        Text("S:")
+                            .font(.system(size: 7, weight: .medium))
+                            .foregroundStyle(Color.textTertiary)
                         Text(group.starterGrade)
                             .font(.system(size: 10, weight: .heavy))
-                            .foregroundStyle(Color.accentBlue)
+                            .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(group.starterGrade))
                         Text("/")
                             .font(.system(size: 8))
                             .foregroundStyle(Color.textTertiary)
+                        Text("D:")
+                            .font(.system(size: 7, weight: .medium))
+                            .foregroundStyle(Color.textTertiary)
                         Text(group.depthGrade)
                             .font(.system(size: 10, weight: .heavy))
-                            .foregroundStyle(Color.warning)
+                            .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(group.depthGrade))
                         Spacer()
                     }
                     // Depth info (#47): e.g. "2/2 filled"
@@ -577,6 +609,40 @@ struct FormationView: View {
         let familiarity = player.familiarity(at: position)
         return Int(Double(player.overall) * Double(familiarity) / 100.0)
     }
+
+    /// Promotes a player to the target depth index at the slot's position,
+    /// updating both local formation state and notifying the parent via callback.
+    private func promotePlayer(_ player: Player, forSlot slot: FormationSlot) {
+        let position = slot.position
+        let targetIndex = slot.positionIndex
+
+        // Build current ordered list for this position
+        let posPlayers = players.filter { $0.position == position }
+        var ordered: [UUID]
+        if let existing = localDepthOrder[position] {
+            let existingSet = Set(existing)
+            let newIDs = posPlayers.filter { !existingSet.contains($0.id) }
+                .sorted { $0.overall > $1.overall }
+                .map { $0.id }
+            ordered = existing + newIDs
+            let validIDs = Set(posPlayers.map { $0.id })
+            ordered = ordered.filter { validIDs.contains($0) }
+        } else {
+            ordered = posPlayers.sorted { $0.overall > $1.overall }.map { $0.id }
+        }
+
+        // Move the selected player to the target depth index
+        if let currentIndex = ordered.firstIndex(of: player.id) {
+            ordered.remove(at: currentIndex)
+        }
+        let clampedTarget = max(0, min(targetIndex, ordered.count))
+        ordered.insert(player.id, at: clampedTarget)
+
+        localDepthOrder[position] = ordered
+
+        // Notify parent (RosterView) so the list view also updates
+        onPlayerSwapped?(position, player)
+    }
 }
 
 // MARK: - Position Group Stat (#47)
@@ -731,6 +797,8 @@ struct PlayerSlotPicker: View {
     let allPlayers: [Player]
     let currentPlayer: Player?
     let backupDepth: Int // #199: 0 = starter, 1 = B2, 2 = B3
+    /// Callback when the user selects a player for this slot.
+    var onPlayerSelected: ((Player) -> Void)?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -785,7 +853,7 @@ struct PlayerSlotPicker: View {
                     } else {
                         ForEach(players) { player in
                             Button {
-                                // TODO: Wire up actual depth chart swap when DepthChart is observable
+                                onPlayerSelected?(player)
                                 dismiss()
                             } label: {
                                 playerPickerRow(player: player, isVersatile: false)
@@ -803,6 +871,7 @@ struct PlayerSlotPicker: View {
                     Section {
                         ForEach(versatilePlayers) { player in
                             Button {
+                                onPlayerSelected?(player)
                                 dismiss()
                             } label: {
                                 playerPickerRow(player: player, isVersatile: true)

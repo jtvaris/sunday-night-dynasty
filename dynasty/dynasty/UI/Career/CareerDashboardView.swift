@@ -147,6 +147,7 @@ struct CareerDashboardView: View {
             CoachingStaffReviewSheet(
                 career: career,
                 coaches: allCoaches,
+                players: players,
                 onConfirm: {
                     showCoachingStaffReview = false
                     confirmCoachingAdvance()
@@ -155,6 +156,7 @@ struct CareerDashboardView: View {
                     showCoachingStaffReview = false
                 }
             )
+            .presentationDetents([.large])
         }
     }
 
@@ -1303,32 +1305,26 @@ struct CareerDashboardView: View {
     }
 
     private func positionGradeRow(_ item: (group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int), isWeakest: Bool = false) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             Text(item.group)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Color.textSecondary)
                 .frame(width: 22, alignment: .leading)
-            // Starter grade (blue)
-            Text(item.starterGrade)
-                .font(.system(size: 11, weight: .black).monospacedDigit())
-                .foregroundStyle(.white)
-                .frame(minWidth: 22, minHeight: 18, maxHeight: 18)
-                .background(
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color.accentBlue)
-                )
-            Text("/")
-                .font(.system(size: 9))
+            Text("S:")
+                .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
-            // Depth grade (orange)
+            Text(item.starterGrade)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(item.starterGrade))
+            Text("/")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.textTertiary)
+            Text("D:")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
             Text(item.depthGrade)
-                .font(.system(size: 11, weight: .black).monospacedDigit())
-                .foregroundStyle(.white)
-                .frame(minWidth: 22, minHeight: 18, maxHeight: 18)
-                .background(
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color.warning)
-                )
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(item.depthGrade))
             if isWeakest {
                 Text("NEED")
                     .font(.system(size: 7, weight: .heavy))
@@ -1974,6 +1970,7 @@ private struct CoachingStaffReviewSheet: View {
 
     let career: Career
     let coaches: [Coach]
+    let players: [Player]
     let onConfirm: () -> Void
     let onCancel: () -> Void
 
@@ -2211,50 +2208,94 @@ private struct CoachingStaffReviewSheet: View {
     // MARK: - Schemes Section
 
     private var schemesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "book.closed.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.accentGold)
-                Text("SCHEMES")
+                Text("SCHEMES & EXPERTISE")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(Color.accentGold)
                     .tracking(0.5)
             }
 
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Offensive")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.textTertiary)
-                    if let scheme = oc?.offensiveScheme {
-                        Text(scheme.displayName)
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(Color.textPrimary)
-                    } else {
-                        Text("Not Set")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(Color.warning)
+            // Each coach's scheme expertise
+            ForEach(coaches.sorted(by: { $0.role.sortOrder < $1.role.sortOrder }), id: \.id) { coach in
+                let expertisePairs = coach.schemeExpertise
+                    .sorted { $0.value > $1.value }
+                    .prefix(3)
+
+                if !expertisePairs.isEmpty || coach.offensiveScheme != nil || coach.defensiveScheme != nil {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(coach.role.abbreviation)
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundStyle(Color.accentGold)
+                                .frame(width: 26)
+                                .padding(.vertical, 2)
+                                .background(Color.accentGold.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+                            Text(coach.fullName)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
+                            Spacer()
+                            if let scheme = coach.offensiveScheme {
+                                Text(scheme.displayName)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Color.accentBlue)
+                            } else if let scheme = coach.defensiveScheme {
+                                Text(scheme.displayName)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Color.accentBlue)
+                            }
+                        }
+
+                        // Expertise bars
+                        if !expertisePairs.isEmpty {
+                            HStack(spacing: 8) {
+                                ForEach(Array(expertisePairs), id: \.key) { schemeName, level in
+                                    let label = schemeDisplayLabel(schemeName)
+                                    HStack(spacing: 4) {
+                                        Text(label)
+                                            .font(.system(size: 9, weight: .medium))
+                                            .foregroundStyle(Color.textTertiary)
+                                            .lineLimit(1)
+                                        Text("\(level)")
+                                            .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                            .foregroundStyle(Color.forRating(level))
+                                    }
+                                }
+                            }
+                            .padding(.leading, 34)
+                        }
                     }
-                }
 
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("Defensive")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.textTertiary)
-                    if let scheme = dc?.defensiveScheme {
-                        Text(scheme.displayName)
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(Color.textPrimary)
-                    } else {
-                        Text("Not Set")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(Color.warning)
+                    if coach.id != coaches.sorted(by: { $0.role.sortOrder < $1.role.sortOrder }).last?.id {
+                        Divider().overlay(Color.surfaceBorder.opacity(0.4))
                     }
                 }
             }
+
+            // Scheme-Roster Fit
+            if let offScheme = oc?.offensiveScheme {
+                Divider().overlay(Color.surfaceBorder.opacity(0.5))
+                schemeRosterFitRow(
+                    schemeName: offScheme.displayName,
+                    schemeKey: offScheme.rawValue,
+                    side: .offense
+                )
+            }
+            if let defScheme = dc?.defensiveScheme {
+                schemeRosterFitRow(
+                    schemeName: defScheme.displayName,
+                    schemeKey: defScheme.rawValue,
+                    side: .defense
+                )
+            }
+
+            // Staff Chemistry
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+            staffChemistryRow
         }
         .padding(12)
         .background(Color.backgroundSecondary)
@@ -2263,6 +2304,97 @@ private struct CoachingStaffReviewSheet: View {
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(Color.surfaceBorder, lineWidth: 1)
         )
+    }
+
+    private func schemeDisplayLabel(_ rawValue: String) -> String {
+        if let off = OffensiveScheme(rawValue: rawValue) { return off.displayName }
+        if let def = DefensiveScheme(rawValue: rawValue) { return def.displayName }
+        return rawValue
+    }
+
+    private func schemeRosterFitRow(schemeName: String, schemeKey: String, side: PositionSide) -> some View {
+        let sidePlayers = players.filter { $0.position.side == side }
+        let starters = Array(sidePlayers.sorted { $0.overall > $1.overall }.prefix(11))
+        let familiarCount = starters.filter { $0.schemeFam(for: schemeKey) >= 50 }.count
+        let pct = starters.isEmpty ? 0 : Int(Double(familiarCount) / Double(starters.count) * 100)
+        let grade: String = pct >= 75 ? "Great" : (pct >= 50 ? "Good" : (pct >= 25 ? "Fair" : "Poor"))
+        let gradeColor: Color = pct >= 75 ? .success : (pct >= 50 ? .accentGold : (pct >= 25 ? .warning : .danger))
+
+        return HStack(spacing: 6) {
+            Image(systemName: "person.3.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(gradeColor)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Roster fits \(schemeName) \(side == .offense ? "offense" : "defense"): **\(grade)**")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.textPrimary)
+                Text("\(pct)% of starters have scheme familiarity")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            Spacer()
+            Text(grade)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(gradeColor)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(gradeColor.opacity(0.12), in: Capsule())
+        }
+    }
+
+    private var staffChemistryRow: some View {
+        let score = calculateStaffChemistry()
+        let grade: String = score >= 75 ? "Great" : (score >= 50 ? "Good" : (score >= 25 ? "Fair" : "Poor"))
+        let gradeColor: Color = score >= 75 ? .success : (score >= 50 ? .accentGold : (score >= 25 ? .warning : .danger))
+
+        return HStack(spacing: 6) {
+            Image(systemName: "person.2.wave.2.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(gradeColor)
+                .frame(width: 18)
+            Text("Staff chemistry: **\(grade)**")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.textPrimary)
+            Spacer()
+            Text(grade)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(gradeColor)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(gradeColor.opacity(0.12), in: Capsule())
+        }
+    }
+
+    /// Simple personality-based chemistry score (0-100).
+    private func calculateStaffChemistry() -> Int {
+        guard coaches.count >= 2 else { return 50 }
+
+        // Compatible personality pairs get bonus, clashing pairs get penalty
+        let compatiblePairs: Set<Set<PersonalityArchetype>> = [
+            [.teamLeader, .mentor],
+            [.teamLeader, .steadyPerformer],
+            [.mentor, .quietProfessional],
+            [.quietProfessional, .steadyPerformer],
+            [.fieryCompetitor, .teamLeader],
+        ]
+        let clashingPairs: Set<Set<PersonalityArchetype>> = [
+            [.fieryCompetitor, .dramaQueen],
+            [.loneWolf, .teamLeader],
+            [.dramaQueen, .quietProfessional],
+            [.classClown, .fieryCompetitor],
+        ]
+
+        var score = 50
+        for i in 0..<coaches.count {
+            for j in (i + 1)..<coaches.count {
+                let pair: Set<PersonalityArchetype> = [coaches[i].personality, coaches[j].personality]
+                if compatiblePairs.contains(pair) { score += 8 }
+                if clashingPairs.contains(pair) { score -= 10 }
+                if coaches[i].personality == coaches[j].personality { score += 3 }
+            }
+        }
+        return min(max(score, 0), 100)
     }
 
     // MARK: - Warnings Section
