@@ -16,6 +16,8 @@ struct PlayerRowView: View {
     var onPositionBadgeTap: (() -> Void)? = nil
     /// Called when the user taps the starter badge to pick a new starter (#198).
     var onStarterBadgeTap: (() -> Void)? = nil
+    /// Number of starters at this player's specific position (scheme-aware). Used for depth numbering (#279).
+    var starterCountForPosition: Int = 1
 
     var body: some View {
         HStack(spacing: 6) {
@@ -458,7 +460,7 @@ struct PlayerRowView: View {
                     }
                 }
             } label: {
-                Text(depthBadgeText)
+                Text(depthBadgeShortText)
                     .font(.system(size: 8, weight: .heavy))
                     .foregroundStyle(depthIndex == 0 ? Color.backgroundPrimary : depthColor)
                     .frame(width: 14, height: 14)
@@ -471,7 +473,7 @@ struct PlayerRowView: View {
             }
             .accessibilityLabel("\(depthLabel), tap to change")
         } else {
-            Text(depthBadgeText)
+            Text(depthBadgeShortText)
                 .font(.system(size: 8, weight: .heavy))
                 .foregroundStyle(depthIndex == 0 ? Color.backgroundPrimary : depthColor)
                 .frame(width: 14, height: 14)
@@ -485,7 +487,15 @@ struct PlayerRowView: View {
         }
     }
 
+    /// Returns a position-specific numbered depth badge, e.g. "DT1", "DE2", "QB1" (#279).
     private var depthBadgeText: String {
+        guard let idx = depthIndex else { return "-" }
+        let pos = player.position.rawValue
+        return "\(pos)\(idx + 1)"
+    }
+
+    /// Short badge text for the small depth indicator (non-depth mode).
+    private var depthBadgeShortText: String {
         switch depthIndex {
         case 0:         return "S"
         case 1:         return "B"

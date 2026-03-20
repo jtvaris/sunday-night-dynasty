@@ -8,10 +8,12 @@ struct FranchiseTagView: View {
     let career: Career
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
 
     @State private var team: Team?
     @State private var teamPlayers: [Player] = []
     @State private var allPlayers: [Player] = []
+    @State private var showSkipConfirmation = false
 
     var body: some View {
         ZStack {
@@ -27,6 +29,7 @@ struct FranchiseTagView: View {
                                 taggedSection
                             }
                             expiringPlayersSection
+                            skipTagButton
                         }
                         .padding(24)
                         .frame(maxWidth: 760)
@@ -44,8 +47,15 @@ struct FranchiseTagView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task {
             loadData()
-            // Mark franchise tag screen as visited so the task can complete
-            UserDefaults.standard.set(true, forKey: "franchiseTagVisited")
+        }
+        .alert("Skip Franchise Tag?", isPresented: $showSkipConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Skip", role: .destructive) {
+                UserDefaults.standard.set(true, forKey: "franchiseTagVisited")
+                dismiss()
+            }
+        } message: {
+            Text("Are you sure? You won't be able to franchise tag any player this offseason.")
         }
     }
 
@@ -356,6 +366,31 @@ struct FranchiseTagView: View {
             .foregroundStyle(Color.textTertiary)
             .padding(20)
             .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Skip Tag Button
+
+    private var skipTagButton: some View {
+        Button {
+            showSkipConfirmation = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "forward.fill")
+                    .font(.caption)
+                Text("Skip — No Tag This Year")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .foregroundStyle(Color.textSecondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(Color.backgroundSecondary)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Computed Properties

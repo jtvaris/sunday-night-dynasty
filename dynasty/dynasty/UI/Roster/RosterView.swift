@@ -38,6 +38,79 @@ struct RosterView: View {
     /// Track whether the user has seen the sort hint.
     @AppStorage("rosterSortHintSeen") private var sortHintSeen: Bool = false
 
+    // MARK: - Group Assessment (#283)
+    @AppStorage("rosterOwnAssessments") private var rosterOwnAssessmentsJSON: String = "{}"
+    @AppStorage("rosterNotes") private var rosterNotesJSON: String = "{}"
+    @AppStorage("rosterPriorities") private var rosterPrioritiesJSON: String = "{}"
+    @State private var assessmentGroup: String? = nil
+    @State private var showAssessmentSheet = false
+    @State private var editingAssessment: String = "none"
+    @State private var editingPriority: String = "none"
+    @State private var editingNote: String = ""
+
+    private var rosterOwnAssessments: [String: String] {
+        (try? JSONDecoder().decode([String: String].self, from: Data(rosterOwnAssessmentsJSON.utf8))) ?? [:]
+    }
+    private var rosterNotes: [String: String] {
+        (try? JSONDecoder().decode([String: String].self, from: Data(rosterNotesJSON.utf8))) ?? [:]
+    }
+    private var rosterPriorities: [String: String] {
+        (try? JSONDecoder().decode([String: String].self, from: Data(rosterPrioritiesJSON.utf8))) ?? [:]
+    }
+
+    private static let assessmentOptions = [
+        "none", "Solid", "Starter needed", "Depth needed", "Upgrade needed", "Aging", "Priority"
+    ]
+
+    /// Maps assessment group IDs to the EvalPositionGroup-style IDs used by RosterEvaluationView.
+    private func evalGroupID(for group: PositionGroup) -> String {
+        switch group.name {
+        case "QB Room":        return "QB"
+        case "Backfield":      return "RB"
+        case "Wide Receivers": return "WR"
+        case "Tight Ends":     return "TE"
+        case "Offensive Line": return "OL"
+        case "Defensive Line": return "DL"
+        case "Linebackers":    return "LB"
+        case "Secondary":      return "DB"
+        case "Specialists":    return "ST"
+        default:               return group.name
+        }
+    }
+
+    private func saveGroupAssessment(groupID: String, assessment: String, priority: String, note: String) {
+        var assessments = rosterOwnAssessments
+        var priorities = rosterPriorities
+        var notes = rosterNotes
+        if assessment == "none" { assessments.removeValue(forKey: groupID) } else { assessments[groupID] = assessment }
+        if priority == "none" { priorities.removeValue(forKey: groupID) } else { priorities[groupID] = priority }
+        if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { notes.removeValue(forKey: groupID) } else { notes[groupID] = note }
+        if let data = try? JSONEncoder().encode(assessments) { rosterOwnAssessmentsJSON = String(data: data, encoding: .utf8) ?? "{}" }
+        if let data = try? JSONEncoder().encode(priorities) { rosterPrioritiesJSON = String(data: data, encoding: .utf8) ?? "{}" }
+        if let data = try? JSONEncoder().encode(notes) { rosterNotesJSON = String(data: data, encoding: .utf8) ?? "{}" }
+    }
+
+    private func assessmentColor(_ assessment: String) -> Color {
+        switch assessment {
+        case "Solid":           return .success
+        case "Starter needed":  return .danger
+        case "Depth needed":    return .warning
+        case "Upgrade needed":  return .accentGold
+        case "Aging":           return .accentBlue
+        case "Priority":        return .danger
+        default:                return .textTertiary
+        }
+    }
+
+    private func priorityColor(_ priority: String) -> Color {
+        switch priority {
+        case "high":   return .danger
+        case "medium": return .warning
+        case "low":    return .accentBlue
+        default:       return .clear
+        }
+    }
+
     // MARK: - Position Groups (NFL-style names)
 
     private static let offenseGroups: [PositionGroup] = [
@@ -224,6 +297,9 @@ struct RosterView: View {
             starterPickerSheet(for: position)
         }
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .sheet(isPresented: $showAssessmentSheet) {
+            groupAssessmentSheet
+        }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 filterPicker
@@ -326,6 +402,9 @@ struct RosterView: View {
                     Section {
                         ForEach(sortedGroupPlayers) { player in
                             let posPlayers = groupPlayers.filter { $0.position == player.position }
+                            let posStarterCount = group.positions.first?.side == .defense
+                                ? schemeStarterCount(for: player.position)
+                                : (PositionGradeCalculator.idealStarterCounts[player.position] ?? 1)
                             NavigationLink(destination: PlayerDetailView(player: player)) {
                                 PlayerRowView(
                                     player: player,
@@ -342,24 +421,159 @@ struct RosterView: View {
                                     },
                                     onStarterBadgeTap: {
                                         starterPickerPosition = player.position
-                                    }
+                                    },
+                                    starterCountForPosition: posStarterCount
                                 )
                             }
                             .listRowBackground(Color.backgroundSecondary)
                         }
                     } header: {
-                        PositionGroupHeader(
-                            group: group,
-                            players: groupPlayers,
-                            isWeakest: group.name == weakestGroupName,
-                            defensiveScheme: group.positions.first?.side == .defense ? defensiveScheme : nil
-                        )
+                        let gid = evalGroupID(for: group)
+                        let hasAssessment = rosterOwnAssessments[gid] != nil || rosterNotes[gid] != nil || rosterPriorities[gid] != nil
+                        Button {
+                            let gid = evalGroupID(for: group)
+                            editingAssessment = rosterOwnAssessments[gid] ?? "none"
+                            editingPriority = rosterPriorities[gid] ?? "none"
+                            editingNote = rosterNotes[gid] ?? ""
+                            assessmentGroup = gid
+                            showAssessmentSheet = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                PositionGroupHeader(
+                                    group: group,
+                                    players: groupPlayers,
+                                    isWeakest: group.name == weakestGroupName,
+                                    defensiveScheme: group.positions.first?.side == .defense ? defensiveScheme : nil
+                                )
+                                if hasAssessment {
+                                    Circle()
+                                        .fill(Color.accentGold)
+                                        .frame(width: 6, height: 6)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
         }
         .scrollContentBackground(.hidden)
         .listStyle(.insetGrouped)
+    }
+
+    // MARK: - Group Assessment Sheet (#283)
+
+    private var groupAssessmentSheet: some View {
+        NavigationStack {
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
+                ScrollView {
+                    VStack(spacing: 20) {
+                        // Your Assessment picker
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Your Assessment")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textSecondary)
+
+                            LazyVGrid(columns: [
+                                GridItem(.flexible()),
+                                GridItem(.flexible()),
+                                GridItem(.flexible())
+                            ], spacing: 8) {
+                                ForEach(Self.assessmentOptions, id: \.self) { option in
+                                    let isSelected = editingAssessment == option
+                                    let displayLabel = option == "none" ? "None" : option
+                                    let badgeColor = option == "none" ? Color.textTertiary : assessmentColor(option)
+
+                                    Button {
+                                        editingAssessment = option
+                                    } label: {
+                                        Text(displayLabel)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(isSelected ? Color.backgroundPrimary : badgeColor)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 8)
+                                            .background(
+                                                isSelected ? badgeColor : badgeColor.opacity(0.1),
+                                                in: RoundedRectangle(cornerRadius: 8)
+                                            )
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 8)
+                                                    .strokeBorder(badgeColor.opacity(isSelected ? 1 : 0.4), lineWidth: 1)
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
+                        // Priority picker
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Priority")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textSecondary)
+                            Picker("Priority", selection: $editingPriority) {
+                                Text("None").tag("none")
+                                Text("Low").tag("low")
+                                Text("Medium").tag("medium")
+                                Text("High").tag("high")
+                            }
+                            .pickerStyle(.segmented)
+                        }
+
+                        // Notes field
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Notes")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textSecondary)
+                            TextEditor(text: $editingNote)
+                                .scrollContentBackground(.hidden)
+                                .font(.body)
+                                .foregroundStyle(Color.textPrimary)
+                                .frame(minHeight: 120)
+                                .padding(10)
+                                .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 10))
+                                .overlay(
+                                    Group {
+                                        if editingNote.isEmpty {
+                                            Text("Add your evaluation notes...")
+                                                .font(.body)
+                                                .foregroundStyle(Color.textTertiary)
+                                                .padding(.horizontal, 14)
+                                                .padding(.vertical, 18)
+                                                .allowsHitTesting(false)
+                                        }
+                                    },
+                                    alignment: .topLeading
+                                )
+                        }
+                    }
+                    .padding(24)
+                }
+            }
+            .navigationTitle("\(assessmentGroup ?? "") Evaluation")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showAssessmentSheet = false }
+                        .foregroundStyle(Color.textSecondary)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        if let gid = assessmentGroup {
+                            saveGroupAssessment(groupID: gid, assessment: editingAssessment, priority: editingPriority, note: editingNote)
+                        }
+                        showAssessmentSheet = false
+                    }
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.accentGold)
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
     }
 
     // MARK: - Sortable Header
