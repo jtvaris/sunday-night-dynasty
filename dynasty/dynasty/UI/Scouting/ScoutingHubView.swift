@@ -246,7 +246,7 @@ struct ScoutingHubView: View {
     private var tabPicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(ScoutingTab.allCases) { tab in
+                ForEach(visibleTabs) { tab in
                     let isSelected = selectedTab == tab
                     Button {
                         selectedTab = tab
@@ -292,6 +292,8 @@ struct ScoutingHubView: View {
             BigBoardView(career: career, prospects: prospects, teamRoster: teamPlayers, scoutsSentToCombine: scoutsSentToCombine)
         case .combine:
             CombineResultsView(career: career, prospects: prospects)
+        case .interviews:
+            InterviewSelectionView(career: career)
         case .mockDraft:
             MockDraftView(career: career, prospects: prospects)
         case .proDays:
@@ -333,6 +335,17 @@ struct ScoutingHubView: View {
 
         if nextYearProspects.isEmpty {
             nextYearProspects = ScoutingEngine.generateNextYearPreview()
+        }
+    }
+
+    private var visibleTabs: [ScoutingTab] {
+        ScoutingTab.allCases.filter { tab in
+            switch tab {
+            case .interviews:
+                return career.currentPhase == .combine
+            default:
+                return true
+            }
         }
     }
 
@@ -454,6 +467,7 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
     case prospects  = "prospects"
     case bigBoard   = "bigBoard"
     case combine    = "combine"
+    case interviews = "interviews"
     case mockDraft  = "mockDraft"
     case proDays    = "proDays"
     case nextYear   = "nextYear"
@@ -465,8 +479,9 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
         case .scouts:    return "Scout Team"
         case .prospects: return "Prospects"
         case .bigBoard:  return "Big Board"
-        case .combine:   return "Combine"
-        case .mockDraft: return "Mock Draft"
+        case .combine:    return "Combine"
+        case .interviews: return "Interviews"
+        case .mockDraft:  return "Mock Draft"
         case .proDays:   return "Pro Days"
         case .nextYear:  return "Next Year"
         }
@@ -477,8 +492,9 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
         case .scouts:    return "binoculars"
         case .prospects: return "person.3"
         case .bigBoard:  return "list.number"
-        case .combine:   return "figure.run"
-        case .mockDraft: return "doc.text"
+        case .combine:    return "figure.run"
+        case .interviews: return "bubble.left.and.bubble.right"
+        case .mockDraft:  return "doc.text"
         case .proDays:   return "mappin.and.ellipse"
         case .nextYear:  return "calendar.badge.clock"
         }
