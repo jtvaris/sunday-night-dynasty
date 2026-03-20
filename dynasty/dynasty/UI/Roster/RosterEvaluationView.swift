@@ -44,6 +44,8 @@ struct RosterEvaluationView: View {
 
     @State private var team: Team?
     @State private var players: [Player] = []
+    @State private var allPlayers: [Player] = []
+    @State private var allTeams: [Team] = []
     @State private var defensiveScheme: DefensiveScheme = .base43
 
     // MARK: - Table Sorting (#250)
@@ -120,6 +122,7 @@ struct RosterEvaluationView: View {
                             ownerDemandsSection
                             positionGradesSection
                             keyDecisionsSection
+                            faPreviewSection
                             strengthsWeaknessesSection
                             capOutlookSection
                             confirmEvaluationButton
@@ -838,6 +841,157 @@ struct RosterEvaluationView: View {
             .padding(.vertical, 2)
             .background(color.opacity(0.15), in: Capsule())
             .overlay(Capsule().strokeBorder(color.opacity(0.4), lineWidth: 1))
+    }
+
+    // MARK: - Section 2b: FA Preview
+
+    /// Position groups with expiring contracts and their FA replacement options.
+    private var faPreviewSection: some View {
+        let groupsWithExpiring = EvalPositionGroup.allGroups.compactMap { group -> (group: EvalPositionGroup, expiring: [Player], previews: [ContractEngine.FAPreviewPlayer])? in
+            guard let teamID = career.teamID else { return nil }
+            let expiring = players.filter { group.positions.contains($0.position) && $0.contractYearsRemaining <= 1 }
+            guard !expiring.isEmpty else { return nil }
+            let previews = ContractEngine.previewFreeAgentsForGroup(
+                allPlayers: allPlayers,
+                allTeams: allTeams,
+                playerTeamID: teamID,
+                positions: group.positions,
+                limit: 3
+            )
+            return (group, expiring, previews)
+        }
+
+        return Group {
+            if !groupsWithExpiring.isEmpty {
+                sectionCard(title: "FA Market Preview", icon: "binoculars.fill") {
+                    VStack(spacing: 0) {
+                        Text("Compare your expiring players with the best available free agents at each position")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+
+                        Divider().overlay(Color.surfaceBorder)
+
+                        ForEach(Array(groupsWithExpiring.enumerated()), id: \.element.group.id) { index, entry in
+                            faPreviewGroupRow(group: entry.group, expiring: entry.expiring, previews: entry.previews)
+
+                            if index < groupsWithExpiring.count - 1 {
+                                Divider()
+                                    .overlay(Color.surfaceBorder.opacity(0.5))
+                                    .padding(.horizontal, 8)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func faPreviewGroupRow(
+        group: EvalPositionGroup,
+        expiring: [Player],
+        previews: [ContractEngine.FAPreviewPlayer]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Group header with expiring count
+            HStack(spacing: 8) {
+                Text(group.label)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Color.textPrimary)
+                Text("\(expiring.count) expiring")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Color.warning)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.warning.opacity(0.15), in: Capsule())
+                Spacer()
+            }
+
+            // Your expiring players
+            ForEach(expiring, id: \.id) { player in
+                HStack(spacing: 8) {
+                    Text(player.position.rawValue)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+                        .frame(width: 30)
+                        .padding(.vertical, 2)
+                        .background(positionSideColor(player.position), in: RoundedRectangle(cornerRadius: 4))
+                    Text(player.fullName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(player.overall) OVR")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(Color.forRating(player.overall))
+                    Text(formatMillions(player.annualSalary))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+
+            // FA alternatives
+            if !previews.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.caption2)
+                        .foregroundStyle(Color.accentBlue)
+                    Text("Potential FA replacements:")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.accentBlue)
+                }
+                .padding(.top, 2)
+
+                ForEach(previews, id: \.playerID) { fa in
+                    let bestExpiring = expiring.max(by: { $0.overall < $1.overall })
+                    let ovrDiff = fa.overall - (bestExpiring?.overall ?? 0)
+
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(ovrDiff > 0 ? Color.success : (ovrDiff == 0 ? Color.accentBlue : Color.textTertiary))
+                            .frame(width: 6, height: 6)
+                        Text(fa.name)
+                            .font(.caption)
+                            .foregroundStyle(Color.textPrimary)
+                            .lineLimit(1)
+                        Text("(\(fa.position.rawValue), \(fa.overall) OVR, Age \(fa.age))")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        Text("~\(formatMillions(fa.estimatedSalary))")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(Color.textTertiary)
+                        Text(fa.currentTeamAbbr)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                }
+
+                // Insight line
+                if let bestFA = previews.first, let bestOwn = expiring.max(by: { $0.overall < $1.overall }) {
+                    let diff = bestFA.overall - bestOwn.overall
+                    if diff > 0 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "lightbulb.fill")
+                                .font(.caption2)
+                                .foregroundStyle(Color.accentGold)
+                            Text("\(bestFA.name) would be a significant upgrade (+\(diff) OVR)")
+                                .font(.caption2)
+                                .foregroundStyle(Color.accentGold)
+                        }
+                        .padding(.top, 2)
+                    }
+                }
+            } else {
+                Text("No notable free agents available at this position")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+                    .padding(.top, 2)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
     // MARK: - Section 3: Strengths & Weaknesses
@@ -1645,6 +1799,10 @@ struct RosterEvaluationView: View {
         )
         playerDesc.sortBy = [SortDescriptor(\.annualSalary, order: .reverse)]
         players = (try? modelContext.fetch(playerDesc)) ?? []
+
+        // Fetch all players and teams for FA preview
+        allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
+        allTeams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
 
         // Fetch the defensive coordinator's scheme
         let coachDesc = FetchDescriptor<Coach>(

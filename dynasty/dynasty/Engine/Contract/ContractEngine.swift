@@ -213,6 +213,75 @@ enum ContractEngine {
         team.currentCapUsage = team.currentCapUsage - previousSalary + tagValue
     }
 
+    // MARK: - FA Preview
+
+    struct FAPreviewPlayer {
+        let playerID: UUID
+        let name: String
+        let position: Position
+        let overall: Int
+        let age: Int
+        let estimatedSalary: Int  // thousands
+        let currentTeamAbbr: String
+    }
+
+    /// Preview the top free agents at a given position from other teams,
+    /// so the player can compare during roster evaluation.
+    static func previewFreeAgents(
+        allPlayers: [Player],
+        allTeams: [Team],
+        playerTeamID: UUID,
+        position: Position,
+        limit: Int = 5
+    ) -> [FAPreviewPlayer] {
+        allPlayers
+            .filter { $0.teamID != playerTeamID
+                  && $0.contractYearsRemaining <= 1
+                  && $0.position == position }
+            .sorted { $0.overall > $1.overall }
+            .prefix(limit)
+            .map { player in
+                let teamAbbr = allTeams.first { $0.id == player.teamID }?.abbreviation ?? "FA"
+                return FAPreviewPlayer(
+                    playerID: player.id,
+                    name: player.fullName,
+                    position: player.position,
+                    overall: player.overall,
+                    age: player.age,
+                    estimatedSalary: estimateMarketValue(player: player),
+                    currentTeamAbbr: teamAbbr
+                )
+            }
+    }
+
+    /// Preview free agents for an array of positions (used for position groups).
+    static func previewFreeAgentsForGroup(
+        allPlayers: [Player],
+        allTeams: [Team],
+        playerTeamID: UUID,
+        positions: [Position],
+        limit: Int = 5
+    ) -> [FAPreviewPlayer] {
+        allPlayers
+            .filter { $0.teamID != playerTeamID
+                  && $0.contractYearsRemaining <= 1
+                  && positions.contains($0.position) }
+            .sorted { $0.overall > $1.overall }
+            .prefix(limit)
+            .map { player in
+                let teamAbbr = allTeams.first { $0.id == player.teamID }?.abbreviation ?? "FA"
+                return FAPreviewPlayer(
+                    playerID: player.id,
+                    name: player.fullName,
+                    position: player.position,
+                    overall: player.overall,
+                    age: player.age,
+                    estimatedSalary: estimateMarketValue(player: player),
+                    currentTeamAbbr: teamAbbr
+                )
+            }
+    }
+
     /// Remove franchise tag from a player. Reverts them to an expiring contract.
     static func removeFranchiseTag(
         player: Player,
