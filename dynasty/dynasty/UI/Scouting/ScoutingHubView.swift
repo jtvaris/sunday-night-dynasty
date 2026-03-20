@@ -56,7 +56,13 @@ struct ScoutingHubView: View {
                 }
             }
         }
-        .task { loadData() }
+        .task {
+            loadData()
+            // Auto-select Pro Days tab when in proDays phase
+            if career.currentPhase == .proDays {
+                selectedTab = .proDays
+            }
+        }
         .sheet(isPresented: $showHireScout, onDismiss: { loadData() }) {
             HireScoutSheet(career: career)
         }
