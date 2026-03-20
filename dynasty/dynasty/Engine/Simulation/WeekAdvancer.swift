@@ -1016,6 +1016,7 @@ enum WeekAdvancer {
         if nextPhase == .freeAgency {
             career.freeAgencyRound = 0
             career.freeAgencyStep = FreeAgencyStep.finalPush.rawValue
+            FASigningTracker.reset()
         }
 
         // --- Generate inbox messages for the new phase ---

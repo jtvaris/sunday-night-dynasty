@@ -382,6 +382,7 @@ struct FinalPushView: View {
                                 capMode: career.capMode,
                                 modelContext: modelContext
                             )
+                            FASigningTracker.trackSigning(player.id)
                             decisions[player.id]?.status = .reSignedAccepted
                         }
                     }
@@ -414,6 +415,7 @@ struct FinalPushView: View {
                                 capMode: career.capMode,
                                 modelContext: modelContext
                             )
+                            FASigningTracker.trackSigning(player.id)
                             decisions[player.id]?.status = .reSignedAccepted
                         }
                     }

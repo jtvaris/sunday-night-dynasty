@@ -58,7 +58,13 @@ struct CapComplianceView: View {
         } message: {
             if let player = showCutConfirm {
                 let savings = player.annualSalary
-                Text("Release \(player.fullName) to save \(formatMillions(savings)) in cap space.")
+                if career.capMode == .realistic {
+                    let deadCap = estimateDeadCap(player: player)
+                    let netSavings = savings - deadCap
+                    Text("Release \(player.fullName). Cap savings: \(formatMillions(netSavings)). Dead cap hit: \(formatMillions(deadCap)).")
+                } else {
+                    Text("Release \(player.fullName) to save \(formatMillions(savings)) in cap space.")
+                }
             }
         }
         .alert("Restructure Contract?", isPresented: .init(
@@ -196,10 +202,14 @@ struct CapComplianceView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text("OVR")
                     .frame(width: 40)
-                Text("Age")
-                    .frame(width: 36)
+                Text("Yrs")
+                    .frame(width: 30)
                 Text("Salary")
                     .frame(width: 60)
+                if career.capMode == .realistic {
+                    Text("Dead $")
+                        .frame(width: 50)
+                }
                 Text("Actions")
                     .frame(width: 110)
             }
@@ -246,15 +256,23 @@ struct CapComplianceView: View {
                 .foregroundStyle(Color.forRating(player.overall))
                 .frame(width: 40)
 
-            Text("\(player.age)")
+            Text("\(player.contractYearsRemaining)")
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(Color.textSecondary)
-                .frame(width: 36)
+                .foregroundStyle(player.contractYearsRemaining <= 1 ? Color.warning : Color.textSecondary)
+                .frame(width: 30)
 
             Text(formatMillions(player.annualSalary))
                 .font(.caption.weight(.semibold).monospacedDigit())
                 .foregroundStyle(Color.textPrimary)
                 .frame(width: 60)
+
+            if career.capMode == .realistic {
+                let deadCap = estimateDeadCap(player: player)
+                Text(formatMillions(deadCap))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(deadCap > 5000 ? Color.danger : Color.textTertiary)
+                    .frame(width: 50)
+            }
 
             // Actions
             HStack(spacing: 6) {
@@ -329,11 +347,22 @@ struct CapComplianceView: View {
     }
 
     private func restructurePlayer(_ player: Player) {
-        // Simplified restructure: halve current year salary, spread savings
-        let savings = Int(Double(player.annualSalary) * 0.5)
-        player.annualSalary -= savings
-        team?.currentCapUsage -= savings
+        // Convert 50% of current salary to bonus (spreads to future years)
+        let convertAmount = Int(Double(player.annualSalary) * 0.5)
+        let yearsLeft = max(player.contractYearsRemaining, 1)
+        // Immediate cap relief = converted amount minus prorated spread
+        let proratedPerYear = convertAmount / yearsLeft
+        let capRelief = convertAmount - proratedPerYear
+
+        player.annualSalary -= capRelief
+        team?.currentCapUsage -= capRelief
         loadData()
+    }
+
+    private func estimateDeadCap(player: Player) -> Int {
+        // Dead cap = remaining guaranteed money (approximated as 40% of remaining total value)
+        let remainingValue = player.annualSalary * max(player.contractYearsRemaining, 1)
+        return Int(Double(remainingValue) * 0.4)
     }
 
     // MARK: - Helpers

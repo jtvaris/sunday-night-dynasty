@@ -148,17 +148,15 @@ struct FACompleteView: View {
         let teamDesc = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
         team = try? modelContext.fetch(teamDesc).first
 
-        // Show recently signed players (short contracts = likely FA signings)
+        // Load actual FA signings tracked via UserDefaults
+        let signingIDs = FASigningTracker.getSigningIDs()
         guard let fetchedTeamID = team?.id else { return }
         var playerDesc = FetchDescriptor<Player>(
             predicate: #Predicate { $0.teamID == fetchedTeamID }
         )
         playerDesc.sortBy = [SortDescriptor(\.annualSalary, order: .reverse)]
         let allPlayers = (try? modelContext.fetch(playerDesc)) ?? []
-        // Approximate: players with short contracts (1-3 years) likely signed in FA
-        recentSignings = allPlayers.filter { $0.contractYearsRemaining <= 3 && $0.contractYearsRemaining > 0 }
+        recentSignings = allPlayers.filter { signingIDs.contains($0.id) }
             .sorted { $0.overall > $1.overall }
-            .prefix(10)
-            .map { $0 }
     }
 }

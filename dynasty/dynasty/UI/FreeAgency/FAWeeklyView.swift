@@ -1,6 +1,29 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - FA Signing Tracker
+
+/// Tracks actual FA signings via UserDefaults for FACompleteView.
+enum FASigningTracker {
+    private static let key = "faSigningIDs"
+
+    static func trackSigning(_ playerID: UUID) {
+        var ids = getSigningIDs()
+        ids.insert(playerID)
+        let strings = ids.map(\.uuidString)
+        UserDefaults.standard.set(strings, forKey: key)
+    }
+
+    static func getSigningIDs() -> Set<UUID> {
+        let strings = UserDefaults.standard.stringArray(forKey: key) ?? []
+        return Set(strings.compactMap { UUID(uuidString: $0) })
+    }
+
+    static func reset() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+}
+
 // MARK: - Contract Offer
 
 struct ContractOffer: Identifiable {
@@ -284,6 +307,7 @@ struct FAWeeklyView: View {
                         Text("Age \(fa.player.age)")
                             .font(.caption)
                             .foregroundStyle(Color.textSecondary)
+                        motivationBadge(fa.player.personality.motivation)
                         // AI interest with progressive visibility
                         aiInterestLabel(fa: fa)
                     }
@@ -383,9 +407,15 @@ struct FAWeeklyView: View {
     private func processRound() {
         guard let team else { return }
 
-        let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
+        // Generate AI bids for all free agents this round
+        let aiBids = FreeAgencyEngine.generateAIOffers(
+            freeAgents: freeAgents,
+            round: currentRound,
+            allTeams: allTeams,
+            playerTeamID: career.teamID
+        )
 
-        // Process player's offers
+        // Process player's offers using resolvePlayerDecision
         var accepted: [(playerName: String, position: String, salary: Int, years: Int)] = []
         var rejected: [(playerName: String, position: String, reason: String, chosenTeam: String?, salary: Int?)] = []
 
@@ -393,25 +423,16 @@ struct FAWeeklyView: View {
             guard let fa = freeAgents.first(where: { $0.player.id == playerID }) else { continue }
             let player = fa.player
 
-            let ratio = Double(offer.salary) / Double(fa.askingPrice)
-            let aggression = FreeAgencyStep.aiAggression(currentRound)
+            let playerBids = aiBids[player.id] ?? []
+            let decision = FreeAgencyEngine.resolvePlayerDecision(
+                player: player,
+                playerOffer: (salary: offer.salary, years: offer.years),
+                aiBids: playerBids,
+                round: currentRound
+            )
 
-            // Player decision: compare offer vs asking price with motivation adjustments
-            let motivationBonus: Double = {
-                switch player.personality.motivation {
-                case .loyalty:  return 0.15
-                case .winning:  return career.totalWins >= 10 ? 0.10 : 0.0
-                case .money:    return -0.05
-                case .fame:     return 0.0
-                case .stats:    return 0.0
-                }
-            }()
-
-            let acceptThreshold = 0.85 - motivationBonus
-            let aiCompetition = aggression * Double.random(in: 0.8...1.2)
-
-            if ratio >= acceptThreshold && Double.random(in: 0...1) > aiCompetition * 0.3 {
-                // Accepted!
+            if decision.accepted {
+                // Signed with us
                 FreeAgencyEngine.signFreeAgent(
                     player: player,
                     team: team,
@@ -420,6 +441,7 @@ struct FAWeeklyView: View {
                     capMode: career.capMode,
                     modelContext: modelContext
                 )
+                FASigningTracker.trackSigning(player.id)
                 accepted.append((
                     playerName: player.fullName,
                     position: player.position.rawValue,
@@ -427,23 +449,23 @@ struct FAWeeklyView: View {
                     years: offer.years
                 ))
             } else {
-                // Rejected
-                let aiTeam = allTeams.filter { $0.id != team.id }.randomElement()
-                let reason = rejectReason(player: player)
+                // Rejected — chose another team
                 rejected.append((
                     playerName: player.fullName,
                     position: player.position.rawValue,
-                    reason: reason,
-                    chosenTeam: aiTeam?.abbreviation,
-                    salary: Int(Double(fa.askingPrice) * Double.random(in: 0.9...1.1))
+                    reason: decision.reason,
+                    chosenTeam: decision.chosenTeamName,
+                    salary: decision.salary
                 ))
 
-                // AI signs the rejected player
-                if let aiTeam, aiTeam.availableCap >= fa.askingPrice {
+                // AI signs the rejected player to their chosen team
+                if let chosenID = decision.chosenTeamID,
+                   let aiTeam = allTeams.first(where: { $0.id == chosenID }),
+                   aiTeam.availableCap >= (decision.salary ?? fa.askingPrice) {
                     ContractEngine.signPlayerSimple(
                         player: player,
-                        years: fa.desiredYears,
-                        annualSalary: fa.askingPrice,
+                        years: decision.years ?? fa.desiredYears,
+                        annualSalary: decision.salary ?? fa.askingPrice,
                         team: aiTeam
                     )
                 }
@@ -451,7 +473,7 @@ struct FAWeeklyView: View {
         }
 
         // AI signings for this round (players without our offers)
-        let aiSignings = simulateAIRound(excludePlayerIDs: Set(myOffers.keys))
+        let aiSignings = simulateAIRound(excludePlayerIDs: Set(myOffers.keys), aiBids: aiBids)
 
         // Generate media headlines
         let headlines = FreeAgencyEngine.generateHeadlines(
@@ -485,47 +507,40 @@ struct FAWeeklyView: View {
         showRoundSummary = true
     }
 
-    private func simulateAIRound(excludePlayerIDs: Set<UUID>) -> [(playerName: String, position: String, team: String, salary: Int)] {
-        let aggression = FreeAgencyStep.aiAggression(currentRound)
+    private func simulateAIRound(excludePlayerIDs: Set<UUID>, aiBids: [UUID: [FreeAgencyEngine.AIBid]]) -> [(playerName: String, position: String, team: String, salary: Int)] {
         let roundFAs = freeAgents.filter { !excludePlayerIDs.contains($0.player.id) && $0.player.teamID == nil }
-
-        // Target top players based on round
-        let targetOVR: Int = {
-            switch currentRound {
-            case 1: return 85
-            case 2: return 80
-            case 3: return 75
-            case 4: return 70
-            case 5: return 65
-            case 6: return 60
-            default: return 60
-            }
-        }()
-
-        let targets = roundFAs.filter { $0.player.overall >= targetOVR }
-            .prefix(Int(Double(roundFAs.count) * aggression * 0.3))
 
         var signings: [(playerName: String, position: String, team: String, salary: Int)] = []
 
-        for fa in targets {
-            let eligibleTeams = allTeams
-                .filter { $0.id != team?.id && $0.availableCap >= fa.askingPrice }
-            guard let signingTeam = eligibleTeams.randomElement() else { continue }
+        for fa in roundFAs {
+            // Use AI bids generated by generateAIOffers
+            guard let bids = aiBids[fa.player.id], !bids.isEmpty else { continue }
 
-            let salary = max(Int(Double(fa.askingPrice) * Double.random(in: 0.85...1.0)), 750)
-            ContractEngine.signPlayerSimple(
+            // Resolve which team wins — player decides among AI offers only
+            let decision = FreeAgencyEngine.resolvePlayerDecision(
                 player: fa.player,
-                years: fa.desiredYears,
-                annualSalary: salary,
-                team: signingTeam
+                playerOffer: nil,
+                aiBids: bids,
+                round: currentRound
             )
 
-            signings.append((
-                playerName: fa.player.fullName,
-                position: fa.player.position.rawValue,
-                team: signingTeam.abbreviation,
-                salary: salary
-            ))
+            if let chosenID = decision.chosenTeamID,
+               let signingTeam = allTeams.first(where: { $0.id == chosenID }),
+               let salary = decision.salary {
+                ContractEngine.signPlayerSimple(
+                    player: fa.player,
+                    years: decision.years ?? fa.desiredYears,
+                    annualSalary: salary,
+                    team: signingTeam
+                )
+
+                signings.append((
+                    playerName: fa.player.fullName,
+                    position: fa.player.position.rawValue,
+                    team: signingTeam.abbreviation,
+                    salary: salary
+                ))
+            }
         }
 
         return signings
@@ -554,6 +569,29 @@ struct FAWeeklyView: View {
         case .loyalty: return "Returned to familiar surroundings"
         case .fame:    return "Chose a big-market team for more exposure"
         }
+    }
+
+    private func motivationBadge(_ motivation: Motivation) -> some View {
+        let (icon, label): (String, String) = {
+            switch motivation {
+            case .money:   return ("dollarsign.circle", "Money")
+            case .winning: return ("trophy", "Winning")
+            case .stats:   return ("chart.bar", "Stats")
+            case .loyalty: return ("heart", "Loyalty")
+            case .fame:    return ("star", "Fame")
+            }
+        }()
+
+        return HStack(spacing: 2) {
+            Image(systemName: icon)
+                .font(.system(size: 7))
+            Text(label)
+                .font(.system(size: 8, weight: .bold))
+        }
+        .foregroundStyle(Color.accentGold.opacity(0.8))
+        .padding(.horizontal, 4)
+        .padding(.vertical, 1)
+        .background(Color.accentGold.opacity(0.1), in: Capsule())
     }
 
     private func positionSideColor(_ position: Position) -> Color {
