@@ -175,6 +175,18 @@ struct InterviewSelectionView: View {
                     }
                 }
 
+                // Scouted overall
+                if let ovr = prospect.scoutedOverall {
+                    VStack(spacing: 1) {
+                        Text("OVR")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(Color.textTertiary)
+                        Text("\(ovr)")
+                            .font(.system(size: 13, weight: .bold).monospacedDigit())
+                            .foregroundStyle(overallColor(ovr))
+                    }
+                }
+
                 // Scout grade
                 if let grade = prospect.scoutGrade {
                     Text(grade)
@@ -329,6 +341,13 @@ struct InterviewSelectionView: View {
         prospects = WeekAdvancer.currentDraftClass
     }
 
+    private func overallColor(_ ovr: Int) -> Color {
+        if ovr >= 80 { return Color.success }
+        if ovr >= 65 { return Color.accentGold }
+        if ovr >= 50 { return Color.warning }
+        return Color.danger
+    }
+
     private func gradeColor(_ grade: String) -> Color {
         if grade.hasPrefix("A") { return Color.success }
         if grade.hasPrefix("B") { return Color.accentGold }
@@ -409,18 +428,33 @@ struct InterviewReportView: View {
 
     private func resultCard(_ result: InterviewResult) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Name and position
+            // Name, position, college, projection
             HStack {
-                Text("\(result.prospect.firstName) \(result.prospect.lastName)")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(Color.textPrimary)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("\(result.prospect.firstName) \(result.prospect.lastName)")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(Color.textPrimary)
 
-                Text(result.prospect.position.rawValue)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Color.accentGold)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.accentGold.opacity(0.15)))
+                        Text(result.prospect.position.rawValue)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color.accentGold)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.accentGold.opacity(0.15)))
+                    }
+
+                    HStack(spacing: 6) {
+                        Text(result.prospect.college)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.textSecondary)
+                        if let proj = result.prospect.draftProjection {
+                            Text("Proj #\(proj)")
+                                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                    }
+                }
 
                 Spacer()
             }
