@@ -44,6 +44,8 @@ struct CoachingStaffView: View {
     // MARK: - Navigation State (separate bindings — sheets for hire views, push for detail)
     @State private var hireCoachRole: CoachRole?      // Opens HireCoachView as sheet
     @State private var hireScoutRole: ScoutRole?       // Opens HireScoutView as sheet
+    @State private var showHireScoutSheet = false       // Workaround for SwiftUI sheet(item:) stale data bug
+    @State private var showHireCoachSheet = false       // Same workaround
     @State private var detailCoachID: UUID?            // Pushes CoachDetailView via navigationDestination
 
     /// Coaches filtered to this team, derived from @Query result.
@@ -472,10 +474,10 @@ struct CoachingStaffView: View {
                 CoachDetailView(coach: coach)
             }
         }
-        // Hire Coach as SHEET (avoids navigation stack confusion)
-        .sheet(item: $hireCoachRole) { role in
-            NavigationStack {
-                if let teamID = career.teamID {
+        // Hire Coach as SHEET — uses isPresented to avoid SwiftUI sheet(item:) stale data bug
+        .sheet(isPresented: $showHireCoachSheet, onDismiss: { hireCoachRole = nil }) {
+            if let role = hireCoachRole, let teamID = career.teamID {
+                NavigationStack {
                     HireCoachView(
                         role: role,
                         teamID: teamID,
@@ -484,21 +486,33 @@ struct CoachingStaffView: View {
                         teamWins: team?.wins ?? 8,
                         teamReputation: career.reputation,
                         onHired: { name, roleName in
-                            hireCoachRole = nil  // Dismiss sheet
+                            showHireCoachSheet = false
                             showHiringConfirmation(coachName: name, roleName: roleName)
                         }
                     )
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Close") { showHireCoachSheet = false }
+                                .foregroundStyle(Color.accentGold)
+                        }
+                    }
                 }
             }
         }
-        // Hire Scout as SHEET
-        .sheet(item: $hireScoutRole) { role in
-            NavigationStack {
-                if let teamID = career.teamID {
+        // Hire Scout as SHEET — same isPresented pattern
+        .sheet(isPresented: $showHireScoutSheet, onDismiss: { hireScoutRole = nil }) {
+            if let role = hireScoutRole, let teamID = career.teamID {
+                NavigationStack {
                     HireScoutView(scoutRole: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
-                        hireScoutRole = nil  // Dismiss sheet
+                        showHireScoutSheet = false
                         showHiringConfirmation(coachName: name, roleName: roleName)
                     })
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Close") { showHireScoutSheet = false }
+                                .foregroundStyle(Color.accentGold)
+                        }
+                    }
                 }
             }
         }
@@ -1660,6 +1674,7 @@ struct CoachingStaffView: View {
     private func compactVacantCard(role: CoachRole) -> some View {
         Button {
             hireCoachRole = role
+            showHireCoachSheet = true
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -1762,6 +1777,7 @@ struct CoachingStaffView: View {
     private func vacantRow(role: CoachRole) -> some View {
         Button {
             hireCoachRole = role
+            showHireCoachSheet = true
         } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -1880,6 +1896,7 @@ struct CoachingStaffView: View {
     private func scoutVacantRow(role: ScoutRole) -> some View {
         Button {
             hireScoutRole = role
+            showHireScoutSheet = true
         } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {

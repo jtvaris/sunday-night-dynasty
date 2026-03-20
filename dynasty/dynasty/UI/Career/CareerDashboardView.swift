@@ -1797,11 +1797,13 @@ struct CareerDashboardView: View {
         coachCount = coaches.count
         headCoach = coaches.first(where: { $0.role == .headCoach })
 
-        // Coaching budget (#147)
+        // Coaching budget (#147) — includes both coach and scout salaries
         let budgetTotal = team?.owner?.coachingBudget ?? 0
-        let salaryUsed = coaches.reduce(0) { $0 + $1.salary }
+        let coachSalaryUsed = coaches.reduce(0) { $0 + $1.salary }
+        let scoutDescriptor = FetchDescriptor<Scout>(predicate: #Predicate { $0.teamID == teamID })
+        let scoutSalaryUsed = ((try? modelContext.fetch(scoutDescriptor)) ?? []).reduce(0) { $0 + $1.salary }
         coachingBudgetTotal = budgetTotal
-        coachingBudgetRemaining = budgetTotal - salaryUsed
+        coachingBudgetRemaining = budgetTotal - coachSalaryUsed - scoutSalaryUsed
 
         // Division teams
         if let myTeam = team {
