@@ -40,9 +40,21 @@ struct RosterEvaluationView: View {
     let career: Career
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var team: Team?
     @State private var players: [Player] = []
+
+    // MARK: - Table Sorting (#250)
+    @State private var sortColumn: SortColumn = .group
+    @State private var sortAscending: Bool = true
+
+    private enum SortColumn: String {
+        case group, avgOVR, starter, depth, avgAge, capAllocation
+    }
+
+    // MARK: - Cap Detail Popover (#253)
+    @State private var showCapDetailPopover = false
 
     // MARK: - Roster Notes & Priorities (#245)
     @AppStorage("rosterNotes") private var rosterNotesJSON: String = "{}"
@@ -51,6 +63,9 @@ struct RosterEvaluationView: View {
     @State private var editingGroup: EvalPositionGroup?
     @State private var editingNote: String = ""
     @State private var editingPriority: String = "none"
+
+    // #251: Expandable key decision rows
+    @State private var expandedDecisions: Set<UUID> = []
 
     private var rosterNotes: [String: String] {
         (try? JSONDecoder().decode([String: String].self, from: Data(rosterNotesJSON.utf8))) ?? [:]
@@ -84,6 +99,7 @@ struct RosterEvaluationView: View {
                 if team != nil {
                     ScrollView {
                         VStack(spacing: 24) {
+                            ownerDemandsSection
                             positionGradesSection
                             keyDecisionsSection
                             strengthsWeaknessesSection
@@ -91,7 +107,6 @@ struct RosterEvaluationView: View {
                             confirmEvaluationButton
                         }
                         .padding(24)
-                        .frame(maxWidth: 760)
                         .frame(maxWidth: .infinity)
                     }
                 } else {
@@ -138,25 +153,221 @@ struct RosterEvaluationView: View {
         .disabled(rosterEvaluationConfirmed)
     }
 
+    // MARK: - Section 0: Owner Demands (#248)
+
+    @ViewBuilder
+    private var ownerDemandsSection: some View {
+        if !career.ownerDemands.isEmpty, let owner = team?.owner {
+            sectionCard(title: "Owner Demands", icon: "person.crop.circle.badge.exclamationmark") {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Owner quote header
+                    HStack(alignment: .top, spacing: 14) {
+                        // Owner avatar
+                        Image(systemName: "person.crop.square.fill")
+                            .font(.system(size: 36))
+                            .foregroundStyle(Color.accentGold)
+                            .frame(width: 44, height: 44)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(owner.name)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(Color.textPrimary)
+                            Text(ownerQuote)
+                                .font(.caption)
+                                .italic()
+                                .foregroundStyle(Color.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+
+                    Divider().overlay(Color.surfaceBorder)
+
+                    // Demand rows
+                    ForEach(Array(career.ownerDemands.enumerated()), id: \.offset) { index, demand in
+                        let isAddressed = career.ownerDemandsAddressed.contains(demand)
+                        let severity = demandSeverity(owner: owner)
+
+                        HStack(spacing: 12) {
+                            // Status icon
+                            Image(systemName: isAddressed ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(isAddressed ? Color.success : severity.color)
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(demand)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(isAddressed ? Color.textTertiary : Color.textPrimary)
+                                    .strikethrough(isAddressed)
+
+                                if !isAddressed {
+                                    HStack(spacing: 6) {
+                                        Text(severity.label)
+                                            .font(.caption2.weight(.bold))
+                                            .foregroundStyle(severity.color)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(severity.color.opacity(0.15), in: Capsule())
+                                            .overlay(Capsule().strokeBorder(severity.color.opacity(0.4), lineWidth: 1))
+
+                                        let penalty = owner.patience <= 3 ? 15 : 10
+                                        Text("Ignoring costs -\(penalty) satisfaction (current: \(owner.satisfaction)%)")
+                                            .font(.caption2)
+                                            .foregroundStyle(Color.textTertiary)
+                                    }
+                                }
+                            }
+
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+
+                        if index < career.ownerDemands.count - 1 {
+                            Divider()
+                                .overlay(Color.surfaceBorder.opacity(0.5))
+                                .padding(.horizontal, 8)
+                        }
+                    }
+                }
+                .padding(.bottom, 8)
+            }
+        }
+    }
+
+    private var ownerQuote: String {
+        guard let owner = team?.owner else { return "" }
+        let demandCount = career.ownerDemands.count
+        if owner.prefersWinNow {
+            return demandCount > 1
+                ? "We need to make moves now. I expect results this season."
+                : "I want to see a key addition before the season starts."
+        } else {
+            return demandCount > 1
+                ? "Let's build smart. I have a few areas I'd like us to address."
+                : "There's one area I'd really like us to focus on this offseason."
+        }
+    }
+
+    private func demandSeverity(owner: Owner) -> (label: String, color: Color) {
+        if owner.patience <= 3 {
+            return ("Must address", .danger)
+        } else {
+            return ("Would like", .accentGold)
+        }
+    }
+
     // MARK: - Section 1: Position Group Grades
+
+    /// Pre-computed data for a single position group row, used for sorting (#250).
+    private struct GroupRowData: Identifiable {
+        let id: String
+        let group: EvalPositionGroup
+        let avgOvr: Int
+        let starterGrade: String
+        let depthGrade: String
+        let starterOVR: Int
+        let depthOVR: Int
+        let avgAge: Int
+        let capAllocation: Int
+        let needs: [NeedInfo]
+    }
+
+    private var sortedGroupRows: [GroupRowData] {
+        let rows: [GroupRowData] = EvalPositionGroup.allGroups.map { group in
+            let groupPlayers = players.filter { group.positions.contains($0.position) }
+            let grades = PositionGradeCalculator.calculatePositionGrades(
+                players: groupPlayers,
+                positions: group.positions
+            )
+            let avgOvr = groupPlayers.isEmpty ? 0 : groupPlayers.map(\.overall).reduce(0, +) / groupPlayers.count
+            let needs = assessNeeds(group: group, players: groupPlayers, grades: grades)
+            let avgAge = groupPlayers.isEmpty ? 0 : groupPlayers.map(\.age).reduce(0, +) / groupPlayers.count
+            let capAllocation = groupPlayers.reduce(0) { $0 + $1.annualSalary }
+            return GroupRowData(
+                id: group.id, group: group, avgOvr: avgOvr,
+                starterGrade: grades.starterGrade, depthGrade: grades.depthGrade,
+                starterOVR: grades.starterOVR, depthOVR: grades.depthOVR,
+                avgAge: avgAge, capAllocation: capAllocation, needs: needs
+            )
+        }
+
+        switch sortColumn {
+        case .group:
+            return sortAscending ? rows : rows.reversed()
+        case .avgOVR:
+            return rows.sorted { sortAscending ? $0.avgOvr < $1.avgOvr : $0.avgOvr > $1.avgOvr }
+        case .starter:
+            return rows.sorted { sortAscending ? $0.starterOVR < $1.starterOVR : $0.starterOVR > $1.starterOVR }
+        case .depth:
+            return rows.sorted { sortAscending ? $0.depthOVR < $1.depthOVR : $0.depthOVR > $1.depthOVR }
+        case .avgAge:
+            return rows.sorted { sortAscending ? $0.avgAge < $1.avgAge : $0.avgAge > $1.avgAge }
+        case .capAllocation:
+            return rows.sorted { sortAscending ? $0.capAllocation < $1.capAllocation : $0.capAllocation > $1.capAllocation }
+        }
+    }
+
+    private func sortableHeader(_ title: String, column: SortColumn, width: CGFloat, alignment: Alignment = .center) -> some View {
+        Button {
+            if sortColumn == column {
+                sortAscending.toggle()
+            } else {
+                sortColumn = column
+                sortAscending = true
+            }
+        } label: {
+            HStack(spacing: 2) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(sortColumn == column ? Color.accentGold : Color.textTertiary)
+                if sortColumn == column {
+                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(Color.accentGold)
+                }
+            }
+            .frame(width: width, alignment: alignment)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var isIPad: Bool {
+        horizontalSizeClass == .regular
+    }
+
+    // #249: Priorities progress
+    private var prioritiesSetCount: Int {
+        rosterPriorities.values.filter { $0 != "none" }.count
+    }
 
     private var positionGradesSection: some View {
         sectionCard(title: "Position Group Grades", icon: "chart.bar.doc.horizontal") {
             VStack(spacing: 0) {
-                // Column headers
+                // #249: Priorities intro text and progress
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Setting priorities affects draft board rankings and scouting focus")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                    Text("Priorities set: \(prioritiesSetCount)/\(EvalPositionGroup.allGroups.count) position groups")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(prioritiesSetCount == EvalPositionGroup.allGroups.count ? Color.success : Color.accentGold)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+                Divider().overlay(Color.surfaceBorder)
+
+                // Column headers — sortable (#250)
                 HStack {
-                    Text("Group")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.textTertiary)
-                        .frame(width: 44, alignment: .leading)
-                    Text("Avg OVR")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.textTertiary)
-                        .frame(width: 64, alignment: .center)
-                    Text("Strt / Depth")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.textTertiary)
-                        .frame(width: 80, alignment: .center)
+                    sortableHeader("Group", column: .group, width: 44, alignment: .leading)
+                    sortableHeader("Avg OVR", column: .avgOVR, width: 64)
+                    sortableHeader("Strt / Depth", column: .starter, width: 80)
+                    if isIPad {
+                        sortableHeader("Avg Age", column: .avgAge, width: 60)
+                        sortableHeader("Cap $", column: .capAllocation, width: 72)
+                    }
                     Spacer()
                     Text("Assessment")
                         .font(.caption.weight(.semibold))
@@ -167,10 +378,10 @@ struct RosterEvaluationView: View {
 
                 Divider().overlay(Color.surfaceBorder)
 
-                ForEach(Array(EvalPositionGroup.allGroups.enumerated()), id: \.element.id) { index, group in
-                    positionGroupRow(group: group)
+                ForEach(Array(sortedGroupRows.enumerated()), id: \.element.id) { index, rowData in
+                    positionGroupRow(rowData: rowData)
 
-                    if index < EvalPositionGroup.allGroups.count - 1 {
+                    if index < sortedGroupRows.count - 1 {
                         Divider()
                             .overlay(Color.surfaceBorder.opacity(0.5))
                             .padding(.horizontal, 8)
@@ -180,14 +391,8 @@ struct RosterEvaluationView: View {
         }
     }
 
-    private func positionGroupRow(group: EvalPositionGroup) -> some View {
-        let groupPlayers = players.filter { group.positions.contains($0.position) }
-        let grades = PositionGradeCalculator.calculatePositionGrades(
-            players: groupPlayers,
-            positions: group.positions
-        )
-        let avgOvr = groupPlayers.isEmpty ? 0 : groupPlayers.map(\.overall).reduce(0, +) / groupPlayers.count
-        let needs = assessNeeds(group: group, players: groupPlayers, grades: grades)
+    private func positionGroupRow(rowData: GroupRowData) -> some View {
+        let group = rowData.group
 
         return HStack(alignment: .center) {
             // Group label
@@ -197,39 +402,52 @@ struct RosterEvaluationView: View {
                 .frame(width: 44, alignment: .leading)
 
             // Avg overall
-            Text(groupPlayers.isEmpty ? "—" : "\(avgOvr)")
+            Text(rowData.avgOvr == 0 ? "\u{2014}" : "\(rowData.avgOvr)")
                 .font(.subheadline.weight(.semibold).monospacedDigit())
-                .foregroundStyle(groupPlayers.isEmpty ? Color.textTertiary : Color.forRating(avgOvr))
+                .foregroundStyle(rowData.avgOvr == 0 ? Color.textTertiary : Color.forRating(rowData.avgOvr))
                 .frame(width: 64, alignment: .center)
 
             // Dual grade: Starter / Depth
             HStack(spacing: 2) {
-                Text(grades.starterGrade)
+                Text(rowData.starterGrade)
                     .font(.caption.weight(.heavy))
                     .foregroundStyle(.white)
                     .frame(minWidth: 22, maxWidth: 28, minHeight: 22, maxHeight: 22)
-                    .background(PositionGradeCalculator.gradeColor(for: grades.starterOVR), in: RoundedRectangle(cornerRadius: 5))
+                    .background(PositionGradeCalculator.gradeColor(for: rowData.starterOVR), in: RoundedRectangle(cornerRadius: 5))
 
                 Text("/")
                     .font(.caption2)
                     .foregroundStyle(Color.textTertiary)
 
-                Text(grades.depthGrade)
+                Text(rowData.depthGrade)
                     .font(.caption.weight(.heavy))
                     .foregroundStyle(.white)
                     .frame(minWidth: 22, maxWidth: 28, minHeight: 22, maxHeight: 22)
-                    .background(PositionGradeCalculator.gradeColor(for: grades.depthOVR), in: RoundedRectangle(cornerRadius: 5))
+                    .background(PositionGradeCalculator.gradeColor(for: rowData.depthOVR), in: RoundedRectangle(cornerRadius: 5))
             }
             .frame(width: 80)
+
+            // iPad extra columns (#250)
+            if isIPad {
+                Text(rowData.avgAge == 0 ? "\u{2014}" : "\(rowData.avgAge)")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+                    .frame(width: 60, alignment: .center)
+
+                Text(formatMillions(rowData.capAllocation))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+                    .frame(width: 72, alignment: .center)
+            }
 
             Spacer()
 
             // Needs assessment badges (stacked)
-            if needs.isEmpty {
+            if rowData.needs.isEmpty {
                 needBadge(label: "Solid", color: .success)
             } else {
                 VStack(alignment: .trailing, spacing: 3) {
-                    ForEach(needs, id: \.label) { need in
+                    ForEach(rowData.needs, id: \.label) { need in
                         needBadge(label: need.label, color: need.color)
                     }
                 }
@@ -256,7 +474,7 @@ struct RosterEvaluationView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(needs.contains(where: { $0.label == "Starter needed" }) ? Color.danger.opacity(0.05) : Color.clear)
+        .background(rowData.needs.contains(where: { $0.label == "Starter needed" }) ? Color.danger.opacity(0.05) : Color.clear)
     }
 
     // MARK: - Needs Assessment
@@ -340,10 +558,28 @@ struct RosterEvaluationView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(decisions.enumerated()), id: \.element.id) { index, decision in
-                        NavigationLink(destination: PlayerDetailView(player: decision.player)) {
-                            keyDecisionRow(decision)
+                        VStack(spacing: 0) {
+                            // Tappable header row
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    if expandedDecisions.contains(decision.id) {
+                                        expandedDecisions.remove(decision.id)
+                                    } else {
+                                        expandedDecisions.insert(decision.id)
+                                    }
+                                }
+                            } label: {
+                                keyDecisionRow(decision)
+                            }
+                            .buttonStyle(.plain)
+
+                            // #251: Expandable financial details
+                            if expandedDecisions.contains(decision.id) {
+                                keyDecisionFinancialDetails(decision)
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
                         }
-                        .buttonStyle(.plain)
+
                         if index < decisions.count - 1 {
                             Divider()
                                 .overlay(Color.surfaceBorder.opacity(0.5))
@@ -390,9 +626,144 @@ struct RosterEvaluationView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
             }
+
+            // Expand chevron
+            Image(systemName: expandedDecisions.contains(decision.id) ? "chevron.up" : "chevron.down")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    // MARK: - #251: Financial Details for Key Decisions
+
+    private func keyDecisionFinancialDetails(_ decision: KeyDecision) -> some View {
+        let player = decision.player
+        let marketValue = ContractEngine.estimateMarketValue(player: player)
+        let salary = player.annualSalary
+        let remainingValue = salary * max(player.contractYearsRemaining, 1)
+        let deadMoney = Int(Double(remainingValue) * 0.4)
+        let capSavings = salary - deadMoney
+        let draftRound = estimatedDraftRound(ovr: player.overall, position: player.position)
+
+        return VStack(alignment: .leading, spacing: 8) {
+            Divider().overlay(Color.surfaceBorder.opacity(0.3)).padding(.horizontal, 8)
+
+            // Common: market value + replacement
+            financialDetailLine(
+                icon: "chart.line.uptrend.xyaxis",
+                text: "Market value: \(formatMillions(marketValue))/yr",
+                color: .accentBlue
+            )
+            financialDetailLine(
+                icon: "arrow.triangle.2.circlepath",
+                text: "Replacement via FA ~\(formatMillions(marketValue)), via draft ~Rd\(draftRound)",
+                color: .textSecondary
+            )
+
+            // Type-specific financial breakdown
+            switch decision.type {
+            case .expiringContract:
+                financialDetailLine(
+                    icon: "signature",
+                    text: "Re-sign est: \(formatMillions(marketValue))/yr (market value)",
+                    color: .warning
+                )
+                financialDetailLine(
+                    icon: "figure.walk.departure",
+                    text: "Let walk: $0 cost, need replacement",
+                    color: .textSecondary
+                )
+
+            case .overpaid:
+                financialDetailLine(
+                    icon: "scissors",
+                    text: "Cut: saves \(formatMillions(max(capSavings, 0))) cap (\(formatMillions(deadMoney)) dead money)",
+                    color: .danger
+                )
+                let restructureSavings = Int(Double(salary) * 0.5)
+                financialDetailLine(
+                    icon: "doc.text",
+                    text: "Restructure: convert \(formatMillions(restructureSavings)) to bonus, save \(formatMillions(restructureSavings)) this year",
+                    color: .accentGold
+                )
+
+            case .underpaid:
+                financialDetailLine(
+                    icon: "signature",
+                    text: "Extension est: \(formatMillions(marketValue))/yr to lock up",
+                    color: .success
+                )
+                financialDetailLine(
+                    icon: "exclamationmark.triangle",
+                    text: "Risk: holdout or walks in \(player.contractYearsRemaining) yr\(player.contractYearsRemaining == 1 ? "" : "s")",
+                    color: .warning
+                )
+
+            case .agingVeteran:
+                financialDetailLine(
+                    icon: "scissors",
+                    text: "Cut: saves \(formatMillions(max(capSavings, 0))) cap (\(formatMillions(deadMoney)) dead money, net \(formatMillions(max(capSavings, 0))))",
+                    color: .danger
+                )
+                financialDetailLine(
+                    icon: "arrow.down.right",
+                    text: "Declining value — replacement cost only \(formatMillions(marketValue))/yr",
+                    color: .textSecondary
+                )
+            }
+
+            // Link to player detail
+            NavigationLink(destination: PlayerDetailView(player: player)) {
+                HStack(spacing: 4) {
+                    Text("View Player Details")
+                        .font(.caption.weight(.semibold))
+                    Image(systemName: "arrow.right")
+                        .font(.caption2)
+                }
+                .foregroundStyle(Color.accentGold)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 12)
+        .padding(.top, 4)
+        .background(Color.backgroundSecondary.opacity(0.5))
+    }
+
+    private func financialDetailLine(icon: String, text: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.caption2)
+                .foregroundStyle(color)
+                .frame(width: 14)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Estimate what draft round a player of this OVR/position would be picked.
+    private func estimatedDraftRound(ovr: Int, position: Position) -> Int {
+        // Premium positions get drafted higher
+        let posBonus: Int = {
+            switch position {
+            case .QB: return 10
+            case .DE, .CB, .LT: return 5
+            case .WR, .OLB: return 3
+            default: return 0
+            }
+        }()
+        let effectiveOVR = ovr + posBonus
+        if effectiveOVR >= 85 { return 1 }
+        if effectiveOVR >= 78 { return 2 }
+        if effectiveOVR >= 72 { return 3 }
+        if effectiveOVR >= 66 { return 4 }
+        if effectiveOVR >= 60 { return 5 }
+        return 6
     }
 
     private func decisionTypeBadge(_ type: KeyDecision.DecisionType) -> some View {
@@ -565,7 +936,7 @@ struct RosterEvaluationView: View {
 
                     Divider().overlay(Color.surfaceBorder)
 
-                    // Cap bar
+                    // Cap bar (#253: enhanced with color thresholds + tap popover)
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text("Cap Usage")
@@ -574,20 +945,53 @@ struct RosterEvaluationView: View {
                             Spacer()
                             Text(String(format: "%.1f%%", capPct(team) * 100))
                                 .font(.caption.weight(.semibold).monospacedDigit())
-                                .foregroundStyle(capUsageColor(team))
+                                .foregroundStyle(capThresholdColor(team))
                         }
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                RoundedRectangle(cornerRadius: 5)
-                                    .fill(Color.backgroundTertiary)
-                                    .frame(height: 10)
-                                RoundedRectangle(cornerRadius: 5)
-                                    .fill(capBarGradient(team))
-                                    .frame(width: geo.size.width * min(capPct(team), 1.0), height: 10)
+                        Button {
+                            showCapDetailPopover = true
+                        } label: {
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    RoundedRectangle(cornerRadius: 5)
+                                        .fill(Color.backgroundTertiary)
+                                        .frame(height: 10)
+                                    RoundedRectangle(cornerRadius: 5)
+                                        .fill(capBarGradientThreshold(team))
+                                        .frame(width: geo.size.width * min(capPct(team), 1.0), height: 10)
+                                }
                             }
+                            .frame(height: 10)
                         }
-                        .frame(height: 10)
+                        .buttonStyle(.plain)
+                        .popover(isPresented: $showCapDetailPopover) {
+                            capDetailPopover(team: team)
+                        }
+
+                        // League average context line
+                        Text("League avg: ~78%")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
                     }
+
+                    // #253: Cap warning cards
+                    if capPct(team) > 0.95 {
+                        capWarningCard(
+                            icon: "exclamationmark.octagon.fill",
+                            title: "CRITICAL: Must cut or restructure before signings",
+                            color: .danger
+                        )
+                    } else if capPct(team) > 0.90 {
+                        capWarningCard(
+                            icon: "exclamationmark.triangle.fill",
+                            title: "Cap tight \u{2014} review restructure opportunities",
+                            color: .warning
+                        )
+                    }
+
+                    // MARK: #252: Cap Scenarios
+                    Divider().overlay(Color.surfaceBorder)
+
+                    capScenariosBlock(team: team)
                 }
             )
         }
@@ -888,10 +1292,224 @@ struct RosterEvaluationView: View {
         return .textSecondary
     }
 
+    /// #253: Color thresholds: <80% green, 80-90% yellow, 90-95% orange, >95% red
+    private func capThresholdColor(_ team: Team) -> Color {
+        let pct = capPct(team)
+        if pct > 0.95 { return .danger }
+        if pct > 0.90 { return .orange }
+        if pct > 0.80 { return .warning }
+        return .success
+    }
+
     private func capBarGradient(_ team: Team) -> LinearGradient {
         let pct = capPct(team)
         let color: Color = pct > 1.0 ? .danger : (pct > 0.9 ? .warning : .accentGold)
         return LinearGradient(colors: [color.opacity(0.7), color], startPoint: .leading, endPoint: .trailing)
+    }
+
+    /// #253: Cap bar gradient using threshold colors
+    private func capBarGradientThreshold(_ team: Team) -> LinearGradient {
+        let color = capThresholdColor(team)
+        return LinearGradient(colors: [color.opacity(0.7), color], startPoint: .leading, endPoint: .trailing)
+    }
+
+    /// #253: Warning card for cap section
+    private func capWarningCard(icon: String, title: String, color: Color) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+                .font(.title3)
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(color.opacity(0.4), lineWidth: 1))
+    }
+
+    /// #253: Popover explaining cap consequences
+    private func capDetailPopover(team: Team) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Cap Usage Breakdown")
+                .font(.headline)
+                .foregroundStyle(Color.textPrimary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                capDetailRow(range: "Under 80%", color: .success, desc: "Healthy cap space. Room for signings and extensions.")
+                capDetailRow(range: "80% \u{2013} 90%", color: .warning, desc: "Moderate usage. Be selective with new deals.")
+                capDetailRow(range: "90% \u{2013} 95%", color: .orange, desc: "Tight cap. Restructures may be needed for signings.")
+                capDetailRow(range: "Over 95%", color: .danger, desc: "Critical. Must cut or restructure to make any moves.")
+            }
+
+            Divider()
+
+            HStack {
+                Text("Your usage:")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+                Text(String(format: "%.1f%%", capPct(team) * 100))
+                    .font(.subheadline.weight(.bold).monospacedDigit())
+                    .foregroundStyle(capThresholdColor(team))
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+        .background(Color.backgroundPrimary)
+    }
+
+    private func capDetailRow(range: String, color: Color, desc: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle()
+                .fill(color)
+                .frame(width: 10, height: 10)
+                .padding(.top, 4)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(range)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.textPrimary)
+                Text(desc)
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // MARK: - #252: Cap Scenarios
+
+    private func capScenariosBlock(team: Team) -> some View {
+        let expiringPlayers = players
+            .filter { $0.contractYearsRemaining <= 1 }
+            .sorted { $0.overall > $1.overall }
+        let expiringCount = expiringPlayers.count
+        let totalExpiringCap = expiringPlayers.reduce(0) { $0 + $1.annualSalary }
+
+        // Re-sign cost estimates based on market value
+        let top3Expiring = Array(expiringPlayers.prefix(3))
+        let top3ReSignCost = top3Expiring.reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1) }
+        let allReSignCost = expiringPlayers.reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1) }
+
+        let currentUsage = team.currentCapUsage
+        let cap = team.salaryCap
+
+        // Scenario A: Release all expiring
+        let scenAUsage = currentUsage - totalExpiringCap
+        let scenASpace = cap - scenAUsage
+        let scenAPct = cap > 0 ? Double(scenAUsage) / Double(cap) : 0
+
+        // Scenario B: Re-sign top 3, release rest
+        let otherExpiringCap = expiringPlayers.dropFirst(3).reduce(0) { $0 + $1.annualSalary }
+        let scenBUsage = currentUsage - totalExpiringCap + top3ReSignCost
+        let scenBSpace = cap - scenBUsage
+        let scenBPct = cap > 0 ? Double(scenBUsage) / Double(cap) : 0
+
+        // Scenario C: Re-sign all
+        let scenCUsage = currentUsage - totalExpiringCap + allReSignCost
+        let scenCSpace = cap - scenCUsage
+        let scenCPct = cap > 0 ? Double(scenCUsage) / Double(cap) : 0
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentGold)
+                Text("Cap Scenarios")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+            }
+
+            capScenarioCard(
+                label: "A",
+                title: "Release All Expiring",
+                capPct: scenAPct,
+                available: scenASpace,
+                tradeoff: "Max flexibility, lose \(expiringCount) player\(expiringCount == 1 ? "" : "s")"
+            )
+
+            capScenarioCard(
+                label: "B",
+                title: "Re-sign Top 3",
+                capPct: scenBPct,
+                available: scenBSpace,
+                tradeoff: "Keep core\(top3Expiring.isEmpty ? "" : " (\(top3Expiring.map(\.lastName).joined(separator: ", ")))"), release \(max(expiringCount - 3, 0))"
+            )
+
+            capScenarioCard(
+                label: "C",
+                title: "Re-sign All",
+                capPct: scenCPct,
+                available: scenCSpace,
+                tradeoff: scenCSpace < 5_000 ? "Retain all, very tight cap" : "Retain all, moderate flexibility"
+            )
+        }
+    }
+
+    private func capScenarioCard(
+        label: String,
+        title: String,
+        capPct: Double,
+        available: Int,
+        tradeoff: String
+    ) -> some View {
+        let pctClamped = min(max(capPct, 0), 1.5)
+        let pctColor: Color = pctClamped > 1.0 ? .danger : (pctClamped > 0.9 ? .warning : .success)
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(label)
+                    .font(.caption.weight(.heavy))
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .frame(width: 22, height: 22)
+                    .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 5))
+
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+
+                Spacer()
+
+                Text(String(format: "%.0f%%", pctClamped * 100))
+                    .font(.subheadline.weight(.bold).monospacedDigit())
+                    .foregroundStyle(pctColor)
+            }
+
+            // Mini cap bar
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.backgroundTertiary)
+                        .frame(height: 6)
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(pctColor)
+                        .frame(width: geo.size.width * min(pctClamped, 1.0), height: 6)
+                }
+            }
+            .frame(height: 6)
+
+            HStack {
+                Text("Available: \(formatMillions(available))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(available >= 0 ? Color.success : Color.danger)
+
+                Spacer()
+
+                Text(tradeoff)
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+        }
+        .padding(12)
+        .background(Color.backgroundSecondary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.surfaceBorder.opacity(0.5), lineWidth: 1)
+        )
     }
 
     // MARK: - Grade Helpers (delegates to PositionGradeCalculator)

@@ -442,6 +442,8 @@ struct BigBoardRowView: View {
     let prospect: CollegeProspect
     var onFlagToggle: (() -> Void)? = nil
 
+    @State private var showMediaPopover = false
+
     var body: some View {
         HStack(spacing: 14) {
             // Rank number
@@ -462,9 +464,36 @@ struct BigBoardRowView: View {
 
             // Name and college
             VStack(alignment: .leading, spacing: 2) {
-                Text(prospect.fullName)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(Color.textPrimary)
+                HStack(spacing: 4) {
+                    Text(prospect.fullName)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Color.textPrimary)
+                    if prospect.combineMediaMention != nil {
+                        Button {
+                            showMediaPopover.toggle()
+                        } label: {
+                            Text("\u{1F4F0}")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .popover(isPresented: $showMediaPopover) {
+                            if let mention = prospect.combineMediaMention {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Label("Combine Media", systemImage: "newspaper.fill")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(Color.accentGold)
+                                    Text(mention)
+                                        .font(.subheadline)
+                                        .foregroundStyle(Color.textPrimary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .padding(12)
+                                .frame(maxWidth: 320)
+                                .background(Color.backgroundSecondary)
+                            }
+                        }
+                    }
+                }
                 HStack(spacing: 6) {
                     Text(prospect.college)
                         .font(.caption)

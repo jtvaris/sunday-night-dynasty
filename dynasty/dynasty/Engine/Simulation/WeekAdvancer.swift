@@ -807,8 +807,18 @@ enum WeekAdvancer {
             UserDefaults.standard.set(false, forKey: "rosterEvaluationConfirmed")
             UserDefaults.standard.set(false, forKey: "franchiseTagVisited")
 
-            // No engine logic — this phase is for the player to review their roster,
-            // apply franchise tags, and evaluate contracts before free agency opens.
+            // Generate owner demands based on weakest position groups (#248)
+            if let playerTeamID = career.teamID,
+               let playerTeam = teamsByID[playerTeamID],
+               let owner = playerTeam.owner {
+                let teamPlayers = allPlayers.filter { $0.teamID == playerTeamID }
+                career.ownerDemands = generateOwnerDemands(
+                    owner: owner,
+                    players: teamPlayers
+                )
+                career.ownerDemandsAddressed = []
+            }
+
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .reviewRoster,
                 career: career,
@@ -952,6 +962,32 @@ enum WeekAdvancer {
             break
         }
 
+        // --- Apply owner demand consequences before season starts (#248) ---
+        if nextPhase == .regularSeason {
+            if let playerTeamID = career.teamID,
+               let playerTeam = teamsByID[playerTeamID],
+               let owner = playerTeam.owner {
+                let unaddressed = career.ownerDemands.filter {
+                    !career.ownerDemandsAddressed.contains($0)
+                }
+                if !unaddressed.isEmpty {
+                    let penaltyPerDemand = owner.patience <= 3 ? 15 : 10
+                    let totalPenalty = unaddressed.count * penaltyPerDemand
+                    owner.satisfaction = max(0, owner.satisfaction - totalPenalty)
+
+                    let demandList = unaddressed.joined(separator: ", ")
+                    let message = InboxMessage(
+                        sender: .owner(name: owner.name),
+                        subject: "Unaddressed Roster Demands",
+                        body: "I'm disappointed you didn't address the following: \(demandList). This is going to affect my confidence in your leadership. (-\(totalPenalty) satisfaction)",
+                        date: "Season \(career.currentSeason)",
+                        category: .ownerDirective
+                    )
+                    lastInboxMessages.append(message)
+                }
+            }
+        }
+
         // --- Transition to the next phase ---
         if nextPhase == .regularSeason {
             // Increment the season year before generating a new schedule.
@@ -1091,6 +1127,63 @@ enum WeekAdvancer {
             }
         )
         return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    // MARK: - Private: Owner Demand Generation (#248)
+
+    /// Generates owner demands based on weakest position groups and owner personality.
+    private static func generateOwnerDemands(owner: Owner, players: [Player]) -> [String] {
+        // Evaluate all position groups and sort by average OVR (weakest first)
+        let groups: [(label: String, positions: [Position])] = [
+            ("QB",  [.QB]),
+            ("RB",  [.RB, .FB]),
+            ("WR",  [.WR]),
+            ("TE",  [.TE]),
+            ("OL",  [.LT, .LG, .C, .RG, .RT]),
+            ("DL",  [.DE, .DT]),
+            ("LB",  [.OLB, .MLB]),
+            ("DB",  [.CB, .FS, .SS]),
+        ]
+
+        let ranked = groups.map { group -> (label: String, avgOVR: Int) in
+            let groupPlayers = players.filter { group.positions.contains($0.position) }
+            let avg = groupPlayers.isEmpty ? 0 : groupPlayers.map(\.overall).reduce(0, +) / groupPlayers.count
+            return (group.label, avg)
+        }.sorted { $0.avgOVR < $1.avgOVR }
+
+        // Determine demand count based on meddling
+        let demandCount: Int
+        if owner.meddling >= 70 {
+            demandCount = 3
+        } else if owner.meddling >= 40 {
+            demandCount = 2
+        } else {
+            demandCount = 1
+        }
+
+        let weakest = Array(ranked.prefix(demandCount))
+        var demands: [String] = []
+
+        for group in weakest {
+            // Low meddling owners give vague demands
+            if owner.meddling < 30 {
+                let side = ["QB", "RB", "WR", "TE", "OL"].contains(group.label) ? "offense" : "defense"
+                let demand = "Improve the \(side)"
+                if !demands.contains(demand) {
+                    demands.append(demand)
+                }
+                continue
+            }
+
+            // Specific demand based on owner personality
+            if owner.prefersWinNow {
+                demands.append("Sign an elite \(group.label)")
+            } else {
+                demands.append("Draft a franchise \(group.label)")
+            }
+        }
+
+        return demands
     }
 
     // MARK: - Private: Score Generation Helpers

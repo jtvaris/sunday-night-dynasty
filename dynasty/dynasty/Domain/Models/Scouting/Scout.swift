@@ -26,6 +26,17 @@ final class Scout {
     /// Scouts with 2+ seasons get a familiarity accuracy bonus.
     var seasonsInRole: Int = 0
 
+    /// Specific position to focus scouting on. nil = general (all positions).
+    var focusPosition: Position?
+
+    /// Attribute category to focus scouting on. nil = general.
+    var focusAttributeRaw: String?
+
+    var focusAttribute: ScoutFocusAttribute? {
+        get { focusAttributeRaw.flatMap { ScoutFocusAttribute(rawValue: $0) } }
+        set { focusAttributeRaw = newValue?.rawValue }
+    }
+
     // MARK: - Computed Properties
 
     var fullName: String {

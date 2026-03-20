@@ -45,6 +45,13 @@ final class Career {
     /// Number of personal workouts conducted this year (max 30).
     var workoutsUsed: Int = 0
 
+    // MARK: - Owner Demands (#248)
+    /// Roster demands set by the owner during the review roster phase.
+    /// Each string is a demand like "Upgrade QB starter" or "Improve the defense".
+    var ownerDemands: [String] = []
+    /// Demands that the player has addressed (e.g. signed/drafted at that position).
+    var ownerDemandsAddressed: [String] = []
+
     // MARK: - HC-GM Relationship
     /// Persisted relationship state between the GM and their Head Coach.
     /// Only meaningful when `role == .gm`; ignored for `.gmAndHeadCoach` careers.

@@ -71,6 +71,14 @@ struct ScoutTeamView: View {
                             }
                         }
                     }
+
+                    // Focus Assignments
+                    Section("Focus Assignments") {
+                        ForEach(scouts) { scout in
+                            ScoutFocusRow(scout: scout)
+                        }
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
                 }
                 .scrollContentBackground(.hidden)
                 .listStyle(.insetGrouped)
@@ -160,6 +168,24 @@ struct ScoutRowView: View {
                             Text("+10% on \(spec.rawValue)")
                                 .font(.caption2.weight(.medium))
                                 .foregroundStyle(Color.success)
+                        }
+
+                        if let fp = scout.focusPosition {
+                            Text(fp.rawValue)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(Color.accentGold)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.accentGold.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                        }
+
+                        if let fa = scout.focusAttribute {
+                            Label(fa.label, systemImage: fa.icon)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color.accentBlue)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.accentBlue.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
                         }
                     }
                 }
@@ -287,6 +313,58 @@ struct ScoutStatBar: View {
                 .frame(width: 28, alignment: .trailing)
         }
         .accessibilityLabel("\(label) \(value) out of 100")
+    }
+}
+
+// MARK: - Scout Focus Row
+
+struct ScoutFocusRow: View {
+    @Bindable var scout: Scout
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(scout.fullName)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.textPrimary)
+
+            HStack(spacing: 12) {
+                // Position picker
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Position")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                    Picker("Position", selection: $scout.focusPosition) {
+                        Text("All Positions").tag(Position?.none)
+                        ForEach(Position.allCases, id: \.self) { pos in
+                            Text(pos.rawValue).tag(Position?.some(pos))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(Color.accentGold)
+                }
+
+                // Attribute picker
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Attribute Focus")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                    Picker("Attribute", selection: Binding(
+                        get: { scout.focusAttribute },
+                        set: { scout.focusAttribute = $0 }
+                    )) {
+                        Text("General").tag(ScoutFocusAttribute?.none)
+                        ForEach(ScoutFocusAttribute.allCases) { attr in
+                            Label(attr.label, systemImage: attr.icon).tag(ScoutFocusAttribute?.some(attr))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(Color.accentBlue)
+                }
+
+                Spacer()
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 

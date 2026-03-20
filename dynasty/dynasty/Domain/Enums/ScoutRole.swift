@@ -58,3 +58,30 @@ enum ScoutRole: String, Codable, CaseIterable {
         self == .chiefScout
     }
 }
+
+// MARK: - Scout Focus Attribute
+
+/// The attribute category a scout focuses on during evaluation.
+enum ScoutFocusAttribute: String, Codable, CaseIterable, Identifiable {
+    case physical   // reveals physical attributes faster
+    case mental     // reveals mental attributes, football IQ faster
+    case character  // reveals personality, character concerns faster
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .physical:  return "Physical"
+        case .mental:    return "Mental"
+        case .character: return "Character"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .physical:  return "figure.strengthtraining.traditional"
+        case .mental:    return "brain.head.profile"
+        case .character: return "person.fill.questionmark"
+        }
+    }
+}

@@ -65,6 +65,11 @@ final class CollegeProspect {
     /// The team abbreviation projected to draft this prospect in the latest mock.
     var mockDraftTeam: String?
 
+    // MARK: - Combine Media
+
+    /// Headline text if this prospect was mentioned in combine media coverage.
+    var combineMediaMention: String?
+
     // MARK: - Prospect Flag
 
     var prospectFlag: ProspectFlag = ProspectFlag.none

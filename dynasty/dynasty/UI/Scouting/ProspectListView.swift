@@ -119,11 +119,19 @@ struct ProspectListView: View {
             Text("No Prospects Found")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(Color.textPrimary)
-            Text("Prospects who have declared for the draft will appear here.")
-                .font(.subheadline)
-                .foregroundStyle(Color.textSecondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
+            if prospects.isEmpty {
+                Text("The draft class hasn't been generated yet. Prospects declare around mid-season (week 9+).")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+            } else {
+                Text("No prospects match this position filter.")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

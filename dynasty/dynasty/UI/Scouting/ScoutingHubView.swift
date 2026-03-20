@@ -5,12 +5,15 @@ struct ScoutingHubView: View {
     @Bindable var career: Career
     @Environment(\.modelContext) private var modelContext
 
-    @State private var selectedTab: ScoutingTab = .scouts
+    @State private var selectedTab: ScoutingTab = .bigBoard
     @State private var scouts: [Scout] = []
     @State private var prospects: [CollegeProspect] = []
     @State private var teamPlayers: [Player] = []
     @State private var showHireScout = false
     @State private var nextYearProspects: [ScoutingEngine.NextYearProspect] = []
+    @State private var showCombineReport = false
+    @State private var combineMedia: [ScoutingEngine.CombineMediaMention] = []
+    @AppStorage("scoutsSentToCombine") private var scoutsSentToCombine = false
 
     private let maxScouts = 8
 
@@ -23,6 +26,12 @@ struct ScoutingHubView: View {
                     .padding(.horizontal, 20)
                     .padding(.top, 12)
                     .padding(.bottom, 8)
+
+                if career.currentPhase == .combine {
+                    sendScoutsToCombineButton
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
+                }
 
                 tabPicker
                     .padding(.horizontal, 20)
@@ -41,6 +50,77 @@ struct ScoutingHubView: View {
         .sheet(isPresented: $showHireScout, onDismiss: { loadData() }) {
             HireScoutSheet(career: career)
         }
+        .sheet(isPresented: $showCombineReport) {
+            CombineReportSheet(mentions: combineMedia)
+        }
+    }
+
+    // MARK: - Send Scouts to Combine (#258)
+
+    private var sendScoutsToCombineButton: some View {
+        Group {
+            if scoutsSentToCombine {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color.success)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Scouts at Combine")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(Color.success)
+                        Text("Results are in — check the Combine tab")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                    Spacer()
+                }
+                .padding(12)
+                .background(Color.success.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.success.opacity(0.3), lineWidth: 1))
+            } else {
+                Button {
+                    sendScoutsToCombine()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "binoculars.fill")
+                            .font(.title3)
+                            .foregroundStyle(Color.accentGold)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Send Scouts to NFL Combine")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(Color.textPrimary)
+                            Text("\(scouts.count) scout\(scouts.count == 1 ? "" : "s") will evaluate ~330 prospects")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                        Spacer()
+                        Image(systemName: "arrow.right.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(Color.accentGold)
+                    }
+                    .padding(12)
+                    .background(Color.accentGold.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentGold.opacity(0.3), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func sendScoutsToCombine() {
+        var draftClass = WeekAdvancer.currentDraftClass
+
+        // Generate combine results if not yet available (WeekAdvancer may have already done this)
+        let hasCombineResults = draftClass.contains { $0.fortyTime != nil }
+        if !hasCombineResults {
+            ScoutingEngine.generateCombineResults(for: &draftClass)
+        }
+
+        combineMedia = ScoutingEngine.generateCombineMedia(prospects: &draftClass)
+        WeekAdvancer.currentDraftClass = draftClass
+        scoutsSentToCombine = true
+        loadData()
+        showCombineReport = true
     }
 
     // MARK: - Overview Metrics (#223)
@@ -149,19 +229,24 @@ struct ScoutingHubView: View {
 
     private var tabPicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 ForEach(ScoutingTab.allCases) { tab in
+                    let isSelected = selectedTab == tab
                     Button {
                         selectedTab = tab
                     } label: {
-                        Text(tab.label)
-                            .font(.system(size: 13, weight: selectedTab == tab ? .bold : .medium))
-                            .foregroundStyle(selectedTab == tab ? Color.backgroundPrimary : Color.textSecondary)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
+                        Label(tab.label, systemImage: tab.icon)
+                            .font(.callout.weight(isSelected ? .bold : .semibold))
+                            .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
                             .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(selectedTab == tab ? Color.accentGold : Color.backgroundTertiary)
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(isSelected ? Color.accentGold : Color.backgroundTertiary)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .strokeBorder(isSelected ? Color.clear : Color.surfaceBorder, lineWidth: 1)
                             )
                     }
                     .buttonStyle(.plain)
@@ -207,10 +292,9 @@ struct ScoutingHubView: View {
         )
         scouts = (try? modelContext.fetch(scoutDesc)) ?? []
 
-        let prospectDesc = FetchDescriptor<CollegeProspect>(
-            predicate: #Predicate { $0.isDeclaringForDraft == true }
-        )
-        prospects = (try? modelContext.fetch(prospectDesc)) ?? []
+        // Prospects live in WeekAdvancer.currentDraftClass (not persisted in SwiftData)
+        let allProspects = WeekAdvancer.currentDraftClass
+        prospects = allProspects.filter { $0.isDeclaringForDraft }
 
         let playerDesc = FetchDescriptor<Player>(
             predicate: #Predicate { $0.teamID == teamID }
@@ -226,6 +310,110 @@ struct ScoutingHubView: View {
         modelContext.delete(scout)
         try? modelContext.save()
         loadData()
+    }
+}
+
+// MARK: - Combine Report Sheet (#259)
+
+private struct CombineReportSheet: View {
+    let mentions: [ScoutingEngine.CombineMediaMention]
+    @Environment(\.dismiss) private var dismiss
+
+    private let categories = ["Standout", "Stock Riser", "Stock Faller", "Surprise"]
+
+    private func mentionsFor(_ category: String) -> [ScoutingEngine.CombineMediaMention] {
+        mentions.filter { $0.category == category }
+    }
+
+    private func categoryIcon(_ category: String) -> String {
+        switch category {
+        case "Standout":     return "star.fill"
+        case "Stock Riser":  return "arrow.up.right.circle.fill"
+        case "Stock Faller": return "arrow.down.right.circle.fill"
+        case "Surprise":     return "exclamationmark.triangle.fill"
+        default:             return "newspaper"
+        }
+    }
+
+    private func categoryColor(_ category: String) -> Color {
+        switch category {
+        case "Standout":     return .accentGold
+        case "Stock Riser":  return .success
+        case "Stock Faller": return .danger
+        case "Surprise":     return .accentBlue
+        default:             return .textSecondary
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
+
+                List {
+                    // Header
+                    Section {
+                        VStack(spacing: 8) {
+                            Image(systemName: "newspaper.fill")
+                                .font(.system(size: 36))
+                                .foregroundStyle(Color.accentGold)
+                            Text("NFL COMBINE REPORT")
+                                .font(.title2.weight(.black))
+                                .foregroundStyle(Color.textPrimary)
+                            Text("\(mentions.count) notable performances")
+                                .font(.subheadline)
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+
+                    ForEach(categories, id: \.self) { category in
+                        let items = mentionsFor(category)
+                        if !items.isEmpty {
+                            Section {
+                                ForEach(items, id: \.prospectID) { mention in
+                                    HStack(spacing: 12) {
+                                        Text(mention.position)
+                                            .font(.caption.weight(.bold))
+                                            .foregroundStyle(Color.textPrimary)
+                                            .frame(width: 32, height: 22)
+                                            .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(mention.prospectName)
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(Color.textPrimary)
+                                            Text(mention.headline)
+                                                .font(.caption)
+                                                .foregroundStyle(Color.textSecondary)
+                                                .lineLimit(2)
+                                        }
+                                    }
+                                }
+                            } header: {
+                                Label(category, systemImage: categoryIcon(category))
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(categoryColor(category))
+                                    .textCase(nil)
+                            }
+                            .listRowBackground(Color.backgroundSecondary)
+                        }
+                    }
+                }
+                .scrollContentBackground(.hidden)
+                .listStyle(.insetGrouped)
+            }
+            .navigationTitle("Combine Report")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }
 
@@ -251,6 +439,18 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
         case .mockDraft: return "Mock Draft"
         case .proDays:   return "Pro Days"
         case .nextYear:  return "Next Year"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .scouts:    return "binoculars"
+        case .prospects: return "person.3"
+        case .bigBoard:  return "list.number"
+        case .combine:   return "figure.run"
+        case .mockDraft: return "doc.text"
+        case .proDays:   return "mappin.and.ellipse"
+        case .nextYear:  return "calendar.badge.clock"
         }
     }
 }

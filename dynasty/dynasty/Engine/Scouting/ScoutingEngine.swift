@@ -245,7 +245,11 @@ enum ScoutingEngine {
         // Determine accuracy modifier
         var accuracyBonus = 0
         if let spec = scout.positionSpecialization, spec == prospect.position {
-            accuracyBonus = 10
+            accuracyBonus += 10
+        }
+        // Focus position bonus: +15% accuracy when scout focuses on the prospect's position
+        if let focusPos = scout.focusPosition, focusPos == prospect.position {
+            accuracyBonus += 15
         }
         let effectiveAccuracy = min(99, scout.accuracy + accuracyBonus)
 
@@ -256,14 +260,18 @@ enum ScoutingEngine {
         prospect.scoutedOverall = scoutedOvr
 
         // Calculate scouted potential with error margin based on potentialRead
-        let potentialMaxError = max(1, 30 - (scout.potentialRead * 30 / 100))
+        // Mental focus gives +15 bonus to potential read accuracy
+        let mentalBonus = scout.focusAttribute == .mental ? 15 : 0
+        let effectivePotentialRead = min(99, scout.potentialRead + mentalBonus)
+        let potentialMaxError = max(1, 30 - (effectivePotentialRead * 30 / 100))
         let potentialError = Int.random(in: -potentialMaxError...potentialMaxError)
         let scoutedPot = min(99, max(1, prospect.truePotential + potentialError))
         prospect.scoutedPotential = scoutedPot
 
-        // Personality read
+        // Personality read — character focus gives +20 bonus
+        let characterBonus = scout.focusAttribute == .character ? 20 : 0
         let personalityRoll = Int.random(in: 1...100)
-        if personalityRoll <= scout.personalityRead {
+        if personalityRoll <= min(99, scout.personalityRead + characterBonus) {
             prospect.scoutedPersonality = prospect.truePersonality.archetype
         } else {
             // Wrong personality assessment
@@ -292,7 +300,9 @@ enum ScoutingEngine {
         // Confidence level based on scout accuracy and experience
         let baseConfidence = Double(effectiveAccuracy) / 100.0
         let experienceBonus = min(0.15, Double(scout.experience) * 0.015)
-        let confidence = min(1.0, baseConfidence + experienceBonus)
+        // Focus attribute bonus: physical/mental focus gives +10% confidence on overall/potential reads
+        let focusAttrBonus: Double = (scout.focusAttribute == .physical || scout.focusAttribute == .mental) ? 0.10 : 0.0
+        let confidence = min(1.0, baseConfidence + experienceBonus + focusAttrBonus)
 
         // Generate notes
         let strengthNotes = generateStrengthNotes(for: prospect, accuracy: effectiveAccuracy)
@@ -2026,6 +2036,170 @@ enum ScoutingEngine {
         }
 
         return prospects
+    }
+
+    // MARK: - Combine Media Summary (#259)
+
+    struct CombineMediaMention {
+        let prospectID: UUID
+        let prospectName: String
+        let position: String
+        let headline: String
+        let category: String  // "Standout", "Stock Riser", "Stock Faller", "Surprise"
+    }
+
+    /// Generates combine media coverage and stamps `combineMediaMention` on highlighted prospects.
+    static func generateCombineMedia(prospects: inout [CollegeProspect]) -> [CombineMediaMention] {
+        var mentions: [CombineMediaMention] = []
+
+        let invited = prospects.filter { $0.combineInvite && $0.fortyTime != nil }
+        guard !invited.isEmpty else { return mentions }
+
+        // --- Standouts: prospects with any elite drill result (top 5% for position) ---
+        let standoutCandidates = invited.filter { p in
+            let bm = CombineBenchmarks.benchmarks(for: p.position)
+            return isElite(p.fortyTime, benchmark: bm.fortyYard)
+                || isElite(Double(p.benchPress ?? 0), benchmark: bm.benchPress)
+                || isElite(p.verticalJump, benchmark: bm.verticalJump)
+                || isElite(Double(p.broadJump ?? 0), benchmark: bm.broadJump)
+                || isElite(p.coneDrill, benchmark: bm.threeCone)
+                || isElite(p.shuttleTime, benchmark: bm.shuttle)
+        }
+        .sorted { ($0.trueOverall) > ($1.trueOverall) }
+
+        for p in standoutCandidates.prefix(Int.random(in: 3...5)) {
+            let headline = standoutHeadline(for: p)
+            mentions.append(CombineMediaMention(
+                prospectID: p.id, prospectName: p.fullName,
+                position: p.position.rawValue, headline: headline, category: "Standout"
+            ))
+        }
+
+        let standoutIDs = Set(mentions.map { $0.prospectID })
+
+        // --- Stock Risers: combine improved grade vs pre-combine projection ---
+        let riserCandidates = invited.filter { p in
+            guard !standoutIDs.contains(p.id) else { return false }
+            guard let proj = p.draftProjection else { return false }
+            // Lower projection number = better. If true overall suggests higher pick
+            // than projection, they rose.
+            let combineGrade = combineAveragePercentile(p)
+            return combineGrade >= 70 && proj >= 3  // Decent combine but was projected late
+        }
+        .sorted { combineAveragePercentile($0) > combineAveragePercentile($1) }
+
+        let riserIDs = Set(riserCandidates.prefix(Int.random(in: 3...5)).map { $0.id })
+        for p in riserCandidates.prefix(Int.random(in: 3...5)) {
+            let headline = riserHeadline(for: p)
+            mentions.append(CombineMediaMention(
+                prospectID: p.id, prospectName: p.fullName,
+                position: p.position.rawValue, headline: headline, category: "Stock Riser"
+            ))
+        }
+
+        // --- Stock Fallers: high OVR but poor combine (slow 40, low bench) ---
+        let fallerCandidates = invited.filter { p in
+            guard !standoutIDs.contains(p.id), !riserIDs.contains(p.id) else { return false }
+            let combineGrade = combineAveragePercentile(p)
+            return p.trueOverall >= 70 && combineGrade < 40
+        }
+        .sorted { $0.trueOverall > $1.trueOverall }
+
+        let fallerIDs = Set(fallerCandidates.prefix(Int.random(in: 2...3)).map { $0.id })
+        for p in fallerCandidates.prefix(Int.random(in: 2...3)) {
+            let headline = fallerHeadline(for: p)
+            mentions.append(CombineMediaMention(
+                prospectID: p.id, prospectName: p.fullName,
+                position: p.position.rawValue, headline: headline, category: "Stock Faller"
+            ))
+        }
+
+        // --- Surprises: low-projected prospects with elite combine numbers ---
+        let surpriseCandidates = invited.filter { p in
+            guard !standoutIDs.contains(p.id), !riserIDs.contains(p.id),
+                  !fallerIDs.contains(p.id) else { return false }
+            guard let proj = p.draftProjection else { return false }
+            let combineGrade = combineAveragePercentile(p)
+            return proj >= 5 && combineGrade >= 75
+        }
+        .sorted { combineAveragePercentile($0) > combineAveragePercentile($1) }
+
+        for p in surpriseCandidates.prefix(Int.random(in: 2...3)) {
+            let headline = surpriseHeadline(for: p)
+            mentions.append(CombineMediaMention(
+                prospectID: p.id, prospectName: p.fullName,
+                position: p.position.rawValue, headline: headline, category: "Surprise"
+            ))
+        }
+
+        // Stamp combineMediaMention on prospects
+        let mentionMap = Dictionary(mentions.map { ($0.prospectID, $0.headline) }, uniquingKeysWith: { a, _ in a })
+        for i in prospects.indices {
+            if let headline = mentionMap[prospects[i].id] {
+                prospects[i].combineMediaMention = headline
+            }
+        }
+
+        return mentions
+    }
+
+    // MARK: - Combine Media Helpers
+
+    private static func isElite(_ value: Double?, benchmark: CombineBenchmarks.DrillBenchmark) -> Bool {
+        guard let value else { return false }
+        if benchmark.lowerIsBetter {
+            // Top 5% = within 5% of elite threshold toward lower
+            return value <= benchmark.elite * 1.02
+        } else {
+            return value >= benchmark.elite * 0.98
+        }
+    }
+
+    private static func combineAveragePercentile(_ p: CollegeProspect) -> Int {
+        let bm = CombineBenchmarks.benchmarks(for: p.position)
+        var pcts: [Int] = []
+        if let v = p.fortyTime { pcts.append(CombineBenchmarks.percentile(value: v, benchmark: bm.fortyYard)) }
+        if let v = p.benchPress { pcts.append(CombineBenchmarks.percentile(value: Double(v), benchmark: bm.benchPress)) }
+        if let v = p.verticalJump { pcts.append(CombineBenchmarks.percentile(value: v, benchmark: bm.verticalJump)) }
+        if let v = p.broadJump { pcts.append(CombineBenchmarks.percentile(value: Double(v), benchmark: bm.broadJump)) }
+        if let v = p.coneDrill { pcts.append(CombineBenchmarks.percentile(value: v, benchmark: bm.threeCone)) }
+        if let v = p.shuttleTime { pcts.append(CombineBenchmarks.percentile(value: v, benchmark: bm.shuttle)) }
+        guard !pcts.isEmpty else { return 50 }
+        return pcts.reduce(0, +) / pcts.count
+    }
+
+    private static func standoutHeadline(for p: CollegeProspect) -> String {
+        if let ft = p.fortyTime, ft < 4.40 {
+            return "\(p.fullName) blazes \(String(format: "%.2f", ft)) 40-yard dash — first round stock!"
+        }
+        if let bp = p.benchPress, bp >= 35 {
+            return "\(p.fullName) powers through \(bp) bench reps, dominates strength testing"
+        }
+        if let vj = p.verticalJump, vj >= 40.0 {
+            return "\(p.fullName) soars with \(String(format: "%.1f", vj))\" vertical, elite athleticism on display"
+        }
+        return "\(p.fullName) posts elite combine numbers across the board"
+    }
+
+    private static func riserHeadline(for p: CollegeProspect) -> String {
+        if let ft = p.fortyTime {
+            return "\(p.fullName) surprises with \(String(format: "%.2f", ft)) 40, vaults up draft boards"
+        }
+        return "\(p.fullName) impresses at combine, stock soaring"
+    }
+
+    private static func fallerHeadline(for p: CollegeProspect) -> String {
+        if let ft = p.fortyTime, ft > 4.70 {
+            return "\(p.fullName) disappoints with \(String(format: "%.2f", ft)) 40-time, stock drops"
+        }
+        return "\(p.fullName) underwhelms at combine, raising red flags for scouts"
+    }
+
+    private static func surpriseHeadline(for p: CollegeProspect) -> String {
+        if let ft = p.fortyTime, ft < 4.50 {
+            return "Unknown \(p.position.rawValue) \(p.fullName) runs \(String(format: "%.2f", ft)) 40, turns heads at combine"
+        }
+        return "Late-round prospect \(p.fullName) steals the show with elite testing"
     }
 }
 
