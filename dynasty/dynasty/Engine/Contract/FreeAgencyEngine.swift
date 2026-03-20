@@ -125,6 +125,98 @@ enum FreeAgencyEngine {
         }
     }
 
+    // MARK: - New League Year Transition
+
+    struct LeagueYearSummary {
+        let newFreeAgents: [(name: String, position: String, overall: Int, formerTeam: String)]
+        let playerTeamCapBefore: Int
+        let playerTeamCapAfter: Int
+        let capFreed: Int
+        let notableFreeAgents: [(name: String, position: String, overall: Int)]
+        let totalFreeAgentCount: Int
+    }
+
+    /// Advance all contracts by one year. Players whose contracts expire become free agents.
+    /// Returns a summary for display.
+    static func executeNewLeagueYear(
+        allPlayers: [Player],
+        allTeams: [Team],
+        playerTeamID: UUID,
+        modelContext: ModelContext
+    ) -> LeagueYearSummary {
+        let playerTeam = allTeams.first { $0.id == playerTeamID }
+        let capBefore = playerTeam?.currentCapUsage ?? 0
+
+        var newFAs: [(name: String, position: String, overall: Int, formerTeam: String)] = []
+
+        for player in allPlayers {
+            guard player.contractYearsRemaining > 0, !player.isFranchiseTagged else { continue }
+
+            player.contractYearsRemaining -= 1
+
+            if player.contractYearsRemaining == 0 {
+                // Player's contract has expired — becomes free agent
+                let formerTeam = allTeams.first { $0.id == player.teamID }
+                let teamAbbr = formerTeam?.abbreviation ?? "FA"
+
+                newFAs.append((
+                    name: player.fullName,
+                    position: player.position.rawValue,
+                    overall: player.overall,
+                    formerTeam: teamAbbr
+                ))
+
+                // Remove from team cap
+                if let team = formerTeam {
+                    team.currentCapUsage -= player.annualSalary
+                }
+                player.teamID = nil
+                player.annualSalary = 0
+            }
+        }
+
+        // Remove franchise tags (they last one year)
+        for player in allPlayers where player.isFranchiseTagged {
+            player.isFranchiseTagged = false
+        }
+
+        // Apply cap growth (~5-8% increase)
+        let capGrowth = Double.random(in: 0.05...0.08)
+        for team in allTeams {
+            team.salaryCap = Int(Double(team.salaryCap) * (1.0 + capGrowth))
+        }
+
+        let capAfter = playerTeam?.currentCapUsage ?? 0
+        let capFreed = capBefore - capAfter
+
+        // Sort by overall for notable FAs
+        let sortedFAs = newFAs.sorted { $0.overall > $1.overall }
+        let notable = sortedFAs.prefix(10).map { (name: $0.name, position: $0.position, overall: $0.overall) }
+
+        return LeagueYearSummary(
+            newFreeAgents: sortedFAs,
+            playerTeamCapBefore: capBefore,
+            playerTeamCapAfter: capAfter,
+            capFreed: capFreed,
+            notableFreeAgents: notable,
+            totalFreeAgentCount: newFAs.count
+        )
+    }
+
+    // MARK: - Skip Remaining FA
+
+    /// AI signs all remaining free agents to fill team rosters.
+    static func simulateRemainingFA(
+        allPlayers: [Player],
+        allTeams: [Team],
+        playerTeamID: UUID?,
+        modelContext: ModelContext
+    ) {
+        let freeAgents = generateFreeAgentMarket(allPlayers: allPlayers)
+        let aiTeams = allTeams.filter { $0.id != playerTeamID }
+        simulateAIFreeAgency(freeAgents: freeAgents, teams: aiTeams, modelContext: modelContext)
+    }
+
     // MARK: - AI Free Agency Simulation
 
     /// Let AI-controlled teams sign available free agents based on need and cap room.
