@@ -768,44 +768,30 @@ enum WeekAdvancer {
             )
 
         case .freeAgency:
-            // Decrement contract years and expire contracts for all players
-            for player in allPlayers where player.contractYearsRemaining > 0 {
-                player.contractYearsRemaining -= 1
-                if player.contractYearsRemaining == 0 {
-                    // Contract expired: player becomes a free agent
-                    if let teamID = player.teamID, let team = teamsByID[teamID] {
-                        team.currentCapUsage -= player.annualSalary
-                    }
-                    player.teamID = nil
-                    player.annualSalary = 0
-                }
-            }
+            // FA engine logic (contract decrements, AI signings, cap growth)
+            // is now handled step-by-step within the FA flow views:
+            //   - executeNewLeagueYear (contracts + cap growth)
+            //   - FAWeeklyView (player offers + AI round signings)
+            //   - simulateRemainingFA (skip button)
+            //
+            // If the player skipped the entire FA phase without entering it,
+            // run the old logic as a fallback.
+            if career.freeAgencyStep == FreeAgencyStep.finalPush.rawValue {
+                // Player never entered FA — auto-run everything
+                let summary = FreeAgencyEngine.executeNewLeagueYear(
+                    allPlayers: allPlayers,
+                    allTeams: teams,
+                    playerTeamID: career.teamID ?? UUID(),
+                    modelContext: modelContext
+                )
+                _ = summary
 
-            // Generate free agent market
-            let freeAgents = FreeAgencyEngine.generateFreeAgentMarket(allPlayers: allPlayers)
-
-            // Simulate AI free agency (AI teams sign available free agents)
-            let aiTeams = teams.filter { $0.id != career.teamID }
-            FreeAgencyEngine.simulateAIFreeAgency(
-                freeAgents: freeAgents,
-                teams: aiTeams,
-                modelContext: modelContext
-            )
-
-            // Grow salary cap for all teams. Most years 5–8% (NFL average),
-            // but ~20% chance of a tough economic year with only 0–2% growth.
-            let growthRate: Double = {
-                let roll = Double.random(in: 0...1)
-                if roll < 0.20 {
-                    // Tough economic year — flat or minimal growth
-                    return Double.random(in: 0.0...0.02)
-                } else {
-                    // Normal growth matching NFL trends
-                    return Double.random(in: 0.05...0.08)
-                }
-            }()
-            for team in teams {
-                CapManagementEngine.applyCapGrowth(team: team, growthRate: growthRate)
+                FreeAgencyEngine.simulateRemainingFA(
+                    allPlayers: allPlayers,
+                    allTeams: teams,
+                    playerTeamID: career.teamID,
+                    modelContext: modelContext
+                )
             }
 
             lastNewsItems = NewsGenerator.generateOffseasonNews(
@@ -1024,6 +1010,12 @@ enum WeekAdvancer {
             lastNewsItems.append(contentsOf: scheduleNews)
         } else {
             career.currentPhase = nextPhase
+        }
+
+        // Reset FA state when entering the free agency phase
+        if nextPhase == .freeAgency {
+            career.freeAgencyRound = 0
+            career.freeAgencyStep = FreeAgencyStep.finalPush.rawValue
         }
 
         // --- Generate inbox messages for the new phase ---
