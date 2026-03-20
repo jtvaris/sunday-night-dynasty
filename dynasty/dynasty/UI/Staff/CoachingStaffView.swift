@@ -35,11 +35,11 @@ struct CoachingStaffView: View {
     @State private var showOffensiveSchemeSelection: Bool = false
     @State private var showDefensiveSchemeSelection: Bool = false
 
-    // MARK: - Collapsible Section State (#80)
+    // MARK: - Collapsible Section State (#80, #274: AppStorage to survive sheet dismiss cycles)
     @State private var isCoordinatorsExpanded: Bool = true
     @State private var isPositionCoachesExpanded: Bool = true
-    @State private var isMedicalExpanded: Bool = true
-    @State private var isScoutingExpanded: Bool = true
+    @AppStorage("staff_isMedicalExpanded") private var isMedicalExpanded: Bool = true
+    @AppStorage("staff_isScoutingExpanded") private var isScoutingExpanded: Bool = true
 
     // MARK: - Navigation State (separate bindings — sheets for hire views, push for detail)
     @State private var hireCoachRole: CoachRole?      // Opens HireCoachView as sheet
@@ -47,6 +47,9 @@ struct CoachingStaffView: View {
     @State private var showHireScoutSheet = false       // Workaround for SwiftUI sheet(item:) stale data bug
     @State private var showHireCoachSheet = false       // Same workaround
     @State private var detailCoachID: UUID?            // Pushes CoachDetailView via navigationDestination
+    @State private var showMedicalHireSheet = false    // #276: Simple hire sheet for medical roles
+    @State private var medicalHireRole: CoachRole?     // #276: Which medical role to hire
+    @State private var medicalCandidates: [Coach] = [] // #276: Generated candidates for medical hire
 
     /// Coaches filtered to this team, derived from @Query result.
     private var coaches: [Coach] {
@@ -289,6 +292,39 @@ struct CoachingStaffView: View {
         return coachCost + scoutCost
     }
 
+    // MARK: - #270: Cost range to fill vacant slots in each section
+
+    /// Estimated cost range string to fill vacant position coach slots.
+    private var positionCoachesCostRange: String? {
+        let posRoles: [CoachRole] = [.qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach, .strengthCoach]
+        let vacant = posRoles.filter { role in !coaches.contains(where: { $0.role == role }) }
+        guard !vacant.isEmpty else { return nil }
+        let minCost = vacant.reduce(0) { $0 + $1.salaryRange.min }
+        let maxCost = vacant.reduce(0) { $0 + $1.salaryRange.max }
+        return "~$\(formatBudget(minCost))M-$\(formatBudget(maxCost))M to fill"
+    }
+
+    /// Estimated cost range string to fill vacant medical slots.
+    private var medicalCostRange: String? {
+        let medRoles: [CoachRole] = [.teamDoctor, .physio]
+        let vacant = medRoles.filter { role in !coaches.contains(where: { $0.role == role }) }
+        guard !vacant.isEmpty else { return nil }
+        let minCost = vacant.reduce(0) { $0 + $1.salaryRange.min }
+        let maxCost = vacant.reduce(0) { $0 + $1.salaryRange.max }
+        return "~$\(formatBudget(minCost))M-$\(formatBudget(maxCost))M to fill"
+    }
+
+    /// Estimated cost range string to fill vacant scout slots.
+    private var scoutingCostRange: String? {
+        guard !vacantScoutRoles.isEmpty else { return nil }
+        // ScoutRole doesn't have salaryRange, use estimatedMinimumScoutSalary-based range
+        let minCost = vacantScoutRoles.reduce(0) { $0 + estimatedMinimumScoutSalary(for: $1) }
+        let maxCost = vacantScoutRoles.reduce(0) { total, role in
+            total + (role == .chiefScout ? 600 : 250)
+        }
+        return "~$\(formatBudget(minCost))M-$\(formatBudget(maxCost))M to fill"
+    }
+
     /// Description of what position group a position coach improves.
     private func positionGroupBoost(for role: CoachRole) -> String? {
         switch role {
@@ -516,6 +552,29 @@ struct CoachingStaffView: View {
                 }
             }
         }
+        // #276: Simple medical hire sheet (no negotiation)
+        .sheet(isPresented: $showMedicalHireSheet, onDismiss: { medicalHireRole = nil; medicalCandidates = [] }) {
+            if let role = medicalHireRole, let teamID = career.teamID {
+                NavigationStack {
+                    SimpleMedicalHireSheet(
+                        role: role,
+                        candidates: medicalCandidates,
+                        remainingBudget: remainingBudget,
+                        teamID: teamID,
+                        onHired: { name, roleName in
+                            showMedicalHireSheet = false
+                            showHiringConfirmation(coachName: name, roleName: roleName)
+                        }
+                    )
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Close") { showMedicalHireSheet = false }
+                                .foregroundStyle(Color.accentGold)
+                        }
+                    }
+                }
+            }
+        }
         // Lock-in alerts moved to Dashboard workflow (CoachingStaffReviewSheet)
     }
 
@@ -723,6 +782,12 @@ struct CoachingStaffView: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(Color.textPrimary)
                             Spacer()
+                            // #270: Cost range to fill vacant slots
+                            if let costRange = positionCoachesCostRange {
+                                Text(costRange)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(Color.textTertiary)
+                            }
                             let filledCount = positionCoaches.count
                             Text("\(filledCount)/8")
                                 .font(.caption.weight(.medium).monospacedDigit())
@@ -750,7 +815,7 @@ struct CoachingStaffView: View {
                                             }
                                             .buttonStyle(.plain)
                                         } else {
-                                            compactVacantCard(role: role)
+                                            compactVacantMedicalCard(role: role)
                                         }
                                         if role != .physio {
                                             Divider().padding(.vertical, 4)
@@ -766,6 +831,18 @@ struct CoachingStaffView: View {
                                         Text("Medical Staff")
                                             .font(.subheadline.weight(.semibold))
                                             .foregroundStyle(Color.textPrimary)
+                                        Spacer()
+                                        // #270: Cost range to fill
+                                        if let costRange = medicalCostRange {
+                                            Text(costRange)
+                                                .font(.system(size: 9, weight: .medium))
+                                                .foregroundStyle(Color.textTertiary)
+                                        }
+                                        // #275: Filled/total count
+                                        let filledCount = medicalStaff.count
+                                        Text("\(filledCount)/2")
+                                            .font(.caption.weight(.medium).monospacedDigit())
+                                            .foregroundStyle(filledCount == 2 ? Color.success : Color.textTertiary)
                                     }
                                 }
                                 .tint(Color.accentGold)
@@ -800,6 +877,18 @@ struct CoachingStaffView: View {
                                         Text("Scouting")
                                             .font(.subheadline.weight(.semibold))
                                             .foregroundStyle(Color.textPrimary)
+                                        Spacer()
+                                        // #270: Cost range to fill
+                                        if let costRange = scoutingCostRange {
+                                            Text(costRange)
+                                                .font(.system(size: 9, weight: .medium))
+                                                .foregroundStyle(Color.textTertiary)
+                                        }
+                                        // #275: Filled/total count
+                                        let filledCount = scouts.count
+                                        Text("\(filledCount)/6")
+                                            .font(.caption.weight(.medium).monospacedDigit())
+                                            .foregroundStyle(filledCount == 6 ? Color.success : Color.textTertiary)
                                     }
                                 }
                                 .tint(Color.accentGold)
@@ -825,7 +914,7 @@ struct CoachingStaffView: View {
                                     }
                                     .buttonStyle(.plain)
                                 } else {
-                                    compactVacantCard(role: role)
+                                    compactVacantMedicalCard(role: role)
                                 }
                             }
                         } label: {
@@ -838,6 +927,18 @@ struct CoachingStaffView: View {
                                 Text("Medical Staff")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(Color.textPrimary)
+                                Spacer()
+                                // #270: Cost range to fill
+                                if let costRange = medicalCostRange {
+                                    Text(costRange)
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundStyle(Color.textTertiary)
+                                }
+                                // #275: Filled/total count
+                                let filledCount = medicalStaff.count
+                                Text("\(filledCount)/2")
+                                    .font(.caption.weight(.medium).monospacedDigit())
+                                    .foregroundStyle(filledCount == 2 ? Color.success : Color.textTertiary)
                             }
                         }
                         .tint(Color.accentGold)
@@ -870,6 +971,18 @@ struct CoachingStaffView: View {
                                 Text("Scouting Department")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(Color.textPrimary)
+                                Spacer()
+                                // #270: Cost range to fill
+                                if let costRange = scoutingCostRange {
+                                    Text(costRange)
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundStyle(Color.textTertiary)
+                                }
+                                // #275: Filled/total count
+                                let filledCount = scouts.count
+                                Text("\(filledCount)/6")
+                                    .font(.caption.weight(.medium).monospacedDigit())
+                                    .foregroundStyle(filledCount == 6 ? Color.success : Color.textTertiary)
                             }
                         }
                         .tint(Color.accentGold)
@@ -933,7 +1046,8 @@ struct CoachingStaffView: View {
                 SchemeSelectionView(
                     coordinator: oc,
                     players: offensivePlayers,
-                    isOffensive: true
+                    isOffensive: true,
+                    coaches: coaches
                 )
             }
         }
@@ -942,7 +1056,8 @@ struct CoachingStaffView: View {
                 SchemeSelectionView(
                     coordinator: dc,
                     players: defensivePlayers,
-                    isOffensive: false
+                    isOffensive: false,
+                    coaches: coaches
                 )
             }
         }
@@ -1719,6 +1834,63 @@ struct CoachingStaffView: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - #276: Compact Vacant Medical Card (simple hire flow)
+
+    @ViewBuilder
+    private func compactVacantMedicalCard(role: CoachRole) -> some View {
+        Button {
+            medicalHireRole = role
+            medicalCandidates = CoachingEngine.generateCoachCandidates(
+                role: role,
+                count: Int.random(in: 8...12),
+                teamBudget: coachingBudget,
+                teamWins: team?.wins ?? 8,
+                teamReputation: career.reputation
+            )
+            showMedicalHireSheet = true
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(role.abbreviation)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.textTertiary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 3))
+
+                    Spacer()
+
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.accentGold)
+                }
+
+                Text(role.displayName)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(1)
+
+                if let impact = hiringImpactDescription(for: role) {
+                    Text(impact)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.success)
+                        .lineLimit(1)
+                }
+
+                Text(estimatedSalaryRange(for: role))
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.accentGold.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     /// Returns a color based on the chemistry score.
     private func chemistryColor(for score: Double) -> Color {
         switch score {
@@ -2404,6 +2576,152 @@ extension DefensiveScheme {
         case .tampa2:   return "Tampa 2"
         case .multiple: return "Multiple"
         case .hybrid:   return "Hybrid"
+        }
+    }
+}
+
+// MARK: - #276: Simple Medical Hire Sheet (no negotiation)
+
+private struct SimpleMedicalHireSheet: View {
+    let role: CoachRole
+    let candidates: [Coach]
+    let remainingBudget: Int
+    let teamID: UUID
+    var onHired: ((String, String) -> Void)?
+
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var hiredID: UUID?
+
+    private func coachOverall(_ coach: Coach) -> Int {
+        let sum = coach.playCalling + coach.playerDevelopment + coach.gamePlanning
+            + coach.scoutingAbility + coach.recruiting + coach.motivation
+            + coach.discipline + coach.adaptability + coach.mediaHandling
+            + coach.contractNegotiation + coach.moraleInfluence + coach.reputation
+        return sum / 12
+    }
+
+    var body: some View {
+        ZStack {
+            Color.backgroundPrimary.ignoresSafeArea()
+
+            ScrollView {
+                VStack(spacing: 12) {
+                    // Header
+                    VStack(spacing: 4) {
+                        Text("Hire \(role.displayName)")
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(Color.textPrimary)
+                        Text("Select a candidate to hire at their listed salary. No negotiation needed.")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(.top, 8)
+
+                    ForEach(candidates.sorted(by: { coachOverall($0) > coachOverall($1) })) { candidate in
+                        let ovr = coachOverall(candidate)
+                        let isOverBudget = candidate.salary > remainingBudget
+                        let isHired = hiredID == candidate.id
+
+                        HStack(spacing: 12) {
+                            // OVR badge
+                            Text("\(ovr)")
+                                .font(.system(size: 16, weight: .bold).monospacedDigit())
+                                .foregroundStyle(Color.forRating(ovr))
+                                .frame(width: 32)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(candidate.fullName)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(isOverBudget ? Color.textTertiary : Color.textPrimary)
+                                HStack(spacing: 6) {
+                                    Text("Age \(candidate.age)")
+                                    Text("\u{00B7}")
+                                    Text("\(candidate.yearsExperience) yrs exp")
+                                    Text("\u{00B7}")
+                                    Text(candidate.personality.shortLabel)
+                                        .foregroundStyle(Color.accentBlue)
+                                }
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                            }
+
+                            Spacer()
+
+                            if isHired {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(Color.success)
+                                    Text("Hired")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(Color.success)
+                                }
+                            } else {
+                                Button {
+                                    hireMedical(candidate)
+                                } label: {
+                                    VStack(spacing: 1) {
+                                        Text("Hire")
+                                            .font(.caption.weight(.bold))
+                                        Text("$\(String(format: "%.1f", Double(candidate.salary) / 1000.0))M/yr")
+                                            .font(.system(size: 9).monospacedDigit())
+                                    }
+                                    .foregroundStyle(isOverBudget ? Color.textTertiary : Color.backgroundPrimary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(isOverBudget ? Color.backgroundTertiary : Color.accentGold)
+                                    )
+                                }
+                                .disabled(isOverBudget || hiredID != nil)
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(isHired ? Color.success.opacity(0.06) : Color.backgroundSecondary)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .strokeBorder(isHired ? Color.success.opacity(0.3) : Color.surfaceBorder.opacity(0.5), lineWidth: 1)
+                                )
+                        )
+                        .opacity(isOverBudget && !isHired ? 0.6 : 1.0)
+                    }
+                }
+                .padding(16)
+            }
+        }
+        .navigationTitle("Hire \(role.displayName)")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+    }
+
+    private func hireMedical(_ candidate: Coach) {
+        guard candidate.salary <= remainingBudget else { return }
+
+        // Remove existing coach in this role
+        let descriptor = FetchDescriptor<Coach>(
+            predicate: #Predicate { $0.teamID == teamID }
+        )
+        if let existing = try? modelContext.fetch(descriptor) {
+            existing.filter { $0.role == role }.forEach { modelContext.delete($0) }
+        }
+
+        candidate.teamID = teamID
+        modelContext.insert(candidate)
+        hiredID = candidate.id
+        try? modelContext.save()
+
+        let hiredName = candidate.fullName
+        let hiredRole = role.displayName
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            onHired?(hiredName, hiredRole)
+            dismiss()
         }
     }
 }

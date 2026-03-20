@@ -10,6 +10,7 @@ struct SchemeSelectionView: View {
     let coordinator: Coach
     let players: [Player]
     let isOffensive: Bool
+    var coaches: [Coach] = []
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -88,11 +89,10 @@ struct SchemeSelectionView: View {
 
     private func offensiveSchemeRow(_ scheme: OffensiveScheme) -> some View {
         let isSelected = coordinator.offensiveScheme == scheme
-        let avgFit = averageOffensiveFit(for: scheme)
-        let avgPercent = Int(avgFit * 100)
-        let fitColor = schemeFitColor(avgPercent)
         let expertiseValue = coordinator.expertise(for: scheme.rawValue)
         let expertiseColor = schemeExpertiseColor(expertiseValue)
+        let coachFit = staffCoachFit(schemeKey: scheme.rawValue, isOffensive: true)
+        let rosterFam = rosterFamiliarity(schemeKey: scheme.rawValue, side: .offense)
 
         return Button {
             selectOffensiveScheme(scheme)
@@ -121,7 +121,7 @@ struct SchemeSelectionView: View {
 
                     Spacer()
 
-                    // Coach expertise
+                    // Coach expertise (coordinator)
                     VStack(alignment: .trailing, spacing: 2) {
                         Text("\(expertiseValue)%")
                             .font(.system(size: 14, weight: .bold).monospacedDigit())
@@ -130,17 +130,23 @@ struct SchemeSelectionView: View {
                             .font(.system(size: 8, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                     }
-
-                    // Roster fit preview
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text("\(avgPercent)%")
-                            .font(.system(size: 14, weight: .bold).monospacedDigit())
-                            .foregroundStyle(fitColor)
-                        Text("Roster Fit")
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundStyle(Color.textTertiary)
-                    }
                 }
+
+                // Coach Fit + Roster Familiarity bars
+                VStack(spacing: 4) {
+                    schemeMetricBar(
+                        label: "Staff Fit",
+                        percent: coachFit,
+                        icon: "person.2.fill"
+                    )
+                    schemeMetricBar(
+                        label: "Roster Fam",
+                        percent: rosterFam,
+                        icon: "person.3.fill"
+                    )
+                }
+                .padding(.top, 8)
+                .padding(.leading, 32)
 
                 // Low expertise warning
                 if expertiseValue < 40 {
@@ -174,11 +180,10 @@ struct SchemeSelectionView: View {
 
     private func defensiveSchemeRow(_ scheme: DefensiveScheme) -> some View {
         let isSelected = coordinator.defensiveScheme == scheme
-        let avgFit = averageDefensiveFit(for: scheme)
-        let avgPercent = Int(avgFit * 100)
-        let fitColor = schemeFitColor(avgPercent)
         let expertiseValue = coordinator.expertise(for: scheme.rawValue)
         let expertiseColor = schemeExpertiseColor(expertiseValue)
+        let coachFit = staffCoachFit(schemeKey: scheme.rawValue, isOffensive: false)
+        let rosterFam = rosterFamiliarity(schemeKey: scheme.rawValue, side: .defense)
 
         return Button {
             selectDefensiveScheme(scheme)
@@ -206,7 +211,7 @@ struct SchemeSelectionView: View {
 
                     Spacer()
 
-                    // Coach expertise
+                    // Coach expertise (coordinator)
                     VStack(alignment: .trailing, spacing: 2) {
                         Text("\(expertiseValue)%")
                             .font(.system(size: 14, weight: .bold).monospacedDigit())
@@ -215,16 +220,23 @@ struct SchemeSelectionView: View {
                             .font(.system(size: 8, weight: .medium))
                             .foregroundStyle(Color.textTertiary)
                     }
-
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text("\(avgPercent)%")
-                            .font(.system(size: 14, weight: .bold).monospacedDigit())
-                            .foregroundStyle(fitColor)
-                        Text("Roster Fit")
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundStyle(Color.textTertiary)
-                    }
                 }
+
+                // Coach Fit + Roster Familiarity bars
+                VStack(spacing: 4) {
+                    schemeMetricBar(
+                        label: "Staff Fit",
+                        percent: coachFit,
+                        icon: "person.2.fill"
+                    )
+                    schemeMetricBar(
+                        label: "Roster Fam",
+                        percent: rosterFam,
+                        icon: "person.3.fill"
+                    )
+                }
+                .padding(.top, 8)
+                .padding(.leading, 32)
 
                 // Low expertise warning
                 if expertiseValue < 40 {
@@ -303,26 +315,66 @@ struct SchemeSelectionView: View {
         dismiss()
     }
 
+    // MARK: - Shared Metric Bar
+
+    private func schemeMetricBar(label: String, percent: Int, icon: String) -> some View {
+        let color = metricColor(percent)
+        return HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 8))
+                .foregroundStyle(color)
+                .frame(width: 12)
+            Text(label)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: 58, alignment: .leading)
+            Text("\(percent)%")
+                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                .foregroundStyle(color)
+                .frame(width: 28, alignment: .trailing)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.surfaceBorder.opacity(0.4))
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(color)
+                        .frame(width: geo.size.width * CGFloat(min(percent, 100)) / 100.0)
+                }
+            }
+            .frame(height: 5)
+        }
+    }
+
     // MARK: - Fit Calculations
 
-    private func averageOffensiveFit(for scheme: OffensiveScheme) -> Double {
-        guard !players.isEmpty else { return 0.5 }
-        return players.reduce(0.0) { sum, player in
-            sum + CoachingEngine.schemeFit(player: player, offensiveScheme: scheme, defensiveScheme: nil)
-        } / Double(players.count)
+    /// Average scheme expertise across all relevant staff (coordinator + position coaches).
+    private func staffCoachFit(schemeKey: String, isOffensive: Bool) -> Int {
+        let relevantRoles: [CoachRole] = isOffensive
+            ? [.offensiveCoordinator, .qbCoach, .rbCoach, .wrCoach, .olCoach]
+            : [.defensiveCoordinator, .dlCoach, .lbCoach, .dbCoach]
+        var relevantCoaches = coaches.filter { relevantRoles.contains($0.role) }
+        // Always include the coordinator being viewed
+        if !relevantCoaches.contains(where: { $0.id == coordinator.id }) {
+            relevantCoaches.append(coordinator)
+        }
+        guard !relevantCoaches.isEmpty else { return coordinator.expertise(for: schemeKey) }
+        return relevantCoaches.reduce(0) { $0 + $1.expertise(for: schemeKey) } / relevantCoaches.count
     }
 
-    private func averageDefensiveFit(for scheme: DefensiveScheme) -> Double {
-        guard !players.isEmpty else { return 0.5 }
-        return players.reduce(0.0) { sum, player in
-            sum + CoachingEngine.schemeFit(player: player, offensiveScheme: nil, defensiveScheme: scheme)
-        } / Double(players.count)
+    /// Percentage of top-11 starters (by OVR) on the given side with schemeFamiliarity >= 50.
+    private func rosterFamiliarity(schemeKey: String, side: PositionSide) -> Int {
+        let sidePlayers = players.filter { $0.position.side == side }
+        let starters = Array(sidePlayers.sorted { $0.overall > $1.overall }.prefix(11))
+        guard !starters.isEmpty else { return 0 }
+        let familiarCount = starters.filter { $0.schemeFam(for: schemeKey) >= 50 }.count
+        return Int(Double(familiarCount) / Double(starters.count) * 100)
     }
 
-    private func schemeFitColor(_ percent: Int) -> Color {
-        if percent >= 80 { return Color.success }
-        if percent >= 60 { return Color.accentGold }
-        return Color.danger
+    private func metricColor(_ percent: Int) -> Color {
+        if percent >= 75 { return .success }
+        if percent >= 50 { return .accentGold }
+        if percent >= 25 { return .warning }
+        return .danger
     }
 
     private func schemeExpertiseColor(_ value: Int) -> Color {

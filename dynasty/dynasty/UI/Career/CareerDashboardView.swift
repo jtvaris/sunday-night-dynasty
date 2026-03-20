@@ -2278,20 +2278,23 @@ private struct CoachingStaffReviewSheet: View {
                 }
             }
 
-            // Scheme-Roster Fit
+            // Scheme Fit Analysis
             if let offScheme = oc?.offensiveScheme {
                 Divider().overlay(Color.surfaceBorder.opacity(0.5))
-                schemeRosterFitRow(
-                    schemeName: offScheme.displayName,
+                schemeFitAnalysis(
+                    scheme: offScheme.displayName,
                     schemeKey: offScheme.rawValue,
-                    side: .offense
+                    side: .offense,
+                    isOffensive: true
                 )
             }
             if let defScheme = dc?.defensiveScheme {
-                schemeRosterFitRow(
-                    schemeName: defScheme.displayName,
+                Divider().overlay(Color.surfaceBorder.opacity(0.5))
+                schemeFitAnalysis(
+                    scheme: defScheme.displayName,
                     schemeKey: defScheme.rawValue,
-                    side: .defense
+                    side: .defense,
+                    isOffensive: false
                 )
             }
 
@@ -2314,35 +2317,205 @@ private struct CoachingStaffReviewSheet: View {
         return rawValue
     }
 
-    private func schemeRosterFitRow(schemeName: String, schemeKey: String, side: PositionSide) -> some View {
+    // MARK: - Scheme Fit Analysis
+
+    private func schemeFitAnalysis(scheme: String, schemeKey: String, side: PositionSide, isOffensive: Bool) -> some View {
+        let coachFit = calculateCoachFit(schemeKey: schemeKey, isOffensive: isOffensive)
+        let rosterFit = calculateRosterFit(schemeKey: schemeKey, side: side)
+        let alternative = bestAlternativeScheme(currentKey: schemeKey, side: side, isOffensive: isOffensive)
+
+        return VStack(alignment: .leading, spacing: 8) {
+            // Current scheme header
+            HStack(spacing: 6) {
+                Image(systemName: isOffensive ? "football.fill" : "shield.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(isOffensive ? Color.accentBlue : Color.danger)
+                Text("\(isOffensive ? "OFFENSIVE" : "DEFENSIVE") SCHEME: \(scheme)")
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundStyle(Color.textPrimary)
+                    .tracking(0.3)
+            }
+
+            // Coach Fit
+            schemeFitBar(
+                label: "Coach Fit",
+                percent: coachFit.total,
+                detail: coachFit.detail,
+                color: fitBarColor(coachFit.total)
+            )
+
+            // Roster Fit
+            schemeFitBar(
+                label: "Roster Fit",
+                percent: rosterFit.percent,
+                detail: "\(rosterFit.familiarCount)/\(rosterFit.starterCount) starters familiar",
+                color: fitBarColor(rosterFit.percent)
+            )
+
+            // Best Alternative
+            if let alt = alternative {
+                let currentTotal = coachFit.total + rosterFit.percent
+                let altTotal = alt.coachFit + alt.rosterFit
+                let significantlyBetter = altTotal - currentTotal > 20 // >10% avg across both
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.swap")
+                            .font(.system(size: 9))
+                            .foregroundStyle(significantlyBetter ? Color.warning : Color.textTertiary)
+                        Text("Alternative: \(alt.name)")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(significantlyBetter ? Color.warning : Color.textSecondary)
+                    }
+
+                    HStack(spacing: 12) {
+                        HStack(spacing: 3) {
+                            Text("Coach:")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.textTertiary)
+                            Text("\(alt.coachFit)%")
+                                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                .foregroundStyle(fitBarColor(alt.coachFit))
+                        }
+                        HStack(spacing: 3) {
+                            Text("Roster:")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.textTertiary)
+                            Text("\(alt.rosterFit)%")
+                                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                .foregroundStyle(fitBarColor(alt.rosterFit))
+                        }
+                    }
+                    .padding(.leading, 13)
+
+                    if significantlyBetter {
+                        HStack(spacing: 4) {
+                            Image(systemName: "lightbulb.fill")
+                                .font(.system(size: 9))
+                            Text("Consider switching -- \(alt.name) may be a better fit")
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                        .foregroundStyle(Color.warning)
+                        .padding(.leading, 13)
+                    }
+                }
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(significantlyBetter ? Color.warning.opacity(0.06) : Color.backgroundPrimary.opacity(0.5))
+                )
+            }
+        }
+    }
+
+    private func schemeFitBar(label: String, percent: Int, detail: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(label)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                    .frame(width: 60, alignment: .leading)
+                Text("\(percent)%")
+                    .font(.system(size: 11, weight: .bold).monospacedDigit())
+                    .foregroundStyle(color)
+                // Progress bar
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color.surfaceBorder.opacity(0.4))
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(color)
+                            .frame(width: geo.size.width * CGFloat(min(percent, 100)) / 100.0)
+                    }
+                }
+                .frame(height: 6)
+            }
+            Text(detail)
+                .font(.system(size: 9))
+                .foregroundStyle(Color.textTertiary)
+                .padding(.leading, 66)
+        }
+    }
+
+    private func fitBarColor(_ percent: Int) -> Color {
+        if percent >= 75 { return .success }
+        if percent >= 50 { return .accentGold }
+        if percent >= 25 { return .warning }
+        return .danger
+    }
+
+    // MARK: - Fit Calculation Helpers
+
+    private struct CoachFitResult {
+        let total: Int
+        let detail: String
+    }
+
+    private struct RosterFitResult {
+        let percent: Int
+        let familiarCount: Int
+        let starterCount: Int
+    }
+
+    private struct AlternativeScheme {
+        let name: String
+        let coachFit: Int
+        let rosterFit: Int
+    }
+
+    private func calculateCoachFit(schemeKey: String, isOffensive: Bool) -> CoachFitResult {
+        // Relevant coaches: coordinator + position coaches on that side
+        let relevantRoles: [CoachRole] = isOffensive
+            ? [.offensiveCoordinator, .qbCoach, .rbCoach, .wrCoach, .olCoach]
+            : [.defensiveCoordinator, .dlCoach, .lbCoach, .dbCoach]
+
+        let relevantCoaches = coaches.filter { relevantRoles.contains($0.role) }
+        guard !relevantCoaches.isEmpty else { return CoachFitResult(total: 0, detail: "No coaches") }
+
+        let expertiseValues = relevantCoaches.map { ($0.role.abbreviation, $0.expertise(for: schemeKey)) }
+        let avg = expertiseValues.reduce(0) { $0 + $1.1 } / expertiseValues.count
+
+        let detailParts = expertiseValues.prefix(3).map { "\($0.0): \($0.1)" }
+        let detail = detailParts.joined(separator: ", ")
+
+        return CoachFitResult(total: avg, detail: detail)
+    }
+
+    private func calculateRosterFit(schemeKey: String, side: PositionSide) -> RosterFitResult {
         let sidePlayers = players.filter { $0.position.side == side }
         let starters = Array(sidePlayers.sorted { $0.overall > $1.overall }.prefix(11))
         let familiarCount = starters.filter { $0.schemeFam(for: schemeKey) >= 50 }.count
         let pct = starters.isEmpty ? 0 : Int(Double(familiarCount) / Double(starters.count) * 100)
-        let grade: String = pct >= 75 ? "Great" : (pct >= 50 ? "Good" : (pct >= 25 ? "Fair" : "Poor"))
-        let gradeColor: Color = pct >= 75 ? .success : (pct >= 50 ? .accentGold : (pct >= 25 ? .warning : .danger))
+        return RosterFitResult(percent: pct, familiarCount: familiarCount, starterCount: starters.count)
+    }
 
-        return HStack(spacing: 6) {
-            Image(systemName: "person.3.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(gradeColor)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Roster fits \(schemeName) \(side == .offense ? "offense" : "defense"): **\(grade)**")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.textPrimary)
-                Text("\(pct)% of starters have scheme familiarity")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.textTertiary)
-            }
-            Spacer()
-            Text(grade)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(gradeColor)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(gradeColor.opacity(0.12), in: Capsule())
+    private func bestAlternativeScheme(currentKey: String, side: PositionSide, isOffensive: Bool) -> AlternativeScheme? {
+        struct SchemeScore: Comparable {
+            let name: String
+            let key: String
+            let coachFit: Int
+            let rosterFit: Int
+            var total: Int { coachFit + rosterFit }
+            static func < (lhs: SchemeScore, rhs: SchemeScore) -> Bool { lhs.total < rhs.total }
         }
+
+        var scores: [SchemeScore] = []
+        if isOffensive {
+            for scheme in OffensiveScheme.allCases where scheme.rawValue != currentKey {
+                let cf = calculateCoachFit(schemeKey: scheme.rawValue, isOffensive: true).total
+                let rf = calculateRosterFit(schemeKey: scheme.rawValue, side: side).percent
+                scores.append(SchemeScore(name: scheme.displayName, key: scheme.rawValue, coachFit: cf, rosterFit: rf))
+            }
+        } else {
+            for scheme in DefensiveScheme.allCases where scheme.rawValue != currentKey {
+                let cf = calculateCoachFit(schemeKey: scheme.rawValue, isOffensive: false).total
+                let rf = calculateRosterFit(schemeKey: scheme.rawValue, side: side).percent
+                scores.append(SchemeScore(name: scheme.displayName, key: scheme.rawValue, coachFit: cf, rosterFit: rf))
+            }
+        }
+
+        guard let best = scores.max() else { return nil }
+        return AlternativeScheme(name: best.name, coachFit: best.coachFit, rosterFit: best.rosterFit)
     }
 
     private var staffChemistryRow: some View {

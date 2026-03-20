@@ -7,9 +7,10 @@ struct RosterViewWrapper: View {
     @Environment(\.modelContext) private var modelContext
     @State private var players: [Player] = []
     @State private var teamSalaryCap: Int = 255_000
+    @State private var defensiveScheme: DefensiveScheme = .base43
 
     var body: some View {
-        RosterView(players: players, teamSalaryCap: teamSalaryCap)
+        RosterView(players: players, teamSalaryCap: teamSalaryCap, defensiveScheme: defensiveScheme)
             .task {
                 guard let teamID = career.teamID else { return }
                 let playerDescriptor = FetchDescriptor<Player>(
@@ -23,6 +24,16 @@ struct RosterViewWrapper: View {
                 )
                 if let team = (try? modelContext.fetch(teamDescriptor))?.first {
                     teamSalaryCap = team.salaryCap
+                }
+
+                // Fetch the defensive coordinator's scheme
+                let coachDescriptor = FetchDescriptor<Coach>(
+                    predicate: #Predicate { $0.teamID == teamID }
+                )
+                if let coaches = try? modelContext.fetch(coachDescriptor),
+                   let dc = coaches.first(where: { $0.role == .defensiveCoordinator }),
+                   let scheme = dc.defensiveScheme {
+                    defensiveScheme = scheme
                 }
             }
     }

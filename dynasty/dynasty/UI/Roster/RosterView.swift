@@ -4,6 +4,8 @@ struct RosterView: View {
     let players: [Player]
     /// The team's current salary cap in thousands. Falls back to 255_000 if not provided.
     var teamSalaryCap: Int = 255_000
+    /// The defensive coordinator's scheme, used to determine correct DL starter counts.
+    var defensiveScheme: DefensiveScheme = .base43
 
     // MARK: - Environment
 
@@ -284,6 +286,35 @@ struct RosterView: View {
 
     // MARK: - List Content
 
+    /// Returns scheme-aware starter count for a position.
+    private func schemeStarterCount(for position: Position) -> Int {
+        let counts = PositionGradeCalculator.starterCounts(for: defensiveScheme)
+        return counts[position] ?? 1
+    }
+
+    /// Sorts group players: starters first (by OVR desc), then backups (by OVR desc).
+    /// Uses scheme-aware starter counts for defensive positions.
+    private func starterSortedPlayers(in group: PositionGroup, from groupPlayers: [Player]) -> [Player] {
+        // Group by position, determine starters per position
+        var starters: [Player] = []
+        var backups: [Player] = []
+
+        for position in group.positions {
+            let posPlayers = depthSortedPlayers(at: position, from: groupPlayers)
+            let starterCount = group.positions.first?.side == .defense
+                ? schemeStarterCount(for: position)
+                : (PositionGradeCalculator.idealStarterCounts[position] ?? 1)
+            starters.append(contentsOf: posPlayers.prefix(starterCount))
+            backups.append(contentsOf: posPlayers.dropFirst(starterCount))
+        }
+
+        // Sort starters by OVR desc, backups by OVR desc
+        starters.sort { $0.overall > $1.overall }
+        backups.sort { $0.overall > $1.overall }
+
+        return starters + backups
+    }
+
     private var listContent: some View {
         List {
             sortableHeader
@@ -291,8 +322,9 @@ struct RosterView: View {
             ForEach(activeGroups) { group in
                 let groupPlayers = filteredPlayers.filter { group.positions.contains($0.position) }
                 if !groupPlayers.isEmpty {
+                    let sortedGroupPlayers = starterSortedPlayers(in: group, from: groupPlayers)
                     Section {
-                        ForEach(groupPlayers) { player in
+                        ForEach(sortedGroupPlayers) { player in
                             let posPlayers = groupPlayers.filter { $0.position == player.position }
                             NavigationLink(destination: PlayerDetailView(player: player)) {
                                 PlayerRowView(
@@ -319,7 +351,8 @@ struct RosterView: View {
                         PositionGroupHeader(
                             group: group,
                             players: groupPlayers,
-                            isWeakest: group.name == weakestGroupName
+                            isWeakest: group.name == weakestGroupName,
+                            defensiveScheme: group.positions.first?.side == .defense ? defensiveScheme : nil
                         )
                     }
                 }
@@ -405,11 +438,10 @@ struct RosterView: View {
             }
         case .attributes:
             Group {
-                headerLabel("SPD", width: 32)
-                headerLabel("STR", width: 32)
-                headerLabel("AGI", width: 32)
-                headerLabel("AWR", width: 32)
-                headerLabel("DEC", width: 32)
+                headerLabel("Skill 1", width: 32)
+                headerLabel("Skill 2", width: 32)
+                headerLabel("Skill 3", width: 32)
+                headerLabel("Skill 4", width: 32)
                 sortButton("OVR", sort: .overall, width: 32)
             }
         case .depth:
@@ -888,7 +920,7 @@ struct PositionGroup: Identifiable {
 /// Shared helper for computing starter grade + depth grade for a position group.
 enum PositionGradeCalculator {
 
-    /// Ideal starter counts per individual position.
+    /// Ideal starter counts per individual position (default: 4-3 defense).
     static let idealStarterCounts: [Position: Int] = [
         .QB: 1, .RB: 2, .FB: 1, .WR: 3, .TE: 1,
         .LT: 1, .LG: 1, .C: 1, .RG: 1, .RT: 1,
@@ -897,9 +929,35 @@ enum PositionGradeCalculator {
         .K: 1, .P: 1,
     ]
 
+    /// Scheme-aware starter counts for defensive positions.
+    /// - 4-3/Cover3/PressMan/Tampa2: 2 DE + 2 DT, 2 OLB + 1 MLB
+    /// - 3-4/Multiple/Hybrid: 2 DE + 1 DT(NT), 2 OLB + 2 MLB
+    static func starterCounts(for scheme: DefensiveScheme) -> [Position: Int] {
+        var counts = idealStarterCounts
+        switch scheme {
+        case .base34, .multiple, .hybrid:
+            counts[.DT] = 1   // 3-4: one NT
+            counts[.DE] = 2
+            counts[.OLB] = 2
+            counts[.MLB] = 2  // 3-4 uses 2 ILBs
+        case .base43, .cover3, .pressMan, .tampa2:
+            counts[.DT] = 2   // 4-3: two DTs
+            counts[.DE] = 2
+            counts[.OLB] = 2
+            counts[.MLB] = 1
+        }
+        return counts
+    }
+
     /// Returns the total ideal starter count for a set of positions.
     static func starterCount(for positions: [Position]) -> Int {
         positions.reduce(0) { $0 + (idealStarterCounts[$1] ?? 1) }
+    }
+
+    /// Returns the total ideal starter count for a set of positions using scheme-aware counts.
+    static func starterCount(for positions: [Position], scheme: DefensiveScheme) -> Int {
+        let counts = starterCounts(for: scheme)
+        return positions.reduce(0) { $0 + (counts[$1] ?? 1) }
     }
 
     /// Converts an average OVR to a letter grade using the #235 thresholds.
@@ -941,12 +999,19 @@ enum PositionGradeCalculator {
     /// - Parameters:
     ///   - players: All players in the position group (e.g. all OL players).
     ///   - positions: The positions in this group (e.g. [.LT, .LG, .C, .RG, .RT]).
+    ///   - scheme: Optional defensive scheme for scheme-aware starter counts.
     /// - Returns: Tuple with starter grade letter, depth grade letter, starter avg OVR, depth avg OVR.
     static func calculatePositionGrades(
         players: [Player],
-        positions: [Position]
+        positions: [Position],
+        scheme: DefensiveScheme? = nil
     ) -> (starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int) {
-        let n = starterCount(for: positions)
+        let n: Int
+        if let scheme {
+            n = starterCount(for: positions, scheme: scheme)
+        } else {
+            n = starterCount(for: positions)
+        }
         let sorted = players.sorted { $0.overall > $1.overall }
         let starters = Array(sorted.prefix(n))
         let backups = Array(sorted.dropFirst(n))
@@ -967,9 +1032,10 @@ struct PositionGroupHeader: View {
     let group: PositionGroup
     let players: [Player]
     var isWeakest: Bool = false
+    var defensiveScheme: DefensiveScheme? = nil
 
     private var grades: (starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int) {
-        PositionGradeCalculator.calculatePositionGrades(players: players, positions: group.positions)
+        PositionGradeCalculator.calculatePositionGrades(players: players, positions: group.positions, scheme: defensiveScheme)
     }
 
     private var injuredCount: Int {

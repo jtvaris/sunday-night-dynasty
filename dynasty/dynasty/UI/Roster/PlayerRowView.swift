@@ -246,20 +246,50 @@ struct PlayerRowView: View {
         }
     }
 
-    // MARK: - Attribute Columns
+    // MARK: - Position Skills Columns (#280)
+
+    /// Returns position-specific attribute tuples: (value, label).
+    private var positionSkillAttributes: [(value: Int, label: String)] {
+        switch player.positionAttributes {
+        case .quarterback(let a):
+            return [(a.armStrength, "ARM"), (a.accuracyShort, "SHT"), (a.accuracyDeep, "DEP"), (a.pocketPresence, "POC")]
+        case .wideReceiver(let a):
+            return [(a.routeRunning, "RTE"), (a.catching, "CTH"), (a.release, "REL")]
+        case .runningBack(let a):
+            return [(a.vision, "VIS"), (a.elusiveness, "ELU"), (a.breakTackle, "TRK")]
+        case .tightEnd(let a):
+            return [(a.blocking, "BLK"), (a.catching, "CTH"), (a.routeRunning, "RTE")]
+        case .offensiveLine(let a):
+            return [(a.passBlock, "PBK"), (a.runBlock, "RBK"), (a.anchor, "ANC")]
+        case .defensiveLine(let a):
+            return [(a.passRush, "PRU"), (a.blockShedding, "RST"), (a.powerMoves, "PWR")]
+        case .linebacker(let a):
+            return [(a.tackling, "TKL"), (a.zoneCoverage, "ZCV"), (a.manCoverage, "MCV")]
+        case .defensiveBack(let a):
+            if player.position == .CB {
+                return [(a.manCoverage, "MAN"), (a.zoneCoverage, "ZON"), (a.press, "PRS")]
+            } else {
+                // Safeties: range (zone), tackle-oriented, ball skills
+                return [(a.zoneCoverage, "RNG"), (a.ballSkills, "BAL"), (a.manCoverage, "MCV")]
+            }
+        case .kicking(let a):
+            return [(a.kickPower, "PWR"), (a.kickAccuracy, "ACC")]
+        }
+    }
 
     private var attributeColumns: some View {
         Group {
-            colorCodedMiniAttribute(value: player.physical.speed, label: "SPD")
-                .frame(width: 32, alignment: .center)
-            colorCodedMiniAttribute(value: player.physical.strength, label: "STR")
-                .frame(width: 32, alignment: .center)
-            colorCodedMiniAttribute(value: player.physical.agility, label: "AGI")
-                .frame(width: 32, alignment: .center)
-            colorCodedMiniAttribute(value: player.mental.awareness, label: "AWR")
-                .frame(width: 32, alignment: .center)
-            colorCodedMiniAttribute(value: player.mental.decisionMaking, label: "DEC")
-                .frame(width: 32, alignment: .center)
+            let skills = positionSkillAttributes
+            ForEach(Array(skills.enumerated()), id: \.offset) { _, skill in
+                colorCodedMiniAttribute(value: skill.value, label: skill.label)
+                    .frame(width: 32, alignment: .center)
+            }
+            // Pad to 4 columns if fewer attributes
+            if skills.count < 4 {
+                ForEach(0..<(4 - skills.count), id: \.self) { _ in
+                    Spacer().frame(width: 32)
+                }
+            }
 
             // OVR
             Text("\(player.overall)")
@@ -693,7 +723,7 @@ enum RosterAnalysisMode: String, CaseIterable, Identifiable {
         case .contracts:   return "Contracts"
         case .development: return "Development"
         case .physical:    return "Physical"
-        case .attributes:  return "Attributes"
+        case .attributes:  return "Position Skills"
         case .depth:       return "Depth"
         }
     }
@@ -704,7 +734,7 @@ enum RosterAnalysisMode: String, CaseIterable, Identifiable {
         case .contracts:   return "dollarsign.circle"
         case .development: return "chart.line.uptrend.xyaxis"
         case .physical:    return "figure.run"
-        case .attributes:  return "slider.horizontal.3"
+        case .attributes:  return "figure.american.football"
         case .depth:       return "person.3.sequence"
         }
     }

@@ -26,6 +26,8 @@ struct HireCoachView: View {
     @State private var schemeFilter: String = "All"
     @State private var showValueLegend: Bool = false
     @State private var showSchemeTip: Bool = false
+    /// #271: Track candidates who rejected offers — shown grayed out with "Signed elsewhere"
+    @State private var rejectedCandidates: Set<UUID> = []
 
     /// The team's head coach, used to determine current team scheme for fit indicator.
     private var teamHeadCoach: Coach? {
@@ -212,7 +214,8 @@ struct HireCoachView: View {
                 candidateRank: candidateRank(for: candidate),
                 totalCandidates: filteredCandidates.count,
                 schemeFitResult: schemeFit(for: candidate),
-                onHire: { hire(candidate) }
+                onHire: { hire(candidate) },
+                onRejected: { rejectedCandidates.insert(candidate.id) }
             )
         }
     }
@@ -395,7 +398,7 @@ struct HireCoachView: View {
             .foregroundStyle(sortColumn == .value ? Color.accentGold : Color.textTertiary)
             // Status column
             Text("")
-                .frame(width: 30)
+                .frame(width: 64)
         }
         .font(.system(size: 10, weight: .semibold))
         .foregroundStyle(Color.textTertiary)
@@ -428,6 +431,7 @@ struct HireCoachView: View {
     private func candidateRow(_ candidate: Coach) -> some View {
         let isOverBudget = candidate.salary > remainingBudget
         let isHired = hiredCoachID == candidate.id
+        let isRejected = rejectedCandidates.contains(candidate.id)
         let ovr = coachOverall(candidate)
         let isTop3 = top3IDs.contains(candidate.id)
         let val = valueScore(candidate)
@@ -435,7 +439,7 @@ struct HireCoachView: View {
         let ovrDelta: Int? = currentCoach.map { coachOverall(candidate) - coachOverall($0) }
 
         return Button {
-            selectedCandidate = candidate
+            if !isRejected { selectedCandidate = candidate }
         } label: {
             HStack(spacing: 0) {
                 // Fix #55: Larger name area with personality + top-3 badge
@@ -554,6 +558,12 @@ struct HireCoachView: View {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 14))
                             .foregroundStyle(Color.success)
+                    } else if isRejected {
+                        // #271: Rejected candidate badge
+                        Text("Signed elsewhere")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(Color.textTertiary)
+                            .lineLimit(1)
                     } else if isOverBudget {
                         Image(systemName: "xmark.circle")
                             .font(.system(size: 14))
@@ -564,18 +574,21 @@ struct HireCoachView: View {
                             .foregroundStyle(Color.textTertiary)
                     }
                 }
-                .frame(width: 30)
+                .frame(width: 64)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .opacity(isOverBudget ? 0.6 : 1.0)
+        .disabled(isRejected)
+        .opacity(isRejected ? 0.45 : isOverBudget ? 0.6 : 1.0)
         .background(
             Group {
                 if isHired {
                     Color.success.opacity(0.06)
+                } else if isRejected {
+                    Color.backgroundTertiary.opacity(0.3)
                 } else if isTop3 {
                     // Fix #56: Subtle gold highlight for top 3
                     Color.accentGold.opacity(0.04)
@@ -760,6 +773,8 @@ private struct CandidateDetailSheet: View {
     let totalCandidates: Int
     let schemeFitResult: (color: Color, label: String)?
     let onHire: () -> Void
+    /// #271: Callback when candidate rejects offer
+    var onRejected: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -767,7 +782,7 @@ private struct CandidateDetailSheet: View {
     @State private var proposedYears: Int = 3
     @State private var negotiationResult: NegotiationResult?
 
-    init(candidate: Coach, remainingBudget: Int, isHired: Bool, headCoach: Coach?, currentCoach: Coach?, candidateRank: Int, totalCandidates: Int, schemeFitResult: (color: Color, label: String)?, onHire: @escaping () -> Void) {
+    init(candidate: Coach, remainingBudget: Int, isHired: Bool, headCoach: Coach?, currentCoach: Coach?, candidateRank: Int, totalCandidates: Int, schemeFitResult: (color: Color, label: String)?, onHire: @escaping () -> Void, onRejected: (() -> Void)? = nil) {
         self.candidate = candidate
         self.remainingBudget = remainingBudget
         self.isHired = isHired
@@ -777,6 +792,7 @@ private struct CandidateDetailSheet: View {
         self.totalCandidates = totalCandidates
         self.schemeFitResult = schemeFitResult
         self.onHire = onHire
+        self.onRejected = onRejected
         self._proposedSalary = State(initialValue: Double(candidate.salary))
     }
 
@@ -1605,8 +1621,10 @@ private struct CandidateDetailSheet: View {
         } else {
             negotiationResult = NegotiationResult(
                 accepted: false,
-                message: "\(candidate.firstName) turned down your offer. They feel \(salaryFormatted(candidate.salary)) is fair compensation. You can adjust your offer and try again."
+                message: "\(candidate.firstName) has signed elsewhere. They are no longer available."
             )
+            // #271: Notify parent to gray out this candidate
+            onRejected?()
         }
     }
 

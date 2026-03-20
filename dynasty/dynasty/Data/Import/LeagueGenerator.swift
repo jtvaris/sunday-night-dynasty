@@ -314,6 +314,14 @@ enum LeagueGenerator {
         )
         let salary = realisticSalary(for: position, yearsPro: yearsPro, depthIndex: depthIndex)
         let contractYears = realisticContractYears(yearsPro: yearsPro, age: age)
+        let morale = initialMorale(
+            personality: personality.archetype,
+            age: age,
+            depthIndex: depthIndex,
+            contractYears: contractYears,
+            salary: salary,
+            position: position
+        )
 
         return Player(
             firstName: name.first,
@@ -323,6 +331,7 @@ enum LeagueGenerator {
             yearsPro: yearsPro,
             positionAttributes: posAttrs,
             personality: personality,
+            morale: morale,
             teamID: teamID,
             contractYearsRemaining: contractYears,
             annualSalary: salary
@@ -378,6 +387,14 @@ enum LeagueGenerator {
         let yearsPro = max(1, age - Int.random(in: 21...23))
         let salary = realisticSalary(for: .QB, yearsPro: yearsPro, depthIndex: 0)
         let contractYears = realisticContractYears(yearsPro: yearsPro, age: age)
+        let morale = initialMorale(
+            personality: personality.archetype,
+            age: age,
+            depthIndex: 0,
+            contractYears: contractYears,
+            salary: salary,
+            position: .QB
+        )
 
         return Player(
             firstName: firstName,
@@ -389,6 +406,7 @@ enum LeagueGenerator {
             mental: mentalAttrs,
             positionAttributes: posAttrs,
             personality: personality,
+            morale: morale,
             teamID: teamID,
             contractYearsRemaining: contractYears,
             annualSalary: salary
@@ -478,6 +496,90 @@ enum LeagueGenerator {
         )
         coach.background = CoachingEngine.generateBackground(for: coach)
         return coach
+    }
+
+    // MARK: - Morale Initialization (#278)
+
+    /// Computes initial morale for a generated player based on several factors.
+    /// Base range: 65-75. Adjustments for contract, age/depth, and personality.
+    private static func initialMorale(
+        personality: PersonalityArchetype,
+        age: Int,
+        depthIndex: Int,
+        contractYears: Int,
+        salary: Int,
+        position: Position
+    ) -> Int {
+        // Base morale: 65-75 (not a flat 70)
+        var morale = Int.random(in: 65...75)
+
+        // Contract situation
+        if contractYears <= 1 {
+            // Expiring contract: anxious = lower morale
+            morale -= Int.random(in: 5...10)
+        }
+
+        // Salary perception (rough market value check)
+        let marketAvg = averageMarketSalary(for: position, depthIndex: depthIndex)
+        if salary > Int(Double(marketAvg) * 1.3) {
+            // Overpaid = happy
+            morale += 5
+        } else if salary < Int(Double(marketAvg) * 0.7) {
+            // Underpaid = unhappy
+            morale -= 5
+        }
+
+        // Age vs depth: veteran backup is unhappy, young starter is excited
+        let peakStart = position.peakAgeRange.lowerBound
+        if depthIndex == 0 && age < peakStart {
+            // Young starter: excited
+            morale += 5
+        } else if depthIndex >= 1 && age >= peakStart + 2 {
+            // Veteran backup: frustrated
+            morale -= Int.random(in: 5...10)
+        }
+
+        // Personality variance
+        switch personality {
+        case .teamLeader, .mentor, .steadyPerformer:
+            morale += Int.random(in: 0...5)
+        case .dramaQueen:
+            morale -= Int.random(in: 3...8)
+        case .loneWolf:
+            morale -= Int.random(in: 0...5)
+        case .fieryCompetitor:
+            morale += Int.random(in: -3...3)
+        case .classClown:
+            morale += Int.random(in: -2...4)
+        case .quietProfessional, .feelPlayer:
+            morale += Int.random(in: -2...2)
+        }
+
+        return min(99, max(30, morale))
+    }
+
+    /// Rough average market salary for starter vs backup at a position (in thousands).
+    private static func averageMarketSalary(for position: Position, depthIndex: Int) -> Int {
+        if depthIndex >= 2 { return 1_500 }
+        if depthIndex == 1 {
+            return position == .QB ? 3_000 : 2_500
+        }
+        // Starter averages
+        switch position {
+        case .QB:            return 35_000
+        case .DE, .OLB:      return 20_000
+        case .CB:            return 18_000
+        case .WR:            return 20_000
+        case .LT, .RT:       return 16_000
+        case .DT:            return 14_000
+        case .FS, .SS:       return 11_000
+        case .TE:            return 11_000
+        case .MLB:           return 11_000
+        case .LG, .RG, .C:  return 11_000
+        case .RB:            return 8_000
+        case .FB:            return 2_500
+        case .K, .P:         return 3_500
+        }
     }
 
     // MARK: - Helpers
