@@ -107,8 +107,8 @@ enum LeagueGenerator {
         var allCoaches: [Coach] = []
 
         for teamDef in NFLTeamData.allTeams {
-            // Create owner
-            let owner = generateOwner()
+            // Create owner (budget scales with market size)
+            let owner = generateOwner(mediaMarket: teamDef.mediaMarket)
             allOwners.append(owner)
 
             // Create team
@@ -235,7 +235,7 @@ enum LeagueGenerator {
 
     // MARK: - Private Generators
 
-    private static func generateOwner() -> Owner {
+    private static func generateOwner(mediaMarket: MediaMarket) -> Owner {
         let first = ownerFirstNames.randomElement()!
         let last = ownerLastNames.randomElement()!
         let avatarID = OwnerAvatars.allIDs.randomElement()!
@@ -243,7 +243,17 @@ enum LeagueGenerator {
 
         // Coaching budget scales with spending willingness:
         // Low spender (20) -> ~$23M, average (50) -> ~$35M, high spender (95) -> ~$53M
-        let coachingBudget = 15_000 + Int(Double(spending) / 99.0 * 40_000.0)
+        let baseBudget = 15_000 + Int(Double(spending) / 99.0 * 40_000.0)
+
+        // Apply market size modifier (same as BudgetEngine)
+        let marketModifier: Double = {
+            switch mediaMarket {
+            case .large:  return 1.10
+            case .medium: return 1.0
+            case .small:  return 0.90
+            }
+        }()
+        let coachingBudget = max(12_000, Int(Double(baseBudget) * marketModifier))
 
         return Owner(
             name: "\(first) \(last)",

@@ -57,8 +57,8 @@ struct ScoutTeamView: View {
                     }
                     .listRowBackground(Color.backgroundSecondary)
 
-                    ForEach(scouts) { scout in
-                        NavigationLink(destination: ScoutDetailView(scout: scout)) {
+                    ForEach(scouts, id: \.id) { scout in
+                        NavigationLink(value: scout) {
                             ScoutRowView(scout: scout)
                         }
                         .listRowBackground(Color.backgroundSecondary)
@@ -75,6 +75,9 @@ struct ScoutTeamView: View {
                 }
                 .scrollContentBackground(.hidden)
                 .listStyle(.insetGrouped)
+                .navigationDestination(for: Scout.self) { scout in
+                    ScoutDetailView(scout: scout)
+                }
             }
         }
         .toolbar {

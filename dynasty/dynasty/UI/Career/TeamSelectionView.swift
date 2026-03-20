@@ -337,6 +337,14 @@ struct TeamSelectionView: View {
             modelContext.insert(pick)
         }
 
+        // Reset per-career AppStorage flags
+        UserDefaults.standard.set(false, forKey: "scoutsSentToCombine")
+        UserDefaults.standard.set(false, forKey: "rosterEvaluationConfirmed")
+        UserDefaults.standard.set("{}", forKey: "rosterNotes")
+        UserDefaults.standard.set("{}", forKey: "rosterPriorities")
+        UserDefaults.standard.set("{}", forKey: "rosterOwnAssessments")
+        UserDefaults.standard.set(false, forKey: "rosterSortHintSeen")
+
         isLoading = false
         selectedCareer = career
     }

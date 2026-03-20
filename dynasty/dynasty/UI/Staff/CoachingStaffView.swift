@@ -19,7 +19,7 @@ struct CoachingStaffView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Query private var allCoaches: [Coach]
     @Query private var allScouts: [Scout]
-    @Query private var allOwners: [Owner]
+
     @Query private var allPlayers: [Player]
     @Query private var allTeams: [Team]
 
@@ -36,8 +36,8 @@ struct CoachingStaffView: View {
     @State private var showDefensiveSchemeSelection: Bool = false
 
     // MARK: - Collapsible Section State (#80, #274: AppStorage to survive sheet dismiss cycles)
-    @State private var isCoordinatorsExpanded: Bool = true
-    @State private var isPositionCoachesExpanded: Bool = true
+    @AppStorage("staff_isCoordinatorsExpanded") private var isCoordinatorsExpanded: Bool = true
+    @AppStorage("staff_isPositionCoachesExpanded") private var isPositionCoachesExpanded: Bool = true
     @AppStorage("staff_isMedicalExpanded") private var isMedicalExpanded: Bool = true
     @AppStorage("staff_isScoutingExpanded") private var isScoutingExpanded: Bool = true
 
@@ -83,9 +83,7 @@ struct CoachingStaffView: View {
 
     /// The team's owner (for budget info).
     private var owner: Owner? {
-        // Owner is stored on Team; find via allOwners matching our team
-        // For now, use the first owner (single-team career)
-        allOwners.first
+        team?.owner
     }
 
     /// #267: The player's team (for wins/prestige data).
@@ -292,37 +290,77 @@ struct CoachingStaffView: View {
         return coachCost + scoutCost
     }
 
-    // MARK: - #270: Cost range to fill vacant slots in each section
+    // MARK: - #270: Salary range summaries per section
+    //
+    // Shows total salary band for the group: hired coaches use actual salary,
+    // vacant slots use role salary range.  As coaches are hired the range narrows.
 
-    /// Estimated cost range string to fill vacant position coach slots.
-    private var positionCoachesCostRange: String? {
-        let posRoles: [CoachRole] = [.qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach, .strengthCoach]
-        let vacant = posRoles.filter { role in !coaches.contains(where: { $0.role == role }) }
-        guard !vacant.isEmpty else { return nil }
-        let minCost = vacant.reduce(0) { $0 + $1.salaryRange.min }
-        let maxCost = vacant.reduce(0) { $0 + $1.salaryRange.max }
-        return "~$\(formatBudget(minCost))M-$\(formatBudget(maxCost))M to fill"
-    }
-
-    /// Estimated cost range string to fill vacant medical slots.
-    private var medicalCostRange: String? {
-        let medRoles: [CoachRole] = [.teamDoctor, .physio]
-        let vacant = medRoles.filter { role in !coaches.contains(where: { $0.role == role }) }
-        guard !vacant.isEmpty else { return nil }
-        let minCost = vacant.reduce(0) { $0 + $1.salaryRange.min }
-        let maxCost = vacant.reduce(0) { $0 + $1.salaryRange.max }
-        return "~$\(formatBudget(minCost))M-$\(formatBudget(maxCost))M to fill"
-    }
-
-    /// Estimated cost range string to fill vacant scout slots.
-    private var scoutingCostRange: String? {
-        guard !vacantScoutRoles.isEmpty else { return nil }
-        // ScoutRole doesn't have salaryRange, use estimatedMinimumScoutSalary-based range
-        let minCost = vacantScoutRoles.reduce(0) { $0 + estimatedMinimumScoutSalary(for: $1) }
-        let maxCost = vacantScoutRoles.reduce(0) { total, role in
-            total + (role == .chiefScout ? 600 : 250)
+    /// Salary range helper: returns (min, max) in thousands for a set of roles.
+    private func sectionSalaryRange(roles: [CoachRole]) -> (min: Int, max: Int)? {
+        var totalMin = 0
+        var totalMax = 0
+        for role in roles {
+            if let coach = coaches.first(where: { $0.role == role }) {
+                totalMin += coach.salary
+                totalMax += coach.salary
+            } else {
+                totalMin += role.salaryRange.min
+                totalMax += role.salaryRange.max
+            }
         }
-        return "~$\(formatBudget(minCost))M-$\(formatBudget(maxCost))M to fill"
+        guard totalMax > 0 else { return nil }
+        return (totalMin, totalMax)
+    }
+
+    /// Format a salary range as a compact string.
+    private func formatSalaryRange(_ range: (min: Int, max: Int)) -> String {
+        if range.min == range.max {
+            return "$\(formatBudget(range.min))M"
+        }
+        return "$\(formatBudget(range.min))M–$\(formatBudget(range.max))M"
+    }
+
+    /// Coordinator section salary range.
+    private var coordinatorsSalaryRange: String? {
+        let roles: [CoachRole] = [.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator]
+        guard let range = sectionSalaryRange(roles: roles) else { return nil }
+        return formatSalaryRange(range)
+    }
+
+    /// Position coaches section salary range.
+    private var positionCoachesCostRange: String? {
+        let roles: [CoachRole] = [.qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach, .strengthCoach]
+        guard let range = sectionSalaryRange(roles: roles) else { return nil }
+        return formatSalaryRange(range)
+    }
+
+    /// Medical staff section salary range.
+    private var medicalCostRange: String? {
+        let roles: [CoachRole] = [.teamDoctor, .physio]
+        guard let range = sectionSalaryRange(roles: roles) else { return nil }
+        return formatSalaryRange(range)
+    }
+
+    /// Scouting section salary range.
+    private var scoutingCostRange: String? {
+        // Sum hired scout salaries + vacant scout role ranges
+        var totalMin = 0
+        var totalMax = 0
+        let allRoles = ScoutRole.allCases
+        for role in allRoles {
+            if let scout = scouts.first(where: { $0.scoutRole == role }) {
+                totalMin += scout.salary
+                totalMax += scout.salary
+            } else {
+                totalMin += estimatedMinimumScoutSalary(for: role)
+                totalMax += (role == .chiefScout ? 600 : 250)
+            }
+        }
+        guard totalMax > 0 else { return nil }
+        if totalMin == totalMax {
+            return "$\(formatBudget(totalMin))M"
+        }
+        return "$\(formatBudget(totalMin))M–$\(formatBudget(totalMax))M"
     }
 
     /// Description of what position group a position coach improves.
@@ -737,6 +775,11 @@ struct CoachingStaffView: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(Color.textPrimary)
                             Spacer()
+                            if let range = coordinatorsSalaryRange {
+                                Text(range)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(Color.textTertiary)
+                            }
                             let filledCount = coaches.filter { [CoachRole.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator].contains($0.role) }.count
                             Text("\(filledCount)/3")
                                 .font(.caption.weight(.medium).monospacedDigit())
@@ -1554,6 +1597,11 @@ struct CoachingStaffView: View {
 
     /// Call this when returning from a hiring screen to show confirmation toast.
     func showHiringConfirmation(coachName: String, roleName: String) {
+        // Keep all sections expanded after hiring
+        isCoordinatorsExpanded = true
+        isPositionCoachesExpanded = true
+        isMedicalExpanded = true
+        isScoutingExpanded = true
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             recentHireMessage = "\(coachName) hired as \(roleName)!"
         }
@@ -2008,7 +2056,9 @@ struct CoachingStaffView: View {
                         .foregroundStyle(Color.accentGold)
                 }
                 .padding(.vertical, 4)
+                .contentShape(Rectangle())
             }
+        .buttonStyle(.plain)
         }
 
     // MARK: - Scout Row

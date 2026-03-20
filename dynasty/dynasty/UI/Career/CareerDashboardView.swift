@@ -17,6 +17,7 @@ struct CareerDashboardView: View {
     @State private var team: Team?
     @State private var rosterCount: Int = 0
     @State private var coachCount: Int = 0
+    @State private var scoutCount: Int = 0
     @State private var headCoach: Coach?
     @State private var divisionTeams: [Team] = []
     @State private var divisionRecords: [StandingsRecord] = []
@@ -935,7 +936,16 @@ struct CareerDashboardView: View {
         } label: {
             DashboardTile(icon: "person.2.fill", title: "Staff", highlighted: currentPhaseHighlightedTiles.contains("Staff")) {
                 VStack(alignment: .leading, spacing: 4) {
-                    if let hc = headCoach {
+                    if isGMAndHC {
+                        HStack(spacing: 4) {
+                            Text("HC")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(Color.accentGold)
+                            Text("You")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Color.textPrimary)
+                        }
+                    } else if let hc = headCoach {
                         HStack(spacing: 4) {
                             Text("HC")
                                 .font(.system(size: 10, weight: .bold))
@@ -951,12 +961,15 @@ struct CareerDashboardView: View {
                             .foregroundStyle(Color.textSecondary)
                     }
 
-                    // Fix #61: Prominent filled/total staff display
-                    let totalSlots = CoachRole.allCases.count
-                    let isFullyStaffed = coachCount >= totalSlots
+                    // Fix #61: Prominent filled/total staff display (coaches + scouts)
+                    let totalCoachSlots = allRoles.count
+                    let totalScoutSlots = 6  // Chief + 5 regional
+                    let totalSlots = totalCoachSlots + totalScoutSlots
+                    let filledSlots = coachCount + scoutCount
+                    let isFullyStaffed = filledSlots >= totalSlots
                     HStack(spacing: 6) {
                         HStack(spacing: 2) {
-                            Text("\(coachCount)")
+                            Text("\(filledSlots)")
                                 .font(.system(size: 18, weight: .bold).monospacedDigit())
                                 .foregroundStyle(Color.textPrimary)
                             Text("/")
@@ -986,7 +999,7 @@ struct CareerDashboardView: View {
                             RoundedRectangle(cornerRadius: 3)
                                 .fill(isFullyStaffed ? Color.success : Color.accentGold)
                                 .frame(
-                                    width: geo.size.width * min(1.0, Double(coachCount) / Double(totalSlots)),
+                                    width: geo.size.width * min(1.0, Double(filledSlots) / Double(totalSlots)),
                                     height: 5
                                 )
                         }
@@ -1801,7 +1814,9 @@ struct CareerDashboardView: View {
         let budgetTotal = team?.owner?.coachingBudget ?? 0
         let coachSalaryUsed = coaches.reduce(0) { $0 + $1.salary }
         let scoutDescriptor = FetchDescriptor<Scout>(predicate: #Predicate { $0.teamID == teamID })
-        let scoutSalaryUsed = ((try? modelContext.fetch(scoutDescriptor)) ?? []).reduce(0) { $0 + $1.salary }
+        let fetchedScouts = (try? modelContext.fetch(scoutDescriptor)) ?? []
+        scoutCount = fetchedScouts.count
+        let scoutSalaryUsed = fetchedScouts.reduce(0) { $0 + $1.salary }
         coachingBudgetTotal = budgetTotal
         coachingBudgetRemaining = budgetTotal - coachSalaryUsed - scoutSalaryUsed
 
@@ -1896,6 +1911,19 @@ struct CareerDashboardView: View {
         }
         return results
     }
+
+    // MARK: - Career Role Helpers
+
+    private var isGMAndHC: Bool {
+        career.role == .gmAndHeadCoach
+    }
+
+    private var allRoles: [CoachRole] {
+        if isGMAndHC {
+            return CoachRole.allCases.filter { $0 != .headCoach }
+        }
+        return CoachRole.allCases
+    }
 }
 
 // MARK: - Dashboard Inbox Filter
@@ -1962,6 +1990,7 @@ private struct DashboardTile<Content: View>: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: 10))
     }
+
 }
 
 // MARK: - Coaching Staff Review Sheet
