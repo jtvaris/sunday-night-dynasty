@@ -120,6 +120,11 @@ struct ScoutingHubView: View {
     private func sendScoutsToCombine() {
         var draftClass = WeekAdvancer.currentDraftClass
 
+        // Snapshot pre-combine grades so we can show grade change arrows later.
+        for i in draftClass.indices {
+            draftClass[i].preCombineGrade = draftClass[i].scoutGrade
+        }
+
         // Generate combine results if not yet available (WeekAdvancer may have already done this)
         let hasCombineResults = draftClass.contains { $0.fortyTime != nil }
         if !hasCombineResults {
@@ -281,9 +286,9 @@ struct ScoutingHubView: View {
                 onSendToCombine: { sendScoutsToCombine() }
             )
         case .prospects:
-            ProspectListView(career: career, prospects: prospects)
+            ProspectListView(career: career, prospects: prospects, scoutsSentToCombine: scoutsSentToCombine)
         case .bigBoard:
-            BigBoardView(career: career, prospects: prospects, teamRoster: teamPlayers)
+            BigBoardView(career: career, prospects: prospects, teamRoster: teamPlayers, scoutsSentToCombine: scoutsSentToCombine)
         case .combine:
             CombineResultsView(career: career, prospects: prospects)
         case .mockDraft:

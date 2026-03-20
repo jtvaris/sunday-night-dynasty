@@ -1,11 +1,34 @@
 import SwiftUI
+import SwiftData
+
+// MARK: - Attribute View Tab
+
+enum ProspectAttributeTab: String, CaseIterable, Identifiable {
+    case overview, physical, mental, position
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .overview: return "Overview"
+        case .physical: return "Physical"
+        case .mental:   return "Mental"
+        case .position: return "Position"
+        }
+    }
+}
 
 struct ProspectListView: View {
     let career: Career
     let prospects: [CollegeProspect]
+    var scoutsSentToCombine: Bool = false
 
+    @Environment(\.modelContext) private var modelContext
     @State private var positionFilter: ProspectPositionFilter = .all
     @State private var sortOrder: ProspectSort = .draftProjection
+    @State private var attributeTab: ProspectAttributeTab = .overview
+    @State private var coaches: [Coach] = []
+    @State private var teamPlayers: [Player] = []
 
     // MARK: - Filtered & Sorted Prospects
 
@@ -61,6 +84,7 @@ struct ProspectListView: View {
 
             VStack(spacing: 0) {
                 positionFilterChips
+                attributeTabPicker
 
                 if displayed.isEmpty {
                     emptyState
@@ -68,7 +92,14 @@ struct ProspectListView: View {
                     List {
                         ForEach(displayed) { prospect in
                             NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
-                                ProspectRowView(prospect: prospect, positionRank: positionRanks[prospect.id])
+                                ProspectRowView(
+                                    prospect: prospect,
+                                    positionRank: positionRanks[prospect.id],
+                                    attributeTab: attributeTab,
+                                    scoutsSentToCombine: scoutsSentToCombine,
+                                    schemeFit: schemeFitLabel(for: prospect),
+                                    starterComparison: starterComparison(for: prospect)
+                                )
                             }
                             .listRowBackground(Color.backgroundSecondary)
                         }
@@ -83,6 +114,64 @@ struct ProspectListView: View {
                 sortMenu
             }
         }
+        .task { loadCoachesAndRoster() }
+    }
+
+    // MARK: - Data Loading
+
+    private func loadCoachesAndRoster() {
+        guard let teamID = career.teamID else { return }
+        let coachDesc = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        coaches = (try? modelContext.fetch(coachDesc)) ?? []
+        let playerDesc = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
+        teamPlayers = (try? modelContext.fetch(playerDesc)) ?? []
+    }
+
+    /// Compute scheme fit label for a prospect based on team's coordinators.
+    private func schemeFitLabel(for prospect: CollegeProspect) -> String? {
+        guard prospect.scoutedOverall != nil else { return nil }
+        let oc = coaches.first(where: { $0.role == .offensiveCoordinator })
+        let dc = coaches.first(where: { $0.role == .defensiveCoordinator })
+
+        if prospect.position.side == .offense, let scheme = oc?.offensiveScheme {
+            return ProspectSchemeFitHelper.offensiveFit(prospect: prospect, scheme: scheme)
+        } else if prospect.position.side == .defense, let scheme = dc?.defensiveScheme {
+            return ProspectSchemeFitHelper.defensiveFit(prospect: prospect, scheme: scheme)
+        }
+        return nil
+    }
+
+    /// Compute starter comparison text for a prospect.
+    private func starterComparison(for prospect: CollegeProspect) -> (text: String, isUpgrade: Bool)? {
+        guard let prospectOVR = prospect.scoutedOverall else { return nil }
+        let starters = teamPlayers
+            .filter { $0.position == prospect.position }
+            .sorted { $0.overall > $1.overall }
+        guard let starter = starters.first else {
+            return ("No \(prospect.position.rawValue) on roster", true)
+        }
+        let diff = prospectOVR - starter.overall
+        if diff > 0 {
+            return ("vs \(starter.fullName): +\(diff) OVR upgrade", true)
+        } else if diff == 0 {
+            return ("vs \(starter.fullName): lateral move", false)
+        } else {
+            return ("vs \(starter.fullName): depth add (\(diff) OVR)", false)
+        }
+    }
+
+    // MARK: - Attribute Tab Picker
+
+    private var attributeTabPicker: some View {
+        Picker("Attributes", selection: $attributeTab) {
+            ForEach(ProspectAttributeTab.allCases) { tab in
+                Text(tab.label).tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color.backgroundPrimary)
     }
 
     // MARK: - Position Filter Chips
@@ -162,6 +251,10 @@ struct ProspectListView: View {
 struct ProspectRowView: View {
     let prospect: CollegeProspect
     var positionRank: Int? = nil
+    var attributeTab: ProspectAttributeTab = .overview
+    var scoutsSentToCombine: Bool = false
+    var schemeFit: String? = nil
+    var starterComparison: (text: String, isUpgrade: Bool)? = nil
 
     private var isScouted: Bool { prospect.scoutedOverall != nil }
 
@@ -187,38 +280,35 @@ struct ProspectRowView: View {
                             .padding(.vertical, 2)
                             .background(Color.accentGold, in: Capsule())
                     }
+
+                    riskBadge
                 }
 
-                HStack(spacing: 6) {
-                    Text(prospect.college)
-                        .font(.caption)
-                        .foregroundStyle(Color.textSecondary)
+                // Combine stats badges
+                if scoutsSentToCombine && prospect.combineInvite {
+                    combineStatsBadges
+                }
 
-                    Text("·")
-                        .foregroundStyle(Color.textTertiary)
-                        .font(.caption)
+                attributeRow
 
-                    Text(heightWeightLabel)
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
-
-                    Text("·")
-                        .foregroundStyle(Color.textTertiary)
-                        .font(.caption)
-
-                    interestBadge
-
-                    Text("·")
-                        .foregroundStyle(Color.textTertiary)
-                        .font(.caption)
-
-                    reportCountLabel
+                // Scheme fit + starter comparison badges
+                if schemeFit != nil || starterComparison != nil {
+                    HStack(spacing: 6) {
+                        if let fit = schemeFit {
+                            schemeFitBadge(fit)
+                        }
+                        if let comp = starterComparison {
+                            starterComparisonBadge(comp)
+                        }
+                    }
                 }
             }
 
             Spacer()
 
-            projectedRoundBadge
+            if attributeTab == .overview {
+                projectedRoundBadge
+            }
 
             VStack(alignment: .trailing, spacing: 4) {
                 overallBadge
@@ -229,12 +319,218 @@ struct ProspectRowView: View {
                             .foregroundStyle(rank <= 3 ? Color.accentGold : Color.textTertiary)
                     }
                     gradeLabel
+                    gradeChangeIndicator
                 }
             }
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
+    }
+
+    // MARK: - Attribute Row (Tab-dependent)
+
+    @ViewBuilder
+    private var attributeRow: some View {
+        switch attributeTab {
+        case .overview:
+            overviewRow
+        case .physical:
+            physicalRow
+        case .mental:
+            mentalRow
+        case .position:
+            positionAttributeRow
+        }
+    }
+
+    private var overviewRow: some View {
+        HStack(spacing: 6) {
+            Text(prospect.college)
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+            Text("\u{00B7}")
+                .foregroundStyle(Color.textTertiary)
+                .font(.caption)
+            Text(heightWeightLabel)
+                .font(.caption)
+                .foregroundStyle(Color.textTertiary)
+            Text("\u{00B7}")
+                .foregroundStyle(Color.textTertiary)
+                .font(.caption)
+            interestBadge
+            Text("\u{00B7}")
+                .foregroundStyle(Color.textTertiary)
+                .font(.caption)
+            reportCountLabel
+        }
+    }
+
+    private var physicalRow: some View {
+        HStack(spacing: 8) {
+            if let forty = prospect.fortyTime {
+                ProspectStatPill(label: "40yd", value: String(format: "%.2fs", forty))
+            }
+            if let bench = prospect.benchPress {
+                ProspectStatPill(label: "Bench", value: "\(bench)")
+            }
+            if let vert = prospect.verticalJump {
+                ProspectStatPill(label: "Vert", value: String(format: "%.1f\"", vert))
+            }
+            if let broad = prospect.broadJump {
+                ProspectStatPill(label: "Broad", value: "\(broad)\"")
+            }
+            if let cone = prospect.coneDrill {
+                ProspectStatPill(label: "3-Cone", value: String(format: "%.2fs", cone))
+            }
+            if let shuttle = prospect.shuttleTime {
+                ProspectStatPill(label: "Shuttle", value: String(format: "%.2fs", shuttle))
+            }
+            if prospect.fortyTime == nil && prospect.benchPress == nil {
+                Text("No combine data")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+    }
+
+    private var mentalRow: some View {
+        HStack(spacing: 8) {
+            if isScouted {
+                ProspectStatPill(label: "AWR", value: "\(prospect.trueMental.awareness)")
+                ProspectStatPill(label: "DEC", value: "\(prospect.trueMental.decisionMaking)")
+                ProspectStatPill(label: "WRK", value: "\(prospect.trueMental.workEthic)")
+                ProspectStatPill(label: "CLT", value: "\(prospect.trueMental.clutch)")
+                ProspectStatPill(label: "COA", value: "\(prospect.trueMental.coachability)")
+                ProspectStatPill(label: "LDR", value: "\(prospect.trueMental.leadership)")
+            } else {
+                Text("Scout to reveal mental attributes")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var positionAttributeRow: some View {
+        if isScouted {
+            HStack(spacing: 8) {
+                switch prospect.truePositionAttributes {
+                case .quarterback(let attrs):
+                    ProspectStatPill(label: "ARM", value: "\(attrs.armStrength)")
+                    ProspectStatPill(label: "SAcc", value: "\(attrs.accuracyShort)")
+                    ProspectStatPill(label: "MAcc", value: "\(attrs.accuracyMid)")
+                    ProspectStatPill(label: "DAcc", value: "\(attrs.accuracyDeep)")
+                    ProspectStatPill(label: "PKT", value: "\(attrs.pocketPresence)")
+                    ProspectStatPill(label: "SCR", value: "\(attrs.scrambling)")
+                case .wideReceiver(let attrs):
+                    ProspectStatPill(label: "RTE", value: "\(attrs.routeRunning)")
+                    ProspectStatPill(label: "CTH", value: "\(attrs.catching)")
+                    ProspectStatPill(label: "RLS", value: "\(attrs.release)")
+                    ProspectStatPill(label: "SPC", value: "\(attrs.spectacularCatch)")
+                case .runningBack(let attrs):
+                    ProspectStatPill(label: "VIS", value: "\(attrs.vision)")
+                    ProspectStatPill(label: "ELU", value: "\(attrs.elusiveness)")
+                    ProspectStatPill(label: "BTK", value: "\(attrs.breakTackle)")
+                    ProspectStatPill(label: "RCV", value: "\(attrs.receiving)")
+                case .tightEnd(let attrs):
+                    ProspectStatPill(label: "BLK", value: "\(attrs.blocking)")
+                    ProspectStatPill(label: "CTH", value: "\(attrs.catching)")
+                    ProspectStatPill(label: "RTE", value: "\(attrs.routeRunning)")
+                    ProspectStatPill(label: "SPD", value: "\(attrs.speed)")
+                case .offensiveLine(let attrs):
+                    ProspectStatPill(label: "RBK", value: "\(attrs.runBlock)")
+                    ProspectStatPill(label: "PBK", value: "\(attrs.passBlock)")
+                    ProspectStatPill(label: "PUL", value: "\(attrs.pull)")
+                    ProspectStatPill(label: "ANC", value: "\(attrs.anchor)")
+                case .defensiveLine(let attrs):
+                    ProspectStatPill(label: "PRU", value: "\(attrs.passRush)")
+                    ProspectStatPill(label: "BSH", value: "\(attrs.blockShedding)")
+                    ProspectStatPill(label: "PWR", value: "\(attrs.powerMoves)")
+                    ProspectStatPill(label: "FIN", value: "\(attrs.finesseMoves)")
+                case .linebacker(let attrs):
+                    ProspectStatPill(label: "TAK", value: "\(attrs.tackling)")
+                    ProspectStatPill(label: "ZCV", value: "\(attrs.zoneCoverage)")
+                    ProspectStatPill(label: "MCV", value: "\(attrs.manCoverage)")
+                    ProspectStatPill(label: "BLZ", value: "\(attrs.blitzing)")
+                case .defensiveBack(let attrs):
+                    ProspectStatPill(label: "MCV", value: "\(attrs.manCoverage)")
+                    ProspectStatPill(label: "ZCV", value: "\(attrs.zoneCoverage)")
+                    ProspectStatPill(label: "PRS", value: "\(attrs.press)")
+                    ProspectStatPill(label: "BSK", value: "\(attrs.ballSkills)")
+                case .kicking(let attrs):
+                    ProspectStatPill(label: "PWR", value: "\(attrs.kickPower)")
+                    ProspectStatPill(label: "ACC", value: "\(attrs.kickAccuracy)")
+                }
+            }
+        } else {
+            Text("Scout to reveal position attributes")
+                .font(.caption)
+                .foregroundStyle(Color.textTertiary)
+        }
+    }
+
+    // MARK: - Combine Stats Badges
+
+    @ViewBuilder
+    private var combineStatsBadges: some View {
+        let parts = combineStatsParts
+        if !parts.isEmpty {
+            Text(parts.joined(separator: " | "))
+                .font(.system(size: 9, weight: .medium).monospacedDigit())
+                .foregroundStyle(Color.accentBlue)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.accentBlue.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+        }
+    }
+
+    private var combineStatsParts: [String] {
+        var parts: [String] = []
+        if let forty = prospect.fortyTime {
+            parts.append(String(format: "%.2fs", forty))
+        }
+        if let bench = prospect.benchPress {
+            parts.append("\(bench) bench")
+        }
+        if let vert = prospect.verticalJump {
+            parts.append(String(format: "%.0f\" vert", vert))
+        }
+        return parts
+    }
+
+    // MARK: - Grade Change Indicator
+
+    @ViewBuilder
+    private var gradeChangeIndicator: some View {
+        if let preGrade = prospect.preCombineGrade,
+           let currentGrade = prospect.scoutGrade,
+           preGrade != currentGrade {
+            let improved = Self.gradeRank(currentGrade) > Self.gradeRank(preGrade)
+            Text(improved ? "\u{2191}" : "\u{2193}")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(improved ? Color.success : Color.danger)
+        }
+    }
+
+    /// Maps letter grades to numeric ranks for comparison (higher = better).
+    static func gradeRank(_ grade: String) -> Int {
+        switch grade {
+        case "A+": return 13
+        case "A":  return 12
+        case "A-": return 11
+        case "B+": return 10
+        case "B":  return 9
+        case "B-": return 8
+        case "C+": return 7
+        case "C":  return 6
+        case "C-": return 5
+        case "D+": return 4
+        case "D":  return 3
+        case "D-": return 2
+        case "F":  return 1
+        default:   return 0
+        }
     }
 
     // MARK: - Subviews
@@ -320,7 +616,7 @@ struct ProspectRowView: View {
         case "Cold": color = .accentBlue
         default:     color = .textTertiary
         }
-        return Text(level == "Unknown" ? "---" : level)
+        return Text(level == "Unknown" ? "No buzz" : level)
             .font(.caption2.weight(.semibold))
             .foregroundStyle(color)
     }
@@ -330,6 +626,55 @@ struct ProspectRowView: View {
         return Text(count > 0 ? "\(count) report\(count == 1 ? "" : "s")" : "Unscouted")
             .font(.caption2)
             .foregroundStyle(count > 0 ? Color.textSecondary : Color.textTertiary)
+    }
+
+    // MARK: - Risk Badge
+
+    @ViewBuilder
+    private var riskBadge: some View {
+        let risk = prospect.riskLevel
+        if risk != .unknown {
+            HStack(spacing: 2) {
+                Image(systemName: risk.icon)
+                    .font(.system(size: 7))
+                Text(risk.rawValue)
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .foregroundStyle(risk.color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(risk.color.opacity(0.15), in: Capsule())
+        }
+    }
+
+    // MARK: - Scheme Fit Badge
+
+    private func schemeFitBadge(_ fit: String) -> some View {
+        let isGood = fit == "Good"
+        let color: Color = isGood ? .success : (fit == "Fair" ? .warning : .danger)
+        let icon = isGood ? "checkmark.circle.fill" : (fit == "Fair" ? "minus.circle.fill" : "xmark.circle.fill")
+        return HStack(spacing: 2) {
+            Image(systemName: icon)
+                .font(.system(size: 7))
+            Text(isGood ? "Scheme Fit" : (fit == "Fair" ? "Scheme OK" : "Scheme Mismatch"))
+                .font(.system(size: 8, weight: .bold))
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(color.opacity(0.15), in: Capsule())
+    }
+
+    // MARK: - Starter Comparison Badge
+
+    private func starterComparisonBadge(_ comp: (text: String, isUpgrade: Bool)) -> some View {
+        let color: Color = comp.isUpgrade ? .success : .textSecondary
+        return Text(comp.text)
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.1), in: Capsule())
     }
 
     // MARK: - Helpers
@@ -351,6 +696,27 @@ struct ProspectRowView: View {
     private var accessibilityDescription: String {
         let overall = prospect.scoutedOverall.map { "\($0)" } ?? "unscouted"
         return "\(prospect.fullName), \(prospect.position.rawValue), \(prospect.college), overall \(overall)"
+    }
+}
+
+// MARK: - Stat Pill
+
+struct ProspectStatPill: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(spacing: 1) {
+            Text(label)
+                .font(.system(size: 7, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
+            Text(value)
+                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                .foregroundStyle(Color.textPrimary)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .background(Color.backgroundPrimary.opacity(0.6), in: RoundedRectangle(cornerRadius: 3))
     }
 }
 

@@ -1,13 +1,65 @@
 import SwiftUI
+import SwiftData
 
 struct BigBoardView: View {
     let career: Career
     let prospects: [CollegeProspect]
     let teamRoster: [Player]
+    var scoutsSentToCombine: Bool = false
 
+    @Environment(\.modelContext) private var modelContext
     @State private var positionFilter: ProspectPositionFilter = .all
     @State private var flagFilter: ProspectFlagFilter = .all
     @State private var boardOrder: [UUID] = []
+    @State private var attributeTab: ProspectAttributeTab = .overview
+    @State private var showWatchlistOnly: Bool = false
+    @State private var editingAssessmentProspect: CollegeProspect?
+    @State private var coaches: [Coach] = []
+
+    // MARK: - Own Assessments & Watchlist Storage
+
+    @AppStorage("prospectOwnAssessments") private var prospectOwnAssessmentsJSON: String = "{}"
+    @AppStorage("prospectWatchlist") private var prospectWatchlistJSON: String = "[]"
+
+    private static let gradeOptions = ["none", "A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D", "F"]
+
+    private var prospectOwnAssessments: [String: String] {
+        (try? JSONDecoder().decode([String: String].self, from: Data(prospectOwnAssessmentsJSON.utf8))) ?? [:]
+    }
+
+    private var prospectWatchlist: Set<String> {
+        Set((try? JSONDecoder().decode([String].self, from: Data(prospectWatchlistJSON.utf8))) ?? [])
+    }
+
+    private func saveOwnAssessment(prospectID: UUID, grade: String) {
+        var assessments = prospectOwnAssessments
+        let key = prospectID.uuidString
+        if grade == "none" {
+            assessments.removeValue(forKey: key)
+        } else {
+            assessments[key] = grade
+        }
+        if let data = try? JSONEncoder().encode(assessments) {
+            prospectOwnAssessmentsJSON = String(data: data, encoding: .utf8) ?? "{}"
+        }
+    }
+
+    private func toggleWatchlist(prospectID: UUID) {
+        var list = prospectWatchlist
+        let key = prospectID.uuidString
+        if list.contains(key) {
+            list.remove(key)
+        } else {
+            list.insert(key)
+        }
+        if let data = try? JSONEncoder().encode(Array(list)) {
+            prospectWatchlistJSON = String(data: data, encoding: .utf8) ?? "[]"
+        }
+    }
+
+    private func isOnWatchlist(_ prospectID: UUID) -> Bool {
+        prospectWatchlist.contains(prospectID.uuidString)
+    }
 
     // MARK: - Tier Constants
 
@@ -30,6 +82,9 @@ struct BigBoardView: View {
         case .mustHave: result = result.filter { $0.prospectFlag == .mustHave }
         case .sleeper:  result = result.filter { $0.prospectFlag == .sleeper }
         case .avoid:    result = result.filter { $0.prospectFlag == .avoid }
+        }
+        if showWatchlistOnly {
+            result = result.filter { isOnWatchlist($0.id) }
         }
         return result
     }
@@ -88,8 +143,10 @@ struct BigBoardView: View {
             if scoutedProspects.isEmpty {
                 emptyState
             } else {
-                List {
-                    recommendationsSection
+                VStack(spacing: 0) {
+                    bigBoardAttributeTabPicker
+                    List {
+                        recommendationsSection
                     depthAnalysisSection
                     ForEach(tieredBoard, id: \.tier) { tierGroup in
                         Section {
@@ -98,7 +155,15 @@ struct BigBoardView: View {
                                     BigBoardRowView(
                                         rank: rankFor(prospect),
                                         prospect: prospect,
-                                        onFlagToggle: { toggleFlag(prospect) }
+                                        ownGrade: prospectOwnAssessments[prospect.id.uuidString],
+                                        isWatchlisted: isOnWatchlist(prospect.id),
+                                        schemeFit: schemeFitLabel(for: prospect),
+                                        starterComparison: starterComparison(for: prospect),
+                                        attributeTab: attributeTab,
+                                        scoutsSentToCombine: scoutsSentToCombine,
+                                        onFlagToggle: { toggleFlag(prospect) },
+                                        onWatchlistToggle: { toggleWatchlist(prospectID: prospect.id) },
+                                        onGradeTap: { editingAssessmentProspect = prospect }
                                     )
                                 }
                                 .listRowBackground(Color.backgroundSecondary)
@@ -117,7 +182,11 @@ struct BigBoardView: View {
                 .scrollContentBackground(.hidden)
                 .listStyle(.insetGrouped)
                 .environment(\.editMode, .constant(.active))
+                }
             }
+        }
+        .sheet(item: $editingAssessmentProspect) { prospect in
+            prospectAssessmentSheet(prospect: prospect)
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -130,7 +199,22 @@ struct BigBoardView: View {
                     .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
                     .map { $0.id }
             }
+            loadCoaches()
         }
+    }
+
+    // MARK: - Attribute Tab Picker
+
+    private var bigBoardAttributeTabPicker: some View {
+        Picker("Attributes", selection: $attributeTab) {
+            ForEach(ProspectAttributeTab.allCases) { tab in
+                Text(tab.label).tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color.backgroundPrimary)
     }
 
     // MARK: - Recommendations Section (#216)
@@ -318,6 +402,13 @@ struct BigBoardView: View {
             }
             .pickerStyle(.menu)
             .frame(width: 44)
+
+            Button {
+                showWatchlistOnly.toggle()
+            } label: {
+                Image(systemName: showWatchlistOnly ? "bookmark.fill" : "bookmark")
+                    .foregroundStyle(showWatchlistOnly ? Color.accentGold : Color.textSecondary)
+            }
         }
     }
 
@@ -340,6 +431,68 @@ struct BigBoardView: View {
                 .padding(.horizontal, 40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Assessment Sheet
+
+    private func prospectAssessmentSheet(prospect: CollegeProspect) -> some View {
+        let currentGrade = prospectOwnAssessments[prospect.id.uuidString] ?? "none"
+        return NavigationStack {
+            VStack(spacing: 20) {
+                Text(prospect.fullName)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+
+                if let staffGrade = prospect.scoutGrade {
+                    Text("Staff Grade: \(staffGrade)")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textSecondary)
+                }
+
+                Text("Your Assessment")
+                    .font(.headline)
+                    .foregroundStyle(Color.accentGold)
+
+                LazyVGrid(columns: [
+                    GridItem(.flexible()),
+                    GridItem(.flexible()),
+                    GridItem(.flexible()),
+                    GridItem(.flexible())
+                ], spacing: 10) {
+                    ForEach(Self.gradeOptions, id: \.self) { grade in
+                        let isSelected = currentGrade == grade
+                        let displayLabel = grade == "none" ? "None" : grade
+                        Button {
+                            saveOwnAssessment(prospectID: prospect.id, grade: grade)
+                            editingAssessmentProspect = nil
+                        } label: {
+                            Text(displayLabel)
+                                .font(.callout.weight(isSelected ? .bold : .regular))
+                                .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textPrimary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(isSelected ? Color.accentGold : Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 8))
+                                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.textTertiary.opacity(0.3), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal)
+
+                Spacer()
+            }
+            .padding(.top, 24)
+            .background(Color.backgroundPrimary.ignoresSafeArea())
+            .navigationTitle("Grade Prospect")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { editingAssessmentProspect = nil }
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+        .presentationDetents([.medium])
     }
 
     // MARK: - Helpers
@@ -416,6 +569,45 @@ struct BigBoardView: View {
         fullOrder.insert(contentsOf: tierIDs, at: insertIndex)
         boardOrder = fullOrder
     }
+
+    private func loadCoaches() {
+        guard let teamID = career.teamID else { return }
+        let desc = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        coaches = (try? modelContext.fetch(desc)) ?? []
+    }
+
+    /// Compute scheme fit label for a prospect based on team's coordinators.
+    private func schemeFitLabel(for prospect: CollegeProspect) -> String? {
+        guard prospect.scoutedOverall != nil else { return nil }
+        let oc = coaches.first(where: { $0.role == .offensiveCoordinator })
+        let dc = coaches.first(where: { $0.role == .defensiveCoordinator })
+
+        if prospect.position.side == .offense, let scheme = oc?.offensiveScheme {
+            return ProspectSchemeFitHelper.offensiveFit(prospect: prospect, scheme: scheme)
+        } else if prospect.position.side == .defense, let scheme = dc?.defensiveScheme {
+            return ProspectSchemeFitHelper.defensiveFit(prospect: prospect, scheme: scheme)
+        }
+        return nil
+    }
+
+    /// Compute starter comparison text for a prospect.
+    private func starterComparison(for prospect: CollegeProspect) -> String? {
+        guard let prospectOVR = prospect.scoutedOverall else { return nil }
+        let starters = teamRoster
+            .filter { $0.position == prospect.position }
+            .sorted { $0.overall > $1.overall }
+        guard let starter = starters.first else {
+            return "No \(prospect.position.rawValue) on roster"
+        }
+        let diff = prospectOVR - starter.overall
+        if diff > 0 {
+            return "vs \(starter.fullName): +\(diff) OVR"
+        } else if diff == 0 {
+            return "vs \(starter.fullName): lateral"
+        } else {
+            return "Depth add (\(diff) OVR)"
+        }
+    }
 }
 
 // MARK: - Flag Filter
@@ -440,7 +632,15 @@ enum ProspectFlagFilter: String, CaseIterable, Identifiable {
 struct BigBoardRowView: View {
     let rank: Int
     let prospect: CollegeProspect
+    var ownGrade: String? = nil
+    var isWatchlisted: Bool = false
+    var schemeFit: String? = nil
+    var starterComparison: String? = nil
+    var attributeTab: ProspectAttributeTab = .overview
+    var scoutsSentToCombine: Bool = false
     var onFlagToggle: (() -> Void)? = nil
+    var onWatchlistToggle: (() -> Void)? = nil
+    var onGradeTap: (() -> Void)? = nil
 
     @State private var showMediaPopover = false
 
@@ -454,6 +654,17 @@ struct BigBoardRowView: View {
 
             // Flag indicator (#215)
             flagIndicator
+
+            // Watchlist bookmark
+            Button {
+                onWatchlistToggle?()
+            } label: {
+                Image(systemName: isWatchlisted ? "bookmark.fill" : "bookmark")
+                    .font(.caption2)
+                    .foregroundStyle(isWatchlisted ? Color.accentGold : Color.textTertiary.opacity(0.4))
+            }
+            .buttonStyle(.plain)
+            .frame(width: 18)
 
             // Position badge
             Text(prospect.position.rawValue)
@@ -494,15 +705,43 @@ struct BigBoardRowView: View {
                         }
                     }
                 }
+                // Combine stats badges
+                if scoutsSentToCombine && prospect.combineInvite {
+                    boardCombineStatsBadges
+                }
+
+                boardAttributeRow
+
                 HStack(spacing: 6) {
-                    Text(prospect.college)
-                        .font(.caption)
-                        .foregroundStyle(Color.textSecondary)
                     if let mockPick = prospect.mockDraftPickNumber,
                        let mockTeam = prospect.mockDraftTeam {
                         Text("Mock: #\(mockPick) \(mockTeam)")
                             .font(.caption2.weight(.medium).monospacedDigit())
                             .foregroundStyle(Color.accentGold)
+                    }
+
+                    if prospect.riskLevel != .unknown {
+                        HStack(spacing: 2) {
+                            Image(systemName: prospect.riskLevel.icon)
+                                .font(.system(size: 7))
+                            Text(prospect.riskLevel.rawValue)
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        .foregroundStyle(prospect.riskLevel.color)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(prospect.riskLevel.color.opacity(0.15), in: Capsule())
+                    }
+                    if let fit = schemeFit {
+                        schemeFitBadgeView(fit)
+                    }
+                    if let comp = starterComparison {
+                        Text(comp)
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(comp.contains("+") ? Color.success : Color.textSecondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background((comp.contains("+") ? Color.success : Color.textSecondary).opacity(0.1), in: Capsule())
                     }
                 }
             }
@@ -521,11 +760,22 @@ struct BigBoardRowView: View {
                         .font(.callout.weight(.bold).monospacedDigit())
                         .foregroundStyle(Color.forRating(overall))
                 }
-                if let grade = prospect.scoutGrade {
-                    Text(grade)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentGold)
+                HStack(spacing: 6) {
+                    if let grade = prospect.scoutGrade {
+                        Text("Staff: \(grade)")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.accentGold)
+                    }
+                    boardGradeChangeIndicator
+                    if let userGrade = ownGrade {
+                        Text("You: \(userGrade)")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.accentBlue)
+                    }
                 }
+            }
+            .onTapGesture {
+                onGradeTap?()
             }
 
             // Drag handle (shown because editMode is active)
@@ -536,6 +786,154 @@ struct BigBoardRowView: View {
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
+    }
+
+    // MARK: - Attribute Row (Tab-dependent)
+
+    @ViewBuilder
+    private var boardAttributeRow: some View {
+        switch attributeTab {
+        case .overview:
+            HStack(spacing: 6) {
+                Text(prospect.college)
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+            }
+        case .physical:
+            HStack(spacing: 8) {
+                if let forty = prospect.fortyTime {
+                    ProspectStatPill(label: "40yd", value: String(format: "%.2fs", forty))
+                }
+                if let bench = prospect.benchPress {
+                    ProspectStatPill(label: "Bench", value: "\(bench)")
+                }
+                if let vert = prospect.verticalJump {
+                    ProspectStatPill(label: "Vert", value: String(format: "%.1f\"", vert))
+                }
+                if let broad = prospect.broadJump {
+                    ProspectStatPill(label: "Broad", value: "\(broad)\"")
+                }
+                if let cone = prospect.coneDrill {
+                    ProspectStatPill(label: "3-Cone", value: String(format: "%.2fs", cone))
+                }
+                if let shuttle = prospect.shuttleTime {
+                    ProspectStatPill(label: "Shuttle", value: String(format: "%.2fs", shuttle))
+                }
+                if prospect.fortyTime == nil && prospect.benchPress == nil {
+                    Text("No combine data")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+        case .mental:
+            HStack(spacing: 8) {
+                if prospect.scoutedOverall != nil {
+                    ProspectStatPill(label: "AWR", value: "\(prospect.trueMental.awareness)")
+                    ProspectStatPill(label: "DEC", value: "\(prospect.trueMental.decisionMaking)")
+                    ProspectStatPill(label: "WRK", value: "\(prospect.trueMental.workEthic)")
+                    ProspectStatPill(label: "CLT", value: "\(prospect.trueMental.clutch)")
+                    ProspectStatPill(label: "COA", value: "\(prospect.trueMental.coachability)")
+                    ProspectStatPill(label: "LDR", value: "\(prospect.trueMental.leadership)")
+                } else {
+                    Text("Scout to reveal")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+        case .position:
+            if prospect.scoutedOverall != nil {
+                HStack(spacing: 8) {
+                    switch prospect.truePositionAttributes {
+                    case .quarterback(let a):
+                        ProspectStatPill(label: "ARM", value: "\(a.armStrength)")
+                        ProspectStatPill(label: "SAcc", value: "\(a.accuracyShort)")
+                        ProspectStatPill(label: "MAcc", value: "\(a.accuracyMid)")
+                        ProspectStatPill(label: "DAcc", value: "\(a.accuracyDeep)")
+                        ProspectStatPill(label: "PKT", value: "\(a.pocketPresence)")
+                    case .wideReceiver(let a):
+                        ProspectStatPill(label: "RTE", value: "\(a.routeRunning)")
+                        ProspectStatPill(label: "CTH", value: "\(a.catching)")
+                        ProspectStatPill(label: "RLS", value: "\(a.release)")
+                        ProspectStatPill(label: "SPC", value: "\(a.spectacularCatch)")
+                    case .runningBack(let a):
+                        ProspectStatPill(label: "VIS", value: "\(a.vision)")
+                        ProspectStatPill(label: "ELU", value: "\(a.elusiveness)")
+                        ProspectStatPill(label: "BTK", value: "\(a.breakTackle)")
+                        ProspectStatPill(label: "RCV", value: "\(a.receiving)")
+                    case .tightEnd(let a):
+                        ProspectStatPill(label: "BLK", value: "\(a.blocking)")
+                        ProspectStatPill(label: "CTH", value: "\(a.catching)")
+                        ProspectStatPill(label: "RTE", value: "\(a.routeRunning)")
+                        ProspectStatPill(label: "SPD", value: "\(a.speed)")
+                    case .offensiveLine(let a):
+                        ProspectStatPill(label: "RBK", value: "\(a.runBlock)")
+                        ProspectStatPill(label: "PBK", value: "\(a.passBlock)")
+                        ProspectStatPill(label: "PUL", value: "\(a.pull)")
+                        ProspectStatPill(label: "ANC", value: "\(a.anchor)")
+                    case .defensiveLine(let a):
+                        ProspectStatPill(label: "PRU", value: "\(a.passRush)")
+                        ProspectStatPill(label: "BSH", value: "\(a.blockShedding)")
+                        ProspectStatPill(label: "PWR", value: "\(a.powerMoves)")
+                        ProspectStatPill(label: "FIN", value: "\(a.finesseMoves)")
+                    case .linebacker(let a):
+                        ProspectStatPill(label: "TAK", value: "\(a.tackling)")
+                        ProspectStatPill(label: "ZCV", value: "\(a.zoneCoverage)")
+                        ProspectStatPill(label: "MCV", value: "\(a.manCoverage)")
+                        ProspectStatPill(label: "BLZ", value: "\(a.blitzing)")
+                    case .defensiveBack(let a):
+                        ProspectStatPill(label: "MCV", value: "\(a.manCoverage)")
+                        ProspectStatPill(label: "ZCV", value: "\(a.zoneCoverage)")
+                        ProspectStatPill(label: "PRS", value: "\(a.press)")
+                        ProspectStatPill(label: "BSK", value: "\(a.ballSkills)")
+                    case .kicking(let a):
+                        ProspectStatPill(label: "PWR", value: "\(a.kickPower)")
+                        ProspectStatPill(label: "ACC", value: "\(a.kickAccuracy)")
+                    }
+                }
+            } else {
+                Text("Scout to reveal")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+    }
+
+    // MARK: - Combine Stats Badges
+
+    @ViewBuilder
+    private var boardCombineStatsBadges: some View {
+        var parts: [String] = []
+        if let forty = prospect.fortyTime {
+            let _ = parts.append(String(format: "%.2fs", forty))
+        }
+        if let bench = prospect.benchPress {
+            let _ = parts.append("\(bench) bench")
+        }
+        if let vert = prospect.verticalJump {
+            let _ = parts.append(String(format: "%.0f\" vert", vert))
+        }
+        if !parts.isEmpty {
+            Text(parts.joined(separator: " | "))
+                .font(.system(size: 9, weight: .medium).monospacedDigit())
+                .foregroundStyle(Color.accentBlue)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.accentBlue.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+        }
+    }
+
+    // MARK: - Grade Change Indicator
+
+    @ViewBuilder
+    private var boardGradeChangeIndicator: some View {
+        if let preGrade = prospect.preCombineGrade,
+           let currentGrade = prospect.scoutGrade,
+           preGrade != currentGrade {
+            let improved = ProspectRowView.gradeRank(currentGrade) > ProspectRowView.gradeRank(preGrade)
+            Text(improved ? "\u{2191}" : "\u{2193}")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(improved ? Color.success : Color.danger)
+        }
     }
 
     // MARK: - Flag Indicator (#215)
@@ -607,6 +1005,22 @@ struct BigBoardRowView: View {
         return Image(systemName: icon)
             .font(.caption)
             .foregroundStyle(color)
+    }
+
+    private func schemeFitBadgeView(_ fit: String) -> some View {
+        let isGood = fit == "Good"
+        let badgeColor: Color = isGood ? .success : (fit == "Fair" ? .warning : .danger)
+        let badgeIcon = isGood ? "checkmark.circle.fill" : (fit == "Fair" ? "minus.circle.fill" : "xmark.circle.fill")
+        return HStack(spacing: 2) {
+            Image(systemName: badgeIcon)
+                .font(.system(size: 7))
+            Text(isGood ? "Scheme Fit" : (fit == "Fair" ? "Scheme OK" : "Mismatch"))
+                .font(.system(size: 8, weight: .bold))
+        }
+        .foregroundStyle(badgeColor)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(badgeColor.opacity(0.15), in: Capsule())
     }
 
     private var accessibilityDescription: String {

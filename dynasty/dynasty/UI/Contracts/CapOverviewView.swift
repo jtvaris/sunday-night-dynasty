@@ -19,6 +19,7 @@ struct CapOverviewView: View {
                     if let team {
                         capSummaryCard(team: team)
                         capBarCard(team: team)
+                        nextSeasonOutlookCard(team: team)
                         contractListCard(team: team)
                     } else {
                         ProgressView()
@@ -120,6 +121,143 @@ struct CapOverviewView: View {
             }
             .frame(height: 14)
         }
+        .padding(20)
+        .cardBackground()
+    }
+
+    // MARK: - Next Season Outlook Card
+
+    /// Estimated replacement cost for a position at league-minimum level (in thousands).
+    private func replacementCost(for position: Position) -> Int {
+        switch position {
+        case .QB:                            return 1_350
+        case .DE, .CB:                       return 975
+        case .WR:                            return 940
+        case .OLB:                           return 900
+        case .LT:                            return 860
+        case .DT, .FS, .SS:                  return 825
+        case .TE, .MLB:                      return 790
+        case .LG, .RG, .C, .RT:             return 715
+        case .RB:                            return 675
+        case .FB:                            return 525
+        case .K, .P:                         return 450
+        }
+    }
+
+    private func nextSeasonOutlookCard(team: Team) -> some View {
+        let expiringPlayers = players.filter { $0.contractYearsRemaining == 1 }
+        let totalFreed = expiringPlayers.reduce(0) { $0 + $1.annualSalary }
+        let totalReplacement = expiringPlayers.reduce(0) { $0 + replacementCost(for: $1.position) }
+        let netChange = totalFreed - totalReplacement
+        // Projected cap grows ~7% per year (NFL trend)
+        let projectedCap = Int(Double(team.salaryCap) * 1.07)
+
+        return VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.accentGold)
+                Text("Next Season Outlook")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+            }
+
+            Divider().overlay(Color.surfaceBorder)
+
+            // Current vs projected cap
+            HStack(spacing: 0) {
+                capStatColumn(
+                    label: "Current Cap",
+                    value: formatMillions(team.salaryCap),
+                    color: .textSecondary
+                )
+                capStatColumn(
+                    label: "Projected Cap",
+                    value: formatMillions(projectedCap),
+                    color: .accentGold
+                )
+            }
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+            // Expiring contracts list
+            if expiringPlayers.isEmpty {
+                Text("No contracts expiring after this season")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textTertiary)
+                    .padding(.vertical, 4)
+            } else {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("Expiring Contracts")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.textPrimary)
+                        Spacer()
+                        Text("\(expiringPlayers.count) player\(expiringPlayers.count == 1 ? "" : "s")")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    .padding(.bottom, 8)
+
+                    ForEach(expiringPlayers, id: \.id) { player in
+                        HStack(spacing: 8) {
+                            Text(player.position.rawValue)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(Color.textPrimary)
+                                .frame(width: 30)
+                                .padding(.vertical, 2)
+                                .background(positionColor(player.position).opacity(0.8), in: RoundedRectangle(cornerRadius: 3))
+                            Text(player.fullName)
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(formatMillions(player.annualSalary))
+                                .font(.caption.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(Color.warning)
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+            }
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+            // Summary line
+            HStack(spacing: 4) {
+                Text("Cap freed:")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                Text(formatMillions(totalFreed))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.success)
+
+                Text("|")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+
+                Text("Est. replacement:")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                Text(formatMillions(totalReplacement))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.warning)
+
+                Text("|")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+
+                Text("Net:")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                Text("\(netChange >= 0 ? "+" : "")\(formatMillions(netChange))")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(netChange >= 0 ? Color.success : Color.danger)
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .frame(maxWidth: .infinity)
         .padding(20)
         .cardBackground()
     }

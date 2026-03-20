@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import SwiftUI
 
 @Model
 final class CollegeProspect {
@@ -70,6 +71,11 @@ final class CollegeProspect {
     /// Headline text if this prospect was mentioned in combine media coverage.
     var combineMediaMention: String?
 
+    // MARK: - Pre-Combine Snapshot
+
+    /// Scout grade captured before combine results are applied, used to show grade change arrows.
+    var preCombineGrade: String?
+
     // MARK: - Prospect Flag
 
     var prospectFlag: ProspectFlag = ProspectFlag.none
@@ -108,6 +114,63 @@ final class CollegeProspect {
         let physicalAvg = truePhysical.average
         let mentalAvg = trueMental.average
         return Int((physicalAvg * 0.6 + mentalAvg * 0.4).rounded())
+    }
+
+    // MARK: - Boom/Bust Risk Indicator
+
+    /// Risk classification based on scouting report variance, personality consistency, and potential spread.
+    var riskLevel: ProspectRiskLevel {
+        guard scoutedOverall != nil else { return .unknown }
+
+        var riskScore = 0 // Higher = riskier
+
+        // 1. Variance between scout report grades (if multiple reports exist)
+        if scoutingReports.count >= 2 {
+            let grades = scoutingReports.map { $0.overallGrade }
+            let maxGrade = grades.max() ?? 0
+            let minGrade = grades.min() ?? 0
+            let variance = maxGrade - minGrade
+            if variance >= 20 { riskScore += 3 }
+            else if variance >= 12 { riskScore += 2 }
+            else if variance >= 6 { riskScore += 1 }
+        }
+
+        // 2. Gap between scouted overall and scouted potential
+        if let ovr = scoutedOverall, let pot = scoutedPotential {
+            let gap = pot - ovr
+            if gap >= 20 { riskScore += 2 }
+            else if gap >= 12 { riskScore += 1 }
+        }
+
+        // 3. Personality-based consistency
+        if let personality = scoutedPersonality {
+            if personality == .feelPlayer || personality == .dramaQueen {
+                riskScore += 2
+            } else if personality == .fieryCompetitor || personality == .classClown {
+                riskScore += 1
+            }
+            if personality == .steadyPerformer || personality == .quietProfessional {
+                riskScore -= 1
+            }
+        }
+
+        // 4. Low confidence in scouting reports
+        if !scoutingReports.isEmpty {
+            let avgConfidence = scoutingReports.map { $0.confidenceLevel }.reduce(0, +) / Double(scoutingReports.count)
+            if avgConfidence < 0.5 { riskScore += 1 }
+        }
+
+        // Classify
+        let hasBigCeiling = (scoutedPotential ?? 0) - (scoutedOverall ?? 0) >= 15
+        if riskScore >= 4 {
+            return .boomOrBust
+        } else if riskScore >= 2 && hasBigCeiling {
+            return .highCeiling
+        } else if riskScore <= 1 {
+            return .safePick
+        } else {
+            return .highCeiling
+        }
     }
 
     // MARK: - Init
@@ -191,4 +254,31 @@ final class CollegeProspect {
 
 enum ProspectFlag: String, Codable {
     case none, mustHave, sleeper, avoid
+}
+
+// MARK: - Prospect Risk Level
+
+enum ProspectRiskLevel: String {
+    case safePick    = "Safe Pick"
+    case highCeiling = "High Ceiling"
+    case boomOrBust  = "Boom or Bust"
+    case unknown     = "Unknown"
+
+    var color: Color {
+        switch self {
+        case .safePick:    return .success
+        case .highCeiling: return .accentGold
+        case .boomOrBust:  return .danger
+        case .unknown:     return .textTertiary
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .safePick:    return "checkmark.shield.fill"
+        case .highCeiling: return "arrow.up.right.circle.fill"
+        case .boomOrBust:  return "bolt.fill"
+        case .unknown:     return "questionmark.circle"
+        }
+    }
 }

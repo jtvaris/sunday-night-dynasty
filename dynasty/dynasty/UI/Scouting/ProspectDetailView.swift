@@ -12,6 +12,7 @@ struct ProspectDetailView: View {
     @State private var showInterviewResult = false
     @State private var interviewResult: (personality: PersonalityArchetype, footballIQ: Int, characterNotes: [String])?
     @State private var positionRank: Int?
+    @State private var teamPlayers: [Player] = []
 
     // MARK: - Derived
 
@@ -32,6 +33,8 @@ struct ProspectDetailView: View {
 
             List {
                 headerSection
+                boomBustSection
+                starterComparisonSection
                 collegeProductionSection
                 schemeFitSection
                 riskFlagsSection
@@ -47,7 +50,7 @@ struct ProspectDetailView: View {
         .navigationTitle(prospect.fullName)
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .task { loadScouts(); loadCoaches(); loadPositionRank() }
+        .task { loadScouts(); loadCoaches(); loadPositionRank(); loadTeamPlayers() }
         .sheet(isPresented: $showSendScout) {
             SendScoutSheet(prospect: prospect, scouts: scouts, scoutingPhase: currentScoutingPhase)
         }
@@ -118,6 +121,149 @@ struct ProspectDetailView: View {
             .padding(.vertical, 4)
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    // MARK: - Boom/Bust Risk Section
+
+    @ViewBuilder
+    private var boomBustSection: some View {
+        let risk = prospect.riskLevel
+        if risk != .unknown {
+            Section("Risk Profile") {
+                HStack(spacing: 10) {
+                    Image(systemName: risk.icon)
+                        .font(.title3)
+                        .foregroundStyle(risk.color)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(risk.rawValue)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(risk.color)
+                        Text(riskExplanation(risk))
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                    Spacer()
+                    Text(risk.rawValue)
+                        .font(.caption.weight(.heavy))
+                        .foregroundStyle(risk.color)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(risk.color.opacity(0.15))
+                        )
+                }
+
+                // Show scout report variance detail if multiple reports
+                if prospect.scoutingReports.count >= 2 {
+                    let grades = prospect.scoutingReports.map { $0.overallGrade }
+                    let minG = grades.min() ?? 0
+                    let maxG = grades.max() ?? 0
+                    HStack(spacing: 8) {
+                        Image(systemName: "chart.bar.fill")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                        Text("Scout grades range: \(minG) - \(maxG) (spread: \(maxG - minG))")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                }
+
+                if let pot = prospect.scoutedPotential, let ovr = prospect.scoutedOverall {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                        Text("Potential gap: +\(pot - ovr) from current (\(ovr) \u{2192} \(pot))")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                }
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        }
+    }
+
+    private func riskExplanation(_ risk: ProspectRiskLevel) -> String {
+        switch risk {
+        case .safePick:
+            return "Consistent evaluations and stable personality. Lower variance in scout reports."
+        case .highCeiling:
+            return "High upside with some uncertainty. Could outperform projection significantly."
+        case .boomOrBust:
+            return "Extreme variance between evaluations. Could be a star or a bust."
+        case .unknown:
+            return "Not enough data to evaluate risk profile."
+        }
+    }
+
+    // MARK: - Starter Comparison Section
+
+    @ViewBuilder
+    private var starterComparisonSection: some View {
+        if isScouted, let prospectOVR = prospect.scoutedOverall {
+            let starters = teamPlayers
+                .filter { $0.position == prospect.position }
+                .sorted { $0.overall > $1.overall }
+            if let starter = starters.first {
+                Section("vs Current Starter") {
+                    HStack(spacing: 12) {
+                        VStack(spacing: 2) {
+                            Text(prospect.fullName)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                            Text("\(prospectOVR)")
+                                .font(.title3.weight(.heavy).monospacedDigit())
+                                .foregroundStyle(Color.forRating(prospectOVR))
+                            Text("Prospect")
+                                .font(.caption2)
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                        .frame(maxWidth: .infinity)
+
+                        let diff = prospectOVR - starter.overall
+                        VStack(spacing: 2) {
+                            Text("vs")
+                                .font(.caption2)
+                                .foregroundStyle(Color.textTertiary)
+                            Text(diff >= 0 ? "+\(diff)" : "\(diff)")
+                                .font(.callout.weight(.heavy).monospacedDigit())
+                                .foregroundStyle(diff > 0 ? Color.success : (diff == 0 ? Color.warning : Color.danger))
+                            Text(diff > 0 ? "Upgrade" : (diff == 0 ? "Lateral" : "Depth add"))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(diff > 0 ? Color.success : (diff == 0 ? Color.warning : Color.textSecondary))
+                        }
+
+                        VStack(spacing: 2) {
+                            Text(starter.fullName)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                            Text("\(starter.overall)")
+                                .font(.title3.weight(.heavy).monospacedDigit())
+                                .foregroundStyle(Color.forRating(starter.overall))
+                            Text("Starter")
+                                .font(.caption2)
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .listRowBackground(Color.backgroundSecondary)
+            } else {
+                Section("vs Current Starter") {
+                    HStack(spacing: 8) {
+                        Image(systemName: "person.fill.badge.plus")
+                            .font(.caption)
+                            .foregroundStyle(Color.success)
+                        Text("No \(prospect.position.rawValue) on roster -- immediate starter")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.success)
+                    }
+                }
+                .listRowBackground(Color.backgroundSecondary)
+            }
+        }
     }
 
     // MARK: - Combine Section
@@ -772,6 +918,12 @@ struct ProspectDetailView: View {
         guard let teamID = career.teamID else { return }
         let desc = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
         coaches = (try? modelContext.fetch(desc)) ?? []
+    }
+
+    private func loadTeamPlayers() {
+        guard let teamID = career.teamID else { return }
+        let desc = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
+        teamPlayers = (try? modelContext.fetch(desc)) ?? []
     }
 
     private func loadPositionRank() {
