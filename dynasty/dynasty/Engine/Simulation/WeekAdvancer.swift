@@ -741,8 +741,8 @@ enum WeekAdvancer {
                 }
             }
 
-            // Generate combine results for invited prospects (~330 of ~350)
-            ScoutingEngine.generateCombineResults(for: &currentDraftClass)
+            // Combine results are NOT auto-generated here — they should only be
+            // generated when the user presses "Send Scouts to Combine" in ScoutingHubView.
 
             // Post-combine mock draft update
             currentMockDraft = ScoutingEngine.generateMockDraft(

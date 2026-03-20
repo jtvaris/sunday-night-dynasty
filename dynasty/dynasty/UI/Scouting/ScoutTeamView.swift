@@ -72,13 +72,6 @@ struct ScoutTeamView: View {
                         }
                     }
 
-                    // Focus Assignments
-                    Section("Focus Assignments") {
-                        ForEach(scouts) { scout in
-                            ScoutFocusRow(scout: scout)
-                        }
-                    }
-                    .listRowBackground(Color.backgroundSecondary)
                 }
                 .scrollContentBackground(.hidden)
                 .listStyle(.insetGrouped)
@@ -146,7 +139,7 @@ struct ScoutTeamView: View {
 // MARK: - Scout Row View
 
 struct ScoutRowView: View {
-    let scout: Scout
+    @Bindable var scout: Scout
 
     var body: some View {
         VStack(spacing: 10) {
@@ -208,6 +201,59 @@ struct ScoutRowView: View {
                 ScoutStatBar(label: "Accuracy",         value: scout.accuracy)
                 ScoutStatBar(label: "Personality Read", value: scout.personalityRead)
                 ScoutStatBar(label: "Potential Read",   value: scout.potentialRead)
+            }
+
+            // Inline Focus Assignment (#287)
+            HStack(spacing: 4) {
+                Text("Focus:")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+
+                Menu {
+                    Button("All Positions") { scout.focusPosition = nil }
+                    ForEach(Position.allCases, id: \.self) { pos in
+                        Button(pos.rawValue) { scout.focusPosition = pos }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(scout.focusPosition?.rawValue ?? "All Pos.")
+                            .font(.caption2.weight(.semibold))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundStyle(Color.accentGold)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.accentGold.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                }
+
+                Text("|")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+
+                Menu {
+                    Button("General") { scout.focusAttribute = nil }
+                    ForEach(ScoutFocusAttribute.allCases) { attr in
+                        Button {
+                            scout.focusAttribute = attr
+                        } label: {
+                            Label(attr.label, systemImage: attr.icon)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(scout.focusAttribute?.label ?? "General")
+                            .font(.caption2.weight(.semibold))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundStyle(Color.accentBlue)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.accentBlue.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                }
+
+                Spacer()
             }
 
             // Reports & Pro Days summary (#232)
@@ -313,58 +359,6 @@ struct ScoutStatBar: View {
                 .frame(width: 28, alignment: .trailing)
         }
         .accessibilityLabel("\(label) \(value) out of 100")
-    }
-}
-
-// MARK: - Scout Focus Row
-
-struct ScoutFocusRow: View {
-    @Bindable var scout: Scout
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(scout.fullName)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.textPrimary)
-
-            HStack(spacing: 12) {
-                // Position picker
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Position")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textTertiary)
-                    Picker("Position", selection: $scout.focusPosition) {
-                        Text("All Positions").tag(Position?.none)
-                        ForEach(Position.allCases, id: \.self) { pos in
-                            Text(pos.rawValue).tag(Position?.some(pos))
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .tint(Color.accentGold)
-                }
-
-                // Attribute picker
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Attribute Focus")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textTertiary)
-                    Picker("Attribute", selection: Binding(
-                        get: { scout.focusAttribute },
-                        set: { scout.focusAttribute = $0 }
-                    )) {
-                        Text("General").tag(ScoutFocusAttribute?.none)
-                        ForEach(ScoutFocusAttribute.allCases) { attr in
-                            Label(attr.label, systemImage: attr.icon).tag(ScoutFocusAttribute?.some(attr))
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .tint(Color.accentBlue)
-                }
-
-                Spacer()
-            }
-        }
-        .padding(.vertical, 4)
     }
 }
 

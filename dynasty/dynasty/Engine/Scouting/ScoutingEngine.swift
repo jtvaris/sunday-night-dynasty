@@ -1580,8 +1580,8 @@ enum ScoutingEngine {
                     "Michigan State", "Iowa", "Minnesota", "Illinois"]
         case .regionalScout5: // Central — Big 12 / AAC
             return ["Oklahoma", "Texas", "Baylor", "TCU", "North Carolina"]
-        case .chiefScout:
-            return colleges // Chief Scout can evaluate any prospect
+        case .chiefScout, .extraScout1, .extraScout2:
+            return colleges // Chief Scout and extra scouts can evaluate any prospect
         }
     }
 

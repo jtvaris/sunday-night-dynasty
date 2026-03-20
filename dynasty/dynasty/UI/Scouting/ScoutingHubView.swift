@@ -46,6 +46,16 @@ struct ScoutingHubView: View {
         .navigationTitle("Scouting")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                if scouts.count < maxScouts {
+                    Button { showHireScout = true } label: {
+                        Image(systemName: "person.badge.plus")
+                    }
+                    .tint(Color.accentGold)
+                }
+            }
+        }
         .task { loadData() }
         .sheet(isPresented: $showHireScout, onDismiss: { loadData() }) {
             HireScoutSheet(career: career)
@@ -292,6 +302,17 @@ struct ScoutingHubView: View {
         )
         scouts = (try? modelContext.fetch(scoutDesc)) ?? []
 
+        // Re-generate draft class if lost (app restart)
+        if WeekAdvancer.currentDraftClass.isEmpty {
+            let validPhases: [SeasonPhase] = [.coachingChanges, .reviewRoster, .combine, .freeAgency, .draft, .otas]
+            if validPhases.contains(career.currentPhase) {
+                WeekAdvancer.currentDraftClass = ScoutingEngine.generateDraftClass()
+                WeekAdvancer.draftClassGenerated = true
+                // Apply pre-scouted data for first season
+                ScoutingEngine.applyPreScoutedData(prospects: &WeekAdvancer.currentDraftClass)
+            }
+        }
+
         // Prospects live in WeekAdvancer.currentDraftClass (not persisted in SwiftData)
         let allProspects = WeekAdvancer.currentDraftClass
         prospects = allProspects.filter { $0.isDeclaringForDraft }
@@ -459,32 +480,61 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
 
 private struct HireScoutSheet: View {
     let career: Career
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+
+    /// Determine the next available scout role that isn't filled yet.
+    private var nextAvailableRole: ScoutRole? {
+        guard let teamID = career.teamID else { return ScoutRole.regionalScout1 }
+        let descriptor = FetchDescriptor<Scout>(
+            predicate: #Predicate { $0.teamID == teamID }
+        )
+        let existing = (try? modelContext.fetch(descriptor)) ?? []
+        let filledRoles = Set(existing.map(\.scoutRole))
+        return ScoutRole.allCases
+            .sorted { $0.sortOrder < $1.sortOrder }
+            .first { !filledRoles.contains($0) }
+    }
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color.backgroundPrimary.ignoresSafeArea()
-                VStack(spacing: 20) {
-                    Image(systemName: "person.badge.plus")
-                        .font(.system(size: 48))
-                        .foregroundStyle(Color.accentGold)
-                    Text("Hire Scout")
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(Color.textPrimary)
-                    Text("Scout hiring market coming soon.")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textSecondary)
-                        .multilineTextAlignment(.center)
+            if let role = nextAvailableRole {
+                HireScoutView(
+                    scoutRole: role,
+                    teamID: career.teamID ?? UUID(),
+                    remainingBudget: 5_000
+                ) { _, _ in
+                    dismiss()
                 }
-                .padding(40)
-            }
-            .navigationTitle("Hire Scout")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { dismiss() }
+                    }
+                }
+            } else {
+                ZStack {
+                    Color.backgroundPrimary.ignoresSafeArea()
+                    VStack(spacing: 20) {
+                        Image(systemName: "person.3.fill")
+                            .font(.system(size: 48))
+                            .foregroundStyle(Color.textTertiary)
+                        Text("Scout Staff Full")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundStyle(Color.textPrimary)
+                        Text("You have filled all 8 scout slots.")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(40)
+                }
+                .navigationTitle("Hire Scout")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbarColorScheme(.dark, for: .navigationBar)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { dismiss() }
+                    }
                 }
             }
         }
