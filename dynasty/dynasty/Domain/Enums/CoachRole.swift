@@ -1,6 +1,8 @@
 import Foundation
 
-enum CoachRole: String, Codable, CaseIterable {
+enum CoachRole: String, Codable, CaseIterable, Identifiable {
+    var id: String { rawValue }
+
     case headCoach               = "HeadCoach"
     case assistantHeadCoach      = "AssistantHeadCoach"
     case offensiveCoordinator    = "OffensiveCoordinator"

@@ -176,7 +176,7 @@ struct HireCoachView: View {
                             }
                         }
                     }
-                    .frame(minWidth: 620)
+                    .frame(minWidth: 620, maxWidth: .infinity)
                 }
                 .frame(maxWidth: .infinity)
             }

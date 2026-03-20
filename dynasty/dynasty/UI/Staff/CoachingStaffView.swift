@@ -9,13 +9,8 @@ enum StaffTab: String, CaseIterable {
     case review = "Review"
 }
 
-/// Single navigation destination enum to avoid multiple `navigationDestination(item:)` conflicts.
-/// Using a single binding prevents SwiftUI from confusing which destination to activate after dismiss.
-enum StaffNavDestination: Hashable {
-    case hireCoach(CoachRole)
-    case hireScout(ScoutRole)
-    case coachDetail(UUID)
-}
+// StaffNavDestination removed — replaced with separate state bindings to avoid
+// SwiftUI navigationDestination(item:) confusion after dismiss/re-navigate cycles.
 
 struct CoachingStaffView: View {
 
@@ -45,8 +40,10 @@ struct CoachingStaffView: View {
     @State private var isMedicalExpanded: Bool = true
     @State private var isScoutingExpanded: Bool = true
 
-    // MARK: - Navigation State (single binding to avoid multiple navigationDestination conflicts)
-    @State private var navDestination: StaffNavDestination?
+    // MARK: - Navigation State (separate bindings — sheets for hire views, push for detail)
+    @State private var hireCoachRole: CoachRole?      // Opens HireCoachView as sheet
+    @State private var hireScoutRole: ScoutRole?       // Opens HireScoutView as sheet
+    @State private var detailCoachID: UUID?            // Pushes CoachDetailView via navigationDestination
 
     /// Coaches filtered to this team, derived from @Query result.
     private var coaches: [Coach] {
@@ -462,23 +459,31 @@ struct CoachingStaffView: View {
         .navigationTitle("Coaching Staff")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .navigationDestination(item: $navDestination) { destination in
-            switch destination {
-            case .hireCoach(let role):
+        // Coach detail stays as navigation push (works correctly)
+        .navigationDestination(item: $detailCoachID) { coachID in
+            if let coach = allCoaches.first(where: { $0.id == coachID }) {
+                CoachDetailView(coach: coach)
+            }
+        }
+        // Hire Coach as SHEET (avoids navigation stack confusion)
+        .sheet(item: $hireCoachRole) { role in
+            NavigationStack {
                 if let teamID = career.teamID {
                     HireCoachView(role: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
+                        hireCoachRole = nil  // Dismiss sheet
                         showHiringConfirmation(coachName: name, roleName: roleName)
                     })
                 }
-            case .hireScout(let scoutRole):
+            }
+        }
+        // Hire Scout as SHEET
+        .sheet(item: $hireScoutRole) { role in
+            NavigationStack {
                 if let teamID = career.teamID {
-                    HireScoutView(scoutRole: scoutRole, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
+                    HireScoutView(scoutRole: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
+                        hireScoutRole = nil  // Dismiss sheet
                         showHiringConfirmation(coachName: name, roleName: roleName)
                     })
-                }
-            case .coachDetail(let coachID):
-                if let coach = allCoaches.first(where: { $0.id == coachID }) {
-                    CoachDetailView(coach: coach)
                 }
             }
         }
@@ -578,7 +583,7 @@ struct CoachingStaffView: View {
                         playerAsHeadCoachRow
                     } else if let hc = headCoach {
                         Button {
-                            navDestination = .coachDetail(hc.id)
+                            detailCoachID = hc.id
                         } label: {
                             HeadCoachCardView(coach: hc, menteeCount: coaches.filter { $0.mentorCoachID == hc.id }.count)
                         }
@@ -666,7 +671,7 @@ struct CoachingStaffView: View {
                             ForEach(posRoles, id: \.self) { role in
                                 if let coach = coaches.first(where: { $0.role == role }) {
                                     Button {
-                                        navDestination = .coachDetail(coach.id)
+                                        detailCoachID = coach.id
                                     } label: {
                                         compactCoachCard(coach: coach)
                                     }
@@ -709,7 +714,7 @@ struct CoachingStaffView: View {
                                     ForEach(medRoles, id: \.self) { role in
                                         if let coach = coaches.first(where: { $0.role == role }) {
                                             Button {
-                                                navDestination = .coachDetail(coach.id)
+                                                detailCoachID = coach.id
                                             } label: {
                                                 compactCoachCard(coach: coach)
                                             }
@@ -783,7 +788,7 @@ struct CoachingStaffView: View {
                             ForEach(medRoles, id: \.self) { role in
                                 if let coach = coaches.first(where: { $0.role == role }) {
                                     Button {
-                                        navDestination = .coachDetail(coach.id)
+                                        detailCoachID = coach.id
                                     } label: {
                                         compactCoachCard(coach: coach)
                                     }
@@ -1546,7 +1551,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func coachRowWithChemistry(coach: Coach) -> some View {
         Button {
-            navDestination = .coachDetail(coach.id)
+            detailCoachID = coach.id
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 CoachRowWithDescriptionView(coach: coach)
@@ -1637,12 +1642,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func compactVacantCard(role: CoachRole) -> some View {
         Button {
-            // Reset first to ensure SwiftUI detects the change even if
-            // navDestination was recently set to another .hireCoach value
-            navDestination = nil
-            DispatchQueue.main.async {
-                navDestination = .hireCoach(role)
-            }
+            hireCoachRole = role
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -1700,10 +1700,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private var headCoachVacantRow: some View {
         Button {
-            navDestination = nil
-            DispatchQueue.main.async {
-                navDestination = .hireCoach(.headCoach)
-            }
+            hireCoachRole = .headCoach
         } label: {
                 VStack(spacing: 10) {
                     HStack {
@@ -1746,10 +1743,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func vacantRow(role: CoachRole) -> some View {
         Button {
-            navDestination = nil
-            DispatchQueue.main.async {
-                navDestination = .hireCoach(role)
-            }
+            hireCoachRole = role
         } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -1867,10 +1861,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func scoutVacantRow(role: ScoutRole) -> some View {
         Button {
-            navDestination = nil
-            DispatchQueue.main.async {
-                navDestination = .hireScout(role)
-            }
+            hireScoutRole = role
         } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {

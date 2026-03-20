@@ -1,7 +1,9 @@
 import Foundation
 
 /// Defines the scouting department hierarchy.
-enum ScoutRole: String, Codable, CaseIterable {
+enum ScoutRole: String, Codable, CaseIterable, Identifiable {
+    var id: String { rawValue }
+
     case chiefScout      = "ChiefScout"
     case regionalScout1  = "RegionalScout1"
     case regionalScout2  = "RegionalScout2"

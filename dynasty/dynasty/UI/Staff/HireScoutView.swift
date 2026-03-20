@@ -222,8 +222,7 @@ private struct ScoutCandidateRow: View {
     let onHire: () -> Void
 
     var body: some View {
-        Button(action: onHire) {
-            HStack(spacing: 0) {
+        HStack(spacing: 0) {
                 // Name + meta
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 4) {
@@ -301,30 +300,33 @@ private struct ScoutCandidateRow: View {
                     .foregroundStyle(valueLabel.color)
                     .frame(width: 36)
 
-                // Status indicator
+                // Hire button / status indicator
                 Group {
                     if isHired {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 14))
                             .foregroundStyle(Color.success)
+                            .frame(width: 30)
                     } else if isOverBudget {
                         Image(systemName: "xmark.circle")
                             .font(.system(size: 14))
                             .foregroundStyle(Color.danger.opacity(0.5))
+                            .frame(width: 30)
                     } else {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Color.textTertiary)
+                        Button(action: onHire) {
+                            Text("Hire")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(Color.backgroundPrimary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
-                .frame(width: 30)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(isHired || isOverBudget)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .opacity(isOverBudget ? 0.6 : 1.0)
         .background(
             Group {
