@@ -251,6 +251,24 @@ enum NewsGenerator {
                 sentiment: .neutral
             ))
 
+        case .proDays:
+            items.append(NewsItem(
+                headline: "Pro day circuit kicks off across the country",
+                body: "College programs are hosting pro days this month, giving prospects one last chance to impress NFL scouts in a controlled environment before the draft.",
+                category: .draft,
+                week: 0,
+                season: season,
+                sentiment: .neutral
+            ))
+            items.append(NewsItem(
+                headline: "Teams scheduling private workouts with top targets",
+                body: "Several teams have begun inviting top prospects for private workouts at their facilities, a sign that they're narrowing down their draft boards ahead of selection day.",
+                category: .draft,
+                week: 0,
+                season: season,
+                sentiment: .neutral
+            ))
+
         case .rosterCuts:
             items.append(NewsItem(
                 headline: "Final roster cuts loom: hundreds face anxious wait",
