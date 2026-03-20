@@ -237,25 +237,37 @@ struct TimelineTasksPanel: View {
         )
     }
 
+    @ViewBuilder
     private func currentTaskRow(_ task: GameTask, isRequired: Bool) -> some View {
+        let locked = isTaskLocked(task)
+
         Button {
-            onTaskSelected(task.destination)
+            if !locked {
+                onTaskSelected(task.destination)
+            }
         } label: {
             HStack(spacing: 8) {
                 // Status dot
-                taskStatusIcon(task, isRequired: isRequired)
+                taskStatusIcon(task, isRequired: isRequired, isLocked: locked)
 
                 // Task text
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 5) {
                         Text(task.title)
-                            .font(.system(size: 13, weight: task.status == .done ? .regular : .medium))
-                            .foregroundStyle(task.status == .done ? Color.textTertiary : Color.textPrimary)
+                            .font(.system(size: 13, weight: task.status == .done ? .regular : (locked ? .regular : .medium)))
+                            .foregroundStyle(task.status == .done ? Color.textTertiary : (locked ? Color.textTertiary : Color.textPrimary))
                             .strikethrough(task.status == .done, color: Color.textTertiary)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        if isRequired && task.status != .done {
+                        if locked {
+                            Text("Locked")
+                                .font(.system(size: 8, weight: .heavy))
+                                .foregroundStyle(Color.textTertiary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.backgroundTertiary))
+                        } else if isRequired && task.status != .done {
                             Text("Required")
                                 .font(.system(size: 8, weight: .heavy))
                                 .foregroundStyle(.white)
@@ -268,7 +280,7 @@ struct TimelineTasksPanel: View {
 
                 Spacer()
 
-                if task.status != .done {
+                if task.status != .done && !locked {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Color.textTertiary)
@@ -278,15 +290,34 @@ struct TimelineTasksPanel: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .opacity(task.status == .done ? 0.55 : 1.0)
+        .disabled(locked)
+        .opacity(task.status == .done ? 0.55 : (locked ? 0.45 : 1.0))
+    }
+
+    /// Determines if a combine/proDays task is locked behind an unfinished prerequisite.
+    private func isTaskLocked(_ task: GameTask) -> Bool {
+        guard task.status == .todo, task.isRequired else { return false }
+        // Combine sequential blocking
+        let combineChain = ["Send scouts to Combine", "Review Combine results", "Conduct prospect interviews", "Review interview report"]
+        if let taskIdx = combineChain.firstIndex(of: task.title), taskIdx > 0 {
+            let prereqTitle = combineChain[taskIdx - 1]
+            if let prereq = tasks.first(where: { $0.title == prereqTitle }), prereq.status != .done {
+                return true
+            }
+        }
+        return false
     }
 
     @ViewBuilder
-    private func taskStatusIcon(_ task: GameTask, isRequired: Bool) -> some View {
+    private func taskStatusIcon(_ task: GameTask, isRequired: Bool, isLocked: Bool = false) -> some View {
         if task.status == .done {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 14))
                 .foregroundStyle(Color.success)
+        } else if isLocked {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.textTertiary)
         } else if task.status == .inProgress {
             Image(systemName: "circle.dotted")
                 .font(.system(size: 14))

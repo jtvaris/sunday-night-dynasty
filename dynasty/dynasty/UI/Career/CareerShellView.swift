@@ -489,9 +489,34 @@ struct CareerShellView: View {
                     currentTasks[index].status = .done
                 }
 
-            // Combine — "Send scouts" is verified by UserDefaults flag
+            // Combine — sequential task unlocking
             case "Send scouts to Combine":
                 if UserDefaults.standard.bool(forKey: "scoutsSentToCombine") {
+                    currentTasks[index].status = .done
+                }
+
+            case "Review Combine results":
+                // Locked until scouts sent
+                let scoutsSent = UserDefaults.standard.bool(forKey: "scoutsSentToCombine")
+                if !scoutsSent {
+                    currentTasks[index].status = .todo
+                } else if currentTasks[index].status == .inProgress {
+                    currentTasks[index].status = .done
+                }
+
+            case "Conduct prospect interviews":
+                // Locked until combine results reviewed
+                let resultsReviewed = currentTasks.first(where: { $0.title == "Review Combine results" })?.status == .done
+                if !resultsReviewed {
+                    currentTasks[index].status = .todo
+                }
+
+            case "Review interview report":
+                // Locked until interviews conducted
+                let interviewsDone = currentTasks.first(where: { $0.title == "Conduct prospect interviews" })?.status == .done
+                if !interviewsDone {
+                    currentTasks[index].status = .todo
+                } else if career.interviewsUsed > 0 {
                     currentTasks[index].status = .done
                 }
 

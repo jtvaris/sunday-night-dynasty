@@ -373,25 +373,25 @@ enum TaskGenerator {
 
     private static func combineTasks() -> [GameTask] {
         [
-            // #203: Reordered — 1. Assign scouts, 2. Review results, 3. Big Board, 4. Interviews
-            // REQUIRED: must send scouts before reviewing results
+            // Step 1: REQUIRED — must complete before step 2 unlocks
             GameTask(
                 phase: .combine,
                 title: "Send scouts to Combine",
-                description: "Deploy your scouting staff to evaluate prospects in person.",
+                description: "Set scout focus and deploy your scouting staff to evaluate prospects.",
                 icon: "binoculars.fill",
                 destination: .scouting,
                 isRequired: true
             ),
-            // Unlocked after scouts are sent (checked in refreshTaskCompletionStatus)
+            // Step 2: REQUIRED — unlocks after step 1, blocks step 3
             GameTask(
                 phase: .combine,
                 title: "Review Combine results",
-                description: "Check 40 times, bench press, and drill results for top prospects.",
+                description: "Study 40-yard times, bench press, and drill results. Check media reactions.",
                 icon: "chart.bar.fill",
                 destination: .scouting,
-                isRequired: false
+                isRequired: true
             ),
+            // Optional: Update board between reviews
             GameTask(
                 phase: .combine,
                 title: "Update Big Board",
@@ -400,13 +400,23 @@ enum TaskGenerator {
                 destination: .bigBoard,
                 isRequired: false
             ),
+            // Step 3: REQUIRED — unlocks after step 2
             GameTask(
                 phase: .combine,
                 title: "Conduct prospect interviews",
-                description: "Meet with prospects to evaluate character, football IQ, and fit.",
+                description: "Select prospects to interview. Evaluate character, football IQ, and team fit.",
                 icon: "bubble.left.and.bubble.right.fill",
-                destination: .prospectList,
-                isRequired: false
+                destination: .scouting,
+                isRequired: true
+            ),
+            // Step 4: REQUIRED — unlocks after interviews conducted
+            GameTask(
+                phase: .combine,
+                title: "Review interview report",
+                description: "Review coaching staff notes on interviews. Prospect grades updated.",
+                icon: "doc.text.magnifyingglass",
+                destination: .scouting,
+                isRequired: true
             ),
         ]
     }
