@@ -516,6 +516,7 @@ struct CareerShellView: View {
                 if !scoutsSent {
                     currentTasks[index].status = .todo
                 } else if currentTasks[index].status == .inProgress {
+                    // Visiting the scouting hub after scouts sent = reviewed
                     currentTasks[index].status = .done
                 }
 
@@ -524,6 +525,9 @@ struct CareerShellView: View {
                 let resultsReviewed = currentTasks.first(where: { $0.title == "Review Combine results" })?.status == .done
                 if !resultsReviewed {
                     currentTasks[index].status = .todo
+                } else if career.interviewsUsed > 0 {
+                    // Player has conducted at least one interview
+                    currentTasks[index].status = .done
                 }
 
             case "Review interview report":
@@ -531,7 +535,8 @@ struct CareerShellView: View {
                 let interviewsDone = currentTasks.first(where: { $0.title == "Conduct prospect interviews" })?.status == .done
                 if !interviewsDone {
                     currentTasks[index].status = .todo
-                } else if career.interviewsUsed > 0 {
+                } else if currentTasks[index].status == .inProgress {
+                    // Visited scouting after interviews → report reviewed
                     currentTasks[index].status = .done
                 }
 
@@ -548,6 +553,40 @@ struct CareerShellView: View {
             case "Review Pro Day results":
                 // Done if visited scouting after pro days attended
                 if currentTasks[index].status == .inProgress {
+                    currentTasks[index].status = .done
+                }
+
+            // Free Agency — sequential task unlocking based on career.freeAgencyStep
+            case "Final Push \u{2014} Re-sign or let walk":
+                let step = FreeAgencyStep(rawValue: career.freeAgencyStep)
+                if step != .finalPush {
+                    currentTasks[index].status = .done
+                }
+
+            case "Start New League Year":
+                let step = FreeAgencyStep(rawValue: career.freeAgencyStep)
+                if step == .finalPush {
+                    // Locked — Final Push not done yet
+                    currentTasks[index].status = .todo
+                } else if step != .newLeagueYear {
+                    currentTasks[index].status = .done
+                }
+
+            case "Roster & Cap compliance":
+                let step = FreeAgencyStep(rawValue: career.freeAgencyStep)
+                if step == .finalPush || step == .newLeagueYear {
+                    // Locked — previous steps not done
+                    currentTasks[index].status = .todo
+                } else if step != .capReview {
+                    currentTasks[index].status = .done
+                }
+
+            case "Free agency signings":
+                let step = FreeAgencyStep(rawValue: career.freeAgencyStep)
+                if step == .finalPush || step == .newLeagueYear || step == .capReview {
+                    // Locked — must complete cap review first
+                    currentTasks[index].status = .todo
+                } else if step == .complete {
                     currentTasks[index].status = .done
                 }
 

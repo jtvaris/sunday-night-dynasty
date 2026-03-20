@@ -847,7 +847,7 @@ struct BigBoardRowView: View {
                                     Label("Combine Media", systemImage: "newspaper.fill")
                                         .font(.caption.weight(.bold))
                                         .foregroundStyle(Color.accentGold)
-                                    Text(mention)
+                                    Text(mention.replacingOccurrences(of: "\\[\\w+\\s?\\w*\\]\\s*", with: "", options: .regularExpression))
                                         .font(.subheadline)
                                         .foregroundStyle(Color.textPrimary)
                                         .fixedSize(horizontal: false, vertical: true)

@@ -288,7 +288,7 @@ struct ProspectRowView: View {
                         Image(systemName: "newspaper.fill")
                             .font(.system(size: 10))
                             .foregroundStyle(mediaColor(for: prospect))
-                            .help(mention)
+                            .help(mention.replacingOccurrences(of: "\\[\\w+\\s?\\w*\\]\\s*", with: "", options: .regularExpression))
                     }
 
                     // Interview completed indicator

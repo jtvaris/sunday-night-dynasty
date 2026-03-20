@@ -2132,11 +2132,14 @@ enum ScoutingEngine {
             ))
         }
 
-        // Stamp combineMediaMention on prospects
-        let mentionMap = Dictionary(mentions.map { ($0.prospectID, $0.headline) }, uniquingKeysWith: { a, _ in a })
+        // Stamp combineMediaMention on prospects (prefixed with category for color coding)
+        let mentionMap = Dictionary(
+            mentions.map { ($0.prospectID, "[\($0.category)] \($0.headline)") },
+            uniquingKeysWith: { a, _ in a }
+        )
         for i in prospects.indices {
-            if let headline = mentionMap[prospects[i].id] {
-                prospects[i].combineMediaMention = headline
+            if let taggedHeadline = mentionMap[prospects[i].id] {
+                prospects[i].combineMediaMention = taggedHeadline
             }
         }
 
