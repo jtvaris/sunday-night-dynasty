@@ -15,11 +15,14 @@ struct BigBoardView: View {
     @State private var showWatchlistOnly: Bool = false
     @State private var editingAssessmentProspect: CollegeProspect?
     @State private var coaches: [Coach] = []
+    @State private var showMyBoard: Bool = false
 
     // MARK: - Own Assessments & Watchlist Storage
 
     @AppStorage("prospectOwnAssessments") private var prospectOwnAssessmentsJSON: String = "{}"
     @AppStorage("prospectWatchlist") private var prospectWatchlistJSON: String = "[]"
+    @AppStorage("prospectCustomBoard") private var prospectCustomBoardJSON: String = "[]"
+    @AppStorage("rosterPriorities") private var rosterPrioritiesJSON: String = "{}"
 
     private static let gradeOptions = ["none", "A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D", "F"]
 
@@ -61,6 +64,26 @@ struct BigBoardView: View {
         prospectWatchlist.contains(prospectID.uuidString)
     }
 
+    // MARK: - Custom Board Storage
+
+    private var customBoardOrder: [UUID] {
+        let strings = (try? JSONDecoder().decode([String].self, from: Data(prospectCustomBoardJSON.utf8))) ?? []
+        return strings.compactMap { UUID(uuidString: $0) }
+    }
+
+    private func saveCustomBoardOrder(_ ids: [UUID]) {
+        let strings = ids.map { $0.uuidString }
+        if let data = try? JSONEncoder().encode(strings) {
+            prospectCustomBoardJSON = String(data: data, encoding: .utf8) ?? "[]"
+        }
+    }
+
+    // MARK: - User Roster Priorities
+
+    private var rosterPriorities: [String: String] {
+        (try? JSONDecoder().decode([String: String].self, from: Data(rosterPrioritiesJSON.utf8))) ?? [:]
+    }
+
     // MARK: - Tier Constants
 
     private static let tierNames = ["Blue Chip", "First Rounder", "Day Two", "Day Three", "Priority FA", "Draftable"]
@@ -95,6 +118,16 @@ struct BigBoardView: View {
         let unordered = filtered.filter { !orderedIDs.contains($0.id) }.map { $0.id }
         orderedIDs.append(contentsOf: unordered)
         return orderedIDs.compactMap { id in filtered.first { $0.id == id } }
+    }
+
+    /// Custom-ordered board for "My Board" mode.
+    private var customOrderedBoard: [CollegeProspect] {
+        let filtered = filteredProspects
+        let savedOrder = customBoardOrder
+        var ordered = savedOrder.compactMap { id in filtered.first { $0.id == id } }
+        let remaining = filtered.filter { p in !savedOrder.contains(p.id) }
+        ordered.append(contentsOf: remaining)
+        return ordered
     }
 
     /// Prospects grouped by tier, maintaining board order within each tier.
@@ -147,41 +180,77 @@ struct BigBoardView: View {
                     bigBoardAttributeTabPicker
                     List {
                         recommendationsSection
-                    depthAnalysisSection
-                    ForEach(tieredBoard, id: \.tier) { tierGroup in
-                        Section {
-                            ForEach(tierGroup.prospects) { prospect in
-                                NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
-                                    BigBoardRowView(
-                                        rank: rankFor(prospect),
-                                        prospect: prospect,
-                                        ownGrade: prospectOwnAssessments[prospect.id.uuidString],
-                                        isWatchlisted: isOnWatchlist(prospect.id),
-                                        schemeFit: schemeFitLabel(for: prospect),
-                                        starterComparison: starterComparison(for: prospect),
-                                        attributeTab: attributeTab,
-                                        scoutsSentToCombine: scoutsSentToCombine,
-                                        onFlagToggle: { toggleFlag(prospect) },
-                                        onWatchlistToggle: { toggleWatchlist(prospectID: prospect.id) },
-                                        onGradeTap: { editingAssessmentProspect = prospect }
-                                    )
+                        depthAnalysisSection
+                        if showMyBoard {
+                            // Flat custom-ordered list
+                            Section {
+                                ForEach(customOrderedBoard) { prospect in
+                                    NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
+                                        BigBoardRowView(
+                                            rank: customRankFor(prospect),
+                                            prospect: prospect,
+                                            ownGrade: prospectOwnAssessments[prospect.id.uuidString],
+                                            isWatchlisted: isOnWatchlist(prospect.id),
+                                            schemeFit: schemeFitLabel(for: prospect),
+                                            starterComparison: starterComparison(for: prospect),
+                                            attributeTab: attributeTab,
+                                            scoutsSentToCombine: scoutsSentToCombine,
+                                            onFlagToggle: { toggleFlag(prospect) },
+                                            onWatchlistToggle: { toggleWatchlist(prospectID: prospect.id) },
+                                            onGradeTap: { editingAssessmentProspect = prospect }
+                                        )
+                                    }
+                                    .listRowBackground(Color.backgroundSecondary)
+                                    .contextMenu {
+                                        tierContextMenu(for: prospect)
+                                    }
                                 }
-                                .listRowBackground(Color.backgroundSecondary)
-                                .contextMenu {
-                                    tierContextMenu(for: prospect)
+                                .onMove { from, to in
+                                    moveCustomBoard(from: from, to: to)
+                                }
+                            } header: {
+                                Label("My Board (\(customOrderedBoard.count))", systemImage: "person.fill")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(Color.accentGold)
+                                    .textCase(nil)
+                            }
+                        } else {
+                            // Staff tiered board
+                            ForEach(tieredBoard, id: \.tier) { tierGroup in
+                                Section {
+                                    ForEach(tierGroup.prospects) { prospect in
+                                        NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
+                                            BigBoardRowView(
+                                                rank: rankFor(prospect),
+                                                prospect: prospect,
+                                                ownGrade: prospectOwnAssessments[prospect.id.uuidString],
+                                                isWatchlisted: isOnWatchlist(prospect.id),
+                                                schemeFit: schemeFitLabel(for: prospect),
+                                                starterComparison: starterComparison(for: prospect),
+                                                attributeTab: attributeTab,
+                                                scoutsSentToCombine: scoutsSentToCombine,
+                                                onFlagToggle: { toggleFlag(prospect) },
+                                                onWatchlistToggle: { toggleWatchlist(prospectID: prospect.id) },
+                                                onGradeTap: { editingAssessmentProspect = prospect }
+                                            )
+                                        }
+                                        .listRowBackground(Color.backgroundSecondary)
+                                        .contextMenu {
+                                            tierContextMenu(for: prospect)
+                                        }
+                                    }
+                                    .onMove { from, to in
+                                        moveTierProspects(tier: tierGroup.tier, from: from, to: to)
+                                    }
+                                } header: {
+                                    tierHeader(tier: tierGroup.tier, count: tierGroup.prospects.count)
                                 }
                             }
-                            .onMove { from, to in
-                                moveTierProspects(tier: tierGroup.tier, from: from, to: to)
-                            }
-                        } header: {
-                            tierHeader(tier: tierGroup.tier, count: tierGroup.prospects.count)
                         }
                     }
-                }
-                .scrollContentBackground(.hidden)
-                .listStyle(.insetGrouped)
-                .environment(\.editMode, .constant(.active))
+                    .scrollContentBackground(.hidden)
+                    .listStyle(.insetGrouped)
+                    .environment(\.editMode, .constant(.active))
                 }
             }
         }
@@ -191,6 +260,15 @@ struct BigBoardView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 positionPicker
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showMyBoard.toggle()
+                } label: {
+                    Text(showMyBoard ? "My Board" : "Staff Board")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(showMyBoard ? Color.accentGold : Color.textSecondary)
+                }
             }
         }
         .onAppear {
@@ -292,8 +370,62 @@ struct BigBoardView: View {
             .first
     }
 
+    /// Map a Position to its EvalPositionGroup id for roster priority lookup.
+    private func positionGroupID(for position: Position) -> String {
+        switch position {
+        case .QB: return "QB"
+        case .RB, .FB: return "RB"
+        case .WR: return "WR"
+        case .TE: return "TE"
+        case .LT, .LG, .C, .RG, .RT: return "OL"
+        case .DE, .DT: return "DL"
+        case .OLB, .MLB: return "LB"
+        case .CB, .FS, .SS: return "DB"
+        case .K, .P: return "ST"
+        }
+    }
+
+    /// User's priority positions from Roster Evaluation, formatted for display.
+    private var userPriorityPositions: [String] {
+        rosterPriorities
+            .filter { $0.value != "none" }
+            .sorted { priorityRank($0.value) < priorityRank($1.value) }
+            .map { $0.key }
+    }
+
+    private func priorityRank(_ priority: String) -> Int {
+        switch priority {
+        case "high": return 0
+        case "medium": return 1
+        case "low": return 2
+        default: return 3
+        }
+    }
+
     private var depthAnalysisSection: some View {
         Section {
+            // Staff vs User needs comparison
+            HStack(spacing: 8) {
+                Image(systemName: "person.2.fill")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentBlue)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Staff: Need \(teamNeeds.prefix(3).map { $0.rawValue }.joined(separator: ", "))")
+                        .font(.caption)
+                        .foregroundStyle(Color.textPrimary)
+                    if userPriorityPositions.isEmpty {
+                        Text("You: Set your priorities in Roster Evaluation")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                    } else {
+                        Text("You: Priority \(userPriorityPositions.joined(separator: ", "))")
+                            .font(.caption)
+                            .foregroundStyle(Color.accentGold)
+                    }
+                }
+            }
+            .listRowBackground(Color.backgroundSecondary)
+
             // Position depth summary
             ForEach(positionDepthItems, id: \.position) { item in
                 HStack(spacing: 8) {
@@ -309,6 +441,15 @@ struct BigBoardView: View {
 
                     Text(sufficient ? "\u{2713}" : "\u{26A0}\u{FE0F}")
                         .font(.caption)
+
+                    let groupID = positionGroupID(for: item.position)
+                    if let userPriority = rosterPriorities[groupID], userPriority != "none" {
+                        Text("You: \(userPriority)")
+                            .font(.caption2)
+                            .foregroundStyle(userPriority == "high" ? Color.danger : userPriority == "medium" ? Color.warning : Color.accentBlue)
+                            .padding(.horizontal, 4)
+                            .background(Color.backgroundTertiary, in: Capsule())
+                    }
                 }
                 .listRowBackground(Color.backgroundSecondary)
             }
@@ -502,6 +643,19 @@ struct BigBoardView: View {
             return index + 1
         }
         return 0
+    }
+
+    private func customRankFor(_ prospect: CollegeProspect) -> Int {
+        if let index = customOrderedBoard.firstIndex(where: { $0.id == prospect.id }) {
+            return index + 1
+        }
+        return 0
+    }
+
+    private func moveCustomBoard(from: IndexSet, to: Int) {
+        var list = customOrderedBoard.map { $0.id }
+        list.move(fromOffsets: from, toOffset: to)
+        saveCustomBoardOrder(list)
     }
 
     private func toggleFlag(_ prospect: CollegeProspect) {

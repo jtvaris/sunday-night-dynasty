@@ -346,6 +346,7 @@ struct TeamSelectionView: View {
         UserDefaults.standard.set(false, forKey: "rosterSortHintSeen")
         UserDefaults.standard.set("[]", forKey: "prospectWatchlist")
         UserDefaults.standard.set("{}", forKey: "prospectOwnAssessments")
+        UserDefaults.standard.set("[]", forKey: "prospectCustomBoard")
 
         isLoading = false
         selectedCareer = career
