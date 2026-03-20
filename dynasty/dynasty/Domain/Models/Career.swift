@@ -39,6 +39,12 @@ final class Career {
     /// Season goals set by the owner during the intro sequence (or generated later).
     var seasonGoals: SeasonGoals?
 
+    // MARK: - Free Agency State
+    /// Current FA round: 0 = pre-FA, 1-6 = rounds (Day 1-3, Week 2-4).
+    var freeAgencyRound: Int = 0
+    /// Current sub-step within the FA phase (stored as raw value of FreeAgencyStep).
+    var freeAgencyStep: String = FreeAgencyStep.finalPush.rawValue
+
     // MARK: - Scouting Counters
     /// Number of combine interviews conducted this year (max 60).
     var interviewsUsed: Int = 0
