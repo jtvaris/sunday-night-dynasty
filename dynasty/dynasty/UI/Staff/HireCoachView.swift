@@ -178,6 +178,7 @@ struct HireCoachView: View {
                     }
                     .frame(minWidth: 620)
                 }
+                .frame(maxWidth: .infinity)
             }
         }
         .navigationTitle("Hire \(role.displayName)")
@@ -926,7 +927,6 @@ private struct CandidateDetailSheet: View {
                         Spacer(minLength: 20)
                     }
                     .padding(16)
-                    .frame(maxWidth: 900)
                     .frame(maxWidth: .infinity)
                 }
             }

@@ -680,9 +680,9 @@ struct RosterEvaluationView: View {
     private func letterGrade(_ avg: Int) -> GradeInfo {
         switch avg {
         case 85...: return GradeInfo(letter: "A", color: .success)
-        case 75..<85: return GradeInfo(letter: "B", color: .accentGold)
-        case 65..<75: return GradeInfo(letter: "C", color: .warning)
-        case 55..<65: return GradeInfo(letter: "D", color: .danger)
+        case 75..<85: return GradeInfo(letter: "B", color: .accentBlue)
+        case 65..<75: return GradeInfo(letter: "C", color: .accentGold)
+        case 55..<65: return GradeInfo(letter: "D", color: .warning)
         default:      return GradeInfo(letter: "F", color: .danger)
         }
     }

@@ -133,10 +133,11 @@ struct DraftPickCard: View {
 
     private func gradeColor(_ grade: String) -> Color {
         switch grade {
-        case "A+", "A":   return .success
-        case "A-", "B+":  return .accentGold
-        case "B", "B-":   return .warning
-        default:          return .textSecondary
+        case "A+", "A", "A-":  return .success
+        case "B+", "B", "B-":  return .accentBlue
+        case "C+", "C", "C-":  return .accentGold
+        case "D+", "D", "D-":  return .warning
+        default:                return .danger
         }
     }
 

@@ -30,7 +30,7 @@ struct CareerDashboardView: View {
     @State private var coachingBudgetRemaining: Int = 0
     @State private var coachingBudgetTotal: Int = 0
     @State private var expiringContractPlayers: [Player] = []
-    @State private var positionGroupGrades: [(group: String, grade: String, avgOVR: Int)] = []
+    @State private var positionGroupGrades: [(group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int)] = []
     @State private var teamMorale: Int = 70
     @State private var previousSeasonRecord: String?
     @State private var previousSeasonYear: Int?
@@ -47,6 +47,10 @@ struct CareerDashboardView: View {
     /// Pulsing animation state for advance button guidance
     @State private var advancePulse = false
 
+    /// Coaching staff review sheet (shown during coachingChanges phase advance)
+    @State private var showCoachingStaffReview = false
+    @State private var allCoaches: [Coach] = []
+
     // MARK: - Derived
 
     private var canAdvance: Bool {
@@ -59,6 +63,14 @@ struct CareerDashboardView: View {
 
     private func performAdvance() {
         guard canAdvance else { return }
+
+        // During coaching changes, show the review sheet instead of advancing directly
+        if career.currentPhase == .coachingChanges {
+            loadCoaches()
+            showCoachingStaffReview = true
+            return
+        }
+
         if let onAdvance {
             onAdvance()
         } else {
@@ -74,6 +86,19 @@ struct CareerDashboardView: View {
             }
             loadAllData()
         }
+    }
+
+    /// Confirm and advance from coaching changes to review roster.
+    private func confirmCoachingAdvance() {
+        career.currentPhase = .reviewRoster
+        try? modelContext.save()
+        loadAllData()
+    }
+
+    private func loadCoaches() {
+        guard let teamID = career.teamID else { return }
+        let descriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        allCoaches = (try? modelContext.fetch(descriptor)) ?? []
     }
 
     // MARK: - Body
@@ -117,6 +142,19 @@ struct CareerDashboardView: View {
                     )
                 }
             }
+        }
+        .sheet(isPresented: $showCoachingStaffReview) {
+            CoachingStaffReviewSheet(
+                career: career,
+                coaches: allCoaches,
+                onConfirm: {
+                    showCoachingStaffReview = false
+                    confirmCoachingAdvance()
+                },
+                onCancel: {
+                    showCoachingStaffReview = false
+                }
+            )
         }
     }
 
@@ -1240,7 +1278,7 @@ struct CareerDashboardView: View {
                             .foregroundStyle(Color.textSecondary)
                     } else {
                         // Find weakest group (#146)
-                        let weakestGroup = positionGroupGrades.min(by: { $0.avgOVR < $1.avgOVR })?.group
+                        let weakestGroup = positionGroupGrades.min(by: { $0.starterOVR < $1.starterOVR })?.group
                         // Show in two columns
                         let halfCount = (positionGroupGrades.count + 1) / 2
                         let leftCol = Array(positionGroupGrades.prefix(halfCount))
@@ -1264,19 +1302,32 @@ struct CareerDashboardView: View {
         .buttonStyle(.plain)
     }
 
-    private func positionGradeRow(_ item: (group: String, grade: String, avgOVR: Int), isWeakest: Bool = false) -> some View {
-        HStack(spacing: 6) {
+    private func positionGradeRow(_ item: (group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int), isWeakest: Bool = false) -> some View {
+        HStack(spacing: 4) {
             Text(item.group)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 28, alignment: .leading)
-            Text(item.grade)
-                .font(.system(size: 14, weight: .black).monospacedDigit())
+                .frame(width: 22, alignment: .leading)
+            // Starter grade (blue)
+            Text(item.starterGrade)
+                .font(.system(size: 11, weight: .black).monospacedDigit())
                 .foregroundStyle(.white)
-                .frame(width: 30, height: 22)
+                .frame(minWidth: 22, minHeight: 18, maxHeight: 18)
                 .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.forRating(item.avgOVR))
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.accentBlue)
+                )
+            Text("/")
+                .font(.system(size: 9))
+                .foregroundStyle(Color.textTertiary)
+            // Depth grade (orange)
+            Text(item.depthGrade)
+                .font(.system(size: 11, weight: .black).monospacedDigit())
+                .foregroundStyle(.white)
+                .frame(minWidth: 22, minHeight: 18, maxHeight: 18)
+                .background(
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.warning)
                 )
             if isWeakest {
                 Text("NEED")
@@ -1746,6 +1797,7 @@ struct CareerDashboardView: View {
         // Coach count + head coach
         let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
         let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
+        allCoaches = coaches
         coachCount = coaches.count
         headCoach = coaches.first(where: { $0.role == .headCoach })
 
@@ -1823,8 +1875,8 @@ struct CareerDashboardView: View {
         }
     }
 
-    /// Calculate average OVR by position group and return a letter grade.
-    private func calculatePositionGroupGrades(players: [Player]) -> [(group: String, grade: String, avgOVR: Int)] {
+    /// Calculate starter + depth grades by position group (#235).
+    private func calculatePositionGroupGrades(players: [Player]) -> [(group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int)] {
         let groups: [(label: String, positions: [Position])] = [
             ("QB", [.QB]),
             ("RB", [.RB, .FB]),
@@ -1837,12 +1889,12 @@ struct CareerDashboardView: View {
             ("S", [.FS, .SS]),
         ]
 
-        var results: [(group: String, grade: String, avgOVR: Int)] = []
+        var results: [(group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int)] = []
         for group in groups {
             let groupPlayers = players.filter { group.positions.contains($0.position) }
             guard !groupPlayers.isEmpty else { continue }
-            let avgOVR = groupPlayers.reduce(0) { $0 + $1.overall } / groupPlayers.count
-            results.append((group: group.label, grade: gradeForOVR(avgOVR), avgOVR: avgOVR))
+            let grades = PositionGradeCalculator.calculatePositionGrades(players: groupPlayers, positions: group.positions)
+            results.append((group: group.label, starterGrade: grades.starterGrade, depthGrade: grades.depthGrade, starterOVR: grades.starterOVR, depthOVR: grades.depthOVR))
         }
         return results
     }
@@ -1911,6 +1963,407 @@ private struct DashboardTile<Content: View>: View {
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+// MARK: - Coaching Staff Review Sheet
+
+/// A review sheet shown when the user advances from the Coaching Changes phase.
+/// Summarizes all hired coaches, vacant positions, schemes, and validation warnings.
+private struct CoachingStaffReviewSheet: View {
+
+    let career: Career
+    let coaches: [Coach]
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    // MARK: - Derived
+
+    private var isGMAndHC: Bool {
+        career.role == .gmAndHeadCoach
+    }
+
+    private var allRoles: [CoachRole] {
+        if isGMAndHC {
+            return CoachRole.allCases.filter { $0 != .headCoach }
+        }
+        return CoachRole.allCases
+    }
+
+    private var filledRoles: Set<CoachRole> {
+        Set(coaches.map { $0.role })
+    }
+
+    private var requiredRoles: [CoachRole] {
+        if isGMAndHC {
+            return [.offensiveCoordinator, .defensiveCoordinator]
+        }
+        return [.headCoach, .offensiveCoordinator, .defensiveCoordinator]
+    }
+
+    private var missingRequiredRoles: [CoachRole] {
+        requiredRoles.filter { !filledRoles.contains($0) }
+    }
+
+    private var vacantRoles: [CoachRole] {
+        allRoles.filter { !filledRoles.contains($0) }
+    }
+
+    private var oc: Coach? {
+        coaches.first { $0.role == .offensiveCoordinator }
+    }
+
+    private var dc: Coach? {
+        coaches.first { $0.role == .defensiveCoordinator }
+    }
+
+    private var areSchemesSet: Bool {
+        oc?.offensiveScheme != nil && dc?.defensiveScheme != nil
+    }
+
+    private var hasValidationWarnings: Bool {
+        !missingRequiredRoles.isEmpty || !areSchemesSet
+    }
+
+    // MARK: - Body
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Header
+                    headerSection
+
+                    // Staff listing
+                    staffSection
+
+                    // Schemes
+                    schemesSection
+
+                    // Warnings
+                    if hasValidationWarnings {
+                        warningsSection
+                    }
+
+                    // Buttons
+                    buttonsSection
+                }
+                .padding(20)
+            }
+            .background(Color.backgroundPrimary)
+            .navigationTitle("Coaching Staff Review")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { onCancel() }
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+    }
+
+    // MARK: - Header
+
+    private var headerSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("COACHING STAFF REVIEW")
+                .font(.system(size: 13, weight: .black))
+                .foregroundStyle(Color.accentGold)
+                .tracking(1.0)
+
+            Rectangle()
+                .fill(Color.accentGold.opacity(0.3))
+                .frame(height: 1)
+        }
+    }
+
+    // MARK: - Staff Section
+
+    private var staffSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Section header
+            HStack(spacing: 6) {
+                Image(systemName: "person.2.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.accentGold)
+                Text("STAFF")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.accentGold)
+                    .tracking(0.5)
+                Spacer()
+                Text("\(coaches.count)/\(allRoles.count) filled")
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .padding(.bottom, 8)
+
+            // Player as HC (if GM+HC role)
+            if isGMAndHC {
+                staffRow(
+                    role: .headCoach,
+                    name: "You (The Tactician)",
+                    overall: nil,
+                    schemeName: nil,
+                    isFilled: true,
+                    isRequired: true
+                )
+            }
+
+            // All roles in sort order
+            ForEach(allRoles.sorted(by: { $0.sortOrder < $1.sortOrder }), id: \.self) { role in
+                if let coach = coaches.first(where: { $0.role == role }) {
+                    let schemeName: String? = {
+                        if role == .offensiveCoordinator {
+                            return coach.offensiveScheme?.displayName
+                        } else if role == .defensiveCoordinator {
+                            return coach.defensiveScheme?.displayName
+                        }
+                        return nil
+                    }()
+                    staffRow(
+                        role: role,
+                        name: coach.fullName,
+                        overall: coachOverall(coach),
+                        schemeName: schemeName,
+                        isFilled: true,
+                        isRequired: requiredRoles.contains(role)
+                    )
+                } else {
+                    staffRow(
+                        role: role,
+                        name: "VACANT",
+                        overall: nil,
+                        schemeName: nil,
+                        isFilled: false,
+                        isRequired: requiredRoles.contains(role)
+                    )
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.backgroundSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+        )
+    }
+
+    private func staffRow(
+        role: CoachRole,
+        name: String,
+        overall: Int?,
+        schemeName: String?,
+        isFilled: Bool,
+        isRequired: Bool
+    ) -> some View {
+        HStack(spacing: 8) {
+            // Status icon
+            Image(systemName: isFilled ? "checkmark.circle.fill" : (isRequired ? "exclamationmark.triangle.fill" : "circle"))
+                .font(.system(size: 14))
+                .foregroundStyle(isFilled ? Color.success : (isRequired ? Color.warning : Color.textTertiary))
+                .frame(width: 18)
+
+            // Role abbreviation
+            Text(role.abbreviation)
+                .font(.system(size: 10, weight: .heavy))
+                .foregroundStyle(Color.accentGold)
+                .frame(width: 30, alignment: .leading)
+
+            // Name
+            Text(name)
+                .font(.system(size: 13, weight: isFilled ? .medium : .bold))
+                .foregroundStyle(isFilled ? Color.textPrimary : Color.warning)
+                .lineLimit(1)
+
+            Spacer()
+
+            // Scheme badge (for coordinators)
+            if let scheme = schemeName {
+                Text(scheme)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.accentGold)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(Color.accentGold.opacity(0.12))
+                    )
+            }
+
+            // OVR
+            if let ovr = overall {
+                Text("\(ovr)")
+                    .font(.system(size: 13, weight: .bold).monospacedDigit())
+                    .foregroundStyle(Color.forRating(ovr))
+                    .frame(width: 30, alignment: .trailing)
+            }
+        }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(!isFilled && isRequired ? Color.warning.opacity(0.06) : Color.clear)
+        )
+    }
+
+    // MARK: - Schemes Section
+
+    private var schemesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "book.closed.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.accentGold)
+                Text("SCHEMES")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.accentGold)
+                    .tracking(0.5)
+            }
+
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Offensive")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.textTertiary)
+                    if let scheme = oc?.offensiveScheme {
+                        Text(scheme.displayName)
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.textPrimary)
+                    } else {
+                        Text("Not Set")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.warning)
+                    }
+                }
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("Defensive")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.textTertiary)
+                    if let scheme = dc?.defensiveScheme {
+                        Text(scheme.displayName)
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.textPrimary)
+                    } else {
+                        Text("Not Set")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.warning)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.backgroundSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+        )
+    }
+
+    // MARK: - Warnings Section
+
+    private var warningsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !vacantRoles.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.warning)
+                    Text("\(vacantRoles.count) position\(vacantRoles.count == 1 ? "" : "s") still vacant")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.warning)
+                }
+            }
+
+            if !missingRequiredRoles.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.octagon.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.danger)
+                    Text("Missing: \(missingRequiredRoles.map { $0.displayName }.joined(separator: ", "))")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.danger)
+                }
+
+                Text("Without coordinators: -20% offense/defense efficiency, slower player development")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.danger.opacity(0.8))
+                    .padding(.leading, 18)
+            }
+
+            if !areSchemesSet {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.warning)
+                    Text("Schemes not fully configured. Go to Staff > Schemes to set them.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.warning)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.warning.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.warning.opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    // MARK: - Buttons Section
+
+    private var buttonsSection: some View {
+        VStack(spacing: 10) {
+            Button {
+                onConfirm()
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                    Text(missingRequiredRoles.isEmpty && areSchemesSet
+                         ? "Confirm & Advance to Review Roster"
+                         : "Lock in Anyway & Advance")
+                        .font(.system(size: 15, weight: .bold))
+                }
+                .foregroundStyle(Color.backgroundPrimary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(missingRequiredRoles.isEmpty && areSchemesSet
+                              ? Color.accentGold
+                              : Color.warning)
+                )
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                onCancel()
+            } label: {
+                Text("Cancel")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.top, 8)
+    }
+
+    // MARK: - Coach Overall Helper
+
+    private func coachOverall(_ coach: Coach) -> Int {
+        let sum = coach.playCalling + coach.playerDevelopment + coach.gamePlanning
+            + coach.scoutingAbility + coach.recruiting + coach.motivation
+            + coach.discipline + coach.adaptability + coach.mediaHandling
+        return sum / 9
     }
 }
 

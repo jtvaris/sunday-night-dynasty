@@ -293,7 +293,20 @@ enum CoachingEngine {
     /// - Returns: An array of freshly created `Coach` objects not yet attached to any team.
     static func generateCoachCandidates(role: CoachRole, count: Int = 25) -> [Coach] {
         let actualCount = max(count, 20) // Floor of 20 candidates per search
-        return (0..<actualCount).map { _ in
+
+        // #238: Determine how many premium (high-quality, expensive) candidates to include
+        let premiumCount: Int
+        switch role {
+        case .headCoach, .assistantHeadCoach:
+            premiumCount = 3
+        case .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator:
+            premiumCount = 3
+        default: // position coaches
+            premiumCount = 2
+        }
+
+        return (0..<actualCount).map { index in
+            let isPremium = index < premiumCount
             let name = RandomNameGenerator.randomName()
 
             // Age distribution: young assistants skew lower, coordinators/HC skew older
@@ -301,20 +314,20 @@ enum CoachingEngine {
             let expRange: ClosedRange<Int>
             switch role {
             case .headCoach:
-                ageRange = 40...65
-                expRange = 12...30
+                ageRange = isPremium ? 42...60 : 40...65
+                expRange = isPremium ? 18...30 : 12...30
             case .assistantHeadCoach:
-                ageRange = 38...60
-                expRange = 10...25
+                ageRange = isPremium ? 40...58 : 38...60
+                expRange = isPremium ? 15...25 : 10...25
             case .offensiveCoordinator, .defensiveCoordinator:
-                ageRange = 35...58
-                expRange = 8...22
+                ageRange = isPremium ? 38...55 : 35...58
+                expRange = isPremium ? 14...22 : 8...22
             case .specialTeamsCoordinator:
-                ageRange = 33...55
-                expRange = 6...20
+                ageRange = isPremium ? 36...52 : 33...55
+                expRange = isPremium ? 12...20 : 6...20
             default: // position coaches
-                ageRange = 28...52
-                expRange = 2...15
+                ageRange = isPremium ? 35...50 : 28...52
+                expRange = isPremium ? 10...18 : 2...15
             }
 
             let age = Int.random(in: ageRange)
@@ -322,8 +335,16 @@ enum CoachingEngine {
             let exp = Int.random(in: expRange)
 
             // Attribute ceilings correlated with experience
-            let baseCeiling = min(99, 45 + exp * 2)
-            let baseFloor   = max(30, baseCeiling - 30)
+            // #238: Premium candidates get significantly higher floors and ceilings
+            let baseCeiling: Int
+            let baseFloor: Int
+            if isPremium {
+                baseCeiling = min(99, 75 + exp)
+                baseFloor = max(65, baseCeiling - 20)
+            } else {
+                baseCeiling = min(99, 45 + exp * 2)
+                baseFloor = max(30, baseCeiling - 30)
+            }
 
             func randAttr() -> Int { Int.random(in: baseFloor...baseCeiling) }
 

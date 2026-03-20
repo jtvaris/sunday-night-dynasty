@@ -153,7 +153,7 @@ struct NewCareerView: View {
                 VStack(spacing: 0) {
                     Spacer(minLength: 12)
 
-                    VStack(spacing: 24) {
+                    VStack(spacing: 16) {
                         if isLandscape {
                             HStack(alignment: .top, spacing: 16) {
                                 coachingStyleSection
@@ -165,18 +165,18 @@ struct NewCareerView: View {
                         }
                     }
                     .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
+                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity)
 
-                    Spacer(minLength: 16)
+                    Spacer(minLength: 8)
 
-                    // Bottom buttons
-                    VStack(spacing: 12) {
+                    // Bottom buttons — always visible
+                    VStack(spacing: 8) {
                         chooseTeamButton
                         backButton
                     }
                     .padding(.horizontal, 20)
-                    .padding(.bottom, 16)
+                    .padding(.bottom, 12)
                     .frame(maxWidth: .infinity)
                 }
                 .frame(minHeight: geometry.size.height)
@@ -313,7 +313,7 @@ struct NewCareerView: View {
     // #106, #107, #111: Coaching style with gameplay effects and beginner tag
     private var coachingStyleSection: some View {
         cardSection(icon: "gamecontroller.fill", title: "Coaching Style") {
-            VStack(spacing: 10) {
+            VStack(spacing: 6) {
                 ForEach(CoachingStyle.allCases, id: \.self) { style in
                     CoachingStyleCard(
                         style: style,
@@ -333,14 +333,14 @@ struct NewCareerView: View {
     // #108, #109, #110, #113: Avatar section with cosmetic label, cleaner headers
     private var avatarSection: some View {
         cardSection(icon: "person.crop.circle.fill", title: "Your Look") {
-            VStack(spacing: 12) {
+            VStack(spacing: 6) {
                 // #108: Clarify avatar is cosmetic
                 Text("Cosmetic only — does not affect gameplay")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.textTertiary)
 
-                AvatarSelectionView(selectedAvatarID: $selectedAvatarID, avatarSize: 72)
-                    .padding(.vertical, 4)
+                AvatarSelectionView(selectedAvatarID: $selectedAvatarID, avatarSize: 60)
+                    .padding(.vertical, 2)
 
                 // #105: larger avatar name, #110: remove confusing "outside -> Male coach" text
                 if let avatar = CoachAvatars.avatar(for: selectedAvatarID) {
@@ -532,17 +532,17 @@ private struct CoachingStyleCard: View {
     }
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             ZStack {
                 Circle()
                     .fill(isSelected ? Color.accentGold.opacity(0.2) : Color.backgroundSecondary)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 36, height: 36)
                 Image(systemName: style.icon)
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(isSelected ? Color.accentGold : Color.textSecondary)
             }
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(style.displayName)
                         .font(.subheadline.weight(.bold))
@@ -562,13 +562,13 @@ private struct CoachingStyleCard: View {
                 }
 
                 Text(style.description)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(Color.textSecondary)
-                    .lineLimit(2)
+                    .lineLimit(1)
 
                 // #111: Gameplay effect line
                 Text(gameplayEffect)
-                    .font(.caption2.weight(.medium).italic())
+                    .font(.system(size: 9, weight: .medium).italic())
                     .foregroundStyle(isSelected ? Color.accentGold.opacity(0.7) : Color.textTertiary)
             }
 
@@ -577,17 +577,18 @@ private struct CoachingStyleCard: View {
             // #104: Wider bonus area to prevent truncation
             VStack(spacing: 2) {
                 Text("+\(style.bonusValue)")
-                    .font(.system(size: 16, weight: .bold).monospacedDigit())
+                    .font(.system(size: 14, weight: .bold).monospacedDigit())
                     .foregroundStyle(isSelected ? Color.accentGold : Color.textTertiary)
                 Text(style.bonusAttribute)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(isSelected ? Color.accentGold.opacity(0.8) : Color.textTertiary)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
             }
-            .frame(width: 85)
+            .frame(width: 75)
         }
-        .padding(12)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(isSelected ? Color.accentGold.opacity(0.08) : Color.backgroundPrimary)

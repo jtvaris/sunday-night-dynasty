@@ -671,6 +671,75 @@ struct PositionGroup: Identifiable {
     var id: String { name }
 }
 
+// MARK: - Position Grade Calculator (#235)
+
+/// Shared helper for computing starter grade + depth grade for a position group.
+enum PositionGradeCalculator {
+
+    /// Ideal starter counts per individual position.
+    static let idealStarterCounts: [Position: Int] = [
+        .QB: 1, .RB: 2, .FB: 1, .WR: 3, .TE: 1,
+        .LT: 1, .LG: 1, .C: 1, .RG: 1, .RT: 1,
+        .DE: 2, .DT: 2, .OLB: 2, .MLB: 1,
+        .CB: 2, .FS: 1, .SS: 1,
+        .K: 1, .P: 1,
+    ]
+
+    /// Returns the total ideal starter count for a set of positions.
+    static func starterCount(for positions: [Position]) -> Int {
+        positions.reduce(0) { $0 + (idealStarterCounts[$1] ?? 1) }
+    }
+
+    /// Converts an average OVR to a letter grade using the #235 thresholds.
+    static func letterGrade(for avgOVR: Int) -> String {
+        switch avgOVR {
+        case 85...:   return "A"
+        case 80..<85: return "B+"
+        case 75..<80: return "B"
+        case 70..<75: return "B-"
+        case 65..<70: return "C+"
+        case 60..<65: return "C"
+        case 55..<60: return "C-"
+        case 50..<55: return "D"
+        default:      return "F"
+        }
+    }
+
+    /// Color for a letter grade.
+    static func gradeColor(for avgOVR: Int) -> Color {
+        switch avgOVR {
+        case 80...:   return .success
+        case 70..<80: return .accentBlue
+        case 60..<70: return .accentGold
+        case 50..<60: return .warning
+        default:      return .danger
+        }
+    }
+
+    /// Calculate starter grade + depth grade for a group of positions.
+    /// - Parameters:
+    ///   - players: All players in the position group (e.g. all OL players).
+    ///   - positions: The positions in this group (e.g. [.LT, .LG, .C, .RG, .RT]).
+    /// - Returns: Tuple with starter grade letter, depth grade letter, starter avg OVR, depth avg OVR.
+    static func calculatePositionGrades(
+        players: [Player],
+        positions: [Position]
+    ) -> (starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int) {
+        let n = starterCount(for: positions)
+        let sorted = players.sorted { $0.overall > $1.overall }
+        let starters = Array(sorted.prefix(n))
+        let backups = Array(sorted.dropFirst(n))
+
+        let starterAvg = starters.isEmpty ? 0 : starters.map(\.overall).reduce(0, +) / starters.count
+        let depthAvg = backups.isEmpty ? 0 : backups.map(\.overall).reduce(0, +) / backups.count
+
+        let sGrade = starters.isEmpty ? "F" : letterGrade(for: starterAvg)
+        let dGrade = backups.isEmpty ? "F" : letterGrade(for: depthAvg)
+
+        return (sGrade, dGrade, starterAvg, depthAvg)
+    }
+}
+
 // MARK: - Position Group Header
 
 struct PositionGroupHeader: View {
@@ -678,41 +747,12 @@ struct PositionGroupHeader: View {
     let players: [Player]
     var isWeakest: Bool = false
 
-    private var averageOVR: Int {
-        guard !players.isEmpty else { return 0 }
-        return players.reduce(0) { $0 + $1.overall } / players.count
-    }
-
-    private var averageOVRDecimal: Double {
-        guard !players.isEmpty else { return 0 }
-        return Double(players.reduce(0) { $0 + $1.overall }) / Double(players.count)
+    private var grades: (starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int) {
+        PositionGradeCalculator.calculatePositionGrades(players: players, positions: group.positions)
     }
 
     private var injuredCount: Int {
         players.filter { $0.isInjured }.count
-    }
-
-    private var depthStatus: DepthStatus {
-        let healthy = players.filter { !$0.isInjured }.count
-        if healthy <= 1 { return .critical }
-        if healthy <= 2 { return .thin }
-        return .deep
-    }
-
-    private var letterGrade: (letter: String, color: Color) {
-        switch averageOVR {
-        case 90...:   return ("A+", .success)
-        case 85..<90: return ("A", .success)
-        case 80..<85: return ("A-", .success)
-        case 77..<80: return ("B+", .accentGold)
-        case 75..<77: return ("B", .accentGold)
-        case 72..<75: return ("B-", .accentGold)
-        case 69..<72: return ("C+", .warning)
-        case 65..<69: return ("C", .warning)
-        case 60..<65: return ("C-", .warning)
-        case 55..<60: return ("D", .danger)
-        default:      return ("F", .danger)
-        }
     }
 
     /// Total cap allocation for this position group in thousands.
@@ -730,6 +770,7 @@ struct PositionGroupHeader: View {
     }
 
     var body: some View {
+        let g = grades
         HStack(spacing: 8) {
             // Group name
             Text(group.name)
@@ -749,24 +790,27 @@ struct PositionGroupHeader: View {
 
             Spacer()
 
-            // Letter grade badge with average (e.g. "A- (82.3)")
-            HStack(spacing: 4) {
-                Text(letterGrade.letter)
+            // Starter grade / Depth grade (#235)
+            HStack(spacing: 2) {
+                // Starter grade (blue)
+                Text(g.starterGrade)
                     .font(.caption)
                     .fontWeight(.heavy)
-                    .foregroundStyle(Color.backgroundPrimary)
+                    .foregroundStyle(.white)
                     .frame(minWidth: 22, maxWidth: 28, minHeight: 22, maxHeight: 22)
-                    .background(letterGrade.color, in: RoundedRectangle(cornerRadius: 5))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 5)
-                            .strokeBorder(letterGrade.color.opacity(0.6), lineWidth: 1)
-                    )
+                    .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: 5))
 
-                Text(String(format: "%.1f", averageOVRDecimal))
+                Text("/")
                     .font(.caption2)
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-                    .foregroundStyle(Color.forRating(averageOVR))
+                    .foregroundStyle(Color.textTertiary)
+
+                // Depth grade (orange/warning)
+                Text(g.depthGrade)
+                    .font(.caption)
+                    .fontWeight(.heavy)
+                    .foregroundStyle(.white)
+                    .frame(minWidth: 22, maxWidth: 28, minHeight: 22, maxHeight: 22)
+                    .background(Color.warning, in: RoundedRectangle(cornerRadius: 5))
             }
 
             // Cap allocation
@@ -778,16 +822,6 @@ struct PositionGroupHeader: View {
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
-
-            // Depth indicator
-            HStack(spacing: 3) {
-                Circle()
-                    .fill(depthStatus.color)
-                    .frame(width: 7, height: 7)
-                Text(depthStatus.label)
-                    .font(.caption2)
-                    .foregroundStyle(depthStatus.color)
-            }
 
             // Injured count
             if injuredCount > 0 {
@@ -810,28 +844,6 @@ struct PositionGroupHeader: View {
                 .background(Color.backgroundTertiary, in: Capsule())
         }
         .textCase(nil)
-    }
-}
-
-// MARK: - Depth Status
-
-enum DepthStatus {
-    case deep, thin, critical
-
-    var label: String {
-        switch self {
-        case .deep: return "Deep"
-        case .thin: return "Thin"
-        case .critical: return "Critical"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .deep: return .success
-        case .thin: return .warning
-        case .critical: return .danger
-        }
     }
 }
 

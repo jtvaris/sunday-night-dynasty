@@ -510,8 +510,10 @@ private struct TeamOverviewStep: View {
     private struct PositionGroupGrade: Identifiable {
         let id = UUID()
         let name: String
-        let grade: String
-        let average: Int
+        let starterGrade: String
+        let depthGrade: String
+        let starterAverage: Int
+        let depthAverage: Int
         let color: Color
         let playerCount: Int
         let need: String // e.g. "need starter", "need depth", "" if fine
@@ -552,8 +554,9 @@ private struct TeamOverviewStep: View {
     private static func colorForGrade(_ avg: Int) -> Color {
         switch avg {
         case 80...:   return Color.success
-        case 70...79: return Color.accentGold
-        case 60...69: return Color.warning
+        case 70...79: return Color.accentBlue
+        case 60...69: return Color.accentGold
+        case 50...59: return Color.warning
         default:      return Color.danger
         }
     }
@@ -576,21 +579,35 @@ private struct TeamOverviewStep: View {
         return ""
     }
 
+    /// Position groups with their positions for grade calculation.
+    private static let groupPositions: [(name: String, positions: [Position])] = [
+        ("QB", [.QB]),
+        ("RB", [.RB, .FB]),
+        ("WR", [.WR]),
+        ("TE", [.TE]),
+        ("OL", [.LT, .LG, .C, .RG, .RT]),
+        ("DL", [.DE, .DT]),
+        ("LB", [.OLB, .MLB]),
+        ("DB", [.CB, .FS, .SS]),
+        ("ST", [.K, .P]),
+    ]
+
     private var positionGroupGrades: [PositionGroupGrade] {
         guard !players.isEmpty else { return [] }
-        let grouped = Dictionary(grouping: players, by: { Self.positionGroupName(for: $0.position) })
-        let order = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "DB", "ST"]
-        return order.compactMap { groupName in
-            guard let groupPlayers = grouped[groupName], !groupPlayers.isEmpty else { return nil }
-            let avg = groupPlayers.map(\.overall).reduce(0, +) / groupPlayers.count
+        return Self.groupPositions.compactMap { group in
+            let groupPlayers = players.filter { group.positions.contains($0.position) }
+            guard !groupPlayers.isEmpty else { return nil }
+            let grades = PositionGradeCalculator.calculatePositionGrades(players: groupPlayers, positions: group.positions)
             let count = groupPlayers.count
             return PositionGroupGrade(
-                name: groupName,
-                grade: Self.gradeForAverage(avg),
-                average: avg,
-                color: Self.colorForGrade(avg),
+                name: group.name,
+                starterGrade: grades.starterGrade,
+                depthGrade: grades.depthGrade,
+                starterAverage: grades.starterOVR,
+                depthAverage: grades.depthOVR,
+                color: PositionGradeCalculator.gradeColor(for: grades.starterOVR),
                 playerCount: count,
-                need: Self.needLabel(groupName: groupName, count: count, avg: avg)
+                need: Self.needLabel(groupName: group.name, count: count, avg: grades.starterOVR)
             )
         }
     }
@@ -771,13 +788,22 @@ private struct TeamOverviewStep: View {
                         ], spacing: 10) {
                             ForEach(positionGroupGrades) { group in
                                 VStack(spacing: 6) {
-                                    Text(group.grade)
-                                        .font(.title.weight(.black))
-                                        .foregroundStyle(group.color)
+                                    // Dual grade: Starter/Depth (#235)
+                                    HStack(spacing: 3) {
+                                        Text(group.starterGrade)
+                                            .font(.title2.weight(.black))
+                                            .foregroundStyle(Color.accentBlue)
+                                        Text("/")
+                                            .font(.title3)
+                                            .foregroundStyle(Color.textTertiary)
+                                        Text(group.depthGrade)
+                                            .font(.title2.weight(.black))
+                                            .foregroundStyle(Color.warning)
+                                    }
                                     Text(group.name)
                                         .font(.subheadline.weight(.bold))
                                         .foregroundStyle(Color.textSecondary)
-                                    Text("\(group.average) OVR")
+                                    Text("\(group.starterAverage) OVR")
                                         .font(.subheadline.monospacedDigit())
                                         .foregroundStyle(Color.textTertiary)
                                     // #131/#134: Show count vs ideal with color

@@ -355,14 +355,21 @@ struct FormationView: View {
 
             ForEach(positionGroupStats, id: \.name) { group in
                 VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 3) {
                         Text(group.name)
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(Color.textSecondary)
-                            .frame(width: 28, alignment: .leading)
-                        Text("\(group.average)")
-                            .font(.system(size: 11, weight: .bold).monospacedDigit())
-                            .foregroundStyle(Color.forPlayerCardRating(group.average))
+                            .frame(width: 22, alignment: .leading)
+                        // Starter grade (blue) / Depth grade (orange) (#235)
+                        Text(group.starterGrade)
+                            .font(.system(size: 10, weight: .heavy))
+                            .foregroundStyle(Color.accentBlue)
+                        Text("/")
+                            .font(.system(size: 8))
+                            .foregroundStyle(Color.textTertiary)
+                        Text(group.depthGrade)
+                            .font(.system(size: 10, weight: .heavy))
+                            .foregroundStyle(Color.warning)
                         Spacer()
                     }
                     // Depth info (#47): e.g. "2/2 filled"
@@ -374,7 +381,7 @@ struct FormationView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 10)
-        .frame(width: 100)
+        .frame(width: 110)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.backgroundPrimary.opacity(0.5))
@@ -414,18 +421,17 @@ struct FormationView: View {
         return groups.compactMap { group in
             // #186: Include ALL sub-positions for OL group and compute correctly
             let groupPlayers = players.filter { group.positions.contains($0.position) }
-            let starters = groupPlayers
-                .sorted { $0.overall > $1.overall }
-                .prefix(group.neededStarters)
-            guard !starters.isEmpty else {
+            let grades = PositionGradeCalculator.calculatePositionGrades(players: groupPlayers, positions: group.positions)
+            guard !groupPlayers.isEmpty else {
                 return PositionGroupStat(
                     name: group.name, average: 0,
+                    starterGrade: "F", depthGrade: "F",
                     filled: 0, needed: group.neededStarters
                 )
             }
-            let avg = starters.map(\.overall).reduce(0, +) / starters.count
             return PositionGroupStat(
-                name: group.name, average: avg,
+                name: group.name, average: grades.starterOVR,
+                starterGrade: grades.starterGrade, depthGrade: grades.depthGrade,
                 filled: min(groupPlayers.count, group.neededStarters),
                 needed: group.neededStarters
             )
@@ -578,6 +584,8 @@ struct FormationView: View {
 private struct PositionGroupStat {
     let name: String
     let average: Int
+    let starterGrade: String
+    let depthGrade: String
     let filled: Int
     let needed: Int
 }

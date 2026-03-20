@@ -33,10 +33,7 @@ struct CoachingStaffView: View {
     // MARK: - Hiring Confirmation State (#49)
     @State private var recentHireMessage: String?
 
-    // MARK: - Lock-in Confirmation (#66)
-    @State private var showLockInConfirmation: Bool = false
-    @State private var showIncompleteStaffWarning: Bool = false
-    @State private var showSchemesNotSetWarning: Bool = false
+    // Lock-in moved to Dashboard workflow (CoachingStaffReviewSheet)
 
     // MARK: - Scheme Selection State (#67)
     @State private var showOffensiveSchemeSelection: Bool = false
@@ -485,36 +482,7 @@ struct CoachingStaffView: View {
                 }
             }
         }
-        // MARK: - Lock-in Confirmation Alert (#66)
-        // #169: Confirmation dialog before phase change
-        .alert("Advance to Review Roster?", isPresented: $showLockInConfirmation) {
-            Button("Advance") {
-                career.currentPhase = .reviewRoster
-                try? modelContext.save()
-            }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Lock in your coaching staff and advance. You won't be able to make coaching changes until next offseason.")
-        }
-        .alert("Incomplete Staff", isPresented: $showIncompleteStaffWarning) {
-            Button("Lock in Anyway") {
-                career.currentPhase = .reviewRoster
-                try? modelContext.save()
-            }
-            Button("Go Back", role: .cancel) { }
-        } message: {
-            Text("You still have vacant positions: \(missingRequiredRoles.map { $0.displayName }.joined(separator: ", ")). Are you sure you want to proceed without filling them?")
-        }
-        .alert("Set Schemes First", isPresented: $showSchemesNotSetWarning) {
-            Button("Go to Schemes") {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    selectedTab = .schemes
-                }
-            }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Set offensive and defensive schemes before locking in. Go to the Schemes tab to configure your coordinators' schemes.")
-        }
+        // Lock-in alerts moved to Dashboard workflow (CoachingStaffReviewSheet)
     }
 
     // MARK: - Tab Bar (#107)
@@ -873,21 +841,12 @@ struct CoachingStaffView: View {
                     .listRowBackground(Color.backgroundSecondary)
                 }
 
-                // Bottom spacer so Lock In button doesn't overlap last row
-                if career.currentPhase == .coachingChanges {
-                    Section {
-                        Color.clear.frame(height: 70)
-                    }
-                    .listRowBackground(Color.clear)
-                }
+                // (Lock in button moved to Dashboard workflow)
             }
             .scrollContentBackground(.hidden)
             .listStyle(.insetGrouped)
 
-            // MARK: - Lock In Staff Button (#66)
-            if career.currentPhase == .coachingChanges {
-                lockInStaffButton
-            }
+            // Lock in button moved to Dashboard workflow (CoachingStaffReviewSheet)
         }
     }
 
@@ -1376,104 +1335,7 @@ struct CoachingStaffView: View {
         }
     }
 
-    // MARK: - Lock In Staff Button (#66)
-
-    private var lockInStaffButton: some View {
-        VStack(spacing: 0) {
-            Divider().overlay(Color.surfaceBorder)
-
-            // #52: Show warning text when required coordinators not hired
-            if !allRequiredRolesFilled && !isBudgetOverspent {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.warning)
-                        Text("Missing: \(missingRequiredRoles.map { $0.displayName }.joined(separator: ", "))")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(Color.warning)
-                    }
-                    // #154: Explain consequences of locking in without coordinators
-                    Text("Without coordinators: -20% offense/defense efficiency, slower player development")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.danger)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 2)
-            }
-
-            // Scheme warning: require schemes to be set before lock-in
-            if allRequiredRolesFilled && !areSchemesSet && !isBudgetOverspent {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.warning)
-                    Text("Set offensive and defensive schemes before locking in")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.warning)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 2)
-            }
-
-            // #155: Show minimum cost to fill all vacant positions
-            if (!vacantCoachRoles.isEmpty || !vacantScoutRoles.isEmpty) && !isBudgetOverspent {
-                Text("Est. minimum to fill all: ~$\(String(format: "%.1f", Double(estimatedMinimumToFillAll) / 1_000.0))M")
-                    .font(.system(size: 10, weight: .medium).monospacedDigit())
-                    .foregroundStyle(estimatedMinimumToFillAll <= remainingBudget ? Color.textSecondary : Color.warning)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 4)
-            }
-
-            // #156: Suggest hiring priority order
-            if !vacantCoachRoles.isEmpty && !isBudgetOverspent {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("1. Coordinators (biggest impact)")
-                        .foregroundStyle(vacantCoachRoles.contains(where: { [.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator].contains($0) }) ? Color.textSecondary : Color.success)
-                    Text("2. Position coaches")
-                        .foregroundStyle(Color.textTertiary)
-                    Text("3. Support staff")
-                        .foregroundStyle(Color.textTertiary)
-                }
-                .font(.system(size: 9, weight: .medium))
-                .padding(.horizontal, 16)
-                .padding(.top, 2)
-            }
-
-            Button {
-                if isBudgetOverspent {
-                    // Do nothing -- button is disabled
-                } else if !allRequiredRolesFilled {
-                    showIncompleteStaffWarning = true
-                } else if !areSchemesSet {
-                    showSchemesNotSetWarning = true
-                } else {
-                    showLockInConfirmation = true
-                }
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: isBudgetOverspent ? "lock.slash.fill" : allRequiredRolesFilled ? "lock.fill" : "exclamationmark.triangle.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                    Text(allRequiredRolesFilled ? "Lock in Staff & Advance" : "Lock in Anyway")
-                        .font(.headline.weight(.bold))
-                }
-                .foregroundStyle(isBudgetOverspent ? Color.textTertiary : allRequiredRolesFilled ? Color.backgroundPrimary : Color.backgroundPrimary)
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .background(
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(isBudgetOverspent ? Color.backgroundTertiary : allRequiredRolesFilled ? Color.accentGold : Color.warning)
-                )
-            }
-            .disabled(isBudgetOverspent)
-            .buttonStyle(.plain)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(Color.backgroundPrimary.opacity(0.95))
-        }
-    }
+    // Lock in staff button removed — now handled by CoachingStaffReviewSheet in Dashboard workflow
 
     // MARK: - Review Tab Helpers
 

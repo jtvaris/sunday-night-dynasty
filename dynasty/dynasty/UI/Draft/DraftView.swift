@@ -1416,10 +1416,11 @@ struct DraftView: View {
 
     private func mediaGradeColor(_ grade: String) -> Color {
         switch grade {
-        case "A+", "A":   return .success
-        case "A-", "B+":  return .accentGold
-        case "B", "B-":   return .warning
-        default:          return .danger
+        case "A+", "A", "A-":  return .success
+        case "B+", "B", "B-":  return .accentBlue
+        case "C+", "C", "C-":  return .accentGold
+        case "D+", "D", "D-":  return .warning
+        default:                return .danger
         }
     }
 
