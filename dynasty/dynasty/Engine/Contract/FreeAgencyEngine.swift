@@ -429,6 +429,61 @@ enum FreeAgencyEngine {
         }
     }
 
+    // MARK: - Media Headlines
+
+    /// Generate media headlines for a round's signings and rejections.
+    static func generateHeadlines(
+        signings: [(playerName: String, position: String, team: String, salary: Int)],
+        rejections: [(playerName: String, chosenTeam: String?)],
+        playerTeamAbbr: String,
+        round: Int
+    ) -> [String] {
+        var headlines: [String] = []
+
+        // Big signing headlines
+        for signing in signings.prefix(3) {
+            let salaryM = String(format: "%.1f", Double(signing.salary) / 1000.0)
+            let templates = [
+                "\(signing.team) land \(signing.playerName) in $\(salaryM)M deal",
+                "\(signing.playerName) signs with \(signing.team) \u{2014} \(signing.position) market heats up",
+                "Breaking: \(signing.team) add \(signing.playerName) to bolster roster",
+            ]
+            headlines.append(templates.randomElement()!)
+        }
+
+        // Player team rejection headlines
+        for rejection in rejections.prefix(2) {
+            if let team = rejection.chosenTeam {
+                let templates = [
+                    "Surprise: \(playerTeamAbbr) lose out on \(rejection.playerName) to \(team)",
+                    "\(rejection.playerName) spurns \(playerTeamAbbr), signs elsewhere",
+                    "\(playerTeamAbbr) miss on \(rejection.playerName) \u{2014} \(team) swoop in",
+                ]
+                headlines.append(templates.randomElement()!)
+            }
+        }
+
+        // Round-specific flavor
+        switch round {
+        case 1:
+            headlines.append("Day 1 frenzy: Top free agents fly off the board")
+        case 2:
+            headlines.append("Day 2: Market still active as teams fill key needs")
+        case 3:
+            headlines.append("Day 3: Mid-tier market opens with value deals")
+        case 4:
+            headlines.append("Week 2: Free agency slows as rosters take shape")
+        case 5:
+            headlines.append("Week 3: Bargain hunters find remaining gems")
+        case 6:
+            headlines.append("Week 4: Final scraps as teams wrap up FA spending")
+        default:
+            break
+        }
+
+        return headlines
+    }
+
     // MARK: - Decision Reasons (always visible)
 
     private static func playerAcceptReason(player: Player) -> String {

@@ -124,6 +124,30 @@ struct FARoundSummaryView: View {
                             }
                         }
 
+                        // Media headlines
+                        if !results.headlines.isEmpty {
+                            summarySection(
+                                title: "Headlines",
+                                icon: "newspaper.fill",
+                                color: .accentGold
+                            ) {
+                                ForEach(Array(results.headlines.enumerated()), id: \.offset) { _, headline in
+                                    HStack(alignment: .top, spacing: 8) {
+                                        Text("\u{201C}")
+                                            .font(.title3.weight(.bold))
+                                            .foregroundStyle(Color.accentGold)
+                                        Text(headline)
+                                            .font(.caption)
+                                            .foregroundStyle(Color.textPrimary)
+                                            .italic()
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 4)
+                                }
+                            }
+                        }
+
                         // Market update
                         HStack(spacing: 16) {
                             VStack(spacing: 2) {

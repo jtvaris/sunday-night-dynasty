@@ -453,11 +453,20 @@ struct FAWeeklyView: View {
         // AI signings for this round (players without our offers)
         let aiSignings = simulateAIRound(excludePlayerIDs: Set(myOffers.keys))
 
+        // Generate media headlines
+        let headlines = FreeAgencyEngine.generateHeadlines(
+            signings: aiSignings,
+            rejections: rejected.map { (playerName: $0.playerName, chosenTeam: $0.chosenTeam) },
+            playerTeamAbbr: team.abbreviation,
+            round: currentRound
+        )
+
         // Build results
         roundResults = RoundResults(
             yourSignings: accepted,
             yourRejections: rejected,
             aiSignings: aiSignings,
+            headlines: headlines,
             playersRemaining: freeAgents.filter { $0.player.teamID == nil }.count - accepted.count,
             capRemaining: team.availableCap
         )
@@ -591,6 +600,7 @@ struct RoundResults {
     let yourSignings: [(playerName: String, position: String, salary: Int, years: Int)]
     let yourRejections: [(playerName: String, position: String, reason: String, chosenTeam: String?, salary: Int?)]
     let aiSignings: [(playerName: String, position: String, team: String, salary: Int)]
+    let headlines: [String]
     let playersRemaining: Int
     let capRemaining: Int
 }
