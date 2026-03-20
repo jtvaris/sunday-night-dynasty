@@ -1775,7 +1775,12 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func compactVacantCard(role: CoachRole) -> some View {
         Button {
-            navDestination = .hireCoach(role)
+            // Reset first to ensure SwiftUI detects the change even if
+            // navDestination was recently set to another .hireCoach value
+            navDestination = nil
+            DispatchQueue.main.async {
+                navDestination = .hireCoach(role)
+            }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -1833,7 +1838,10 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private var headCoachVacantRow: some View {
         Button {
-            navDestination = .hireCoach(.headCoach)
+            navDestination = nil
+            DispatchQueue.main.async {
+                navDestination = .hireCoach(.headCoach)
+            }
         } label: {
                 VStack(spacing: 10) {
                     HStack {
@@ -1876,7 +1884,10 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func vacantRow(role: CoachRole) -> some View {
         Button {
-            navDestination = .hireCoach(role)
+            navDestination = nil
+            DispatchQueue.main.async {
+                navDestination = .hireCoach(role)
+            }
         } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -1994,7 +2005,10 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func scoutVacantRow(role: ScoutRole) -> some View {
         Button {
-            navDestination = .hireScout(role)
+            navDestination = nil
+            DispatchQueue.main.async {
+                navDestination = .hireScout(role)
+            }
         } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
