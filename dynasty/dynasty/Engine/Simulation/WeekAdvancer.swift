@@ -803,6 +803,10 @@ enum WeekAdvancer {
             )
 
         case .reviewRoster:
+            // Reset roster evaluation flags for the new Review Roster phase
+            UserDefaults.standard.set(false, forKey: "rosterEvaluationConfirmed")
+            UserDefaults.standard.set(false, forKey: "franchiseTagVisited")
+
             // No engine logic — this phase is for the player to review their roster,
             // apply franchise tags, and evaluate contracts before free agency opens.
             lastNewsItems = NewsGenerator.generateOffseasonNews(

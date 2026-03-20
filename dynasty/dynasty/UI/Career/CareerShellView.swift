@@ -438,9 +438,10 @@ struct CareerShellView: View {
         let hasOC = coaches.contains { $0.role == .offensiveCoordinator }
         let hasDC = coaches.contains { $0.role == .defensiveCoordinator }
 
-        // Fetch current roster count
+        // Fetch current roster
         let playerDescriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
-        let rosterCount = (try? modelContext.fetchCount(playerDescriptor)) ?? 0
+        let players = (try? modelContext.fetch(playerDescriptor)) ?? []
+        let rosterCount = players.count
 
         for index in currentTasks.indices {
             guard currentTasks[index].status != .done else { continue }
@@ -458,6 +459,32 @@ struct CareerShellView: View {
             // Roster Cuts — verified by actual game state (roster count)
             case _ where task.title.contains("Finalize 53-man roster"):
                 if rosterCount <= 53 { currentTasks[index].status = .done }
+
+            // Review Roster tasks — check actual game state / user confirmations
+            case "Review Position Group Grades":
+                if UserDefaults.standard.bool(forKey: "rosterEvaluationConfirmed") {
+                    currentTasks[index].status = .done
+                }
+            case "Analyze Contract Situations":
+                if UserDefaults.standard.bool(forKey: "rosterEvaluationConfirmed") {
+                    currentTasks[index].status = .done
+                }
+            case "Franchise Tag Decisions":
+                // Complete if a franchise tag was applied OR the user confirmed evaluation
+                let hasFranchiseTag = players.contains { $0.isFranchiseTagged }
+                if hasFranchiseTag || UserDefaults.standard.bool(forKey: "franchiseTagVisited") {
+                    currentTasks[index].status = .done
+                }
+            case "Check Salary Cap Outlook":
+                // Auto-complete once visited — viewing cap data is the action
+                if currentTasks[index].status == .inProgress {
+                    currentTasks[index].status = .done
+                }
+            case "Set Roster Priorities":
+                if let data = UserDefaults.standard.string(forKey: "rosterPriorities"),
+                   !data.isEmpty, data != "{}" {
+                    currentTasks[index].status = .done
+                }
 
             // All other tasks: do NOT auto-complete based on visit status.
             // The user must explicitly tap "Advance" to progress the phase.

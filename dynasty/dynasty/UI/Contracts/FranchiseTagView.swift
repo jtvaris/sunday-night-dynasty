@@ -42,7 +42,11 @@ struct FranchiseTagView: View {
         .navigationTitle("Franchise Tag")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .task { loadData() }
+        .task {
+            loadData()
+            // Mark franchise tag screen as visited so the task can complete
+            UserDefaults.standard.set(true, forKey: "franchiseTagVisited")
+        }
     }
 
     // MARK: - Cap Banner
@@ -395,6 +399,10 @@ struct FranchiseTagView: View {
             team: team
         )
 
+        // Persist so CareerShellView picks up the change
+        try? modelContext.save()
+        UserDefaults.standard.set(true, forKey: "franchiseTagVisited")
+
         // Refresh local state
         loadData()
     }
@@ -406,6 +414,9 @@ struct FranchiseTagView: View {
             player: player,
             team: team
         )
+
+        // Persist so CareerShellView picks up the change
+        try? modelContext.save()
 
         // Refresh local state
         loadData()
