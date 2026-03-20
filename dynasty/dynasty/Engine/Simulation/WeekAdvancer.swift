@@ -616,6 +616,18 @@ enum WeekAdvancer {
         case .coachingChanges:
             var newMessages: [InboxMessage] = []
 
+            // Generate draft class early so prospects are visible during offseason
+            if !draftClassGenerated {
+                currentDraftClass = ScoutingEngine.generateDraftClass()
+                draftClassGenerated = true
+                // First season: apply pre-scouted data
+                let totalWins = teams.reduce(0) { $0 + $1.wins }
+                let totalLosses = teams.reduce(0) { $0 + $1.losses }
+                if totalWins == 0 && totalLosses == 0 {
+                    ScoutingEngine.applyPreScoutedData(prospects: &currentDraftClass)
+                }
+            }
+
             // Check coordinator poaching for all teams (legacy system)
             for team in teams {
                 let teamCoaches = allCoaches.filter { $0.teamID == team.id }
