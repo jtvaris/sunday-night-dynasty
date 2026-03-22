@@ -58,6 +58,7 @@ struct PlayerDetailView: View {
 
     @State private var showCutConfirmation = false
     @State private var showPositionChange = false
+    @State private var showContractNegotiation = false
 
     /// True when in landscape on iPad.
     private var isLandscape: Bool {
@@ -168,6 +169,27 @@ struct PlayerDetailView: View {
         }
         .sheet(isPresented: $showPositionChange) {
             positionChangeSheet
+        }
+        .fullScreenCover(isPresented: $showContractNegotiation) {
+            NavigationStack {
+                ContractNegotiationView(
+                    player: player,
+                    negotiationType: .extend,
+                    teamCapSpace: 50_000,
+                    onDealCompleted: { offer in
+                        // Apply the new contract
+                        player.contractYearsRemaining = offer.years
+                        player.annualSalary = offer.annualSalary
+                        showContractNegotiation = false
+                    }
+                )
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { showContractNegotiation = false }
+                            .foregroundStyle(Color.accentGold)
+                    }
+                }
+            }
         }
     }
 
@@ -618,7 +640,22 @@ struct PlayerDetailView: View {
         Section("Actions") {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                 actionButton(label: "Set as Starter", icon: "star.fill", color: .accentGold)
-                actionButton(label: "Extend Contract", icon: "doc.badge.plus", color: .accentBlue)
+                Button {
+                    showContractNegotiation = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.badge.plus")
+                            .font(.caption)
+                        Text("Extend Contract")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(Color.accentBlue)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.accentBlue.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentBlue.opacity(0.3), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
                 actionButton(label: "Propose Trade", icon: "arrow.left.arrow.right", color: .success)
                 Button {
                     showCutConfirmation = true
