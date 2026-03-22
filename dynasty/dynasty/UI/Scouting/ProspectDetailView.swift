@@ -309,6 +309,30 @@ struct ProspectDetailView: View {
                                  posLabel: pos,
                                  recordNote: prospect.coneDrill.flatMap { nearRecordNote(value: $0, record: CombineBenchmarks.records.threeCone.value, name: CombineBenchmarks.records.threeCone.name, lowerIsBetter: true, format: "%.2f") })
 
+            // Position drill grade
+            if let drillGrade = prospect.positionDrillGrade {
+                HStack(spacing: 8) {
+                    Image(systemName: "figure.run.circle.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.accentGold)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Position Drills")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.textPrimary)
+                        Text("Estimated from \(prospect.position.rawValue)-specific combine drills")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    Spacer()
+                    Text(drillGrade)
+                        .font(.title3.weight(.black))
+                        .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(drillGrade))
+                    Image(systemName: "questionmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+
             if !hasCombine {
                 HStack {
                     Image(systemName: "clock")

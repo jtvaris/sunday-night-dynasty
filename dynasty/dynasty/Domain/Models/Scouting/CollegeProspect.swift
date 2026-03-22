@@ -37,6 +37,10 @@ final class CollegeProspect {
     var shuttleTime: Double?
     var coneDrill: Double?
 
+    /// Position drill grade (F through A+). Estimated from position-specific drills at combine.
+    /// This is an imprecise evaluation — real skill may differ significantly.
+    var positionDrillGrade: String?
+
     // MARK: - Scouting Reports
 
     var scoutingReports: [ScoutingReport]

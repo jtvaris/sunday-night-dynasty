@@ -107,8 +107,8 @@ enum LeagueGenerator {
         var allCoaches: [Coach] = []
 
         for teamDef in NFLTeamData.allTeams {
-            // Create owner (budget scales with market size)
-            let owner = generateOwner(mediaMarket: teamDef.mediaMarket)
+            // Create owner (budget matches team preview data)
+            let owner = generateOwner(mediaMarket: teamDef.mediaMarket, teamAbbreviation: teamDef.abbreviation)
             allOwners.append(owner)
 
             // Create team
@@ -235,25 +235,19 @@ enum LeagueGenerator {
 
     // MARK: - Private Generators
 
-    private static func generateOwner(mediaMarket: MediaMarket) -> Owner {
+    private static func generateOwner(mediaMarket: MediaMarket, teamAbbreviation: String) -> Owner {
         let first = ownerFirstNames.randomElement()!
         let last = ownerLastNames.randomElement()!
         let avatarID = OwnerAvatars.allIDs.randomElement()!
-        let spending = Int.random(in: 20...95)
 
-        // Coaching budget scales with spending willingness:
-        // Low spender (20) -> ~$23M, average (50) -> ~$35M, high spender (95) -> ~$53M
-        let baseBudget = 15_000 + Int(Double(spending) / 99.0 * 40_000.0)
+        // Use team-specific spending willingness from preview data (with ±5 jitter)
+        // so the generated budget matches what the player saw on the Team Selection screen.
+        let preview = NFLTeamData.previews[teamAbbreviation]
+        let baseSpending = preview?.spendingWillingness ?? 50
+        let spending = max(1, min(99, baseSpending + Int.random(in: -5...5)))
 
-        // Apply market size modifier (same as BudgetEngine)
-        let marketModifier: Double = {
-            switch mediaMarket {
-            case .large:  return 1.10
-            case .medium: return 1.0
-            case .small:  return 0.90
-            }
-        }()
-        let coachingBudget = max(12_000, Int(Double(baseBudget) * marketModifier))
+        // Coaching budget from preview (converted to thousands) — matches Team Selection display
+        let coachingBudget = (preview?.coachingBudget ?? 35) * 1_000
 
         return Owner(
             name: "\(first) \(last)",

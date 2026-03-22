@@ -1011,10 +1011,10 @@ enum CoachingEngine {
             let salaryRange: ClosedRange<Int>
             if role.isChief {
                 expRange = 8...25
-                salaryRange = 400...1_200
+                salaryRange = 650...2_000
             } else {
                 expRange = 1...15
-                salaryRange = 100...600
+                salaryRange = 150...1_000
             }
 
             let experience = Int.random(in: expRange)

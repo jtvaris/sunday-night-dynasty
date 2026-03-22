@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 struct RosterView: View {
     let players: [Player]
@@ -9,6 +10,7 @@ struct RosterView: View {
 
     // MARK: - Environment
 
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
@@ -61,6 +63,47 @@ struct RosterView: View {
     private static let assessmentOptions = [
         "none", "Solid", "Starter needed", "Depth needed", "Upgrade needed", "Aging", "Priority"
     ]
+
+    /// Computes the staff assessment label and color for a position group.
+    private func staffAssessment(group: PositionGroup, players: [Player]) -> (label: String, color: Color) {
+        let scheme: DefensiveScheme? = group.positions.first?.side == .defense ? defensiveScheme : nil
+        let grades = PositionGradeCalculator.calculatePositionGrades(players: players, positions: group.positions, scheme: scheme)
+
+        let starterBad = ["D", "F"].contains(grades.starterGrade)
+        let depthBad = ["D", "F"].contains(grades.depthGrade)
+        let starterWeak = ["C-", "D", "F"].contains(grades.starterGrade)
+        let starterGood = grades.starterGrade.hasPrefix("A") || grades.starterGrade.hasPrefix("B")
+        let depthGood = grades.depthGrade.hasPrefix("A") || grades.depthGrade.hasPrefix("B")
+
+        if starterBad { return ("Starter needed", .danger) }
+        if depthBad { return ("Depth needed", .warning) }
+
+        if starterWeak {
+            let hasExpiring = players.contains { $0.contractYearsRemaining <= 1 }
+            if hasExpiring { return ("Upgrade recommended", .accentGold) }
+        }
+
+        let n = PositionGradeCalculator.starterCount(for: group.positions)
+        let sorted = players.sorted { $0.overall > $1.overall }
+        let starters = Array(sorted.prefix(n))
+        if !starters.isEmpty {
+            let avgAge = starters.map(\.age).reduce(0, +) / starters.count
+            let peakUpper = group.positions.map { $0.peakAgeRange.upperBound }.reduce(0, +) / max(group.positions.count, 1)
+            if avgAge > peakUpper { return ("Aging — plan ahead", .accentBlue) }
+        }
+
+        if starterGood && depthGood { return ("Solid", .success) }
+        return ("Solid", .success)
+    }
+
+    /// Returns a slightly brighter background for starters to visually distinguish them.
+    private func starterRowBackground(player: Player, groupPlayers: [Player], starterCount: Int) -> Color {
+        let idx = depthIndex(for: player, in: groupPlayers)
+        if idx < starterCount {
+            return Color(white: 0.16) // slightly lighter than backgroundSecondary
+        }
+        return Color.backgroundSecondary
+    }
 
     /// Maps assessment group IDs to the EvalPositionGroup-style IDs used by RosterEvaluationView.
     private func evalGroupID(for group: PositionGroup) -> String {
@@ -425,11 +468,11 @@ struct RosterView: View {
                                     starterCountForPosition: posStarterCount
                                 )
                             }
-                            .listRowBackground(Color.backgroundSecondary)
+                            .listRowBackground(starterRowBackground(player: player, groupPlayers: groupPlayers, starterCount: posStarterCount))
                         }
                     } header: {
                         let gid = evalGroupID(for: group)
-                        let hasAssessment = rosterOwnAssessments[gid] != nil || rosterNotes[gid] != nil || rosterPriorities[gid] != nil
+                        let staffInfo = staffAssessment(group: group, players: groupPlayers)
                         Button {
                             let gid = evalGroupID(for: group)
                             editingAssessment = rosterOwnAssessments[gid] ?? "none"
@@ -438,19 +481,15 @@ struct RosterView: View {
                             assessmentGroup = gid
                             showAssessmentSheet = true
                         } label: {
-                            HStack(spacing: 4) {
-                                PositionGroupHeader(
-                                    group: group,
-                                    players: groupPlayers,
-                                    isWeakest: group.name == weakestGroupName,
-                                    defensiveScheme: group.positions.first?.side == .defense ? defensiveScheme : nil
-                                )
-                                if hasAssessment {
-                                    Circle()
-                                        .fill(Color.accentGold)
-                                        .frame(width: 6, height: 6)
-                                }
-                            }
+                            PositionGroupHeader(
+                                group: group,
+                                players: groupPlayers,
+                                isWeakest: group.name == weakestGroupName,
+                                defensiveScheme: group.positions.first?.side == .defense ? defensiveScheme : nil,
+                                staffLabel: staffInfo.label,
+                                staffColor: staffInfo.color,
+                                ownAssessment: rosterOwnAssessments[gid]
+                            )
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -741,7 +780,7 @@ struct RosterView: View {
     // MARK: - Toolbar Components
 
     private var filterPicker: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 8) {
             ForEach(RosterFilter.allCases) { filter in
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
@@ -753,24 +792,25 @@ struct RosterView: View {
                         .fontWeight(selectedSide == filter ? .heavy : .medium)
                         .foregroundStyle(selectedSide == filter ? Color.backgroundPrimary : Color.textSecondary)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 7)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 8)
                         .background(
                             selectedSide == filter ? Color.accentGold : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 8)
+                            in: RoundedRectangle(cornerRadius: 10)
                         )
                         .overlay(
                             selectedSide == filter
                                 ? nil
-                                : RoundedRectangle(cornerRadius: 8)
+                                : RoundedRectangle(cornerRadius: 10)
                                     .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                         )
                 }
-                .contentShape(RoundedRectangle(cornerRadius: 8))
+                .contentShape(RoundedRectangle(cornerRadius: 10))
             }
         }
-        .padding(3)
-        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 10))
-        .frame(minWidth: 280, maxWidth: isWideLayout ? 420 : 360)
+        .padding(5)
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
+        .frame(minWidth: 320, maxWidth: isWideLayout ? 480 : 400)
     }
 
     private var sortMenu: some View {
@@ -807,41 +847,133 @@ struct RosterView: View {
 
     // MARK: - Position Picker Sheet (#175)
 
+    /// Finds the position group containing a given position.
+    private func positionGroup(for position: Position) -> PositionGroup? {
+        let allGroups = Self.offenseGroups + Self.defenseGroups + Self.specialTeamsGroups
+        return allGroups.first { $0.positions.contains(position) }
+    }
+
+    /// All players in the same position group as the given player, excluding the player itself.
+    private func swapCandidates(for player: Player) -> [(player: Player, effectiveOVR: Int, familiarity: Int, isNatural: Bool)] {
+        guard let group = positionGroup(for: player.position) else { return [] }
+        let groupPlayers = players.filter { group.positions.contains($0.position) && $0.id != player.id }
+
+        return groupPlayers.map { candidate in
+            // What OVR would this candidate have at the selected player's position?
+            let fam = candidate.familiarity(at: player.position)
+            let effectiveOVR = candidate.position == player.position
+                ? candidate.overall
+                : Int(Double(candidate.overall) * Double(fam) / 100.0)
+            let isNatural = candidate.position == player.position
+            return (player: candidate, effectiveOVR: effectiveOVR, familiarity: fam, isNatural: isNatural)
+        }
+        .sorted { $0.effectiveOVR > $1.effectiveOVR }
+    }
+
     private func positionPickerSheet(for player: Player) -> some View {
-        NavigationStack {
+        let candidates = swapCandidates(for: player)
+        let playerDepth = depthIndex(for: player, in: players.filter { $0.position == player.position })
+        let isStarter = playerDepth < (PositionGradeCalculator.idealStarterCounts[player.position] ?? 1)
+
+        return NavigationStack {
             List {
-                let eligible = Position.allCases.filter { pos in
-                    pos == player.position || player.familiarity(at: pos) > 0
-                }
-                ForEach(eligible) { pos in
-                    Button {
-                        // In a real implementation this would update the player's position
-                        positionPickerPlayer = nil
-                    } label: {
-                        HStack {
-                            Text(pos.rawValue)
-                                .font(.headline)
-                                .fontWeight(.bold)
+                // Current player info
+                Section {
+                    HStack(spacing: 12) {
+                        Text(player.position.rawValue)
+                            .font(.system(size: 11, weight: .heavy))
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Self.positionSideColor(player.position), in: RoundedRectangle(cornerRadius: 4))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(player.fullName)
+                                .font(.subheadline.weight(.bold))
                                 .foregroundStyle(Color.textPrimary)
-                            Spacer()
-                            if pos == player.position {
-                                Text("Current")
-                                    .font(.caption)
-                                    .foregroundStyle(Color.accentGold)
-                            } else {
-                                Text("\(player.familiarity(at: pos))%")
-                                    .font(.caption)
-                                    .monospacedDigit()
-                                    .foregroundStyle(Color.forRating(player.familiarity(at: pos)))
-                            }
+                            Text(isStarter ? "Starter" : "Backup")
+                                .font(.caption)
+                                .foregroundStyle(isStarter ? Color.success : Color.textTertiary)
                         }
+                        Spacer()
+                        Text("\(player.overall)")
+                            .font(.title2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Color.forRating(player.overall))
                     }
                     .listRowBackground(Color.backgroundSecondary)
+                } header: {
+                    Text("Swap from")
+                }
+
+                // Swap candidates
+                Section {
+                    if candidates.isEmpty {
+                        Text("No other players in this position group")
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                            .listRowBackground(Color.backgroundSecondary)
+                    } else {
+                        ForEach(candidates, id: \.player.id) { entry in
+                            Button {
+                                performSwap(player: player, with: entry.player)
+                                positionPickerPlayer = nil
+                            } label: {
+                                HStack(spacing: 12) {
+                                    // Position badge
+                                    Text(entry.player.position.rawValue)
+                                        .font(.system(size: 11, weight: .heavy))
+                                        .foregroundStyle(Color.backgroundPrimary)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Self.positionSideColor(entry.player.position), in: RoundedRectangle(cornerRadius: 4))
+
+                                    // Name
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(entry.player.fullName)
+                                            .font(.subheadline.weight(.medium))
+                                            .foregroundStyle(Color.textPrimary)
+                                        if !entry.isNatural {
+                                            Text("\(entry.player.position.rawValue) → \(player.position.rawValue)")
+                                                .font(.system(size: 9, weight: .medium))
+                                                .foregroundStyle(Color.warning)
+                                        }
+                                    }
+
+                                    Spacer()
+
+                                    // Familiarity % for out-of-position
+                                    if !entry.isNatural {
+                                        Text("\(entry.familiarity)%")
+                                            .font(.system(size: 11, weight: .bold).monospacedDigit())
+                                            .foregroundStyle(Color.forRating(entry.familiarity))
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 2)
+                                            .background(Color.forRating(entry.familiarity).opacity(0.12), in: Capsule())
+                                    }
+
+                                    // Effective OVR at the target position
+                                    VStack(alignment: .trailing, spacing: 1) {
+                                        Text("\(entry.effectiveOVR)")
+                                            .font(.headline.weight(.bold).monospacedDigit())
+                                            .foregroundStyle(Color.forRating(entry.effectiveOVR))
+                                        if !entry.isNatural {
+                                            Text("eff. OVR")
+                                                .font(.system(size: 8))
+                                                .foregroundStyle(Color.textTertiary)
+                                        }
+                                    }
+                                    .frame(width: 50, alignment: .trailing)
+                                }
+                            }
+                            .listRowBackground(Color.backgroundSecondary)
+                        }
+                    }
+                } header: {
+                    Text("Swap with")
                 }
             }
             .scrollContentBackground(.hidden)
             .background(Color.backgroundPrimary)
-            .navigationTitle("Change Position — \(player.fullName)")
+            .navigationTitle("Swap — \(player.fullName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
@@ -850,7 +982,36 @@ struct RosterView: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.large])
+    }
+
+    static func positionSideColor(_ position: Position) -> Color {
+        switch position.side {
+        case .offense:      return .accentBlue
+        case .defense:      return .danger
+        case .specialTeams: return .accentGold
+        }
+    }
+
+    /// Swaps two players' depth chart positions by exchanging their depth order indices.
+    private func performSwap(player: Player, with other: Player) {
+        // If same position, swap depth order
+        if player.position == other.position {
+            let posPlayers = players.filter { $0.position == player.position }
+            var ordered = customDepthOrder[player.position] ?? posPlayers.sorted { $0.overall > $1.overall }.map(\.id)
+
+            if let idxA = ordered.firstIndex(of: player.id), let idxB = ordered.firstIndex(of: other.id) {
+                ordered.swapAt(idxA, idxB)
+                customDepthOrder[player.position] = ordered
+            }
+        } else {
+            // Cross-position swap: exchange positions
+            let posA = player.position
+            let posB = other.position
+            player.position = posB
+            other.position = posA
+            try? modelContext.save()
+        }
     }
 
     // MARK: - Starter Picker Sheet (#198) — Rich version matching PlayerSlotPicker
@@ -1247,6 +1408,9 @@ struct PositionGroupHeader: View {
     let players: [Player]
     var isWeakest: Bool = false
     var defensiveScheme: DefensiveScheme? = nil
+    var staffLabel: String = "Solid"
+    var staffColor: Color = .success
+    var ownAssessment: String? = nil
 
     private var grades: (starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int) {
         PositionGradeCalculator.calculatePositionGrades(players: players, positions: group.positions, scheme: defensiveScheme)
@@ -1339,8 +1503,48 @@ struct PositionGroupHeader: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(Color.backgroundTertiary, in: Capsule())
+
+            // Staff assessment badge
+            Text(staffLabel)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(staffColor)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(staffColor.opacity(0.15), in: Capsule())
+                .overlay(Capsule().strokeBorder(staffColor.opacity(0.4), lineWidth: 1))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            // Own assessment badge
+            if let own = ownAssessment, own != "none" {
+                Text(own)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Self.ownAssessmentColor(own))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Self.ownAssessmentColor(own).opacity(0.15), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Self.ownAssessmentColor(own).opacity(0.4), lineWidth: 1))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            } else {
+                Text("Not reviewed")
+                    .font(.system(size: 7, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+            }
         }
         .textCase(nil)
+    }
+
+    static func ownAssessmentColor(_ assessment: String) -> Color {
+        switch assessment {
+        case "Solid":           return .success
+        case "Starter needed":  return .danger
+        case "Depth needed":    return .warning
+        case "Upgrade needed":  return .accentGold
+        case "Aging":           return .accentBlue
+        case "Priority":        return .danger
+        default:                return .textTertiary
+        }
     }
 }
 

@@ -662,6 +662,57 @@ enum ScoutingEngine {
             let shuttleNoise = shuttleBase * Double.random(in: -0.02...0.02)
             let shuttleVariance = Double.random(in: -0.06...0.06) + combineModifier * 0.03
             prospects[i].shuttleTime = max(3.80, min(4.80, shuttleBase + shuttleVariance + shuttleNoise))
+
+            // Position drill grade — imprecise estimate from position-specific attributes
+            prospects[i].positionDrillGrade = generatePositionDrillGrade(for: prospects[i])
+        }
+    }
+
+    /// Generates a position drill grade (F through A+) based on the prospect's
+    /// position-specific attributes. Adds noise to simulate the imprecision of
+    /// combine position drills (route running, pass rush moves, coverage drills, etc.).
+    private static func generatePositionDrillGrade(for prospect: CollegeProspect) -> String {
+        let baseAvg: Double
+        switch prospect.truePositionAttributes {
+        case .quarterback(let a):
+            baseAvg = Double(a.armStrength + a.accuracyShort + a.accuracyMid + a.accuracyDeep + a.pocketPresence + a.scrambling) / 6.0
+        case .wideReceiver(let a):
+            baseAvg = Double(a.routeRunning + a.catching + a.release + a.spectacularCatch) / 4.0
+        case .runningBack(let a):
+            baseAvg = Double(a.vision + a.elusiveness + a.breakTackle + a.receiving) / 4.0
+        case .tightEnd(let a):
+            baseAvg = Double(a.blocking + a.catching + a.routeRunning + a.speed) / 4.0
+        case .offensiveLine(let a):
+            baseAvg = Double(a.runBlock + a.passBlock + a.pull + a.anchor) / 4.0
+        case .defensiveLine(let a):
+            baseAvg = Double(a.passRush + a.blockShedding + a.powerMoves + a.finesseMoves) / 4.0
+        case .linebacker(let a):
+            baseAvg = Double(a.tackling + a.zoneCoverage + a.manCoverage + a.blitzing) / 4.0
+        case .defensiveBack(let a):
+            baseAvg = Double(a.manCoverage + a.zoneCoverage + a.press + a.ballSkills) / 4.0
+        case .kicking(let a):
+            baseAvg = Double(a.kickPower + a.kickAccuracy) / 2.0
+        }
+
+        // Add significant noise (±12 points) to simulate combine drill imprecision
+        let noise = Double.random(in: -12...12)
+        let drillScore = max(20, min(99, baseAvg + noise))
+
+        // Convert to letter grade
+        switch drillScore {
+        case 92...:  return "A+"
+        case 87..<92: return "A"
+        case 83..<87: return "A-"
+        case 78..<83: return "B+"
+        case 73..<78: return "B"
+        case 68..<73: return "B-"
+        case 63..<68: return "C+"
+        case 58..<63: return "C"
+        case 53..<58: return "C-"
+        case 48..<53: return "D+"
+        case 43..<48: return "D"
+        case 38..<43: return "D-"
+        default:      return "F"
         }
     }
 

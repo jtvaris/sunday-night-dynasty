@@ -218,7 +218,7 @@ private struct OwnerMeetingStep: View {
     private var budgetImplication: String {
         guard let owner = owner else { return "" }
         let budgetM = String(format: "$%.1fM", Double(owner.coachingBudget) / 1_000.0)
-        let leagueAvgM = "$20.0M"
+        let leagueAvgM = "$38.0M"
         switch owner.spendingWillingness {
         case 1...30:  return "Budget: \(budgetM) (league avg: \(leagueAvgM)). Build through the draft — free agency will be tight."
         case 31...60: return "Budget: \(budgetM) (league avg: \(leagueAvgM)). Modest spending — be strategic with signings."

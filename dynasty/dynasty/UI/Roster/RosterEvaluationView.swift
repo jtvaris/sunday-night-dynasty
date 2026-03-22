@@ -122,7 +122,6 @@ struct RosterEvaluationView: View {
                             ownerDemandsSection
                             positionGradesSection
                             keyDecisionsSection
-                            faPreviewSection
                             strengthsWeaknessesSection
                             capOutlookSection
                             confirmEvaluationButton
@@ -392,19 +391,21 @@ struct RosterEvaluationView: View {
                         sortableHeader("Cap $", column: .capAllocation, width: 72)
                     }
                     Spacer()
-                    HStack(spacing: 8) {
+                    HStack(spacing: 4) {
                         Text("Staff")
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(Color.textSecondary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
                             .background(Color.textTertiary.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                            .frame(minWidth: 60, alignment: .trailing)
                         Text("You")
                             .font(.caption.weight(.bold))
                             .foregroundStyle(Color.accentGold)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
                             .background(Color.accentGold.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                            .frame(minWidth: 60, alignment: .trailing)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -482,37 +483,33 @@ struct RosterEvaluationView: View {
 
                 Spacer()
 
-                // #266: Dual assessment badges — Staff (smaller, left) + Own (right, larger)
+                // #266: Dual assessment badges — Staff (left) + Own (right)
                 HStack(spacing: 4) {
-                    // Staff assessment (auto-generated, smaller)
-                    if rowData.needs.isEmpty {
-                        needBadge(label: "Solid", color: .success, small: true)
-                    } else {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            ForEach(rowData.needs.prefix(2), id: \.label) { need in
-                                needBadge(label: need.label, color: need.color, small: true)
+                    // Staff assessment (auto-generated)
+                    Group {
+                        if rowData.needs.isEmpty {
+                            needBadge(label: "Solid", color: .success, small: true)
+                        } else {
+                            VStack(alignment: .trailing, spacing: 2) {
+                                ForEach(rowData.needs.prefix(2), id: \.label) { need in
+                                    needBadge(label: need.label, color: need.color, small: true)
+                                }
                             }
                         }
                     }
+                    .frame(minWidth: 60, alignment: .trailing)
 
-                    // Own assessment (user's, slightly larger)
-                    if let ownAssessment = rosterOwnAssessments[group.id] {
-                        needBadge(label: ownAssessment, color: ownAssessmentColor(ownAssessment), small: false)
+                    // Own assessment (user's)
+                    Group {
+                        if let ownAssessment = rosterOwnAssessments[group.id], ownAssessment != "none" {
+                            needBadge(label: ownAssessment, color: ownAssessmentColor(ownAssessment), small: false)
+                        } else {
+                            Text("—")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(Color.textTertiary)
+                        }
                     }
-                }
-
-                // Priority dot + note indicator (#245)
-                HStack(spacing: 4) {
-                    if let priority = rosterPriorities[group.id], priority != "none" {
-                        Circle()
-                            .fill(priorityColor(priority))
-                            .frame(width: 8, height: 8)
-                    }
-                    if rosterNotes[group.id] != nil {
-                        Image(systemName: "note.text")
-                            .font(.caption)
-                            .foregroundStyle(Color.accentGold)
-                    }
+                    .frame(minWidth: 60, alignment: .trailing)
                 }
             }
             .padding(.horizontal, 16)
@@ -770,6 +767,66 @@ struct RosterEvaluationView: View {
                     text: "Declining value — replacement cost only \(formatMillions(marketValue))/yr",
                     color: .textSecondary
                 )
+            }
+
+            // FA market alternatives (for expiring contracts)
+            if decision.type == .expiringContract, let teamID = career.teamID {
+                let faPreviews = ContractEngine.previewFreeAgentsForGroup(
+                    allPlayers: allPlayers,
+                    allTeams: allTeams,
+                    playerTeamID: teamID,
+                    positions: [player.position],
+                    limit: 3
+                )
+                if !faPreviews.isEmpty {
+                    Divider().overlay(Color.surfaceBorder.opacity(0.3)).padding(.vertical, 4)
+
+                    HStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.caption2)
+                            .foregroundStyle(Color.accentBlue)
+                        Text("FA replacements available:")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.accentBlue)
+                    }
+
+                    ForEach(faPreviews, id: \.playerID) { fa in
+                        let ovrDiff = fa.overall - player.overall
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(ovrDiff > 0 ? Color.success : (ovrDiff == 0 ? Color.accentBlue : Color.textTertiary))
+                                .frame(width: 6, height: 6)
+                            Text(fa.name)
+                                .font(.caption)
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
+                            Text("(\(fa.position.rawValue), \(fa.overall) OVR, Age \(fa.age))")
+                                .font(.caption2)
+                                .foregroundStyle(Color.textSecondary)
+                            Spacer()
+                            Text("~\(formatMillions(fa.estimatedSalary))")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(Color.textTertiary)
+                            Text(fa.currentTeamAbbr)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                    }
+
+                    if let bestFA = faPreviews.first {
+                        let diff = bestFA.overall - player.overall
+                        if diff > 0 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "lightbulb.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(Color.accentGold)
+                                Text("\(bestFA.name) would be an upgrade (+\(diff) OVR)")
+                                    .font(.caption2)
+                                    .foregroundStyle(Color.accentGold)
+                            }
+                        }
+                    }
+                }
             }
 
             // Link to player detail
@@ -1105,18 +1162,24 @@ struct RosterEvaluationView: View {
     // MARK: - Section 4: Cap Outlook
 
     private var capOutlookSection: some View {
-        sectionCard(title: "Cap Outlook", icon: "dollarsign.circle.fill") {
+        sectionCard(title: "Cap Outlook — \(career.currentSeason)", icon: "dollarsign.circle.fill") {
             guard let team else {
                 return AnyView(emptyStateRow("No cap data available."))
             }
 
-            let expiringCap = expiringContractCapRelief
+            let expiringPlayers = players.filter { $0.contractYearsRemaining <= 1 }
+            let expiringCap = expiringPlayers.reduce(0) { $0 + $1.annualSalary }
+            let expiringCount = expiringPlayers.count
+            // Estimate replacement cost: market value of each expiring player
+            let replacementCost = expiringPlayers.reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1) }
             let projectedUsage = max(0, team.currentCapUsage - expiringCap)
-            let projectedSpace  = team.salaryCap - projectedUsage
+            let projectedWithReplacements = projectedUsage + replacementCost
+            let projectedSpace = team.salaryCap - projectedUsage
+            let projectedSpaceAfterReplacements = team.salaryCap - projectedWithReplacements
 
             return AnyView(
                 VStack(spacing: 16) {
-                    // Four stat columns
+                    // Current season summary
                     HStack(spacing: 0) {
                         capStatColumn(label: "Total Cap",    value: formatMillions(team.salaryCap),      color: .accentGold)
                         capStatColumn(label: "Used",         value: formatMillions(team.currentCapUsage), color: capUsageColor(team))
@@ -1126,22 +1189,60 @@ struct RosterEvaluationView: View {
 
                     Divider().overlay(Color.surfaceBorder)
 
-                    // Projected cap after expiring contracts
+                    // Next season outlook
+                    let nextSeason = career.currentSeason + 1
+                    HStack {
+                        Text("Next Season Outlook (\(String(nextSeason)))")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Color.accentGold)
+                        Spacer()
+                        Text("\(expiringCount) contracts expiring")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+
                     projectedCapRow(
-                        label: "Expiring Contracts Relief",
-                        value: "+\(formatMillions(expiringCap))",
-                        color: .success
-                    )
-                    projectedCapRow(
-                        label: "Projected Cap After Expirations",
-                        value: formatMillions(projectedUsage),
+                        label: "Current Cap Usage",
+                        value: formatMillions(team.currentCapUsage),
                         color: .textPrimary
                     )
                     projectedCapRow(
-                        label: "Projected FA Budget",
-                        value: formatMillions(projectedSpace),
-                        color: projectedSpace > 20_000 ? .success : (projectedSpace > 5_000 ? .accentGold : .danger)
+                        label: "− Expiring Contracts (\(expiringCount) players)",
+                        value: "−\(formatMillions(expiringCap))",
+                        color: .success
                     )
+                    projectedCapRow(
+                        label: "= Committed Cap",
+                        value: formatMillions(projectedUsage),
+                        color: .textPrimary
+                    )
+
+                    Divider().overlay(Color.surfaceBorder.opacity(0.4))
+
+                    projectedCapRow(
+                        label: "+ Est. Replacement Cost",
+                        value: "+\(formatMillions(replacementCost))",
+                        color: .warning
+                    )
+                    projectedCapRow(
+                        label: "= Projected Cap After Replacements",
+                        value: formatMillions(projectedWithReplacements),
+                        color: .textPrimary
+                    )
+
+                    Divider().overlay(Color.surfaceBorder.opacity(0.4))
+
+                    // Final available cap
+                    HStack {
+                        Text("Projected Available Cap")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        Text(formatMillions(projectedSpaceAfterReplacements))
+                            .font(.subheadline.weight(.bold).monospacedDigit())
+                            .foregroundStyle(projectedSpaceAfterReplacements > 20_000 ? Color.success : (projectedSpaceAfterReplacements > 5_000 ? Color.accentGold : Color.danger))
+                    }
+                    .padding(.horizontal, 16)
 
                     Divider().overlay(Color.surfaceBorder)
 

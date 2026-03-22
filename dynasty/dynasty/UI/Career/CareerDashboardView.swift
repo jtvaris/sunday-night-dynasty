@@ -1011,14 +1011,14 @@ struct CareerDashboardView: View {
                         HStack(spacing: 4) {
                             Image(systemName: "dollarsign.square.fill")
                                 .font(.system(size: 10))
-                                .foregroundStyle(coachingBudgetRemaining > 5000 ? Color.success : coachingBudgetRemaining > 2000 ? Color.accentGold : Color.warning)
+                                .foregroundStyle(coachingBudgetRemaining > 10_000 ? Color.success : coachingBudgetRemaining > 5_000 ? Color.accentGold : Color.warning)
                             Text("Budget")
                                 .font(.system(size: 9))
                                 .foregroundStyle(Color.textTertiary)
                             Spacer()
                             Text(formatCap(coachingBudgetRemaining))
                                 .font(.system(size: 11, weight: .bold).monospacedDigit())
-                                .foregroundStyle(coachingBudgetRemaining > 5000 ? Color.success : coachingBudgetRemaining > 2000 ? Color.accentGold : Color.warning)
+                                .foregroundStyle(coachingBudgetRemaining > 10_000 ? Color.success : coachingBudgetRemaining > 5_000 ? Color.accentGold : Color.warning)
                             Text("/")
                                 .font(.system(size: 9))
                                 .foregroundStyle(Color.textTertiary)
@@ -2275,78 +2275,6 @@ private struct CoachingStaffReviewSheet: View {
 
             // Team scheme banner
             teamSchemeBanner
-
-            // Each coach's scheme expertise
-            ForEach(coaches.sorted(by: { $0.role.sortOrder < $1.role.sortOrder }), id: \.id) { coach in
-                let expertisePairs = coach.schemeExpertise
-                    .sorted { $0.value > $1.value }
-                    .prefix(3)
-
-                if !expertisePairs.isEmpty || coach.offensiveScheme != nil || coach.defensiveScheme != nil {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(coach.role.abbreviation)
-                                .font(.system(size: 9, weight: .heavy))
-                                .foregroundStyle(Color.accentGold)
-                                .frame(width: 26)
-                                .padding(.vertical, 2)
-                                .background(Color.accentGold.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-                            Text(coach.fullName)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Color.textPrimary)
-                                .lineLimit(1)
-                            Spacer()
-                            // Scheme fit indicator
-                            schemeFitIndicator(for: coach)
-                            if let scheme = coach.offensiveScheme {
-                                Text(scheme.displayName)
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(Color.accentBlue)
-                            } else if let scheme = coach.defensiveScheme {
-                                Text(scheme.displayName)
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(Color.accentBlue)
-                            }
-                        }
-
-                        // Expertise bars
-                        if !expertisePairs.isEmpty {
-                            HStack(spacing: 8) {
-                                ForEach(Array(expertisePairs), id: \.key) { schemeName, level in
-                                    let label = schemeDisplayLabel(schemeName)
-                                    HStack(spacing: 4) {
-                                        Text(label)
-                                            .font(.system(size: 9, weight: .medium))
-                                            .foregroundStyle(Color.textTertiary)
-                                            .lineLimit(1)
-                                        Text("\(level)")
-                                            .font(.system(size: 9, weight: .bold).monospacedDigit())
-                                            .foregroundStyle(Color.forRating(level))
-                                    }
-                                }
-                            }
-                            .padding(.leading, 34)
-                        }
-
-                        // Mismatch warning for coordinators
-                        if let warning = schemeMismatchWarning(for: coach) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 9))
-                                Text(warning)
-                                    .font(.system(size: 9, weight: .medium))
-                                    .lineLimit(2)
-                            }
-                            .foregroundStyle(Color.warning)
-                            .padding(.leading, 34)
-                        }
-                    }
-
-                    if coach.id != coaches.sorted(by: { $0.role.sortOrder < $1.role.sortOrder }).last?.id {
-                        Divider().overlay(Color.surfaceBorder.opacity(0.4))
-                    }
-                }
-            }
 
             // Scheme Fit Analysis
             if let offScheme = oc?.offensiveScheme {

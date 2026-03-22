@@ -481,7 +481,7 @@ private struct CompactTeamRow: View {
                         .foregroundStyle(Color.textTertiary)
                     Text("$\(preview.coachingBudget)M")
                         .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(preview.coachingBudget >= 18 ? Color.success : preview.coachingBudget >= 13 ? Color.accentGold : Color.warning)
+                        .foregroundStyle(preview.coachingBudget >= 40 ? Color.success : preview.coachingBudget >= 30 ? Color.accentGold : Color.warning)
                 }
             }
             .frame(width: 64)
@@ -1053,10 +1053,10 @@ private struct TeamDetailSheet: View {
             HStack(spacing: 8) {
                 Image(systemName: "dollarsign.square.fill")
                     .font(.system(size: 16))
-                    .foregroundStyle(preview.coachingBudget >= 18 ? Color.success : preview.coachingBudget >= 13 ? Color.accentGold : Color.warning)
+                    .foregroundStyle(preview.coachingBudget >= 40 ? Color.success : preview.coachingBudget >= 30 ? Color.accentGold : Color.warning)
                 Text("$\(preview.coachingBudget)M")
                     .font(.title3.weight(.bold))
-                    .foregroundStyle(preview.coachingBudget >= 18 ? Color.success : preview.coachingBudget >= 13 ? Color.accentGold : Color.warning)
+                    .foregroundStyle(preview.coachingBudget >= 40 ? Color.success : preview.coachingBudget >= 30 ? Color.accentGold : Color.warning)
                 Text("for coaching & scouting staff")
                     .font(.caption)
                     .foregroundStyle(Color.textTertiary)

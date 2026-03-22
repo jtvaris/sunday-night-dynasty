@@ -43,6 +43,8 @@ struct CombineResultsView: View {
                 return compareOptional(a.coneDrill, b.coneDrill, lowerIsBetter: true)
             case .shuttle:
                 return compareOptional(a.shuttleTime, b.shuttleTime, lowerIsBetter: true)
+            case .positionDrill:
+                return compare(a.positionDrillGrade ?? "Z", b.positionDrillGrade ?? "Z")
             }
         }
         return sortAscending ? sorted : sorted.reversed()
@@ -136,6 +138,7 @@ struct CombineResultsView: View {
             sortableHeader("Broad", column: .broadJump, width: 60)
             sortableHeader("3-Cone", column: .threeCone, width: 66)
             sortableHeader("Shuttle", column: .shuttle, width: 66)
+            sortableHeader("Pos Drill", column: .positionDrill, width: 66)
         }
     }
 
@@ -215,6 +218,12 @@ struct CombineResultsView: View {
             drillCell(value: prospect.shuttleTime.map { String(format: "%.2f", $0) },
                       tier: prospect.shuttleTime.map { shuttleTier($0) }, width: 66,
                       percentile: prospect.shuttleTime.map { drillPercentile($0, \.shuttle, prospect.position) })
+
+            // Position drill grade
+            Text(prospect.positionDrillGrade ?? "--")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(prospect.positionDrillGrade.map { PositionGradeCalculator.gradeColorForLetter($0) } ?? Color.textTertiary)
+                .frame(width: 66)
         }
     }
 
@@ -338,6 +347,7 @@ struct CombineResultsView: View {
 private enum CombineColumn {
     case rank, name, position, college
     case fortyYard, bench, vertical, broadJump, threeCone, shuttle
+    case positionDrill
 }
 
 private enum DrillTier {

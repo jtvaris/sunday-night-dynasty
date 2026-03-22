@@ -47,6 +47,7 @@ struct CoachingStaffView: View {
     @State private var showHireScoutSheet = false       // Workaround for SwiftUI sheet(item:) stale data bug
     @State private var showHireCoachSheet = false       // Same workaround
     @State private var detailCoachID: UUID?            // Pushes CoachDetailView via navigationDestination
+    @State private var detailScoutID: UUID?            // Pushes ScoutDetailView via navigationDestination
     @State private var showMedicalHireSheet = false    // #276: Simple hire sheet for medical roles
     @State private var medicalHireRole: CoachRole?     // #276: Which medical role to hire
     @State private var medicalCandidates: [Coach] = [] // #276: Generated candidates for medical hire
@@ -546,6 +547,12 @@ struct CoachingStaffView: View {
         .navigationDestination(item: $detailCoachID) { coachID in
             if let coach = allCoaches.first(where: { $0.id == coachID }) {
                 CoachDetailView(coach: coach)
+            }
+        }
+        // Scout detail as navigation push
+        .navigationDestination(item: $detailScoutID) { scoutID in
+            if let scout = scouts.first(where: { $0.id == scoutID }) {
+                ScoutDetailView(scout: scout)
             }
         }
         // Hire Coach as SHEET — uses isPresented to avoid SwiftUI sheet(item:) stale data bug
@@ -1837,7 +1844,9 @@ struct CoachingStaffView: View {
     private func compactVacantCard(role: CoachRole) -> some View {
         Button {
             hireCoachRole = role
-            showHireCoachSheet = true
+            DispatchQueue.main.async {
+                showHireCoachSheet = true
+            }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -1895,7 +1904,9 @@ struct CoachingStaffView: View {
                 teamWins: team?.wins ?? 8,
                 teamReputation: career.reputation
             )
-            showMedicalHireSheet = true
+            DispatchQueue.main.async {
+                showMedicalHireSheet = true
+            }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -1997,7 +2008,9 @@ struct CoachingStaffView: View {
     private func vacantRow(role: CoachRole) -> some View {
         Button {
             hireCoachRole = role
-            showHireCoachSheet = true
+            DispatchQueue.main.async {
+                showHireCoachSheet = true
+            }
         } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -2065,6 +2078,9 @@ struct CoachingStaffView: View {
 
     @ViewBuilder
     private func scoutRow(scout: Scout) -> some View {
+        Button {
+            detailScoutID = scout.id
+        } label: {
         HStack(spacing: 12) {
             // Role badge
             Text(scout.scoutRole.abbreviation)
@@ -2110,6 +2126,8 @@ struct CoachingStaffView: View {
             }
         }
         .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Scout Vacant Row
@@ -2118,7 +2136,9 @@ struct CoachingStaffView: View {
     private func scoutVacantRow(role: ScoutRole) -> some View {
         Button {
             hireScoutRole = role
-            showHireScoutSheet = true
+            DispatchQueue.main.async {
+                showHireScoutSheet = true
+            }
         } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
