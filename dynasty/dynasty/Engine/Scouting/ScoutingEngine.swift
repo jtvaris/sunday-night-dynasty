@@ -313,12 +313,14 @@ enum ScoutingEngine {
         let mentalGrades = generateMentalGrades(
             mental: prospect.trueMental,
             accuracy: effectiveAccuracy,
-            positionSpec: scout.positionSpecialization == prospect.position
+            positionSpec: scout.positionSpecialization == prospect.position,
+            mentalFocus: scout.focusAttribute == .mental
         )
         let positionGrades = generatePositionSkillGrades(
             attributes: prospect.truePositionAttributes,
             accuracy: effectiveAccuracy,
-            positionSpec: scout.positionSpecialization == prospect.position
+            positionSpec: scout.positionSpecialization == prospect.position,
+            physicalFocus: scout.focusAttribute == .physical
         )
         let overallLetterGrade = LetterGrade.from(numericValue: scoutedOvr)
         let potentialLabel = PotentialLabel.from(
@@ -361,7 +363,11 @@ enum ScoutingEngine {
         // Position specialization bonus
         var accuracyBonus = 0
         if let spec = scout.positionSpecialization, spec == prospect.position {
-            accuracyBonus = 3
+            accuracyBonus += 3
+        }
+        // Focus position bonus: +15% accuracy when scout focuses on the prospect's position
+        if let focusPos = scout.focusPosition, focusPos == prospect.position {
+            accuracyBonus += 15
         }
         let adjustedError = max(1, errorRange - accuracyBonus)
 
@@ -370,43 +376,53 @@ enum ScoutingEngine {
         let scoutedOverall = min(99, max(1, prospect.trueOverall + overallNoise))
 
         // 3. Scouted potential with noise based on potentialRead
-        let potentialError = max(2, Int(15.0 * (1.0 - Double(scout.potentialRead) / 100.0)))
+        // Mental focus gives +15 bonus to potential read accuracy
+        let mentalBonus = scout.focusAttribute == .mental ? 15 : 0
+        let effectivePotentialRead = min(99, scout.potentialRead + mentalBonus)
+        let potentialError = max(2, Int(15.0 * (1.0 - Double(effectivePotentialRead) / 100.0)))
         let potentialNoise = Int.random(in: -potentialError...potentialError)
         let scoutedPotential = min(99, max(1, prospect.truePotential + potentialNoise))
 
         // 4. Personality assessment based on personalityRead
+        // Character focus gives +20 bonus to personality read
+        let characterBonus = scout.focusAttribute == .character ? 20 : 0
         let personalityNotes: String?
         let personalityRoll = Int.random(in: 1...100)
-        if personalityRoll <= scout.personalityRead {
+        if personalityRoll <= min(99, scout.personalityRead + characterBonus) {
             personalityNotes = accuratePersonalityNote(archetype: prospect.truePersonality.archetype)
-        } else if personalityRoll <= scout.personalityRead + 25 {
+        } else if personalityRoll <= min(99, scout.personalityRead + characterBonus) + 25 {
             personalityNotes = "Hard to get a clear read on personality. Seems fine on the surface."
         } else {
             personalityNotes = nil
         }
 
         // 5. Strength and weakness notes (position-appropriate, 2-3 each)
-        let strengthNotes = generatePositionStrengths(for: prospect, accuracy: scout.accuracy)
-        let weaknessNotes = generatePositionWeaknesses(for: prospect, accuracy: scout.accuracy)
+        let effectiveAccuracy = min(99, scout.accuracy + accuracyBonus)
+        let strengthNotes = generatePositionStrengths(for: prospect, accuracy: effectiveAccuracy)
+        let weaknessNotes = generatePositionWeaknesses(for: prospect, accuracy: effectiveAccuracy)
 
-        // 6. Confidence level based on phase
-        let confidenceLevel = phase.confidenceLevel
+        // 6. Confidence level based on phase, with focus attribute bonus
+        let baseConfidence = phase.confidenceLevel
+        let focusAttrBonus: Double = (scout.focusAttribute == .physical || scout.focusAttribute == .mental) ? 0.10 : 0.0
+        let confidenceLevel = min(1.0, baseConfidence + focusAttrBonus)
 
         // 7. Generate per-attribute letter grades for mental and position skills
         let mentalGrades = generateMentalGrades(
             mental: prospect.trueMental,
-            accuracy: scout.accuracy,
-            positionSpec: scout.positionSpecialization == prospect.position
+            accuracy: effectiveAccuracy,
+            positionSpec: scout.positionSpecialization == prospect.position,
+            mentalFocus: scout.focusAttribute == .mental
         )
         let positionGrades = generatePositionSkillGrades(
             attributes: prospect.truePositionAttributes,
-            accuracy: scout.accuracy,
-            positionSpec: scout.positionSpecialization == prospect.position
+            accuracy: effectiveAccuracy,
+            positionSpec: scout.positionSpecialization == prospect.position,
+            physicalFocus: scout.focusAttribute == .physical
         )
         let overallLetterGrade = LetterGrade.from(numericValue: scoutedOverall)
         let potentialLabel = PotentialLabel.from(
             potential: prospect.truePotential,
-            noise: max(0, 3 - (scout.potentialRead / 30))
+            noise: max(0, 3 - (effectivePotentialRead / 30))
         )
 
         // 8. Create and return the report
@@ -432,9 +448,10 @@ enum ScoutingEngine {
     // MARK: - Grade Generation Helpers
 
     /// Generates letter grades for each mental attribute with noise based on scout accuracy.
-    private static func generateMentalGrades(mental: MentalAttributes, accuracy: Int, positionSpec: Bool) -> [String: LetterGrade] {
+    private static func generateMentalGrades(mental: MentalAttributes, accuracy: Int, positionSpec: Bool, mentalFocus: Bool = false) -> [String: LetterGrade] {
         // Higher accuracy = less noise. Noise in grade steps: low acc → ±3, high acc → ±1
-        let noiseSteps = max(1, 4 - accuracy / 25) - (positionSpec ? 1 : 0)
+        // Mental focus reduces noise by 1 additional step
+        let noiseSteps = max(0, 4 - accuracy / 25 - (positionSpec ? 1 : 0) - (mentalFocus ? 1 : 0))
 
         func gradeWithNoise(_ value: Int) -> LetterGrade {
             let trueGrade = LetterGrade.from(numericValue: value)
@@ -453,8 +470,9 @@ enum ScoutingEngine {
     }
 
     /// Generates letter grades for position-specific skills with noise.
-    private static func generatePositionSkillGrades(attributes: PositionAttributes, accuracy: Int, positionSpec: Bool) -> [String: LetterGrade] {
-        let noiseSteps = max(1, 4 - accuracy / 25) - (positionSpec ? 1 : 0)
+    private static func generatePositionSkillGrades(attributes: PositionAttributes, accuracy: Int, positionSpec: Bool, physicalFocus: Bool = false) -> [String: LetterGrade] {
+        // Physical focus reduces noise by 1 additional step
+        let noiseSteps = max(0, 4 - accuracy / 25 - (positionSpec ? 1 : 0) - (physicalFocus ? 1 : 0))
 
         func gradeWithNoise(_ value: Int) -> LetterGrade {
             let trueGrade = LetterGrade.from(numericValue: value)

@@ -19,7 +19,7 @@ struct PlayerRowView: View {
     /// Number of starters at this player's specific position (scheme-aware). Used for depth numbering (#279).
     var starterCountForPosition: Int = 1
     /// Team salary cap in thousands — used to calculate cap% per player.
-    var teamSalaryCap: Int = 255_000
+    var teamSalaryCap: Int = 265_000
 
     var body: some View {
         HStack(spacing: 6) {

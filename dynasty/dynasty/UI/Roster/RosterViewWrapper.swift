@@ -6,7 +6,7 @@ struct RosterViewWrapper: View {
     let career: Career
     @Environment(\.modelContext) private var modelContext
     @State private var players: [Player] = []
-    @State private var teamSalaryCap: Int = 255_000
+    @State private var teamSalaryCap: Int = 265_000
     @State private var defensiveScheme: DefensiveScheme = .base43
 
     var body: some View {

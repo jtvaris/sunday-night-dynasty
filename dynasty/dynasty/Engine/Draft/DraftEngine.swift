@@ -691,6 +691,7 @@ enum DraftEngine {
 
     /// Returns the top team need positions sorted by priority (highest need first).
     static func topTeamNeeds(roster: [Player], limit: Int = 5) -> [Position] {
+        guard !roster.isEmpty else { return [] }
         let needs = evaluateTeamNeeds(roster: roster)
         return needs.sorted { $0.value > $1.value }.prefix(limit).map(\.key)
     }

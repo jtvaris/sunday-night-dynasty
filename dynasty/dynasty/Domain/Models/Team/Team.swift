@@ -22,7 +22,7 @@ final class Team {
     var losses: Int
     var ties: Int
 
-    /// Total salary cap in thousands of dollars (default: $255,000,000 → 255_000).
+    /// Total salary cap in thousands of dollars (default: $265,000,000 → 265_000, 2026 projection).
     var salaryCap: Int
 
     /// Current cap usage in thousands of dollars.
@@ -58,7 +58,7 @@ final class Team {
         wins: Int = 0,
         losses: Int = 0,
         ties: Int = 0,
-        salaryCap: Int = 255_000,
+        salaryCap: Int = 265_000,
         currentCapUsage: Int = 0
     ) {
         self.id = id

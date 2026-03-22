@@ -521,7 +521,7 @@ private struct CapImpactBar: View {
                 conference: .AFC,
                 division: .west,
                 mediaMarket: .large,
-                salaryCap: 255_000,
+                salaryCap: 265_000,
                 currentCapUsage: 210_000
             ),
             capMode: .realistic

@@ -291,8 +291,8 @@ enum LeagueGenerator {
             }
         }
 
-        // Adjust total salary to target 80-95% of $255,000 cap (~$204K-$242K in thousands)
-        let targetCap = Int.random(in: 204_000...235_000)
+        // Adjust total salary to target 80-95% of $265,000 cap (~$212K-$252K in thousands)
+        let targetCap = Int.random(in: 212_000...252_000)
         let currentTotal = players.reduce(0) { $0 + $1.annualSalary }
 
         if currentTotal > 0 {
@@ -657,39 +657,53 @@ enum LeagueGenerator {
             }
         }
 
-        // Starter tier (depthIndex == 0)
+        // Starter tier (depthIndex == 0) — calibrated to 2026 NFL pay scales
         switch position {
         case .QB:
-            // Franchise QBs are the most expensive
-            return Int.random(in: 25_000...45_000)
-        case .DE, .OLB:
-            // Premium pass rushers / EDGE
-            return Int.random(in: 15_000...25_000)
-        case .CB:
-            // Top corners
-            return Int.random(in: 15_000...22_000)
+            // Franchise QBs: $30M-$55M+
+            return Int.random(in: 30_000...55_000)
         case .WR:
-            // WR1 tier
-            return Int.random(in: 15_000...25_000)
-        case .LT, .RT:
-            // Franchise tackles
-            return Int.random(in: 12_000...20_000)
+            // WR1: $18M-$35M
+            return Int.random(in: 18_000...35_000)
+        case .DE:
+            // Edge rushers: $18M-$33M
+            return Int.random(in: 18_000...33_000)
+        case .OLB:
+            // OLB: $14M-$25M
+            return Int.random(in: 14_000...25_000)
+        case .CB:
+            // Top corners: $14M-$25M
+            return Int.random(in: 14_000...25_000)
+        case .LT:
+            // Left tackles: $16M-$28M
+            return Int.random(in: 16_000...28_000)
+        case .RT:
+            // Right tackles: $12M-$22M
+            return Int.random(in: 12_000...22_000)
         case .DT:
-            return Int.random(in: 10_000...18_000)
-        case .FS, .SS:
-            return Int.random(in: 8_000...15_000)
-        case .TE:
-            return Int.random(in: 8_000...15_000)
+            // Interior DL: $12M-$22M
+            return Int.random(in: 12_000...22_000)
         case .MLB:
-            return Int.random(in: 8_000...15_000)
+            // MLB: $10M-$20M
+            return Int.random(in: 10_000...20_000)
+        case .FS, .SS:
+            // Safeties: $8M-$18M
+            return Int.random(in: 8_000...18_000)
+        case .TE:
+            // Tight ends: $8M-$16M
+            return Int.random(in: 8_000...16_000)
         case .LG, .RG, .C:
-            return Int.random(in: 8_000...14_000)
+            // Interior OL: $8M-$16M
+            return Int.random(in: 8_000...16_000)
         case .RB:
-            return Int.random(in: 5_000...12_000)
+            // RBs devalued: $4M-$14M
+            return Int.random(in: 4_000...14_000)
         case .FB:
-            return Int.random(in: 1_500...3_500)
+            // Fullbacks: $1.5M-$4M
+            return Int.random(in: 1_500...4_000)
         case .K, .P:
-            return Int.random(in: 2_000...5_500)
+            // Specialists: $2M-$6M
+            return Int.random(in: 2_000...6_000)
         }
     }
 

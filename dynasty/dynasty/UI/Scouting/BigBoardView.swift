@@ -147,7 +147,7 @@ struct BigBoardView: View {
     // MARK: - Need-Based Recommendations
 
     private var teamNeeds: [Position] {
-        DraftEngine.topTeamNeeds(roster: teamRoster, limit: 5)
+        DraftEngine.topTeamNeeds(roster: teamRoster, limit: 3)
     }
 
     private var topNeedPosition: Position? {
@@ -169,7 +169,8 @@ struct BigBoardView: View {
     }
 
     private var teamNeedPositions: Set<Position> {
-        Set(teamNeeds)
+        guard !teamRoster.isEmpty else { return [] }
+        return Set(teamNeeds)
     }
 
     /// Best available prospect on the board for a given position.
@@ -292,7 +293,6 @@ struct BigBoardView: View {
                     }
                     .scrollContentBackground(.hidden)
                     .listStyle(.insetGrouped)
-                    .environment(\.editMode, .constant(.active))
                 }
             }
         }
@@ -714,6 +714,7 @@ struct BigBoardView: View {
 
     @ViewBuilder
     private func tierContextMenu(for prospect: CollegeProspect) -> some View {
+        // Tier movement
         ForEach(1...6, id: \.self) { tier in
             if tier != prospect.scoutedTier {
                 Button {
@@ -721,6 +722,29 @@ struct BigBoardView: View {
                 } label: {
                     Label("Move to \(Self.tierNames[tier - 1])", systemImage: "arrow.right.circle")
                 }
+            }
+        }
+        // Reset to auto tier (only show if manually overridden)
+        if prospect.manualTier != nil {
+            Button {
+                prospect.manualTier = nil
+            } label: {
+                Label("Reset to Auto Tier", systemImage: "arrow.counterclockwise")
+            }
+        }
+        Divider()
+        // Draft round projection
+        let roundOptions: [(label: String, projection: Int)] = [
+            ("Move to Round 1", 1),
+            ("Move to Round 2-3", 2),
+            ("Move to Round 4-5", 4),
+            ("Move to Round 6-7", 6)
+        ]
+        ForEach(roundOptions, id: \.projection) { option in
+            Button {
+                prospect.draftProjection = option.projection
+            } label: {
+                Label(option.label, systemImage: "number.circle")
             }
         }
         Divider()
@@ -735,13 +759,27 @@ struct BigBoardView: View {
 
     private var positionPicker: some View {
         HStack(spacing: 12) {
-            Picker("Position", selection: $positionFilter) {
-                ForEach(ProspectPositionFilter.allCases) { filter in
-                    Text(filter.label).tag(filter)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(ProspectPositionFilter.allCases) { filter in
+                        let isSelected = positionFilter == filter
+                        Button {
+                            positionFilter = filter
+                        } label: {
+                            Text(filter.label)
+                                .font(.caption.weight(isSelected ? .heavy : .medium))
+                                .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule()
+                                        .fill(isSelected ? Color.accentGold : Color.backgroundTertiary)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
-            .pickerStyle(.segmented)
-            .frame(minWidth: 380)
 
             Picker("Flag", selection: $flagFilter) {
                 ForEach(ProspectFlagFilter.allCases) { filter in
@@ -892,18 +930,9 @@ struct BigBoardView: View {
         }
     }
 
-    /// Move prospect to a different tier by adjusting scoutedOverall to land in the target tier.
+    /// Move prospect to a different tier using manual tier override (preserves scoutedOverall).
     private func moveProspectToTier(_ prospect: CollegeProspect, tier: Int) {
-        let targetOverall: Int
-        switch tier {
-        case 1: targetOverall = 85
-        case 2: targetOverall = 75
-        case 3: targetOverall = 65
-        case 4: targetOverall = 55
-        case 5: targetOverall = 45
-        default: targetOverall = 40
-        }
-        prospect.scoutedOverall = targetOverall
+        prospect.manualTier = tier
     }
 
     private func moveTierProspects(tier: Int, from: IndexSet, to: Int) {
@@ -1295,31 +1324,25 @@ struct BigBoardRowView: View {
     }
 
     private var boardOverallBadge: some View {
-        Group {
-            if let gradeRange = prospect.scoutedOverallGrade {
-                Text(gradeRange.displayText)
-                    .font(.system(size: gradeRange.isSingleGrade ? 14 : 11, weight: .bold))
-                    .foregroundStyle(boardGradeColor(gradeRange.midGrade))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            } else if let grade = prospect.scoutGrade {
-                Text(grade)
-                    .font(.callout.weight(.bold))
-                    .foregroundStyle(Color.accentGold)
-            } else if prospect.scoutedOverall != nil {
-                Text("\(prospect.scoutedOverall!)")
-                    .font(.callout.weight(.bold).monospacedDigit())
-                    .foregroundStyle(Color.forRating(prospect.scoutedOverall!))
-            } else {
-                Text("?")
-                    .font(.callout.weight(.bold))
-                    .foregroundStyle(Color.textTertiary)
-            }
-        }
-        .frame(width: 34, alignment: .center)
-        .onTapGesture {
+        Button {
             onGradeTap?()
+        } label: {
+            Group {
+                if let gradeRange = prospect.effectiveOverallGrade {
+                    Text(gradeRange.displayText)
+                        .font(.system(size: gradeRange.isSingleGrade ? 14 : 11, weight: .bold))
+                        .foregroundStyle(boardGradeColor(gradeRange.midGrade))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                } else {
+                    Text("?")
+                        .font(.callout.weight(.bold))
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+            .frame(width: 34, alignment: .center)
         }
+        .buttonStyle(.plain)
     }
 
     private var boardProjectedRoundBadge: some View {
@@ -1478,7 +1501,7 @@ struct BigBoardRowView: View {
     }
 
     private var accessibilityDescription: String {
-        let overall = prospect.scoutedOverall.map { "\($0)" } ?? "ungraded"
+        let overall = prospect.overallGradeDisplay
         let flag = prospect.prospectFlag == .none ? "" : " \(prospect.prospectFlag.rawValue)"
         return "Rank \(rank), \(prospect.fullName), \(prospect.position.rawValue), \(prospect.college), overall \(overall)\(flag)"
     }

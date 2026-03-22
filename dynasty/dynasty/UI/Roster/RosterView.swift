@@ -3,8 +3,8 @@ import SwiftData
 
 struct RosterView: View {
     let players: [Player]
-    /// The team's current salary cap in thousands. Falls back to 255_000 if not provided.
-    var teamSalaryCap: Int = 255_000
+    /// The team's current salary cap in thousands. Falls back to 265_000 if not provided.
+    var teamSalaryCap: Int = 265_000
     /// The defensive coordinator's scheme, used to determine correct DL starter counts.
     var defensiveScheme: DefensiveScheme = .base43
 

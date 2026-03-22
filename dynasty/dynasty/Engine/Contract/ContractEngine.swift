@@ -26,61 +26,75 @@ enum ContractEngine {
     /// Estimate the annual market value (in thousands) a player would command
     /// on the open market based on position, age, and overall rating.
     ///
-    /// The salary cap is ~$255M; a franchise QB earns $45-55M (18-22% of cap).
-    /// A 77 OVR starting QB in their prime should command ~$18-22M.
+    /// The salary cap is ~$265M (2026); a franchise QB earns $55M+ (20%+ of cap).
     /// Scale: value in thousands (e.g. 20_000 = $20M/yr).
+    ///
+    /// TODO: Use player's natural/best position for salary calculation instead of
+    /// current assigned position. A player moved from DE to DT should still demand
+    /// DE money. Add `naturalPosition` to Player model when available.
     static func estimateMarketValue(player: Player) -> Int {
         let overall = player.overall
         let position = player.position
         let age = player.age
 
         // Tiered base value from overall rating (in thousands).
-        // Uses a piecewise curve so the jump from 75 to 90+ is dramatic,
-        // reflecting how elite talent commands exponentially more money.
+        // Steeper curve at elite level — reflecting how elite talent commands
+        // exponentially more money in the real NFL.
         let normalizedOVR = Double(overall)
         let baseValue: Double
-        if normalizedOVR >= 90 {
-            // Elite tier: $25M–$35M base before position multiplier
-            baseValue = 25_000 + (normalizedOVR - 90.0) * 1_000
+        if normalizedOVR >= 95 {
+            // True elite: $25M–$30M base (× position multiplier → QB $55M+, DE $37M)
+            baseValue = 25_000 + (normalizedOVR - 95.0) * 1_500
+        } else if normalizedOVR >= 90 {
+            // Elite tier: $16M–$25M base
+            baseValue = 16_000 + (normalizedOVR - 90.0) * 1_800
         } else if normalizedOVR >= 80 {
-            // Starter tier: $10M–$25M
-            baseValue = 10_000 + (normalizedOVR - 80.0) * 1_500
+            // Starter tier: $8M–$22M
+            baseValue = 8_000 + (normalizedOVR - 80.0) * 1_400
         } else if normalizedOVR >= 70 {
-            // Solid contributor: $3M–$10M
-            baseValue = 3_000 + (normalizedOVR - 70.0) * 700
+            // Solid contributor: $2.5M–$8M
+            baseValue = 2_500 + (normalizedOVR - 70.0) * 550
         } else if normalizedOVR >= 60 {
-            // Depth/rotational: $1M–$3M
-            baseValue = 1_000 + (normalizedOVR - 60.0) * 200
+            // Depth/rotational: $1M–$2.5M
+            baseValue = 1_000 + (normalizedOVR - 60.0) * 150
         } else {
             // Fringe / practice squad: $750K–$1M
             baseValue = 750 + max(0, normalizedOVR - 50.0) * 25
         }
 
-        // Position multiplier: QBs get the largest premium
+        // Position multiplier calibrated to real NFL 2026 pay scales.
         let positionMultiplier: Double = {
             switch position {
             case .QB:
-                return 1.8
-            case .DE, .CB:
-                return 1.3
+                return 2.2    // Elite QBs: $55M+
             case .WR:
-                return 1.25
-            case .OLB:
-                return 1.2
+                return 1.3    // WR1: $30-35M
+            case .DE:
+                return 1.25   // Edge rushers: $30-35M
             case .LT:
-                return 1.15
-            case .DT, .FS, .SS:
-                return 1.1
-            case .TE, .MLB:
-                return 1.05
+                return 1.05   // LT: $23-28M
+            case .OLB:
+                return 1.0    // OLB: $20-25M
+            case .CB:
+                return 0.95   // Top CB: $21-25M
+            case .DT:
+                return 0.9    // Interior DL: $18-22M
+            case .RT:
+                return 0.85   // RT: $18-22M
+            case .MLB:
+                return 0.8    // MLB: $15-20M
+            case .FS, .SS:
+                return 0.75   // Safeties: $14-18M
+            case .TE:
+                return 0.7    // TE: $12-16M
+            case .LG, .RG, .C:
+                return 0.65   // Interior OL: $12-16M
             case .RB:
-                return 0.9
-            case .LG, .RG, .C, .RT:
-                return 0.95
+                return 0.45   // RBs devalued: $8-14M
             case .FB:
-                return 0.7
+                return 0.25   // FB: $2-4M
             case .K, .P:
-                return 0.6
+                return 0.25   // Specialists: $3-6M
             }
         }()
         var value = baseValue * positionMultiplier

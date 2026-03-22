@@ -42,15 +42,15 @@ struct ProspectDetailView: View {
 
             List {
                 headerSection
-                riskAndSchemeFitSection
-                starterComparisonSection
-                collegeProductionSection
-                teamInterestRow
-                riskFlagsSection
-                combineSection
-                if prospect.interviewCompleted { interviewResultsSection }
+                quickAssessmentRow
                 if isScouted { scoutingReportSection }
+                starterComparisonSection
+                combineSection
+                collegeProductionSection
                 draftSection
+                riskFlagsSection
+                if prospect.interviewCompleted { interviewResultsSection }
+                teamInterestRow
                 actionsSection
             }
             .scrollContentBackground(.hidden)
@@ -158,17 +158,19 @@ struct ProspectDetailView: View {
         let confidenceColor: Color = {
             switch count {
             case 0:  return .textTertiary
-            case 1:  return .danger
-            case 2:  return .accentGold
+            case 1:  return .accentGold
+            case 2:  return .accentBlue
             default: return .success
             }
         }()
         return HStack(spacing: 2) {
-            Text(prospect.scoutConfidenceDots)
-                .font(.system(size: 8))
-                .foregroundStyle(confidenceColor)
-            Text("\(count)x")
-                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(i < count ? confidenceColor : confidenceColor.opacity(0.3))
+                    .frame(width: 6, height: 6)
+            }
+            Text("\(count) report\(count == 1 ? "" : "s")")
+                .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(confidenceColor)
         }
         .padding(.horizontal, 6)
@@ -182,73 +184,110 @@ struct ProspectDetailView: View {
     private var potentialBadge: some View {
         let label = prospect.scoutedPotentialLabel ?? .unknown
         let color = potentialLabelColor(label)
-        return Text(label.rawValue)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.12), in: Capsule())
+        return Group {
+            if label != .unknown {
+                Text(label.rawValue)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(color)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(color.opacity(0.12), in: Capsule())
+            }
+        }
     }
 
-    // MARK: - Risk Profile + Scheme Fit (compact)
+    // MARK: - Quick Assessment Row
 
     @ViewBuilder
-    private var riskAndSchemeFitSection: some View {
+    private var quickAssessmentRow: some View {
         let risk = prospect.riskLevel
         let fit = evaluateSchemeFit()
-        if risk != .unknown || fit != nil {
-            Section {
-                HStack(spacing: 12) {
-                    // Risk card
-                    if risk != .unknown {
-                        HStack(spacing: 8) {
-                            Image(systemName: risk.icon)
-                                .font(.subheadline)
-                                .foregroundStyle(risk.color)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Risk")
-                                    .font(.caption2)
-                                    .foregroundStyle(Color.textTertiary)
-                                Text(risk.rawValue)
-                                    .font(.caption.weight(.heavy))
-                                    .foregroundStyle(risk.color)
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(risk.color.opacity(0.1))
-                        )
-                    }
-
-                    // Scheme fit card
-                    if let fit {
-                        HStack(spacing: 8) {
-                            Image(systemName: schemeFitIcon(fit))
-                                .font(.subheadline)
-                                .foregroundStyle(schemeFitColor(fit))
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Scheme Fit")
-                                    .font(.caption2)
-                                    .foregroundStyle(Color.textTertiary)
-                                Text(fit)
-                                    .font(.caption.weight(.heavy))
-                                    .foregroundStyle(schemeFitColor(fit))
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(schemeFitColor(fit).opacity(0.1))
-                        )
+        Section {
+            HStack(spacing: 8) {
+                // Risk badge
+                if risk != .unknown {
+                    assessmentBadge(icon: risk.icon, label: risk.rawValue, color: risk.color)
+                }
+                // Scheme fit badge
+                if let fit {
+                    assessmentBadge(icon: schemeFitIcon(fit), label: "Fit: \(fit)", color: schemeFitColor(fit))
+                }
+                // Athletic profile badge
+                if hasCombine {
+                    assessmentBadge(icon: "figure.run", label: athleticProfileLabel, color: athleticProfileColor)
+                }
+                // Stock trajectory
+                let trajectory = prospect.stockTrajectory
+                if trajectory != .newOnBoard {
+                    assessmentBadge(icon: trajectory.icon, label: trajectory.rawValue, color: trajectory.color)
+                }
+                // Draft value mismatch warning
+                if let proj = prospect.draftProjection, let ovr = prospect.scoutedOverall {
+                    let projectedMinOvr = projectionMinOverall(proj)
+                    if ovr < projectedMinOvr {
+                        assessmentBadge(icon: "exclamationmark.triangle.fill", label: "Overdraft?", color: .danger)
                     }
                 }
             }
-            .listRowBackground(Color.backgroundSecondary)
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private func assessmentBadge(icon: String, label: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.caption2)
+                .foregroundStyle(color)
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(color.opacity(0.12), in: Capsule())
+    }
+
+    /// Minimum expected OVR for a given draft round projection
+    private func projectionMinOverall(_ round: Int) -> Int {
+        switch round {
+        case 1: return 70
+        case 2...3: return 60
+        case 4...5: return 50
+        default: return 40
+        }
+    }
+
+    // MARK: - Athletic Profile
+
+    private var athleticProfileLabel: String {
+        let percentiles = [
+            prospect.fortyTime.map { CombineBenchmarks.percentile(value: $0, benchmark: CombineBenchmarks.benchmarks(for: prospect.position).fortyYard) },
+            prospect.benchPress.map { CombineBenchmarks.percentile(value: Double($0), benchmark: CombineBenchmarks.benchmarks(for: prospect.position).benchPress) },
+            prospect.verticalJump.map { CombineBenchmarks.percentile(value: $0, benchmark: CombineBenchmarks.benchmarks(for: prospect.position).verticalJump) },
+            prospect.broadJump.map { CombineBenchmarks.percentile(value: Double($0), benchmark: CombineBenchmarks.benchmarks(for: prospect.position).broadJump) },
+            prospect.shuttleTime.map { CombineBenchmarks.percentile(value: $0, benchmark: CombineBenchmarks.benchmarks(for: prospect.position).shuttle) },
+            prospect.coneDrill.map { CombineBenchmarks.percentile(value: $0, benchmark: CombineBenchmarks.benchmarks(for: prospect.position).threeCone) }
+        ].compactMap { $0 }
+
+        guard !percentiles.isEmpty else { return "No Data" }
+        let avg = percentiles.reduce(0, +) / percentiles.count
+
+        switch avg {
+        case 80...: return "Elite"
+        case 65..<80: return "Above Average"
+        case 45..<65: return "Average"
+        case 25..<45: return "Below Average"
+        default: return "Poor"
+        }
+    }
+
+    private var athleticProfileColor: Color {
+        switch athleticProfileLabel {
+        case "Elite": return .success
+        case "Above Average": return .accentGold
+        case "Average": return .accentBlue
+        case "Below Average": return .warning
+        default: return .danger
         }
     }
 
@@ -310,14 +349,15 @@ struct ProspectDetailView: View {
                                 .multilineTextAlignment(.center)
                         }
 
-                        // Starter side — keep numeric
+                        // Starter side — letter grade to match prospect
                         VStack(spacing: 2) {
                             Text(starter.fullName)
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(Color.textPrimary)
-                            Text("\(starter.overall)")
-                                .font(.title3.weight(.heavy).monospacedDigit())
-                                .foregroundStyle(Color.forRating(starter.overall))
+                            let starterGrade = LetterGrade.from(numericValue: starter.overall)
+                            Text(starterGrade.rawValue)
+                                .font(.title3.weight(.heavy))
+                                .foregroundStyle(detailGradeColor(starterGrade))
                             Text("Starter")
                                 .font(.caption2)
                                 .foregroundStyle(Color.textTertiary)
@@ -344,10 +384,10 @@ struct ProspectDetailView: View {
     }
 
     private func starterComparisonLabel(_ diff: Int) -> String {
-        if diff > -3 { return "Likely upgrade" }
-        if diff > -8 { return "Potential\nupgrade" }
-        if diff > -15 { return "Development" }
-        return "Project pick"
+        if diff >= 0 { return "Upgrade" }
+        if diff > -5 { return "Close" }
+        if diff > -12 { return "Development\nProject" }
+        return "Long-term\nProject"
     }
 
     private func starterComparisonColor(_ diff: Int) -> Color {
@@ -379,6 +419,22 @@ struct ProspectDetailView: View {
 
     private var combineSection: some View {
         Section("Physical Measurables") {
+            // Athletic profile summary
+            if hasCombine {
+                HStack {
+                    Text("Athletic Profile")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer()
+                    Text(athleticProfileLabel)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(athleticProfileColor)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(athleticProfileColor.opacity(0.15), in: Capsule())
+                }
+            }
+
             let bm = CombineBenchmarks.benchmarks(for: prospect.position)
             let pos = prospect.position.rawValue
 
@@ -490,10 +546,11 @@ struct ProspectDetailView: View {
                         .foregroundStyle(potentialLabelColor(potentialLabel))
                 }
             } else if let potential = prospect.scoutedPotential {
-                LabeledContent("Potential Grade") {
-                    Text("\(potential)")
-                        .font(.body.weight(.bold).monospacedDigit())
-                        .foregroundStyle(Color.forRating(potential))
+                let potentialGrade = LetterGrade.from(numericValue: potential)
+                LabeledContent("Potential") {
+                    Text(potentialGrade.rawValue)
+                        .font(.body.weight(.bold))
+                        .foregroundStyle(detailGradeColor(potentialGrade))
                 }
             }
 
@@ -633,22 +690,16 @@ struct ProspectDetailView: View {
         .listRowBackground(Color.backgroundSecondary)
     }
 
-    // MARK: - College Production Section
+    // MARK: - College Production Section (Position Skills)
 
     @ViewBuilder
     private var collegeProductionSection: some View {
-        Section("College Production") {
-            HStack(spacing: 20) {
-                ProspectInfoPill(label: "Height", value: heightLabel)
-                ProspectInfoPill(label: "Weight", value: "\(prospect.weight) lbs")
-                ProspectInfoPill(label: "Age", value: "\(prospect.age)")
-            }
-
-            if isScouted {
+        if isScouted {
+            Section("Position Skills") {
                 collegeFlavorStats
             }
+            .listRowBackground(Color.backgroundSecondary)
         }
-        .listRowBackground(Color.backgroundSecondary)
     }
 
     @ViewBuilder
@@ -760,7 +811,7 @@ struct ProspectDetailView: View {
         }
     }
 
-    // MARK: - Scheme Fit (used by riskAndSchemeFitSection)
+    // MARK: - Scheme Fit
 
     private func evaluateSchemeFit() -> String? {
         let oc = coaches.first(where: { $0.role == .offensiveCoordinator })
@@ -990,6 +1041,16 @@ struct ProspectDetailView: View {
                 }
             }
 
+            // Rookie contract estimate
+            if let proj = prospect.draftProjection {
+                LabeledContent("Est. Rookie Deal") {
+                    Text(rookieContractEstimate(round: proj))
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color.textSecondary)
+                        .monospacedDigit()
+                }
+            }
+
             // Mock draft projection
             if let mockPick = prospect.mockDraftPickNumber,
                let mockTeam = prospect.mockDraftTeam {
@@ -1180,6 +1241,18 @@ struct ProspectDetailView: View {
         }
     }
 
+    private func rookieContractEstimate(round: Int) -> String {
+        switch round {
+        case 1: return "~$12-40M / 4yr"
+        case 2: return "~$6-10M / 4yr"
+        case 3: return "~$4-6M / 4yr"
+        case 4: return "~$3-4M / 4yr"
+        case 5: return "~$2-3M / 4yr"
+        case 6: return "~$1-2M / 4yr"
+        default: return "~$900K / 4yr"
+        }
+    }
+
     /// Maps the career's current season phase to a scouting phase for report generation.
     private var currentScoutingPhase: ScoutingPhase {
         switch career.currentPhase {
@@ -1367,13 +1440,14 @@ private struct StatusPill: View {
         HStack(spacing: 5) {
             Image(systemName: completed ? "checkmark.circle.fill" : "circle")
                 .foregroundStyle(completed ? Color.success : Color.textTertiary)
-                .font(.caption)
+                .font(.subheadline)
             Text(label)
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundStyle(completed ? Color.textPrimary : Color.textTertiary)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(minHeight: 44)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(completed ? Color.success.opacity(0.15) : Color.backgroundTertiary)
@@ -1494,33 +1568,4 @@ private struct SendScoutSheet: View {
         ScoutingEngine.applyReport(report: report, to: prospect)
         dismiss()
     }
-}
-
-
-// MARK: - Preview
-
-#Preview {
-    NavigationStack {
-        ProspectDetailView(
-            career: Career(playerName: "John Doe", role: .gm, capMode: .simple),
-            prospect: CollegeProspect(
-                firstName: "Caleb", lastName: "Williams",
-                college: "USC", position: .QB,
-                age: 21, height: 74, weight: 214,
-                truePositionAttributes: .quarterback(QBAttributes(
-                    armStrength: 92, accuracyShort: 88, accuracyMid: 90,
-                    accuracyDeep: 85, pocketPresence: 87, scrambling: 78
-                )),
-                truePersonality: PlayerPersonality(archetype: .fieryCompetitor, motivation: .winning),
-                scoutedOverall: 89, scoutedPotential: 94,
-                scoutedPersonality: .fieryCompetitor,
-                scoutGrade: "A",
-                fortyTime: 4.62, benchPress: 18, verticalJump: 33.5,
-                broadJump: 118, shuttleTime: 4.24, coneDrill: 6.87,
-                interviewCompleted: true, proDayCompleted: false,
-                draftProjection: 1
-            )
-        )
-    }
-    .modelContainer(for: [Career.self, Scout.self, CollegeProspect.self], inMemory: true)
 }

@@ -94,14 +94,39 @@ final class CollegeProspect {
     /// Scout grade captured before combine results are applied, used to show grade change arrows.
     var preCombineGrade: String?
 
+    // MARK: - Manual Tier Override
+
+    /// When set, overrides the computed tier derived from scoutedOverall.
+    var manualTier: Int?
+
     // MARK: - Prospect Flag
 
     var prospectFlag: ProspectFlag = ProspectFlag.none
 
     // MARK: - Computed Properties
 
-    /// 6-tier scouting classification based on scouted overall rating.
+    /// Always returns a grade — uses scoutedOverallGrade if available, otherwise converts
+    /// from legacy scoutedOverall or scoutGrade. This ensures all views show grades, not numbers.
+    var effectiveOverallGrade: GradeRange? {
+        if let grade = scoutedOverallGrade { return grade }
+        if let ovr = scoutedOverall {
+            let lg = LetterGrade.from(numericValue: ovr)
+            return GradeRange(grade: lg)
+        }
+        if let gradeStr = scoutGrade, let lg = LetterGrade(rawValue: gradeStr) {
+            return GradeRange(grade: lg)
+        }
+        return nil
+    }
+
+    /// Display text for the overall grade — always a letter grade, never a number.
+    var overallGradeDisplay: String {
+        effectiveOverallGrade?.displayText ?? "?"
+    }
+
+    /// 6-tier scouting classification. Uses manualTier if overridden, otherwise computed from scoutedOverall.
     var scoutedTier: Int {
+        if let manual = manualTier { return manual }
         guard let ovr = scoutedOverall else { return 6 }
         switch ovr {
         case 85...99: return 1  // Blue Chip
@@ -158,31 +183,58 @@ final class CollegeProspect {
 
     // MARK: - Boom/Bust Risk Indicator
 
-    /// Risk classification based on scouting report variance, personality consistency, and potential spread.
+    /// Risk classification based on age, position, scouting variance, personality, and potential spread.
     var riskLevel: ProspectRiskLevel {
-        guard scoutedOverall != nil else { return .unknown }
+        guard let ovr = scoutedOverall else { return .unknown }
 
         var riskScore = 0 // Higher = riskier
 
-        // 1. Variance between scout report grades (if multiple reports exist)
+        // 1. Age-based risk — younger prospects have higher ceilings but more uncertainty
+        if age <= 20 {
+            riskScore += 2
+        } else if age <= 21 {
+            riskScore += 1
+        }
+
+        // 2. Position-based risk — some positions are inherently riskier transitions to NFL
+        switch position {
+        case .QB:
+            riskScore += 2  // QB is the hardest transition
+        case .WR, .CB:
+            riskScore += 1  // Skill positions with steep learning curves
+        case .LT, .LG, .C, .RG, .RT:
+            break            // OL transitions are more predictable
+        default:
+            break
+        }
+
+        // 3. Variance between scout report grades (if multiple reports exist)
         if scoutingReports.count >= 2 {
             let grades = scoutingReports.map { $0.overallGrade }
             let maxGrade = grades.max() ?? 0
             let minGrade = grades.min() ?? 0
             let variance = maxGrade - minGrade
-            if variance >= 20 { riskScore += 3 }
-            else if variance >= 12 { riskScore += 2 }
-            else if variance >= 6 { riskScore += 1 }
+            if variance >= 15 { riskScore += 3 }
+            else if variance >= 8 { riskScore += 2 }
+            else if variance >= 4 { riskScore += 1 }
         }
 
-        // 2. Gap between scouted overall and scouted potential
-        if let ovr = scoutedOverall, let pot = scoutedPotential {
-            let gap = pot - ovr
-            if gap >= 20 { riskScore += 2 }
-            else if gap >= 12 { riskScore += 1 }
+        // 4. Gap between scouted overall and scouted potential — big ceiling adds risk
+        let potentialGap: Int
+        if let pot = scoutedPotential {
+            potentialGap = pot - ovr
+        } else {
+            potentialGap = 0
+        }
+        let hasBigCeiling = potentialGap >= 15
+
+        if hasBigCeiling {
+            riskScore += 3  // Large gap = volatile prospect
+        } else if potentialGap >= 8 {
+            riskScore += 1
         }
 
-        // 3. Personality-based consistency
+        // 5. Personality-based consistency
         if let personality = scoutedPersonality {
             if personality == .feelPlayer || personality == .dramaQueen {
                 riskScore += 2
@@ -194,23 +246,62 @@ final class CollegeProspect {
             }
         }
 
-        // 4. Low confidence in scouting reports
+        // 6. Low confidence in scouting reports
         if !scoutingReports.isEmpty {
             let avgConfidence = scoutingReports.map { $0.confidenceLevel }.reduce(0, +) / Double(scoutingReports.count)
             if avgConfidence < 0.5 { riskScore += 1 }
         }
 
         // Classify
-        let hasBigCeiling = (scoutedPotential ?? 0) - (scoutedOverall ?? 0) >= 15
-        if riskScore >= 4 {
+        if riskScore >= 4 || (riskScore >= 3 && hasBigCeiling) {
             return .boomOrBust
-        } else if riskScore >= 2 && hasBigCeiling {
+        } else if riskScore >= 2 || hasBigCeiling {
             return .highCeiling
-        } else if riskScore <= 1 {
-            return .safePick
         } else {
-            return .highCeiling
+            return .safePick
         }
+    }
+
+    // MARK: - Stock Trajectory
+
+    /// Determines whether the prospect's stock is rising, falling, or steady
+    /// based on multiple scouting reports and pre/post-combine grade changes.
+    var stockTrajectory: StockTrajectory {
+        // Need at least scouting data to determine trajectory
+        guard scoutedOverall != nil else { return .newOnBoard }
+
+        // Method 1: Multiple scouting reports — compare chronologically by phase weight
+        if scoutingReports.count >= 2 {
+            let phaseOrder: [ScoutingPhase] = [.collegeSeason, .seniorBowl, .combine, .proDay, .personalWorkout]
+            let sorted = scoutingReports.sorted { a, b in
+                let ai = phaseOrder.firstIndex(of: a.phase) ?? 0
+                let bi = phaseOrder.firstIndex(of: b.phase) ?? 0
+                return ai < bi
+            }
+            let earlier = sorted.prefix(sorted.count / 2)
+            let later = sorted.suffix(sorted.count - sorted.count / 2)
+            let earlyAvg = earlier.map(\.overallGrade).reduce(0, +) / earlier.count
+            let lateAvg = later.map(\.overallGrade).reduce(0, +) / later.count
+            let diff = lateAvg - earlyAvg
+
+            if diff >= 4 { return .rising }
+            if diff <= -4 { return .falling }
+            return .steady
+        }
+
+        // Method 2: Pre-combine vs current grade
+        if let preGrade = preCombineGrade, let currentGrade = scoutGrade, preGrade != currentGrade {
+            let preRank = LetterGrade(rawValue: preGrade)?.rank ?? 0
+            let curRank = LetterGrade(rawValue: currentGrade)?.rank ?? 0
+            if curRank > preRank { return .rising }
+            if curRank < preRank { return .falling }
+            return .steady
+        }
+
+        // Single report, no pre-combine data — too early to tell
+        if scoutingReports.count == 1 { return .newOnBoard }
+
+        return .steady
     }
 
     // MARK: - Init
@@ -294,6 +385,33 @@ final class CollegeProspect {
 
 enum ProspectFlag: String, Codable {
     case none, mustHave, sleeper, avoid
+}
+
+// MARK: - Stock Trajectory
+
+enum StockTrajectory: String {
+    case rising      = "Rising"
+    case falling     = "Falling"
+    case steady      = "Steady"
+    case newOnBoard  = "New"
+
+    var icon: String {
+        switch self {
+        case .rising:     return "arrow.up.right"
+        case .falling:    return "arrow.down.right"
+        case .steady:     return "arrow.right"
+        case .newOnBoard: return "sparkles"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .rising:     return .success
+        case .falling:    return .danger
+        case .steady:     return .textSecondary
+        case .newOnBoard: return .accentGold
+        }
+    }
 }
 
 // MARK: - Prospect Risk Level

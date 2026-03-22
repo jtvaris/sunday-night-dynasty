@@ -3,8 +3,8 @@ import SwiftUI
 /// Always-visible summary bar at the top of the Roster view showing key team stats.
 struct RosterSummaryBar: View {
     let players: [Player]
-    /// The team's current salary cap in thousands. Falls back to 255_000 if not provided.
-    var teamSalaryCap: Int = 255_000
+    /// The team's current salary cap in thousands. Falls back to 265_000 if not provided.
+    var teamSalaryCap: Int = 265_000
 
     private var totalCount: Int { players.count }
     private var healthyCount: Int { players.filter { !$0.isInjured }.count }
@@ -19,7 +19,7 @@ struct RosterSummaryBar: View {
         players.reduce(0) { $0 + $1.annualSalary }
     }
 
-    /// Salary cap ceiling in thousands (e.g., 255000 = $255M).
+    /// Salary cap ceiling in thousands (e.g., 265000 = $265M).
     private var salaryCap: Int { teamSalaryCap }
 
     private var formattedCapUsed: String {
