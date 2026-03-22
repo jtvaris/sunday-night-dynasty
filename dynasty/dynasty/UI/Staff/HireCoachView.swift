@@ -615,7 +615,7 @@ struct HireCoachView: View {
     private func potentialBadgeColor(_ label: String) -> Color {
         switch label {
         case "Elite Ceiling":   return Color.accentGold
-        case "High Ceiling":    return .green
+        case "High Ceiling":    return .success
         case "Solid Ceiling":   return Color.accentBlue
         case "Limited Upside":  return .orange
         case "Low Ceiling":     return .red
@@ -854,6 +854,57 @@ private struct CandidateDetailSheet: View {
         return sum / 12
     }
 
+    // MARK: - #89: Coach Development Potential
+
+    private var candidatePotentialLabel: String {
+        candidate.potentialLabel(seasonsOnTeam: 0)
+    }
+
+    private var candidatePotentialColor: Color {
+        let p = candidate.potential
+        if p >= 85 { return .accentGold }
+        if p >= 70 { return .success }
+        if p >= 55 { return .accentBlue }
+        if p >= 40 { return .warning }
+        return .danger
+    }
+
+    // MARK: - #91: Other Teams' Interest
+
+    private var demandBadge: some View {
+        let ovr = coachOverall(candidate)
+        let (label, icon): (String, String) = {
+            if ovr >= 80 { return ("High demand (4-5 teams)", "flame.fill") }
+            if ovr >= 70 { return ("Moderate (2-3 teams)", "person.2.fill") }
+            return ("Limited interest", "person.fill")
+        }()
+        let color: Color = ovr >= 80 ? .danger : ovr >= 70 ? .warning : .textTertiary
+        return HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(color)
+            Text(label)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
+    }
+
+    // MARK: - #92: Negotiation Offer Assessment
+
+    private var offerAssessment: (label: String, color: Color) {
+        let ratio = proposedSalary / askingSalary
+        if ratio >= 0.95 { return ("Likely to accept", .success) }
+        if ratio >= 0.80 { return ("May counter-offer", .warning) }
+        return ("High risk of rejection", .danger)
+    }
+
+    private var counterOfferMinimum: Double {
+        askingSalary * 0.85
+    }
+
     /// Fix #68: Personality effect descriptions.
     private var personalityEffects: [(effect: String, icon: String)] {
         switch candidate.personality {
@@ -917,18 +968,15 @@ private struct CandidateDetailSheet: View {
                         // Profile header
                         profileHeader
 
-                        // Fix #43: Prominent hire button at top of sheet
-                        if !isHired && negotiationResult?.accepted != true {
-                            quickHireButton
-                        }
-
                         if isHired || negotiationResult?.accepted == true {
                             hiredBanner
                         }
 
-                        // Fix #63: Comparison to current coach
+                        // Fix #63 + #87: Comparison to current coach
                         if let current = currentCoach {
                             comparisonCard(current: current)
+                        } else {
+                            noCurrentCoachCard
                         }
 
                         // Two-column layout for cards
@@ -936,11 +984,14 @@ private struct CandidateDetailSheet: View {
                             VStack(spacing: 12) {
                                 // All attributes
                                 attributesCard
+                                // #90: Position group impact
+                                positionGroupImpactCard
                                 // Background story
                                 if !candidate.background.isEmpty {
                                     backgroundCard
                                 }
                             }
+                            .frame(maxWidth: .infinity)
                             VStack(spacing: 12) {
                                 // Fix #66: Scheme fit analysis
                                 schemeFitCard
@@ -949,6 +1000,7 @@ private struct CandidateDetailSheet: View {
                                 // Negotiation section
                                 negotiationCard
                             }
+                            .frame(maxWidth: .infinity)
                         }
 
                         Spacer(minLength: 20)
@@ -1040,6 +1092,19 @@ private struct CandidateDetailSheet: View {
                 .frame(width: 52, height: 58)
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
 
+                // #89: Coach development potential
+                VStack(spacing: 2) {
+                    Text(candidatePotentialLabel)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(candidatePotentialColor)
+                    Text("Potential")
+                        .font(.system(size: 7, weight: .medium))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(candidatePotentialColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+
                 if let off = candidate.offensiveScheme {
                     schemeTag(off.displayName, color: .accentBlue)
                 }
@@ -1059,6 +1124,9 @@ private struct CandidateDetailSheet: View {
                     .padding(.vertical, 4)
                     .background(fit.color.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
                 }
+
+                // #91: Other teams' interest badge
+                demandBadge
 
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
@@ -1130,7 +1198,7 @@ private struct CandidateDetailSheet: View {
         )
     }
 
-    // MARK: - Comparison Card (Fix #63)
+    // MARK: - Comparison Card (Fix #63 + #87)
 
     private func comparisonCard(current: Coach) -> some View {
         let curOVR = coachOverall(current)
@@ -1138,10 +1206,17 @@ private struct CandidateDetailSheet: View {
         let delta = newOVR - curOVR
 
         return VStack(alignment: .leading, spacing: 10) {
-            Text("VS CURRENT \(candidate.role.displayName.uppercased())")
-                .font(.system(size: 11, weight: .black))
-                .tracking(1.5)
-                .foregroundStyle(Color.accentGold)
+            HStack {
+                Text("VS CURRENT \(candidate.role.abbreviation)")
+                    .font(.system(size: 11, weight: .black))
+                    .tracking(1.5)
+                    .foregroundStyle(Color.accentGold)
+                Spacer()
+                // #87: Upgrade summary
+                Text("vs \(current.fullName) (\(curOVR) OVR) — \(delta >= 0 ? "+\(delta)" : "\(delta)") \(delta > 0 ? "upgrade" : delta < 0 ? "downgrade" : "even")")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(delta > 0 ? Color.success : delta < 0 ? Color.danger : Color.textTertiary)
+            }
 
             HStack(spacing: 16) {
                 // Current
@@ -1185,10 +1260,11 @@ private struct CandidateDetailSheet: View {
                 .frame(maxWidth: .infinity)
             }
 
-            // Key attribute comparison
+            // #87: Key attribute side-by-side comparison
             let comparisons: [(String, Int, Int)] = [
                 ("Play Calling", current.playCalling, candidate.playCalling),
                 ("Player Dev", current.playerDevelopment, candidate.playerDevelopment),
+                ("Reputation", current.reputation, candidate.reputation),
                 ("Game Plan", current.gamePlanning, candidate.gamePlanning),
                 ("Motivation", current.motivation, candidate.motivation),
             ]
@@ -1208,6 +1284,74 @@ private struct CandidateDetailSheet: View {
             }
         }
         .padding(16)
+        .cardBackground()
+    }
+
+    // MARK: - No Current Coach Card (#87)
+
+    private var noCurrentCoachCard: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "person.badge.plus")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color.accentBlue)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("New hire — no current \(candidate.role.abbreviation)")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                Text("This is a new addition to the coaching staff.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            }
+            Spacer()
+        }
+        .padding(16)
+        .cardBackground()
+    }
+
+    // MARK: - Position Group Impact Card (#90)
+
+    private var positionGroupImpactCard: some View {
+        let leagueAvg = 65.0
+        let playBoost = (Double(candidate.playCalling) - leagueAvg) * 0.15
+        let devBoost = (Double(candidate.playerDevelopment) - leagueAvg) * 0.15
+        let avgBoost = (playBoost + devBoost) / 2.0
+
+        let offensiveRoles: [CoachRole] = [.offensiveCoordinator, .qbCoach, .rbCoach, .wrCoach, .olCoach]
+        let defensiveRoles: [CoachRole] = [.defensiveCoordinator, .dlCoach, .lbCoach, .dbCoach]
+        let sideLabel: String = offensiveRoles.contains(candidate.role) ? "offensive" :
+            defensiveRoles.contains(candidate.role) ? "defensive" : "unit"
+
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("PROJECTED IMPACT")
+                .font(.system(size: 11, weight: .black))
+                .tracking(1.5)
+                .foregroundStyle(Color.accentGold)
+
+            HStack(spacing: 10) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(avgBoost >= 0 ? Color.success : Color.danger)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Expected \(sideLabel) boost: \(avgBoost >= 0 ? "+" : "")\(String(format: "%.1f", avgBoost))% efficiency")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(avgBoost >= 0 ? Color.success : Color.danger)
+                    HStack(spacing: 12) {
+                        Text("Play Calling: \(playBoost >= 0 ? "+" : "")\(String(format: "%.1f", playBoost))%")
+                            .font(.caption)
+                            .foregroundStyle(playBoost >= 0 ? Color.success.opacity(0.8) : Color.danger.opacity(0.8))
+                        Text("Player Dev: \(devBoost >= 0 ? "+" : "")\(String(format: "%.1f", devBoost))%")
+                            .font(.caption)
+                            .foregroundStyle(devBoost >= 0 ? Color.success.opacity(0.8) : Color.danger.opacity(0.8))
+                    }
+                }
+            }
+
+            Text("Compared to league average (\(Int(leagueAvg)) rating)")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cardBackground()
     }
 
@@ -1251,17 +1395,23 @@ private struct CandidateDetailSheet: View {
         .cardBackground()
     }
 
-    /// Fix #64: Color-coded attribute cells with tier label.
+    /// Fix #64 + #86: Color-coded attribute cells with tier label.
     private func attributeCell(name: String, value: Int) -> some View {
-        let tierLabel = attributeTierLabel(value)
+        let tier = attributeTier(value)
         return HStack(spacing: 6) {
             Text(name)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Color.textSecondary)
             Spacer()
-            Text(tierLabel)
-                .font(.system(size: 7, weight: .semibold))
-                .foregroundStyle(Color.forRating(value).opacity(0.8))
+            Text(tier.label)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(tier.color)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(tier.color.opacity(tier.isElite ? 0.18 : 0.10))
+                )
             Text("\(value)")
                 .font(.system(size: 16, weight: .bold).monospacedDigit())
                 .foregroundStyle(Color.forRating(value))
@@ -1275,14 +1425,13 @@ private struct CandidateDetailSheet: View {
         )
     }
 
-    /// Tier label for attribute value (Fix #64).
-    private func attributeTierLabel(_ value: Int) -> String {
-        if value >= 90 { return "Elite" }
-        if value >= 80 { return "Great" }
-        if value >= 70 { return "Good" }
-        if value >= 60 { return "Avg" }
-        if value >= 50 { return "Below" }
-        return "Poor"
+    /// #86: Attribute tier with color coding.
+    private func attributeTier(_ value: Int) -> (label: String, color: Color, isElite: Bool) {
+        if value >= 85 { return ("Elite", .accentGold, true) }
+        if value >= 75 { return ("Great", .success, false) }
+        if value >= 65 { return ("Good", .accentBlue, false) }
+        if value >= 55 { return ("Avg", .textSecondary, false) }
+        return ("Below", .warning, false)
     }
 
     // MARK: - Background Card
@@ -1354,6 +1503,42 @@ private struct CandidateDetailSheet: View {
                 Text("No scheme data available for comparison.")
                     .font(.caption)
                     .foregroundStyle(Color.textTertiary)
+            }
+
+            // #88: Scheme expertise levels
+            if !candidate.schemeExpertise.isEmpty {
+                Divider().overlay(Color.surfaceBorder)
+
+                Text("SCHEME EXPERTISE")
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(1)
+                    .foregroundStyle(Color.textTertiary)
+
+                ForEach(candidate.schemeExpertise.sorted(by: { $0.value > $1.value }), id: \.key) { scheme, value in
+                    HStack(spacing: 8) {
+                        Text(scheme)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Color.textSecondary)
+                            .frame(width: 80, alignment: .leading)
+
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.backgroundTertiary)
+                                    .frame(height: 6)
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.forRating(value))
+                                    .frame(width: geo.size.width * CGFloat(value) / 100.0, height: 6)
+                            }
+                        }
+                        .frame(height: 6)
+
+                        Text(LetterGrade.from(numericValue: value).rawValue)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color.forRating(value))
+                            .frame(width: 24, alignment: .trailing)
+                    }
+                }
             }
         }
         .padding(16)
@@ -1477,6 +1662,23 @@ private struct CandidateDetailSheet: View {
                     .fill(Color.backgroundTertiary.opacity(0.5))
             )
 
+            // #92: Detailed offer assessment
+            if proposedSalary < askingSalary {
+                let assessment = offerAssessment
+                HStack(spacing: 6) {
+                    Image(systemName: assessment.color == .danger ? "xmark.circle.fill" :
+                            assessment.color == .warning ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(assessment.color)
+                    Text(assessment.label)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(assessment.color)
+                    Text("— Below asking, may reject or counter-offer")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+
             // Contract years + #162: Show contract length effect
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -1531,28 +1733,58 @@ private struct CandidateDetailSheet: View {
 
             // Negotiation result
             if let result = negotiationResult {
-                HStack(spacing: 10) {
-                    Image(systemName: result.accepted ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(result.accepted ? Color.success : Color.danger)
+                let resultColor: Color = result.accepted ? .success : (result.counterOffer != nil ? .warning : .danger)
+                let resultIcon = result.accepted ? "checkmark.circle.fill" : (result.counterOffer != nil ? "arrow.triangle.2.circlepath.circle.fill" : "xmark.circle.fill")
+                let resultTitle = result.accepted ? "Offer Accepted!" : (result.counterOffer != nil ? "Counter-Offer" : "Offer Rejected")
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(result.accepted ? "Offer Accepted!" : "Offer Rejected")
-                            .font(.headline.weight(.bold))
-                            .foregroundStyle(result.accepted ? Color.success : Color.danger)
-                        Text(result.message)
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
+                VStack(spacing: 10) {
+                    HStack(spacing: 10) {
+                        Image(systemName: resultIcon)
+                            .font(.title2)
+                            .foregroundStyle(resultColor)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(resultTitle)
+                                .font(.headline.weight(.bold))
+                                .foregroundStyle(resultColor)
+                            Text(result.message)
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    // #92: Accept counter-offer button
+                    if let counter = result.counterOffer, !result.accepted {
+                        Button {
+                            acceptCounterOffer(amount: counter)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "handshake.fill")
+                                    .font(.system(size: 14))
+                                Text("Accept Counter: \(salaryFormatted(counter))/yr")
+                                    .font(.subheadline.weight(.bold))
+                            }
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 44)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Int(counter) > remainingBudget ? Color.backgroundTertiary : Color.warning)
+                            )
+                        }
+                        .disabled(Int(counter) > remainingBudget)
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .fill((result.accepted ? Color.success : Color.danger).opacity(0.08))
+                        .fill(resultColor.opacity(0.08))
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
-                                .strokeBorder((result.accepted ? Color.success : Color.danger).opacity(0.3), lineWidth: 1)
+                                .strokeBorder(resultColor.opacity(0.3), lineWidth: 1)
                         )
                 )
             }
@@ -1612,6 +1844,7 @@ private struct CandidateDetailSheet: View {
         if accepted {
             negotiationResult = NegotiationResult(
                 accepted: true,
+                counterOffer: nil,
                 message: proposedSalary < askingSalary
                     ? "\(candidate.firstName) accepted your below-market offer of \(salaryFormatted(Int(proposedSalary)))/yr for \(proposedYears) years."
                     : "\(candidate.firstName) is pleased with the offer of \(salaryFormatted(Int(proposedSalary)))/yr for \(proposedYears) years."
@@ -1619,13 +1852,39 @@ private struct CandidateDetailSheet: View {
             candidate.salary = Int(proposedSalary)
             onHire()
         } else {
-            negotiationResult = NegotiationResult(
-                accepted: false,
-                message: "\(candidate.firstName) has signed elsewhere. They are no longer available."
-            )
-            // #271: Notify parent to gray out this candidate
-            onRejected?()
+            // #92: Counter-offer instead of instant rejection
+            let minAcceptable = Int(counterOfferMinimum)
+            let ratio = proposedSalary / askingSalary
+            if ratio >= 0.65 {
+                // Coach counters instead of walking away
+                negotiationResult = NegotiationResult(
+                    accepted: false,
+                    counterOffer: minAcceptable,
+                    message: "\(candidate.firstName) rejected your offer but is willing to negotiate. Coach wants at least \(salaryFormatted(minAcceptable))."
+                )
+            } else {
+                // Offer too low — walks away
+                negotiationResult = NegotiationResult(
+                    accepted: false,
+                    counterOffer: nil,
+                    message: "\(candidate.firstName) has signed elsewhere. They are no longer available."
+                )
+                // #271: Notify parent to gray out this candidate
+                onRejected?()
+            }
         }
+    }
+
+    // MARK: - #92: Accept Counter-Offer
+
+    private func acceptCounterOffer(amount: Int) {
+        negotiationResult = NegotiationResult(
+            accepted: true,
+            counterOffer: nil,
+            message: "\(candidate.firstName) accepted the counter-offer of \(salaryFormatted(amount))/yr for \(proposedYears) years."
+        )
+        candidate.salary = amount
+        onHire()
     }
 
     // MARK: - Helpers
@@ -1658,6 +1917,8 @@ private struct CandidateDetailSheet: View {
 
 private struct NegotiationResult {
     let accepted: Bool
+    /// #92: Counter-offer amount (in thousands) if the coach didn't walk away.
+    let counterOffer: Int?
     let message: String
 }
 
