@@ -370,17 +370,17 @@ struct FranchiseTagView: View {
 
     // MARK: - Skip Tag Button
 
+    @ViewBuilder
     private var skipTagButton: some View {
-        Button {
-            showSkipConfirmation = true
-        } label: {
+        if hasUsedTag {
             HStack(spacing: 8) {
-                Image(systemName: "forward.fill")
+                Image(systemName: "checkmark.circle.fill")
                     .font(.caption)
-                Text("Skip — No Tag This Year")
+                    .foregroundStyle(Color.success)
+                Text("Franchise tag applied")
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textSecondary)
             }
-            .foregroundStyle(Color.textSecondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .background(Color.backgroundSecondary)
@@ -389,8 +389,28 @@ struct FranchiseTagView: View {
                 RoundedRectangle(cornerRadius: 12)
                     .strokeBorder(Color.surfaceBorder, lineWidth: 1)
             )
+        } else {
+            Button {
+                showSkipConfirmation = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "forward.fill")
+                        .font(.caption)
+                    Text("Skip — No Tag This Year")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(Color.textSecondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(Color.backgroundSecondary)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Computed Properties

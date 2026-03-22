@@ -12,6 +12,26 @@ enum StaffTab: String, CaseIterable {
 // StaffNavDestination removed — replaced with separate state bindings to avoid
 // SwiftUI navigationDestination(item:) confusion after dismiss/re-navigate cycles.
 
+/// Unified hire sheet enum — SwiftUI only supports one reliable .sheet per view level,
+/// so all hire sheets are funneled through a single .sheet(item:) binding.
+enum HireSheetType: Identifiable {
+    case coach(CoachRole)
+    case scout(ScoutRole)
+    case medical(CoachRole, [Coach])
+    case offensiveScheme
+    case defensiveScheme
+
+    var id: String {
+        switch self {
+        case .coach(let r):      return "coach-\(r.rawValue)"
+        case .scout(let r):      return "scout-\(r.rawValue)"
+        case .medical(let r, _): return "medical-\(r.rawValue)"
+        case .offensiveScheme:   return "scheme-offense"
+        case .defensiveScheme:   return "scheme-defense"
+        }
+    }
+}
+
 struct CoachingStaffView: View {
 
     let career: Career
@@ -41,16 +61,10 @@ struct CoachingStaffView: View {
     @AppStorage("staff_isMedicalExpanded") private var isMedicalExpanded: Bool = true
     @AppStorage("staff_isScoutingExpanded") private var isScoutingExpanded: Bool = true
 
-    // MARK: - Navigation State (separate bindings — sheets for hire views, push for detail)
-    @State private var hireCoachRole: CoachRole?      // Opens HireCoachView as sheet
-    @State private var hireScoutRole: ScoutRole?       // Opens HireScoutView as sheet
-    @State private var showHireScoutSheet = false       // Workaround for SwiftUI sheet(item:) stale data bug
-    @State private var showHireCoachSheet = false       // Same workaround
-    @State private var detailCoachID: UUID?            // Pushes CoachDetailView via navigationDestination
-    @State private var detailScoutID: UUID?            // Pushes ScoutDetailView via navigationDestination
-    @State private var showMedicalHireSheet = false    // #276: Simple hire sheet for medical roles
-    @State private var medicalHireRole: CoachRole?     // #276: Which medical role to hire
-    @State private var medicalCandidates: [Coach] = [] // #276: Generated candidates for medical hire
+    // MARK: - Navigation State
+    @State private var activeHireSheet: HireSheetType?  // Single sheet for all hire flows
+    @State private var detailCoachID: UUID?             // Pushes CoachDetailView via navigationDestination
+    @State private var detailScoutID: UUID?             // Pushes ScoutDetailView via navigationDestination
 
     /// Coaches filtered to this team, derived from @Query result.
     private var coaches: [Coach] {
@@ -526,7 +540,11 @@ struct CoachingStaffView: View {
                     .padding(.vertical, 12)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.success.opacity(0.15))
+                            .fill(Color.backgroundSecondary)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.success.opacity(0.15))
+                            )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
                                     .strokeBorder(Color.success.opacity(0.4), lineWidth: 1)
@@ -555,65 +573,64 @@ struct CoachingStaffView: View {
                 ScoutDetailView(scout: scout)
             }
         }
-        // Hire Coach as SHEET — uses isPresented to avoid SwiftUI sheet(item:) stale data bug
-        .sheet(isPresented: $showHireCoachSheet, onDismiss: { hireCoachRole = nil }) {
-            if let role = hireCoachRole, let teamID = career.teamID {
+        // Unified hire sheet — single .sheet(item:) avoids SwiftUI multi-sheet conflicts
+        .sheet(item: $activeHireSheet) { sheetType in
+            if let teamID = career.teamID {
                 NavigationStack {
-                    HireCoachView(
-                        role: role,
-                        teamID: teamID,
-                        remainingBudget: remainingBudget,
-                        teamBudget: coachingBudget,
-                        teamWins: team?.wins ?? 8,
-                        teamReputation: career.reputation,
-                        onHired: { name, roleName in
-                            showHireCoachSheet = false
-                            showHiringConfirmation(coachName: name, roleName: roleName)
-                        }
-                    )
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Close") { showHireCoachSheet = false }
-                                .foregroundStyle(Color.accentGold)
+                    Group {
+                        switch sheetType {
+                        case .coach(let role):
+                            HireCoachView(
+                                role: role,
+                                teamID: teamID,
+                                remainingBudget: remainingBudget,
+                                teamBudget: coachingBudget,
+                                teamWins: team?.wins ?? 8,
+                                teamReputation: career.reputation,
+                                onHired: { name, roleName in
+                                    activeHireSheet = nil
+                                    showHiringConfirmation(coachName: name, roleName: roleName)
+                                }
+                            )
+                        case .scout(let role):
+                            HireScoutView(scoutRole: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
+                                activeHireSheet = nil
+                                showHiringConfirmation(coachName: name, roleName: roleName)
+                            })
+                        case .medical(let role, let candidates):
+                            SimpleMedicalHireSheet(
+                                role: role,
+                                candidates: candidates,
+                                remainingBudget: remainingBudget,
+                                teamID: teamID,
+                                onHired: { name, roleName in
+                                    activeHireSheet = nil
+                                    showHiringConfirmation(coachName: name, roleName: roleName)
+                                }
+                            )
+                        case .offensiveScheme:
+                            if let oc = coaches.first(where: { $0.role == .offensiveCoordinator }) {
+                                SchemeSelectionView(
+                                    coordinator: oc,
+                                    players: offensivePlayers,
+                                    isOffensive: true,
+                                    coaches: coaches
+                                )
+                            }
+                        case .defensiveScheme:
+                            if let dc = coaches.first(where: { $0.role == .defensiveCoordinator }) {
+                                SchemeSelectionView(
+                                    coordinator: dc,
+                                    players: defensivePlayers,
+                                    isOffensive: false,
+                                    coaches: coaches
+                                )
+                            }
                         }
                     }
-                }
-            }
-        }
-        // Hire Scout as SHEET — same isPresented pattern
-        .sheet(isPresented: $showHireScoutSheet, onDismiss: { hireScoutRole = nil }) {
-            if let role = hireScoutRole, let teamID = career.teamID {
-                NavigationStack {
-                    HireScoutView(scoutRole: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
-                        showHireScoutSheet = false
-                        showHiringConfirmation(coachName: name, roleName: roleName)
-                    })
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Close") { showHireScoutSheet = false }
-                                .foregroundStyle(Color.accentGold)
-                        }
-                    }
-                }
-            }
-        }
-        // #276: Simple medical hire sheet (no negotiation)
-        .sheet(isPresented: $showMedicalHireSheet, onDismiss: { medicalHireRole = nil; medicalCandidates = [] }) {
-            if let role = medicalHireRole, let teamID = career.teamID {
-                NavigationStack {
-                    SimpleMedicalHireSheet(
-                        role: role,
-                        candidates: medicalCandidates,
-                        remainingBudget: remainingBudget,
-                        teamID: teamID,
-                        onHired: { name, roleName in
-                            showMedicalHireSheet = false
-                            showHiringConfirmation(coachName: name, roleName: roleName)
-                        }
-                    )
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Close") { showMedicalHireSheet = false }
+                            Button("Close") { activeHireSheet = nil }
                                 .foregroundStyle(Color.accentGold)
                         }
                     }
@@ -1091,26 +1108,7 @@ struct CoachingStaffView: View {
             }
             .padding(16)
         }
-        .sheet(isPresented: $showOffensiveSchemeSelection) {
-            if let oc = coaches.first(where: { $0.role == .offensiveCoordinator }) {
-                SchemeSelectionView(
-                    coordinator: oc,
-                    players: offensivePlayers,
-                    isOffensive: true,
-                    coaches: coaches
-                )
-            }
-        }
-        .sheet(isPresented: $showDefensiveSchemeSelection) {
-            if let dc = coaches.first(where: { $0.role == .defensiveCoordinator }) {
-                SchemeSelectionView(
-                    coordinator: dc,
-                    players: defensivePlayers,
-                    isOffensive: false,
-                    coaches: coaches
-                )
-            }
-        }
+        // Scheme selection sheets moved to unified activeHireSheet
     }
 
     // MARK: - Offensive Scheme Card
@@ -1141,7 +1139,7 @@ struct CoachingStaffView: View {
                     }
                     Spacer()
                     Button {
-                        showOffensiveSchemeSelection = true
+                        activeHireSheet = .offensiveScheme
                     } label: {
                         Text("Change")
                             .font(.caption.weight(.semibold))
@@ -1203,7 +1201,7 @@ struct CoachingStaffView: View {
                     }
                     Spacer()
                     Button {
-                        showDefensiveSchemeSelection = true
+                        activeHireSheet = .defensiveScheme
                     } label: {
                         Text("Change")
                             .font(.caption.weight(.semibold))
@@ -1843,10 +1841,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func compactVacantCard(role: CoachRole) -> some View {
         Button {
-            hireCoachRole = role
-            DispatchQueue.main.async {
-                showHireCoachSheet = true
-            }
+            activeHireSheet = .coach(role)
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -1896,17 +1891,14 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func compactVacantMedicalCard(role: CoachRole) -> some View {
         Button {
-            medicalHireRole = role
-            medicalCandidates = CoachingEngine.generateCoachCandidates(
+            let candidates = CoachingEngine.generateCoachCandidates(
                 role: role,
                 count: Int.random(in: 8...12),
                 teamBudget: coachingBudget,
                 teamWins: team?.wins ?? 8,
                 teamReputation: career.reputation
             )
-            DispatchQueue.main.async {
-                showMedicalHireSheet = true
-            }
+            activeHireSheet = .medical(role, candidates)
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -1964,7 +1956,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private var headCoachVacantRow: some View {
         Button {
-            hireCoachRole = .headCoach
+            activeHireSheet = .coach(.headCoach)
         } label: {
                 VStack(spacing: 10) {
                     HStack {
@@ -2007,10 +1999,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func vacantRow(role: CoachRole) -> some View {
         Button {
-            hireCoachRole = role
-            DispatchQueue.main.async {
-                showHireCoachSheet = true
-            }
+            activeHireSheet = .coach(role)
         } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -2135,10 +2124,7 @@ struct CoachingStaffView: View {
     @ViewBuilder
     private func scoutVacantRow(role: ScoutRole) -> some View {
         Button {
-            hireScoutRole = role
-            DispatchQueue.main.async {
-                showHireScoutSheet = true
-            }
+            activeHireSheet = .scout(role)
         } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {

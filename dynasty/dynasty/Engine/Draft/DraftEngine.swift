@@ -146,7 +146,9 @@ enum DraftEngine {
     // MARK: - Convert Prospect to Player
 
     /// Creates a `Player` from a drafted `CollegeProspect` using the prospect's true
-    /// (not scouted) attributes. Rookie contract terms are based on pick number.
+    /// attributes scaled down by a rookie factor. Rookies start below their ceiling
+    /// and must develop to reach their true potential. Rookie contract terms are based
+    /// on pick number.
     ///
     /// - Parameters:
     ///   - prospect: The college prospect being drafted.
@@ -159,6 +161,14 @@ enum DraftEngine {
         pickNumber: Int
     ) -> Player {
         let contract = rookieContract(pickNumber: pickNumber)
+        let factor = rookieScaleFactor(pickNumber: pickNumber)
+
+        // Physical attributes get a +0.05 bonus — physicals are more "ready" than mental.
+        let physicalFactor = min(factor + 0.05, 1.0)
+
+        let scaledPhysical = scalePhysical(prospect.truePhysical, factor: physicalFactor)
+        let scaledMental = scaleMental(prospect.trueMental, factor: factor)
+        let scaledPosition = scalePositionAttributes(prospect.truePositionAttributes, factor: factor)
 
         return Player(
             firstName: prospect.firstName,
@@ -166,15 +176,143 @@ enum DraftEngine {
             position: prospect.position,
             age: prospect.age,
             yearsPro: 0,
-            physical: prospect.truePhysical,
-            mental: prospect.trueMental,
-            positionAttributes: prospect.truePositionAttributes,
+            physical: scaledPhysical,
+            mental: scaledMental,
+            positionAttributes: scaledPosition,
             personality: prospect.truePersonality,
             truePotential: prospect.truePotential,
             teamID: teamID,
             contractYearsRemaining: contract.years,
-            annualSalary: contract.salary
+            annualSalary: contract.salary,
+            draftPickNumber: pickNumber
         )
+    }
+
+    // MARK: - Rookie Scaling
+
+    /// Returns a rookie scale factor (0.0–1.0) based on draft pick number.
+    /// Higher picks produce more NFL-ready rookies. A 5% chance from any round
+    /// yields an immediately elite rookie (0.92–0.97).
+    static func rookieScaleFactor(pickNumber: Int) -> Double {
+        // 5% chance: immediately elite rookie from any round
+        if Int.random(in: 1...100) <= 5 {
+            return Double.random(in: 0.92...0.97)
+        }
+
+        switch pickNumber {
+        case 1...5:
+            return Double.random(in: 0.82...0.90)
+        case 6...32:
+            return Double.random(in: 0.77...0.85)
+        case 33...64:
+            return Double.random(in: 0.72...0.80)
+        case 65...100:
+            return Double.random(in: 0.68...0.76)
+        case 101...150:
+            return Double.random(in: 0.64...0.72)
+        default:
+            return Double.random(in: 0.60...0.68)
+        }
+    }
+
+    /// Scales a single attribute value: `floor + Int(Double(trueValue - floor) * factor)`.
+    private static let attributeFloor = 35
+
+    private static func scaleAttribute(_ trueValue: Int, factor: Double) -> Int {
+        attributeFloor + Int(Double(trueValue - attributeFloor) * factor)
+    }
+
+    /// Scales physical attributes with the given factor.
+    static func scalePhysical(_ attrs: PhysicalAttributes, factor: Double) -> PhysicalAttributes {
+        PhysicalAttributes(
+            speed: scaleAttribute(attrs.speed, factor: factor),
+            acceleration: scaleAttribute(attrs.acceleration, factor: factor),
+            strength: scaleAttribute(attrs.strength, factor: factor),
+            agility: scaleAttribute(attrs.agility, factor: factor),
+            stamina: scaleAttribute(attrs.stamina, factor: factor),
+            durability: scaleAttribute(attrs.durability, factor: factor)
+        )
+    }
+
+    /// Scales mental attributes with the given factor.
+    static func scaleMental(_ attrs: MentalAttributes, factor: Double) -> MentalAttributes {
+        MentalAttributes(
+            awareness: scaleAttribute(attrs.awareness, factor: factor),
+            decisionMaking: scaleAttribute(attrs.decisionMaking, factor: factor),
+            clutch: scaleAttribute(attrs.clutch, factor: factor),
+            workEthic: scaleAttribute(attrs.workEthic, factor: factor),
+            coachability: scaleAttribute(attrs.coachability, factor: factor),
+            leadership: scaleAttribute(attrs.leadership, factor: factor)
+        )
+    }
+
+    /// Scales position-specific attributes with the given factor.
+    static func scalePositionAttributes(_ attrs: PositionAttributes, factor: Double) -> PositionAttributes {
+        switch attrs {
+        case .quarterback(let qb):
+            return .quarterback(QBAttributes(
+                armStrength: scaleAttribute(qb.armStrength, factor: factor),
+                accuracyShort: scaleAttribute(qb.accuracyShort, factor: factor),
+                accuracyMid: scaleAttribute(qb.accuracyMid, factor: factor),
+                accuracyDeep: scaleAttribute(qb.accuracyDeep, factor: factor),
+                pocketPresence: scaleAttribute(qb.pocketPresence, factor: factor),
+                scrambling: scaleAttribute(qb.scrambling, factor: factor)
+            ))
+        case .wideReceiver(let wr):
+            return .wideReceiver(WRAttributes(
+                routeRunning: scaleAttribute(wr.routeRunning, factor: factor),
+                catching: scaleAttribute(wr.catching, factor: factor),
+                release: scaleAttribute(wr.release, factor: factor),
+                spectacularCatch: scaleAttribute(wr.spectacularCatch, factor: factor)
+            ))
+        case .runningBack(let rb):
+            return .runningBack(RBAttributes(
+                vision: scaleAttribute(rb.vision, factor: factor),
+                elusiveness: scaleAttribute(rb.elusiveness, factor: factor),
+                breakTackle: scaleAttribute(rb.breakTackle, factor: factor),
+                receiving: scaleAttribute(rb.receiving, factor: factor)
+            ))
+        case .tightEnd(let te):
+            return .tightEnd(TEAttributes(
+                blocking: scaleAttribute(te.blocking, factor: factor),
+                catching: scaleAttribute(te.catching, factor: factor),
+                routeRunning: scaleAttribute(te.routeRunning, factor: factor),
+                speed: scaleAttribute(te.speed, factor: factor)
+            ))
+        case .offensiveLine(let ol):
+            return .offensiveLine(OLAttributes(
+                runBlock: scaleAttribute(ol.runBlock, factor: factor),
+                passBlock: scaleAttribute(ol.passBlock, factor: factor),
+                pull: scaleAttribute(ol.pull, factor: factor),
+                anchor: scaleAttribute(ol.anchor, factor: factor)
+            ))
+        case .defensiveLine(let dl):
+            return .defensiveLine(DLAttributes(
+                passRush: scaleAttribute(dl.passRush, factor: factor),
+                blockShedding: scaleAttribute(dl.blockShedding, factor: factor),
+                powerMoves: scaleAttribute(dl.powerMoves, factor: factor),
+                finesseMoves: scaleAttribute(dl.finesseMoves, factor: factor)
+            ))
+        case .linebacker(let lb):
+            return .linebacker(LBAttributes(
+                tackling: scaleAttribute(lb.tackling, factor: factor),
+                zoneCoverage: scaleAttribute(lb.zoneCoverage, factor: factor),
+                manCoverage: scaleAttribute(lb.manCoverage, factor: factor),
+                blitzing: scaleAttribute(lb.blitzing, factor: factor)
+            ))
+        case .defensiveBack(let db):
+            return .defensiveBack(DBAttributes(
+                manCoverage: scaleAttribute(db.manCoverage, factor: factor),
+                zoneCoverage: scaleAttribute(db.zoneCoverage, factor: factor),
+                press: scaleAttribute(db.press, factor: factor),
+                ballSkills: scaleAttribute(db.ballSkills, factor: factor)
+            ))
+        case .kicking(let k):
+            return .kicking(KickingAttributes(
+                kickPower: scaleAttribute(k.kickPower, factor: factor),
+                kickAccuracy: scaleAttribute(k.kickAccuracy, factor: factor)
+            ))
+        }
     }
 
     // MARK: - Pick Value Chart

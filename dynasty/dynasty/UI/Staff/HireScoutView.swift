@@ -17,11 +17,11 @@ struct HireScoutView: View {
     @State private var showAffordableOnly: Bool = false
 
     enum SortOption: String, CaseIterable {
-        case accuracy      = "Accuracy"
-        case potential      = "Potential Read"
-        case personality    = "Personality Read"
+        case accuracy      = "Acc"
+        case potential      = "Pot"
+        case personality    = "Pers"
         case salary         = "Salary"
-        case experience     = "Experience"
+        case experience     = "Exp"
         case value          = "Value"
     }
 

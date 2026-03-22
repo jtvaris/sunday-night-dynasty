@@ -74,6 +74,53 @@ enum PlayerDevelopmentEngine {
 
         totalPoints *= ageFactor
 
+        // --- Rookie accelerated development ---
+        // Rookies start at 60-90% of true attributes (Phase 4 scaling) so they
+        // have significant room to grow toward their ceiling in their first years.
+        let rookieMultiplier: Double
+        switch player.yearsPro {
+        case 0:  rookieMultiplier = 2.5  // First offseason — massive college-to-NFL growth
+        case 1:  rookieMultiplier = 1.8  // Second year leap
+        case 2:  rookieMultiplier = 1.3  // Still improving
+        default: rookieMultiplier = 1.0  // Normal rate
+        }
+        totalPoints *= rookieMultiplier
+
+        // --- Boom/Bust year-1 roll ---
+        // For rookies (yearsPro == 0), a "realization" roll can dramatically alter
+        // their first-year trajectory — breakout stars or year-1 struggles.
+        enum RookieOutcome { case breakout, struggle, normal }
+        let rookieOutcome: RookieOutcome
+        if player.yearsPro == 0 {
+            let roll = Double.random(in: 0.0..<1.0)
+            if roll < 0.05 {
+                rookieOutcome = .breakout
+            } else if roll < 0.10 {
+                rookieOutcome = .struggle
+            } else {
+                rookieOutcome = .normal
+            }
+        } else {
+            rookieOutcome = .normal
+        }
+
+        switch rookieOutcome {
+        case .breakout:
+            // BREAKOUT — triple all development gains; player is immediately impactful
+            totalPoints *= 3.0
+        case .struggle:
+            // STRUGGLE — zero development this offseason, -2 to all mental attributes
+            totalPoints = 0
+            let mentalPaths: [WritableKeyPath<MentalAttributes, Int>] = [
+                \.awareness, \.decisionMaking, \.clutch, \.workEthic, \.coachability, \.leadership
+            ]
+            for kp in mentalPaths {
+                player.mental[keyPath: kp] = max(1, player.mental[keyPath: kp] - 2)
+            }
+        case .normal:
+            break
+        }
+
         // --- Potential ceiling ---
         // Attribute ceiling scaled from truePotential (1-99).
         // A truePotential of 99 allows attributes up to 99; potential of 50 caps around 65.
@@ -416,7 +463,34 @@ enum PlayerDevelopmentEngine {
         return (injured: true, weeksOut: weeksOut, description: "\(description) (\(weeksOut) weeks)")
     }
 
-    // MARK: - 7. Full Offseason Processing
+    // MARK: - 7. Potential Assessment
+
+    /// Converts a player's hidden `truePotential` into a verbal `PotentialLabel`,
+    /// with noise that decreases over time and with better coaching.
+    ///
+    /// - Parameters:
+    ///   - player: The player to evaluate.
+    ///   - coachDevelopmentRating: The position/development coach's playerDevelopment attribute (1-99).
+    ///   - yearsOnTeam: How many years the player has been on this team.
+    /// - Returns: A `PotentialLabel` representing the coaching staff's best guess at the player's ceiling.
+    static func assessPotential(player: Player, coachDevelopmentRating: Int, yearsOnTeam: Int) -> PotentialLabel {
+        // Base noise level depends on how long the coaching staff has had to evaluate the player.
+        var noise: Int
+        switch yearsOnTeam {
+        case 0:     noise = 2   // Just drafted/acquired — very inaccurate
+        case 1:     noise = 1   // One year of observation
+        default:    noise = 0   // Two+ years — accurate assessment
+        }
+
+        // Elite development coaches (rating >= 80) reduce noise by 1 level.
+        if coachDevelopmentRating >= 80 {
+            noise = max(0, noise - 1)
+        }
+
+        return PotentialLabel.from(potential: player.truePotential, noise: noise)
+    }
+
+    // MARK: - 8. Full Offseason Processing
 
     /// Runs the complete offseason pipeline for a roster of players: aging, development,
     /// injury processing, mentoring, and retirement evaluation.

@@ -689,6 +689,7 @@ struct RosterEvaluationView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+        .contentShape(Rectangle())
     }
 
     // MARK: - #251: Financial Details for Key Decisions
@@ -1174,8 +1175,9 @@ struct RosterEvaluationView: View {
             let replacementCost = expiringPlayers.reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1) }
             let projectedUsage = max(0, team.currentCapUsage - expiringCap)
             let projectedWithReplacements = projectedUsage + replacementCost
-            let projectedSpace = team.salaryCap - projectedUsage
-            let projectedSpaceAfterReplacements = team.salaryCap - projectedWithReplacements
+            // NFL cap typically grows ~5% per year
+            let projectedNextCap = Int(Double(team.salaryCap) * 1.05)
+            let projectedSpaceAfterReplacements = projectedNextCap - projectedWithReplacements
 
             return AnyView(
                 VStack(spacing: 16) {
@@ -1200,6 +1202,19 @@ struct RosterEvaluationView: View {
                             .font(.caption2)
                             .foregroundStyle(Color.textTertiary)
                     }
+
+                    projectedCapRow(
+                        label: "Current Cap (\(String(career.currentSeason)))",
+                        value: formatMillions(team.salaryCap),
+                        color: .textSecondary
+                    )
+                    projectedCapRow(
+                        label: "Projected Cap (\(String(nextSeason)), ~5% increase)",
+                        value: formatMillions(projectedNextCap),
+                        color: .accentGold
+                    )
+
+                    Divider().overlay(Color.surfaceBorder.opacity(0.4))
 
                     projectedCapRow(
                         label: "Current Cap Usage",
@@ -1234,7 +1249,7 @@ struct RosterEvaluationView: View {
 
                     // Final available cap
                     HStack {
-                        Text("Projected Available Cap")
+                        Text("Projected Available Cap (\(String(nextSeason)))")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()

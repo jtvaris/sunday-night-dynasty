@@ -76,12 +76,15 @@ struct RosterView: View {
         let depthGood = grades.depthGrade.hasPrefix("A") || grades.depthGrade.hasPrefix("B")
 
         if starterBad { return ("Starter needed", .danger) }
-        if depthBad { return ("Depth needed", .warning) }
+        if depthBad && starterWeak { return ("Needs work", .danger) }
 
         if starterWeak {
             let hasExpiring = players.contains { $0.contractYearsRemaining <= 1 }
-            if hasExpiring { return ("Upgrade recommended", .accentGold) }
+            if hasExpiring { return ("Upgrade + expiring", .warning) }
+            return ("Below average", .warning)
         }
+
+        if depthBad { return ("Depth thin", .accentGold) }
 
         let n = PositionGradeCalculator.starterCount(for: group.positions)
         let sorted = players.sorted { $0.overall > $1.overall }
@@ -89,18 +92,22 @@ struct RosterView: View {
         if !starters.isEmpty {
             let avgAge = starters.map(\.age).reduce(0, +) / starters.count
             let peakUpper = group.positions.map { $0.peakAgeRange.upperBound }.reduce(0, +) / max(group.positions.count, 1)
-            if avgAge > peakUpper { return ("Aging — plan ahead", .accentBlue) }
+            if avgAge > peakUpper { return ("Aging", .accentBlue) }
         }
 
-        if starterGood && depthGood { return ("Solid", .success) }
-        return ("Solid", .success)
+        let hasExpiring = players.contains { $0.contractYearsRemaining <= 1 && $0.overall >= grades.starterOVR - 5 }
+        if hasExpiring { return ("Key FA pending", .accentGold) }
+
+        if starterGood && depthGood { return ("Strong", .success) }
+        if starterGood { return ("Solid starters", .success) }
+        return ("Adequate", .textSecondary)
     }
 
     /// Returns a slightly brighter background for starters to visually distinguish them.
     private func starterRowBackground(player: Player, groupPlayers: [Player], starterCount: Int) -> Color {
         let idx = depthIndex(for: player, in: groupPlayers)
         if idx < starterCount {
-            return Color(white: 0.16) // slightly lighter than backgroundSecondary
+            return Color(red: 0.10, green: 0.14, blue: 0.22) // blue tint distinguishing starters from backups
         }
         return Color.backgroundSecondary
     }
@@ -465,7 +472,8 @@ struct RosterView: View {
                                     onStarterBadgeTap: {
                                         starterPickerPosition = player.position
                                     },
-                                    starterCountForPosition: posStarterCount
+                                    starterCountForPosition: posStarterCount,
+                                    teamSalaryCap: teamSalaryCap
                                 )
                             }
                             .listRowBackground(starterRowBackground(player: player, groupPlayers: groupPlayers, starterCount: posStarterCount))
@@ -654,13 +662,13 @@ struct RosterView: View {
         case .overview:
             Group {
                 sortButton("Age", sort: .age, width: 32)
-                headerLabel("Form", width: 24)
+                headerLabel("Frm", width: 24)
                 sortButton("OVR", sort: .overall, width: 40)
-                headerLabel("Dev", width: 20)
+                headerLabel("↗", width: 20)
                 sortButton("Salary", sort: .salary, width: 52)
                 headerLabel("Yrs", width: 30)
-                headerLabel("Morale", width: 24)
-                headerLabel("Health", width: 28)
+                headerLabel("😊", width: 24)
+                headerLabel("❤️", width: 28)
             }
         case .contracts:
             Group {
@@ -1416,6 +1424,14 @@ struct PositionGroupHeader: View {
         PositionGradeCalculator.calculatePositionGrades(players: players, positions: group.positions, scheme: defensiveScheme)
     }
 
+    private var starterCount: Int {
+        group.positions.reduce(0) { $0 + PositionGradeCalculator.starterCount(for: [$1]) }
+    }
+
+    private var expiringCount: Int {
+        players.filter { $0.contractYearsRemaining <= 1 }.count
+    }
+
     private var injuredCount: Int {
         players.filter { $0.isInjured }.count
     }
@@ -1455,22 +1471,22 @@ struct PositionGroupHeader: View {
 
             Spacer()
 
-            // Starter grade / Depth grade (#235)
-            HStack(spacing: 2) {
+            // Starter grade / Depth grade — prominent sizing
+            HStack(spacing: 3) {
                 Text("S:")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
                 Text(g.starterGrade)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 18, weight: .black))
                     .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.starterGrade))
                 Text("/")
-                    .font(.system(size: 11))
+                    .font(.system(size: 13))
                     .foregroundStyle(Color.textTertiary)
                 Text("D:")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Color.textTertiary)
                 Text(g.depthGrade)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 18, weight: .black))
                     .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.depthGrade))
             }
 
@@ -1484,6 +1500,24 @@ struct PositionGroupHeader: View {
                 .padding(.vertical, 2)
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
 
+            // Starter / total count
+            Text("\(starterCount)/\(players.count)")
+                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                .foregroundStyle(Color.textTertiary)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
+
+            // Expiring contracts
+            if expiringCount > 0 {
+                Text("\(expiringCount) exp")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color.warning)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.warning.opacity(0.15), in: Capsule())
+            }
+
             // Injured count
             if injuredCount > 0 {
                 HStack(spacing: 2) {
@@ -1496,40 +1530,40 @@ struct PositionGroupHeader: View {
                 .foregroundStyle(Color.danger)
             }
 
-            // Player count
-            Text("\(players.count)")
-                .font(.caption2)
-                .foregroundStyle(Color.textTertiary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.backgroundTertiary, in: Capsule())
-
             // Staff assessment badge
             Text(staffLabel)
-                .font(.system(size: 8, weight: .bold))
+                .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(staffColor)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
                 .background(staffColor.opacity(0.15), in: Capsule())
                 .overlay(Capsule().strokeBorder(staffColor.opacity(0.4), lineWidth: 1))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
 
-            // Own assessment badge
+            // Review button — shows own assessment or prompts review
             if let own = ownAssessment, own != "none" {
                 Text(own)
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(Self.ownAssessmentColor(own))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
                     .background(Self.ownAssessmentColor(own).opacity(0.15), in: Capsule())
                     .overlay(Capsule().strokeBorder(Self.ownAssessmentColor(own).opacity(0.4), lineWidth: 1))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             } else {
-                Text("Not reviewed")
-                    .font(.system(size: 7, weight: .medium))
-                    .foregroundStyle(Color.textTertiary)
+                HStack(spacing: 3) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 9))
+                    Text("Review")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .foregroundStyle(Color.accentGold)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.accentGold.opacity(0.12), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.accentGold.opacity(0.3), lineWidth: 1))
             }
         }
         .textCase(nil)

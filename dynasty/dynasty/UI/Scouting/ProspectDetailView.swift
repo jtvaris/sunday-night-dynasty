@@ -16,6 +16,15 @@ struct ProspectDetailView: View {
 
     // MARK: - Derived
 
+    private var effectiveOverallGrade: GradeRange? {
+        if let grade = prospect.scoutedOverallGrade { return grade }
+        if let ovr = prospect.scoutedOverall {
+            let lg = LetterGrade.from(numericValue: ovr)
+            return GradeRange(grade: lg)
+        }
+        return nil
+    }
+
     private var isScouted: Bool { prospect.scoutedOverall != nil }
     private var hasCombine: Bool {
         prospect.fortyTime != nil || prospect.benchPress != nil ||
@@ -33,10 +42,10 @@ struct ProspectDetailView: View {
 
             List {
                 headerSection
-                boomBustSection
+                riskAndSchemeFitSection
                 starterComparisonSection
                 collegeProductionSection
-                schemeFitSection
+                teamInterestRow
                 riskFlagsSection
                 combineSection
                 if prospect.interviewCompleted { interviewResultsSection }
@@ -46,6 +55,9 @@ struct ProspectDetailView: View {
             }
             .scrollContentBackground(.hidden)
             .listStyle(.insetGrouped)
+        }
+        .safeAreaInset(edge: .bottom) {
+            actionButtonBar
         }
         .navigationTitle(prospect.fullName)
         .navigationBarTitleDisplayMode(.large)
@@ -98,14 +110,30 @@ struct ProspectDetailView: View {
 
                 Spacer()
 
-                if let overall = prospect.scoutedOverall {
+                if let gradeRange = effectiveOverallGrade {
                     VStack(spacing: 2) {
-                        Text("\(overall)")
-                            .font(.system(size: 36, weight: .heavy).monospacedDigit())
-                            .foregroundStyle(Color.forRating(overall))
+                        Text(gradeRange.displayText)
+                            .font(.system(size: gradeRange.isSingleGrade ? 36 : 28, weight: .heavy))
+                            .foregroundStyle(detailGradeColor(gradeRange.midGrade))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                         Text("Overall")
                             .font(.caption2)
                             .foregroundStyle(Color.textTertiary)
+                        scoutConfidenceBadge
+
+                        // Draft projection
+                        if let rd = prospect.draftProjection {
+                            Text("Rd \(rd)")
+                                .font(.caption.weight(.heavy))
+                                .foregroundStyle(projectionColor(rd))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(projectionColor(rd).opacity(0.15), in: Capsule())
+                        }
+
+                        // Potential assessment
+                        potentialBadge
                     }
                 } else {
                     VStack(spacing: 2) {
@@ -123,60 +151,100 @@ struct ProspectDetailView: View {
         .listRowBackground(Color.backgroundSecondary)
     }
 
-    // MARK: - Boom/Bust Risk Section
+    // MARK: - Scout Confidence Badge
+
+    private var scoutConfidenceBadge: some View {
+        let count = prospect.scoutReportCount
+        let confidenceColor: Color = {
+            switch count {
+            case 0:  return .textTertiary
+            case 1:  return .danger
+            case 2:  return .accentGold
+            default: return .success
+            }
+        }()
+        return HStack(spacing: 2) {
+            Text(prospect.scoutConfidenceDots)
+                .font(.system(size: 8))
+                .foregroundStyle(confidenceColor)
+            Text("\(count)x")
+                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .foregroundStyle(confidenceColor)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(confidenceColor.opacity(0.12), in: Capsule())
+        .help("\(count) scout report\(count == 1 ? "" : "s") -- \(prospect.scoutConfidenceLabel) confidence")
+    }
+
+    // MARK: - Potential Badge
+
+    private var potentialBadge: some View {
+        let label = prospect.scoutedPotentialLabel ?? .unknown
+        let color = potentialLabelColor(label)
+        return Text(label.rawValue)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.12), in: Capsule())
+    }
+
+    // MARK: - Risk Profile + Scheme Fit (compact)
 
     @ViewBuilder
-    private var boomBustSection: some View {
+    private var riskAndSchemeFitSection: some View {
         let risk = prospect.riskLevel
-        if risk != .unknown {
-            Section("Risk Profile") {
-                HStack(spacing: 10) {
-                    Image(systemName: risk.icon)
-                        .font(.title3)
-                        .foregroundStyle(risk.color)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(risk.rawValue)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(risk.color)
-                        Text(riskExplanation(risk))
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                    }
-                    Spacer()
-                    Text(risk.rawValue)
-                        .font(.caption.weight(.heavy))
-                        .foregroundStyle(risk.color)
+        let fit = evaluateSchemeFit()
+        if risk != .unknown || fit != nil {
+            Section {
+                HStack(spacing: 12) {
+                    // Risk card
+                    if risk != .unknown {
+                        HStack(spacing: 8) {
+                            Image(systemName: risk.icon)
+                                .font(.subheadline)
+                                .foregroundStyle(risk.color)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Risk")
+                                    .font(.caption2)
+                                    .foregroundStyle(Color.textTertiary)
+                                Text(risk.rawValue)
+                                    .font(.caption.weight(.heavy))
+                                    .foregroundStyle(risk.color)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
                         .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
                         .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(risk.color.opacity(0.15))
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(risk.color.opacity(0.1))
                         )
-                }
-
-                // Show scout report variance detail if multiple reports
-                if prospect.scoutingReports.count >= 2 {
-                    let grades = prospect.scoutingReports.map { $0.overallGrade }
-                    let minG = grades.min() ?? 0
-                    let maxG = grades.max() ?? 0
-                    HStack(spacing: 8) {
-                        Image(systemName: "chart.bar.fill")
-                            .font(.caption)
-                            .foregroundStyle(Color.textTertiary)
-                        Text("Scout grades range: \(minG) - \(maxG) (spread: \(maxG - minG))")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
                     }
-                }
 
-                if let pot = prospect.scoutedPotential, let ovr = prospect.scoutedOverall {
-                    HStack(spacing: 8) {
-                        Image(systemName: "arrow.up.right")
-                            .font(.caption)
-                            .foregroundStyle(Color.textTertiary)
-                        Text("Potential gap: +\(pot - ovr) from current (\(ovr) \u{2192} \(pot))")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
+                    // Scheme fit card
+                    if let fit {
+                        HStack(spacing: 8) {
+                            Image(systemName: schemeFitIcon(fit))
+                                .font(.subheadline)
+                                .foregroundStyle(schemeFitColor(fit))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Scheme Fit")
+                                    .font(.caption2)
+                                    .foregroundStyle(Color.textTertiary)
+                                Text(fit)
+                                    .font(.caption.weight(.heavy))
+                                    .foregroundStyle(schemeFitColor(fit))
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(schemeFitColor(fit).opacity(0.1))
+                        )
                     }
                 }
             }
@@ -201,39 +269,48 @@ struct ProspectDetailView: View {
 
     @ViewBuilder
     private var starterComparisonSection: some View {
-        if isScouted, let prospectOVR = prospect.scoutedOverall {
+        if isScouted {
             let starters = teamPlayers
                 .filter { $0.position == prospect.position }
                 .sorted { $0.overall > $1.overall }
             if let starter = starters.first {
                 Section("vs Current Starter") {
                     HStack(spacing: 12) {
+                        // Prospect side — show grade range
                         VStack(spacing: 2) {
                             Text(prospect.fullName)
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(Color.textPrimary)
-                            Text("\(prospectOVR)")
-                                .font(.title3.weight(.heavy).monospacedDigit())
-                                .foregroundStyle(Color.forRating(prospectOVR))
+                            if let gr = effectiveOverallGrade {
+                                Text(gr.displayText)
+                                    .font(.title3.weight(.heavy))
+                                    .foregroundStyle(detailGradeColor(gr.midGrade))
+                            } else {
+                                Text("?")
+                                    .font(.title3.weight(.heavy))
+                                    .foregroundStyle(Color.textTertiary)
+                            }
                             Text("Prospect")
                                 .font(.caption2)
                                 .foregroundStyle(Color.textTertiary)
                         }
                         .frame(maxWidth: .infinity)
 
-                        let diff = prospectOVR - starter.overall
+                        // Qualitative comparison
+                        let diff = (prospect.scoutedOverall ?? 0) - starter.overall
+                        let compLabel = starterComparisonLabel(diff)
+                        let compColor = starterComparisonColor(diff)
                         VStack(spacing: 2) {
                             Text("vs")
                                 .font(.caption2)
                                 .foregroundStyle(Color.textTertiary)
-                            Text(diff >= 0 ? "+\(diff)" : "\(diff)")
-                                .font(.callout.weight(.heavy).monospacedDigit())
-                                .foregroundStyle(diff > 0 ? Color.success : (diff == 0 ? Color.warning : Color.danger))
-                            Text(diff > 0 ? "Upgrade" : (diff == 0 ? "Lateral" : "Depth add"))
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(diff > 0 ? Color.success : (diff == 0 ? Color.warning : Color.textSecondary))
+                            Text(compLabel)
+                                .font(.caption.weight(.heavy))
+                                .foregroundStyle(compColor)
+                                .multilineTextAlignment(.center)
                         }
 
+                        // Starter side — keep numeric
                         VStack(spacing: 2) {
                             Text(starter.fullName)
                                 .font(.caption.weight(.semibold))
@@ -263,6 +340,38 @@ struct ProspectDetailView: View {
                 }
                 .listRowBackground(Color.backgroundSecondary)
             }
+        }
+    }
+
+    private func starterComparisonLabel(_ diff: Int) -> String {
+        if diff > -3 { return "Likely upgrade" }
+        if diff > -8 { return "Potential\nupgrade" }
+        if diff > -15 { return "Development" }
+        return "Project pick"
+    }
+
+    private func starterComparisonColor(_ diff: Int) -> Color {
+        if diff > -3 { return .success }
+        if diff > -8 { return .accentGold }
+        if diff > -15 { return .warning }
+        return .textSecondary
+    }
+
+    // MARK: - Team Interest Row
+
+    @ViewBuilder
+    private var teamInterestRow: some View {
+        if !prospect.teamInterest.isEmpty {
+            Section {
+                HStack(spacing: 8) {
+                    InterestBadge(level: prospect.interestLevel)
+                    Text("\(prospect.teamInterest.count) team\(prospect.teamInterest.count == 1 ? "" : "s") interested")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer()
+                }
+            }
+            .listRowBackground(Color.backgroundSecondary)
         }
     }
 
@@ -364,15 +473,23 @@ struct ProspectDetailView: View {
     @ViewBuilder
     private var scoutingReportSection: some View {
         Section("Scouting Report") {
-            if let overall = prospect.scoutedOverall {
+            // Overall grade
+            if let gradeRange = effectiveOverallGrade {
                 LabeledContent("Overall Grade") {
-                    Text("\(overall)")
-                        .font(.body.weight(.bold).monospacedDigit())
-                        .foregroundStyle(Color.forRating(overall))
+                    Text(gradeRange.displayText)
+                        .font(.body.weight(.bold))
+                        .foregroundStyle(detailGradeColor(gradeRange.midGrade))
                 }
             }
 
-            if let potential = prospect.scoutedPotential {
+            // Potential
+            if let potentialLabel = prospect.scoutedPotentialLabel {
+                LabeledContent("Potential") {
+                    Text(potentialLabel.rawValue)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(potentialLabelColor(potentialLabel))
+                }
+            } else if let potential = prospect.scoutedPotential {
                 LabeledContent("Potential Grade") {
                     Text("\(potential)")
                         .font(.body.weight(.bold).monospacedDigit())
@@ -395,6 +512,12 @@ struct ProspectDetailView: View {
                 }
             }
 
+            // Mental grades — with fallback from trueMental
+            mentalGradesGrid
+
+            // Position grades — with fallback from truePositionAttributes
+            positionGradesGrid
+
             // Status indicators
             HStack(spacing: 16) {
                 StatusPill(label: "Interview", completed: prospect.interviewCompleted)
@@ -402,6 +525,70 @@ struct ProspectDetailView: View {
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// Mental grades grid with fallback from legacy numeric values.
+    private var mentalGradesGrid: some View {
+        let mentalKeys = ["AWR", "DEC", "WRK", "CLT", "COA", "LDR"]
+        let scoutedGrades = prospect.scoutedMentalGrades
+        let hasAny = scoutedGrades != nil && !(scoutedGrades?.isEmpty ?? true)
+
+        return Group {
+            if hasAny {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Mental Attributes")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 6), spacing: 8) {
+                        ForEach(mentalKeys, id: \.self) { key in
+                            if let gr = scoutedGrades?[key] {
+                                gradeCell(key: key, grade: gr)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Position grades grid with fallback from legacy numeric values.
+    private var positionGradesGrid: some View {
+        let scoutedGrades = prospect.scoutedPositionGrades
+        let hasAny = scoutedGrades != nil && !(scoutedGrades?.isEmpty ?? true)
+
+        return Group {
+            if hasAny {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Position Skills")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: min(scoutedGrades?.count ?? 4, 6)), spacing: 8) {
+                        ForEach(Array((scoutedGrades ?? [:]).keys.sorted()), id: \.self) { key in
+                            if let gr = scoutedGrades?[key] {
+                                gradeCell(key: key, grade: gr)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func gradeCell(key: String, grade: GradeRange) -> some View {
+        VStack(spacing: 2) {
+            Text(grade.displayText)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(detailGradeColor(grade.midGrade))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(detailGradeColor(grade.midGrade).opacity(0.12))
+                )
+            Text(key)
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+        }
     }
 
     // MARK: - Interview Results Section
@@ -466,108 +653,114 @@ struct ProspectDetailView: View {
 
     @ViewBuilder
     private var collegeFlavorStats: some View {
+        let posGrades = prospect.scoutedPositionGrades
+        let fb = positionFallbackValues
         switch prospect.truePositionAttributes {
-        case .quarterback(let qb):
+        case .quarterback:
             HStack(spacing: 14) {
-                flavorStat(label: "Arm", value: qb.armStrength)
-                flavorStat(label: "Acc (S)", value: qb.accuracyShort)
-                flavorStat(label: "Acc (D)", value: qb.accuracyDeep)
-                flavorStat(label: "Pocket", value: qb.pocketPresence)
+                flavorGradeStat(label: "Arm", key: "ARM", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Acc (S)", key: "SAc", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Acc (D)", key: "DAc", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Pocket", key: "PKT", grades: posGrades, fallback: fb)
             }
-        case .wideReceiver(let wr):
+        case .wideReceiver:
             HStack(spacing: 14) {
-                flavorStat(label: "Route", value: wr.routeRunning)
-                flavorStat(label: "Catch", value: wr.catching)
-                flavorStat(label: "Release", value: wr.release)
+                flavorGradeStat(label: "Route", key: "RTE", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Catch", key: "CTH", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Release", key: "RLS", grades: posGrades, fallback: fb)
             }
-        case .runningBack(let rb):
+        case .runningBack:
             HStack(spacing: 14) {
-                flavorStat(label: "Vision", value: rb.vision)
-                flavorStat(label: "Elusiv", value: rb.elusiveness)
-                flavorStat(label: "Recv", value: rb.receiving)
+                flavorGradeStat(label: "Vision", key: "VIS", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Elusiv", key: "ELU", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Recv", key: "RCV", grades: posGrades, fallback: fb)
             }
-        case .defensiveBack(let db):
+        case .defensiveBack:
             HStack(spacing: 14) {
-                flavorStat(label: "Man", value: db.manCoverage)
-                flavorStat(label: "Zone", value: db.zoneCoverage)
-                flavorStat(label: "Press", value: db.press)
+                flavorGradeStat(label: "Man", key: "MCV", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Zone", key: "ZCV", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Press", key: "PRS", grades: posGrades, fallback: fb)
             }
-        case .linebacker(let lb):
+        case .linebacker:
             HStack(spacing: 14) {
-                flavorStat(label: "Tackle", value: lb.tackling)
-                flavorStat(label: "Zone", value: lb.zoneCoverage)
-                flavorStat(label: "Blitz", value: lb.blitzing)
+                flavorGradeStat(label: "Tackle", key: "TAK", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Zone", key: "ZCV", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Blitz", key: "BLZ", grades: posGrades, fallback: fb)
             }
-        case .defensiveLine(let dl):
+        case .defensiveLine:
             HStack(spacing: 14) {
-                flavorStat(label: "Pass Rush", value: dl.passRush)
-                flavorStat(label: "Shed", value: dl.blockShedding)
-                flavorStat(label: "Power", value: dl.powerMoves)
+                flavorGradeStat(label: "Pass Rush", key: "PRU", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Shed", key: "BSH", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Power", key: "PWR", grades: posGrades, fallback: fb)
             }
-        case .offensiveLine(let ol):
+        case .offensiveLine:
             HStack(spacing: 14) {
-                flavorStat(label: "Run Blk", value: ol.runBlock)
-                flavorStat(label: "Pass Blk", value: ol.passBlock)
-                flavorStat(label: "Anchor", value: ol.anchor)
+                flavorGradeStat(label: "Run Blk", key: "RBK", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Pass Blk", key: "PBK", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Anchor", key: "ANC", grades: posGrades, fallback: fb)
             }
-        case .tightEnd(let te):
+        case .tightEnd:
             HStack(spacing: 14) {
-                flavorStat(label: "Block", value: te.blocking)
-                flavorStat(label: "Catch", value: te.catching)
-                flavorStat(label: "Route", value: te.routeRunning)
+                flavorGradeStat(label: "Block", key: "BLK", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Catch", key: "CTH", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Route", key: "RTE", grades: posGrades, fallback: fb)
             }
-        case .kicking(let k):
+        case .kicking:
             HStack(spacing: 14) {
-                flavorStat(label: "Power", value: k.kickPower)
-                flavorStat(label: "Accuracy", value: k.kickAccuracy)
+                flavorGradeStat(label: "Power", key: "PWR", grades: posGrades, fallback: fb)
+                flavorGradeStat(label: "Accuracy", key: "ACC", grades: posGrades, fallback: fb)
             }
         }
     }
 
-    private func flavorStat(label: String, value: Int) -> some View {
+    /// Builds a fallback dictionary mapping position skill keys to numeric values from truePositionAttributes.
+    private var positionFallbackValues: [String: Int] {
+        switch prospect.truePositionAttributes {
+        case .quarterback(let qb):
+            return ["ARM": qb.armStrength, "SAc": qb.accuracyShort, "DAc": qb.accuracyDeep,
+                    "PKT": qb.pocketPresence, "MAc": qb.accuracyMid, "SCR": qb.scrambling]
+        case .wideReceiver(let wr):
+            return ["RTE": wr.routeRunning, "CTH": wr.catching, "RLS": wr.release]
+        case .runningBack(let rb):
+            return ["VIS": rb.vision, "ELU": rb.elusiveness, "RCV": rb.receiving, "BTK": rb.breakTackle]
+        case .defensiveBack(let db):
+            return ["MCV": db.manCoverage, "ZCV": db.zoneCoverage, "PRS": db.press, "BLS": db.ballSkills]
+        case .linebacker(let lb):
+            return ["TAK": lb.tackling, "ZCV": lb.zoneCoverage, "BLZ": lb.blitzing]
+        case .defensiveLine(let dl):
+            return ["PRU": dl.passRush, "BSH": dl.blockShedding, "PWR": dl.powerMoves, "FIN": dl.finesseMoves]
+        case .offensiveLine(let ol):
+            return ["RBK": ol.runBlock, "PBK": ol.passBlock, "ANC": ol.anchor, "PUL": ol.pull]
+        case .tightEnd(let te):
+            return ["BLK": te.blocking, "CTH": te.catching, "RTE": te.routeRunning, "SPD": te.speed]
+        case .kicking(let k):
+            return ["PWR": k.kickPower, "ACC": k.kickAccuracy]
+        }
+    }
+
+    private func flavorGradeStat(label: String, key: String, grades: [String: GradeRange]?, fallback: [String: Int]) -> some View {
         VStack(spacing: 2) {
-            Text("\(value)")
-                .font(.caption.weight(.bold).monospacedDigit())
-                .foregroundStyle(Color.forRating(value))
+            if let gr = grades?[key] {
+                Text(gr.displayText)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(detailGradeColor(gr.midGrade))
+            } else if let numVal = fallback[key] {
+                let lg = LetterGrade.from(numericValue: numVal)
+                Text(lg.rawValue)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(detailGradeColor(lg))
+            } else {
+                Text("?")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.textTertiary)
+            }
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(Color.textTertiary)
         }
     }
 
-    // MARK: - Scheme Fit Section
-
-    @ViewBuilder
-    private var schemeFitSection: some View {
-        if isScouted, let fit = evaluateSchemeFit() {
-            Section("Scheme Fit") {
-                HStack(spacing: 10) {
-                    Image(systemName: schemeFitIcon(fit))
-                        .font(.title3)
-                        .foregroundStyle(schemeFitColor(fit))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Scheme Fit: \(fit)")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(schemeFitColor(fit))
-                        Text(schemeFitExplanation(fit))
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                    }
-                    Spacer()
-                    Text(fit)
-                        .font(.caption.weight(.heavy))
-                        .foregroundStyle(schemeFitColor(fit))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(schemeFitColor(fit).opacity(0.15))
-                        )
-                }
-            }
-            .listRowBackground(Color.backgroundSecondary)
-        }
-    }
+    // MARK: - Scheme Fit (used by riskAndSchemeFitSection)
 
     private func evaluateSchemeFit() -> String? {
         let oc = coaches.first(where: { $0.role == .offensiveCoordinator })
@@ -892,6 +1085,55 @@ struct ProspectDetailView: View {
         .listRowBackground(Color.backgroundSecondary)
     }
 
+    // MARK: - Action Button Bar (#48)
+
+    private var actionButtonBar: some View {
+        HStack(spacing: 12) {
+            // Add to Board / toggle flag
+            Button {
+                withAnimation {
+                    prospect.prospectFlag = prospect.prospectFlag == .mustHave ? .none : .mustHave
+                    try? modelContext.save()
+                }
+            } label: {
+                Label(
+                    prospect.prospectFlag == .mustHave ? "On Board" : "Add to Board",
+                    systemImage: prospect.prospectFlag == .mustHave ? "star.fill" : "star"
+                )
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(prospect.prospectFlag == .mustHave ? Color.accentGold : Color.textPrimary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule()
+                        .fill(prospect.prospectFlag == .mustHave ? Color.accentGold.opacity(0.2) : Color.backgroundSecondary)
+                )
+            }
+
+            // Interview button — only during combine phase
+            if canInterview {
+                Button {
+                    performInterview()
+                } label: {
+                    Label("Interview", systemImage: "bubble.left.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.accentBlue)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule()
+                                .fill(Color.accentBlue.opacity(0.15))
+                        )
+                }
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+    }
+
     // MARK: - Helpers
 
     private var positionColor: Color {
@@ -914,6 +1156,27 @@ struct ProspectDetailView: View {
         case 2...3: return .accentGold
         case 4...5: return .warning
         default:   return .textSecondary
+        }
+    }
+
+    private func detailGradeColor(_ grade: LetterGrade) -> Color {
+        switch grade.rank {
+        case 10...12: return .success      // A range
+        case 7...9:   return .accentGold   // B range
+        case 4...6:   return .warning      // C range
+        case 2...3:   return .danger       // D range
+        default:      return .danger       // F
+        }
+    }
+
+    private func potentialLabelColor(_ label: PotentialLabel) -> Color {
+        switch label {
+        case .eliteCeiling:  return .success
+        case .highUpside:    return .accentGold
+        case .solidStarter:  return .accentBlue
+        case .average:       return .warning
+        case .limitedUpside: return .danger
+        case .unknown:       return .textTertiary
         }
     }
 
@@ -1089,10 +1352,10 @@ private struct CombineMeasurableRow: View {
     }
 
     private func percentileColor(_ pct: Int) -> Color {
-        if pct >= 90 { return .accentGold }
-        if pct >= 70 { return .success }
-        if pct >= 40 { return .textPrimary }
-        return .warning
+        if pct >= 75 { return .success }
+        if pct >= 50 { return .accentGold }
+        if pct >= 25 { return .warning }
+        return .danger
     }
 }
 

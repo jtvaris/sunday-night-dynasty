@@ -55,6 +55,16 @@ struct RosterSummaryBar: View {
         }
     }
 
+    private var strengthLabel: String {
+        switch rosterStrength {
+        case 5:  return "Elite"
+        case 4:  return "Strong"
+        case 3:  return "Average"
+        case 2:  return "Below Avg"
+        default: return "Weak"
+        }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             summaryItem(
@@ -93,15 +103,15 @@ struct RosterSummaryBar: View {
             VStack(spacing: 3) {
                 HStack(spacing: 0) {
                     Text(formattedCapUsed)
-                        .font(.caption)
+                        .font(.subheadline)
                         .fontWeight(.bold)
                         .monospacedDigit()
                         .foregroundStyle(capColor)
                     Text(" / ")
-                        .font(.caption2)
+                        .font(.caption)
                         .foregroundStyle(Color.textTertiary)
                     Text(formattedCapTotal)
-                        .font(.caption)
+                        .font(.subheadline)
                         .fontWeight(.medium)
                         .monospacedDigit()
                         .foregroundStyle(Color.textSecondary)
@@ -114,14 +124,14 @@ struct RosterSummaryBar: View {
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(Color.backgroundTertiary)
-                            .frame(height: 4)
+                            .frame(height: 5)
                         Capsule()
                             .fill(capColor)
-                            .frame(width: geo.size.width * capUsageRatio, height: 4)
+                            .frame(width: geo.size.width * capUsageRatio, height: 5)
                     }
                 }
-                .frame(height: 4)
-                .padding(.horizontal, 8)
+                .frame(height: 5)
+                .padding(.horizontal, 6)
 
                 Text("Salary Cap")
                     .font(.system(size: 9))
@@ -131,17 +141,17 @@ struct RosterSummaryBar: View {
 
             divider
 
-            // Roster Strength stars
+            // Roster Strength stars with OVR-based label
             VStack(spacing: 2) {
-                HStack(spacing: 1) {
+                HStack(spacing: 2) {
                     ForEach(0..<5, id: \.self) { index in
                         Image(systemName: index < rosterStrength ? "star.fill" : "star")
-                            .font(.system(size: 8))
+                            .font(.system(size: 10))
                             .foregroundStyle(index < rosterStrength ? Color.accentGold : Color.textTertiary)
                     }
                 }
-                Text("Strength")
-                    .font(.system(size: 9))
+                Text(strengthLabel)
+                    .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(Color.textTertiary)
             }
             .frame(maxWidth: .infinity)

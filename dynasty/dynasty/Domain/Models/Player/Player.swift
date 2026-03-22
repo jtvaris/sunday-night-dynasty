@@ -50,6 +50,13 @@ final class Player {
     /// Whether this player has been franchise-tagged for the current season.
     var isFranchiseTagged: Bool
 
+    /// The overall draft pick number (1-224) if this player was drafted, nil for UDFAs/veterans.
+    var draftPickNumber: Int?
+
+    /// Coaching staff's verbal assessment of this player's development ceiling.
+    /// Stored as PotentialLabel.rawValue. Accuracy depends on coach quality and time with team.
+    var assessedPotential: String?
+
     // MARK: - Computed Properties
 
     var fullName: String {
@@ -97,7 +104,9 @@ final class Player {
         teamID: UUID? = nil,
         contractYearsRemaining: Int = 4,
         annualSalary: Int = 750,
-        isFranchiseTagged: Bool = false
+        isFranchiseTagged: Bool = false,
+        draftPickNumber: Int? = nil,
+        assessedPotential: String? = nil
     ) {
         self.id = id
         self.firstName = firstName
@@ -120,5 +129,7 @@ final class Player {
         self.contractYearsRemaining = contractYearsRemaining
         self.annualSalary = annualSalary
         self.isFranchiseTagged = isFranchiseTagged
+        self.draftPickNumber = draftPickNumber
+        self.assessedPotential = assessedPotential
     }
 }

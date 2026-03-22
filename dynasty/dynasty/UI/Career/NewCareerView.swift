@@ -11,12 +11,10 @@ struct NewCareerView: View {
     @State private var currentStep = 1
     @State private var showNameError = false
 
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @State private var viewWidth: CGFloat = 0
 
-    private var isLandscape: Bool {
-        verticalSizeClass == .compact
-    }
+    /// iPad always reports .regular for both size classes, so use actual width
+    private var isLandscape: Bool { viewWidth > 900 }
 
     private var isNameValid: Bool {
         !playerName.trimmingCharacters(in: .whitespaces).isEmpty
@@ -54,6 +52,11 @@ struct NewCareerView: View {
                     page2Content(isLandscape: isLandscape)
                 }
             }
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { newWidth in
+            viewWidth = newWidth
         }
         .navigationTitle(currentStep == 1 ? "Your Career" : "Your Identity")
         .navigationBarTitleDisplayMode(.large)
@@ -109,37 +112,29 @@ struct NewCareerView: View {
 
     @ViewBuilder
     private func page1Content(isLandscape: Bool) -> some View {
-        GeometryReader { geometry in
-            ScrollView {
-                VStack(spacing: 0) {
-                    Spacer(minLength: 12)
-
-                    VStack(spacing: 24) {
-                        if isLandscape {
-                            nameSection
-                            HStack(alignment: .top, spacing: 16) {
-                                roleSection
-                                capModeSection
-                            }
-                        } else {
-                            nameSection
+        ScrollView {
+            VStack(spacing: 0) {
+                VStack(spacing: 24) {
+                    if isLandscape {
+                        nameSection
+                        HStack(alignment: .top, spacing: 16) {
                             roleSection
                             capModeSection
                         }
+                    } else {
+                        nameSection
+                        roleSection
+                        capModeSection
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
-                    .frame(maxWidth: .infinity)
-
-                    Spacer(minLength: 16)
-
-                    // Next button
-                    nextButton
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 16)
-                        .frame(maxWidth: .infinity)
                 }
-                .frame(minHeight: geometry.size.height)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
+
+                // Next button
+                nextButton
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                    .padding(.bottom, 16)
             }
         }
     }
@@ -148,38 +143,30 @@ struct NewCareerView: View {
 
     @ViewBuilder
     private func page2Content(isLandscape: Bool) -> some View {
-        GeometryReader { geometry in
-            ScrollView {
-                VStack(spacing: 0) {
-                    Spacer(minLength: 12)
-
-                    VStack(spacing: 16) {
-                        if isLandscape {
-                            HStack(alignment: .top, spacing: 16) {
-                                coachingStyleSection
-                                avatarSection
-                            }
-                        } else {
+        ScrollView {
+            VStack(spacing: 0) {
+                VStack(spacing: 16) {
+                    if isLandscape {
+                        HStack(alignment: .top, spacing: 16) {
                             coachingStyleSection
                             avatarSection
                         }
+                    } else {
+                        coachingStyleSection
+                        avatarSection
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity)
-
-                    Spacer(minLength: 8)
-
-                    // Bottom buttons — always visible
-                    VStack(spacing: 8) {
-                        chooseTeamButton
-                        backButton
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 12)
-                    .frame(maxWidth: .infinity)
                 }
-                .frame(minHeight: geometry.size.height)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+
+                // Bottom buttons
+                VStack(spacing: 8) {
+                    chooseTeamButton
+                    backButton
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 16)
             }
         }
     }
@@ -313,7 +300,7 @@ struct NewCareerView: View {
     // #106, #107, #111: Coaching style with gameplay effects and beginner tag
     private var coachingStyleSection: some View {
         cardSection(icon: "gamecontroller.fill", title: "Coaching Style") {
-            VStack(spacing: 6) {
+            VStack(spacing: 3) {
                 ForEach(CoachingStyle.allCases, id: \.self) { style in
                     CoachingStyleCard(
                         style: style,
@@ -333,19 +320,18 @@ struct NewCareerView: View {
     // #108, #109, #110, #113: Avatar section with cosmetic label, cleaner headers
     private var avatarSection: some View {
         cardSection(icon: "person.crop.circle.fill", title: "Your Look") {
-            VStack(spacing: 6) {
+            VStack(spacing: 4) {
                 // #108: Clarify avatar is cosmetic
                 Text("Cosmetic only — does not affect gameplay")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.textTertiary)
 
-                AvatarSelectionView(selectedAvatarID: $selectedAvatarID, avatarSize: 60)
-                    .padding(.vertical, 2)
+                AvatarSelectionView(selectedAvatarID: $selectedAvatarID, avatarSize: 48)
 
                 // #105: larger avatar name, #110: remove confusing "outside -> Male coach" text
                 if let avatar = CoachAvatars.avatar(for: selectedAvatarID) {
                     Text("\"\(avatar.name)\"")
-                        .font(.body.weight(.semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.textPrimary)
                 }
             }
@@ -532,41 +518,35 @@ private struct CoachingStyleCard: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             ZStack {
                 Circle()
                     .fill(isSelected ? Color.accentGold.opacity(0.2) : Color.backgroundSecondary)
-                    .frame(width: 36, height: 36)
+                    .frame(width: 30, height: 30)
                 Image(systemName: style.icon)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(isSelected ? Color.accentGold : Color.textSecondary)
             }
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(style.displayName)
-                        .font(.subheadline.weight(.bold))
+                        .font(.caption.weight(.bold))
                         .foregroundStyle(isSelected ? Color.accentGold : Color.textPrimary)
 
                     // #107: Beginner guidance tag
                     if isRecommended {
                         Text("Recommended")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 8, weight: .bold))
                             .foregroundStyle(Color.backgroundPrimary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
                             .background(
                                 Capsule().fill(Color.accentGold)
                             )
                     }
                 }
 
-                Text(style.description)
-                    .font(.caption2)
-                    .foregroundStyle(Color.textSecondary)
-                    .lineLimit(1)
-
-                // #111: Gameplay effect line
                 Text(gameplayEffect)
                     .font(.system(size: 9, weight: .medium).italic())
                     .foregroundStyle(isSelected ? Color.accentGold.opacity(0.7) : Color.textTertiary)
@@ -575,20 +555,20 @@ private struct CoachingStyleCard: View {
             Spacer(minLength: 4)
 
             // #104: Wider bonus area to prevent truncation
-            VStack(spacing: 2) {
+            VStack(spacing: 1) {
                 Text("+\(style.bonusValue)")
-                    .font(.system(size: 14, weight: .bold).monospacedDigit())
+                    .font(.system(size: 13, weight: .bold).monospacedDigit())
                     .foregroundStyle(isSelected ? Color.accentGold : Color.textTertiary)
                 Text(style.bonusAttribute)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(isSelected ? Color.accentGold.opacity(0.8) : Color.textTertiary)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
             }
-            .frame(width: 75)
+            .frame(width: 65)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(isSelected ? Color.accentGold.opacity(0.08) : Color.backgroundPrimary)

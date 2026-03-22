@@ -17,8 +17,10 @@ struct TeamSelectionView: View {
     @State private var detailTeam: NFLTeamDefinition?
     @State private var situationFilter: String = "All"
     @State private var sortMode: TeamSortMode = .division
+    @State private var viewWidth: CGFloat = 0
 
-    private var isLandscape: Bool { verticalSizeClass == .compact }
+    /// iPad always reports .regular for both size classes, so use actual width
+    private var isLandscape: Bool { viewWidth > 900 }
 
     /// All 32 NFL teams from static data.
     private let allTeams = NFLTeamData.allTeams
@@ -130,6 +132,11 @@ struct TeamSelectionView: View {
                     }
                 }
             }
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { newWidth in
+            viewWidth = newWidth
         }
         .navigationTitle("Choose Your Team")
         .navigationBarTitleDisplayMode(.large)
@@ -502,8 +509,8 @@ private struct CompactTeamRow: View {
                 .foregroundStyle(Color.textTertiary)
                 .frame(width: 16)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.backgroundSecondary)
@@ -734,9 +741,9 @@ private struct TeamDetailSheet: View {
     let onSelect: () -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @State private var viewWidth: CGFloat = 0
 
-    private var isLandscape: Bool { verticalSizeClass == .compact }
+    private var isLandscape: Bool { viewWidth > 900 }
 
     private var preview: TeamPreview { team.preview }
 
@@ -786,17 +793,18 @@ private struct TeamDetailSheet: View {
             }
             .ignoresSafeArea()
 
-            GeometryReader { geometry in
-                ScrollView {
-                    if isLandscape {
-                        landscapeDetailContent
-                            .frame(minHeight: geometry.size.height)
-                    } else {
-                        portraitDetailContent
-                            .frame(minHeight: geometry.size.height)
-                    }
+            ScrollView {
+                if isLandscape {
+                    landscapeDetailContent
+                } else {
+                    portraitDetailContent
                 }
             }
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { newWidth in
+            viewWidth = newWidth
         }
         .safeAreaInset(edge: .bottom) {
             Button(action: onSelect) {

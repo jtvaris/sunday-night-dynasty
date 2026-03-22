@@ -23,10 +23,24 @@ final class CollegeProspect {
 
     // MARK: - Scouted Attributes (what the player sees)
 
-    var scoutedOverall: Int?
-    var scoutedPotential: Int?
+    var scoutedOverall: Int?          // Legacy — kept for backward compat, use scoutedOverallGrade instead
+    var scoutedPotential: Int?        // Legacy — use scoutedPotentialLabel instead
     var scoutedPersonality: PersonalityArchetype?
-    var scoutGrade: String?
+    var scoutGrade: String?           // Legacy letter grade from scoutedOverall
+
+    // MARK: - Grade-Based Scouting (new system)
+
+    /// Overall prospect grade as a range that narrows with more scout reports.
+    var scoutedOverallGrade: GradeRange?
+
+    /// Per-attribute mental grades keyed by abbreviation ("AWR", "DEC", "WRK", "CLT", "COA", "LDR").
+    var scoutedMentalGrades: [String: GradeRange]?
+
+    /// Per-attribute position skill grades keyed by skill name.
+    var scoutedPositionGrades: [String: GradeRange]?
+
+    /// Verbal potential assessment — accuracy depends on staff quality and scout reports.
+    var scoutedPotentialLabel: PotentialLabel?
 
     // MARK: - Combine Results
 
@@ -111,6 +125,28 @@ final class CollegeProspect {
 
     var fullName: String {
         "\(firstName) \(lastName)"
+    }
+
+    /// Number of scout reports filed for this prospect (0-3+ scale).
+    var scoutReportCount: Int {
+        scoutingReports.count
+    }
+
+    /// Confidence level label based on number of scouting reports.
+    var scoutConfidenceLabel: String {
+        switch scoutingReports.count {
+        case 0:  return "No Intel"
+        case 1:  return "Low"
+        case 2:  return "Medium"
+        default: return "High"
+        }
+    }
+
+    /// Filled/empty dot string representing scouting confidence (max 3 dots).
+    var scoutConfidenceDots: String {
+        let filled = min(scoutingReports.count, 3)
+        let empty = 3 - filled
+        return String(repeating: "\u{25CF}", count: filled) + String(repeating: "\u{25CB}", count: empty)
     }
 
     /// Overall rating as a weighted average of physical (60%) and mental (40%) attributes.

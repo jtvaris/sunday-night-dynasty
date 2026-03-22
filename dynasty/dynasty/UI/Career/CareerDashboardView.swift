@@ -653,26 +653,36 @@ struct CareerDashboardView: View {
     ]
 
     private var centerTilesGrid: some View {
-        LazyVGrid(columns: tileColumns, spacing: 12) {
-            // Row 1: Team + Roster (equalized height)
-            teamTile.frame(minHeight: 160)
-            rosterTile.frame(minHeight: 160)
+        VStack(spacing: 12) {
+            // Row 1: Team + Roster (equal height via HStack)
+            HStack(spacing: 12) {
+                teamTile
+                rosterTile
+            }
 
-            // Row 2: Staff + Scouting (equalized height)
-            staffTile.frame(minHeight: 150)
-            scoutingTile.frame(minHeight: 150)
+            // Row 2: Staff + Scouting (equal height via HStack)
+            HStack(spacing: 12) {
+                staffTile
+                scoutingTile
+            }
 
-            // Row 3: Salary Cap + Locker Room (equalized height)
-            capTile.frame(minHeight: 160)
-            lockerRoomTile.frame(minHeight: 160)
+            // Row 3: Salary Cap + Locker Room (equal height)
+            HStack(spacing: 12) {
+                capTile
+                lockerRoomTile
+            }
 
             // Row 4: Key Players + Position Strengths
-            keyPlayersTile
-            positionStrengthsTile
+            HStack(spacing: 12) {
+                keyPlayersTile
+                positionStrengthsTile
+            }
 
             // Row 5: Expiring Contracts + Owner Expectations
-            expiringContractsTile
-            ownerExpectationsTile
+            HStack(spacing: 12) {
+                expiringContractsTile
+                ownerExpectationsTile
+            }
 
             // Previous season summary (season 2+)
             if previousSeasonRecord != nil {
@@ -680,14 +690,16 @@ struct CareerDashboardView: View {
             }
 
             // Contextual tiles
-            if career.currentPhase == .draft || career.currentPhase == .combine {
-                draftTile
-            }
-            if career.currentPhase == .freeAgency {
-                freeAgencyTile
-            }
-            if career.currentPhase == .regularSeason || career.currentPhase == .tradeDeadline {
-                tradeTile
+            LazyVGrid(columns: tileColumns, spacing: 12) {
+                if career.currentPhase == .draft || career.currentPhase == .combine {
+                    draftTile
+                }
+                if career.currentPhase == .freeAgency {
+                    freeAgencyTile
+                }
+                if career.currentPhase == .regularSeason || career.currentPhase == .tradeDeadline {
+                    tradeTile
+                }
             }
         }
     }

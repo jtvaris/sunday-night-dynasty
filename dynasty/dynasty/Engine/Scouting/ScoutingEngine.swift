@@ -309,6 +309,23 @@ enum ScoutingEngine {
         let weaknessNotes = generateWeaknessNotes(for: prospect, accuracy: effectiveAccuracy)
         let personalityNotes = generatePersonalityNotes(for: prospect, scout: scout)
 
+        // Generate per-attribute letter grades
+        let mentalGrades = generateMentalGrades(
+            mental: prospect.trueMental,
+            accuracy: effectiveAccuracy,
+            positionSpec: scout.positionSpecialization == prospect.position
+        )
+        let positionGrades = generatePositionSkillGrades(
+            attributes: prospect.truePositionAttributes,
+            accuracy: effectiveAccuracy,
+            positionSpec: scout.positionSpecialization == prospect.position
+        )
+        let overallLetterGrade = LetterGrade.from(numericValue: scoutedOvr)
+        let potentialLabel = PotentialLabel.from(
+            potential: prospect.truePotential,
+            noise: max(0, 3 - (effectivePotentialRead / 30))
+        )
+
         return ScoutingReport(
             prospectID: prospect.id,
             scoutID: scout.id,
@@ -320,7 +337,11 @@ enum ScoutingEngine {
             strengthNotes: strengthNotes,
             weaknessNotes: weaknessNotes,
             personalityNotes: personalityNotes,
-            confidenceLevel: confidence
+            confidenceLevel: confidence,
+            mentalGrades: mentalGrades,
+            positionSkillGrades: positionGrades,
+            overallLetterGrade: overallLetterGrade,
+            potentialLabel: potentialLabel
         )
     }
 
@@ -371,7 +392,24 @@ enum ScoutingEngine {
         // 6. Confidence level based on phase
         let confidenceLevel = phase.confidenceLevel
 
-        // 7. Create and return the report
+        // 7. Generate per-attribute letter grades for mental and position skills
+        let mentalGrades = generateMentalGrades(
+            mental: prospect.trueMental,
+            accuracy: scout.accuracy,
+            positionSpec: scout.positionSpecialization == prospect.position
+        )
+        let positionGrades = generatePositionSkillGrades(
+            attributes: prospect.truePositionAttributes,
+            accuracy: scout.accuracy,
+            positionSpec: scout.positionSpecialization == prospect.position
+        )
+        let overallLetterGrade = LetterGrade.from(numericValue: scoutedOverall)
+        let potentialLabel = PotentialLabel.from(
+            potential: prospect.truePotential,
+            noise: max(0, 3 - (scout.potentialRead / 30))
+        )
+
+        // 8. Create and return the report
         return ScoutingReport(
             prospectID: prospect.id,
             scoutID: scout.id,
@@ -383,8 +421,76 @@ enum ScoutingEngine {
             strengthNotes: strengthNotes,
             weaknessNotes: weaknessNotes,
             personalityNotes: personalityNotes,
-            confidenceLevel: confidenceLevel
+            confidenceLevel: confidenceLevel,
+            mentalGrades: mentalGrades,
+            positionSkillGrades: positionGrades,
+            overallLetterGrade: overallLetterGrade,
+            potentialLabel: potentialLabel
         )
+    }
+
+    // MARK: - Grade Generation Helpers
+
+    /// Generates letter grades for each mental attribute with noise based on scout accuracy.
+    private static func generateMentalGrades(mental: MentalAttributes, accuracy: Int, positionSpec: Bool) -> [String: LetterGrade] {
+        // Higher accuracy = less noise. Noise in grade steps: low acc → ±3, high acc → ±1
+        let noiseSteps = max(1, 4 - accuracy / 25) - (positionSpec ? 1 : 0)
+
+        func gradeWithNoise(_ value: Int) -> LetterGrade {
+            let trueGrade = LetterGrade.from(numericValue: value)
+            let shift = Int.random(in: -noiseSteps...noiseSteps)
+            return trueGrade.shifted(by: shift)
+        }
+
+        return [
+            "AWR": gradeWithNoise(mental.awareness),
+            "DEC": gradeWithNoise(mental.decisionMaking),
+            "CLT": gradeWithNoise(mental.clutch),
+            "WRK": gradeWithNoise(mental.workEthic),
+            "COA": gradeWithNoise(mental.coachability),
+            "LDR": gradeWithNoise(mental.leadership),
+        ]
+    }
+
+    /// Generates letter grades for position-specific skills with noise.
+    private static func generatePositionSkillGrades(attributes: PositionAttributes, accuracy: Int, positionSpec: Bool) -> [String: LetterGrade] {
+        let noiseSteps = max(1, 4 - accuracy / 25) - (positionSpec ? 1 : 0)
+
+        func gradeWithNoise(_ value: Int) -> LetterGrade {
+            let trueGrade = LetterGrade.from(numericValue: value)
+            let shift = Int.random(in: -noiseSteps...noiseSteps)
+            return trueGrade.shifted(by: shift)
+        }
+
+        switch attributes {
+        case .quarterback(let a):
+            return ["ARM": gradeWithNoise(a.armStrength), "SAC": gradeWithNoise(a.accuracyShort),
+                    "MAC": gradeWithNoise(a.accuracyMid), "DAC": gradeWithNoise(a.accuracyDeep),
+                    "PKT": gradeWithNoise(a.pocketPresence), "SCR": gradeWithNoise(a.scrambling)]
+        case .wideReceiver(let a):
+            return ["RTE": gradeWithNoise(a.routeRunning), "CTH": gradeWithNoise(a.catching),
+                    "RLS": gradeWithNoise(a.release), "SPC": gradeWithNoise(a.spectacularCatch)]
+        case .runningBack(let a):
+            return ["VIS": gradeWithNoise(a.vision), "ELU": gradeWithNoise(a.elusiveness),
+                    "BTK": gradeWithNoise(a.breakTackle), "RCV": gradeWithNoise(a.receiving)]
+        case .tightEnd(let a):
+            return ["BLK": gradeWithNoise(a.blocking), "CTH": gradeWithNoise(a.catching),
+                    "RTE": gradeWithNoise(a.routeRunning), "SPD": gradeWithNoise(a.speed)]
+        case .offensiveLine(let a):
+            return ["RBK": gradeWithNoise(a.runBlock), "PBK": gradeWithNoise(a.passBlock),
+                    "PUL": gradeWithNoise(a.pull), "ANC": gradeWithNoise(a.anchor)]
+        case .defensiveLine(let a):
+            return ["PRU": gradeWithNoise(a.passRush), "BSH": gradeWithNoise(a.blockShedding),
+                    "PWR": gradeWithNoise(a.powerMoves), "FIN": gradeWithNoise(a.finesseMoves)]
+        case .linebacker(let a):
+            return ["TKL": gradeWithNoise(a.tackling), "ZCV": gradeWithNoise(a.zoneCoverage),
+                    "MCV": gradeWithNoise(a.manCoverage), "BLZ": gradeWithNoise(a.blitzing)]
+        case .defensiveBack(let a):
+            return ["MCV": gradeWithNoise(a.manCoverage), "ZCV": gradeWithNoise(a.zoneCoverage),
+                    "PRS": gradeWithNoise(a.press), "BSK": gradeWithNoise(a.ballSkills)]
+        case .kicking(let a):
+            return ["PWR": gradeWithNoise(a.kickPower), "ACC": gradeWithNoise(a.kickAccuracy)]
+        }
     }
 
     /// Apply a scouting report to update prospect's visible attributes based on the best available report.
@@ -397,7 +503,7 @@ enum ScoutingEngine {
             return
         }
 
-        // Update prospect's visible attributes from best report
+        // Legacy: Update numeric scouted values (kept for backward compat)
         prospect.scoutedOverall = bestReport.overallGrade
         prospect.scoutedPotential = bestReport.potentialGrade
 
@@ -418,6 +524,9 @@ enum ScoutingEngine {
         default:      prospect.scoutGrade = "F"
         }
 
+        // New: Update grade-based scouting fields
+        applyGradeBasedFields(report: report, to: prospect)
+
         // Use personality from the highest-confidence report that has personality notes
         if let _ = prospect.scoutingReports
             .filter({ $0.personalityNotes != nil })
@@ -429,6 +538,61 @@ enum ScoutingEngine {
                 let wrongArchetypes = PersonalityArchetype.allCases.filter { $0 != prospect.truePersonality.archetype }
                 prospect.scoutedPersonality = wrongArchetypes.randomElement()
             }
+        }
+    }
+
+    /// Aggregates grade data from all reports into progressive GradeRange fields.
+    private static func applyGradeBasedFields(report: ScoutingReport, to prospect: CollegeProspect) {
+        let reportCount = prospect.scoutingReports.count
+
+        // Overall grade — narrow with each report
+        if let letterGrade = report.overallLetterGrade {
+            if var existing = prospect.scoutedOverallGrade {
+                existing.incorporate(newGrade: letterGrade)
+                prospect.scoutedOverallGrade = existing
+            } else {
+                // First report — wide range (±2 grades)
+                let low = letterGrade.shifted(by: 2)   // 2 grades worse
+                let high = letterGrade.shifted(by: -2)  // 2 grades better
+                prospect.scoutedOverallGrade = GradeRange(low: low, high: high, reportCount: 1)
+            }
+        }
+
+        // Mental grades — aggregate each attribute
+        if let mentalGrades = report.mentalGrades {
+            var existing = prospect.scoutedMentalGrades ?? [:]
+            for (key, grade) in mentalGrades {
+                if var range = existing[key] {
+                    range.incorporate(newGrade: grade)
+                    existing[key] = range
+                } else {
+                    let low = grade.shifted(by: 2)
+                    let high = grade.shifted(by: -2)
+                    existing[key] = GradeRange(low: low, high: high, reportCount: 1)
+                }
+            }
+            prospect.scoutedMentalGrades = existing
+        }
+
+        // Position skill grades — same aggregation
+        if let posGrades = report.positionSkillGrades {
+            var existing = prospect.scoutedPositionGrades ?? [:]
+            for (key, grade) in posGrades {
+                if var range = existing[key] {
+                    range.incorporate(newGrade: grade)
+                    existing[key] = range
+                } else {
+                    let low = grade.shifted(by: 2)
+                    let high = grade.shifted(by: -2)
+                    existing[key] = GradeRange(low: low, high: high, reportCount: 1)
+                }
+            }
+            prospect.scoutedPositionGrades = existing
+        }
+
+        // Potential label — use the latest report's assessment (most recent = most informed)
+        if let label = report.potentialLabel {
+            prospect.scoutedPotentialLabel = label
         }
     }
 
@@ -575,7 +739,7 @@ enum ScoutingEngine {
     /// K/P only get height/weight measured — no athletic drills.
     /// Drill results derive from true physical attributes with position-specific
     /// adjustments and ±2-5% random noise.
-    static func generateCombineResults(for prospects: inout [CollegeProspect]) {
+    static func generateCombineResults(for prospects: inout [CollegeProspect], scoutingAbility: Int = 50) {
         // 1. Select top ~330 prospects by trueOverall as combine invitees
         let inviteCount = min(330, prospects.count)
         let sortedIndices = prospects.indices.sorted { prospects[$0].trueOverall > prospects[$1].trueOverall }
@@ -585,7 +749,7 @@ enum ScoutingEngine {
             prospects[i].combineInvite = true
         }
 
-        // 2. Generate drill results for each invitee
+        // 2. Generate drill results for each invitee using position-group benchmarks
         for i in invitedIndices {
             let position = prospects[i].position
             let phys = prospects[i].truePhysical
@@ -595,83 +759,51 @@ enum ScoutingEngine {
 
             let combineModifier = combinePersonalityModifier()
             let posGroup = positionGroup(for: position)
+            let tiers = drillTiers(for: posGroup)
+
+            // DE bonus: slightly faster than OL/DT on 40 and 3-cone
+            let isDE = position == .DE
 
             // --- 40-yard dash ---
-            // Base: speed attribute mapped to time. Higher speed = lower time.
-            // Position: QB/WR/CB fastest, OL/DL slowest, RB/LB balanced
-            let fortyBase: Double = {
-                let raw = 5.5 - (Double(phys.speed) * 0.013)
-                switch posGroup {
-                case .speedster: return raw - 0.05
-                case .bigman:    return raw + 0.15
-                case .balanced:  return raw
-                }
-            }()
-            let fortyNoise = fortyBase * Double.random(in: -0.03...0.03)
-            let fortyVariance = Double.random(in: -0.04...0.04) + combineModifier * 0.04
-            prospects[i].fortyTime = max(4.22, min(5.40, fortyBase + fortyVariance + fortyNoise))
+            var fortyResult = drillResult(tiers: tiers.forty, attribute: phys.speed, combineModifier: combineModifier, lowerIsBetter: true)
+            if isDE { fortyResult -= 0.05 }
+            prospects[i].fortyTime = max(4.24, min(5.50, fortyResult))
 
             // --- Bench press (225 lb reps) ---
-            // OL/DL: highest reps; QB/WR/CB: lightest
-            let benchBase: Int = {
-                let raw = Int(Double(phys.strength) * 0.35) - 5
-                switch posGroup {
-                case .bigman:    return raw + 8
-                case .balanced:  return raw + 2
-                case .speedster: return raw - 2
-                }
-            }()
-            let benchNoise = Int(Double(benchBase) * Double.random(in: -0.05...0.05))
-            let benchVariance = Int.random(in: -2...2) + Int(combineModifier * 2.0)
-            prospects[i].benchPress = max(8, min(45, benchBase + benchVariance + benchNoise))
+            let benchResult = drillResult(tiers: tiers.bench, attribute: phys.strength, combineModifier: combineModifier, lowerIsBetter: false)
+            prospects[i].benchPress = max(6, min(45, Int(benchResult.rounded())))
 
             // --- Vertical jump ---
-            let vertBase = 20.0 + Double(phys.agility + phys.acceleration) * 0.13
-            let vertNoise = vertBase * Double.random(in: -0.03...0.03)
-            let vertVariance = Double.random(in: -1.5...1.5) + combineModifier * 1.5
-            prospects[i].verticalJump = max(24.0, min(46.0, vertBase + vertVariance + vertNoise))
+            let vertAttr = (phys.agility + phys.acceleration) / 2
+            let vertResult = drillResult(tiers: tiers.vert, attribute: vertAttr, combineModifier: combineModifier, lowerIsBetter: false)
+            prospects[i].verticalJump = max(22.0, min(46.0, vertResult))
 
             // --- Broad jump ---
-            let broadBase: Double = {
-                let raw = 80.0 + Double(phys.strength + phys.acceleration) * 0.3
-                switch posGroup {
-                case .speedster: return raw + 2.0
-                case .bigman:    return raw - 4.0
-                case .balanced:  return raw
-                }
-            }()
-            let broadNoise = Int(broadBase * Double.random(in: -0.03...0.03))
-            let broadVariance = Int.random(in: -3...3) + Int(combineModifier * 3.0)
-            prospects[i].broadJump = max(95, min(145, Int(broadBase) + broadVariance + broadNoise))
+            let broadAttr = (phys.strength + phys.acceleration) / 2
+            let broadResult = drillResult(tiers: tiers.broad, attribute: broadAttr, combineModifier: combineModifier, lowerIsBetter: false)
+            prospects[i].broadJump = max(88, min(145, Int(broadResult.rounded())))
 
             // --- 3-cone drill ---
-            let coneBase = 7.8 - (Double(phys.agility + phys.acceleration) * 0.007)
-            let coneNoise = coneBase * Double.random(in: -0.02...0.02)
-            let coneVariance = Double.random(in: -0.08...0.08) + combineModifier * 0.04
-            prospects[i].coneDrill = max(6.40, min(7.60, coneBase + coneVariance + coneNoise))
+            let coneAttr = (phys.agility + phys.acceleration) / 2
+            var coneResult = drillResult(tiers: tiers.cone, attribute: coneAttr, combineModifier: combineModifier, lowerIsBetter: true)
+            if isDE { coneResult -= 0.05 }
+            prospects[i].coneDrill = max(6.40, min(8.00, coneResult))
 
             // --- Shuttle time ---
-            let shuttleBase: Double = {
-                let raw = 4.8 - (Double(phys.agility + phys.speed) * 0.005)
-                switch posGroup {
-                case .speedster: return raw - 0.05
-                case .bigman:    return raw + 0.10
-                case .balanced:  return raw
-                }
-            }()
-            let shuttleNoise = shuttleBase * Double.random(in: -0.02...0.02)
-            let shuttleVariance = Double.random(in: -0.06...0.06) + combineModifier * 0.03
-            prospects[i].shuttleTime = max(3.80, min(4.80, shuttleBase + shuttleVariance + shuttleNoise))
+            let shuttleAttr = (phys.agility + phys.speed) / 2
+            let shuttleResult = drillResult(tiers: tiers.shuttle, attribute: shuttleAttr, combineModifier: combineModifier, lowerIsBetter: true)
+            prospects[i].shuttleTime = max(3.90, min(5.00, shuttleResult))
 
             // Position drill grade — imprecise estimate from position-specific attributes
-            prospects[i].positionDrillGrade = generatePositionDrillGrade(for: prospects[i])
+            // Better scouting staff → more accurate grade
+            prospects[i].positionDrillGrade = generatePositionDrillGrade(for: prospects[i], scoutingAbility: scoutingAbility)
         }
     }
 
     /// Generates a position drill grade (F through A+) based on the prospect's
-    /// position-specific attributes. Adds noise to simulate the imprecision of
-    /// combine position drills (route running, pass rush moves, coverage drills, etc.).
-    private static func generatePositionDrillGrade(for prospect: CollegeProspect) -> String {
+    /// position-specific attributes. Noise varies by position (QB/DB hardest to
+    /// evaluate, OL/DL most visible) and is reduced by better scouting staff.
+    private static func generatePositionDrillGrade(for prospect: CollegeProspect, scoutingAbility: Int = 50) -> String {
         let baseAvg: Double
         switch prospect.truePositionAttributes {
         case .quarterback(let a):
@@ -694,8 +826,29 @@ enum ScoutingEngine {
             baseAvg = Double(a.kickPower + a.kickAccuracy) / 2.0
         }
 
-        // Add significant noise (±12 points) to simulate combine drill imprecision
-        let noise = Double.random(in: -12...12)
+        // Position-specific base noise — some positions are harder to evaluate in drills
+        // QB: decision-making/reads can't be fully measured in drills
+        // DB: coverage instincts hard to isolate in controlled drills
+        // OL/DL: technique and power most visible in 1-on-1 drills
+        let positionNoise: Double = {
+            switch prospect.position {
+            case .QB:                          return 16.0  // Hardest — intangibles dominate
+            case .CB, .FS, .SS:                return 15.0  // Coverage instincts hard to measure
+            case .WR, .TE:                     return 13.0  // Route running partially visible
+            case .RB, .FB:                     return 12.0  // Vision/instincts vs measurables
+            case .MLB, .OLB:                   return 11.0  // Tackling/blitzing fairly observable
+            case .DE, .DT:                     return 9.0   // Pass rush moves very visible
+            case .LT, .LG, .C, .RG, .RT:      return 8.0   // Technique most measurable in 1-on-1
+            case .K, .P:                       return 6.0   // Accuracy directly measurable
+            }
+        }()
+
+        // Scouting staff modifier: ability 1-99 maps to 1.4x (worst) down to 0.6x (best)
+        // Average staff (50) = 1.0x (no change)
+        let staffModifier = 1.4 - (Double(max(1, min(99, scoutingAbility))) - 1.0) / 98.0 * 0.8
+
+        let adjustedNoise = positionNoise * staffModifier
+        let noise = Double.random(in: -adjustedNoise...adjustedNoise)
         let drillScore = max(20, min(99, baseAvg + noise))
 
         // Convert to letter grade
@@ -717,29 +870,147 @@ enum ScoutingEngine {
     }
 
     /// Legacy wrapper — calls generateCombineResults(for:).
-    static func simulateCombine(prospects: inout [CollegeProspect]) {
-        generateCombineResults(for: &prospects)
+    static func simulateCombine(prospects: inout [CollegeProspect], scoutingAbility: Int = 50) {
+        generateCombineResults(for: &prospects, scoutingAbility: scoutingAbility)
     }
 
-    // MARK: - Combine Position Groups
+    // MARK: - Combine Position Groups & Drill Ranges
 
     private enum CombinePositionGroup {
-        case speedster  // QB, WR, CB — fastest 40 times
-        case bigman     // OL, DL — highest bench press, slower 40
-        case balanced   // RB, FB, TE, LB, S — balanced across drills
+        case speedster  // WR, CB, FS, SS, QB — fastest 40 times
+        case bigman     // OL (LT, LG, C, RG, RT), DL (DE, DT) — highest bench press, slower 40
+        case balanced   // RB, FB, TE, OLB, MLB — balanced across drills
     }
 
     private static func positionGroup(for position: Position) -> CombinePositionGroup {
         switch position {
-        case .QB, .WR, .CB:
+        case .QB, .WR, .CB, .FS, .SS:
             return .speedster
         case .LT, .LG, .C, .RG, .RT, .DE, .DT:
             return .bigman
-        case .RB, .FB, .TE, .OLB, .MLB, .FS, .SS:
+        case .RB, .FB, .TE, .OLB, .MLB:
             return .balanced
         case .K, .P:
             return .balanced  // Won't be reached (K/P excluded above)
         }
+    }
+
+    /// Real NFL Combine drill ranges per position group, split into 4 tiers:
+    /// Elite (attr 95-99), Good (80-94), Average (65-79), Below Average (<65).
+    /// Each tier stores (min, max) for the drill result.
+    private struct CombineDrillTiers {
+        let elite: (Double, Double)
+        let good: (Double, Double)
+        let average: (Double, Double)
+        let belowAvg: (Double, Double)
+
+        /// Returns the (min, max) range for a given physical attribute value (40-99).
+        func range(for attribute: Int) -> (Double, Double) {
+            switch attribute {
+            case 95...99: return elite
+            case 80...94: return good
+            case 65...79: return average
+            default:      return belowAvg
+            }
+        }
+    }
+
+    /// Position-group–specific drill tiers based on real NFL Combine data.
+    /// For time-based drills (40, 3-cone, shuttle) lower is better.
+    /// For reps/distance drills (bench, vert, broad) higher is better.
+    private static func drillTiers(for group: CombinePositionGroup) -> (
+        forty: CombineDrillTiers,
+        bench: CombineDrillTiers,
+        vert: CombineDrillTiers,
+        broad: CombineDrillTiers,
+        cone: CombineDrillTiers,
+        shuttle: CombineDrillTiers
+    ) {
+        switch group {
+        case .speedster:
+            return (
+                forty:   CombineDrillTiers(elite: (4.25, 4.35), good: (4.36, 4.45), average: (4.46, 4.55), belowAvg: (4.56, 4.70)),
+                bench:   CombineDrillTiers(elite: (14, 18), good: (10, 14), average: (8, 12), belowAvg: (6, 10)),
+                vert:    CombineDrillTiers(elite: (39, 43), good: (36, 39), average: (33, 36), belowAvg: (30, 33)),
+                broad:   CombineDrillTiers(elite: (128, 140), good: (120, 128), average: (112, 120), belowAvg: (104, 112)),
+                cone:    CombineDrillTiers(elite: (6.50, 6.70), good: (6.70, 6.90), average: (6.90, 7.10), belowAvg: (7.10, 7.30)),
+                shuttle: CombineDrillTiers(elite: (3.95, 4.10), good: (4.10, 4.20), average: (4.20, 4.35), belowAvg: (4.35, 4.50))
+            )
+        case .bigman:
+            return (
+                forty:   CombineDrillTiers(elite: (4.80, 5.00), good: (5.00, 5.15), average: (5.15, 5.30), belowAvg: (5.30, 5.50)),
+                bench:   CombineDrillTiers(elite: (30, 40), good: (25, 30), average: (20, 25), belowAvg: (15, 20)),
+                vert:    CombineDrillTiers(elite: (30, 35), good: (27, 30), average: (24, 27), belowAvg: (22, 24)),
+                broad:   CombineDrillTiers(elite: (108, 120), good: (100, 108), average: (94, 100), belowAvg: (88, 94)),
+                cone:    CombineDrillTiers(elite: (7.20, 7.40), good: (7.40, 7.60), average: (7.60, 7.80), belowAvg: (7.80, 8.00)),
+                shuttle: CombineDrillTiers(elite: (4.40, 4.55), good: (4.55, 4.70), average: (4.70, 4.85), belowAvg: (4.85, 5.00))
+            )
+        case .balanced:
+            return (
+                forty:   CombineDrillTiers(elite: (4.35, 4.48), good: (4.48, 4.58), average: (4.58, 4.70), belowAvg: (4.70, 4.85)),
+                bench:   CombineDrillTiers(elite: (20, 28), good: (16, 22), average: (12, 18), belowAvg: (10, 14)),
+                vert:    CombineDrillTiers(elite: (36, 40), good: (33, 36), average: (30, 33), belowAvg: (27, 30)),
+                broad:   CombineDrillTiers(elite: (118, 132), good: (110, 120), average: (104, 112), belowAvg: (98, 106)),
+                cone:    CombineDrillTiers(elite: (6.70, 6.95), good: (6.95, 7.15), average: (7.15, 7.35), belowAvg: (7.35, 7.55)),
+                shuttle: CombineDrillTiers(elite: (4.10, 4.25), good: (4.25, 4.40), average: (4.40, 4.55), belowAvg: (4.55, 4.70))
+            )
+        }
+    }
+
+    /// Generates a drill result within a tier's range, placing the value based on
+    /// where the attribute sits within that tier, plus ±1-2% noise and personality modifier.
+    /// For time-based drills (lower = better), higher attributes produce lower results.
+    /// For rep/distance drills (higher = better), higher attributes produce higher results.
+    private static func drillResult(
+        tiers: CombineDrillTiers,
+        attribute: Int,
+        combineModifier: Double,
+        lowerIsBetter: Bool
+    ) -> Double {
+        let (lo, hi) = tiers.range(for: attribute)
+
+        // 1% chance of "workout warrior" — bump result into the next tier up
+        let isWorkoutWarrior = Int.random(in: 1...100) == 1
+        let effectiveRange: (Double, Double)
+        if isWorkoutWarrior {
+            if lowerIsBetter {
+                // For time drills, one tier up means faster (lower values)
+                effectiveRange = (lo - (hi - lo) * 0.5, lo)
+            } else {
+                // For rep/distance drills, one tier up means higher values
+                effectiveRange = (hi, hi + (hi - lo) * 0.5)
+            }
+        } else {
+            effectiveRange = (lo, hi)
+        }
+
+        // Place within range: higher attribute → better end
+        // For time drills: higher attr → lower time (near lo end)
+        // For rep/distance: higher attr → higher value (near hi end)
+        let tierSpread = effectiveRange.1 - effectiveRange.0
+        let t = Double.random(in: 0.0...1.0) // Random placement within range
+        let base: Double
+        if lowerIsBetter {
+            base = effectiveRange.0 + t * tierSpread
+        } else {
+            base = effectiveRange.0 + t * tierSpread
+        }
+
+        // ±1-2% noise
+        let noisePct = Double.random(in: -0.02...0.02)
+        let noise = base * noisePct
+
+        // Combine personality modifier: warriors test better, bad testers worse
+        // For time drills: negative modifier = faster (better)
+        // For rep/distance: positive modifier = more reps/distance (better)
+        let modifierEffect: Double
+        if lowerIsBetter {
+            modifierEffect = -combineModifier * base * 0.01
+        } else {
+            modifierEffect = combineModifier * base * 0.01
+        }
+
+        return base + noise + modifierEffect
     }
 
     /// Returns a modifier: positive = combine warrior (tests better), negative = bad tester.

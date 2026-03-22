@@ -383,10 +383,10 @@ struct CareerShellView: View {
         case .schedule:           shellDest = .schedule
         case .standings:          shellDest = .standings
         case .coachingStaff:      shellDest = .coachingStaff
-        case .hireCoach:          shellDest = .hireCoach
-        case .hireHC:             shellDest = .hireHC
-        case .hireOC:             shellDest = .hireOC
-        case .hireDC:             shellDest = .hireDC
+        case .hireCoach:          shellDest = .coachingStaff
+        case .hireHC:             shellDest = .coachingStaff
+        case .hireOC:             shellDest = .coachingStaff
+        case .hireDC:             shellDest = .coachingStaff
         case .scouting:           shellDest = .scouting
         case .prospectList:       shellDest = .prospectList
         case .bigBoard:           shellDest = .bigBoard

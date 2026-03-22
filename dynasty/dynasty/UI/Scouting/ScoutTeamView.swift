@@ -5,6 +5,8 @@ struct ScoutTeamView: View {
     let canHire: Bool
     let career: Career
     let scoutsSentToCombine: Bool
+    let prospects: [CollegeProspect]
+    let coachingBudget: Int
     let onHire: () -> Void
     let onFire: (Scout) -> Void
     let onSendToCombine: () -> Void
@@ -23,6 +25,20 @@ struct ScoutTeamView: View {
             return String(format: "$%.1fM", Double(totalScoutSalary) / 1000.0)
         }
         return "$\(totalScoutSalary)K"
+    }
+
+    private var formattedBudget: String {
+        if coachingBudget >= 1000 {
+            return String(format: "$%.1fM", Double(coachingBudget) / 1000.0)
+        }
+        return "$\(coachingBudget)K"
+    }
+
+    /// Count of prospects scouted by a specific scout (matched by scoutID in reports).
+    private func scoutedCount(for scout: Scout) -> Int {
+        prospects.filter { prospect in
+            prospect.scoutingReports.contains { $0.scoutID == scout.id }
+        }.count
     }
 
     /// The most common specialization among scouts, if any.
@@ -47,7 +63,7 @@ struct ScoutTeamView: View {
                             Image(systemName: "dollarsign.circle")
                                 .foregroundStyle(Color.accentGold)
                                 .font(.caption)
-                            Text("Scout salaries: \(formattedTotalSalary) of coaching budget")
+                            Text("Scout salaries: \(formattedTotalSalary) / \(formattedBudget) budget")
                                 .font(.caption)
                                 .foregroundStyle(Color.textSecondary)
                             Spacer()
@@ -76,7 +92,7 @@ struct ScoutTeamView: View {
 
                         ForEach(scouts, id: \.id) { scout in
                             NavigationLink(value: scout) {
-                                ScoutTableRow(scout: scout)
+                                ScoutTableRow(scout: scout, scoutedCount: scoutedCount(for: scout))
                             }
                             .buttonStyle(.plain)
                                 .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
@@ -180,27 +196,41 @@ struct ScoutTeamView: View {
     // MARK: - Table Header
 
     private var scoutTableHeader: some View {
-        HStack(spacing: 0) {
-            Text("Role")
-                .frame(width: 36, alignment: .leading)
-            Text("Name")
-                .frame(minWidth: 100, alignment: .leading)
-            Text("Spec")
-                .frame(width: 40, alignment: .center)
-            Text("ACC")
-                .frame(width: 36, alignment: .center)
-            Text("PER")
-                .frame(width: 36, alignment: .center)
-            Text("POT")
-                .frame(width: 36, alignment: .center)
-            Text("Salary")
-                .frame(width: 56, alignment: .trailing)
-            Spacer(minLength: 4)
-            Text("Focus Assignment")
-                .frame(minWidth: 180, alignment: .center)
+        VStack(spacing: 4) {
+            HStack(spacing: 0) {
+                Text("Role")
+                    .frame(width: 36, alignment: .leading)
+                Text("Name")
+                    .frame(minWidth: 100, alignment: .leading)
+                Text("Spec")
+                    .frame(width: 40, alignment: .center)
+                Text("Scouted")
+                    .frame(width: 50, alignment: .center)
+                Text("ACC")
+                    .frame(width: 48, alignment: .center)
+                Text("PER")
+                    .frame(width: 48, alignment: .center)
+                Text("POT")
+                    .frame(width: 48, alignment: .center)
+                Text("Salary")
+                    .frame(width: 56, alignment: .trailing)
+                Text("Value")
+                    .frame(width: 52, alignment: .center)
+                Spacer(minLength: 4)
+                Text("Focus Assignment")
+                    .frame(minWidth: 180, alignment: .center)
+            }
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(Color.textTertiary)
+
+            HStack {
+                Spacer()
+                Text("Focus: narrow position or attribute to boost scouting accuracy in that area")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.textTertiary)
+                    .frame(minWidth: 180, alignment: .center)
+            }
         }
-        .font(.caption2.weight(.bold))
-        .foregroundStyle(Color.textTertiary)
         .padding(.vertical, 6)
     }
 
@@ -241,6 +271,36 @@ struct ScoutTeamView: View {
 
 struct ScoutTableRow: View {
     @Bindable var scout: Scout
+    let scoutedCount: Int
+
+    // MARK: - Value Rating (#31)
+
+    private var averageRating: Double {
+        Double(scout.accuracy + scout.personalityRead + scout.potentialRead) / 3.0
+    }
+
+    private var valueRating: (label: String, color: Color) {
+        // Compare avg rating vs salary tier
+        let salaryTier: Double
+        if scout.salary >= 400 { salaryTier = 80 }
+        else if scout.salary >= 250 { salaryTier = 70 }
+        else if scout.salary >= 150 { salaryTier = 60 }
+        else { salaryTier = 50 }
+
+        let diff = averageRating - salaryTier
+        if diff >= 5 { return ("Great", Color.success) }
+        if diff >= -5 { return ("Fair", Color.accentGold) }
+        return ("Overpaid", Color.danger)
+    }
+
+    // MARK: - Qualitative Labels (#33)
+
+    private func qualitativeLabel(for value: Int) -> (text: String, color: Color) {
+        if value >= 80 { return ("Elite", Color.success) }
+        if value >= 70 { return ("Good", Color.accentBlue) }
+        if value >= 55 { return ("Avg", Color.accentGold) }
+        return ("Low", Color.danger)
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -268,23 +328,35 @@ struct ScoutTableRow: View {
                 .foregroundStyle(scout.positionSpecialization != nil ? Color.accentBlue : Color.textTertiary)
                 .frame(width: 40, alignment: .center)
 
-            // Accuracy
-            ratingCell(value: scout.accuracy)
-                .frame(width: 36, alignment: .center)
+            // Scouted count (#29)
+            Text("\(scoutedCount)")
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(scoutedCount > 0 ? Color.textPrimary : Color.textTertiary)
+                .frame(width: 50, alignment: .center)
 
-            // Personality Read
-            ratingCell(value: scout.personalityRead)
-                .frame(width: 36, alignment: .center)
+            // Accuracy with qualitative label (#33)
+            ratingCellWithLabel(value: scout.accuracy)
+                .frame(width: 48, alignment: .center)
 
-            // Potential Read
-            ratingCell(value: scout.potentialRead)
-                .frame(width: 36, alignment: .center)
+            // Personality Read with qualitative label (#33)
+            ratingCellWithLabel(value: scout.personalityRead)
+                .frame(width: 48, alignment: .center)
+
+            // Potential Read with qualitative label (#33)
+            ratingCellWithLabel(value: scout.potentialRead)
+                .frame(width: 48, alignment: .center)
 
             // Salary
             Text(formattedSalary)
                 .font(.caption2.weight(.semibold).monospacedDigit())
                 .foregroundStyle(Color.accentGold)
                 .frame(width: 56, alignment: .trailing)
+
+            // Value indicator (#31)
+            Text(valueRating.label)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(valueRating.color)
+                .frame(width: 52, alignment: .center)
 
             Spacer(minLength: 4)
 
@@ -355,6 +427,18 @@ struct ScoutTableRow: View {
         Text("\(value)")
             .font(.caption.weight(.semibold).monospacedDigit())
             .foregroundStyle(Color.forRating(value))
+    }
+
+    private func ratingCellWithLabel(value: Int) -> some View {
+        let qual = qualitativeLabel(for: value)
+        return VStack(spacing: 0) {
+            Text("\(value)")
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(Color.forRating(value))
+            Text(qual.text)
+                .font(.system(size: 8))
+                .foregroundStyle(qual.color.opacity(0.8))
+        }
     }
 
     private var formattedSalary: String {
@@ -532,6 +616,8 @@ struct ScoutRowView: View {
                 capMode: .simple
             ),
             scoutsSentToCombine: false,
+            prospects: [],
+            coachingBudget: 20_000,
             onHire: {},
             onFire: { _ in },
             onSendToCombine: {}

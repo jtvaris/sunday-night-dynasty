@@ -27,7 +27,7 @@ struct ScoutingHubView: View {
                     .padding(.top, 12)
                     .padding(.bottom, 8)
 
-                if career.currentPhase == .combine {
+                if career.currentPhase == .combine && selectedTab != .scouts {
                     sendScoutsToCombineButton
                         .padding(.horizontal, 20)
                         .padding(.bottom, 8)
@@ -131,10 +131,20 @@ struct ScoutingHubView: View {
             draftClass[i].preCombineGrade = draftClass[i].scoutGrade
         }
 
+        // Compute average scouting ability from coaching staff
+        let staffScoutingAbility: Int = {
+            guard let teamID = career.teamID else { return 50 }
+            let desc = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+            let coaches = (try? modelContext.fetch(desc)) ?? []
+            guard !coaches.isEmpty else { return 50 }
+            let total = coaches.reduce(0) { $0 + $1.scoutingAbility }
+            return total / coaches.count
+        }()
+
         // Generate combine results if not yet available (WeekAdvancer may have already done this)
         let hasCombineResults = draftClass.contains { $0.fortyTime != nil }
         if !hasCombineResults {
-            ScoutingEngine.generateCombineResults(for: &draftClass)
+            ScoutingEngine.generateCombineResults(for: &draftClass, scoutingAbility: staffScoutingAbility)
         }
 
         combineMedia = ScoutingEngine.generateCombineMedia(prospects: &draftClass)
@@ -275,6 +285,13 @@ struct ScoutingHubView: View {
                 }
             }
         }
+        .mask(
+            HStack(spacing: 0) {
+                Color.white
+                LinearGradient(colors: [.white, .clear], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 24)
+            }
+        )
     }
 
     // MARK: - Tab Content
@@ -288,6 +305,8 @@ struct ScoutingHubView: View {
                 canHire: scouts.count < maxScouts,
                 career: career,
                 scoutsSentToCombine: scoutsSentToCombine,
+                prospects: prospects,
+                coachingBudget: fetchCoachingBudget(),
                 onHire: { showHireScout = true },
                 onFire: { fireScout($0) },
                 onSendToCombine: { sendScoutsToCombine() }
@@ -342,6 +361,12 @@ struct ScoutingHubView: View {
         if nextYearProspects.isEmpty {
             nextYearProspects = ScoutingEngine.generateNextYearPreview()
         }
+    }
+
+    private func fetchCoachingBudget() -> Int {
+        guard let teamID = career.teamID else { return 20_000 }
+        let desc = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
+        return (try? modelContext.fetch(desc))?.first?.owner?.coachingBudget ?? 20_000
     }
 
     private var visibleTabs: [ScoutingTab] {
@@ -489,7 +514,7 @@ enum ScoutingTab: String, CaseIterable, Identifiable {
         case .interviews: return "Interviews"
         case .mockDraft:  return "Mock Draft"
         case .proDays:   return "Pro Days"
-        case .nextYear:  return "Next Year"
+        case .nextYear:  return "Next Yr"
         }
     }
 

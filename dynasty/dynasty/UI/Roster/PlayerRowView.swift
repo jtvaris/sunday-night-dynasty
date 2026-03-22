@@ -18,6 +18,8 @@ struct PlayerRowView: View {
     var onStarterBadgeTap: (() -> Void)? = nil
     /// Number of starters at this player's specific position (scheme-aware). Used for depth numbering (#279).
     var starterCountForPosition: Int = 1
+    /// Team salary cap in thousands — used to calculate cap% per player.
+    var teamSalaryCap: Int = 255_000
 
     var body: some View {
         HStack(spacing: 6) {
@@ -101,22 +103,23 @@ struct PlayerRowView: View {
                 .foregroundStyle(Color.forRating(player.overall))
                 .frame(width: 40, alignment: .center)
 
-            // Development arrow
-            developmentArrow
+            // Development potential indicator
+            Text(shortPotentialLabel)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(shortPotentialColor)
                 .frame(width: 20, alignment: .center)
 
-            // Cap Hit
+            // Cap Hit + cap%
             VStack(alignment: .trailing, spacing: 0) {
                 Text(formattedCapHit)
                     .font(.caption2)
                     .fontWeight(.medium)
                     .monospacedDigit()
                     .foregroundStyle(Color.textSecondary)
-                if showsSeparateCapHit {
-                    Text("cap")
-                        .font(.system(size: 7))
-                        .foregroundStyle(Color.textTertiary)
-                }
+                Text(capPercentLabel)
+                    .font(.system(size: 7, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(capPercentColor)
             }
             .frame(width: 52, alignment: .trailing)
 
@@ -369,11 +372,20 @@ struct PlayerRowView: View {
 
     private var formColumn: some View {
         let form = playerFormIndicator(for: player)
-        return Text(form.symbol)
-            .font(.system(size: 18, weight: .bold))
-            .foregroundStyle(form.color)
-            .frame(width: 24, alignment: .center)
-            .accessibilityLabel("Form \(formAccessibilityLabel)")
+        let label: String = {
+            switch form.symbol {
+            case "\u{2191}": return "↑"
+            case "\u{2192}": return "→"
+            default:         return "↓"
+            }
+        }()
+        return VStack(spacing: 0) {
+            Text(label)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(form.color)
+        }
+        .frame(width: 24, alignment: .center)
+        .accessibilityLabel("Form \(formAccessibilityLabel)")
     }
 
     private var formAccessibilityLabel: String {
@@ -577,6 +589,29 @@ struct PlayerRowView: View {
         .accessibilityLabel("Development \(developmentTrend.label)")
     }
 
+    /// Short potential label for overview columns (1-2 chars)
+    private var shortPotentialLabel: String {
+        let pot = player.truePotential
+        switch pot {
+        case 90...:   return "★"
+        case 80..<90: return "↑↑"
+        case 70..<80: return "↑"
+        case 60..<70: return "→"
+        default:      return "↓"
+        }
+    }
+
+    private var shortPotentialColor: Color {
+        let pot = player.truePotential
+        switch pot {
+        case 90...:   return .accentGold
+        case 80..<90: return .success
+        case 70..<80: return .accentBlue
+        case 60..<70: return .textTertiary
+        default:      return .danger
+        }
+    }
+
     // MARK: - Helpers
 
     private var positionColor: Color {
@@ -620,6 +655,23 @@ struct PlayerRowView: View {
 
     private var formattedSalary: String {
         formatSalary(player.annualSalary)
+    }
+
+    private var capPercent: Double {
+        guard teamSalaryCap > 0 else { return 0 }
+        return Double(capHitValue) / Double(teamSalaryCap) * 100.0
+    }
+
+    private var capPercentLabel: String {
+        String(format: "%.1f%%", capPercent)
+    }
+
+    private var capPercentColor: Color {
+        switch capPercent {
+        case 8...:  return .warning   // Heavy cap hit
+        case 4..<8: return .textSecondary
+        default:    return .textTertiary
+        }
     }
 
     /// Returns true when the contract provides a distinct cap hit that differs from base salary.

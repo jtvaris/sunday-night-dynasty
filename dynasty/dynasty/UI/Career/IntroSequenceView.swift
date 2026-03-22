@@ -1009,11 +1009,11 @@ private struct YourRoadmapStep: View {
     ]
 
     private var calendarCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 10) {
             SectionLabel(text: "OFFSEASON CALENDAR")
 
             Text("Your journey through the NFL year:")
-                .font(.subheadline)
+                .font(.caption)
                 .foregroundStyle(Color.textSecondary)
 
             VStack(alignment: .leading, spacing: 0) {
@@ -1023,18 +1023,18 @@ private struct YourRoadmapStep: View {
                     // #137: Fade distant phases progressively
                     let distanceFade: Double = isCurrent ? 1.0 : max(0.4, 1.0 - Double(index) * 0.08)
 
-                    HStack(alignment: .top, spacing: 14) {
+                    HStack(alignment: .top, spacing: 10) {
                         // Timeline connector
                         VStack(spacing: 0) {
                             ZStack {
                                 if isCurrent {
                                     Circle()
                                         .fill(Color.accentGold.opacity(0.25))
-                                        .frame(width: 20, height: 20)
+                                        .frame(width: 16, height: 16)
                                 }
                                 Circle()
                                     .fill(isCurrent ? Color.accentGold : Color.textTertiary.opacity(0.3))
-                                    .frame(width: isCurrent ? 12 : 8, height: isCurrent ? 12 : 8)
+                                    .frame(width: isCurrent ? 10 : 6, height: isCurrent ? 10 : 6)
                             }
 
                             if index < totalEntries - 1 {
@@ -1044,53 +1044,54 @@ private struct YourRoadmapStep: View {
                                     .frame(maxHeight: .infinity)
                             }
                         }
-                        .frame(width: 20)
+                        .frame(width: 16)
 
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(spacing: 6) {
                                 Text(entry.name)
-                                    .font(isCurrent ? .subheadline.weight(.bold) : .subheadline.weight(.medium))
+                                    .font(isCurrent ? .caption.weight(.bold) : .caption.weight(.medium))
                                     .foregroundStyle(isCurrent ? Color.accentGold : Color.textPrimary)
 
                                 if isCurrent {
                                     Text("CURRENT")
-                                        .font(.system(size: 9, weight: .black))
+                                        .font(.system(size: 7, weight: .black))
                                         .foregroundStyle(Color.backgroundPrimary)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
                                         .background(Capsule().fill(Color.accentGold))
                                 }
 
                                 // #140: Mandatory vs optional badge
                                 if !isCurrent {
                                     Text(entry.isMandatory ? "REQUIRED" : "OPTIONAL")
-                                        .font(.system(size: 8, weight: .bold))
+                                        .font(.system(size: 7, weight: .bold))
                                         .foregroundStyle(entry.isMandatory ? Color.textSecondary : Color.textTertiary)
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 2)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
                                         .background(
                                             Capsule()
                                                 .fill(entry.isMandatory ? Color.backgroundSecondary : Color.backgroundSecondary.opacity(0.5))
                                         )
                                 }
+
+                                Text(entry.duration)
+                                    .font(.system(size: 8, weight: .semibold))
+                                    .foregroundStyle(Color.textTertiary)
                             }
 
-                            // #139: Expanded description
-                            Text(entry.description)
-                                .font(.caption)
-                                .foregroundStyle(isCurrent ? Color.textSecondary : Color.textTertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            // #138: Duration label
-                            Text(entry.duration)
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(Color.textTertiary)
+                            // Description — only for current phase
+                            if isCurrent {
+                                Text(entry.description)
+                                    .font(.caption2)
+                                    .foregroundStyle(Color.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
 
                         Spacer()
                     }
-                    .padding(.vertical, isCurrent ? 10 : 7)
-                    .padding(.horizontal, isCurrent ? 10 : 6)
+                    .padding(.vertical, isCurrent ? 8 : 4)
+                    .padding(.horizontal, isCurrent ? 8 : 4)
                     .opacity(distanceFade)
                     .background(
                         Group {
