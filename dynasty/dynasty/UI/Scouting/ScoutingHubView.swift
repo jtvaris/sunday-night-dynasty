@@ -14,6 +14,7 @@ struct ScoutingHubView: View {
     @State private var showCombineReport = false
     @State private var combineMedia: [ScoutingEngine.CombineMediaMention] = []
     @AppStorage("scoutsSentToCombine") private var scoutsSentToCombine = false
+    @AppStorage("combineResultsReviewed") private var combineResultsReviewed = false
 
     private let maxScouts = 8
 
@@ -61,6 +62,11 @@ struct ScoutingHubView: View {
             // Auto-select Pro Days tab when in proDays phase
             if career.currentPhase == .proDays {
                 selectedTab = .proDays
+            }
+        }
+        .onChange(of: selectedTab) { _, newTab in
+            if newTab == .combine && scoutsSentToCombine {
+                combineResultsReviewed = true
             }
         }
         .sheet(isPresented: $showHireScout, onDismiss: { loadData() }) {

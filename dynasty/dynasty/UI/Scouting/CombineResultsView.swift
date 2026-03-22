@@ -1,12 +1,16 @@
 import SwiftUI
+import SwiftData
 
 struct CombineResultsView: View {
     let career: Career
     let prospects: [CollegeProspect]
 
+    @Environment(\.modelContext) private var modelContext
     @State private var positionFilter: ProspectPositionFilter = .all
     @State private var sortColumn: CombineColumn = .rank
     @State private var sortAscending: Bool = true
+    @State private var mediaPopoverProspectID: UUID?
+    @State private var teamPlayers: [Player] = []
 
     // MARK: - Filtered & Sorted Data
 
@@ -31,6 +35,10 @@ struct CombineResultsView: View {
                 return compare(a.position.rawValue, b.position.rawValue)
             case .college:
                 return compare(a.college, b.college)
+            case .grade:
+                return compare(gradeDisplayText(for: b), gradeDisplayText(for: a))
+            case .projection:
+                return compare(a.draftProjection ?? 999, b.draftProjection ?? 999)
             case .fortyYard:
                 return compareOptional(a.fortyTime, b.fortyTime, lowerIsBetter: true)
             case .bench:
@@ -44,10 +52,59 @@ struct CombineResultsView: View {
             case .shuttle:
                 return compareOptional(a.shuttleTime, b.shuttleTime, lowerIsBetter: true)
             case .positionDrill:
-                return compare(a.positionDrillGrade ?? "Z", b.positionDrillGrade ?? "Z")
+                let aRank = LetterGrade(rawValue: a.positionDrillGrade ?? "F")?.rank ?? 0
+                let bRank = LetterGrade(rawValue: b.positionDrillGrade ?? "F")?.rank ?? 0
+                return aRank > bRank
             }
         }
         return sortAscending ? sorted : sorted.reversed()
+    }
+
+    // MARK: - Team Needs
+
+    private var teamNeeds: Set<Position> {
+        Set(DraftEngine.topTeamNeeds(roster: teamPlayers, limit: 5))
+    }
+
+    // MARK: - Combine Risers & Fallers
+
+    private var combineRisers: [CollegeProspect] {
+        combineInvitees
+            .filter { gradeImprovement(for: $0) > 0 }
+            .sorted { gradeImprovement(for: $0) > gradeImprovement(for: $1) }
+            .prefix(5).map { $0 }
+    }
+
+    private var combineFallers: [CollegeProspect] {
+        combineInvitees
+            .filter { gradeImprovement(for: $0) < 0 }
+            .sorted { gradeImprovement(for: $0) < gradeImprovement(for: $1) }
+            .prefix(5).map { $0 }
+    }
+
+    private func gradeImprovement(for prospect: CollegeProspect) -> Int {
+        guard let pre = prospect.preCombineGrade,
+              let post = prospect.scoutGrade else { return 0 }
+        return gradeRank(post) - gradeRank(pre)
+    }
+
+    private func gradeRank(_ grade: String) -> Int {
+        switch grade {
+        case "A+": return 13
+        case "A":  return 12
+        case "A-": return 11
+        case "B+": return 10
+        case "B":  return 9
+        case "B-": return 8
+        case "C+": return 7
+        case "C":  return 6
+        case "C-": return 5
+        case "D+": return 4
+        case "D":  return 3
+        case "D-": return 2
+        case "F":  return 1
+        default:   return 0
+        }
     }
 
     var body: some View {
@@ -66,6 +123,15 @@ struct CombineResultsView: View {
                 if combineInvitees.isEmpty {
                     emptyState
                 } else {
+                    // Risers & Fallers section
+                    if !combineRisers.isEmpty || !combineFallers.isEmpty {
+                        risersAndFallersSection
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+
+                        Divider().overlay(Color.surfaceBorder)
+                    }
+
                     ScrollView(.horizontal, showsIndicators: false) {
                         VStack(spacing: 0) {
                             columnHeaders
@@ -95,6 +161,7 @@ struct CombineResultsView: View {
                 }
             }
         }
+        .onAppear { loadTeamPlayers() }
     }
 
     // MARK: - Header Bar
@@ -124,13 +191,104 @@ struct CombineResultsView: View {
         }
     }
 
+    // MARK: - Risers & Fallers
+
+    private var risersAndFallersSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !combineRisers.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .foregroundStyle(Color.success)
+                            .font(.caption)
+                        Text("COMBINE RISERS")
+                            .font(.caption.weight(.heavy))
+                            .foregroundStyle(Color.success)
+                    }
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(combineRisers) { prospect in
+                                riserFallerCard(prospect: prospect, isRiser: true)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !combineFallers.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .foregroundStyle(Color.danger)
+                            .font(.caption)
+                        Text("COMBINE FALLERS")
+                            .font(.caption.weight(.heavy))
+                            .foregroundStyle(Color.danger)
+                    }
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(combineFallers) { prospect in
+                                riserFallerCard(prospect: prospect, isRiser: false)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func riserFallerCard(prospect: CollegeProspect, isRiser: Bool) -> some View {
+        HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(prospect.fullName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+
+                Text(prospect.position.rawValue)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Color.textSecondary)
+            }
+
+            VStack(spacing: 1) {
+                Text(prospect.preCombineGrade ?? "--")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.textTertiary)
+                Image(systemName: isRiser ? "arrow.up" : "arrow.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(isRiser ? Color.success : Color.danger)
+                Text(prospect.scoutGrade ?? "--")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(isRiser ? Color.success : Color.danger)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(isRiser ? Color.success.opacity(0.3) : Color.danger.opacity(0.3), lineWidth: 1)
+                )
+        )
+    }
+
     // MARK: - Column Headers
 
     private var columnHeaders: some View {
         HStack(spacing: 0) {
-            sortableHeader("#", column: .rank, width: 36)
+            // Star column (no sort)
+            Text("")
+                .frame(width: 30)
+
+            sortableHeader("Rank", column: .rank, width: 42)
             sortableHeader("Name", column: .name, width: 140, alignment: .leading)
             sortableHeader("Pos", column: .position, width: 44)
+            sortableHeader("GRD", column: .grade, width: 44)
+            sortableHeader("Proj", column: .projection, width: 44)
             sortableHeader("College", column: .college, width: 110, alignment: .leading)
             sortableHeader("40yd", column: .fortyYard, width: 60)
             sortableHeader("Bench", column: .bench, width: 60)
@@ -171,17 +329,57 @@ struct CombineResultsView: View {
 
     private func combineRow(index: Int, prospect: CollegeProspect) -> some View {
         HStack(spacing: 0) {
+            // Star / watchlist toggle
+            Button {
+                toggleWatchlist(prospect)
+            } label: {
+                Image(systemName: prospect.prospectFlag != .none ? "star.fill" : "star")
+                    .font(.caption)
+                    .foregroundStyle(prospect.prospectFlag != .none ? Color.accentGold : Color.textTertiary)
+                    .frame(width: 30)
+            }
+            .buttonStyle(.plain)
+
+            // Rank
             Text("\(index)")
                 .font(.caption.weight(.semibold).monospacedDigit())
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 36)
+                .frame(width: 42)
 
-            Text(prospect.fullName)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(Color.textPrimary)
-                .lineLimit(1)
-                .frame(width: 140, alignment: .leading)
+            // Name + media mention + NEED badge
+            HStack(spacing: 4) {
+                Text(prospect.fullName)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
 
+                if prospect.combineMediaMention != nil {
+                    Image(systemName: "megaphone.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(isNegativeMediaMention(prospect.combineMediaMention!) ? Color.danger : Color.accentGold)
+                        .onTapGesture {
+                            mediaPopoverProspectID = mediaPopoverProspectID == prospect.id ? nil : prospect.id
+                        }
+                        .popover(isPresented: Binding(
+                            get: { mediaPopoverProspectID == prospect.id },
+                            set: { if !$0 { mediaPopoverProspectID = nil } }
+                        )) {
+                            mediaBubble(prospect.combineMediaMention!)
+                        }
+                }
+
+                if teamNeeds.contains(prospect.position) {
+                    Text("NEED")
+                        .font(.system(size: 7, weight: .heavy))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.danger))
+                }
+            }
+            .frame(width: 140, alignment: .leading)
+
+            // Position
             Text(prospect.position.rawValue)
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(Color.textPrimary)
@@ -189,6 +387,19 @@ struct CombineResultsView: View {
                 .background(positionColor(for: prospect), in: RoundedRectangle(cornerRadius: 3))
                 .frame(width: 44)
 
+            // GRD column
+            Text(gradeDisplayText(for: prospect))
+                .font(.caption.weight(.bold))
+                .foregroundStyle(gradeDisplayColor(for: prospect))
+                .frame(width: 44)
+
+            // Proj column
+            Text(projectionDisplayText(for: prospect))
+                .font(.caption.weight(.medium).monospacedDigit())
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 44)
+
+            // College
             Text(prospect.college)
                 .font(.caption)
                 .foregroundStyle(Color.textSecondary)
@@ -203,11 +414,11 @@ struct CombineResultsView: View {
                       tier: prospect.benchPress.map { benchTier($0) }, width: 60,
                       percentile: prospect.benchPress.map { drillPercentile(Double($0), \.benchPress, prospect.position) })
 
-            drillCell(value: prospect.verticalJump.map { String(format: "%.1f", $0) },
+            drillCell(value: prospect.verticalJump.map { String(format: "%.1f\"", $0) },
                       tier: prospect.verticalJump.map { verticalTier($0) }, width: 60,
                       percentile: prospect.verticalJump.map { drillPercentile($0, \.verticalJump, prospect.position) })
 
-            drillCell(value: prospect.broadJump.map { "\($0)" },
+            drillCell(value: prospect.broadJump.map { "\($0)in" },
                       tier: prospect.broadJump.map { broadTier($0) }, width: 60,
                       percentile: prospect.broadJump.map { drillPercentile(Double($0), \.broadJump, prospect.position) })
 
@@ -224,6 +435,12 @@ struct CombineResultsView: View {
                 .font(.caption.weight(.bold))
                 .foregroundStyle(prospect.positionDrillGrade.map { PositionGradeCalculator.gradeColorForLetter($0) } ?? Color.textTertiary)
                 .frame(width: 66)
+
+            // Chevron for row navigation
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: 20)
         }
     }
 
@@ -243,10 +460,10 @@ struct CombineResultsView: View {
     }
 
     private func percentileColor(_ pct: Int) -> Color {
-        if pct >= 90 { return .accentGold }
-        if pct >= 70 { return .success }
-        if pct >= 40 { return .textPrimary }
-        return .warning
+        if pct >= 75 { return .success }
+        if pct >= 50 { return .accentGold }
+        if pct >= 25 { return .textSecondary }
+        return .danger
     }
 
     // MARK: - Empty State
@@ -268,6 +485,83 @@ struct CombineResultsView: View {
                 .padding(.horizontal, 40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Media Mention Helpers
+
+    private func isNegativeMediaMention(_ mention: String) -> Bool {
+        let negativeKeywords = ["disappoint", "concern", "struggled", "slow", "poor", "weak", "dropped", "injury", "flag", "bust"]
+        let lower = mention.lowercased()
+        return negativeKeywords.contains { lower.contains($0) }
+    }
+
+    private func mediaBubble(_ mention: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("MEDIA")
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundStyle(Color.textTertiary)
+
+            Text("\"\(mention)\"")
+                .font(.caption)
+                .foregroundStyle(Color.textPrimary)
+                .italic()
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: 260)
+        .background(Color.backgroundSecondary)
+        .presentationCompactAdaptation(.popover)
+    }
+
+    // MARK: - Grade Display
+
+    private func gradeDisplayText(for prospect: CollegeProspect) -> String {
+        if let gradeRange = prospect.scoutedOverallGrade {
+            return gradeRange.displayText
+        }
+        return prospect.scoutGrade ?? "--"
+    }
+
+    private func gradeDisplayColor(for prospect: CollegeProspect) -> Color {
+        if let gradeRange = prospect.scoutedOverallGrade {
+            return PositionGradeCalculator.gradeColorForLetter(gradeRange.midGrade.rawValue)
+        }
+        if let grade = prospect.scoutGrade {
+            return PositionGradeCalculator.gradeColorForLetter(grade)
+        }
+        return Color.textTertiary
+    }
+
+    private func projectionDisplayText(for prospect: CollegeProspect) -> String {
+        guard let round = prospect.draftProjection else { return "--" }
+        switch round {
+        case 1: return "Rd 1"
+        case 2: return "Rd 2"
+        case 3: return "Rd 3"
+        case 4: return "Rd 4"
+        case 5: return "Rd 5"
+        case 6: return "Rd 6"
+        case 7: return "Rd 7"
+        default: return "UDFA"
+        }
+    }
+
+    // MARK: - Watchlist Toggle
+
+    private func toggleWatchlist(_ prospect: CollegeProspect) {
+        if prospect.prospectFlag == .none {
+            prospect.prospectFlag = .mustHave
+        } else {
+            prospect.prospectFlag = .none
+        }
+    }
+
+    // MARK: - Load Team Players
+
+    private func loadTeamPlayers() {
+        guard let teamID = career.teamID else { return }
+        let descriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
+        teamPlayers = (try? modelContext.fetch(descriptor)) ?? []
     }
 
     // MARK: - Helpers
@@ -346,6 +640,7 @@ struct CombineResultsView: View {
 
 private enum CombineColumn {
     case rank, name, position, college
+    case grade, projection
     case fortyYard, bench, vertical, broadJump, threeCone, shuttle
     case positionDrill
 }

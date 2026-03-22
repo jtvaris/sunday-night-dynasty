@@ -886,7 +886,20 @@ enum DraftEngine {
                 multiplier += 0.3
             }
 
-            needs[position] = multiplier
+            // Apply positional value weight — K/P should rarely surface as top needs.
+            let positionalWeight: Double
+            switch position {
+            case .QB, .DE, .CB, .WR, .LT:
+                positionalWeight = 1.0
+            case .DT, .OLB, .MLB, .FS, .SS, .TE:
+                positionalWeight = 0.8
+            case .RB, .RG, .LG, .C, .RT, .FB:
+                positionalWeight = 0.6
+            case .K, .P:
+                positionalWeight = 0.3
+            }
+
+            needs[position] = multiplier * positionalWeight
         }
 
         return needs

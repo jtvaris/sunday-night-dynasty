@@ -12,11 +12,22 @@ struct InterviewSelectionView: View {
     @State private var showResults = false
     @State private var interviewResults: [InterviewResult] = []
     @State private var positionFilter: Position?
+    @State private var teamRoster: [Player] = []
+    @State private var coaches: [Coach] = []
+    @AppStorage("interviewBannerDismissed") private var bannerDismissed = false
 
     private let maxInterviews = 60
 
     private var remainingSlots: Int {
         max(0, maxInterviews - career.interviewsUsed)
+    }
+
+    private var teamNeeds: [Position] {
+        DraftEngine.topTeamNeeds(roster: teamRoster, limit: 5)
+    }
+
+    private var teamNeedPositions: Set<Position> {
+        Set(teamNeeds)
     }
 
     private var selectableProspects: [CollegeProspect] {
@@ -26,6 +37,23 @@ struct InterviewSelectionView: View {
             filtered = filtered.filter { $0.position == pos }
         }
         return filtered.sorted { ($0.draftProjection ?? 999) < ($1.draftProjection ?? 999) }
+    }
+
+    /// Prospects that match a team need AND have OVR in the top 50% of all selectable prospects.
+    private var recommendedProspects: [CollegeProspect] {
+        let all = selectableProspects
+        guard !all.isEmpty else { return [] }
+        let overalls = all.map { ovrValue(for: $0) }
+        let median = overalls.sorted()[overalls.count / 2]
+        return all.filter { prospect in
+            teamNeedPositions.contains(prospect.position) && ovrValue(for: prospect) >= median
+        }
+    }
+
+    /// Everyone not in the recommended section.
+    private var otherProspects: [CollegeProspect] {
+        let recommendedIDs = Set(recommendedProspects.map(\.id))
+        return selectableProspects.filter { !recommendedIDs.contains($0.id) }
     }
 
     // MARK: - Body
@@ -47,7 +75,10 @@ struct InterviewSelectionView: View {
                 selectionList
             }
         }
-        .onAppear { loadProspects() }
+        .onAppear {
+            loadProspects()
+            loadTeamData()
+        }
     }
 
     // MARK: - Header
@@ -62,30 +93,48 @@ struct InterviewSelectionView: View {
 
                 Spacer()
 
-                Text("\(career.interviewsUsed)/\(maxInterviews) used")
-                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(Color.textSecondary)
-            }
-
-            HStack(spacing: 8) {
-                Text("Selected: \(selectedProspectIDs.count)")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.textSecondary)
-
-                Text("\u{2022}")
-                    .foregroundStyle(Color.textTertiary)
-
-                Text("\(remainingSlots) remaining")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(remainingSlots < 10 ? Color.danger : Color.textSecondary)
-
-                Spacer()
-
                 positionFilterMenu
             }
+
+            // #83: Selection progress
+            selectionProgress
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
+    }
+
+    // MARK: - Selection Progress (#83)
+
+    private var selectionProgress: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("\(selectedProspectIDs.count)/\(remainingSlots) selected")
+                    .font(.system(size: 14, weight: .bold).monospacedDigit())
+                    .foregroundStyle(Color.textPrimary)
+
+                Spacer()
+
+                Text("NFL teams typically interview 15\u{2013}20 prospects")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.backgroundTertiary)
+                        .frame(height: 6)
+
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(selectedProspectIDs.isEmpty ? Color.textTertiary : Color.accentGold)
+                        .frame(width: remainingSlots > 0
+                               ? geo.size.width * CGFloat(selectedProspectIDs.count) / CGFloat(remainingSlots)
+                               : 0,
+                               height: 6)
+                }
+            }
+            .frame(height: 6)
+        }
     }
 
     private var positionFilterMenu: some View {
@@ -115,7 +164,26 @@ struct InterviewSelectionView: View {
         VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(selectableProspects) { prospect in
+                    // #82: Explanation banner
+                    if !bannerDismissed {
+                        infoBanner
+                    }
+
+                    // #78: Table header
+                    tableHeader
+
+                    // #81: Recommended section
+                    if !recommendedProspects.isEmpty {
+                        sectionHeader("RECOMMENDED", subtitle: "Matches team needs with top-half talent")
+                        ForEach(recommendedProspects) { prospect in
+                            prospectRow(prospect)
+                            Divider().overlay(Color.surfaceBorder.opacity(0.3))
+                        }
+                    }
+
+                    // #81: All Prospects section
+                    sectionHeader("ALL PROSPECTS", subtitle: nil)
+                    ForEach(otherProspects) { prospect in
                         prospectRow(prospect)
                         Divider().overlay(Color.surfaceBorder.opacity(0.3))
                     }
@@ -127,9 +195,92 @@ struct InterviewSelectionView: View {
         }
     }
 
+    // MARK: - Info Banner (#82)
+
+    private var infoBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "info.circle.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(Color.accentGold)
+
+            Text("Interviews reveal personality, football IQ, and character \u{2014} reducing bust risk.")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.textSecondary)
+
+            Spacer()
+
+            Button {
+                bannerDismissed = true
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.accentGold.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.accentGold.opacity(0.2))
+                )
+        )
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - Section Header (#81)
+
+    private func sectionHeader(_ title: String, subtitle: String?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 11, weight: .heavy))
+                .foregroundStyle(Color.accentGold)
+                .tracking(0.5)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 6)
+        .padding(.top, 4)
+    }
+
+    // MARK: - Table Header (#78)
+
+    private var tableHeader: some View {
+        HStack(spacing: 0) {
+            // Checkbox placeholder
+            Color.clear.frame(width: 22)
+
+            Text("POS")
+                .frame(width: 36, alignment: .center)
+            Text("NAME")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 6)
+            Text("AGE")
+                .frame(width: 32, alignment: .center)
+            Text("OVR")
+                .frame(width: 32, alignment: .center)
+            Text("RD")
+                .frame(width: 36, alignment: .center)
+            // Space for badges
+            Color.clear.frame(width: 64)
+        }
+        .font(.system(size: 9, weight: .heavy))
+        .foregroundStyle(Color.textTertiary)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 4)
+    }
+
+    // MARK: - Prospect Row (#78, #79, #80)
+
     private func prospectRow(_ prospect: CollegeProspect) -> some View {
         let isSelected = selectedProspectIDs.contains(prospect.id)
         let canSelect = isSelected || selectedProspectIDs.count < remainingSlots
+        let isNeed = teamNeedPositions.contains(prospect.position)
 
         return Button {
             if isSelected {
@@ -138,64 +289,75 @@ struct InterviewSelectionView: View {
                 selectedProspectIDs.insert(prospect.id)
             }
         } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: 0) {
                 // Checkbox
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 18))
+                    .font(.system(size: 16))
                     .foregroundStyle(isSelected ? Color.accentGold : Color.textTertiary)
+                    .frame(width: 22)
 
-                // Prospect info
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(prospect.firstName) \(prospect.lastName)")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.textPrimary)
+                // POS badge
+                Text(prospect.position.rawValue)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.textPrimary)
+                    .frame(width: 32, height: 20)
+                    .background(RoundedRectangle(cornerRadius: 3).fill(positionColor(prospect.position)))
+                    .frame(width: 36)
 
-                    HStack(spacing: 6) {
-                        Text(prospect.position.rawValue)
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Color.accentGold)
+                // NAME
+                Text("\(prospect.firstName) \(prospect.lastName)")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 6)
 
-                        Text(prospect.college)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.textSecondary)
-                    }
-                }
+                // AGE
+                Text("\(prospect.age)")
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+                    .frame(width: 32, alignment: .center)
 
-                Spacer()
+                // OVR grade
+                Text(ovrGradeText(for: prospect))
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(gradeColor(ovrGradeText(for: prospect)))
+                    .frame(width: 32, alignment: .center)
 
-                // Draft projection
+                // #79: Draft projection as round
                 if let proj = prospect.draftProjection {
-                    VStack(spacing: 1) {
-                        Text("Proj")
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundStyle(Color.textTertiary)
-                        Text("#\(proj)")
-                            .font(.system(size: 13, weight: .bold).monospacedDigit())
-                            .foregroundStyle(Color.textPrimary)
-                    }
+                    Text("Rd \(proj)")
+                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Color.textSecondary)
+                        .frame(width: 36, alignment: .center)
+                } else {
+                    Color.clear.frame(width: 36)
                 }
 
-                // Scouted overall
-                if let ovr = prospect.scoutedOverall {
-                    VStack(spacing: 1) {
-                        Text("OVR")
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundStyle(Color.textTertiary)
-                        Text("\(ovr)")
-                            .font(.system(size: 13, weight: .bold).monospacedDigit())
-                            .foregroundStyle(overallColor(ovr))
+                // #80: Badges
+                HStack(spacing: 3) {
+                    if isNeed {
+                        Text("NEED")
+                            .font(.system(size: 7, weight: .heavy))
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.success))
+                    }
+
+                    if let fit = schemeFitLabel(for: prospect) {
+                        Text(fit)
+                            .font(.system(size: 7, weight: .heavy))
+                            .foregroundStyle(schemeFitColor(fit))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(schemeFitColor(fit).opacity(0.15)))
                     }
                 }
-
-                // Scout grade
-                if let grade = prospect.scoutGrade {
-                    Text(grade)
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(gradeColor(grade))
-                        .frame(width: 30)
-                }
+                .frame(width: 64, alignment: .trailing)
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -341,11 +503,65 @@ struct InterviewSelectionView: View {
         prospects = WeekAdvancer.currentDraftClass
     }
 
-    private func overallColor(_ ovr: Int) -> Color {
-        if ovr >= 80 { return Color.success }
-        if ovr >= 65 { return Color.accentGold }
-        if ovr >= 50 { return Color.warning }
-        return Color.danger
+    private func loadTeamData() {
+        guard let teamID = career.teamID else { return }
+        let playerDesc = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
+        teamRoster = (try? modelContext.fetch(playerDesc)) ?? []
+
+        let coachDesc = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        coaches = (try? modelContext.fetch(coachDesc)) ?? []
+    }
+
+    /// Returns the numeric OVR value for sorting/comparison.
+    private func ovrValue(for prospect: CollegeProspect) -> Int {
+        if let ovr = prospect.scoutedOverall { return ovr }
+        if let grade = prospect.scoutedOverallGrade {
+            // Convert grade midpoint rank back to approximate numeric value
+            return 40 + grade.midGrade.rank * 5
+        }
+        return 50 // default mid-range
+    }
+
+    /// Returns a letter grade string for display.
+    private func ovrGradeText(for prospect: CollegeProspect) -> String {
+        if let grade = prospect.scoutedOverallGrade {
+            return grade.midGrade.rawValue
+        }
+        if let ovr = prospect.scoutedOverall {
+            return LetterGrade.from(numericValue: ovr).rawValue
+        }
+        return "?"
+    }
+
+    /// Compute scheme fit label for a prospect based on team's coordinators.
+    private func schemeFitLabel(for prospect: CollegeProspect) -> String? {
+        guard prospect.scoutedOverall != nil || prospect.scoutedOverallGrade != nil else { return nil }
+        let oc = coaches.first(where: { $0.role == .offensiveCoordinator })
+        let dc = coaches.first(where: { $0.role == .defensiveCoordinator })
+
+        if prospect.position.side == .offense, let scheme = oc?.offensiveScheme {
+            return ProspectSchemeFitHelper.offensiveFit(prospect: prospect, scheme: scheme)
+        } else if prospect.position.side == .defense, let scheme = dc?.defensiveScheme {
+            return ProspectSchemeFitHelper.defensiveFit(prospect: prospect, scheme: scheme)
+        }
+        return nil
+    }
+
+    private func schemeFitColor(_ fit: String) -> Color {
+        switch fit {
+        case "Good": return Color.success
+        case "Fair": return Color.warning
+        case "Poor": return Color.danger
+        default: return Color.textTertiary
+        }
+    }
+
+    private func positionColor(_ position: Position) -> Color {
+        switch position.side {
+        case .offense: return Color.accentGold.opacity(0.25)
+        case .defense: return Color.accentBlue.opacity(0.25)
+        case .specialTeams: return Color.textTertiary.opacity(0.25)
+        }
     }
 
     private func gradeColor(_ grade: String) -> Color {
@@ -449,7 +665,7 @@ struct InterviewReportView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(Color.textSecondary)
                         if let proj = result.prospect.draftProjection {
-                            Text("Proj #\(proj)")
+                            Text("Rd \(proj)")
                                 .font(.system(size: 11, weight: .medium).monospacedDigit())
                                 .foregroundStyle(Color.textTertiary)
                         }

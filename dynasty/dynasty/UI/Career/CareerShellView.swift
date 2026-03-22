@@ -515,8 +515,8 @@ struct CareerShellView: View {
                 let scoutsSent = UserDefaults.standard.bool(forKey: "scoutsSentToCombine")
                 if !scoutsSent {
                     currentTasks[index].status = .todo
-                } else if currentTasks[index].status == .inProgress {
-                    // Visiting the scouting hub after scouts sent = reviewed
+                } else if UserDefaults.standard.bool(forKey: "combineResultsReviewed") {
+                    // User visited the Combine tab after scouts were sent
                     currentTasks[index].status = .done
                 }
 

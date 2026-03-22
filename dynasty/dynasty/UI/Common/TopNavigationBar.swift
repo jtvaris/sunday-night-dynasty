@@ -106,10 +106,12 @@ struct TopNavigationBar: View {
                         Image(systemName: bookmark.icon)
                             .font(.system(size: 16))
                         Text(bookmark.label)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: 9, weight: .medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                     }
                     .foregroundStyle(Color.textSecondary)
-                    .frame(minWidth: 48, minHeight: 44)
+                    .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
