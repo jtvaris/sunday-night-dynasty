@@ -3,6 +3,11 @@
 ## Open (ei vielä toteutettu)
 
 - [ ] CareerShellView: Wire up hasPendingTradeOffers when TradeOffer model exists (odottaa Trade-järjestelmää)
+- [ ] PlayerDetail: career stats from prior seasons (vaatii uuden PlayerSeasonStats-mallin + tallennuksen vuosittain)
+- [ ] PlayerDetail: performance trend rising/falling (vaatii season-over-season OVR-historian)
+- [ ] HireCoachView: salary spread — top 40% kalliimpia kuin halvimmat (laske bottom alaspäin LeagueGenerator.salaryForCoach:ssa)
+- [ ] HireCoachView: name column truncation iPadilla
+- [ ] HireCoachView: TOP badge tooltip / role-specific key attrs / personality filter / coach career history / win contribution
 
 ## Toteutettu 2026-04-29
 

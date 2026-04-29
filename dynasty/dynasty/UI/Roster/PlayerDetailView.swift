@@ -346,6 +346,17 @@ struct PlayerDetailView: View {
                 compactInfoPill(label: "Exp", value: player.yearsPro == 0 ? "R" : "\(player.yearsPro)yr", color: .textSecondary)
             }
 
+            // Morale impact tooltip — explains how the morale score affects gameplay (#40).
+            HStack(alignment: .top, spacing: 4) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.textTertiary)
+                Text(moraleImpactDescription)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if player.isInjured {
                 HStack(spacing: 4) {
                     Image(systemName: "cross.circle.fill")
@@ -377,8 +388,24 @@ struct PlayerDetailView: View {
                     color: player.contractYearsRemaining <= 1 ? .warning : .textPrimary
                 )
                 compactInfoPill(label: "Salary", value: formattedSalary, color: .textSecondary)
+                compactInfoPill(label: "Cap %", value: capPercentageText, color: capPercentageColor)
                 compactInfoPill(label: "Market", value: estimatedMarketValue, color: marketValueComparison.color)
                 compactInfoPill(label: "Value", value: marketValueComparison.label, color: marketValueComparison.color)
+            }
+
+            // Market comparables strip — contextualizes the player's salary against
+            // top-N peers at the same position (#39).
+            if let comparables = marketComparablesText {
+                HStack(spacing: 4) {
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(comparables)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
             }
 
             if player.isFranchiseTagged {
@@ -392,6 +419,38 @@ struct PlayerDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Player's salary as a percentage of the league cap (#38). Uses 2026 cap of $260M.
+    /// Falls back to "—" when salary is zero.
+    private var capPercentageText: String {
+        guard player.annualSalary > 0 else { return "—" }
+        let capK = 260_000  // $260M 2026 NFL salary cap, in thousands
+        let pct = Double(player.annualSalary) / Double(capK) * 100.0
+        return String(format: "%.1f%%", pct)
+    }
+
+    private var capPercentageColor: Color {
+        let capK = 260_000
+        let pct = Double(player.annualSalary) / Double(capK) * 100.0
+        if pct >= 12 { return .danger }
+        if pct >= 7  { return .warning }
+        return .textSecondary
+    }
+
+    /// Top-paid peers at this position for market context (#39).
+    /// Returns text like "Top 5 QB: $30-55M".
+    private var marketComparablesText: String? {
+        let peers = allLeaguePlayers
+            .filter { $0.position == player.position && $0.id != player.id && $0.annualSalary > 0 }
+            .sorted { $0.annualSalary > $1.annualSalary }
+            .prefix(5)
+        guard peers.count >= 2 else { return nil }
+        let salaries = peers.map { $0.annualSalary }
+        guard let lo = salaries.last, let hi = salaries.first else { return nil }
+        let loM = Double(lo) / 1_000.0
+        let hiM = Double(hi) / 1_000.0
+        return String(format: "Top 5 %@: $%.1fM–$%.1fM", player.position.rawValue, loM, hiM)
     }
 
     private func compactInfoPill(label: String, value: String, color: Color) -> some View {
@@ -610,8 +669,48 @@ struct PlayerDetailView: View {
                 }
             }
             .padding(.vertical, 4)
+
+            // "If this player leaves" replacement preview (#37) — shows the next-best player
+            // on the same team at the same position so the user understands the depth-chart
+            // impact of cutting / trading.
+            if let replacement = replacementPlayerInfo {
+                Divider().overlay(Color.surfaceBorder)
+                HStack(spacing: 8) {
+                    Image(systemName: "person.fill.questionmark")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("If \(player.lastName) leaves")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.textSecondary)
+                        Text(replacement)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    Spacer()
+                }
+            }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// Next-best player on the same team at the same position, used for the
+    /// "if cut/traded" depth-chart preview (#37).
+    /// Returns text like "Smith starts at QB — 71 OVR (-13)".
+    private var replacementPlayerInfo: String? {
+        guard let teamID = player.teamID else { return nil }
+        let teammates = allLeaguePlayers
+            .filter { $0.teamID == teamID && $0.position == player.position && $0.id != player.id }
+            .sorted { $0.overall > $1.overall }
+        guard let next = teammates.first else {
+            return "No backup on roster — would need free agent / draft pick"
+        }
+        let delta = next.overall - player.overall
+        let deltaText: String
+        if delta > 0 { deltaText = "+\(delta)" }
+        else if delta < 0 { deltaText = "\(delta)" }
+        else { deltaText = "±0" }
+        return "\(next.lastName) starts at \(player.position.rawValue) — \(next.overall) OVR (\(deltaText))"
     }
 
     private func tradeValueFactorRow(label: String, detail: String, positive: Bool) -> some View {
@@ -1224,6 +1323,19 @@ struct PlayerDetailView: View {
 
     private var schemeFitSection: some View {
         Section("Scheme Fit") {
+            // Best-fit scheme call-out (#42) — derived from the player's highest familiarity entry.
+            if let best = bestSchemeFit {
+                LabeledContent("Best Scheme") {
+                    HStack(spacing: 6) {
+                        Text(best.scheme)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.accentGold)
+                        Text("\(best.familiarity)%")
+                            .font(.system(size: 11, weight: .medium).monospacedDigit())
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+            }
             LabeledContent("Position Group") {
                 Text(positionGroupName)
                     .foregroundStyle(Color.textSecondary)
@@ -1252,6 +1364,14 @@ struct PlayerDetailView: View {
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// Highest-familiarity scheme for the player, used in Scheme Fit recommendation.
+    /// Returns nil when the player has no scheme familiarity data.
+    private var bestSchemeFit: (scheme: String, familiarity: Int)? {
+        let entries = player.schemeFamiliarity.filter { $0.value > 0 }
+        guard let top = entries.max(by: { $0.value < $1.value }) else { return nil }
+        return (scheme: top.key, familiarity: top.value)
     }
 
     // MARK: - Grid Attribute Sections (iPad / landscape)
@@ -1480,6 +1600,22 @@ struct PlayerDetailView: View {
         case 70..<85: return "face.smiling"
         case 55..<70: return "face.dashed"
         default:    return "face.dashed.fill"
+        }
+    }
+
+    /// Plain-language morale impact (#40). Helps the user understand *why* morale matters.
+    private var moraleImpactDescription: String {
+        switch player.morale {
+        case 85...:
+            return "Energized — small in-game performance bonus, more likely to extend long-term."
+        case 70..<85:
+            return "Content — performs to expectations, no extra friction in negotiations."
+        case 55..<70:
+            return "Neutral — no boost; expect harder-line contract demands."
+        case 40..<55:
+            return "Unhappy — minor performance penalty; risk of locker room drama."
+        default:
+            return "Disgruntled — clear performance penalty; may demand a trade or hold out."
         }
     }
 
