@@ -11,13 +11,17 @@ struct MockDraftView: View {
     @State private var selectedRound: Int = 1
     @State private var isLoading: Bool = true
 
+    // MARK: - Performance caches
+    @State private var cachedStrategyRecommendation: String = ""
+    @State private var cachedTargetAvailability: [TargetAvailabilityInfo] = []
+    @State private var cachedTradeHints: [TradeHint] = []
+    @State private var cachedPicksForRound: [ScoutingEngine.MockDraftPick] = []
+
     private var mockDraft: [ScoutingEngine.MockDraftPick] {
         WeekAdvancer.currentMockDraft
     }
 
-    private var picksForRound: [ScoutingEngine.MockDraftPick] {
-        mockDraft.filter { $0.round == selectedRound }
-    }
+    private var picksForRound: [ScoutingEngine.MockDraftPick] { cachedPicksForRound }
 
     private var availableRounds: [Int] {
         Array(Set(mockDraft.map { $0.round })).sorted()
@@ -50,7 +54,9 @@ struct MockDraftView: View {
     }
 
     /// Strategy recommendation based on roster strength and needs.
-    private var strategyRecommendation: String {
+    private var strategyRecommendation: String { cachedStrategyRecommendation }
+
+    private func computeStrategyRecommendation() -> String {
         guard let teamID = career.teamID else { return "" }
         let teamPlayers = players.filter { $0.teamID == teamID }
         guard !teamPlayers.isEmpty else { return "" }
@@ -73,9 +79,10 @@ struct MockDraftView: View {
         } else if let weakest, weakest.value < 58 {
             // Check if quality prospects at that position exist after user's pick
             let userFirstPick = mockDraft.first { $0.teamAbbreviation == userTeamAbbreviation }?.pickNumber ?? 32
-            let laterProspectsAtNeed = picksForRound.filter { pick in
+            let prospectByID = Dictionary(uniqueKeysWithValues: prospects.map { ($0.id, $0) })
+            let laterProspectsAtNeed = cachedPicksForRound.filter { pick in
                 pick.pickNumber > userFirstPick &&
-                prospects.first { $0.id == pick.prospectID }?.position == weakest.key
+                prospectByID[pick.prospectID]?.position == weakest.key
             }
             if laterProspectsAtNeed.isEmpty {
                 return "Strategy: Address \(weakest.key.rawValue) need -- no quality \(weakest.key.rawValue) after your pick"
@@ -85,6 +92,14 @@ struct MockDraftView: View {
         } else {
             return "Strategy: Balance BPA with needs -- roster has some gaps"
         }
+    }
+
+    /// Recomputes all derived caches. Called from .task and on dependency changes.
+    private func refreshCaches() {
+        cachedPicksForRound = mockDraft.filter { $0.round == selectedRound }
+        cachedStrategyRecommendation = computeStrategyRecommendation()
+        cachedTargetAvailability = selectedRound == 1 ? computeTargetAvailability() : []
+        cachedTradeHints = selectedRound == 1 ? computeTradeHints() : []
     }
 
     var body: some View {
@@ -199,8 +214,11 @@ struct MockDraftView: View {
         }
         .task {
             loadData()
+            refreshCaches()
             isLoading = false
         }
+        .onChange(of: selectedRound) { _, _ in refreshCaches() }
+        .onChange(of: players.count) { _, _ in refreshCaches() }
     }
 
     // MARK: - Header
@@ -262,10 +280,7 @@ struct MockDraftView: View {
 
     // MARK: - Target Availability Section
 
-    private var targetAvailabilityData: [TargetAvailabilityInfo] {
-        guard selectedRound == 1 else { return [] }
-        return computeTargetAvailability()
-    }
+    private var targetAvailabilityData: [TargetAvailabilityInfo] { cachedTargetAvailability }
 
     @ViewBuilder
     private var targetAvailabilitySection: some View {
@@ -285,10 +300,7 @@ struct MockDraftView: View {
 
     // MARK: - Trade Hints Section
 
-    private var tradeHintsData: [TradeHint] {
-        guard selectedRound == 1 else { return [] }
-        return computeTradeHints()
-    }
+    private var tradeHintsData: [TradeHint] { cachedTradeHints }
 
     @ViewBuilder
     private var tradeHintsSection: some View {

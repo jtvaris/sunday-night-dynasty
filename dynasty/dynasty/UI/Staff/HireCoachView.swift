@@ -30,6 +30,13 @@ struct HireCoachView: View {
     /// #271: Track candidates who rejected offers — shown grayed out with "Signed elsewhere"
     @State private var rejectedCandidates: Set<UUID> = []
 
+    // MARK: - Performance caches
+    // Recomputed via refreshCaches() on dependency changes — avoids per-render O(n log n) sorts in body.
+    @State private var cachedSortedCandidates: [Coach] = []
+    @State private var cachedTop3IDs: Set<UUID> = []
+    @State private var cachedAvailableSchemes: [String] = ["All"]
+    @State private var cachedCurrentCoachOVR: Int?
+
     /// The team's head coach, used to determine current team scheme for fit indicator.
     private var teamHeadCoach: Coach? {
         allCoaches.first { $0.teamID == teamID && $0.role == .headCoach }
@@ -82,21 +89,10 @@ struct HireCoachView: View {
     }
 
     /// Fix #56: Top-3 candidate indices in the current sorted list.
-    private var top3IDs: Set<UUID> {
-        // Rank by OVR regardless of current sort
-        let byOVR = filteredCandidates.sorted { coachOverall($0) > coachOverall($1) }
-        return Set(byOVR.prefix(3).map { $0.id })
-    }
+    private var top3IDs: Set<UUID> { cachedTop3IDs }
 
     /// Available scheme names for the filter dropdown (Fix #58).
-    private var availableSchemes: [String] {
-        var schemes = Set<String>()
-        for c in candidates {
-            if let o = c.offensiveScheme { schemes.insert(o.displayName) }
-            if let d = c.defensiveScheme { schemes.insert(d.displayName) }
-        }
-        return ["All"] + schemes.sorted()
-    }
+    private var availableSchemes: [String] { cachedAvailableSchemes }
 
     // MARK: - Filtered & Sorted Candidates
 
@@ -112,21 +108,40 @@ struct HireCoachView: View {
         return list
     }
 
-    private var sortedCandidates: [Coach] {
-        let list = filteredCandidates
+    private var sortedCandidates: [Coach] { cachedSortedCandidates }
+
+    /// Recomputes all derived caches. Called when dependencies change.
+    private func refreshCaches() {
+        let filtered = filteredCandidates
+
         let sorted: [Coach]
         switch sortColumn {
-        case .name:    sorted = list.sorted { $0.lastName < $1.lastName }
-        case .age:     sorted = list.sorted { $0.age < $1.age }
-        case .scheme:  sorted = list.sorted { schemeLabel($0) < schemeLabel($1) }
-        case .ovr:     sorted = list.sorted { coachOverall($0) > coachOverall($1) }
-        case .play:    sorted = list.sorted { $0.playCalling > $1.playCalling }
-        case .dev:     sorted = list.sorted { $0.playerDevelopment > $1.playerDevelopment }
-        case .game:    sorted = list.sorted { $0.gamePlanning > $1.gamePlanning }
-        case .salary:  sorted = list.sorted { $0.salary < $1.salary }
-        case .value:   sorted = list.sorted { valueRatio($0) > valueRatio($1) }
+        case .name:    sorted = filtered.sorted { $0.lastName < $1.lastName }
+        case .age:     sorted = filtered.sorted { $0.age < $1.age }
+        case .scheme:  sorted = filtered.sorted { schemeLabel($0) < schemeLabel($1) }
+        case .ovr:     sorted = filtered.sorted { coachOverall($0) > coachOverall($1) }
+        case .play:    sorted = filtered.sorted { $0.playCalling > $1.playCalling }
+        case .dev:     sorted = filtered.sorted { $0.playerDevelopment > $1.playerDevelopment }
+        case .game:    sorted = filtered.sorted { $0.gamePlanning > $1.gamePlanning }
+        case .salary:  sorted = filtered.sorted { $0.salary < $1.salary }
+        case .value:   sorted = filtered.sorted { valueRatio($0) > valueRatio($1) }
         }
-        return sortAscending ? sorted.reversed() : sorted
+        cachedSortedCandidates = sortAscending ? sorted.reversed() : sorted
+
+        // Top-3 by OVR among filtered candidates (regardless of sort column)
+        let byOVR = filtered.sorted { coachOverall($0) > coachOverall($1) }
+        cachedTop3IDs = Set(byOVR.prefix(3).map { $0.id })
+
+        // Available scheme names — depends only on candidates list
+        var schemes = Set<String>()
+        for c in candidates {
+            if let o = c.offensiveScheme { schemes.insert(o.displayName) }
+            if let d = c.defensiveScheme { schemes.insert(d.displayName) }
+        }
+        cachedAvailableSchemes = ["All"] + schemes.sorted()
+
+        // Current-coach OVR cache, used by candidateRow to display delta without per-row recompute.
+        cachedCurrentCoachOVR = currentCoach.map { coachOverall($0) }
     }
 
     var body: some View {
@@ -191,8 +206,12 @@ struct HireCoachView: View {
         .navigationTitle("Hire \(role.displayName)")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .onAppear {
+        .task {
             if candidates.isEmpty {
+                // Yield first so the navigation transition completes before we block on generation.
+                // CoachingEngine.generateCoachCandidates is @MainActor (touches SwiftData PersistentModels)
+                // so we can't detach — but yielding lets the spinner / nav animation render first.
+                await Task.yield()
                 let count = Int.random(in: 20...30)
                 // #267: Pass team data so candidate quality scales with budget/prestige
                 candidates = CoachingEngine.generateCoachCandidates(
@@ -203,7 +222,14 @@ struct HireCoachView: View {
                     teamReputation: teamReputation
                 )
             }
+            refreshCaches()
         }
+        .onChange(of: candidates.count) { _, _ in refreshCaches() }
+        .onChange(of: sortColumn) { _, _ in refreshCaches() }
+        .onChange(of: sortAscending) { _, _ in refreshCaches() }
+        .onChange(of: showAffordableOnly) { _, _ in refreshCaches() }
+        .onChange(of: schemeFilter) { _, _ in refreshCaches() }
+        .onChange(of: allCoaches.count) { _, _ in refreshCaches() }
         // #157: Full screen cover on iPad for max space
         .fullScreenCover(item: $selectedCandidate) { candidate in
             CandidateDetailSheet(
@@ -436,8 +462,8 @@ struct HireCoachView: View {
         let ovr = coachOverall(candidate)
         let isTop3 = top3IDs.contains(candidate.id)
         let val = valueScore(candidate)
-        // Fix #63: OVR delta vs current coach
-        let ovrDelta: Int? = currentCoach.map { coachOverall(candidate) - coachOverall($0) }
+        // Fix #63: OVR delta vs current coach (cached current OVR — avoids per-row recompute)
+        let ovrDelta: Int? = cachedCurrentCoachOVR.map { ovr - $0 }
 
         return Button {
             if !isRejected { selectedCandidate = candidate }
@@ -720,6 +746,7 @@ struct HireCoachView: View {
     }
 
     /// Fix #67: Candidate ranking by OVR among filtered list.
+    /// Called once when the detail sheet opens — no longer per-row.
     private func candidateRank(for candidate: Coach) -> Int {
         let byOVR = filteredCandidates.sorted { coachOverall($0) > coachOverall($1) }
         if let idx = byOVR.firstIndex(where: { $0.id == candidate.id }) {

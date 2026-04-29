@@ -33,6 +33,9 @@ struct BigBoardView: View {
     @State private var cachedTieredBoard: [(tier: Int, prospects: [CollegeProspect])] = []
     @State private var cachedOrderedBoard: [CollegeProspect] = []
     @State private var cachedCustomOrderedBoard: [CollegeProspect] = []
+    /// O(1) rank lookup by prospect ID — avoids per-row firstIndex(where:) which would be O(n²) overall.
+    @State private var cachedRankMap: [UUID: Int] = [:]
+    @State private var cachedCustomRankMap: [UUID: Int] = [:]
 
     // MARK: - Prospect Notes Storage
 
@@ -406,9 +409,21 @@ struct BigBoardView: View {
     // MARK: - Body
 
     private func refreshCachedBoard() {
-        cachedOrderedBoard = orderedBoard
-        cachedCustomOrderedBoard = customOrderedBoard
+        let ordered = orderedBoard
+        let custom = customOrderedBoard
+        cachedOrderedBoard = ordered
+        cachedCustomOrderedBoard = custom
         cachedTieredBoard = tieredBoard
+        // Build O(1) rank lookup tables once per refresh.
+        var rankMap: [UUID: Int] = [:]
+        rankMap.reserveCapacity(ordered.count)
+        for (idx, p) in ordered.enumerated() { rankMap[p.id] = idx + 1 }
+        cachedRankMap = rankMap
+
+        var customMap: [UUID: Int] = [:]
+        customMap.reserveCapacity(custom.count)
+        for (idx, p) in custom.enumerated() { customMap[p.id] = idx + 1 }
+        cachedCustomRankMap = customMap
     }
 
     var body: some View {
@@ -563,7 +578,7 @@ struct BigBoardView: View {
                                     moveCustomBoard(from: from, to: to)
                                 }
                             } header: {
-                                Label("My Board (\(customOrderedBoard.count))", systemImage: "person.fill")
+                                Label("My Board (\(cachedCustomOrderedBoard.count))", systemImage: "person.fill")
                                     .font(.caption.weight(.bold))
                                     .foregroundStyle(Color.accentGold)
                                     .textCase(nil)
@@ -1025,7 +1040,7 @@ struct BigBoardView: View {
             }
 
             // Your #1 vs Media #1 comparison (#15)
-            if let myTop = orderedBoard.first, let mediaTop = mediaTopProspect {
+            if let myTop = cachedOrderedBoard.first, let mediaTop = mediaTopProspect {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Image(systemName: "arrow.left.arrow.right")
@@ -1054,7 +1069,7 @@ struct BigBoardView: View {
             }
 
             // Available at your pick probability (#18)
-            if let myTop = orderedBoard.first,
+            if let myTop = cachedOrderedBoard.first,
                let prob = availableAtPickProbability(for: myTop),
                let firstPick = teamDraftPicks.filter({ !$0.isComplete }).sorted(by: { $0.pickNumber < $1.pickNumber }).first {
                 HStack(spacing: 8) {
@@ -1079,7 +1094,7 @@ struct BigBoardView: View {
 
     private func tierHeader(tier: Int, count: Int) -> some View {
         let tierIndex = min(tier - 1, Self.tierNames.count - 1)
-        let tierProspects = tieredBoard.first(where: { $0.tier == tier })?.prospects ?? []
+        let tierProspects = cachedTieredBoard.first(where: { $0.tier == tier })?.prospects ?? []
         let needCount = tierProspects.filter { teamNeedPositions.contains($0.position) }.count
         let starCount = tierProspects.filter { isOnWatchlist($0.id) }.count
         return VStack(alignment: .leading, spacing: 3) {
@@ -1356,21 +1371,15 @@ struct BigBoardView: View {
     // MARK: - Helpers
 
     private func rankFor(_ prospect: CollegeProspect) -> Int {
-        if let index = orderedBoard.firstIndex(where: { $0.id == prospect.id }) {
-            return index + 1
-        }
-        return 0
+        cachedRankMap[prospect.id] ?? 0
     }
 
     private func customRankFor(_ prospect: CollegeProspect) -> Int {
-        if let index = customOrderedBoard.firstIndex(where: { $0.id == prospect.id }) {
-            return index + 1
-        }
-        return 0
+        cachedCustomRankMap[prospect.id] ?? 0
     }
 
     private func moveCustomBoard(from: IndexSet, to: Int) {
-        var list = customOrderedBoard.map { $0.id }
+        var list = cachedCustomOrderedBoard.map { $0.id }
         list.move(fromOffsets: from, toOffset: to)
         saveCustomBoardOrder(list)
     }
@@ -1408,7 +1417,7 @@ struct BigBoardView: View {
     }
 
     private func moveTierProspects(tier: Int, from: IndexSet, to: Int) {
-        let tierProspects = tieredBoard.first(where: { $0.tier == tier })?.prospects ?? []
+        let tierProspects = cachedTieredBoard.first(where: { $0.tier == tier })?.prospects ?? []
         var tierIDs = tierProspects.map { $0.id }
         tierIDs.move(fromOffsets: from, toOffset: to)
 
@@ -1418,7 +1427,7 @@ struct BigBoardView: View {
         fullOrder.removeAll { oldTierIDs.contains($0) }
 
         // Find insertion point: after the last ID from the previous tier.
-        let previousTierIDs = tieredBoard
+        let previousTierIDs = cachedTieredBoard
             .filter { $0.tier < tier }
             .flatMap { $0.prospects.map { $0.id } }
         let insertIndex: Int

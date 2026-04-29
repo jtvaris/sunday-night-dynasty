@@ -3,6 +3,20 @@
 ## Open (ei vielä toteutettu)
 
 - [ ] CareerShellView: Wire up hasPendingTradeOffers when TradeOffer model exists (odottaa Trade-järjestelmää)
+
+## Toteutettu 2026-04-29
+
+### Performance: Draft & Hire Coach optimisointi
+- [x] HireCoachView: onAppear → task() async generation (Task.yield ennen blokkaavaa generointia)
+- [x] HireCoachView: cached top3IDs, sortedCandidates, availableSchemes (poistettu O(n²) per-row sort)
+- [x] HireCoachView: cached currentCoachOVR (poistettu per-row OVR-laskenta)
+- [x] BigBoardView: O(1) rank-map (cachedRankMap) — rankFor() O(n) → O(1)
+- [x] BigBoardView: kaikki computed pipeline -kutsut (orderedBoard, customOrderedBoard, tieredBoard) bodyssä korvattu cache-versioilla
+- [x] MockDraftView: cached strategyRecommendation, targetAvailability, tradeHints, picksForRound
+- [x] DraftOrderView: cached picksByRound, teamLookup, abbreviationLookup, userPickNumbers, userTotalPicks
+
+## Toteutettu (agentit 1-13, 2026-03-23)
+
 - [x] Game: Kaikki prospect-listat - oma arvosana/tähti (context menu, UserProspectGradeStore, badge kaikissa näkymissä)
 - [x] Game: Draft Order -näkymä (7 kierrosta, omat pickit korostettu, traded picks, pick value, team records)
 - [x] Bug: Big Board QB-dominanssi korjattu (0.85 + 0.15×posValue + max 4 per positio per tier)

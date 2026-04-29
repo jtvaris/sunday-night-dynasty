@@ -10,33 +10,38 @@ struct DraftOrderView: View {
     @State private var expandedRounds: Set<Int> = [1]
     @State private var isLoading: Bool = true
 
+    // MARK: - Performance caches
+    @State private var cachedPicksByRound: [(round: Int, picks: [DraftPick])] = []
+    @State private var cachedTeamLookup: [UUID: Team] = [:]
+    @State private var cachedAbbreviationLookup: [UUID: String] = [:]
+    @State private var cachedUserPickNumbers: Set<Int> = []
+    @State private var cachedUserTotalPicks: Int = 0
+
     private var userTeamID: UUID? { career.teamID }
 
-    private var teamLookup: [UUID: Team] {
-        Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
-    }
+    private var teamLookup: [UUID: Team] { cachedTeamLookup }
 
-    private var abbreviationLookup: [UUID: String] {
-        Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0.abbreviation) })
-    }
+    private var abbreviationLookup: [UUID: String] { cachedAbbreviationLookup }
 
     /// Group draft picks by round.
-    private var picksByRound: [(round: Int, picks: [DraftPick])] {
+    private var picksByRound: [(round: Int, picks: [DraftPick])] { cachedPicksByRound }
+
+    /// User's pick numbers for highlighting.
+    private var userPickNumbers: Set<Int> { cachedUserPickNumbers }
+
+    /// Total picks the user has.
+    private var userTotalPicks: Int { cachedUserTotalPicks }
+
+    private func refreshCaches() {
+        cachedTeamLookup = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
+        cachedAbbreviationLookup = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0.abbreviation) })
         let grouped = Dictionary(grouping: draftPicks) { $0.round }
-        return grouped.keys.sorted().compactMap { round in
+        cachedPicksByRound = grouped.keys.sorted().compactMap { round in
             guard let picks = grouped[round] else { return nil }
             return (round: round, picks: picks.sorted { $0.pickNumber < $1.pickNumber })
         }
-    }
-
-    /// User's pick numbers for highlighting.
-    private var userPickNumbers: Set<Int> {
-        Set(draftPicks.filter { $0.currentTeamID == userTeamID }.map { $0.pickNumber })
-    }
-
-    /// Total picks the user has.
-    private var userTotalPicks: Int {
-        draftPicks.filter { $0.currentTeamID == userTeamID && !$0.isComplete }.count
+        cachedUserPickNumbers = Set(draftPicks.filter { $0.currentTeamID == userTeamID }.map { $0.pickNumber })
+        cachedUserTotalPicks = draftPicks.filter { $0.currentTeamID == userTeamID && !$0.isComplete }.count
     }
 
     var body: some View {
@@ -104,6 +109,7 @@ struct DraftOrderView: View {
         }
         .task {
             loadData()
+            refreshCaches()
             isLoading = false
         }
     }
