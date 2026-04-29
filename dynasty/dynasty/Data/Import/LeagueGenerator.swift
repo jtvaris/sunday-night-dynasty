@@ -452,19 +452,74 @@ enum LeagueGenerator {
 
         let personality = PersonalityArchetype.allCases.randomElement()!
 
-        // Temporary attributes to compute OVR for salary calculation
-        let tmpPlayCalling = Int.random(in: 35...90)
-        let tmpPlayerDev   = Int.random(in: 35...90)
-        let tmpReputation  = Int.random(in: 30...85)
-        let tmpAdaptability = Int.random(in: 30...85)
-        let tmpGamePlanning = Int.random(in: 35...90)
-        let tmpScouting     = Int.random(in: 30...85)
-        let tmpRecruiting   = Int.random(in: 30...85)
-        let tmpMotivation   = Int.random(in: 35...90)
-        let tmpDiscipline   = Int.random(in: 30...85)
-        let tmpMedia        = Int.random(in: 30...85)
-        let tmpContract     = Int.random(in: 30...80)
-        let tmpMorale       = Int.random(in: 35...85)
+        // Role-aware attribute generation: proper hierarchy
+        // HC: highest overall, Coordinators: mid, Position coaches: specialists
+        let goodFloor: Int
+        let goodCeiling: Int
+        let weakFloor: Int
+        let weakCeiling: Int
+        let goodCount: Int
+        let isPositionCoach: Bool
+
+        switch role {
+        case .headCoach:
+            goodFloor = 70; goodCeiling = 95; weakFloor = 55; weakCeiling = 70
+            goodCount = Int.random(in: 5...8)
+            isPositionCoach = false
+        case .assistantHeadCoach:
+            goodFloor = 68; goodCeiling = 90; weakFloor = 50; weakCeiling = 65
+            goodCount = Int.random(in: 4...6)
+            isPositionCoach = false
+        case .offensiveCoordinator, .defensiveCoordinator:
+            goodFloor = 65; goodCeiling = 90; weakFloor = 50; weakCeiling = 65
+            goodCount = Int.random(in: 4...6)
+            isPositionCoach = false
+        case .specialTeamsCoordinator:
+            goodFloor = 62; goodCeiling = 85; weakFloor = 45; weakCeiling = 58
+            goodCount = Int.random(in: 3...5)
+            isPositionCoach = false
+        default: // Position coaches: specialists
+            goodFloor = 70; goodCeiling = 85; weakFloor = 40; weakCeiling = 60
+            goodCount = Int.random(in: 1...5)
+            isPositionCoach = true
+        }
+
+        let allAttrNames = ["playCalling", "playerDevelopment", "reputation", "adaptability",
+                            "gamePlanning", "scoutingAbility", "recruiting", "motivation",
+                            "discipline", "mediaHandling", "contractNegotiation", "moraleInfluence"]
+        let focusAttrs = role.focusAttributes
+        var goodIndices = Set<Int>()
+
+        if isPositionCoach {
+            for (i, name) in allAttrNames.enumerated() {
+                if focusAttrs.contains(name) { goodIndices.insert(i) }
+            }
+        }
+        var remaining = Array(0..<12).filter { !goodIndices.contains($0) }
+        remaining.shuffle()
+        let slotsNeeded = max(0, goodCount - goodIndices.count)
+        for i in 0..<min(slotsNeeded, remaining.count) {
+            goodIndices.insert(remaining[i])
+        }
+
+        func genAttr(_ index: Int) -> Int {
+            goodIndices.contains(index)
+                ? Int.random(in: goodFloor...goodCeiling)
+                : Int.random(in: weakFloor...weakCeiling)
+        }
+
+        let tmpPlayCalling = genAttr(0)
+        let tmpPlayerDev   = genAttr(1)
+        let tmpReputation  = genAttr(2)
+        let tmpAdaptability = genAttr(3)
+        let tmpGamePlanning = genAttr(4)
+        let tmpScouting     = genAttr(5)
+        let tmpRecruiting   = genAttr(6)
+        let tmpMotivation   = genAttr(7)
+        let tmpDiscipline   = genAttr(8)
+        let tmpMedia        = genAttr(9)
+        let tmpContract     = genAttr(10)
+        let tmpMorale       = genAttr(11)
 
         let ovr = (tmpPlayCalling + tmpPlayerDev + tmpReputation + tmpAdaptability
             + tmpGamePlanning + tmpScouting + tmpRecruiting + tmpMotivation
@@ -499,6 +554,9 @@ enum LeagueGenerator {
             yearsExperience: experience
         )
         coach.background = CoachingEngine.generateBackground(for: coach)
+        // Pre-existing staff: treat as hired before career starts
+        coach.hireSeasonYear = 2025
+        coach.contractYearsRemaining = Int.random(in: 1...4)
         return coach
     }
 

@@ -11,6 +11,9 @@ struct CombineResultsView: View {
     @State private var sortAscending: Bool = true
     @State private var mediaPopoverProspectID: UUID?
     @State private var teamPlayers: [Player] = []
+    @ObservedObject private var userGradeStore = UserProspectGradeStore.shared
+    @State private var isLoading: Bool = true
+    @State private var cachedSortedProspects: [CollegeProspect] = []
 
     // MARK: - Filtered & Sorted Data
 
@@ -107,10 +110,25 @@ struct CombineResultsView: View {
         }
     }
 
+    private func refreshCachedData() {
+        cachedSortedProspects = sortedProspects
+    }
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
+            if isLoading {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .scaleEffect(1.5)
+                        .tint(Color.accentGold)
+                    Text("Loading Combine Results...")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+            } else {
             VStack(spacing: 0) {
                 headerBar
                     .padding(.horizontal, 20)
@@ -143,7 +161,7 @@ struct CombineResultsView: View {
 
                             ScrollView(.vertical, showsIndicators: true) {
                                 LazyVStack(spacing: 0) {
-                                    ForEach(Array(sortedProspects.enumerated()), id: \.element.id) { index, prospect in
+                                    ForEach(Array(cachedSortedProspects.enumerated()), id: \.element.id) { index, prospect in
                                         NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
                                             combineRow(index: index + 1, prospect: prospect)
                                                 .padding(.horizontal, 16)
@@ -151,6 +169,9 @@ struct CombineResultsView: View {
                                                 .background(index % 2 == 0 ? Color.backgroundPrimary : Color.backgroundSecondary.opacity(0.5))
                                         }
                                         .buttonStyle(.plain)
+                                        .contextMenu {
+                                            ProspectGradeContextMenu(prospectID: prospect.id)
+                                        }
 
                                         Divider().overlay(Color.surfaceBorder.opacity(0.5))
                                     }
@@ -160,8 +181,16 @@ struct CombineResultsView: View {
                     }
                 }
             }
+            } // end else (not loading)
         }
-        .onAppear { loadTeamPlayers() }
+        .task {
+            loadTeamPlayers()
+            refreshCachedData()
+            isLoading = false
+        }
+        .onChange(of: positionFilter) { _, _ in refreshCachedData() }
+        .onChange(of: sortColumn) { _, _ in refreshCachedData() }
+        .onChange(of: sortAscending) { _, _ in refreshCachedData() }
     }
 
     // MARK: - Header Bar
@@ -253,15 +282,17 @@ struct CombineResultsView: View {
             }
 
             VStack(spacing: 1) {
-                Text(prospect.preCombineGrade ?? "--")
-                    .font(.system(size: 9))
-                    .foregroundStyle(Color.textTertiary)
+                // New (current) grade on top — prominent
+                Text(prospect.scoutGrade ?? "--")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(isRiser ? Color.success : Color.danger)
                 Image(systemName: isRiser ? "arrow.up" : "arrow.down")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(isRiser ? Color.success : Color.danger)
-                Text(prospect.scoutGrade ?? "--")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(isRiser ? Color.success : Color.danger)
+                // Old (pre-combine) grade below — dimmed
+                Text(prospect.preCombineGrade ?? "--")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.textTertiary)
             }
         }
         .padding(.horizontal, 10)
@@ -287,7 +318,7 @@ struct CombineResultsView: View {
             sortableHeader("Rank", column: .rank, width: 42)
             sortableHeader("Name", column: .name, width: 140, alignment: .leading)
             sortableHeader("Pos", column: .position, width: 44)
-            sortableHeader("GRD", column: .grade, width: 44)
+            sortableHeader("GRD", column: .grade, width: 54)
             sortableHeader("Proj", column: .projection, width: 44)
             sortableHeader("College", column: .college, width: 110, alignment: .leading)
             sortableHeader("40yd", column: .fortyYard, width: 60)
@@ -329,16 +360,9 @@ struct CombineResultsView: View {
 
     private func combineRow(index: Int, prospect: CollegeProspect) -> some View {
         HStack(spacing: 0) {
-            // Star / watchlist toggle
-            Button {
-                toggleWatchlist(prospect)
-            } label: {
-                Image(systemName: prospect.prospectFlag != .none ? "star.fill" : "star")
-                    .font(.caption)
-                    .foregroundStyle(prospect.prospectFlag != .none ? Color.accentGold : Color.textTertiary)
-                    .frame(width: 30)
-            }
-            .buttonStyle(.plain)
+            // Star toggle using UserProspectGradeStore
+            ProspectStarButton(prospectID: prospect.id)
+                .frame(width: 44)
 
             // Rank
             Text("\(index)")
@@ -352,6 +376,8 @@ struct CombineResultsView: View {
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
+
+                UserGradeBadge(prospectID: prospect.id)
 
                 if prospect.combineMediaMention != nil {
                     Image(systemName: "megaphone.fill")
@@ -387,11 +413,13 @@ struct CombineResultsView: View {
                 .background(positionColor(for: prospect), in: RoundedRectangle(cornerRadius: 3))
                 .frame(width: 44)
 
-            // GRD column
-            Text(gradeDisplayText(for: prospect))
-                .font(.caption.weight(.bold))
-                .foregroundStyle(gradeDisplayColor(for: prospect))
-                .frame(width: 44)
+            // GRD column - dual grade display
+            DualGradeDisplay(
+                prospectID: prospect.id,
+                scoutGradeText: gradeDisplayText(for: prospect),
+                scoutGradeColor: gradeDisplayColor(for: prospect)
+            )
+            .frame(width: 54)
 
             // Proj column
             Text(projectionDisplayText(for: prospect))

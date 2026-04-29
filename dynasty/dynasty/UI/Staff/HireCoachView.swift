@@ -16,6 +16,7 @@ struct HireCoachView: View {
     @Environment(\.dismiss) private var dismiss
 
     @Query private var allCoaches: [Coach]
+    @Query private var allCareers: [Career]
 
     @State private var candidates: [Coach] = []
     @State private var hiredCoachID: UUID?
@@ -740,6 +741,8 @@ struct HireCoachView: View {
         }
 
         candidate.teamID = teamID
+        candidate.hireSeasonYear = allCareers.first?.currentSeason ?? 2026
+        candidate.contractYearsRemaining = 3
         modelContext.insert(candidate)
         hiredCoachID = candidate.id
 

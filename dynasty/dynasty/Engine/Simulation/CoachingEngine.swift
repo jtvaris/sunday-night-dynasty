@@ -375,19 +375,87 @@ enum CoachingEngine {
             let potential = CoachDevelopmentEngine.generatePotential(forAge: age)
             let exp = Int.random(in: expRange)
 
-            // Attribute ceilings correlated with experience
-            // #238: Premium candidates get significantly higher floors and ceilings
-            let baseCeiling: Int
-            let baseFloor: Int
-            if isPremium {
-                baseCeiling = min(99, 75 + exp)
-                baseFloor = max(65, baseCeiling - 20)
-            } else {
-                baseCeiling = min(99, 45 + exp * 2)
-                baseFloor = max(30, baseCeiling - 30)
+            // Attribute generation: role-aware ranges ensure proper hierarchy
+            // HC: 5-8 good ratings (70-95), rest moderate (55-70)
+            // Coordinators: 4-6 good ratings (65-90), rest moderate (50-65)
+            // Position coaches: 1-5 good ratings in specialty (70-85), rest LOW (40-60)
+            let goodFloor: Int
+            let goodCeiling: Int
+            let weakFloor: Int
+            let weakCeiling: Int
+            let goodCount: Int
+
+            let isPositionCoach: Bool
+            switch role {
+            case .headCoach:
+                goodFloor = isPremium ? 78 : 70
+                goodCeiling = isPremium ? 95 : 92
+                weakFloor = isPremium ? 58 : 55
+                weakCeiling = isPremium ? 72 : 70
+                goodCount = isPremium ? Int.random(in: 6...8) : Int.random(in: 5...7)
+                isPositionCoach = false
+            case .assistantHeadCoach:
+                goodFloor = isPremium ? 72 : 68
+                goodCeiling = isPremium ? 92 : 88
+                weakFloor = isPremium ? 55 : 50
+                weakCeiling = isPremium ? 68 : 65
+                goodCount = isPremium ? Int.random(in: 5...7) : Int.random(in: 4...6)
+                isPositionCoach = false
+            case .offensiveCoordinator, .defensiveCoordinator:
+                goodFloor = isPremium ? 72 : 65
+                goodCeiling = isPremium ? 92 : 90
+                weakFloor = isPremium ? 52 : 50
+                weakCeiling = isPremium ? 67 : 65
+                goodCount = isPremium ? Int.random(in: 5...6) : Int.random(in: 4...6)
+                isPositionCoach = false
+            case .specialTeamsCoordinator:
+                goodFloor = isPremium ? 68 : 62
+                goodCeiling = isPremium ? 88 : 85
+                weakFloor = isPremium ? 48 : 45
+                weakCeiling = isPremium ? 62 : 58
+                goodCount = isPremium ? Int.random(in: 4...5) : Int.random(in: 3...5)
+                isPositionCoach = false
+            default: // Position coaches: specialists with low general skills
+                goodFloor = isPremium ? 72 : 70
+                goodCeiling = isPremium ? 88 : 85
+                weakFloor = isPremium ? 44 : 40
+                weakCeiling = isPremium ? 62 : 60
+                goodCount = isPremium ? Int.random(in: 2...5) : Int.random(in: 1...4)
+                isPositionCoach = true
             }
 
-            func randAttr() -> Int { Int.random(in: baseFloor...baseCeiling) }
+            // Determine which attribute indices get "good" ratings
+            // For position coaches, always include their focus attributes as good
+            let allAttrNames = ["playCalling", "playerDevelopment", "reputation", "adaptability",
+                                "gamePlanning", "scoutingAbility", "recruiting", "motivation",
+                                "discipline", "mediaHandling", "contractNegotiation", "moraleInfluence"]
+            let focusAttrs = role.focusAttributes
+            var goodIndices = Set<Int>()
+
+            // Ensure focus attributes are always in the "good" set for position coaches
+            if isPositionCoach {
+                for (i, name) in allAttrNames.enumerated() {
+                    if focusAttrs.contains(name) {
+                        goodIndices.insert(i)
+                    }
+                }
+            }
+
+            // Fill remaining good slots randomly
+            var remaining = Array(0..<12).filter { !goodIndices.contains($0) }
+            remaining.shuffle()
+            let slotsNeeded = max(0, goodCount - goodIndices.count)
+            for i in 0..<min(slotsNeeded, remaining.count) {
+                goodIndices.insert(remaining[i])
+            }
+
+            func genAttr(index: Int) -> Int {
+                if goodIndices.contains(index) {
+                    return Int.random(in: goodFloor...goodCeiling)
+                } else {
+                    return Int.random(in: weakFloor...weakCeiling)
+                }
+            }
 
             // Scheme assignment: offensive roles get offensive schemes, defensive get defensive
             let offScheme: OffensiveScheme? = offensiveRole(role) ? OffensiveScheme.allCases.randomElement() : nil
@@ -405,18 +473,18 @@ enum CoachingEngine {
             }
 
             // Generate attributes first, then derive salary from OVR + experience
-            let attrPlayCalling = randAttr()
-            let attrPlayerDev   = randAttr()
-            let attrReputation  = randAttr()
-            let attrAdaptability = randAttr()
-            let attrGamePlanning = randAttr()
-            let attrScouting     = randAttr()
-            let attrRecruiting   = randAttr()
-            let attrMotivation   = randAttr()
-            let attrDiscipline   = randAttr()
-            let attrMedia        = randAttr()
-            let attrContract     = randAttr()
-            let attrMorale       = randAttr()
+            let attrPlayCalling = genAttr(index: 0)
+            let attrPlayerDev   = genAttr(index: 1)
+            let attrReputation  = genAttr(index: 2)
+            let attrAdaptability = genAttr(index: 3)
+            let attrGamePlanning = genAttr(index: 4)
+            let attrScouting     = genAttr(index: 5)
+            let attrRecruiting   = genAttr(index: 6)
+            let attrMotivation   = genAttr(index: 7)
+            let attrDiscipline   = genAttr(index: 8)
+            let attrMedia        = genAttr(index: 9)
+            let attrContract     = genAttr(index: 10)
+            let attrMorale       = genAttr(index: 11)
 
             let ovr = (attrPlayCalling + attrPlayerDev + attrReputation + attrAdaptability
                 + attrGamePlanning + attrScouting + attrRecruiting + attrMotivation

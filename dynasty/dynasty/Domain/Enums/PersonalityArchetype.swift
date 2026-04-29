@@ -39,4 +39,29 @@ enum PersonalityArchetype: String, Codable, CaseIterable {
         case .classClown:        return "Clown"
         }
     }
+
+    /// Personality tier for badge coloring: positive, risky, or neutral.
+    var tier: PersonalityTier {
+        switch self {
+        case .teamLeader, .steadyPerformer, .quietProfessional, .mentor:
+            return .positive
+        case .dramaQueen, .fieryCompetitor:
+            return .risky
+        case .loneWolf, .feelPlayer, .classClown:
+            return .neutral
+        }
+    }
+
+    /// Personality score contribution for interview grading (-10 to +10).
+    var interviewScoreContribution: Int {
+        switch tier {
+        case .positive: return 10
+        case .neutral:  return 0
+        case .risky:    return -10
+        }
+    }
+}
+
+enum PersonalityTier {
+    case positive, neutral, risky
 }

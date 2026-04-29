@@ -15,6 +15,7 @@ struct ContractExtensionSheet: View {
     @State private var signingBonusThousands: Int = 0       // realistic only
     @State private var guaranteedThousands: Int = 0         // realistic only
     @State private var showConfirmAlert = false
+    @State private var showYearlyBreakdown = false
 
     private let minYears = 1
     private let maxYears = 5
@@ -33,6 +34,7 @@ struct ContractExtensionSheet: View {
                     if capMode == .realistic {
                         realisticFieldsCard
                     }
+                    yearlyBreakdownCard
                     capImpactCard
                     actionButtons
                 }
@@ -50,11 +52,12 @@ struct ContractExtensionSheet: View {
                     .foregroundStyle(Color.textSecondary)
             }
         }
-        .alert("Sign \(player.fullName)?", isPresented: $showConfirmAlert) {
-            Button("Sign") { signContract() }
+        .alert("Extend \(player.fullName)?", isPresented: $showConfirmAlert) {
+            Button("Sign Extension") { signContract() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Sign \(player.fullName) to a \(years)-year deal at \(formatMillions(annualSalaryThousands)) per year. Total value: \(formatMillions(annualSalaryThousands * years)).")
+            let totalYears = player.contractYearsRemaining + years
+            Text("Extend \(player.fullName) with a \(years)-year extension at \(formatMillions(annualSalaryThousands)) per year. Total contract: \(totalYears) years.")
         }
         .onAppear { seedDefaults() }
     }
@@ -269,6 +272,117 @@ struct ContractExtensionSheet: View {
         .cardBackground()
     }
 
+    // MARK: - Yearly Breakdown Card
+
+    private var yearlyBreakdownCard: some View {
+        VStack(spacing: 12) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showYearlyBreakdown.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Yearly Contract Breakdown")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                    Spacer()
+                    Image(systemName: showYearlyBreakdown ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if showYearlyBreakdown {
+                Divider().overlay(Color.surfaceBorder)
+
+                let breakdown = computeYearlyBreakdown()
+
+                // Header row
+                HStack(spacing: 0) {
+                    Text("Year")
+                        .frame(width: 44, alignment: .leading)
+                    Text("Base Salary")
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    Text("Bonus")
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    Text("Cap Hit")
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    Text("Dead Cap")
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(Color.textTertiary)
+                .padding(.horizontal, 4)
+
+                Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+                // Year rows with separator between current contract and extension
+                let currentYearsLeft = player.contractYearsRemaining
+
+                ForEach(Array(breakdown.enumerated()), id: \.element.id) { index, year in
+                    // Insert separator between current contract and extension years
+                    if index == currentYearsLeft && currentYearsLeft > 0 {
+                        HStack(spacing: 6) {
+                            Rectangle().fill(Color.accentGold.opacity(0.4)).frame(height: 1)
+                            Text("EXTENSION")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(Color.accentGold)
+                            Rectangle().fill(Color.accentGold.opacity(0.4)).frame(height: 1)
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 4)
+                    }
+
+                    HStack(spacing: 0) {
+                        Text("Yr \(year.yearNumber)")
+                            .frame(width: 44, alignment: .leading)
+                        Text(formatMillions(year.baseSalary))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Text(formatMillions(year.proratedBonus))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Text(formatMillions(year.capHit))
+                            .foregroundStyle(Color.accentGold)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Text(formatMillions(year.deadCapIfCut))
+                            .foregroundStyle(Color.danger.opacity(0.8))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(index < currentYearsLeft ? Color.textTertiary : Color.textSecondary)
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 4)
+                }
+
+                Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+                // Totals row
+                HStack(spacing: 0) {
+                    Text("Total")
+                        .frame(width: 44, alignment: .leading)
+                    Text(formatMillions(breakdown.reduce(0) { $0 + $1.baseSalary }))
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    Text(formatMillions(breakdown.reduce(0) { $0 + $1.proratedBonus }))
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    Text(formatMillions(breakdown.reduce(0) { $0 + $1.capHit }))
+                        .foregroundStyle(Color.accentGold)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    Text("")
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(Color.textPrimary)
+                .padding(.vertical, 2)
+                .padding(.horizontal, 4)
+            }
+        }
+        .padding(20)
+        .cardBackground()
+    }
+
     // MARK: - Cap Impact Card
 
     private var capImpactCard: some View {
@@ -370,6 +484,56 @@ struct ContractExtensionSheet: View {
         }
     }
 
+    /// Computes yearly breakdown showing both remaining current contract years
+    /// AND new extension years, clearly separated.
+    private func computeYearlyBreakdown() -> [ContractYearDetail] {
+        var result: [ContractYearDetail] = []
+        let currentYearsLeft = player.contractYearsRemaining
+
+        // 1. Current contract years (at current salary)
+        if currentYearsLeft > 0 {
+            for i in 0..<currentYearsLeft {
+                result.append(ContractYearDetail(
+                    yearNumber: i + 1,
+                    baseSalary: player.annualSalary,
+                    proratedBonus: 0,
+                    capHit: player.annualSalary,
+                    deadCapIfCut: 0
+                ))
+            }
+        }
+
+        // 2. Extension years (at new salary with escalating/front-loaded structure)
+        guard years > 0 else { return result }
+
+        let baseSalaries: [Int]
+        if player.age < 28 {
+            baseSalaries = ContractEngine.escalatingBaseSalaries(annualSalary: annualSalaryThousands, years: years)
+        } else {
+            baseSalaries = ContractEngine.frontLoadedBaseSalaries(annualSalary: annualSalaryThousands, years: years)
+        }
+
+        let bonus = capMode == .realistic ? signingBonusThousands : 0
+        let proratedPerYear = years > 0 ? bonus / years : 0
+
+        for yearIndex in 0..<years {
+            let base = yearIndex < baseSalaries.count ? baseSalaries[yearIndex] : annualSalaryThousands
+            let yearCapHit = base + proratedPerYear
+            let remainingFromThisYear = years - yearIndex
+            let deadCapIfCut = proratedPerYear * remainingFromThisYear
+
+            result.append(ContractYearDetail(
+                yearNumber: currentYearsLeft + yearIndex + 1,
+                baseSalary: base,
+                proratedBonus: proratedPerYear,
+                capHit: yearCapHit,
+                deadCapIfCut: deadCapIfCut
+            ))
+        }
+
+        return result
+    }
+
     // MARK: - Helpers
 
     private func sectionHeader(_ title: String) -> some View {
@@ -409,7 +573,8 @@ struct ContractExtensionSheet: View {
     private func seedDefaults() {
         // Pre-fill with player's current salary as a starting point
         annualSalaryThousands = roundToStep(player.annualSalary)
-        years = max(minYears, min(maxYears, player.contractYearsRemaining))
+        // Default extension length: 2 years (not the remaining contract years)
+        years = 2
         if capMode == .realistic {
             guaranteedThousands = roundToStep(Int(Double(annualSalaryThousands) * Double(years) * 0.4))
         }
@@ -418,11 +583,12 @@ struct ContractExtensionSheet: View {
     // MARK: - Sign Action
 
     private func signContract() {
-        // Update cap: subtract old salary, add new salary
+        // Update cap: subtract old salary, add new extension salary
         team.currentCapUsage = team.currentCapUsage - player.annualSalary + annualSalaryThousands
-        // Update player contract
+        // Extension ADDS years to the current contract, not replaces
+        player.contractYearsRemaining = player.contractYearsRemaining + years
+        // New salary kicks in for the extension years (cap hit uses new salary)
         player.annualSalary = annualSalaryThousands
-        player.contractYearsRemaining = years
         dismiss()
     }
 }

@@ -50,18 +50,81 @@ enum ScoutingEngine {
         }
     }
 
+    // MARK: - Positional Draft Value
+
+    /// Modifier that affects how high a position can realistically be drafted.
+    /// 1.0 = highest value (QB), lower values push positions down in projected round.
+    static func positionalDraftValue(for position: Position) -> Double {
+        switch position {
+        case .QB:              return 1.0
+        case .LT, .RT:        return 0.95
+        case .DE:              return 0.93
+        case .WR:              return 0.90
+        case .CB:              return 0.88
+        case .DT:              return 0.85
+        case .OLB, .MLB:      return 0.78
+        case .TE:              return 0.75
+        case .FS, .SS:        return 0.72
+        case .RB:              return 0.65
+        case .C, .LG, .RG:   return 0.60
+        case .FB:              return 0.30
+        case .K:               return 0.25
+        case .P:               return 0.20
+        }
+    }
+
+    /// Maximum first-round prospects allowed per position in a typical draft class.
+    private static let maxFirstRounders: [Position: ClosedRange<Int>] = [
+        .QB: 1...3, .WR: 3...5, .LT: 1...2, .RT: 1...2,
+        .DE: 3...5, .CB: 2...4, .DT: 1...3, .OLB: 1...2, .MLB: 0...1,
+        .TE: 0...2, .FS: 0...1, .SS: 0...1, .RB: 0...2,
+        .C: 0...1, .LG: 0...1, .RG: 0...1,
+        .FB: 0...0, .K: 0...0, .P: 0...0
+    ]
+
+    // MARK: - Draft Class Strength
+
+    /// Picks 2-3 "strong" positions and 2-3 "weak" positions for the draft class.
+    private struct DraftClassStrength {
+        let strongPositions: Set<Position>
+        let weakPositions: Set<Position>
+
+        static func random() -> DraftClassStrength {
+            // Eligible positions for strength variance (exclude K/P/FB)
+            let eligible: [Position] = [.QB, .RB, .WR, .TE, .LT, .RT, .LG, .RG, .C,
+                                        .DE, .DT, .OLB, .MLB, .CB, .FS, .SS]
+            var shuffled = eligible.shuffled()
+            let strongCount = Int.random(in: 2...3)
+            let strong = Set(shuffled.prefix(strongCount))
+            shuffled.removeFirst(strongCount)
+            let weakCount = Int.random(in: 2...3)
+            let weak = Set(shuffled.prefix(weakCount))
+            return DraftClassStrength(strongPositions: strong, weakPositions: weak)
+        }
+    }
+
     // MARK: - Prospect Generation
 
-    /// Generates a full draft class of college prospects.
+    /// Generates a full draft class of college prospects with realistic position distribution
+    /// and draft class strength variance.
     static func generateDraftClass(count: Int = 350) -> [CollegeProspect] {
         var prospects: [CollegeProspect] = []
+        let classStrength = DraftClassStrength.random()
 
         // Scale distribution to requested count
         let totalTarget = positionDistribution.reduce(0) { $0 + $1.1 }
         let scale = Double(count) / Double(totalTarget)
 
         for (position, baseCount) in positionDistribution {
-            let posCount = max(1, Int((Double(baseCount) * scale).rounded()))
+            var posCount = max(1, Int((Double(baseCount) * scale).rounded()))
+
+            // Adjust count based on draft class strength
+            if classStrength.strongPositions.contains(position) {
+                posCount = Int(Double(posCount) * Double.random(in: 1.2...1.4))
+            } else if classStrength.weakPositions.contains(position) {
+                posCount = max(1, Int(Double(posCount) * Double.random(in: 0.6...0.8)))
+            }
+
             for _ in 0..<posCount {
                 let prospect = generateProspect(position: position)
                 prospects.append(prospect)
@@ -77,32 +140,122 @@ enum ScoutingEngine {
             prospects.append(generateProspect(position: randomPos))
         }
 
-        // Assign draft projections based on true overall
-        prospects.sort { $0.trueOverall > $1.trueOverall }
+        // Assign draft projections using positional draft value modifier
+        // Sort by a composite score: trueOverall * positionalDraftValue
+        prospects.sort { a, b in
+            let aScore = Double(a.trueOverall) * positionalDraftValue(for: a.position)
+            let bScore = Double(b.trueOverall) * positionalDraftValue(for: b.position)
+            return aScore > bScore
+        }
+
+        // Track first-rounders per position to enforce caps
+        var firstRoundCount: [Position: Int] = [:]
+
         for i in prospects.indices {
             let fraction = Double(i) / Double(prospects.count)
-            if fraction < 0.12 {
-                prospects[i].draftProjection = 1
-            } else if fraction < 0.24 {
-                prospects[i].draftProjection = 2
-            } else if fraction < 0.38 {
-                prospects[i].draftProjection = 3
-            } else if fraction < 0.52 {
-                prospects[i].draftProjection = 4
-            } else if fraction < 0.66 {
-                prospects[i].draftProjection = 5
-            } else if fraction < 0.82 {
-                prospects[i].draftProjection = 6
+            let position = prospects[i].position
+            let posValue = positionalDraftValue(for: position)
+
+            // Base round from ranking fraction
+            let baseRound: Int
+            if fraction < 0.09 {
+                baseRound = 1
+            } else if fraction < 0.18 {
+                baseRound = 2
+            } else if fraction < 0.32 {
+                baseRound = 3
+            } else if fraction < 0.46 {
+                baseRound = 4
+            } else if fraction < 0.60 {
+                baseRound = 5
+            } else if fraction < 0.78 {
+                baseRound = 6
             } else {
-                prospects[i].draftProjection = 7
+                baseRound = 7
             }
+
+            // Apply positional value penalty: low-value positions get pushed down
+            let roundPenalty: Int
+            if posValue >= 0.85 {
+                roundPenalty = 0
+            } else if posValue >= 0.70 {
+                roundPenalty = baseRound <= 1 ? 1 : 0
+            } else if posValue >= 0.50 {
+                roundPenalty = baseRound <= 2 ? 1 : 0
+            } else if posValue >= 0.30 {
+                // FB: earliest Rd 4
+                roundPenalty = max(0, 4 - baseRound)
+            } else {
+                // K/P: earliest Rd 4 (best ever), typically Rd 5+
+                roundPenalty = max(0, 4 - baseRound)
+            }
+
+            var projectedRound = min(7, baseRound + roundPenalty)
+
+            // Enforce first-round caps per position
+            if projectedRound == 1 {
+                let maxRange = maxFirstRounders[position] ?? (0...0)
+                let currentCount = firstRoundCount[position, default: 0]
+
+                // Strong positions get the upper bound, weak get lower bound
+                let maxAllowed: Int
+                if classStrength.strongPositions.contains(position) {
+                    maxAllowed = maxRange.upperBound
+                } else if classStrength.weakPositions.contains(position) {
+                    maxAllowed = maxRange.lowerBound
+                } else {
+                    maxAllowed = Int.random(in: maxRange)
+                }
+
+                if currentCount >= maxAllowed {
+                    projectedRound = 2  // Push to round 2
+                } else {
+                    firstRoundCount[position, default: 0] += 1
+                }
+            }
+
+            prospects[i].draftProjection = projectedRound
+        }
+
+        // Now scale physical stats based on assigned draft projection (tier)
+        for i in prospects.indices {
+            let round = prospects[i].draftProjection ?? 7
+            prospects[i].truePhysical = tieredPhysical(forRound: round)
         }
 
         prospects.shuffle()
         return prospects
     }
 
+    /// Physical stat ranges per draft round tier.
+    /// Draft-age athletes (20-23) are near physical peak — mental/technique develops more over career.
+    private static func tieredPhysical(forRound round: Int) -> PhysicalAttributes {
+        let range: ClosedRange<Int>
+        switch round {
+        case 1:  range = 82...96
+        case 2:  range = 76...90
+        case 3:  range = 70...85
+        case 4, 5: range = 65...80
+        default: range = 58...75
+        }
+        return PhysicalAttributes(
+            speed: bellCurveRating(min: range.lowerBound, max: range.upperBound,
+                                  center: (range.lowerBound + range.upperBound) / 2),
+            acceleration: bellCurveRating(min: range.lowerBound, max: range.upperBound,
+                                          center: (range.lowerBound + range.upperBound) / 2),
+            strength: bellCurveRating(min: range.lowerBound, max: range.upperBound,
+                                      center: (range.lowerBound + range.upperBound) / 2),
+            agility: bellCurveRating(min: range.lowerBound, max: range.upperBound,
+                                     center: (range.lowerBound + range.upperBound) / 2),
+            stamina: bellCurveRating(min: range.lowerBound, max: range.upperBound,
+                                     center: (range.lowerBound + range.upperBound) / 2),
+            durability: bellCurveRating(min: range.lowerBound, max: range.upperBound,
+                                        center: (range.lowerBound + range.upperBound) / 2)
+        )
+    }
+
     /// Generates a single college prospect at the given position with bell-curved attributes.
+    /// Physical stats are assigned later by `generateDraftClass` based on draft tier.
     private static func generateProspect(position: Position) -> CollegeProspect {
         let name = RandomNameGenerator.randomName()
         let college = colleges.randomElement()!
@@ -111,6 +264,7 @@ enum ScoutingEngine {
         let height = Int.random(in: hw.height)
         let weight = Int.random(in: hw.weight)
 
+        // Placeholder physical — will be overwritten by tieredPhysical in generateDraftClass
         let physical = bellCurvePhysical()
         let mental = bellCurveMental()
         let posAttrs = randomPositionAttributes(for: position)
@@ -783,8 +937,9 @@ enum ScoutingEngine {
             let isDE = position == .DE
 
             // --- 40-yard dash ---
-            var fortyResult = drillResult(tiers: tiers.forty, attribute: phys.speed, combineModifier: combineModifier, lowerIsBetter: true)
-            if isDE { fortyResult -= 0.05 }
+            // Direct SPD-to-40-time correlation for realism
+            var fortyResult = fortyTimeFromSpeed(speed: phys.speed, position: position, combineModifier: combineModifier)
+            if isDE { fortyResult -= 0.03 }
             prospects[i].fortyTime = max(4.24, min(5.50, fortyResult))
 
             // --- Bench press (225 lb reps) ---
@@ -869,21 +1024,23 @@ enum ScoutingEngine {
         let noise = Double.random(in: -adjustedNoise...adjustedNoise)
         let drillScore = max(20, min(99, baseAvg + noise))
 
-        // Convert to letter grade
+        // Convert to letter grade using percentile-based thresholds
+        // Top 3%: A+, Top 5%: A, Top 15%: A-, Top 25%: B+, Top 35%: B
+        // Top 50%: B-, Top 60%: C+, Top 70%: C, Top 80%: C-, Top 88%: D+, Top 94%: D, Top 97%: D-, Rest: F
         switch drillScore {
-        case 92...:  return "A+"
-        case 87..<92: return "A"
-        case 83..<87: return "A-"
-        case 78..<83: return "B+"
-        case 73..<78: return "B"
-        case 68..<73: return "B-"
-        case 63..<68: return "C+"
-        case 58..<63: return "C"
-        case 53..<58: return "C-"
-        case 48..<53: return "D+"
-        case 43..<48: return "D"
-        case 38..<43: return "D-"
-        default:      return "F"
+        case 93...:   return "A+"
+        case 88..<93:  return "A"
+        case 82..<88:  return "A-"
+        case 76..<82:  return "B+"
+        case 70..<76:  return "B"
+        case 64..<70:  return "B-"
+        case 58..<64:  return "C+"
+        case 52..<58:  return "C"
+        case 46..<52:  return "C-"
+        case 40..<46:  return "D+"
+        case 35..<40:  return "D"
+        case 30..<35:  return "D-"
+        default:       return "F"
         }
     }
 
@@ -1029,6 +1186,48 @@ enum ScoutingEngine {
         }
 
         return base + noise + modifierEffect
+    }
+
+    /// Converts a speed attribute (40-99) to a realistic 40-yard dash time.
+    /// Uses position-specific adjustments: OL/DL run slower regardless of SPD rating.
+    /// WR/CB/FS/SS get a slight speed bonus to produce sub-4.40 runners.
+    private static func fortyTimeFromSpeed(speed: Int, position: Position, combineModifier: Double) -> Double {
+        // Base time range by SPD attribute
+        let (lo, hi): (Double, Double)
+        switch speed {
+        case 90...99: (lo, hi) = (4.25, 4.38)   // Elite speed
+        case 85...89: (lo, hi) = (4.38, 4.48)
+        case 80...84: (lo, hi) = (4.45, 4.55)
+        case 75...79: (lo, hi) = (4.52, 4.62)
+        case 70...74: (lo, hi) = (4.58, 4.70)
+        default:      (lo, hi) = (4.65, 4.85)   // Below average
+        }
+
+        // Position-specific adjustment: big men run slower
+        let posAdjust: Double
+        switch position {
+        case .LT, .LG, .C, .RG, .RT:
+            posAdjust = 0.40   // OL: 4.80-5.40 range
+        case .DT:
+            posAdjust = 0.30   // DT: 4.80-5.20 range
+        case .DE:
+            posAdjust = 0.15   // DE: faster than OL but slower than skill
+        case .TE, .MLB, .OLB, .FB:
+            posAdjust = 0.08   // Medium-speed positions
+        case .WR, .CB, .FS, .SS:
+            posAdjust = -0.02  // Slight bonus for speed positions
+        default:
+            posAdjust = 0.0
+        }
+
+        // Random placement within range
+        let base = Double.random(in: lo...hi) + posAdjust
+
+        // ±1% noise + combine modifier
+        let noise = base * Double.random(in: -0.01...0.01)
+        let modEffect = -combineModifier * base * 0.005
+
+        return base + noise + modEffect
     }
 
     /// Returns a modifier: positive = combine warrior (tests better), negative = bad tester.
@@ -1181,11 +1380,21 @@ enum ScoutingEngine {
             revealedPersonality = wrong.randomElement() ?? prospect.truePersonality.archetype
         }
 
-        // 2. Reveal footballIQ (mental attribute average with noise)
+        // 2. Reveal footballIQ scaled by draft projection tier with interviewer noise
         let trueMentalAvg = Int(prospect.trueMental.average.rounded())
+        let projRound = prospect.draftProjection ?? 5
+        let iqFloor: Int
+        let iqCeiling: Int
+        switch projRound {
+        case 1:      iqFloor = 70; iqCeiling = 95
+        case 2...3:  iqFloor = 60; iqCeiling = 85
+        case 4...5:  iqFloor = 50; iqCeiling = 78
+        default:     iqFloor = 45; iqCeiling = 75
+        }
+        let scaledIQ = iqFloor + Int(Double(trueMentalAvg - 40) / 59.0 * Double(iqCeiling - iqFloor))
         let maxNoise = max(1, 20 - (interviewerQuality * 20 / 100))
         let iqNoise = Int.random(in: -maxNoise...maxNoise)
-        let footballIQ = min(99, max(1, trueMentalAvg + iqNoise))
+        let footballIQ = min(iqCeiling, max(iqFloor, scaledIQ + iqNoise))
 
         // 3. Generate 1-3 character notes based on true attributes
         var characterPool: [String] = []
@@ -1272,6 +1481,9 @@ enum ScoutingEngine {
         }
 
         scout.proDaysAttended += 1
+        if !scout.proDayColleges.contains(college) {
+            scout.proDayColleges.append(college)
+        }
     }
 
     /// For combine invitees at pro day: improve their weakest drill result.
@@ -1693,22 +1905,32 @@ enum ScoutingEngine {
     /// A single entry in a mock draft projection.
     struct MockDraftPick {
         let pickNumber: Int
+        let round: Int
         let prospectID: UUID
         let teamAbbreviation: String
+        let teamID: UUID
+        /// Top positional needs for the team at the time of the pick.
+        let teamNeeds: [Position]
+        /// Why this pick was made: "BPA at position of need", "Best Player Available", etc.
+        let pickRationale: String
+        /// Media comment: "Perfect fit", "Surprise pick", "Steal of the draft", etc.
+        let mediaComment: String
     }
 
-    /// Generate a mock draft projection for the first round (32 picks).
+    /// Generate a mock draft projection for rounds 1-3 (up to 96+ picks).
     ///
     /// Called at: midseason (week 9), entering combine phase, entering draft phase.
     /// The mock simulates which prospect each team would take based on roster needs,
     /// with +-3-5 pick variance to represent media imperfection.
+    /// Applies positional draft value so P/K/FB never appear in round 1.
+    /// Enforces position diversity: max 1 per position in top 5, max 2 in top 10 (QB exempted up to 2 in top 5).
     ///
     /// - Parameters:
     ///   - prospects: All available college prospects.
     ///   - draftPicks: Current draft pick assignments (used for team order). If empty, uses team order by wins (worst first).
     ///   - teams: All 32 teams.
     ///   - players: All current NFL players (used to evaluate team needs).
-    /// - Returns: Array of mock pick assignments for the first round.
+    /// - Returns: Array of mock pick assignments for rounds 1-3.
     static func generateMockDraft(
         prospects: [CollegeProspect],
         draftPicks: [DraftPick],
@@ -1717,25 +1939,31 @@ enum ScoutingEngine {
     ) -> [MockDraftPick] {
         guard !prospects.isEmpty, !teams.isEmpty else { return [] }
 
-        // Build team pick order for round 1.
-        // If we have real draft picks, use those. Otherwise derive from standings (worst team first).
-        let teamOrder: [(pickNumber: Int, teamID: UUID, abbreviation: String)]
+        let teamLookup = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
+
+        // Build team pick order for rounds 1-3.
+        let teamOrder: [(pickNumber: Int, round: Int, teamID: UUID, abbreviation: String)]
 
         if !draftPicks.isEmpty {
-            let firstRound = draftPicks
-                .filter { $0.round == 1 }
+            let roundPicks = draftPicks
+                .filter { $0.round >= 1 && $0.round <= 3 }
                 .sorted { $0.pickNumber < $1.pickNumber }
-            let teamLookup = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
-            teamOrder = firstRound.compactMap { pick in
+            teamOrder = roundPicks.compactMap { pick in
                 guard let team = teamLookup[pick.currentTeamID] else { return nil }
-                return (pickNumber: pick.pickNumber, teamID: team.id, abbreviation: team.abbreviation)
+                return (pickNumber: pick.pickNumber, round: pick.round, teamID: team.id, abbreviation: team.abbreviation)
             }
         } else {
-            // Pre-draft: order by worst record first
+            // Pre-draft: order by worst record first, generate 3 rounds
             let sorted = teams.sorted { ($0.wins - $0.losses) < ($1.wins - $1.losses) }
-            teamOrder = sorted.prefix(32).enumerated().map { index, team in
-                (pickNumber: index + 1, teamID: team.id, abbreviation: team.abbreviation)
+            var order: [(pickNumber: Int, round: Int, teamID: UUID, abbreviation: String)] = []
+            for round in 1...3 {
+                let roundTeams = round % 2 == 1 ? sorted : sorted.reversed()
+                for (index, team) in roundTeams.prefix(32).enumerated() {
+                    let pickNum = (round - 1) * 32 + index + 1
+                    order.append((pickNumber: pickNum, round: round, teamID: team.id, abbreviation: team.abbreviation))
+                }
             }
+            teamOrder = order
         }
 
         guard !teamOrder.isEmpty else { return [] }
@@ -1743,27 +1971,35 @@ enum ScoutingEngine {
         // Pre-compute team needs
         let playersByTeam = Dictionary(grouping: players) { $0.teamID ?? UUID() }
         var teamNeeds: [UUID: [Position: Double]] = [:]
-        for entry in teamOrder {
-            let roster = playersByTeam[entry.teamID] ?? []
-            teamNeeds[entry.teamID] = evaluateTeamNeedsForMock(roster: roster)
+        for team in teams {
+            let roster = playersByTeam[team.id] ?? []
+            teamNeeds[team.id] = evaluateTeamNeedsForMock(roster: roster)
         }
 
-        // Sort prospects by true overall (best first) as the base talent board
+        // Sort prospects by composite score: trueOverall * positionalDraftValue
         let sortedProspects = prospects
             .filter { $0.isDeclaringForDraft }
-            .sorted { $0.trueOverall > $1.trueOverall }
+            .sorted {
+                Double($0.trueOverall) * positionalDraftValue(for: $0.position) >
+                Double($1.trueOverall) * positionalDraftValue(for: $1.position)
+            }
 
         var takenIDs = Set<UUID>()
         var mockPicks: [MockDraftPick] = []
+        // Track position counts for diversity enforcement in top 10
+        var positionCountsTop5: [Position: Int] = [:]
+        var positionCountsTop10: [Position: Int] = [:]
 
         for entry in teamOrder {
             let needs = teamNeeds[entry.teamID] ?? [:]
+            let topNeeds = needs.sorted { $0.value > $1.value }.prefix(3).map { $0.key }
             let available = sortedProspects.filter { !takenIDs.contains($0.id) }
             guard !available.isEmpty else { break }
 
-            // Score each available prospect (same logic as DraftEngine.aiMakePick but with noise)
-            let scored = available.prefix(60).map { prospect -> (CollegeProspect, Double) in
-                var score = Double(prospect.trueOverall)
+            // Score each available prospect
+            let scored = available.prefix(80).compactMap { prospect -> (CollegeProspect, Double, String, String)? in
+                let posValue = positionalDraftValue(for: prospect.position)
+                var score = Double(prospect.trueOverall) * posValue
 
                 // Positional need boost
                 let needMultiplier = needs[prospect.position] ?? 1.0
@@ -1781,15 +2017,82 @@ enum ScoutingEngine {
                 let noise = Double.random(in: -5.0...5.0)
                 score += noise
 
-                return (prospect, score)
+                // Position diversity enforcement for round 1
+                if entry.round == 1 {
+                    let pickNum = entry.pickNumber
+                    // Top 5: max 1 per position (QB can have 2)
+                    if pickNum <= 5 {
+                        let currentCount = positionCountsTop5[prospect.position] ?? 0
+                        let maxAllowed = prospect.position == .QB ? 2 : 1
+                        if currentCount >= maxAllowed {
+                            return nil // skip this prospect
+                        }
+                    }
+                    // Top 10: max 2 per position
+                    if pickNum <= 10 {
+                        let currentCount = positionCountsTop10[prospect.position] ?? 0
+                        if currentCount >= 2 {
+                            return nil // skip this prospect
+                        }
+                    }
+                }
+
+                // Determine rationale
+                let isNeedPosition = topNeeds.contains(prospect.position)
+                let rationale: String
+                if isNeedPosition && needMultiplier > 1.15 {
+                    rationale = "BPA at position of need"
+                } else if isNeedPosition {
+                    rationale = "Addresses team need"
+                } else {
+                    rationale = "Best Player Available"
+                }
+
+                return (prospect, score, rationale, "")
             }
 
             if let best = scored.max(by: { $0.1 < $1.1 }) {
                 takenIDs.insert(best.0.id)
+
+                // Update position diversity trackers
+                if entry.round == 1 {
+                    if entry.pickNumber <= 5 {
+                        positionCountsTop5[best.0.position, default: 0] += 1
+                    }
+                    if entry.pickNumber <= 10 {
+                        positionCountsTop10[best.0.position, default: 0] += 1
+                    }
+                }
+
+                // Generate media comment based on pick position vs projected round
+                let projectedRound = best.0.draftProjection ?? entry.round
+                let mediaComment: String
+                if entry.round == 1 && projectedRound >= 3 {
+                    mediaComment = "Reaches for need"
+                } else if entry.round >= 2 && projectedRound == 1 {
+                    mediaComment = "Steal of the draft"
+                } else if entry.round == 1 && projectedRound == 1 {
+                    let isNeed = topNeeds.contains(best.0.position)
+                    if isNeed {
+                        mediaComment = "Perfect fit"
+                    } else {
+                        mediaComment = "Best player available"
+                    }
+                } else if entry.pickNumber <= 10 && projectedRound >= 2 {
+                    mediaComment = "Surprise pick"
+                } else {
+                    mediaComment = ""
+                }
+
                 mockPicks.append(MockDraftPick(
                     pickNumber: entry.pickNumber,
+                    round: entry.round,
                     prospectID: best.0.id,
-                    teamAbbreviation: entry.abbreviation
+                    teamAbbreviation: entry.abbreviation,
+                    teamID: entry.teamID,
+                    teamNeeds: topNeeds,
+                    pickRationale: best.2,
+                    mediaComment: mediaComment
                 ))
             }
         }
@@ -2396,6 +2699,7 @@ enum ScoutingEngine {
         guard !invited.isEmpty else { return mentions }
 
         // --- Standouts: prospects with any elite drill result (top 5% for position) ---
+        // Limited to 1-3 per position to prevent unrealistic clustering (e.g. 5 QBs)
         let standoutCandidates = invited.filter { p in
             let bm = CombineBenchmarks.benchmarks(for: p.position)
             return isElite(p.fortyTime, benchmark: bm.fortyYard)
@@ -2407,7 +2711,20 @@ enum ScoutingEngine {
         }
         .sorted { ($0.trueOverall) > ($1.trueOverall) }
 
-        for p in standoutCandidates.prefix(Int.random(in: 3...5)) {
+        // Limit to 1-3 standouts per position to ensure diversity
+        var standoutPositionCount: [Position: Int] = [:]
+        var selectedStandouts: [CollegeProspect] = []
+        for p in standoutCandidates {
+            let posCount = standoutPositionCount[p.position, default: 0]
+            let maxPerPosition = Int.random(in: 1...2) // 1-2 per position
+            if posCount < maxPerPosition {
+                selectedStandouts.append(p)
+                standoutPositionCount[p.position, default: 0] += 1
+            }
+            if selectedStandouts.count >= Int.random(in: 4...7) { break }
+        }
+
+        for p in selectedStandouts {
             let headline = standoutHeadline(for: p)
             mentions.append(CombineMediaMention(
                 prospectID: p.id, prospectName: p.fullName,

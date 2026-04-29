@@ -26,78 +26,83 @@ enum ContractEngine {
     /// Estimate the annual market value (in thousands) a player would command
     /// on the open market based on position, age, and overall rating.
     ///
-    /// The salary cap is ~$265M (2026); a franchise QB earns $55M+ (20%+ of cap).
-    /// Scale: value in thousands (e.g. 20_000 = $20M/yr).
+    /// Values are expressed as a percentage of the salary cap, so they scale
+    /// naturally as the cap grows each season. The default cap (265_000) matches
+    /// the 2026 projection; callers should pass the team's actual `salaryCap`.
     ///
-    /// TODO: Use player's natural/best position for salary calculation instead of
-    /// current assigned position. A player moved from DE to DT should still demand
-    /// DE money. Add `naturalPosition` to Player model when available.
-    static func estimateMarketValue(player: Player) -> Int {
+    /// Uses the player's natural position (derived from positionAttributes) for salary
+    /// calculation. A player moved from DE to DT still demands DE money.
+    static func estimateMarketValue(player: Player, salaryCap: Int = 265_000) -> Int {
         let overall = player.overall
-        let position = player.position
+        // Use the higher-paying position: current or natural (players demand pay
+        // based on their best position — a DE moved to DT still demands DE money)
+        let natural = naturalPositionForAttributes(player.positionAttributes)
+        let position = bestPayingPosition(current: player.position, natural: natural)
         let age = player.age
 
-        // Tiered base value from overall rating (in thousands).
+        // Tiered base value as a percentage of the salary cap.
         // Steeper curve at elite level — reflecting how elite talent commands
         // exponentially more money in the real NFL.
         let normalizedOVR = Double(overall)
-        let baseValue: Double
+        let basePercent: Double
         if normalizedOVR >= 95 {
-            // True elite: $25M–$30M base (× position multiplier → QB $55M+, DE $37M)
-            baseValue = 25_000 + (normalizedOVR - 95.0) * 1_500
+            // True elite: ~9.5% + 0.55% per OVR above 95 (× position → QB ~20%+)
+            basePercent = 9.5 + (normalizedOVR - 95.0) * 0.55
         } else if normalizedOVR >= 90 {
-            // Elite tier: $16M–$25M base
-            baseValue = 16_000 + (normalizedOVR - 90.0) * 1_800
+            // Elite tier: ~6% + 0.7% per OVR above 90
+            basePercent = 6.0 + (normalizedOVR - 90.0) * 0.7
         } else if normalizedOVR >= 80 {
-            // Starter tier: $8M–$22M
-            baseValue = 8_000 + (normalizedOVR - 80.0) * 1_400
+            // Starter tier: ~3% + 0.5% per OVR above 80
+            basePercent = 3.0 + (normalizedOVR - 80.0) * 0.5
         } else if normalizedOVR >= 70 {
-            // Solid contributor: $2.5M–$8M
-            baseValue = 2_500 + (normalizedOVR - 70.0) * 550
+            // Solid contributor: ~1% + 0.2% per OVR above 70
+            basePercent = 1.0 + (normalizedOVR - 70.0) * 0.2
         } else if normalizedOVR >= 60 {
-            // Depth/rotational: $1M–$2.5M
-            baseValue = 1_000 + (normalizedOVR - 60.0) * 150
+            // Depth/rotational: ~0.4% + 0.06% per OVR above 60
+            basePercent = 0.4 + (normalizedOVR - 60.0) * 0.06
         } else {
-            // Fringe / practice squad: $750K–$1M
-            baseValue = 750 + max(0, normalizedOVR - 50.0) * 25
+            // Fringe / practice squad: ~0.28% (minimum)
+            basePercent = 0.28
         }
 
         // Position multiplier calibrated to real NFL 2026 pay scales.
         let positionMultiplier: Double = {
             switch position {
             case .QB:
-                return 2.2    // Elite QBs: $55M+
+                return 2.2    // Elite QBs: ~20%+ of cap
             case .WR:
-                return 1.3    // WR1: $30-35M
+                return 1.3    // WR1: ~11-13%
             case .DE:
-                return 1.25   // Edge rushers: $30-35M
+                return 1.25   // Edge rushers: ~11-13%
             case .LT:
-                return 1.05   // LT: $23-28M
+                return 1.05   // LT: ~8.5-10%
             case .OLB:
-                return 1.0    // OLB: $20-25M
+                return 1.0    // OLB: ~8-9%
             case .CB:
-                return 0.95   // Top CB: $21-25M
+                return 0.95   // Top CB: ~8-9.5%
             case .DT:
-                return 0.9    // Interior DL: $18-22M
+                return 0.9    // Interior DL: ~7-8.5%
             case .RT:
-                return 0.85   // RT: $18-22M
+                return 0.85   // RT: ~7-8%
             case .MLB:
-                return 0.8    // MLB: $15-20M
+                return 0.8    // MLB: ~6-7%
             case .FS, .SS:
-                return 0.75   // Safeties: $14-18M
+                return 0.75   // Safeties: ~5.5-7%
             case .TE:
-                return 0.7    // TE: $12-16M
+                return 0.7    // TE: ~4.5-6%
             case .LG, .RG, .C:
-                return 0.65   // Interior OL: $12-16M
+                return 0.65   // Interior OL: ~4-5%
             case .RB:
-                return 0.45   // RBs devalued: $8-14M
+                return 0.45   // RBs devalued: ~3-5%
             case .FB:
-                return 0.25   // FB: $2-4M
+                return 0.25   // FB: ~1-2%
             case .K, .P:
-                return 0.25   // Specialists: $3-6M
+                return 0.25   // Specialists: ~1-2%
             }
         }()
-        var value = baseValue * positionMultiplier
+
+        // Convert cap percentage to thousands
+        var value = basePercent * positionMultiplier * Double(salaryCap) / 100.0
 
         // Age adjustment: discount once the player is past peak years
         let peakRange = position.peakAgeRange
@@ -112,8 +117,9 @@ enum ContractEngine {
             value *= max(youthDiscount, 0.6)
         }
 
-        // Floor: every player is worth at least the veteran minimum
-        return max(Int(value), 750)
+        // Floor: every player is worth at least the veteran minimum (~0.28% of cap)
+        let minimum = max(Int(0.0028 * Double(salaryCap)), 750)
+        return max(Int(value), minimum)
     }
 
     // MARK: - Realistic Mode
@@ -129,6 +135,97 @@ enum ContractEngine {
         noTrade: Bool
     ) -> Contract {
         Contract(
+            playerID: playerID,
+            teamID: teamID,
+            totalYears: years,
+            currentYear: 0,
+            baseSalary: baseSalaries,
+            signingBonus: signingBonus,
+            guaranteedMoney: guaranteed,
+            noTradeClause: noTrade
+        )
+    }
+
+    // MARK: - Realistic Contract Structures
+
+    /// Generates escalating base salaries for a young player's contract.
+    /// Base salary increases ~5-10% per year, rewarding players who grow into the deal.
+    static func escalatingBaseSalaries(annualSalary: Int, years: Int) -> [Int] {
+        guard years > 0 else { return [] }
+        // Start ~15% below the average and escalate ~7% per year
+        let startBase = max(Int(Double(annualSalary) * 0.85), 500)
+        return (0..<years).map { yearIndex in
+            let escalation = pow(1.07, Double(yearIndex))
+            return max(Int(Double(startBase) * escalation), 500)
+        }
+    }
+
+    /// Generates front-loaded base salaries for a veteran's contract.
+    /// Higher salary in early years, tapering off in later years.
+    static func frontLoadedBaseSalaries(annualSalary: Int, years: Int) -> [Int] {
+        guard years > 0 else { return [] }
+        // Start 15% above the average, decrease ~8% per year
+        let startBase = Int(Double(annualSalary) * 1.15)
+        return (0..<years).map { yearIndex in
+            let taper = pow(0.92, Double(yearIndex))
+            return max(Int(Double(startBase) * taper), 500)
+        }
+    }
+
+    /// Calculates a realistic signing bonus for a contract.
+    /// - Big contracts (>= $10M/yr): 40-60% of first year salary
+    /// - Medium contracts ($3-10M/yr): 20-40% of first year salary
+    /// - Small contracts (< $3M/yr): 10-20% of first year salary
+    static func realisticSigningBonus(annualSalary: Int) -> Int {
+        let bonusPercent: Double
+        if annualSalary >= 10_000 {
+            bonusPercent = Double.random(in: 0.40...0.60)
+        } else if annualSalary >= 3_000 {
+            bonusPercent = Double.random(in: 0.20...0.40)
+        } else {
+            bonusPercent = Double.random(in: 0.10...0.20)
+        }
+        return Int(Double(annualSalary) * bonusPercent)
+    }
+
+    /// Calculates realistic guaranteed money for a contract.
+    /// First 1-2 years fully guaranteed for big deals, less for smaller ones.
+    static func realisticGuaranteedMoney(baseSalaries: [Int], signingBonus: Int) -> Int {
+        guard !baseSalaries.isEmpty else { return signingBonus }
+        let avgSalary = baseSalaries.reduce(0, +) / baseSalaries.count
+        let guaranteedYears: Int
+        if avgSalary >= 15_000 {
+            guaranteedYears = min(2, baseSalaries.count)
+        } else if avgSalary >= 5_000 {
+            guaranteedYears = min(2, baseSalaries.count)
+        } else {
+            guaranteedYears = 1
+        }
+        let guaranteedBase = baseSalaries.prefix(guaranteedYears).reduce(0, +)
+        return guaranteedBase + signingBonus
+    }
+
+    /// Build a complete realistic contract with escalating or front-loaded structure.
+    /// - Young players (age < 28): escalating salary structure
+    /// - Veteran players (age >= 28): front-loaded salary structure
+    static func buildRealisticContract(
+        playerID: UUID,
+        teamID: UUID,
+        annualSalary: Int,
+        years: Int,
+        playerAge: Int,
+        noTrade: Bool = false
+    ) -> Contract {
+        let baseSalaries: [Int]
+        if playerAge < 28 {
+            baseSalaries = escalatingBaseSalaries(annualSalary: annualSalary, years: years)
+        } else {
+            baseSalaries = frontLoadedBaseSalaries(annualSalary: annualSalary, years: years)
+        }
+        let signingBonus = realisticSigningBonus(annualSalary: annualSalary)
+        let guaranteed = realisticGuaranteedMoney(baseSalaries: baseSalaries, signingBonus: signingBonus)
+
+        return Contract(
             playerID: playerID,
             teamID: teamID,
             totalYears: years,
@@ -246,6 +343,7 @@ enum ContractEngine {
         allTeams: [Team],
         playerTeamID: UUID,
         position: Position,
+        salaryCap: Int = 265_000,
         limit: Int = 5
     ) -> [FAPreviewPlayer] {
         allPlayers
@@ -262,7 +360,7 @@ enum ContractEngine {
                     position: player.position,
                     overall: player.overall,
                     age: player.age,
-                    estimatedSalary: estimateMarketValue(player: player),
+                    estimatedSalary: estimateMarketValue(player: player, salaryCap: salaryCap),
                     currentTeamAbbr: teamAbbr
                 )
             }
@@ -274,6 +372,7 @@ enum ContractEngine {
         allTeams: [Team],
         playerTeamID: UUID,
         positions: [Position],
+        salaryCap: Int = 265_000,
         limit: Int = 5
     ) -> [FAPreviewPlayer] {
         allPlayers
@@ -290,7 +389,7 @@ enum ContractEngine {
                     position: player.position,
                     overall: player.overall,
                     age: player.age,
-                    estimatedSalary: estimateMarketValue(player: player),
+                    estimatedSalary: estimateMarketValue(player: player, salaryCap: salaryCap),
                     currentTeamAbbr: teamAbbr
                 )
             }
@@ -309,5 +408,49 @@ enum ContractEngine {
 
         // Free up the tag salary from team cap
         team.currentCapUsage -= tagSalary
+    }
+
+    // MARK: - Natural Position Helpers
+
+    /// Derives the natural/primary position from a player's position attributes.
+    /// This represents what position group the player was originally built for.
+    static func naturalPositionForAttributes(_ attributes: PositionAttributes) -> Position {
+        switch attributes {
+        case .quarterback(_):     return .QB
+        case .runningBack(_):     return .RB
+        case .wideReceiver(_):    return .WR
+        case .tightEnd(_):        return .TE
+        case .offensiveLine(_):   return .LT   // Use LT as the premium OL position
+        case .defensiveLine(_):   return .DE   // Use DE as the premium DL position
+        case .linebacker(_):      return .OLB  // Use OLB as the premium LB position
+        case .defensiveBack(_):   return .CB   // Use CB as the premium DB position
+        case .kicking(_):         return .K
+        }
+    }
+
+    /// Returns whichever position commands more money on the market.
+    /// Players demand pay based on their highest-value position.
+    static func bestPayingPosition(current: Position, natural: Position) -> Position {
+        // Use a simple ranking by position multiplier (higher = more expensive)
+        let rank: (Position) -> Double = { pos in
+            switch pos {
+            case .QB:             return 2.2
+            case .WR:             return 1.3
+            case .DE:             return 1.25
+            case .LT:             return 1.05
+            case .OLB:            return 1.0
+            case .CB:             return 0.95
+            case .DT:             return 0.9
+            case .RT:             return 0.85
+            case .MLB:            return 0.8
+            case .FS, .SS:        return 0.75
+            case .TE:             return 0.7
+            case .LG, .RG, .C:   return 0.65
+            case .RB:             return 0.45
+            case .FB:             return 0.25
+            case .K, .P:         return 0.25
+            }
+        }
+        return rank(current) >= rank(natural) ? current : natural
     }
 }

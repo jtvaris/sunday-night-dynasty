@@ -39,6 +39,11 @@ struct ProspectListView: View {
     @State private var coaches: [Coach] = []
     @State private var teamPlayers: [Player] = []
 
+    @State private var teamDraftPicks: [DraftPick] = []
+    @State private var isLoading: Bool = true
+    @State private var cachedDisplayed: [CollegeProspect] = []
+    @State private var cachedPositionRanks: [UUID: Int] = [:]
+
     // MARK: - Filtered & Sorted Prospects
 
     private var displayed: [CollegeProspect] {
@@ -88,19 +93,96 @@ struct ProspectListView: View {
     }
 
     /// Team needs for the need indicator column.
+    private var teamNeedsList: [Position] {
+        DraftEngine.topTeamNeeds(roster: teamPlayers, limit: 5)
+    }
+
     private var teamNeeds: Set<Position> {
-        Set(DraftEngine.topTeamNeeds(roster: teamPlayers, limit: 5))
+        Set(teamNeedsList)
+    }
+
+    /// Need level label for a position based on roster depth.
+    private func needLevel(for position: Position) -> String {
+        let idealCounts: [Position: Int] = [
+            .QB: 2, .RB: 3, .FB: 1, .WR: 5, .TE: 3,
+            .LT: 2, .LG: 2, .C: 2, .RG: 2, .RT: 2,
+            .DE: 4, .DT: 3, .OLB: 4, .MLB: 2,
+            .CB: 5, .FS: 2, .SS: 2, .K: 1, .P: 1
+        ]
+        let ideal = idealCounts[position] ?? 2
+        let current = teamPlayers.filter { $0.position == position }.count
+        let deficit = ideal - current
+        if deficit >= 2 { return "High" }
+        if deficit >= 1 { return "Med" }
+        return "Set"
+    }
+
+    /// Current starter at a position for comparison.
+    private func starterComparison(for prospect: CollegeProspect) -> String? {
+        guard let prospectOVR = prospect.scoutedOverall else { return nil }
+        let starters = teamPlayers
+            .filter { $0.position == prospect.position }
+            .sorted { $0.overall > $1.overall }
+        guard let starter = starters.first else {
+            return "No \(prospect.position.rawValue) on roster"
+        }
+        let diff = prospectOVR - starter.overall
+        let name = starter.lastName.prefix(8)
+        if diff > 0 {
+            return "+\(diff) vs \(name)"
+        } else if diff == 0 {
+            return "= \(name)"
+        } else {
+            return "\(diff) vs \(name)"
+        }
+    }
+
+    /// Format the team's draft picks for display.
+    private var draftPicksSummary: String {
+        let sorted = teamDraftPicks
+            .filter { !$0.isComplete }
+            .sorted { $0.pickNumber < $1.pickNumber }
+        if sorted.isEmpty { return "No picks" }
+        return sorted.map { "Rd\($0.round) #\($0.pickNumber)" }.joined(separator: ", ")
+    }
+
+    /// Position need summary text for the top bar.
+    private var positionNeedSummary: String {
+        let needs = teamNeedsList.prefix(5)
+        if needs.isEmpty { return "No major needs" }
+        return needs.map { "\($0.rawValue)(\(needLevel(for: $0)))" }.joined(separator: " ")
+    }
+
+    private func refreshCachedData() {
+        cachedDisplayed = displayed
+        cachedPositionRanks = positionRanks
     }
 
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
+            if isLoading {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .scaleEffect(1.5)
+                        .tint(Color.accentGold)
+                    Text("Loading Prospects...")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+            } else {
             VStack(spacing: 0) {
+                // #7: Position need summary bar + #8: Draft picks
+                if !teamPlayers.isEmpty {
+                    needAndPicksBar
+                }
+
                 positionFilterChips
                 analysisModePicker
 
-                if displayed.isEmpty {
+                if cachedDisplayed.isEmpty {
                     emptyState
                 } else {
                     // Column headers
@@ -112,32 +194,88 @@ struct ProspectListView: View {
                     Divider().overlay(Color.surfaceBorder)
 
                     List {
-                        ForEach(displayed) { prospect in
-                            NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
-                                ProspectRowView(
-                                    prospect: prospect,
-                                    positionRank: positionRanks[prospect.id],
-                                    attributeTab: attributeTab,
-                                    scoutsSentToCombine: scoutsSentToCombine,
-                                    schemeFit: schemeFitLabel(for: prospect),
-                                    isTeamNeed: teamNeeds.contains(prospect.position)
-                                )
+                        ForEach(cachedDisplayed) { prospect in
+                            HStack(spacing: 0) {
+                                ProspectStarButton(prospectID: prospect.id)
+
+                                NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
+                                    ProspectRowView(
+                                        prospect: prospect,
+                                        positionRank: cachedPositionRanks[prospect.id],
+                                        attributeTab: attributeTab,
+                                        scoutsSentToCombine: scoutsSentToCombine,
+                                        schemeFit: schemeFitLabel(for: prospect),
+                                        isTeamNeed: teamNeeds.contains(prospect.position),
+                                        needLevel: needLevel(for: prospect.position),
+                                        starterComparison: starterComparison(for: prospect)
+                                    )
+                                }
                             }
                             .listRowBackground(Color.backgroundSecondary)
-                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                            .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
+                            .contextMenu {
+                                ProspectGradeContextMenu(prospectID: prospect.id)
+                            }
                         }
                     }
                     .scrollContentBackground(.hidden)
                     .listStyle(.plain)
                 }
             }
+            } // end else (not loading)
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 sortMenu
             }
         }
-        .task { loadCoachesAndRoster() }
+        .task {
+            loadCoachesAndRoster()
+            refreshCachedData()
+            isLoading = false
+        }
+        .onChange(of: positionFilter) { _, _ in refreshCachedData() }
+        .onChange(of: sortOrder) { _, _ in refreshCachedData() }
+        .onChange(of: attributeTab) { _, _ in refreshCachedData() }
+    }
+
+    // MARK: - Need & Picks Bar (#7, #8)
+
+    private var needAndPicksBar: some View {
+        VStack(spacing: 4) {
+            // Position needs
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.warning)
+                Text("Needs:")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.textSecondary)
+                Text(positionNeedSummary)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                Spacer()
+            }
+
+            // Draft picks
+            HStack(spacing: 6) {
+                Image(systemName: "list.number")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.accentBlue)
+                Text("Your Picks:")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.textSecondary)
+                Text(draftPicksSummary)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.accentGold)
+                    .lineLimit(1)
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color.backgroundSecondary)
     }
 
     // MARK: - Data Loading
@@ -148,6 +286,8 @@ struct ProspectListView: View {
         coaches = (try? modelContext.fetch(coachDesc)) ?? []
         let playerDesc = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
         teamPlayers = (try? modelContext.fetch(playerDesc)) ?? []
+        let pickDesc = FetchDescriptor<DraftPick>(predicate: #Predicate { $0.currentTeamID == teamID })
+        teamDraftPicks = (try? modelContext.fetch(pickDesc)) ?? []
     }
 
     /// Compute scheme fit label for a prospect based on team's coordinators.
@@ -194,7 +334,7 @@ struct ProspectListView: View {
 
             // Always-visible: OVR
             Text("OVR")
-                .frame(width: 34, alignment: .center)
+                .frame(width: 50, alignment: .center)
 
             // Always-visible: Proj Rd (overview only shows text, others show grade)
             if attributeTab == .overview {
@@ -215,11 +355,11 @@ struct ProspectListView: View {
             Text("AGE")
                 .frame(width: 28, alignment: .center)
             Text("FIT")
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
             Text("NEED")
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
             Text("RISK")
-                .frame(width: 52, alignment: .center)
+                .frame(width: 64, alignment: .center)
         }
         .font(.system(size: 8, weight: .bold))
         .foregroundStyle(Color.textTertiary)
@@ -277,51 +417,51 @@ struct ProspectListView: View {
 
     // MARK: - Analysis Mode Picker (matches RosterView style)
 
+    // MARK: - Analysis Mode Picker (#3 - prominent segmented control)
+
     private var analysisModePicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(ProspectAttributeTab.allCases) { tab in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            attributeTab = tab
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: tab.icon)
-                                .font(.system(size: 10))
-                            Text(tab.label)
-                                .font(.caption)
-                                .fontWeight(.medium)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .foregroundStyle(attributeTab == tab ? Color.backgroundPrimary : Color.textSecondary)
-                        .background(
-                            attributeTab == tab ? Color.accentGold : Color.backgroundTertiary,
-                            in: Capsule()
-                        )
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(
-                                    attributeTab == tab ? Color.accentGold : Color.surfaceBorder,
-                                    lineWidth: 1
-                                )
-                        )
+        HStack(spacing: 0) {
+            ForEach(ProspectAttributeTab.allCases) { tab in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        attributeTab = tab
                     }
-                    .accessibilityLabel("View mode: \(tab.label)")
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: tab.icon)
+                            .font(.system(size: 11))
+                        Text(tab.label)
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .foregroundStyle(attributeTab == tab ? Color.backgroundPrimary : Color.textSecondary)
+                    .background(
+                        attributeTab == tab
+                            ? Color.accentGold
+                            : Color.backgroundTertiary
+                    )
                 }
+                .accessibilityLabel("View mode: \(tab.label)")
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
         }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
         .background(Color.backgroundPrimary)
     }
 
     // MARK: - Position Filter Chips
 
+    // MARK: - Position Filter Chips (#3 - smaller capsule pills)
+
     private var positionFilterChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: 5) {
                 ForEach(ProspectPositionFilter.allCases) { filter in
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) {
@@ -329,12 +469,12 @@ struct ProspectListView: View {
                         }
                     } label: {
                         Text(filter.label)
-                            .font(.subheadline.weight(positionFilter == filter ? .bold : .medium))
+                            .font(.system(size: 11, weight: positionFilter == filter ? .bold : .medium))
                             .foregroundStyle(positionFilter == filter ? Color.backgroundPrimary : Color.textSecondary)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 7)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
                             .background(
-                                positionFilter == filter ? Color.accentBlue : Color.backgroundSecondary,
+                                positionFilter == filter ? Color.accentBlue : Color.backgroundTertiary,
                                 in: Capsule()
                             )
                     }
@@ -343,7 +483,7 @@ struct ProspectListView: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.vertical, 6)
         }
         .background(Color.backgroundPrimary)
     }
@@ -398,6 +538,8 @@ struct ProspectRowView: View {
     var scoutsSentToCombine: Bool = false
     var schemeFit: String? = nil
     var isTeamNeed: Bool = false
+    var needLevel: String = "Set"
+    var starterComparison: String? = nil
 
     private var isScouted: Bool { prospect.scoutedOverall != nil }
 
@@ -408,14 +550,24 @@ struct ProspectRowView: View {
 
             // Always-visible: Name column
             VStack(alignment: .leading, spacing: 1) {
-                Text(prospect.fullName)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Color.textPrimary)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(prospect.fullName)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+
+                    UserGradeBadge(prospectID: prospect.id)
+                }
 
                 // Compact sub-info
                 HStack(spacing: 4) {
+                    // #5: Scouting report count
+                    if prospect.scoutReportCount > 0 {
+                        Text(prospect.scoutConfidenceDots)
+                            .font(.system(size: 7))
+                            .foregroundStyle(prospect.scoutReportCount >= 3 ? Color.success : prospect.scoutReportCount >= 2 ? Color.accentGold : Color.textTertiary)
+                    }
                     if prospect.combineInvite {
                         Text("CMB")
                             .font(.system(size: 7, weight: .bold))
@@ -438,6 +590,12 @@ struct ProspectRowView: View {
                         Text("#\(rank) \(prospect.position.rawValue)")
                             .font(.system(size: 7, weight: .semibold))
                             .foregroundStyle(rank <= 3 ? Color.accentGold : Color.textTertiary)
+                    }
+                    // #6: Current starter comparison
+                    if let comparison = starterComparison {
+                        Text(comparison)
+                            .font(.system(size: 7, weight: .semibold))
+                            .foregroundStyle(comparison.hasPrefix("+") ? Color.success : comparison.hasPrefix("-") ? Color.danger : Color.textTertiary)
                     }
                 }
             }
@@ -485,15 +643,15 @@ struct ProspectRowView: View {
 
             // Scheme Fit
             schemeFitIcon
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
 
             // Need indicator
             needIndicator
-                .frame(width: 28, alignment: .center)
+                .frame(width: 32, alignment: .center)
 
             // Risk label
             compactRiskBadge
-                .frame(width: 52, alignment: .center)
+                .frame(width: 64, alignment: .center)
         }
     }
 
@@ -671,15 +829,17 @@ struct ProspectRowView: View {
     private var overallBadge: some View {
         Group {
             if let gradeRange = prospect.scoutedOverallGrade {
-                Text(gradeRange.displayText)
-                    .font(.system(size: gradeRange.isSingleGrade ? 14 : 11, weight: .bold))
-                    .foregroundStyle(gradeColor(gradeRange.midGrade))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                DualGradeDisplay(
+                    prospectID: prospect.id,
+                    scoutGradeText: gradeRange.displayText,
+                    scoutGradeColor: gradeColor(gradeRange.midGrade)
+                )
             } else if let grade = prospect.scoutGrade {
-                Text(grade)
-                    .font(.callout.weight(.bold))
-                    .foregroundStyle(Color.accentGold)
+                DualGradeDisplay(
+                    prospectID: prospect.id,
+                    scoutGradeText: grade,
+                    scoutGradeColor: Color.accentGold
+                )
             } else if prospect.scoutedOverall != nil {
                 Text("\(prospect.scoutedOverall!)")
                     .font(.callout.weight(.bold).monospacedDigit())
@@ -690,7 +850,7 @@ struct ProspectRowView: View {
                     .foregroundStyle(Color.textTertiary)
             }
         }
-        .frame(width: 34, alignment: .center)
+        .frame(width: 50, alignment: .center)
     }
 
     private var projectedRoundBadge: some View {
@@ -725,14 +885,14 @@ struct ProspectRowView: View {
 
     // MARK: - Overview-Specific Column Views
 
+    // MARK: - #1: FIT column - show text label with color
+
     @ViewBuilder
     private var schemeFitIcon: some View {
         if let fit = schemeFit {
-            let isGood = fit == "Good"
-            let color: Color = isGood ? .success : (fit == "Fair" ? .warning : .danger)
-            let icon = isGood ? "checkmark.circle.fill" : (fit == "Fair" ? "minus.circle.fill" : "xmark.circle.fill")
-            Image(systemName: icon)
-                .font(.system(size: 12))
+            let color: Color = fit == "Good" ? .success : (fit == "Fair" ? .warning : .danger)
+            Text(fit)
+                .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(color)
         } else {
             Text("--")
@@ -741,32 +901,46 @@ struct ProspectRowView: View {
         }
     }
 
+    // MARK: - #2: NEED column - clearer labels
+
     @ViewBuilder
     private var needIndicator: some View {
+        let level = needLevel
         if isTeamNeed {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(Color.accentGold)
+            Text(level)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(level == "High" ? Color.danger : Color.warning)
         } else {
-            Text("")
-                .font(.system(size: 9))
+            Text("Set")
+                .font(.system(size: 8, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
         }
     }
+
+    // MARK: - #4: RISK badges - larger with background colors
 
     @ViewBuilder
     private var compactRiskBadge: some View {
         let risk = prospect.riskLevel
         if risk != .unknown {
+            let bgColor: Color = {
+                switch risk {
+                case .boomOrBust:  return .danger
+                case .highCeiling: return .accentBlue
+                case .safePick:    return .success
+                case .unknown:     return .textTertiary
+                }
+            }()
             HStack(spacing: 2) {
                 Image(systemName: risk.icon)
-                    .font(.system(size: 7))
+                    .font(.system(size: 8))
                 Text(compactRiskLabel(risk))
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.system(size: 8, weight: .bold))
             }
-            .foregroundStyle(risk.color)
-            .padding(.horizontal, 3)
-            .padding(.vertical, 1)
-            .background(risk.color.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(bgColor.opacity(0.85), in: RoundedRectangle(cornerRadius: 4))
         } else {
             Text("--")
                 .font(.system(size: 9))

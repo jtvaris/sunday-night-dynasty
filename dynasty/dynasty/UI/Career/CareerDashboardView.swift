@@ -189,7 +189,7 @@ struct CareerDashboardView: View {
 
             // Right column -- Tiles + Messages + Division + Schedule
             ScrollView {
-                VStack(spacing: 12) {
+                LazyVStack(spacing: 12) {
                     centerTilesGrid
                     messagesPanel
                         .frame(minHeight: 240)
@@ -246,7 +246,7 @@ struct CareerDashboardView: View {
 
             // Center column -- Dashboard tiles + Messages (flexible)
             ScrollView {
-                VStack(spacing: 12) {
+                LazyVStack(spacing: 12) {
                     centerTilesGrid
                     messagesPanel
                         .frame(minHeight: 280)
@@ -277,7 +277,7 @@ struct CareerDashboardView: View {
 
     private var portraitLayout: some View {
         ScrollView {
-            VStack(spacing: 12) {
+            LazyVStack(spacing: 12) {
                 // Timeline+Tasks panel (full width, collapsible)
                 VStack(spacing: 0) {
                     // Fix #64: Clear guidance when all tasks complete
@@ -654,6 +654,9 @@ struct CareerDashboardView: View {
 
     private var centerTilesGrid: some View {
         VStack(spacing: 12) {
+            // Satisfaction/Reputation scores row
+            satisfactionScoresRow
+
             // Row 1: Team + Roster (equal height via HStack)
             HStack(spacing: 12) {
                 teamTile
@@ -1632,6 +1635,76 @@ struct CareerDashboardView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color.success.opacity(0.1))
+    }
+
+    // MARK: - Satisfaction Scores Row
+
+    private var satisfactionScoresRow: some View {
+        let ownerSat = team?.owner?.satisfaction ?? 50
+        let legacyPts = career.legacy.totalPoints
+        let mediaRep = career.legacy.mediaReputation
+
+        return HStack(spacing: 10) {
+            satisfactionCard(
+                icon: "building.2.fill",
+                label: "Owner",
+                value: "\(ownerSat)%",
+                color: satisfactionColor(ownerSat)
+            )
+            satisfactionCard(
+                icon: "heart.fill",
+                label: "Morale",
+                value: "\(teamMorale)%",
+                color: moraleColor(teamMorale)
+            )
+            satisfactionCard(
+                icon: "newspaper.fill",
+                label: "Media",
+                value: career.legacy.reputationLabel,
+                color: mediaReputationColor(mediaRep)
+            )
+            satisfactionCard(
+                icon: "trophy.fill",
+                label: "Legacy",
+                value: "\(legacyPts)",
+                color: Color.accentGold
+            )
+        }
+    }
+
+    private func satisfactionCard(icon: String, label: String, value: String, color: Color) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(color)
+            Text(value)
+                .font(.system(size: 13, weight: .bold).monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(label)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(Color.textSecondary)
+                .textCase(.uppercase)
+                .tracking(0.3)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private func mediaReputationColor(_ value: Int) -> Color {
+        if value >= 30  { return Color.success }
+        if value >= -10 { return Color.textSecondary }
+        if value >= -30 { return Color.warning }
+        return Color.danger
     }
 
     // MARK: - Owner Satisfaction Bar

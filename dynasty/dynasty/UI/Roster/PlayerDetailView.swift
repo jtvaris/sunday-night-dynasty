@@ -177,8 +177,8 @@ struct PlayerDetailView: View {
                     negotiationType: .extend,
                     teamCapSpace: 50_000,
                     onDealCompleted: { offer in
-                        // Apply the new contract
-                        player.contractYearsRemaining = offer.years
+                        // Extension: ADD new years to existing contract, don't replace
+                        player.contractYearsRemaining = player.contractYearsRemaining + offer.years
                         player.annualSalary = offer.annualSalary
                         showContractNegotiation = false
                     }

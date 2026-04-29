@@ -402,6 +402,8 @@ struct CareerShellView: View {
         case .inbox:              shellDest = .inbox
         case .rosterEvaluation:   shellDest = .rosterEvaluation
         case .franchiseTag:       shellDest = .franchiseTag
+        case .interviewReport:    shellDest = .scouting
+        case .personalWorkouts:   shellDest = .scouting
         }
 
         // Dismiss calendar, then navigate
@@ -626,6 +628,18 @@ struct CareerShellView: View {
         TaskGenerator.incompleteRequiredCount(in: currentTasks)
     }
 
+    /// Derive the current playoff round name from the career week.
+    /// Week mapping: 19 = Wild Card, 20 = Divisional, 21 = Conference Championships.
+    private var playoffRoundName: String? {
+        guard career.currentPhase == .playoffs else { return nil }
+        switch career.currentWeek {
+        case 19: return "Wild Card"
+        case 20: return "Divisional Round"
+        case 21: return "Conference Championships"
+        default: return nil
+        }
+    }
+
     // MARK: - Task Generation
 
     /// Regenerate the task list for the given phase using current game state.
@@ -641,7 +655,11 @@ struct CareerShellView: View {
             rosterCount = 53
         }
 
-        let hasPendingTradeOffers = false // TODO: wire up when TradeOffer model exists
+        // TODO: Wire up when TradeOffer state is persisted on Career or Team.
+        // TradeEngine.generateAITradeOffers() creates offers but they aren't stored
+        // in a persistent collection yet. When added, check for offers where
+        // receivingTeamID == career.teamID && isAccepted == nil.
+        let hasPendingTradeOffers = false
 
         // Detect coaching vacancies
         var hasHC = true
@@ -655,8 +673,21 @@ struct CareerShellView: View {
             hasDC = coaches.contains { $0.role == .defensiveCoordinator }
         }
 
-        let hasExpiringContracts = false  // TODO: wire up when contract expiration tracking exists
-        let hasScoutsAssigned = false     // TODO: wire up when scout deployment tracking exists
+        // Check roster for players with 1 year or less remaining on contract
+        let hasExpiringContracts: Bool = {
+            guard let teamID = career.teamID else { return false }
+            let playerDescriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
+            let players = (try? modelContext.fetch(playerDescriptor)) ?? []
+            return players.contains { $0.contractYearsRemaining <= 1 }
+        }()
+
+        // Check if any scouts are assigned to the team
+        let hasScoutsAssigned: Bool = {
+            guard let teamID = career.teamID else { return false }
+            let scoutDescriptor = FetchDescriptor<Scout>(predicate: #Predicate { $0.teamID == teamID })
+            let count = (try? modelContext.fetchCount(scoutDescriptor)) ?? 0
+            return count > 0
+        }()
         let hasPendingEvents = !WeekAdvancer.lastEvents.isEmpty
         let ownerSatisfaction = team?.owner?.satisfaction ?? 50
 
@@ -679,7 +710,7 @@ struct CareerShellView: View {
             hasDC: hasDC,
             hasExpiringContracts: hasExpiringContracts,
             opponentName: opponentName,
-            playoffRoundName: nil,  // TODO: derive from playoff bracket
+            playoffRoundName: playoffRoundName,
             hasScoutsAssigned: hasScoutsAssigned,
             hasPendingEvents: hasPendingEvents,
             ownerSatisfaction: ownerSatisfaction

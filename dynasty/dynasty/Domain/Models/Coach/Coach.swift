@@ -34,6 +34,14 @@ final class Coach {
     var mentorCoachID: UUID?
     var mentorshipOrigin: String?
 
+    /// The season year when this coach was hired onto the current team.
+    /// Used to calculate seasons on team. Defaults to 0 (unknown/legacy data).
+    var hireSeasonYear: Int = 0
+
+    /// Remaining years on the coach's contract. Decremented each offseason.
+    /// Defaults to 3 for newly hired coaches.
+    var contractYearsRemaining: Int = 3
+
     /// Annual salary in thousands (e.g. 2500 = $2.5M).
     var salary: Int
 

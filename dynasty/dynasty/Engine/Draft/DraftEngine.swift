@@ -154,13 +154,15 @@ enum DraftEngine {
     ///   - prospect: The college prospect being drafted.
     ///   - teamID: The UUID of the team drafting the player.
     ///   - pickNumber: The overall draft pick number (1-224).
+    ///   - salaryCap: The current salary cap (in thousands). Defaults to 265_000.
     /// - Returns: A fully initialized `Player` ready to be inserted into the data store.
     static func convertToPlayer(
         prospect: CollegeProspect,
         teamID: UUID,
-        pickNumber: Int
+        pickNumber: Int,
+        salaryCap: Int = 265_000
     ) -> Player {
-        let contract = rookieContract(pickNumber: pickNumber)
+        let contract = rookieContract(pickNumber: pickNumber, salaryCap: salaryCap)
         let factor = rookieScaleFactor(pickNumber: pickNumber)
 
         // Physical attributes get a +0.05 bonus — physicals are more "ready" than mental.
@@ -190,9 +192,9 @@ enum DraftEngine {
 
     // MARK: - Rookie Scaling
 
-    /// Returns a rookie scale factor (0.0–1.0) based on draft pick number.
+    /// Returns a rookie scale factor (0.0-1.0) based on draft pick number.
     /// Higher picks produce more NFL-ready rookies. A 5% chance from any round
-    /// yields an immediately elite rookie (0.92–0.97).
+    /// yields an immediately elite rookie (0.92-0.97).
     static func rookieScaleFactor(pickNumber: Int) -> Double {
         // 5% chance: immediately elite rookie from any round
         if Int.random(in: 1...100) <= 5 {
@@ -519,7 +521,7 @@ enum DraftEngine {
         if roundDelta >= 2 {
             // Great value
             let headlines = [
-                "\(name) falls to \(roundLabel) — steal!",
+                "\(name) falls to \(roundLabel) \u{2014} steal!",
                 "Incredible value: \(name) in \(roundLabel)!",
                 "\(pos) \(name) is a draft-day steal!"
             ]
@@ -532,7 +534,7 @@ enum DraftEngine {
         } else if roundDelta == 1 {
             let headlines = [
                 "Nice value on \(name) in \(roundLabel)",
-                "\(name) slides just enough — solid get"
+                "\(name) slides just enough \u{2014} solid get"
             ]
             headline = headlines[pickNumber % headlines.count]
             comment = "\(prospect.fullName) was expected to go a round earlier. Getting a player of this caliber at pick \(pickNumber) is smart drafting."
@@ -907,35 +909,55 @@ enum DraftEngine {
     }
 
     /// Determines rookie contract years and salary based on draft pick number.
+    /// Salaries are expressed as a percentage of the salary cap so they scale
+    /// automatically as the cap grows each season.
     /// - 1st round: 4 years, salary scaled by pick position.
     /// - 2nd round: 4 years, lower salary.
     /// - 3rd-4th round: 4 years, modest salary.
     /// - 5th-7th round: 3 years, league minimum-tier salary.
-    private static func rookieContract(pickNumber: Int) -> (years: Int, salary: Int) {
+    private static func rookieContract(pickNumber: Int, salaryCap: Int = 265_000) -> (years: Int, salary: Int) {
+        // Cap percentage for each draft slot tier.
+        let capPercent: Double
+        let years: Int
+
         switch pickNumber {
         case 1:
-            return (years: 4, salary: 40_000)   // ~$40M/yr for #1 overall
+            capPercent = 15.0    // ~15% of cap for #1 overall
+            years = 4
         case 2...5:
-            return (years: 4, salary: 30_000)   // ~$30M/yr
+            capPercent = 11.0    // ~11% of cap
+            years = 4
         case 6...10:
-            return (years: 4, salary: 20_000)   // ~$20M/yr
+            capPercent = 7.5     // ~7.5% of cap
+            years = 4
         case 11...16:
-            return (years: 4, salary: 14_000)   // ~$14M/yr
+            capPercent = 5.3     // ~5.3% of cap
+            years = 4
         case 17...32:
-            return (years: 4, salary: 10_000)   // ~$10M/yr
+            capPercent = 3.8     // ~3.8% of cap
+            years = 4
         case 33...64:
-            return (years: 4, salary: 5_000)    // ~$5M/yr (2nd round)
+            capPercent = 1.9     // ~1.9% of cap (2nd round)
+            years = 4
         case 65...100:
-            return (years: 4, salary: 2_500)    // ~$2.5M/yr (3rd round)
+            capPercent = 0.95    // ~0.95% of cap (3rd round)
+            years = 4
         case 101...128:
-            return (years: 4, salary: 1_500)    // ~$1.5M/yr (4th round)
+            capPercent = 0.57    // ~0.57% of cap (4th round)
+            years = 4
         case 129...160:
-            return (years: 3, salary: 1_000)    // ~$1M/yr (5th round)
+            capPercent = 0.38    // ~0.38% of cap (5th round)
+            years = 3
         case 161...192:
-            return (years: 3, salary: 900)      // ~$900K/yr (6th round)
+            capPercent = 0.34    // ~0.34% of cap (6th round)
+            years = 3
         default:
-            return (years: 3, salary: 750)      // ~$750K/yr (7th round)
+            capPercent = 0.28    // ~0.28% of cap (7th round)
+            years = 3
         }
+
+        let salary = max(Int(capPercent * Double(salaryCap) / 100.0), 750)
+        return (years: years, salary: salary)
     }
 
     // MARK: - Pick Value Chart Internals

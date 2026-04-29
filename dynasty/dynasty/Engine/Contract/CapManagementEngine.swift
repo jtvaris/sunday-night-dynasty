@@ -41,8 +41,9 @@ enum CapManagementEngine {
         gainedFreeAgents: [Player]
     ) -> [DraftPick] {
 
-        let lostValue = lostFreeAgents.reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1) }
-        let gainedValue = gainedFreeAgents.reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1) }
+        let salaryCap = team.salaryCap
+        let lostValue = lostFreeAgents.reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1, salaryCap: salaryCap) }
+        let gainedValue = gainedFreeAgents.reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1, salaryCap: salaryCap) }
 
         let valueDelta = lostValue - gainedValue
         guard valueDelta > 0 else { return [] }
@@ -120,7 +121,7 @@ enum CapManagementEngine {
     ///
     /// - Parameters:
     ///   - team: The team whose cap is being updated.
-    ///   - growthRate: Fractional growth rate (e.g., 0.05 for 5%). Clamped to 0–0.25.
+    ///   - growthRate: Fractional growth rate (e.g., 0.05 for 5%). Clamped to 0-0.25.
     static func applyCapGrowth(team: Team, growthRate: Double) {
         let clampedRate = max(0.0, min(0.25, growthRate))
         let oldCap = team.salaryCap

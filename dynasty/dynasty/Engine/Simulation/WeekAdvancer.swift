@@ -800,6 +800,20 @@ enum WeekAdvancer {
                 teams: teams
             )
 
+            // Regenerate mock draft after FA signings change team rosters/needs
+            if !currentDraftClass.isEmpty {
+                currentMockDraft = ScoutingEngine.generateMockDraft(
+                    prospects: currentDraftClass,
+                    draftPicks: currentDraftPicks,
+                    teams: teams,
+                    players: allPlayers
+                )
+                ScoutingEngine.applyMockDraftToProspects(
+                    prospects: &currentDraftClass,
+                    mockDraft: currentMockDraft
+                )
+            }
+
         case .proDays:
             // Pro days phase — engine work happens in scouting UI
             lastNewsItems = NewsGenerator.generateOffseasonNews(

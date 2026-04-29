@@ -19,6 +19,7 @@ struct ContractNegotiationView: View {
     @State private var outcome: NegotiationOutcome = .pending
     @State private var roundNumber: Int = 0
     @State private var scrollTarget: UUID?
+    @State private var showYearlyBreakdown = false
 
     // Offer builder state
     @State private var offerYears: Int = 2
@@ -316,6 +317,9 @@ struct ContractNegotiationView: View {
             // Cap impact preview
             capPreview
 
+            // Yearly breakdown toggle
+            yearlyBreakdownSection
+
             // Action buttons
             actionButtons
         }
@@ -364,6 +368,110 @@ struct ContractNegotiationView: View {
                 .foregroundStyle(Color.textSecondary)
         }
         .padding(.horizontal, 4)
+    }
+
+    // MARK: - Yearly Breakdown Section
+
+    private var yearlyBreakdownSection: some View {
+        VStack(spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showYearlyBreakdown.toggle()
+                }
+            } label: {
+                HStack {
+                    Text("Yearly Breakdown")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer()
+                    Image(systemName: showYearlyBreakdown ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .padding(.horizontal, 4)
+            }
+            .buttonStyle(.plain)
+
+            if showYearlyBreakdown {
+                let currentOffer = NegotiationOffer(
+                    years: offerYears,
+                    annualSalary: offerSalary,
+                    signingBonus: offerBonus,
+                    guaranteedPercent: offerGuaranteed,
+                    noTradeClause: false
+                )
+                let breakdown = currentOffer.yearlyBreakdown(playerAge: player.age)
+
+                VStack(spacing: 0) {
+                    // Header row
+                    HStack(spacing: 0) {
+                        Text("Year")
+                            .frame(width: 40, alignment: .leading)
+                        Text("Base")
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Text("Bonus")
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Text("Cap Hit")
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Text("Dead Cap")
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    .font(.system(size: 9).weight(.bold))
+                    .foregroundStyle(Color.textTertiary)
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+
+                    Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+                    // Year rows
+                    ForEach(breakdown) { year in
+                        HStack(spacing: 0) {
+                            Text("Yr \(year.yearNumber)")
+                                .frame(width: 40, alignment: .leading)
+                            Text(formatMillions(year.baseSalary))
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                            Text(formatMillions(year.proratedBonus))
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                            Text(formatMillions(year.capHit))
+                                .foregroundStyle(Color.accentGold)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                            Text(formatMillions(year.deadCapIfCut))
+                                .foregroundStyle(Color.danger.opacity(0.8))
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                        }
+                        .font(.system(size: 10).weight(.semibold).monospacedDigit())
+                        .foregroundStyle(Color.textSecondary)
+                        .padding(.vertical, 3)
+                        .padding(.horizontal, 8)
+                    }
+
+                    Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+                    // Totals row
+                    HStack(spacing: 0) {
+                        Text("Total")
+                            .frame(width: 40, alignment: .leading)
+                        Text(formatMillions(breakdown.reduce(0) { $0 + $1.baseSalary }))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Text(formatMillions(breakdown.reduce(0) { $0 + $1.proratedBonus }))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Text(formatMillions(breakdown.reduce(0) { $0 + $1.capHit }))
+                            .foregroundStyle(Color.accentGold)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Text("")
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    .font(.system(size: 10).weight(.bold).monospacedDigit())
+                    .foregroundStyle(Color.textPrimary)
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.backgroundPrimary.opacity(0.5))
+                )
+            }
+        }
     }
 
     private var actionButtons: some View {
@@ -557,9 +665,7 @@ struct ContractNegotiationView: View {
         outcome = .walkedAway
         scrollTarget = sysMsg.id
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            dismiss()
-        }
+        // Don't auto-dismiss — let the user read the messages and close manually
     }
 
     // MARK: - Helpers

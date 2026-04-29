@@ -648,37 +648,192 @@ struct ProspectDetailView: View {
         }
     }
 
-    // MARK: - Interview Results Section
+    // MARK: - Interview Results Section (Task 16: Full interview results in prospect detail)
 
     @ViewBuilder
     private var interviewResultsSection: some View {
-        Section("Interview Results") {
-            if let personality = prospect.scoutedPersonality {
-                LabeledContent("Personality") {
-                    Text(personality.displayName)
-                        .font(.body.weight(.semibold))
+        Section {
+            // Header with interview grade
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .font(.subheadline)
                         .foregroundStyle(Color.accentGold)
+                    Text("Interview Results")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+                }
+                Spacer()
+                if let iq = prospect.interviewFootballIQ {
+                    // Overall interview grade
+                    let grade = interviewGradeLetter(iq: iq, personality: prospect.scoutedPersonality)
+                    Text(grade)
+                        .font(.title2.weight(.heavy))
+                        .foregroundStyle(interviewDetailGradeColor(grade))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(interviewDetailGradeColor(grade).opacity(0.15))
+                        )
                 }
             }
 
+            // Personality badge with colored background (Task 1)
+            if let personality = prospect.scoutedPersonality {
+                HStack {
+                    Text("Personality")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Image(systemName: "person.fill")
+                            .font(.caption2)
+                        Text(personality.displayName)
+                            .font(.subheadline.weight(.bold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule().fill(personalityDetailBadgeColor(personality))
+                    )
+                }
+            }
+
+            // Football IQ with letter grade (Task 2)
             if let iq = prospect.interviewFootballIQ {
-                LabeledContent("Football IQ") {
-                    Text("\(iq)")
-                        .font(.body.weight(.bold).monospacedDigit())
-                        .foregroundStyle(Color.forRating(iq))
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Football IQ")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        HStack(spacing: 6) {
+                            Text(footballIQGradeLetter(iq))
+                                .font(.body.weight(.heavy))
+                                .foregroundStyle(footballIQDetailColor(iq))
+                            Text("(\(iq))")
+                                .font(.caption.weight(.medium).monospacedDigit())
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                    }
+                    Text("Affects scheme learning speed")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+
+                    // Football IQ impact (Task 11)
+                    if iq >= 85 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "bolt.fill")
+                                .font(.caption2)
+                                .foregroundStyle(Color.success)
+                            Text("High IQ = faster scheme learning, better decisions, fewer penalties")
+                                .font(.caption2)
+                                .foregroundStyle(Color.success)
+                        }
+                    } else if iq < 55 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.caption2)
+                                .foregroundStyle(Color.danger)
+                            Text("Low IQ = slower scheme learning, more mental errors")
+                                .font(.caption2)
+                                .foregroundStyle(Color.danger)
+                        }
+                    }
                 }
             }
 
+            // Off-field / exemplary character indicators (Task 3: larger, more visible)
+            if let notes = prospect.interviewCharacterNotes {
+                let hasOffField = notes.contains(where: { $0.contains("\u{1F6A9}") })
+                let hasExemplary = notes.contains(where: { $0.contains("\u{2705}") })
+
+                if hasOffField {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.body)
+                            .foregroundStyle(Color.danger)
+                        Text("OFF-FIELD CONCERNS REPORTED")
+                            .font(.subheadline.weight(.heavy))
+                            .foregroundStyle(Color.danger)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.danger.opacity(0.1))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.danger.opacity(0.3))
+                            )
+                    )
+                }
+
+                if hasExemplary {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.body)
+                            .foregroundStyle(Color.success)
+                        Text("EXEMPLARY CHARACTER")
+                            .font(.subheadline.weight(.heavy))
+                            .foregroundStyle(Color.success)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.success.opacity(0.1))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.success.opacity(0.3))
+                            )
+                    )
+                }
+            }
+
+            // Red/green flags summary (Task 12)
+            if let iq = prospect.interviewFootballIQ {
+                let personality = prospect.scoutedPersonality
+                let hasOffField = prospect.interviewCharacterNotes?.contains(where: { $0.contains("\u{1F6A9}") }) ?? false
+
+                VStack(alignment: .leading, spacing: 4) {
+                    // Green flags
+                    if iq >= 75 {
+                        interviewFlagRow(color: .success, text: "High Football IQ")
+                    }
+                    if let p = personality, p.tier == .positive {
+                        interviewFlagRow(color: .success, text: p.displayName)
+                    }
+                    if !hasOffField {
+                        interviewFlagRow(color: .success, text: "Clean record")
+                    }
+
+                    // Red flags
+                    if hasOffField {
+                        interviewFlagRow(color: .danger, text: "Off-field concerns")
+                    }
+                    if iq < 55 {
+                        interviewFlagRow(color: .danger, text: "Low Football IQ")
+                    }
+                    if let p = personality, p.tier == .risky {
+                        interviewFlagRow(color: .danger, text: p.displayName)
+                    }
+                }
+            }
+
+            // Character notes (excluding off-field/exemplary which are shown above)
             if let notes = prospect.interviewCharacterNotes, !notes.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Character Notes")
                         .font(.caption)
                         .foregroundStyle(Color.textTertiary)
-                    ForEach(notes, id: \.self) { note in
+                    ForEach(notes.filter({ !$0.contains("\u{1F6A9}") && !$0.contains("\u{2705}") }), id: \.self) { note in
                         HStack(spacing: 6) {
-                            Image(systemName: "person.fill.checkmark")
+                            Image(systemName: "quote.bubble.fill")
                                 .font(.caption)
-                                .foregroundStyle(Color.accentBlue)
+                                .foregroundStyle(Color.textTertiary)
                             Text(note)
                                 .font(.subheadline)
                                 .foregroundStyle(Color.textPrimary)
@@ -688,6 +843,68 @@ struct ProspectDetailView: View {
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private func interviewFlagRow(color: Color, text: String) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text(text)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(color)
+        }
+    }
+
+    private func interviewGradeLetter(iq: Int, personality: PersonalityArchetype?) -> String {
+        var score = iq
+        if let p = personality {
+            score += p.interviewScoreContribution
+        }
+        if let notes = prospect.interviewCharacterNotes {
+            if notes.contains(where: { $0.contains("\u{1F6A9}") }) { score -= 15 }
+            if notes.contains(where: { $0.contains("\u{2705}") }) { score += 10 }
+        }
+        score = max(0, min(99, score))
+        if score >= 85 { return "A" }
+        if score >= 75 { return "B" }
+        if score >= 65 { return "C" }
+        if score >= 55 { return "D" }
+        return "F"
+    }
+
+    private func interviewDetailGradeColor(_ grade: String) -> Color {
+        switch grade {
+        case "A": return .success
+        case "B": return .accentGold
+        case "C": return .warning
+        case "D": return .danger
+        default:  return .danger
+        }
+    }
+
+    private func personalityDetailBadgeColor(_ p: PersonalityArchetype) -> Color {
+        switch p.tier {
+        case .positive: return .success
+        case .risky:    return .danger
+        case .neutral:  return .warning.opacity(0.8)
+        }
+    }
+
+    private func footballIQGradeLetter(_ iq: Int) -> String {
+        if iq >= 85 { return "A" }
+        if iq >= 75 { return "B" }
+        if iq >= 65 { return "C" }
+        if iq >= 55 { return "D" }
+        return "F"
+    }
+
+    private func footballIQDetailColor(_ iq: Int) -> Color {
+        if iq >= 85 { return .success }
+        if iq >= 75 { return .accentGold }
+        if iq >= 65 { return .warning }
+        if iq >= 55 { return .danger }
+        return .danger
     }
 
     // MARK: - College Production Section (Position Skills)

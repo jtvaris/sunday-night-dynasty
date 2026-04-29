@@ -22,6 +22,36 @@ struct NegotiationOffer: Identifiable, Equatable {
         let proratedBonus = years > 0 ? signingBonus / years : 0
         return annualSalary + proratedBonus
     }
+
+    /// Year-by-year breakdown of the offer for preview purposes.
+    /// Uses escalating structure for display (young player default).
+    func yearlyBreakdown(playerAge: Int = 25) -> [ContractYearDetail] {
+        guard years > 0 else { return [] }
+        let proratedPerYear = signingBonus / years
+
+        // Build base salaries with escalating/front-loaded structure
+        let baseSalaries: [Int]
+        if playerAge < 28 {
+            baseSalaries = ContractEngine.escalatingBaseSalaries(annualSalary: annualSalary, years: years)
+        } else {
+            baseSalaries = ContractEngine.frontLoadedBaseSalaries(annualSalary: annualSalary, years: years)
+        }
+
+        return (0..<years).map { yearIndex in
+            let base = yearIndex < baseSalaries.count ? baseSalaries[yearIndex] : annualSalary
+            let yearCapHit = base + proratedPerYear
+            let remainingFromThisYear = years - yearIndex
+            let deadCapIfCut = proratedPerYear * remainingFromThisYear
+
+            return ContractYearDetail(
+                yearNumber: yearIndex + 1,
+                baseSalary: base,
+                proratedBonus: proratedPerYear,
+                capHit: yearCapHit,
+                deadCapIfCut: deadCapIfCut
+            )
+        }
+    }
 }
 
 // MARK: - Negotiation Message
@@ -69,27 +99,29 @@ enum ContractNegotiationEngine {
     static func generateOpeningDemand(
         player: Player,
         negotiationType: NegotiationType,
-        teamCapSpace: Int = 50_000
+        teamCapSpace: Int = 50_000,
+        salaryCap: Int = 265_000
     ) -> (offer: NegotiationOffer, message: String) {
-        let marketValue = ContractEngine.estimateMarketValue(player: player)
+        let marketValue = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
 
         // Agent asks 10-25% above market value
         let aggressiveness = Double.random(in: 1.10...1.25)
         let askingSalary = Int(Double(marketValue) * aggressiveness)
 
-        // Preferred years based on age
+        // Preferred years based on age, capped by age-based maximum
+        let ageMax = maxContractYears(forAge: player.age)
         let preferredYears: Int = {
             switch player.age {
-            case ...25: return Int.random(in: 3...4)   // Young: shorter for next payday
-            case 26...29: return Int.random(in: 3...5)  // Prime: medium-long
-            case 30...32: return Int.random(in: 2...4)  // Aging: wants security
-            default: return Int.random(in: 1...2)       // Old: short prove-it
+            case ...25: return min(Int.random(in: 3...4), ageMax)
+            case 26...29: return min(Int.random(in: 3...5), ageMax)
+            case 30...31: return min(Int.random(in: 2...4), ageMax)
+            case 32...33: return min(Int.random(in: 2...3), ageMax)
+            default: return min(Int.random(in: 1...2), ageMax)
             }
         }()
 
-        // Signing bonus: 15-30% of first year salary
-        let bonusPercent = Double.random(in: 0.15...0.30)
-        let signingBonus = Int(Double(askingSalary) * bonusPercent)
+        // Signing bonus: realistic scaling based on contract size
+        let signingBonus = ContractEngine.realisticSigningBonus(annualSalary: askingSalary)
 
         // Guaranteed percentage based on OVR
         let guaranteedPercent: Int = {
@@ -116,6 +148,19 @@ enum ContractNegotiationEngine {
         return (offer, message)
     }
 
+    // MARK: - Age-Based Max Contract Years
+
+    /// Maximum contract years a player will accept based on age.
+    /// Older players approaching retirement won't sign long-term deals.
+    static func maxContractYears(forAge age: Int) -> Int {
+        switch age {
+        case 34...: return 2   // 34+: max 1-2 years
+        case 32...33: return 3 // 32-33: max 2-3 years
+        case 30...31: return 4 // 30-31: max 3-4 years
+        default: return 6      // Under 30: any length
+        }
+    }
+
     // MARK: - Evaluate Counter Offer
 
     /// Agent evaluates the GM's counter-offer and responds.
@@ -125,9 +170,25 @@ enum ContractNegotiationEngine {
         player: Player,
         previousAgentOffer: NegotiationOffer,
         roundNumber: Int,
-        negotiationType: NegotiationType
+        negotiationType: NegotiationType,
+        salaryCap: Int = 265_000
     ) -> (message: String, counterOffer: NegotiationOffer?, outcome: NegotiationOutcome) {
-        let marketValue = ContractEngine.estimateMarketValue(player: player)
+        // Check if the offer is too long for the player's age
+        let maxYears = maxContractYears(forAge: player.age)
+        if gmOffer.years > maxYears {
+            // Agent counters with fewer years
+            let adjustedOffer = NegotiationOffer(
+                years: maxYears,
+                annualSalary: previousAgentOffer.annualSalary,
+                signingBonus: previousAgentOffer.signingBonus,
+                guaranteedPercent: previousAgentOffer.guaranteedPercent,
+                noTradeClause: previousAgentOffer.noTradeClause
+            )
+            let message = "At \(player.age) years old, \(player.firstName) isn't looking for a \(gmOffer.years)-year commitment. We'd consider \(maxYears) years max. Here's our revised ask."
+            return (message, adjustedOffer, .pending)
+        }
+
+        let marketValue = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
         let askingTotal = previousAgentOffer.totalValue
         let offerTotal = gmOffer.totalValue
 

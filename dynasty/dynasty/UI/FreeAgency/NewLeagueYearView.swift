@@ -199,11 +199,41 @@ struct NewLeagueYearView: View {
         let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
         let allTeams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
 
+        // Capture pre-FA snapshot before contracts expire
+        let myTeam = allTeams.first { $0.id == teamID }
+        let myRoster = allPlayers.filter { $0.teamID == teamID }
+        let preCapUsage = myTeam?.currentCapUsage ?? 0
+        let preOVR = myRoster.isEmpty ? 0 : myRoster.reduce(0) { $0 + $1.overall } / myRoster.count
+        let idealCounts = PositionGradeCalculator.idealStarterCounts
+        var starterGaps = 0
+        for (pos, needed) in idealCounts {
+            let have = myRoster.filter { $0.position == pos }.count
+            if have < needed { starterGaps += (needed - have) }
+        }
+        let baseCap = myTeam?.salaryCap ?? 265_000
+
         summary = FreeAgencyEngine.executeNewLeagueYear(
             allPlayers: allPlayers,
             allTeams: allTeams,
             playerTeamID: teamID,
             modelContext: modelContext
         )
+
+        // Track lost players (those who were on our team and became FAs)
+        if let summary {
+            let myAbbr = myTeam?.abbreviation ?? ""
+            let lostIDs = summary.newFreeAgents
+                .filter { $0.formerTeam == myAbbr }
+                .compactMap { fa in
+                    allPlayers.first { $0.fullName == fa.name }?.id
+                }
+            FASigningTracker.trackLostPlayers(lostIDs)
+            FASigningTracker.savePreFASnapshot(
+                capUsage: preCapUsage,
+                rosterOVR: preOVR,
+                starterGaps: starterGaps,
+                baseSalaryCap: baseCap
+            )
+        }
     }
 }

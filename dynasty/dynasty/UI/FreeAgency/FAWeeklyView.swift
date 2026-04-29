@@ -6,6 +6,11 @@ import SwiftData
 /// Tracks actual FA signings via UserDefaults for FACompleteView.
 enum FASigningTracker {
     private static let key = "faSigningIDs"
+    private static let lostKey = "faLostPlayerIDs"
+    private static let preCapKey = "faPreCapUsage"
+    private static let preOVRKey = "faPreRosterOVR"
+    private static let preStarterGapsKey = "faPreStarterGaps"
+    private static let baseSalaryCapKey = "faBaseSalaryCap"
 
     static func trackSigning(_ playerID: UUID) {
         var ids = getSigningIDs()
@@ -19,8 +24,51 @@ enum FASigningTracker {
         return Set(strings.compactMap { UUID(uuidString: $0) })
     }
 
+    // MARK: - Lost Players
+
+    static func trackLostPlayers(_ playerIDs: [UUID]) {
+        let strings = playerIDs.map(\.uuidString)
+        UserDefaults.standard.set(strings, forKey: lostKey)
+    }
+
+    static func getLostPlayerIDs() -> [UUID] {
+        let strings = UserDefaults.standard.stringArray(forKey: lostKey) ?? []
+        return strings.compactMap { UUID(uuidString: $0) }
+    }
+
+    // MARK: - Pre-FA Snapshot
+
+    static func savePreFASnapshot(capUsage: Int, rosterOVR: Int, starterGaps: Int, baseSalaryCap: Int) {
+        UserDefaults.standard.set(capUsage, forKey: preCapKey)
+        UserDefaults.standard.set(rosterOVR, forKey: preOVRKey)
+        UserDefaults.standard.set(starterGaps, forKey: preStarterGapsKey)
+        UserDefaults.standard.set(baseSalaryCap, forKey: baseSalaryCapKey)
+    }
+
+    static func getPreFACapUsage() -> Int {
+        UserDefaults.standard.integer(forKey: preCapKey)
+    }
+
+    static func getPreFARosterOVR() -> Int {
+        UserDefaults.standard.integer(forKey: preOVRKey)
+    }
+
+    static func getPreFAStarterGaps() -> Int {
+        UserDefaults.standard.integer(forKey: preStarterGapsKey)
+    }
+
+    static func getBaseSalaryCap() -> Int {
+        let val = UserDefaults.standard.integer(forKey: baseSalaryCapKey)
+        return val > 0 ? val : 265_000
+    }
+
     static func reset() {
         UserDefaults.standard.removeObject(forKey: key)
+        UserDefaults.standard.removeObject(forKey: lostKey)
+        UserDefaults.standard.removeObject(forKey: preCapKey)
+        UserDefaults.standard.removeObject(forKey: preOVRKey)
+        UserDefaults.standard.removeObject(forKey: preStarterGapsKey)
+        UserDefaults.standard.removeObject(forKey: baseSalaryCapKey)
     }
 }
 
@@ -50,6 +98,11 @@ struct FAWeeklyView: View {
     @State private var showSkipConfirm = false
     @State private var selectedFA: FreeAgencyEngine.FreeAgent?
     @State private var positionFilter: PositionFilter = .all
+    @State private var biddingUpdates: [FreeAgencyEngine.BiddingUpdate] = []
+    @State private var showBiddingUpdates = false
+    @State private var instantSigningMessage: String?
+    @State private var showInstantSigning = false
+    @State private var allPlayers: [Player] = []
 
     // Position filter
     enum PositionFilter: String, CaseIterable {
@@ -90,6 +143,7 @@ struct FAWeeklyView: View {
             if team != nil {
                 VStack(spacing: 0) {
                     roundHeader
+                    biddingUpdatesBar
                     pendingOffersBar
                     positionFilterBar
                     freeAgentList
@@ -112,11 +166,38 @@ struct FAWeeklyView: View {
                     team: team,
                     marketValue: fa.askingPrice,
                     onSubmit: { salary, years in
-                        myOffers[fa.player.id] = ContractOffer(
-                            playerID: fa.player.id,
-                            salary: salary,
-                            years: years
+                        // Check for instant signing (big overpay on Day 1)
+                        let instantResult = FreeAgencyEngine.checkInstantSigning(
+                            offeredSalary: salary,
+                            askingPrice: fa.askingPrice,
+                            round: currentRound
                         )
+
+                        switch instantResult {
+                        case .signedImmediately, .coinFlipSigned:
+                            // Player signs immediately -- too good to refuse
+                            FreeAgencyEngine.signFreeAgent(
+                                player: fa.player,
+                                team: team,
+                                years: years,
+                                salary: salary,
+                                capMode: career.capMode,
+                                modelContext: modelContext
+                            )
+                            FASigningTracker.trackSigning(fa.player.id)
+                            let salaryStr = formatMillions(salary)
+                            instantSigningMessage = "\(fa.player.fullName) signed immediately for \(salaryStr)/yr x \(years)yr! The offer was too good to refuse."
+                            showInstantSigning = true
+                            loadData()
+
+                        case .goesToMarket:
+                            // Normal offer, goes to bidding process
+                            myOffers[fa.player.id] = ContractOffer(
+                                playerID: fa.player.id,
+                                salary: salary,
+                                years: years
+                            )
+                        }
                     }
                 )
             }
@@ -136,6 +217,11 @@ struct FAWeeklyView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("AI teams will sign remaining free agents based on their needs. You won't be able to make any more signings.")
+        }
+        .alert("Instant Signing!", isPresented: $showInstantSigning) {
+            Button("OK") { instantSigningMessage = nil }
+        } message: {
+            Text(instantSigningMessage ?? "")
         }
     }
 
@@ -186,6 +272,154 @@ struct FAWeeklyView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(Color.backgroundSecondary)
+    }
+
+    // MARK: - Bidding Updates Bar
+
+    @ViewBuilder
+    private var biddingUpdatesBar: some View {
+        if !biddingUpdates.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 6) {
+                    Image(systemName: "megaphone.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.accentGold)
+                    Text("BIDDING UPDATES")
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundStyle(Color.accentGold)
+                    Spacer()
+                    Button {
+                        biddingUpdates.removeAll()
+                    } label: {
+                        Text("Dismiss")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
+
+                ForEach(biddingUpdates, id: \.playerID) { update in
+                    biddingUpdateRow(update)
+                }
+            }
+            .background(Color.backgroundSecondary)
+            .overlay(
+                Rectangle()
+                    .fill(Color.accentGold.opacity(0.3))
+                    .frame(height: 1),
+                alignment: .bottom
+            )
+        }
+    }
+
+    private func biddingUpdateRow(_ update: FreeAgencyEngine.BiddingUpdate) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(update.position)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.textPrimary)
+                    .frame(width: 26)
+                    .padding(.vertical, 2)
+                    .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: 3))
+                Text(update.playerName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                if update.isBiddingWar {
+                    Text("BIDDING WAR")
+                        .font(.system(size: 7, weight: .black))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.danger, in: Capsule())
+                }
+                Spacer()
+                Text("\(update.totalBidders) bidder\(update.totalBidders == 1 ? "" : "s")")
+                    .font(.system(size: 9))
+                    .foregroundStyle(update.totalBidders >= 4 ? Color.danger : Color.textTertiary)
+            }
+
+            HStack(spacing: 12) {
+                Text("Your offer: \(formatMillions(update.yourOffer))/yr")
+                    .font(.system(size: 9).monospacedDigit())
+                    .foregroundStyle(Color.accentGold)
+
+                if let highest = update.highestCompetingOffer, let teamAbbr = update.highestCompetingTeam {
+                    Text("Highest: ~\(formatMillions(highest))/yr from \(teamAbbr)")
+                        .font(.system(size: 9).monospacedDigit())
+                        .foregroundStyle(Color.warning)
+                }
+            }
+
+            HStack(spacing: 8) {
+                let leaningColor: Color = {
+                    switch update.playerLeaning {
+                    case .strongInterest, .prefersYou: return .success
+                    case .undecided: return .warning
+                    case .leaningAway: return .danger
+                    }
+                }()
+                Image(systemName: leaningIcon(update.playerLeaning))
+                    .font(.system(size: 8))
+                    .foregroundStyle(leaningColor)
+                Text(update.playerLeaning.rawValue)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(leaningColor)
+
+                Spacer()
+
+                // Action buttons
+                Button {
+                    // Raise offer: reopen offer sheet
+                    if let fa = freeAgents.first(where: { $0.player.id == update.playerID }) {
+                        selectedFA = fa
+                    }
+                } label: {
+                    Text("Raise Offer")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.accentGold)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.accentGold.opacity(0.15), in: Capsule())
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    // Withdraw offer
+                    myOffers.removeValue(forKey: update.playerID)
+                    biddingUpdates.removeAll { $0.playerID == update.playerID }
+                } label: {
+                    Text("Withdraw")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.danger)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.danger.opacity(0.1), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.accentGold.opacity(0.03))
+        .overlay(
+            Rectangle()
+                .fill(Color.surfaceBorder.opacity(0.3))
+                .frame(height: 1),
+            alignment: .top
+        )
+    }
+
+    private func leaningIcon(_ leaning: FreeAgencyEngine.PlayerLeaning) -> String {
+        switch leaning {
+        case .strongInterest: return "hand.thumbsup.fill"
+        case .prefersYou:     return "arrow.right"
+        case .undecided:      return "questionmark.circle"
+        case .leaningAway:    return "arrow.left"
+        }
     }
 
     // MARK: - Pending Offers Bar
@@ -407,17 +641,26 @@ struct FAWeeklyView: View {
     private func processRound() {
         guard let team else { return }
 
-        // Generate AI bids for all free agents this round
-        let aiBids = FreeAgencyEngine.generateAIOffers(
+        // Generate AI bids for all free agents this round (need-based)
+        var aiBids = FreeAgencyEngine.generateAIOffers(
             freeAgents: freeAgents,
             round: currentRound,
             allTeams: allTeams,
+            allPlayers: allPlayers.isEmpty ? nil : allPlayers,
             playerTeamID: career.teamID
+        )
+
+        // Process bidding wars (4+ teams on same player)
+        let biddingWarInfos = FreeAgencyEngine.processBiddingWars(
+            aiBids: &aiBids,
+            freeAgents: freeAgents,
+            allTeams: allTeams
         )
 
         // Process player's offers using resolvePlayerDecision
         var accepted: [(playerName: String, position: String, salary: Int, years: Int)] = []
         var rejected: [(playerName: String, position: String, reason: String, chosenTeam: String?, salary: Int?)] = []
+        var shoppingAround: [(playerName: String, position: String)] = []
 
         for (playerID, offer) in myOffers {
             guard let fa = freeAgents.first(where: { $0.player.id == playerID }) else { continue }
@@ -428,8 +671,19 @@ struct FAWeeklyView: View {
                 player: player,
                 playerOffer: (salary: offer.salary, years: offer.years),
                 aiBids: playerBids,
-                round: currentRound
+                round: currentRound,
+                allTeams: allTeams
             )
+
+            if decision.shoppingAround {
+                // Player wants to see more offers -- keep the offer active
+                shoppingAround.append((
+                    playerName: player.fullName,
+                    position: player.position.rawValue
+                ))
+                // Don't remove from myOffers -- carry forward
+                continue
+            }
 
             if decision.accepted {
                 // Signed with us
@@ -449,7 +703,7 @@ struct FAWeeklyView: View {
                     years: offer.years
                 ))
             } else {
-                // Rejected — chose another team
+                // Rejected -- chose another team
                 rejected.append((
                     playerName: player.fullName,
                     position: player.position.rawValue,
@@ -472,13 +726,34 @@ struct FAWeeklyView: View {
             }
         }
 
+        // Remove signed/rejected players from offers; keep shopping-around offers
+        let shoppingIDs = Set(shoppingAround.map { _ -> UUID? in nil }) // we keep all myOffers for shopping players
+        for (playerID, _) in myOffers {
+            let isShoppingAround = freeAgents
+                .first(where: { $0.player.id == playerID })
+                .map { fa in shoppingAround.contains(where: { $0.playerName == fa.player.fullName }) } ?? false
+            if !isShoppingAround {
+                myOffers.removeValue(forKey: playerID)
+            }
+        }
+
+        // Generate bidding updates for remaining offers (players still shopping)
+        let offerTuples = myOffers.mapValues { offer in (salary: offer.salary, years: offer.years) }
+        biddingUpdates = FreeAgencyEngine.generateBiddingUpdates(
+            myOffers: offerTuples,
+            aiBids: aiBids,
+            freeAgents: freeAgents,
+            playerTeamID: career.teamID
+        )
+
         // AI signings for this round (players without our offers)
         let aiSignings = simulateAIRound(excludePlayerIDs: Set(myOffers.keys), aiBids: aiBids)
 
-        // Generate media headlines
+        // Generate media headlines (with bidding war info)
         let headlines = FreeAgencyEngine.generateHeadlines(
             signings: aiSignings,
             rejections: rejected.map { (playerName: $0.playerName, chosenTeam: $0.chosenTeam) },
+            biddingWars: biddingWarInfos,
             playerTeamAbbr: team.abbreviation,
             round: currentRound
         )
@@ -490,11 +765,11 @@ struct FAWeeklyView: View {
             aiSignings: aiSignings,
             headlines: headlines,
             playersRemaining: freeAgents.filter { $0.player.teamID == nil }.count - accepted.count,
-            capRemaining: team.availableCap
+            capRemaining: team.availableCap,
+            biddingWars: biddingWarInfos,
+            shoppingAround: shoppingAround,
+            biddingUpdates: biddingUpdates
         )
-
-        // Clear offers and advance round
-        myOffers.removeAll()
 
         if currentRound >= 6 {
             career.freeAgencyStep = FreeAgencyStep.complete.rawValue
@@ -516,12 +791,13 @@ struct FAWeeklyView: View {
             // Use AI bids generated by generateAIOffers
             guard let bids = aiBids[fa.player.id], !bids.isEmpty else { continue }
 
-            // Resolve which team wins — player decides among AI offers only
+            // Resolve which team wins -- player decides among AI offers only
             let decision = FreeAgencyEngine.resolvePlayerDecision(
                 player: fa.player,
                 playerOffer: nil,
                 aiBids: bids,
-                round: currentRound
+                round: currentRound,
+                allTeams: allTeams
             )
 
             if let chosenID = decision.chosenTeamID,
@@ -621,7 +897,7 @@ struct FAWeeklyView: View {
 
         allTeams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
 
-        let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
+        allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
         freeAgents = FreeAgencyEngine.generateFreeAgentMarket(allPlayers: allPlayers)
     }
 }
@@ -641,4 +917,7 @@ struct RoundResults {
     let headlines: [String]
     let playersRemaining: Int
     let capRemaining: Int
+    var biddingWars: [FreeAgencyEngine.BiddingWarInfo] = []
+    var shoppingAround: [(playerName: String, position: String)] = []
+    var biddingUpdates: [FreeAgencyEngine.BiddingUpdate] = []
 }

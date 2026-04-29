@@ -106,7 +106,7 @@ struct CoachDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will offer \(coach.firstName) a 2-year contract extension at their current salary of $\(coach.salary)K/yr.")
+            Text("This will offer \(coach.firstName) a 2-year contract extension at their current salary of $\(coach.salary)K/yr. Contract will go from \(coach.contractYearsRemaining) to \(coach.contractYearsRemaining + 2) years.")
         }
         // Promote: role picker sheet
         .sheet(isPresented: $showPromoteSheet) {
@@ -184,6 +184,21 @@ struct CoachDetailView: View {
                     .monospacedDigit()
                     .foregroundStyle(Color.accentGold)
             }
+            LabeledContent("Contract") {
+                let years = coach.contractYearsRemaining
+                Text(years <= 1
+                     ? "\(max(1, years)) yr remaining"
+                     : "\(years) yrs remaining")
+                    .monospacedDigit()
+                    .foregroundStyle(years <= 1 ? Color.warning : Color.textPrimary)
+            }
+            if let currentSeason = career?.currentSeason, coach.hireSeasonYear > 0 {
+                let tenure = max(1, currentSeason - coach.hireSeasonYear + 1)
+                LabeledContent("Tenure") {
+                    Text(tenure == 1 ? "1st season" : "\(tenure) seasons")
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
             if !coach.background.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Background")
@@ -202,8 +217,13 @@ struct CoachDetailView: View {
 
     private var developmentSection: some View {
         Section("Development") {
-            // Fuzzy potential label
-            let label = coach.potentialLabel(seasonsOnTeam: 2) // TODO: calculate actual seasons
+            // Fuzzy potential label — accuracy improves with tenure
+            let seasonsOnTeam: Int = {
+                guard let currentSeason = career?.currentSeason,
+                      coach.hireSeasonYear > 0 else { return 1 }
+                return max(1, currentSeason - coach.hireSeasonYear + 1)
+            }()
+            let label = coach.potentialLabel(seasonsOnTeam: seasonsOnTeam)
             LabeledContent("Potential") {
                 Text(label)
                     .font(.subheadline.weight(.semibold))
@@ -662,9 +682,9 @@ struct CoachDetailView: View {
         dismiss()
     }
 
-    /// Extend the coach's contract (placeholder: just saves context to confirm action).
+    /// Extend the coach's contract by 2 years.
     private func extendContract() {
-        // TODO: Implement full contract length tracking. For now, save context to acknowledge.
+        coach.contractYearsRemaining += 2
         try? modelContext.save()
     }
 

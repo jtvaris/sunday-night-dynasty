@@ -74,6 +74,16 @@ enum ScoutRole: String, Codable, CaseIterable, Identifiable {
     var isExtra: Bool {
         self == .extraScout1 || self == .extraScout2
     }
+
+    /// Maximum pro days this scout role can attend per year.
+    var maxProDays: Int {
+        switch self {
+        case .chiefScout:                                       return 4
+        case .regionalScout1, .regionalScout2, .regionalScout3,
+             .regionalScout4, .regionalScout5:                  return 3
+        case .extraScout1, .extraScout2:                        return 3
+        }
+    }
 }
 
 // MARK: - Scout Focus Attribute

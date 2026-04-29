@@ -22,6 +22,9 @@ final class Scout {
     /// Number of Pro Days attended this year (max 5 per scout).
     var proDaysAttended: Int = 0
 
+    /// Colleges this scout has been sent to for Pro Days.
+    var proDayColleges: [String] = []
+
     /// How many seasons this scout has been in their current role/region.
     /// Scouts with 2+ seasons get a familiarity accuracy bonus.
     var seasonsInRole: Int = 0
@@ -41,6 +44,27 @@ final class Scout {
 
     var fullName: String {
         "\(firstName) \(lastName)"
+    }
+
+    /// Short display label for the scout's specialty/focus area.
+    var specialtyLabel: String {
+        if let pos = positionSpecialization {
+            return "\(pos.rawValue) Specialist"
+        }
+        if let focus = focusAttribute {
+            return "\(focus.label) Focus"
+        }
+        return scoutRole.isChief ? "Chief Scout" : "General"
+    }
+
+    /// Maximum pro days this scout can attend, based on role.
+    var maxProDays: Int {
+        scoutRole.maxProDays
+    }
+
+    /// Whether this scout can attend more pro days.
+    var canAttendProDay: Bool {
+        proDaysAttended < maxProDays
     }
 
     // MARK: - Init

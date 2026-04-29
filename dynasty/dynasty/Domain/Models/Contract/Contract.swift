@@ -1,6 +1,18 @@
 import Foundation
 import SwiftData
 
+// MARK: - Contract Year Detail
+
+/// Breakdown of a single contract year for display purposes.
+struct ContractYearDetail: Identifiable {
+    let id = UUID()
+    let yearNumber: Int          // 1-based year of the contract
+    let baseSalary: Int          // In thousands
+    let proratedBonus: Int       // In thousands (signing bonus / totalYears)
+    let capHit: Int              // baseSalary + proratedBonus
+    let deadCapIfCut: Int        // Remaining prorated bonus from this year onward
+}
+
 /// Detailed contract model used in realistic cap mode.
 /// Tracks per-year base salaries, signing bonuses, guaranteed money,
 /// void years, and franchise tag status.
@@ -60,6 +72,27 @@ final class Contract {
     /// Total contract value: sum of all base salaries + signing bonus.
     var totalValue: Int {
         baseSalary.reduce(0, +) + signingBonus
+    }
+
+    /// Full year-by-year breakdown of the contract for UI display.
+    var yearlyBreakdown: [ContractYearDetail] {
+        guard totalYears > 0 else { return [] }
+        let proratedPerYear = signingBonus / totalYears
+
+        return (0..<totalYears).map { yearIndex in
+            let base = yearIndex < baseSalary.count ? baseSalary[yearIndex] : 0
+            let yearCapHit = base + proratedPerYear
+            let remainingFromThisYear = totalYears - yearIndex
+            let deadCapIfCut = proratedPerYear * remainingFromThisYear
+
+            return ContractYearDetail(
+                yearNumber: yearIndex + 1,
+                baseSalary: base,
+                proratedBonus: proratedPerYear,
+                capHit: yearCapHit,
+                deadCapIfCut: deadCapIfCut
+            )
+        }
     }
 
     // MARK: - Init

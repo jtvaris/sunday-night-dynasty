@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 /// Manages the free-agent market: building the pool, signing players,
-/// and simulating AI team signings.
+/// and simulating AI team signings with realistic bidding wars.
 enum FreeAgencyEngine {
 
     // MARK: - Types
@@ -17,15 +17,54 @@ enum FreeAgencyEngine {
         let marketInterest: Int
     }
 
+    // MARK: - Position Need Levels (for AI bidding)
+
+    enum PositionNeedLevel: String {
+        case critical = "Critical"  // No starter-quality player
+        case high     = "High"      // Below ideal depth
+        case moderate = "Moderate"  // Could use depth
+        case none     = "None"      // Fully stocked
+    }
+
+    // MARK: - Bidding Update (shown to player between rounds)
+
+    struct BiddingUpdate {
+        let playerID: UUID
+        let playerName: String
+        let position: String
+        let yourOffer: Int
+        let yourYears: Int
+        let highestCompetingOffer: Int?    // approximate, not exact
+        let highestCompetingTeam: String?  // team abbreviation
+        let totalBidders: Int
+        let playerLeaning: PlayerLeaning
+        let isBiddingWar: Bool
+    }
+
+    enum PlayerLeaning: String {
+        case prefersYou     = "Player prefers your team"
+        case leaningAway    = "Player is leaning toward another team"
+        case undecided      = "Player is weighing options"
+        case strongInterest = "Player has strong interest in your offer"
+    }
+
+    // MARK: - Instant Signing Result
+
+    enum InstantSigningResult {
+        case signedImmediately  // >= 1.4x on Day 1
+        case coinFlipSigned     // >= 1.2x on Day 1, 50% chance
+        case goesToMarket       // Normal bidding process
+    }
+
     // MARK: - Market Generation
 
     /// Build the free-agent market from all players whose contracts have expired.
     /// Asking prices are influenced by market value and the player's personality motivation.
-    static func generateFreeAgentMarket(allPlayers: [Player]) -> [FreeAgent] {
+    static func generateFreeAgentMarket(allPlayers: [Player], salaryCap: Int = 265_000) -> [FreeAgent] {
         allPlayers
             .filter { $0.contractYearsRemaining == 0 && !$0.isFranchiseTagged }
             .map { player in
-                let baseValue = ContractEngine.estimateMarketValue(player: player)
+                let baseValue = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
 
                 // Motivation-based salary modifier
                 let motivationMultiplier: Double = {
@@ -43,7 +82,8 @@ enum FreeAgencyEngine {
                     }
                 }()
 
-                let askingPrice = max(Int(Double(baseValue) * motivationMultiplier), 750)
+                let minimum = max(Int(0.0028 * Double(salaryCap)), 750)
+                let askingPrice = max(Int(Double(baseValue) * motivationMultiplier), minimum)
 
                 // Desired years: younger players want longer deals, older want shorter
                 let desiredYears: Int = {
@@ -82,7 +122,7 @@ enum FreeAgencyEngine {
     // MARK: - Signing
 
     /// Sign a free agent to a team. Works in both simple and realistic cap modes.
-    /// In realistic mode a full Contract is created and inserted into the model context.
+    /// In realistic mode a full Contract is created with escalating/front-loaded structure.
     static func signFreeAgent(
         player: Player,
         team: Team,
@@ -101,18 +141,13 @@ enum FreeAgencyEngine {
             )
 
         case .realistic:
-            // Build a flat base-salary structure for the realistic contract.
-            let baseSalaries = Array(repeating: salary, count: years)
-            let signingBonus = Int(Double(salary) * 0.3) * years  // ~30% of total as bonus
-            let guaranteed = salary * max(years / 2, 1)           // roughly half the deal
-
-            let contract = ContractEngine.createContract(
+            // Build a realistic contract with proper salary structure
+            let contract = ContractEngine.buildRealisticContract(
                 playerID: player.id,
                 teamID: team.id,
+                annualSalary: salary,
                 years: years,
-                baseSalaries: baseSalaries,
-                signingBonus: signingBonus,
-                guaranteed: guaranteed,
+                playerAge: player.age,
                 noTrade: false
             )
 
@@ -155,7 +190,7 @@ enum FreeAgencyEngine {
             player.contractYearsRemaining -= 1
 
             if player.contractYearsRemaining == 0 {
-                // Player's contract has expired — becomes free agent
+                // Player's contract has expired -- becomes free agent
                 let formerTeam = allTeams.first { $0.id == player.teamID }
                 let teamAbbr = formerTeam?.abbreviation ?? "FA"
 
@@ -212,7 +247,9 @@ enum FreeAgencyEngine {
         playerTeamID: UUID?,
         modelContext: ModelContext
     ) {
-        let freeAgents = generateFreeAgentMarket(allPlayers: allPlayers)
+        // Use average cap across all teams for market valuation
+        let avgCap = allTeams.isEmpty ? 265_000 : allTeams.reduce(0) { $0 + $1.salaryCap } / allTeams.count
+        let freeAgents = generateFreeAgentMarket(allPlayers: allPlayers, salaryCap: avgCap)
         let aiTeams = allTeams.filter { $0.id != playerTeamID }
         simulateAIFreeAgency(freeAgents: freeAgents, teams: aiTeams, modelContext: modelContext)
     }
@@ -247,7 +284,8 @@ enum FreeAgencyEngine {
             guard let winningTeam = candidates.randomElement() else { continue }
 
             // AI always signs at a slight discount (negotiation)
-            let agreedSalary = max(Int(Double(agent.askingPrice) * Double.random(in: 0.85...1.0)), 750)
+            let minimum = max(Int(0.0028 * Double(winningTeam.salaryCap)), 750)
+            let agreedSalary = max(Int(Double(agent.askingPrice) * Double.random(in: 0.85...1.0)), minimum)
             let agreedYears = agent.desiredYears
 
             // Use simple mode for AI signings to keep simulation fast
@@ -260,21 +298,86 @@ enum FreeAgencyEngine {
         }
     }
 
-    // MARK: - AI Bidding Per Round
+    // MARK: - AI Position Need Assessment
+
+    /// Calculate how badly an AI team needs a specific position.
+    /// Compares current roster to ideal depth chart.
+    static func assessPositionNeed(team: Team, position: Position, allPlayers: [Player]) -> PositionNeedLevel {
+        let teamPlayers = allPlayers.filter { $0.teamID == team.id }
+
+        // Map positions to their group and ideal counts
+        let (groupPositions, idealCount) = positionGroupInfo(for: position)
+
+        let groupPlayers = teamPlayers.filter { groupPositions.contains($0.position) }
+        let count = groupPlayers.count
+        let bestOVR = groupPlayers.map(\.overall).max() ?? 0
+
+        // Critical: no starter-quality player at the position
+        if count == 0 || bestOVR < 60 {
+            return .critical
+        }
+
+        let deficit = idealCount - count
+
+        // High need: significant roster holes
+        if deficit >= 2 || (deficit >= 1 && bestOVR < 70) {
+            return .high
+        }
+
+        // Moderate: could use depth
+        if deficit >= 1 || bestOVR < 75 {
+            return .moderate
+        }
+
+        return .none
+    }
+
+    /// Returns the position group and ideal roster count for a given position.
+    private static func positionGroupInfo(for position: Position) -> (positions: [Position], idealCount: Int) {
+        switch position {
+        case .QB:                    return ([.QB], 2)
+        case .RB, .FB:               return ([.RB, .FB], 3)
+        case .WR:                    return ([.WR], 4)
+        case .TE:                    return ([.TE], 2)
+        case .LT, .LG, .C, .RG, .RT: return ([.LT, .LG, .C, .RG, .RT], 8)
+        case .DE:                    return ([.DE], 3)
+        case .DT:                    return ([.DT], 3)
+        case .OLB, .MLB:            return ([.OLB, .MLB], 5)
+        case .CB:                    return ([.CB], 4)
+        case .FS, .SS:              return ([.FS, .SS], 3)
+        case .K:                     return ([.K], 1)
+        case .P:                     return ([.P], 1)
+        }
+    }
+
+    /// Multiplier AI teams apply based on how badly they need the position.
+    private static func needMultiplier(for need: PositionNeedLevel) -> ClosedRange<Double> {
+        switch need {
+        case .critical: return 1.3...1.5
+        case .high:     return 1.1...1.3
+        case .moderate: return 0.95...1.1
+        case .none:     return 0.0...0.0  // Won't bid
+        }
+    }
+
+    // MARK: - AI Bidding Per Round (Need-Based)
 
     struct AIBid {
         let teamID: UUID
         let teamAbbr: String
         let salary: Int
         let years: Int
+        let needLevel: PositionNeedLevel
     }
 
     /// Generate AI team offers for each free agent in a given round.
+    /// AI teams now bid based on positional need and cap space.
     /// Returns a dictionary keyed by player ID with arrays of competing bids.
     static func generateAIOffers(
         freeAgents: [FreeAgent],
         round: Int,
         allTeams: [Team],
+        allPlayers: [Player]? = nil,
         playerTeamID: UUID?
     ) -> [UUID: [AIBid]] {
         let aggression = FreeAgencyStep.aiAggression(round)
@@ -293,41 +396,281 @@ enum FreeAgencyEngine {
         }()
 
         let aiTeams = allTeams.filter { $0.id != playerTeamID }
+        // All players for need assessment; fall back to empty if not provided
+        let rosterPlayers = allPlayers ?? []
 
         for fa in freeAgents {
             guard fa.player.teamID == nil else { continue }
             guard fa.player.overall >= targetMinOVR else { continue }
 
-            // Number of teams bidding scales with aggression and player quality
-            let qualityFactor = Double(fa.player.overall - 60) / 40.0
-            let bidCount = max(1, Int(aggression * qualityFactor * 5))
-
-            let eligibleTeams = aiTeams
-                .filter { $0.availableCap >= fa.askingPrice }
-                .shuffled()
-                .prefix(bidCount)
-
             var bids: [AIBid] = []
-            for team in eligibleTeams {
-                let salaryMultiplier = Double.random(in: (aggression * 0.8)...(aggression * 1.1 + 0.1))
-                let offeredSalary = max(Int(Double(fa.askingPrice) * salaryMultiplier), 750)
+
+            for team in aiTeams {
+                guard team.availableCap >= fa.askingPrice else { continue }
+
+                // Assess this team's need for the player's position
+                let need: PositionNeedLevel
+                if rosterPlayers.isEmpty {
+                    // Fallback: use old quality-based approach when roster data unavailable
+                    let qualityFactor = Double(fa.player.overall - 60) / 40.0
+                    if qualityFactor > 0.5 { need = .high }
+                    else if qualityFactor > 0.25 { need = .moderate }
+                    else { need = .none }
+                } else {
+                    need = assessPositionNeed(team: team, position: fa.player.position, allPlayers: rosterPlayers)
+                }
+
+                // Teams with no need don't bid on that position
+                guard need != .none else { continue }
+
+                // Need-based multiplier
+                let needRange = needMultiplier(for: need)
+                let needFactor = Double.random(in: needRange)
+
+                // Combine need with round aggression
+                let salaryMultiplier = needFactor * Double.random(in: (aggression * 0.85)...(aggression * 1.05 + 0.05))
+
+                // Cap-aware: don't bid more than 30% of remaining cap on one player
+                let maxBid = Int(Double(team.availableCap) * 0.30)
+                let minimum = max(Int(0.0028 * Double(team.salaryCap)), 750)
+                let rawOffer = Int(Double(fa.askingPrice) * salaryMultiplier)
+                let offeredSalary = max(min(rawOffer, maxBid), minimum)
+
                 bids.append(AIBid(
                     teamID: team.id,
                     teamAbbr: team.abbreviation,
                     salary: offeredSalary,
-                    years: fa.desiredYears
+                    years: fa.desiredYears,
+                    needLevel: need
                 ))
             }
 
-            if !bids.isEmpty {
-                offers[fa.player.id] = bids
+            // Limit total bids per player based on quality + aggression
+            let qualityFactor = Double(fa.player.overall - 60) / 40.0
+            let maxBidders = max(1, Int(aggression * qualityFactor * 6))
+
+            // Sort by salary descending so the most aggressive bidders are kept
+            let sortedBids = bids.sorted { $0.salary > $1.salary }
+            let cappedBids = Array(sortedBids.prefix(maxBidders))
+
+            if !cappedBids.isEmpty {
+                offers[fa.player.id] = cappedBids
             }
         }
 
         return offers
     }
 
-    // MARK: - Player Decision
+    // MARK: - Instant Signing Check (Big Overpay)
+
+    /// Check if an offer is high enough to trigger an instant signing.
+    /// Offer >= 1.4x asking on Day 1 -> immediate signing.
+    /// Offer >= 1.2x asking on Day 1 -> 50% chance of immediate signing.
+    static func checkInstantSigning(
+        offeredSalary: Int,
+        askingPrice: Int,
+        round: Int
+    ) -> InstantSigningResult {
+        guard round == 1 else { return .goesToMarket }
+
+        let ratio = Double(offeredSalary) / Double(max(askingPrice, 1))
+
+        if ratio >= 1.4 {
+            return .signedImmediately
+        } else if ratio >= 1.2 {
+            return Bool.random() ? .coinFlipSigned : .goesToMarket
+        }
+
+        return .goesToMarket
+    }
+
+    // MARK: - Bidding War Detection
+
+    struct BiddingWarInfo {
+        let playerID: UUID
+        let playerName: String
+        let position: String
+        let bidderCount: Int
+        let escalatedPrice: Int   // Price after escalation
+        let droppedOutTeams: [String]  // Teams that couldn't keep up
+    }
+
+    /// Detect and escalate bidding wars when 4+ teams bid on the same player.
+    /// Returns escalated bids and info about which teams dropped out.
+    static func processBiddingWars(
+        aiBids: inout [UUID: [AIBid]],
+        freeAgents: [FreeAgent],
+        allTeams: [Team]
+    ) -> [BiddingWarInfo] {
+        var wars: [BiddingWarInfo] = []
+
+        for (playerID, bids) in aiBids {
+            guard bids.count >= 4 else { continue }
+            guard let fa = freeAgents.first(where: { $0.player.id == playerID }) else { continue }
+
+            let bestOffer = bids.map(\.salary).max() ?? fa.askingPrice
+            // Escalate 5-15% above best offer
+            let escalation = Double.random(in: 1.05...1.15)
+            let escalatedPrice = Int(Double(bestOffer) * escalation)
+
+            // Some teams drop out if they can't afford the escalated price
+            var survivingBids: [AIBid] = []
+            var droppedOut: [String] = []
+
+            for bid in bids {
+                guard let team = allTeams.first(where: { $0.id == bid.teamID }) else { continue }
+                let canAfford = team.availableCap >= escalatedPrice
+                // Critical-need teams push harder to stay in
+                let staysIn: Bool
+                if bid.needLevel == .critical {
+                    staysIn = canAfford  // Always stays if they can afford it
+                } else if bid.needLevel == .high {
+                    staysIn = canAfford && Double.random(in: 0...1) > 0.2  // 80% stay
+                } else {
+                    staysIn = canAfford && Double.random(in: 0...1) > 0.5  // 50% stay
+                }
+
+                if staysIn {
+                    // Raise their bid to compete
+                    let raisedSalary = Int(Double(bid.salary) * escalation)
+                    survivingBids.append(AIBid(
+                        teamID: bid.teamID,
+                        teamAbbr: bid.teamAbbr,
+                        salary: min(raisedSalary, team.availableCap),
+                        years: bid.years,
+                        needLevel: bid.needLevel
+                    ))
+                } else {
+                    droppedOut.append(bid.teamAbbr)
+                }
+            }
+
+            aiBids[playerID] = survivingBids
+
+            wars.append(BiddingWarInfo(
+                playerID: playerID,
+                playerName: fa.player.fullName,
+                position: fa.player.position.rawValue,
+                bidderCount: bids.count,
+                escalatedPrice: escalatedPrice,
+                droppedOutTeams: droppedOut
+            ))
+        }
+
+        return wars
+    }
+
+    // MARK: - Generate Bidding Updates (for player UI)
+
+    /// Generate bidding updates for all players the human has bid on.
+    /// Shows approximate competing offers and player leanings.
+    static func generateBiddingUpdates(
+        myOffers: [UUID: (salary: Int, years: Int)],
+        aiBids: [UUID: [AIBid]],
+        freeAgents: [FreeAgent],
+        playerTeamID: UUID?
+    ) -> [BiddingUpdate] {
+        var updates: [BiddingUpdate] = []
+
+        for (playerID, offer) in myOffers {
+            guard let fa = freeAgents.first(where: { $0.player.id == playerID }) else { continue }
+            let player = fa.player
+            let competingBids = aiBids[playerID] ?? []
+
+            // Find highest competing offer (fuzz it slightly for realism)
+            let bestCompeting = competingBids.max(by: { $0.salary < $1.salary })
+            let fuzzedHighest: Int? = bestCompeting.map { bid in
+                // Show approximate value (within 5-10%)
+                let fuzz = Double.random(in: 0.93...1.07)
+                return Int(Double(bid.salary) * fuzz)
+            }
+
+            // Determine player leaning based on motivation
+            let leaning: PlayerLeaning = {
+                guard let best = bestCompeting else { return .strongInterest }
+
+                let ourScore = scoreOfferForMotivation(
+                    salary: offer.salary,
+                    isPlayerTeam: true,
+                    motivation: player.personality.motivation,
+                    teamRecord: nil,
+                    mediaMarket: nil
+                )
+                let bestScore = scoreOfferForMotivation(
+                    salary: best.salary,
+                    isPlayerTeam: false,
+                    motivation: player.personality.motivation,
+                    teamRecord: nil,
+                    mediaMarket: nil
+                )
+
+                let ratio = ourScore / max(bestScore, 1)
+                if ratio > 1.15 { return .strongInterest }
+                if ratio > 0.95 { return .prefersYou }
+                if ratio > 0.80 { return .undecided }
+                return .leaningAway
+            }()
+
+            let isBiddingWar = competingBids.count >= 4
+
+            updates.append(BiddingUpdate(
+                playerID: playerID,
+                playerName: player.fullName,
+                position: player.position.rawValue,
+                yourOffer: offer.salary,
+                yourYears: offer.years,
+                highestCompetingOffer: fuzzedHighest,
+                highestCompetingTeam: bestCompeting?.teamAbbr,
+                totalBidders: competingBids.count + 1, // +1 for us
+                playerLeaning: leaning,
+                isBiddingWar: isBiddingWar
+            ))
+        }
+
+        return updates.sorted { $0.yourOffer > $1.yourOffer }
+    }
+
+    /// Score a salary offer based on player motivation (used for leaning calculation).
+    private static func scoreOfferForMotivation(
+        salary: Int,
+        isPlayerTeam: Bool,
+        motivation: Motivation,
+        teamRecord: (wins: Int, losses: Int)?,
+        mediaMarket: MediaMarket?
+    ) -> Double {
+        var score = Double(salary)
+
+        switch motivation {
+        case .money:
+            score *= 1.3
+        case .winning:
+            if isPlayerTeam {
+                score *= 1.15
+            }
+            if let record = teamRecord {
+                let winPct = Double(record.wins) / Double(max(record.wins + record.losses, 1))
+                score *= (1.0 + winPct * 0.15)
+            }
+        case .stats:
+            score *= 1.05
+            if isPlayerTeam { score *= 1.05 }
+        case .loyalty:
+            score *= isPlayerTeam ? 1.25 : 0.9
+        case .fame:
+            score *= 1.1
+            if let market = mediaMarket {
+                score *= market.freeAgentAttraction
+            }
+        }
+
+        if isPlayerTeam {
+            score *= 1.1
+        }
+
+        return score
+    }
+
+    // MARK: - Player Decision (Enhanced with Motivation)
 
     struct PlayerDecision {
         let accepted: Bool
@@ -336,15 +679,17 @@ enum FreeAgencyEngine {
         let reason: String          // ALWAYS populated
         let salary: Int?
         let years: Int?
+        let shoppingAround: Bool    // Player doesn't sign yet, wants to see more offers
     }
 
     /// Determine a free agent's decision given the player's offer and AI bids.
-    /// The reason is always populated explaining why the player chose or rejected.
+    /// Enhanced with motivation-based preferences and "shopping around" mechanic.
     static func resolvePlayerDecision(
         player: Player,
         playerOffer: (salary: Int, years: Int)?,
         aiBids: [AIBid],
-        round: Int
+        round: Int,
+        allTeams: [Team]? = nil
     ) -> PlayerDecision {
         // Combine player offer with AI bids
         struct Bid {
@@ -353,14 +698,35 @@ enum FreeAgencyEngine {
             let salary: Int
             let years: Int
             let isPlayer: Bool
+            let mediaMarket: MediaMarket?
+            let teamRecord: (wins: Int, losses: Int)?
         }
 
-        var allBids: [Bid] = aiBids.map {
-            Bid(teamID: $0.teamID, teamName: $0.teamAbbr, salary: $0.salary, years: $0.years, isPlayer: false)
+        let teams = allTeams ?? []
+
+        var allBids: [Bid] = aiBids.map { aiBid in
+            let teamData = teams.first { $0.id == aiBid.teamID }
+            return Bid(
+                teamID: aiBid.teamID,
+                teamName: aiBid.teamAbbr,
+                salary: aiBid.salary,
+                years: aiBid.years,
+                isPlayer: false,
+                mediaMarket: teamData?.mediaMarket,
+                teamRecord: teamData.map { (wins: $0.wins, losses: $0.losses) }
+            )
         }
 
         if let offer = playerOffer {
-            allBids.append(Bid(teamID: nil, teamName: "Your Team", salary: offer.salary, years: offer.years, isPlayer: true))
+            allBids.append(Bid(
+                teamID: nil,
+                teamName: "Your Team",
+                salary: offer.salary,
+                years: offer.years,
+                isPlayer: true,
+                mediaMarket: nil,
+                teamRecord: nil
+            ))
         }
 
         guard !allBids.isEmpty else {
@@ -370,29 +736,70 @@ enum FreeAgencyEngine {
                 chosenTeamName: nil,
                 reason: "No offers received \u{2014} will wait for better opportunities",
                 salary: nil,
-                years: nil
+                years: nil,
+                shoppingAround: false
             )
         }
 
-        // Score each bid based on player motivation
+        // Check if player wants to shop around (multiple competitive offers, early rounds)
+        if allBids.count >= 2 && round <= 3 {
+            let salaries = allBids.map(\.salary).sorted(by: >)
+            if salaries.count >= 2 {
+                let topOffer = salaries[0]
+                let secondOffer = salaries[1]
+                // If offers are within 20% of each other, player shops around
+                let ratio = Double(secondOffer) / Double(max(topOffer, 1))
+                if ratio > 0.80 && round < 3 {
+                    // Player doesn't decide yet on rounds 1-2 if offers are competitive
+                    let bestBid = allBids.max(by: { $0.salary < $1.salary })!
+                    return PlayerDecision(
+                        accepted: false,
+                        chosenTeamID: bestBid.isPlayer ? nil : bestBid.teamID,
+                        chosenTeamName: bestBid.teamName,
+                        reason: "Wants to explore all options before committing",
+                        salary: bestBid.salary,
+                        years: bestBid.years,
+                        shoppingAround: true
+                    )
+                }
+            }
+        }
+
+        // Score each bid based on player motivation (enhanced)
         func scoreBid(_ bid: Bid) -> Double {
             var score = Double(bid.salary)
 
             switch player.personality.motivation {
             case .money:
-                score *= 1.3  // Weighs salary heavily
+                // Always picks highest offer -- salary is king
+                score *= 1.3
+
             case .winning:
-                // Would need team win data; use salary as proxy + bonus for player's team
-                score *= bid.isPlayer ? 1.15 : 1.0
+                // Prefers teams with better record (discount up to 15%)
+                if let record = bid.teamRecord {
+                    let winPct = Double(record.wins) / Double(max(record.wins + record.losses, 1))
+                    score *= (1.0 + winPct * 0.15)
+                }
+                if bid.isPlayer { score *= 1.15 }
+
             case .stats:
+                // Prefers teams where they'll start
                 score *= 1.05
+                if bid.isPlayer { score *= 1.05 }
+
             case .loyalty:
-                score *= bid.isPlayer ? 1.25 : 0.9
+                // Prefers current team (discount up to 20%)
+                score *= bid.isPlayer ? 1.25 : 0.85
+
             case .fame:
+                // Prefers big-market teams
+                if let market = bid.mediaMarket {
+                    score *= market.freeAgentAttraction
+                }
                 score *= 1.1
             }
 
-            // Player team loyalty bonus
+            // General player-team loyalty bonus
             if bid.isPlayer {
                 score *= 1.1
             }
@@ -415,7 +822,8 @@ enum FreeAgencyEngine {
                 chosenTeamName: "Your Team",
                 reason: playerAcceptReason(player: player),
                 salary: best.bid.salary,
-                years: best.bid.years
+                years: best.bid.years,
+                shoppingAround: false
             )
         } else {
             return PlayerDecision(
@@ -424,7 +832,8 @@ enum FreeAgencyEngine {
                 chosenTeamName: best.bid.teamName,
                 reason: playerRejectReason(player: player, chosenTeam: best.bid.teamName, salary: best.bid.salary, playerOffer: playerOffer),
                 salary: best.bid.salary,
-                years: best.bid.years
+                years: best.bid.years,
+                shoppingAround: false
             )
         }
     }
@@ -435,10 +844,26 @@ enum FreeAgencyEngine {
     static func generateHeadlines(
         signings: [(playerName: String, position: String, team: String, salary: Int)],
         rejections: [(playerName: String, chosenTeam: String?)],
+        biddingWars: [BiddingWarInfo] = [],
         playerTeamAbbr: String,
         round: Int
     ) -> [String] {
         var headlines: [String] = []
+
+        // Bidding war headlines (most exciting, show first)
+        for war in biddingWars.prefix(2) {
+            let templates = [
+                "Bidding war erupts for \(war.playerName) -- \(war.bidderCount) teams drive price up!",
+                "\(war.playerName) in high demand: \(war.bidderCount)-team bidding war sends price soaring",
+                "Frenzy: \(war.position) \(war.playerName) at center of \(war.bidderCount)-team bidding war",
+            ]
+            headlines.append(templates.randomElement()!)
+
+            if !war.droppedOutTeams.isEmpty {
+                let dropped = war.droppedOutTeams.prefix(2).joined(separator: ", ")
+                headlines.append("\(dropped) drop\(war.droppedOutTeams.count == 1 ? "s" : "") out of \(war.playerName) sweepstakes")
+            }
+        }
 
         // Big signing headlines
         for signing in signings.prefix(3) {

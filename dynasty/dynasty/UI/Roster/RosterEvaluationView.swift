@@ -25,12 +25,22 @@ private struct EvalPositionGroup: Identifiable {
 
 private struct KeyDecision: Identifiable {
     enum DecisionType {
-        case expiringContract, overpaid, underpaid, agingVeteran
+        case expiringContract, overpaid, underpaid, agingVeteran, consideringRetirement
     }
     let id: UUID
     let player: Player
     let type: DecisionType
     let recommendation: String
+    /// Retirement probability (0.0-1.0), only set for consideringRetirement type
+    let retirementChance: Double
+
+    init(id: UUID, player: Player, type: DecisionType, recommendation: String, retirementChance: Double = 0.0) {
+        self.id = id
+        self.player = player
+        self.type = type
+        self.recommendation = recommendation
+        self.retirementChance = retirementChance
+    }
 }
 
 // MARK: - RosterEvaluationView
@@ -118,7 +128,7 @@ struct RosterEvaluationView: View {
             Group {
                 if team != nil {
                     ScrollView {
-                        VStack(spacing: 24) {
+                        LazyVStack(spacing: 24) {
                             ownerDemandsSection
                             positionGradesSection
                             keyDecisionsSection
@@ -662,6 +672,9 @@ struct RosterEvaluationView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
+                    Text("Age \(decision.player.age)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textSecondary)
                     decisionTypeBadge(decision.type)
                 }
                 Text(decision.recommendation)
@@ -768,6 +781,26 @@ struct RosterEvaluationView: View {
                     text: "Declining value — replacement cost only \(formatMillions(marketValue))/yr",
                     color: .textSecondary
                 )
+
+            case .consideringRetirement:
+                let pct = Int(decision.retirementChance * 100)
+                financialDetailLine(
+                    icon: "figure.walk.departure",
+                    text: "Retirement probability: \(pct)%",
+                    color: pct >= 50 ? .danger : .warning
+                )
+                financialDetailLine(
+                    icon: "hand.raised",
+                    text: "You can try to convince him to stay (20-30% success, 1-2yr deal)",
+                    color: .accentBlue
+                )
+                if player.contractYearsRemaining > 0 {
+                    financialDetailLine(
+                        icon: "dollarsign.circle",
+                        text: "Current deal: \(formatMillions(salary))/yr, \(player.contractYearsRemaining) yr\(player.contractYearsRemaining == 1 ? "" : "s") remaining",
+                        color: .textSecondary
+                    )
+                }
             }
 
             // FA market alternatives (for expiring contracts)
@@ -830,18 +863,31 @@ struct RosterEvaluationView: View {
                 }
             }
 
-            // Link to player detail
+            // Link to player detail — styled as a prominent tappable button
             NavigationLink(destination: PlayerDetailView(player: player)) {
-                HStack(spacing: 4) {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.text.rectangle")
+                        .font(.system(size: 14, weight: .semibold))
                     Text("View Player Details")
+                        .font(.subheadline.weight(.bold))
+                    Spacer()
+                    Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
-                    Image(systemName: "arrow.right")
-                        .font(.caption2)
                 }
                 .foregroundStyle(Color.accentGold)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.accentGold.opacity(0.1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color.accentGold.opacity(0.3), lineWidth: 1)
+                        )
+                )
             }
             .buttonStyle(.plain)
-            .padding(.top, 2)
+            .padding(.top, 4)
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
@@ -885,10 +931,11 @@ struct RosterEvaluationView: View {
     private func decisionTypeBadge(_ type: KeyDecision.DecisionType) -> some View {
         let (label, color): (String, Color) = {
             switch type {
-            case .expiringContract: return ("EXPIRING", .warning)
-            case .overpaid:         return ("OVERPAID", .danger)
-            case .underpaid:        return ("UNDERPAID", .success)
-            case .agingVeteran:     return ("AGING", .textTertiary)
+            case .expiringContract:       return ("EXPIRING", .warning)
+            case .overpaid:               return ("OVERPAID", .danger)
+            case .underpaid:              return ("UNDERPAID", .success)
+            case .agingVeteran:           return ("AGING", .textTertiary)
+            case .consideringRetirement:  return ("RETIRING?", .danger)
             }
         }()
 
@@ -1555,6 +1602,34 @@ struct RosterEvaluationView: View {
 
     // MARK: - Key Decision Builder
 
+    /// Calculate retirement chance for a player based on age, injuries, and morale.
+    private func retirementChance(for player: Player) -> Double {
+        guard player.age >= 34 else { return 0.0 }
+        var chance: Double
+        switch player.age {
+        case 34:    chance = 0.10
+        case 35:    chance = 0.25
+        case 36:    chance = 0.40
+        case 37:    chance = 0.60
+        default:    chance = 0.80  // 38+
+        }
+        // Injured players retire more often
+        if player.isInjured {
+            chance += 0.15
+        }
+        // Low morale increases retirement chance
+        if player.morale < 50 {
+            chance += 0.15
+        } else if player.morale < 65 {
+            chance += 0.05
+        }
+        // K/P can play longer
+        if player.position == .K || player.position == .P {
+            chance *= 0.5
+        }
+        return min(0.95, chance)
+    }
+
     private func buildKeyDecisions() -> [KeyDecision] {
         var decisions: [KeyDecision] = []
 
@@ -1563,7 +1638,23 @@ struct RosterEvaluationView: View {
             let salary = player.annualSalary
             let isPastPeak = player.age > player.position.peakAgeRange.upperBound
 
-            // Expiring contracts
+            // Skip players who have already been extended (contract > 1 year means not expiring)
+            // Task 7: Extended players should not appear as expiring
+
+            // Check retirement first — players 34+ may be considering retirement
+            let retireChance = retirementChance(for: player)
+            if retireChance > 0 {
+                let pct = Int(retireChance * 100)
+                decisions.append(KeyDecision(
+                    id: UUID(), // Use unique ID so it doesn't collide with other decisions for same player
+                    player: player,
+                    type: .consideringRetirement,
+                    recommendation: "\(pct)% chance of retirement. \(player.isInjured ? "Injury history increases risk. " : "")\(player.morale < 50 ? "Low morale — may walk away. " : "")Consider talking to him about staying.",
+                    retirementChance: retireChance
+                ))
+            }
+
+            // Expiring contracts — only show if contractYearsRemaining <= 1
             if player.contractYearsRemaining <= 1 {
                 let rec = expiringRecommendation(player: player, marketValue: marketValue)
                 decisions.append(KeyDecision(
@@ -1577,7 +1668,7 @@ struct RosterEvaluationView: View {
             else if salary > Int(Double(marketValue) * 1.3) {
                 let excess = formatMillions(salary - marketValue)
                 decisions.append(KeyDecision(
-                    id: player.id,
+                    id: UUID(),
                     player: player,
                     type: .overpaid,
                     recommendation: "Paying \(excess) above market value. Consider restructuring or cutting."
@@ -1587,7 +1678,7 @@ struct RosterEvaluationView: View {
             else if marketValue > Int(Double(salary) * 1.4) && player.contractYearsRemaining <= 2 {
                 let upside = formatMillions(marketValue - salary)
                 decisions.append(KeyDecision(
-                    id: player.id,
+                    id: UUID(),
                     player: player,
                     type: .underpaid,
                     recommendation: "Worth \(upside) more than current deal. Extension risk — act before he walks."
@@ -1597,7 +1688,7 @@ struct RosterEvaluationView: View {
             else if isPastPeak && salary > 3_000 && player.overall < 75 {
                 let yearsOver = player.age - player.position.peakAgeRange.upperBound
                 decisions.append(KeyDecision(
-                    id: player.id,
+                    id: UUID(),
                     player: player,
                     type: .agingVeteran,
                     recommendation: "\(yearsOver) year\(yearsOver == 1 ? "" : "s") past peak age. Declining production — evaluate before committing long-term."
@@ -1605,13 +1696,13 @@ struct RosterEvaluationView: View {
             }
         }
 
-        // Sort: expiring first, then overpaid, underpaid, aging
+        // Sort: retirement first, then expiring, overpaid, underpaid, aging
         let order: [KeyDecision.DecisionType: Int] = [
-            .expiringContract: 0, .overpaid: 1, .underpaid: 2, .agingVeteran: 3
+            .consideringRetirement: 0, .expiringContract: 1, .overpaid: 2, .underpaid: 3, .agingVeteran: 4
         ]
         return decisions
             .sorted { (order[$0.type] ?? 99) < (order[$1.type] ?? 99) }
-            .prefix(12)
+            .prefix(15)
             .map { $0 }
     }
 

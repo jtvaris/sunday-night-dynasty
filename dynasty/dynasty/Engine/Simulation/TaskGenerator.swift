@@ -68,6 +68,8 @@ enum TaskDestination: String, Codable, CaseIterable {
     case inbox
     case rosterEvaluation
     case franchiseTag
+    case interviewReport
+    case personalWorkouts
 }
 
 // MARK: - Task Generator
@@ -217,7 +219,10 @@ enum TaskGenerator {
         hasScoutsAssigned: Bool = false,
         hasPendingEvents: Bool = false,
         ownerSatisfaction: Int = 50,
-        isDraftComplete: Bool = false
+        isDraftComplete: Bool = false,
+        interviewsDone: Int = 0,
+        interviewsMax: Int = 60,
+        allScoutsAssignedToProDays: Bool = false
     ) -> [GameTask] {
         switch phase {
         case .superBowl:
@@ -232,11 +237,11 @@ enum TaskGenerator {
                 playerIsHC: career.role == .gmAndHeadCoach
             )
         case .combine:
-            return combineTasks()
+            return combineTasks(interviewsDone: interviewsDone, interviewsMax: interviewsMax)
         case .freeAgency:
             return freeAgencyTasks(hasExpiringContracts: hasExpiringContracts)
         case .proDays:
-            return proDaysTasks()
+            return proDaysTasks(allScoutsAssigned: allScoutsAssignedToProDays)
         case .reviewRoster:
             return reviewRosterTasks()
         case .draft:
@@ -371,8 +376,11 @@ enum TaskGenerator {
         return tasks
     }
 
-    private static func combineTasks() -> [GameTask] {
-        [
+    private static func combineTasks(interviewsDone: Int = 0, interviewsMax: Int = 60) -> [GameTask] {
+        let interviewTitle = interviewsDone > 0
+            ? "Conduct prospect interviews (\(interviewsDone)/\(interviewsMax) done)"
+            : "Conduct prospect interviews"
+        return [
             // Step 1: REQUIRED — must complete before step 2 unlocks
             GameTask(
                 phase: .combine,
@@ -403,8 +411,8 @@ enum TaskGenerator {
             // Step 3: REQUIRED — unlocks after step 2
             GameTask(
                 phase: .combine,
-                title: "Conduct prospect interviews",
-                description: "Select prospects to interview. Evaluate character, football IQ, and team fit.",
+                title: interviewTitle,
+                description: "Select and interview up to \(interviewsMax) prospects. Reveals personality, football IQ, and character.",
                 icon: "bubble.left.and.bubble.right.fill",
                 destination: .scouting,
                 isRequired: true
@@ -413,9 +421,9 @@ enum TaskGenerator {
             GameTask(
                 phase: .combine,
                 title: "Review interview report",
-                description: "Review coaching staff notes on interviews. Prospect grades updated.",
+                description: "Review full interview report with grades, risk analysis, and scout recommendations.",
                 icon: "doc.text.magnifyingglass",
-                destination: .scouting,
+                destination: .interviewReport,
                 isRequired: true
             ),
         ]
@@ -503,7 +511,7 @@ enum TaskGenerator {
         ]
     }
 
-    private static func proDaysTasks() -> [GameTask] {
+    private static func proDaysTasks(allScoutsAssigned: Bool = false) -> [GameTask] {
         [
             GameTask(
                 phase: .proDays,
@@ -511,7 +519,8 @@ enum TaskGenerator {
                 description: "Send your scouts to college pro days to evaluate prospects in their home environment.",
                 icon: "figure.run",
                 destination: .scouting,
-                isRequired: true
+                isRequired: true,
+                status: allScoutsAssigned ? .done : .todo
             ),
             GameTask(
                 phase: .proDays,
@@ -526,7 +535,7 @@ enum TaskGenerator {
                 title: "Conduct personal workouts",
                 description: "Invite top prospects for private workouts with your coaching staff.",
                 icon: "dumbbell.fill",
-                destination: .prospectList,
+                destination: .personalWorkouts,
                 isRequired: false
             ),
             GameTask(
