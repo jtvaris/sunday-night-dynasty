@@ -61,6 +61,10 @@ struct QBAttributes: Codable, Equatable {
     var accuracyDeep: Int
     var pocketPresence: Int
     var scrambling: Int
+
+    var overall: Double {
+        Double(armStrength + accuracyShort + accuracyMid + accuracyDeep + pocketPresence + scrambling) / 6.0
+    }
 }
 
 struct WRAttributes: Codable, Equatable {
@@ -68,6 +72,10 @@ struct WRAttributes: Codable, Equatable {
     var catching: Int
     var release: Int
     var spectacularCatch: Int
+
+    var overall: Double {
+        Double(routeRunning + catching + release + spectacularCatch) / 4.0
+    }
 }
 
 struct RBAttributes: Codable, Equatable {
@@ -75,6 +83,10 @@ struct RBAttributes: Codable, Equatable {
     var elusiveness: Int
     var breakTackle: Int
     var receiving: Int
+
+    var overall: Double {
+        Double(vision + elusiveness + breakTackle + receiving) / 4.0
+    }
 }
 
 struct TEAttributes: Codable, Equatable {
@@ -82,6 +94,10 @@ struct TEAttributes: Codable, Equatable {
     var catching: Int
     var routeRunning: Int
     var speed: Int
+
+    var overall: Double {
+        Double(blocking + catching + routeRunning + speed) / 4.0
+    }
 }
 
 struct OLAttributes: Codable, Equatable {
@@ -89,6 +105,10 @@ struct OLAttributes: Codable, Equatable {
     var passBlock: Int
     var pull: Int
     var anchor: Int
+
+    var overall: Double {
+        Double(runBlock + passBlock + pull + anchor) / 4.0
+    }
 }
 
 struct DLAttributes: Codable, Equatable {
@@ -96,6 +116,10 @@ struct DLAttributes: Codable, Equatable {
     var blockShedding: Int
     var powerMoves: Int
     var finesseMoves: Int
+
+    var overall: Double {
+        Double(passRush + blockShedding + powerMoves + finesseMoves) / 4.0
+    }
 }
 
 struct LBAttributes: Codable, Equatable {
@@ -103,6 +127,10 @@ struct LBAttributes: Codable, Equatable {
     var zoneCoverage: Int
     var manCoverage: Int
     var blitzing: Int
+
+    var overall: Double {
+        Double(tackling + zoneCoverage + manCoverage + blitzing) / 4.0
+    }
 }
 
 struct DBAttributes: Codable, Equatable {
@@ -110,11 +138,19 @@ struct DBAttributes: Codable, Equatable {
     var zoneCoverage: Int
     var press: Int
     var ballSkills: Int
+
+    var overall: Double {
+        Double(manCoverage + zoneCoverage + press + ballSkills) / 4.0
+    }
 }
 
 struct KickingAttributes: Codable, Equatable {
     var kickPower: Int
     var kickAccuracy: Int
+
+    var overall: Double {
+        Double(kickPower + kickAccuracy) / 2.0
+    }
 }
 
 // MARK: - Position Attributes Enum
@@ -129,4 +165,19 @@ enum PositionAttributes: Codable, Equatable {
     case linebacker(LBAttributes)
     case defensiveBack(DBAttributes)
     case kicking(KickingAttributes)
+
+    /// Average of the position-specific attribute fields (0-99 scale).
+    var overall: Double {
+        switch self {
+        case .quarterback(let a):    return a.overall
+        case .wideReceiver(let a):   return a.overall
+        case .runningBack(let a):    return a.overall
+        case .tightEnd(let a):       return a.overall
+        case .offensiveLine(let a):  return a.overall
+        case .defensiveLine(let a):  return a.overall
+        case .linebacker(let a):     return a.overall
+        case .defensiveBack(let a):  return a.overall
+        case .kicking(let a):        return a.overall
+        }
+    }
 }

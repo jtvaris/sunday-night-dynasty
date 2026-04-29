@@ -393,6 +393,34 @@ struct PositionVersatilityView: View {
                                 }
                             }
                             .frame(height: 10)
+
+                            // Use Case hint (when this versatility matters in-game)
+                            if let useCase = useCaseHint(from: player.position, to: pos) {
+                                HStack(alignment: .top, spacing: 5) {
+                                    Image(systemName: "sportscourt.fill")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(Color.textTertiary)
+                                        .padding(.top, 1)
+                                    Text(useCase)
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 0)
+                                }
+                            }
+
+                            // What this unlocks rationale based on current familiarity
+                            HStack(alignment: .top, spacing: 5) {
+                                Image(systemName: "checkmark.seal.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(unlockColor(familiarity: familiarity))
+                                    .padding(.top, 1)
+                                Text(unlockRationale(familiarity: familiarity))
+                                    .font(.caption2)
+                                    .foregroundStyle(unlockColor(familiarity: familiarity))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                            }
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
@@ -462,6 +490,102 @@ struct PositionVersatilityView: View {
         if value >= 60 { return .success }
         if value >= 40 { return .accentBlue }
         return .danger
+    }
+
+    // MARK: - Versatility Explainers
+
+    /// Concrete in-game scenario describing when this position pair becomes useful.
+    private func useCaseHint(from primary: Position, to alt: Position) -> String? {
+        switch (primary, alt) {
+
+        // --- Quarterback ---
+        case (.QB, .WR):
+            return "Use as WR on trick plays / 2-point conversions"
+        case (.QB, .RB):
+            return "Wildcat formations and goal-line packages"
+
+        // --- Running Backs ---
+        case (.RB, .WR):
+            return "Lines up in slot for receiving work in 3-WR sets"
+        case (.RB, .FB):
+            return "Lead blocker on power runs and short-yardage"
+        case (.FB, .RB):
+            return "Spell carrier in heavy/goal-line packages"
+        case (.FB, .TE):
+            return "H-back motion and inline blocking on play-action"
+
+        // --- Receivers / Tight Ends ---
+        case (.WR, .TE):
+            return "Big-slot / move-TE in 12 personnel sets"
+        case (.WR, .RB):
+            return "Jet sweeps and backfield motion screens"
+        case (.TE, .WR):
+            return "Detached split-end in spread formations"
+        case (.TE, .FB):
+            return "Lead blocker / H-back in heavy run packages"
+
+        // --- Offensive Line ---
+        case (.LT, .RT), (.RT, .LT):
+            return "Swing tackle when a starter goes down"
+        case (.LT, .LG), (.LT, .RG),
+             (.RT, .RG), (.RT, .LG):
+            return "Kick inside to guard in jumbo packages"
+        case (.LG, .LT), (.RG, .RT):
+            return "Emergency tackle if depth is depleted"
+        case (.LG, .C), (.RG, .C),
+             (.C, .LG), (.C, .RG):
+            return "Interior swing depth across guard/center"
+        case (.LG, .RG), (.RG, .LG):
+            return "Cross-train both guard spots for flexibility"
+        case (.LT, .C), (.RT, .C):
+            return "Last-resort interior fill in injury crises"
+
+        // --- Defensive Line / Edge ---
+        case (.DE, .OLB):
+            return "Stand-up edge rusher in 3-4 fronts"
+        case (.OLB, .DE):
+            return "Hand-in-dirt rusher on passing downs"
+        case (.DE, .DT):
+            return "Bumps inside on nickel pass-rush packages"
+        case (.DT, .DE):
+            return "Slides outside in heavy fronts"
+
+        // --- Linebackers ---
+        case (.OLB, .MLB):
+            return "Signal-caller depth when MIKE is out"
+        case (.MLB, .OLB):
+            return "Coverage LB on passing downs"
+
+        // --- Secondary ---
+        case (.CB, .FS):
+            return "Big nickel / single-high safety in dime"
+        case (.CB, .SS):
+            return "Slot defender and run-support nickel"
+        case (.FS, .SS), (.SS, .FS):
+            return "Interchangeable safety duo in disguised coverages"
+        case (.FS, .CB), (.SS, .CB):
+            return "Emergency outside coverage on go-routes"
+
+        default:
+            return nil
+        }
+    }
+
+    /// Plain-English explanation of what familiarity at this level unlocks in-game.
+    private func unlockRationale(familiarity: Int) -> String {
+        if familiarity > 70 {
+            return "Can start at this position with minimal performance penalty"
+        } else if familiarity >= 40 {
+            return "Can play in spot situations, ~10-20% effectiveness penalty"
+        } else {
+            return "Emergency use only, significant performance loss"
+        }
+    }
+
+    private func unlockColor(familiarity: Int) -> Color {
+        if familiarity > 70 { return .success }
+        if familiarity >= 40 { return .accentBlue }
+        return .warning
     }
 
     // MARK: - Matrix Card

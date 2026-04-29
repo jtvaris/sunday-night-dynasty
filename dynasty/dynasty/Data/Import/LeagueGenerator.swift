@@ -311,7 +311,7 @@ enum LeagueGenerator {
         let name = RandomNameGenerator.randomName()
         let age = randomAge(for: position)
         let yearsPro = max(0, age - Int.random(in: 21...23))
-        let posAttrs = randomPositionAttributes(for: position)
+        let posAttrs = randomPositionAttributes(for: position, depthIndex: depthIndex)
         let personality = PlayerPersonality(
             archetype: PersonalityArchetype.allCases.randomElement()!,
             motivation: Motivation.allCases.randomElement()!
@@ -373,7 +373,9 @@ enum LeagueGenerator {
             workEthic: mental[3], coachability: mental[4], leadership: mental[5]
         )
 
-        let posAttrs = randomPositionAttributes(for: .QB)
+        // Named starting QB: scale position attributes to match the target overall
+        // so the QB's position-specific skills are consistent with their reputation.
+        let posAttrs = qbPositionAttributesForTarget(target: targetOverall)
         let personality = PlayerPersonality(
             archetype: PersonalityArchetype.allCases.randomElement()!,
             motivation: Motivation.allCases.randomElement()!
@@ -812,6 +814,110 @@ enum LeagueGenerator {
             if let defScheme = dc?.defensiveScheme, player.position.side == .defense {
                 player.schemeFamiliarity[defScheme.rawValue] = Int.random(in: 55...85)
             }
+
+            // Baseline scheme familiarity from career history (based on yearsPro).
+            // Veterans have played in multiple schemes over their careers, so they
+            // should have non-zero familiarity in several schemes — not just the
+            // current team's scheme.
+            assignCareerSchemeFamiliarity(player: player)
+        }
+    }
+
+    /// Assigns baseline scheme familiarity to a player based on their career history.
+    /// More veteran players have exposure to a wider variety of schemes from previous
+    /// teams, position groups, and college experience. The "expert" scheme represents
+    /// the system they spent the most time in. Existing values (e.g. set by the team's
+    /// current coordinator above) are preserved if they are higher than the career
+    /// baseline assignment.
+    private static func assignCareerSchemeFamiliarity(player: Player) {
+        // Determine the appropriate scheme pool based on position side.
+        // Offense and defense players generally only learn schemes for their side;
+        // special teams (K/P) and FB are exposed to either, so we pick from both.
+        let schemes: [String]
+        switch player.position {
+        case .QB, .RB, .WR, .TE, .LT, .LG, .C, .RG, .RT:
+            schemes = OffensiveScheme.allCases.map { $0.rawValue }
+        case .DE, .DT, .OLB, .MLB, .CB, .FS, .SS:
+            schemes = DefensiveScheme.allCases.map { $0.rawValue }
+        case .K, .P, .FB:
+            schemes = OffensiveScheme.allCases.map { $0.rawValue }
+                + DefensiveScheme.allCases.map { $0.rawValue }
+        }
+
+        // Tier definitions: (numSecondary, secondaryRange, expertRange, weakRange?)
+        // Each tier produces a list of (schemeName, familiarityValue) assignments.
+        let assignments: [(scheme: String, value: Int)]
+
+        switch player.yearsPro {
+        case 0...2:
+            // Rookies / sophomores: 1 scheme at 30-50%, others 0%.
+            // (College + brief NFL exposure to a single system.)
+            guard let primary = schemes.randomElement() else { return }
+            assignments = [(primary, Int.random(in: 30...50))]
+
+        case 3...5:
+            // Developing veterans: 2 schemes at 30-60%, 1 expert at 60-80%.
+            var pool = schemes.shuffled()
+            guard pool.count >= 3 else {
+                assignments = pool.map { ($0, Int.random(in: 30...60)) }
+                applyAssignments(assignments, to: player)
+                return
+            }
+            let expert = pool.removeFirst()
+            let secondary1 = pool.removeFirst()
+            let secondary2 = pool.removeFirst()
+            assignments = [
+                (expert, Int.random(in: 60...80)),
+                (secondary1, Int.random(in: 30...60)),
+                (secondary2, Int.random(in: 30...60))
+            ]
+
+        case 6...9:
+            // Established veterans: 1 expert at 70-90%, 2 secondaries at 50-75%,
+            // 1 weak/older exposure at 20-40%.
+            var pool = schemes.shuffled()
+            guard pool.count >= 4 else {
+                assignments = pool.map { ($0, Int.random(in: 50...75)) }
+                applyAssignments(assignments, to: player)
+                return
+            }
+            let expert = pool.removeFirst()
+            let secondary1 = pool.removeFirst()
+            let secondary2 = pool.removeFirst()
+            let weak = pool.removeFirst()
+            assignments = [
+                (expert, Int.random(in: 70...90)),
+                (secondary1, Int.random(in: 50...75)),
+                (secondary2, Int.random(in: 50...75)),
+                (weak, Int.random(in: 20...40))
+            ]
+
+        default:
+            // Long veterans (10+): 1 expert at 80-95%, 3-4 secondaries at 50-80%.
+            var pool = schemes.shuffled()
+            let secondaryCount = min(Int.random(in: 3...4), max(0, pool.count - 1))
+            guard !pool.isEmpty else { return }
+            let expert = pool.removeFirst()
+            var built: [(String, Int)] = [(expert, Int.random(in: 80...95))]
+            for _ in 0..<secondaryCount {
+                guard !pool.isEmpty else { break }
+                built.append((pool.removeFirst(), Int.random(in: 50...80)))
+            }
+            assignments = built
+        }
+
+        applyAssignments(assignments, to: player)
+    }
+
+    /// Applies a list of scheme/value assignments to the player. Only overwrites
+    /// existing entries when the new value is higher, so the team's current-scheme
+    /// boost from the coordinator pass is preserved.
+    private static func applyAssignments(_ assignments: [(scheme: String, value: Int)], to player: Player) {
+        for (scheme, value) in assignments {
+            let existing = player.schemeFamiliarity[scheme] ?? 0
+            if value > existing {
+                player.schemeFamiliarity[scheme] = value
+            }
         }
     }
 
@@ -873,79 +979,108 @@ enum LeagueGenerator {
         }
     }
 
-    private static func randomPositionAttributes(for position: Position) -> PositionAttributes {
+    /// Position-attribute range based on depth tier.
+    /// Starters (0): 75-95, Backups (1): 60-80, Deep depth (2+): 50-70.
+    private static func positionAttributeRange(forDepth depthIndex: Int) -> ClosedRange<Int> {
+        switch depthIndex {
+        case 0:  return 75...95
+        case 1:  return 60...80
+        default: return 50...70
+        }
+    }
+
+    /// Returns a single random attribute value within the depth tier's range.
+    private static func rndAttr(_ depthIndex: Int) -> Int {
+        Int.random(in: positionAttributeRange(forDepth: depthIndex))
+    }
+
+    private static func randomPositionAttributes(for position: Position, depthIndex: Int) -> PositionAttributes {
         switch position {
         case .QB:
             return .quarterback(QBAttributes(
-                armStrength: Int.random(in: 40...99),
-                accuracyShort: Int.random(in: 40...99),
-                accuracyMid: Int.random(in: 40...99),
-                accuracyDeep: Int.random(in: 40...99),
-                pocketPresence: Int.random(in: 40...99),
-                scrambling: Int.random(in: 40...99)
+                armStrength: rndAttr(depthIndex),
+                accuracyShort: rndAttr(depthIndex),
+                accuracyMid: rndAttr(depthIndex),
+                accuracyDeep: rndAttr(depthIndex),
+                pocketPresence: rndAttr(depthIndex),
+                scrambling: rndAttr(depthIndex)
             ))
 
         case .WR:
             return .wideReceiver(WRAttributes(
-                routeRunning: Int.random(in: 40...99),
-                catching: Int.random(in: 40...99),
-                release: Int.random(in: 40...99),
-                spectacularCatch: Int.random(in: 40...99)
+                routeRunning: rndAttr(depthIndex),
+                catching: rndAttr(depthIndex),
+                release: rndAttr(depthIndex),
+                spectacularCatch: rndAttr(depthIndex)
             ))
 
         case .RB, .FB:
             return .runningBack(RBAttributes(
-                vision: Int.random(in: 40...99),
-                elusiveness: Int.random(in: 40...99),
-                breakTackle: Int.random(in: 40...99),
-                receiving: Int.random(in: 40...99)
+                vision: rndAttr(depthIndex),
+                elusiveness: rndAttr(depthIndex),
+                breakTackle: rndAttr(depthIndex),
+                receiving: rndAttr(depthIndex)
             ))
 
         case .TE:
             return .tightEnd(TEAttributes(
-                blocking: Int.random(in: 40...99),
-                catching: Int.random(in: 40...99),
-                routeRunning: Int.random(in: 40...99),
-                speed: Int.random(in: 40...99)
+                blocking: rndAttr(depthIndex),
+                catching: rndAttr(depthIndex),
+                routeRunning: rndAttr(depthIndex),
+                speed: rndAttr(depthIndex)
             ))
 
         case .LT, .LG, .C, .RG, .RT:
             return .offensiveLine(OLAttributes(
-                runBlock: Int.random(in: 40...99),
-                passBlock: Int.random(in: 40...99),
-                pull: Int.random(in: 40...99),
-                anchor: Int.random(in: 40...99)
+                runBlock: rndAttr(depthIndex),
+                passBlock: rndAttr(depthIndex),
+                pull: rndAttr(depthIndex),
+                anchor: rndAttr(depthIndex)
             ))
 
         case .DE, .DT:
             return .defensiveLine(DLAttributes(
-                passRush: Int.random(in: 40...99),
-                blockShedding: Int.random(in: 40...99),
-                powerMoves: Int.random(in: 40...99),
-                finesseMoves: Int.random(in: 40...99)
+                passRush: rndAttr(depthIndex),
+                blockShedding: rndAttr(depthIndex),
+                powerMoves: rndAttr(depthIndex),
+                finesseMoves: rndAttr(depthIndex)
             ))
 
         case .OLB, .MLB:
             return .linebacker(LBAttributes(
-                tackling: Int.random(in: 40...99),
-                zoneCoverage: Int.random(in: 40...99),
-                manCoverage: Int.random(in: 40...99),
-                blitzing: Int.random(in: 40...99)
+                tackling: rndAttr(depthIndex),
+                zoneCoverage: rndAttr(depthIndex),
+                manCoverage: rndAttr(depthIndex),
+                blitzing: rndAttr(depthIndex)
             ))
 
         case .CB, .FS, .SS:
             return .defensiveBack(DBAttributes(
-                manCoverage: Int.random(in: 40...99),
-                zoneCoverage: Int.random(in: 40...99),
-                press: Int.random(in: 40...99),
-                ballSkills: Int.random(in: 40...99)
+                manCoverage: rndAttr(depthIndex),
+                zoneCoverage: rndAttr(depthIndex),
+                press: rndAttr(depthIndex),
+                ballSkills: rndAttr(depthIndex)
             ))
 
         case .K, .P:
             return .kicking(KickingAttributes(
-                kickPower: Int.random(in: 40...99),
-                kickAccuracy: Int.random(in: 40...99)
+                kickPower: rndAttr(depthIndex),
+                kickAccuracy: rndAttr(depthIndex)
             ))
         }
+    }
+
+    /// Generates QB position attributes whose average is approximately the target overall,
+    /// so a "84 OVR" franchise QB has accuracy/arm strength values consistent with that rating.
+    private static func qbPositionAttributesForTarget(target: Int) -> PositionAttributes {
+        let values = attributesForTarget(target: target, count: 6, variance: 6)
+        return .quarterback(QBAttributes(
+            armStrength: values[0],
+            accuracyShort: values[1],
+            accuracyMid: values[2],
+            accuracyDeep: values[3],
+            pocketPresence: values[4],
+            scrambling: values[5]
+        ))
     }
 }

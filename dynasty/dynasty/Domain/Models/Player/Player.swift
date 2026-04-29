@@ -63,11 +63,14 @@ final class Player {
         "\(firstName) \(lastName)"
     }
 
-    /// Overall rating as a weighted average of physical (60%) and mental (40%) attributes.
+    /// Overall rating as a weighted blend of position-specific skills (50%),
+    /// physical (30%), and mental (20%) attributes. Position skills dominate
+    /// because they reflect what a player actually does on the field.
     var overall: Int {
+        let positionAvg = positionAttributes.overall
         let physicalAvg = physical.average
         let mentalAvg = mental.average
-        return Int((physicalAvg * 0.6 + mentalAvg * 0.4).rounded())
+        return Int((positionAvg * 0.5 + physicalAvg * 0.3 + mentalAvg * 0.2).rounded())
     }
 
     /// Get familiarity for a specific position (defaults to 0, primary is always 100).

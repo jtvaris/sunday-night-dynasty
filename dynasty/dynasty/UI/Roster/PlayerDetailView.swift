@@ -218,11 +218,14 @@ struct PlayerDetailView: View {
                                     .foregroundStyle(Color.textTertiary)
                             }
                         }
-                        // League ranking (#33)
+                        // League ranking (#33) — promoted to a clear gold pill for at-a-glance prestige.
                         if let rankInfo = leagueRanking {
                             Text(rankInfo)
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(Color.accentGold)
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(Color.backgroundPrimary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.accentGold, in: Capsule())
                         }
                     }
 
@@ -246,15 +249,7 @@ struct PlayerDetailView: View {
                         }
                         .font(.caption)
                         .foregroundStyle(Color.textSecondary)
-
-                        // Trade value indicator (#37)
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.left.arrow.right")
-                                .font(.system(size: 9))
-                            Text("Trade Value: \(tradeValueLabel)")
-                                .font(.caption2.weight(.semibold))
-                        }
-                        .foregroundStyle(tradeValueColor)
+                        // (Trade value moved to dedicated section below — was duplicated.)
                     }
 
                     Spacer()
@@ -638,75 +633,126 @@ struct PlayerDetailView: View {
 
     private var actionButtonsSection: some View {
         Section("Actions") {
+            // 2×2 grid for the four primary actions, then a full-width "Change Position"
+            // beneath. Avoids the previous asymmetric 5-button layout where the last
+            // button sat alone in its row.
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                actionButton(label: "Set as Starter", icon: "star.fill", color: .accentGold)
-                Button {
+                actionButton(
+                    label: "Set as Starter",
+                    icon: "star.fill",
+                    color: .accentGold,
+                    subtitle: nil
+                ) {}
+                actionButton(
+                    label: "Extend Contract",
+                    icon: "doc.badge.plus",
+                    color: .accentBlue,
+                    subtitle: extensionPreviewText
+                ) {
                     showContractNegotiation = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "doc.badge.plus")
-                            .font(.caption)
-                        Text("Extend Contract")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .foregroundStyle(Color.accentBlue)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(Color.accentBlue.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentBlue.opacity(0.3), lineWidth: 1))
                 }
-                .buttonStyle(.plain)
-                actionButton(label: "Propose Trade", icon: "arrow.left.arrow.right", color: .success)
-                Button {
+                actionButton(
+                    label: "Propose Trade",
+                    icon: "arrow.left.arrow.right",
+                    color: .success,
+                    subtitle: tradeInterestPreviewText
+                ) {}
+                actionButton(
+                    label: "Cut / Release",
+                    icon: "scissors",
+                    color: .danger,
+                    subtitle: cutImpactPreviewText
+                ) {
                     showCutConfirmation = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "scissors")
-                            .font(.caption)
-                        Text("Cut / Release")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .foregroundStyle(Color.danger)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(Color.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.danger.opacity(0.3), lineWidth: 1))
                 }
-                .buttonStyle(.plain)
-
-                Button {
-                    showPositionChange = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.triangle.swap")
-                            .font(.caption)
-                        Text("Change Position")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .foregroundStyle(Color.warning)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(Color.warning.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.warning.opacity(0.3), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
             }
             .padding(.vertical, 4)
+
+            actionButton(
+                label: "Change Position",
+                icon: "arrow.triangle.swap",
+                color: .warning,
+                subtitle: nil
+            ) {
+                showPositionChange = true
+            }
+            .padding(.bottom, 4)
         }
         .listRowBackground(Color.backgroundSecondary)
     }
 
-    private func actionButton(label: String, icon: String, color: Color) -> some View {
-        Button {
-            // Action handled by parent via callbacks
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.caption)
-                Text(label)
-                    .font(.caption.weight(.semibold))
+    /// One-line dead cap preview for the Cut button. E.g. "$2.4M dead cap".
+    /// Until the live Contract model is wired through, falls back to a salary-based estimate.
+    private var cutImpactPreviewText: String? {
+        let salaryK = player.annualSalary
+        guard salaryK > 0 else { return nil }
+        // Rough estimate: dead cap ≈ remaining guaranteed money. Without a Contract object
+        // here we approximate as 25% of remaining salary.
+        let estimateK = salaryK * max(player.contractYearsRemaining, 1) / 4
+        if estimateK >= 1_000 {
+            return String(format: "~$%.1fM dead cap", Double(estimateK) / 1_000.0)
+        }
+        return "~$\(estimateK)K dead cap"
+    }
+
+    /// Suggested-extension preview for the Extend button. E.g. "~$32M/yr × 4yr".
+    private var extensionPreviewText: String? {
+        let market = PlayerValueEngine.estimatedMarketValue(for: player)
+        guard market > 0 else { return nil }
+        let years: Int
+        switch player.age {
+        case ..<28: years = 5
+        case 28...30: years = 4
+        case 31...32: years = 3
+        default: years = 2
+        }
+        let perYearM = Double(market) / 1_000.0
+        return String(format: "~$%.1fM/yr · %dyr", perYearM, years)
+    }
+
+    /// Trade interest preview for the Propose Trade button. E.g. "~6 teams interested".
+    private var tradeInterestPreviewText: String? {
+        // Heuristic: count teams that aren't this team (assume 32 league teams) and where
+        // overall + age suggest acquirability. Cheap enough to do here.
+        guard player.overall >= 60 else { return "Limited interest" }
+        let baseInterest: Int
+        switch player.overall {
+        case 85...:    baseInterest = 12
+        case 78..<85:  baseInterest = 9
+        case 72..<78:  baseInterest = 6
+        case 65..<72:  baseInterest = 4
+        default:       baseInterest = 2
+        }
+        // Older players draw less interest
+        let agePenalty = max(0, player.age - player.position.peakAgeRange.upperBound) * 1
+        let count = max(1, baseInterest - agePenalty)
+        return "~\(count) team\(count == 1 ? "" : "s") interested"
+    }
+
+    /// Reusable action button. Optional subtitle adds preview info under the label.
+    private func actionButton(
+        label: String,
+        icon: String,
+        color: Color,
+        subtitle: String? = nil,
+        action: @escaping () -> Void = {}
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .font(.caption)
+                    Text(label)
+                        .font(.caption.weight(.semibold))
+                }
+                .foregroundStyle(color)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 9, weight: .medium).monospacedDigit())
+                        .foregroundStyle(color.opacity(0.7))
+                        .lineLimit(1)
+                }
             }
-            .foregroundStyle(color)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
@@ -1488,33 +1534,14 @@ struct PlayerDetailView: View {
         }
     }
 
-    /// Rough market value estimate based on overall, age, and position.
+    /// Realistic NFL-calibrated market value (in thousands), delegated to PlayerValueEngine.
+    /// Replaces the old `OVR^2 / 10` formula which produced absurd values (e.g. $705K for an 84 OVR QB).
     private var estimateMarketValueAmount: Int {
-        let baseValue = player.overall * player.overall  // Quadratic scaling
-        let ageFactor: Double
-        let peak = player.position.peakAgeRange
-        if peak.contains(player.age) {
-            ageFactor = 1.0
-        } else if player.age < peak.lowerBound {
-            ageFactor = 0.85
-        } else {
-            let yearsOver = player.age - peak.upperBound
-            ageFactor = max(0.3, 1.0 - Double(yearsOver) * 0.15)
-        }
-        return Int(Double(baseValue) * ageFactor / 10.0)
+        PlayerValueEngine.estimatedMarketValue(for: player)
     }
 
     private var marketValueComparison: MarketValueAssessment {
-        let market = estimateMarketValueAmount
-        let salary = player.annualSalary
-        let ratio = salary > 0 ? Double(market) / Double(salary) : 2.0
-        if ratio > 1.3 {
-            return .bargain
-        } else if ratio > 0.8 {
-            return .fairValue
-        } else {
-            return .overpaid
-        }
+        PlayerValueEngine.marketAssessment(for: player)
     }
 
     // MARK: - Development Phase
@@ -1903,6 +1930,21 @@ struct AttributeRowWithContext: View {
         colorForAttribute(value)
     }
 
+    /// Sign of the gap vs league average at this position (e.g. "+5", "-12").
+    private var deltaText: String {
+        let delta = value - avg
+        if delta > 0 { return "+\(delta)" }
+        if delta < 0 { return "\(delta)" }
+        return "±0"
+    }
+
+    private var deltaColor: Color {
+        let delta = value - avg
+        if delta >= 5  { return .success }
+        if delta <= -5 { return .danger }
+        return Color.textTertiary
+    }
+
     var body: some View {
         LabeledContent(name) {
             HStack(spacing: 6) {
@@ -1916,9 +1958,12 @@ struct AttributeRowWithContext: View {
                     .monospacedDigit()
                     .foregroundStyle(attributeColor)
 
-                Text("(Avg: \(avg))")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.textTertiary)
+                // Delta vs position-league average — clearer than the previous "(Avg: 68)" tag
+                // since the user couldn't tell what the bare parenthetical referenced.
+                Text(deltaText)
+                    .font(.system(size: 10, weight: .medium).monospacedDigit())
+                    .foregroundStyle(deltaColor)
+                    .accessibilityLabel("\(deltaText) vs league average for this position (\(avg))")
             }
         }
     }
