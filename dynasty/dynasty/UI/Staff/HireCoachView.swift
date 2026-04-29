@@ -42,6 +42,31 @@ struct HireCoachView: View {
         allCoaches.first { $0.teamID == teamID && $0.role == .headCoach }
     }
 
+    /// The team's offensive coordinator, used as fallback for offensive scheme when HC absent.
+    private var teamOffensiveCoordinator: Coach? {
+        allCoaches.first { $0.teamID == teamID && $0.role == .offensiveCoordinator }
+    }
+
+    /// The team's defensive coordinator, used as fallback for defensive scheme when HC absent.
+    private var teamDefensiveCoordinator: Coach? {
+        allCoaches.first { $0.teamID == teamID && $0.role == .defensiveCoordinator }
+    }
+
+    /// Effective offensive scheme — HC's, falling back to OC's.
+    private var teamOffensiveScheme: OffensiveScheme? {
+        teamHeadCoach?.offensiveScheme ?? teamOffensiveCoordinator?.offensiveScheme
+    }
+
+    /// Effective defensive scheme — HC's, falling back to DC's.
+    private var teamDefensiveScheme: DefensiveScheme? {
+        teamHeadCoach?.defensiveScheme ?? teamDefensiveCoordinator?.defensiveScheme
+    }
+
+    /// Whether any team scheme can be inferred — used to hide the Fit column otherwise.
+    private var hasInferableTeamScheme: Bool {
+        teamOffensiveScheme != nil || teamDefensiveScheme != nil
+    }
+
     /// The current coach in the role being hired for (Fix #63: comparison).
     private var currentCoach: Coach? {
         allCoaches.first { $0.teamID == teamID && $0.role == role }
@@ -71,14 +96,15 @@ struct HireCoachView: View {
         return sum / 12
     }
 
-    /// Fix #60: Value score — skill-to-salary ratio normalized to a label.
+    /// Fix #60: Value score — OVR-per-million calibrated against the role's avg salary.
+    /// Reference ratio = 65 OVR / role.avgSalaryM. A coach matching that ratio is "Fair".
+    /// 1.4× reference = "Great", 1.15× = "Good", 0.85× = "Poor".
     private func valueScore(_ coach: Coach) -> (label: String, color: Color) {
-        let ovr = coachOverall(coach)
-        let salaryM = max(Double(coach.salary) / 1000.0, 0.1)
-        let ratio = Double(ovr) / salaryM  // Higher = better value
-        if ratio >= 40 { return ("Great", .success) }
-        if ratio >= 25 { return ("Good", .accentBlue) }
-        if ratio >= 15 { return ("Fair", .warning) }
+        let ratio = valueRatio(coach)
+        let reference = roleReferenceRatio
+        if ratio >= reference * 1.40 { return ("Great", .success) }
+        if ratio >= reference * 1.15 { return ("Good", .accentBlue) }
+        if ratio >= reference * 0.85 { return ("Fair", .warning) }
         return ("Poor", .danger)
     }
 
@@ -86,6 +112,13 @@ struct HireCoachView: View {
         let ovr = coachOverall(coach)
         let salaryM = max(Double(coach.salary) / 1000.0, 0.1)
         return Double(ovr) / salaryM
+    }
+
+    /// Reference OVR-per-million ratio for the role being hired.
+    /// Treats avg-OVR (65) at the role's avg salary as the "Fair" baseline.
+    private var roleReferenceRatio: Double {
+        let avgSalaryM = max(Double(role.salaryRange.avg) / 1000.0, 0.1)
+        return 65.0 / avgSalaryM
     }
 
     /// Fix #56: Top-3 candidate indices in the current sorted list.
@@ -400,8 +433,8 @@ struct HireCoachView: View {
                 .frame(width: 62)
             }
             .foregroundStyle(sortColumn == .scheme ? Color.accentGold : Color.textTertiary)
-            // Fix #38: Scheme fit column header
-            if teamHeadCoach != nil || !candidates.isEmpty {
+            // Fix #38: Scheme fit column header — only when team has a comparable scheme.
+            if hasInferableTeamScheme {
                 Text("Fit")
                     .frame(width: 32)
             }
@@ -524,8 +557,8 @@ struct HireCoachView: View {
                     .minimumScaleFactor(0.7)
                     .frame(width: 62)
 
-                // Fix #38 + #152: Scheme/roster fit indicator (shows even without HC)
-                if teamHeadCoach != nil || !candidates.isEmpty {
+                // Fix #38: Scheme/roster fit indicator — only when team has comparable scheme.
+                if hasInferableTeamScheme {
                     Group {
                         if let fit = schemeFit(for: candidate) {
                             Circle()
@@ -658,47 +691,43 @@ struct HireCoachView: View {
 
     // MARK: - Scheme Fit (Fix #38)
 
-    /// Determines how well a candidate's scheme fits the team's current scheme (via HC).
-    /// Returns (color, label) for the fit indicator.
+    /// Determines how well a candidate's scheme fits the team's current scheme.
+    /// Falls back from HC → OC/DC when no HC scheme set. Returns nil when no
+    /// comparable scheme is available on the team or candidate.
     private func schemeFit(for candidate: Coach) -> (color: Color, label: String)? {
-        guard let hc = teamHeadCoach else { return nil }
-
-        // Compare offensive schemes
+        // Compare offensive schemes against effective team offensive scheme.
         if let candidateOff = candidate.offensiveScheme {
-            if let hcOff = hc.offensiveScheme {
-                if candidateOff == hcOff {
+            if let teamOff = teamOffensiveScheme {
+                if candidateOff == teamOff {
                     return (.success, "Great")
                 }
                 // Similar scheme families
                 let passingSchemes: Set<OffensiveScheme> = [.westCoast, .airRaid, .proPassing, .spread]
                 let runSchemes: Set<OffensiveScheme> = [.powerRun, .shanahan, .option, .rpo]
-                if (passingSchemes.contains(candidateOff) && passingSchemes.contains(hcOff))
-                    || (runSchemes.contains(candidateOff) && runSchemes.contains(hcOff)) {
+                if (passingSchemes.contains(candidateOff) && passingSchemes.contains(teamOff))
+                    || (runSchemes.contains(candidateOff) && runSchemes.contains(teamOff)) {
                     return (.warning, "OK")
                 }
                 return (.danger, "Poor")
             }
-            return nil // HC has no offensive scheme set
         }
 
-        // Compare defensive schemes
+        // Compare defensive schemes against effective team defensive scheme.
         if let candidateDef = candidate.defensiveScheme {
-            if let hcDef = hc.defensiveScheme {
-                if candidateDef == hcDef {
+            if let teamDef = teamDefensiveScheme {
+                if candidateDef == teamDef {
                     return (.success, "Great")
                 }
-                // Similar scheme families
                 let frontSchemes: Set<DefensiveScheme> = [.base34, .base43]
                 let coverageSchemes: Set<DefensiveScheme> = [.cover3, .tampa2, .pressMan]
                 let flexSchemes: Set<DefensiveScheme> = [.multiple, .hybrid]
-                if (frontSchemes.contains(candidateDef) && frontSchemes.contains(hcDef))
-                    || (coverageSchemes.contains(candidateDef) && coverageSchemes.contains(hcDef))
-                    || (flexSchemes.contains(candidateDef) && flexSchemes.contains(hcDef)) {
+                if (frontSchemes.contains(candidateDef) && frontSchemes.contains(teamDef))
+                    || (coverageSchemes.contains(candidateDef) && coverageSchemes.contains(teamDef))
+                    || (flexSchemes.contains(candidateDef) && flexSchemes.contains(teamDef)) {
                     return (.warning, "OK")
                 }
                 return (.danger, "Poor")
             }
-            return nil // HC has no defensive scheme set
         }
 
         return nil

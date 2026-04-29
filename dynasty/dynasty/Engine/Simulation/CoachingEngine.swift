@@ -461,12 +461,22 @@ enum CoachingEngine {
             let offScheme: OffensiveScheme? = offensiveRole(role) ? OffensiveScheme.allCases.randomElement() : nil
             let defScheme: DefensiveScheme? = defensiveRole(role) ? DefensiveScheme.allCases.randomElement() : nil
 
-            // Head coaches and assistant HCs may know both
+            // Head coaches and assistant HCs always know at least one side, often both.
+            // Distribution: 40% off-only, 30% def-only, 30% both. Never neither.
             let finalOffScheme: OffensiveScheme?
             let finalDefScheme: DefensiveScheme?
             if role == .headCoach || role == .assistantHeadCoach {
-                finalOffScheme = Bool.random() ? OffensiveScheme.allCases.randomElement() : nil
-                finalDefScheme = Bool.random() ? DefensiveScheme.allCases.randomElement() : nil
+                let roll = Double.random(in: 0...1)
+                if roll < 0.40 {
+                    finalOffScheme = OffensiveScheme.allCases.randomElement()
+                    finalDefScheme = nil
+                } else if roll < 0.70 {
+                    finalOffScheme = nil
+                    finalDefScheme = DefensiveScheme.allCases.randomElement()
+                } else {
+                    finalOffScheme = OffensiveScheme.allCases.randomElement()
+                    finalDefScheme = DefensiveScheme.allCases.randomElement()
+                }
             } else {
                 finalOffScheme = offScheme
                 finalDefScheme = defScheme
