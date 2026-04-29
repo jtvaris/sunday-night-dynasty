@@ -336,6 +336,17 @@ enum CoachingEngine {
             effectivePremiumIndices.insert(i)
         }
 
+        // Budget tier: ~25% of non-premium candidates are flagged as "value" /
+        // bargain-bin candidates with lower attribute floors. Combined with the
+        // power-curve in salaryForCoach, these produce notably cheaper asking
+        // prices, widening the visible salary spread for the user.
+        var budgetIndices = Set<Int>()
+        let nonPremiumIndices = (0..<actualCount).filter { !effectivePremiumIndices.contains($0) }
+        let budgetTarget = Int((Double(nonPremiumIndices.count) * 0.25).rounded())
+        for idx in nonPremiumIndices.shuffled().prefix(budgetTarget) {
+            budgetIndices.insert(idx)
+        }
+
         // #267: Salary adjustment factor based on team wins
         let salaryAdjustment: Double
         if teamWins < 5 {
@@ -348,6 +359,7 @@ enum CoachingEngine {
 
         return (0..<actualCount).map { index in
             let isPremium = effectivePremiumIndices.contains(index)
+            let isBudget = budgetIndices.contains(index)
             let name = RandomNameGenerator.randomName()
 
             // Age distribution: young assistants skew lower, coordinators/HC skew older
@@ -388,40 +400,86 @@ enum CoachingEngine {
             let isPositionCoach: Bool
             switch role {
             case .headCoach:
-                goodFloor = isPremium ? 78 : 70
-                goodCeiling = isPremium ? 95 : 92
-                weakFloor = isPremium ? 58 : 55
-                weakCeiling = isPremium ? 72 : 70
-                goodCount = isPremium ? Int.random(in: 6...8) : Int.random(in: 5...7)
+                if isBudget {
+                    // Budget HC: notably lower floors so OVR lands ~50-60
+                    goodFloor = 62
+                    goodCeiling = 78
+                    weakFloor = 38
+                    weakCeiling = 55
+                    goodCount = Int.random(in: 1...3)
+                } else {
+                    goodFloor = isPremium ? 78 : 70
+                    goodCeiling = isPremium ? 95 : 92
+                    weakFloor = isPremium ? 58 : 55
+                    weakCeiling = isPremium ? 72 : 70
+                    goodCount = isPremium ? Int.random(in: 6...8) : Int.random(in: 5...7)
+                }
                 isPositionCoach = false
             case .assistantHeadCoach:
-                goodFloor = isPremium ? 72 : 68
-                goodCeiling = isPremium ? 92 : 88
-                weakFloor = isPremium ? 55 : 50
-                weakCeiling = isPremium ? 68 : 65
-                goodCount = isPremium ? Int.random(in: 5...7) : Int.random(in: 4...6)
+                if isBudget {
+                    // Budget AHC
+                    goodFloor = 60
+                    goodCeiling = 75
+                    weakFloor = 38
+                    weakCeiling = 55
+                    goodCount = Int.random(in: 1...3)
+                } else {
+                    goodFloor = isPremium ? 72 : 68
+                    goodCeiling = isPremium ? 92 : 88
+                    weakFloor = isPremium ? 55 : 50
+                    weakCeiling = isPremium ? 68 : 65
+                    goodCount = isPremium ? Int.random(in: 5...7) : Int.random(in: 4...6)
+                }
                 isPositionCoach = false
             case .offensiveCoordinator, .defensiveCoordinator:
-                goodFloor = isPremium ? 72 : 65
-                goodCeiling = isPremium ? 92 : 90
-                weakFloor = isPremium ? 52 : 50
-                weakCeiling = isPremium ? 67 : 65
-                goodCount = isPremium ? Int.random(in: 5...6) : Int.random(in: 4...6)
+                if isBudget {
+                    // Budget coordinator
+                    goodFloor = 58
+                    goodCeiling = 75
+                    weakFloor = 35
+                    weakCeiling = 52
+                    goodCount = Int.random(in: 1...3)
+                } else {
+                    goodFloor = isPremium ? 72 : 65
+                    goodCeiling = isPremium ? 92 : 90
+                    weakFloor = isPremium ? 52 : 50
+                    weakCeiling = isPremium ? 67 : 65
+                    goodCount = isPremium ? Int.random(in: 5...6) : Int.random(in: 4...6)
+                }
                 isPositionCoach = false
             case .specialTeamsCoordinator:
-                goodFloor = isPremium ? 68 : 62
-                goodCeiling = isPremium ? 88 : 85
-                weakFloor = isPremium ? 48 : 45
-                weakCeiling = isPremium ? 62 : 58
-                goodCount = isPremium ? Int.random(in: 4...5) : Int.random(in: 3...5)
+                if isBudget {
+                    // Budget STC
+                    goodFloor = 55
+                    goodCeiling = 72
+                    weakFloor = 35
+                    weakCeiling = 52
+                    goodCount = Int.random(in: 1...3)
+                } else {
+                    goodFloor = isPremium ? 68 : 62
+                    goodCeiling = isPremium ? 88 : 85
+                    weakFloor = isPremium ? 48 : 45
+                    weakCeiling = isPremium ? 62 : 58
+                    goodCount = isPremium ? Int.random(in: 4...5) : Int.random(in: 3...5)
+                }
                 isPositionCoach = false
             default: // Position coaches: specialists with low general skills
-                goodFloor = isPremium ? 72 : 70
-                goodCeiling = isPremium ? 88 : 85
-                weakFloor = isPremium ? 44 : 40
-                weakCeiling = isPremium ? 62 : 60
-                goodCount = isPremium ? Int.random(in: 2...5) : Int.random(in: 1...4)
-                isPositionCoach = true
+                if isBudget {
+                    // Budget position coach: even lower floors
+                    goodFloor = 60
+                    goodCeiling = 75
+                    weakFloor = 32
+                    weakCeiling = 52
+                    goodCount = Int.random(in: 1...3)
+                    isPositionCoach = true
+                } else {
+                    goodFloor = isPremium ? 72 : 70
+                    goodCeiling = isPremium ? 88 : 85
+                    weakFloor = isPremium ? 44 : 40
+                    weakCeiling = isPremium ? 62 : 60
+                    goodCount = isPremium ? Int.random(in: 2...5) : Int.random(in: 1...4)
+                    isPositionCoach = true
+                }
             }
 
             // Determine which attribute indices get "good" ratings

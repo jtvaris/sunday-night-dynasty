@@ -27,6 +27,10 @@ struct HireCoachView: View {
     @State private var schemeFilter: String = "All"
     @State private var showValueLegend: Bool = false
     @State private var showSchemeTip: Bool = false
+    /// #17: Toggle for OVR/skill color legend panel.
+    @State private var showRatingLegend: Bool = false
+    /// #20: Personality archetype filter ("All" or PersonalityArchetype.rawValue).
+    @State private var personalityFilter: String = "All"
     /// #271: Track candidates who rejected offers — shown grayed out with "Signed elsewhere"
     @State private var rejectedCandidates: Set<UUID> = []
 
@@ -138,6 +142,10 @@ struct HireCoachView: View {
         if schemeFilter != "All" {
             list = list.filter { schemeLabel($0) == schemeFilter }
         }
+        // #20: Personality filter
+        if personalityFilter != "All" {
+            list = list.filter { $0.personality.rawValue == personalityFilter }
+        }
         return list
     }
 
@@ -231,7 +239,7 @@ struct HireCoachView: View {
                             }
                         }
                     }
-                    .frame(minWidth: 620, maxWidth: .infinity)
+                    .frame(minWidth: 780, maxWidth: .infinity)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -262,6 +270,7 @@ struct HireCoachView: View {
         .onChange(of: sortAscending) { _, _ in refreshCaches() }
         .onChange(of: showAffordableOnly) { _, _ in refreshCaches() }
         .onChange(of: schemeFilter) { _, _ in refreshCaches() }
+        .onChange(of: personalityFilter) { _, _ in refreshCaches() }
         .onChange(of: allCoaches.count) { _, _ in refreshCaches() }
         // #157: Full screen cover on iPad for max space
         .fullScreenCover(item: $selectedCandidate) { candidate in
@@ -317,6 +326,66 @@ struct HireCoachView: View {
                             .font(.caption2.weight(.medium))
                     }
                     .foregroundStyle(schemeFilter == "All" ? Color.textSecondary : Color.accentGold)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 6))
+                }
+
+                Spacer().frame(width: 8)
+
+                // #20: Personality filter dropdown
+                Menu {
+                    Button {
+                        personalityFilter = "All"
+                    } label: {
+                        HStack {
+                            Text("All")
+                            if personalityFilter == "All" {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                    ForEach(PersonalityArchetype.allCases, id: \.rawValue) { archetype in
+                        Button {
+                            personalityFilter = archetype.rawValue
+                        } label: {
+                            HStack {
+                                Text(archetype.displayName)
+                                if personalityFilter == archetype.rawValue {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "person.crop.circle")
+                            .font(.system(size: 12))
+                        Text(personalityFilter == "All"
+                             ? "Personality"
+                             : (PersonalityArchetype(rawValue: personalityFilter)?.displayName ?? "Personality"))
+                            .font(.caption2.weight(.medium))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(personalityFilter == "All" ? Color.textSecondary : Color.accentGold)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 6))
+                }
+
+                Spacer().frame(width: 8)
+
+                // #17: Color legend toggle
+                Button {
+                    showRatingLegend.toggle()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "questionmark.circle")
+                            .font(.system(size: 11))
+                        Text("Colors")
+                            .font(.caption2.weight(.medium))
+                    }
+                    .foregroundStyle(showRatingLegend ? Color.accentGold : Color.textSecondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 6))
@@ -385,6 +454,27 @@ struct HireCoachView: View {
                 }
             }
 
+            // #17: Rating color legend
+            if showRatingLegend {
+                HStack(spacing: 10) {
+                    Image(systemName: "paintpalette.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.accentGold)
+                    legendSwatch(color: .success, label: "≥80 Elite")
+                    legendSwatch(color: .accentGold, label: "60–79 Solid")
+                    legendSwatch(color: .warning, label: "40–59 OK")
+                    legendSwatch(color: .danger, label: "<40 Poor")
+                    Spacer()
+                    Button { showRatingLegend = false } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+                .padding(8)
+                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 6))
+            }
+
             // Fix #63: Current coach comparison bar
             if let current = currentCoach {
                 HStack(spacing: 8) {
@@ -439,9 +529,10 @@ struct HireCoachView: View {
                     .frame(width: 32)
             }
             headerButton("OVR", column: .ovr, width: 36)
-            headerButton("Play", column: .play, width: 36)
-            headerButton("Dev", column: .dev, width: 36)
-            headerButton("Game", column: .game, width: 36)
+            // #18: Highlight role-relevant attribute headers with a gold dot.
+            headerButton("Play", column: .play, width: 36, keyForRole: roleHighlights("playCalling"))
+            headerButton("Dev", column: .dev, width: 36, keyForRole: roleHighlights("playerDevelopment"))
+            headerButton("Game", column: .game, width: 36, keyForRole: roleHighlights("gamePlanning"))
             headerButton("Salary", column: .salary, width: 56)
             // Fix #60 + #153: Value column with info legend
             Button {
@@ -464,7 +555,7 @@ struct HireCoachView: View {
         .foregroundStyle(Color.textTertiary)
     }
 
-    private func headerButton(_ title: String, column: SortColumn, width: CGFloat?, alignment: Alignment = .center) -> some View {
+    private func headerButton(_ title: String, column: SortColumn, width: CGFloat?, alignment: Alignment = .center, keyForRole: Bool = false) -> some View {
         Button {
             if sortColumn == column {
                 sortAscending.toggle()
@@ -474,7 +565,14 @@ struct HireCoachView: View {
             }
         } label: {
             HStack(spacing: 2) {
+                // #18: Subtle gold dot when this attribute is a focus for the role being hired.
+                if keyForRole {
+                    Circle()
+                        .fill(Color.accentGold)
+                        .frame(width: 4, height: 4)
+                }
                 Text(title)
+                    .fontWeight(keyForRole ? .black : .semibold)
                 if sortColumn == column {
                     Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
                         .font(.system(size: 7))
@@ -483,7 +581,39 @@ struct HireCoachView: View {
             .frame(maxWidth: width == nil ? .infinity : nil, alignment: alignment)
             .frame(width: width)
         }
-        .foregroundStyle(sortColumn == column ? Color.accentGold : Color.textTertiary)
+        .foregroundStyle(sortColumn == column ? Color.accentGold : (keyForRole ? Color.accentGold.opacity(0.85) : Color.textTertiary))
+    }
+
+    /// #18: Whether the given Coach attribute key is a focus attribute for the role being hired.
+    private func roleHighlights(_ attr: String) -> Bool {
+        role.focusAttributes.contains(attr)
+    }
+
+    /// #19: Personality effect lines for the row's tappable popover (reuses CandidateDetailSheet's effect set).
+    private func personalityEffectsForRow(_ candidate: Coach) -> [String] {
+        switch candidate.personality {
+        case .teamLeader:        return ["Player morale +5%", "Team chemistry +3%"]
+        case .loneWolf:          return ["Individual skill dev +8%", "Team chemistry -3%"]
+        case .feelPlayer:        return ["Adaptability +5%", "Consistency -3%"]
+        case .steadyPerformer:   return ["Consistency +5%", "Development stability +3%"]
+        case .dramaQueen:        return ["Media handling +8%", "Locker room drama risk +5%"]
+        case .quietProfessional: return ["Discipline +5%", "Media handling -3%"]
+        case .mentor:            return ["Player development +8%", "Young player growth +5%"]
+        case .fieryCompetitor:   return ["Motivation +8%", "Discipline risk +3%"]
+        case .classClown:        return ["Morale boost +5%", "Discipline -3%"]
+        }
+    }
+
+    /// #17: Small swatch used inside the rating-color legend.
+    private func legendSwatch(color: Color, label: String) -> some View {
+        HStack(spacing: 4) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(color)
+                .frame(width: 10, height: 10)
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color.textSecondary)
+        }
     }
 
     // MARK: - Candidate Row (Fix #42: one star rating + numeric skill values)
@@ -517,9 +647,9 @@ struct HireCoachView: View {
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
                             .background(potentialBadgeColor(potLabel).opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
-                        // Fix #56: Best Available badge for top 3
+                        // Fix #56 + #16: Self-explanatory "TOP 3" badge for top-3 candidates.
                         if isTop3 {
-                            Text("TOP")
+                            Text("TOP 3")
                                 .font(.system(size: 7, weight: .black))
                                 .foregroundStyle(Color.backgroundPrimary)
                                 .padding(.horizontal, 4)
@@ -528,11 +658,25 @@ struct HireCoachView: View {
                         }
                     }
                     HStack(spacing: 4) {
-                        // Fix #59 + #148: Coaching personality — shorter labels to avoid truncation
-                        Text(candidate.personality.shortLabel)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(Color.accentBlue)
-                            .lineLimit(1)
+                        // Fix #59 + #148: Coaching personality — shorter labels to avoid truncation.
+                        // #19: Tappable personality reveals an effects menu.
+                        Menu {
+                            Text(candidate.personality.displayName)
+                            ForEach(personalityEffectsForRow(candidate), id: \.self) { line in
+                                Text(line)
+                            }
+                        } label: {
+                            HStack(spacing: 2) {
+                                Text(candidate.personality.shortLabel)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(Color.accentBlue)
+                                    .lineLimit(1)
+                                Image(systemName: "info.circle")
+                                    .font(.system(size: 7))
+                                    .foregroundStyle(Color.accentBlue.opacity(0.6))
+                            }
+                        }
+                        .buttonStyle(.plain)
                         // Fix #63: OVR delta vs current
                         if let delta = ovrDelta {
                             Text(delta >= 0 ? "+\(delta)" : "\(delta)")
@@ -541,7 +685,7 @@ struct HireCoachView: View {
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
 
                 // Age
                 Text("\(candidate.age)")
@@ -928,6 +1072,204 @@ private struct CandidateDetailSheet: View {
         return .danger
     }
 
+    // MARK: - #21: Career History
+
+    /// Generates plausible career history lines from age, experience, and role.
+    /// Uses simple deterministic rules so results are stable per candidate.
+    private var careerHistoryLines: [String] {
+        var lines: [String] = []
+        let exp = max(candidate.yearsExperience, 0)
+        if exp > 0 {
+            lines.append("\(exp) year\(exp == 1 ? "" : "s") of coaching experience")
+        } else {
+            lines.append("First-time \(candidate.role.displayName.lowercased()) candidate")
+        }
+
+        // Hash the candidate ID to derive a stable count without storing extra state.
+        let stableHash = abs(candidate.id.hashValue)
+
+        if candidate.role == .headCoach {
+            if candidate.age > 50 && exp > 12 {
+                let stints = 1 + (stableHash % 2) // 1 or 2 prior HC stints
+                lines.append("\(stints) previous head coach stint\(stints == 1 ? "" : "s")")
+            } else if exp >= 8 {
+                lines.append("Coordinator at \(2 + stableHash % 2) different teams")
+            }
+        } else if candidate.role == .offensiveCoordinator || candidate.role == .defensiveCoordinator {
+            if exp >= 10 {
+                lines.append("Coordinator at \(1 + stableHash % 3) prior team\(stableHash % 3 == 0 ? "" : "s")")
+            } else if exp >= 4 {
+                lines.append("Promoted from position coach")
+            }
+        } else if candidate.role == .assistantHeadCoach {
+            if exp >= 8 {
+                lines.append("Former coordinator with playoff experience")
+            }
+        } else {
+            // Position coach
+            if exp >= 6 {
+                lines.append("Position coach at \(1 + stableHash % 3) prior team\(stableHash % 3 == 0 ? "" : "s")")
+            } else if exp == 0 {
+                lines.append("Recently moved from playing or college ranks")
+            }
+        }
+        return Array(lines.prefix(3))
+    }
+
+    private var careerHistoryCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("CAREER HISTORY")
+                .font(.system(size: 11, weight: .black))
+                .tracking(1.5)
+                .foregroundStyle(Color.accentGold)
+
+            ForEach(careerHistoryLines, id: \.self) { line in
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
+    // MARK: - #22: Projected Impact estimates
+
+    /// Role-aware contribution estimates derived from the coach's attributes.
+    /// Numbers are intentionally conservative.
+    private var projectedImpactEstimates: [(label: String, value: String, icon: String, color: Color)] {
+        let leagueAvg = 65.0
+        var items: [(label: String, value: String, icon: String, color: Color)] = []
+
+        let positionCoaches: Set<CoachRole> = [.qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach]
+        let coordinators: Set<CoachRole> = [.offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator]
+        let topRoles: Set<CoachRole> = [.headCoach, .assistantHeadCoach]
+
+        if positionCoaches.contains(candidate.role) {
+            // +X% position development (conservative 0.5–3% range).
+            let dev = Double(candidate.playerDevelopment)
+            let pct = max(-3.0, min(3.0, (dev - leagueAvg) * 0.05))
+            let group = candidate.role.displayName.replacingOccurrences(of: "Coach", with: "").trimmingCharacters(in: .whitespaces)
+            items.append((
+                label: "\(group) development",
+                value: "\(pct >= 0 ? "+" : "")\(String(format: "%.1f", pct))% / season",
+                icon: "chart.line.uptrend.xyaxis",
+                color: pct >= 0 ? .success : .danger
+            ))
+
+            let mot = Double(candidate.motivation)
+            let moralePct = max(-2.0, min(2.0, (mot - leagueAvg) * 0.03))
+            items.append((
+                label: "Player morale",
+                value: "\(moralePct >= 0 ? "+" : "")\(String(format: "%.1f", moralePct))%",
+                icon: "heart.fill",
+                color: moralePct >= 0 ? .success : .danger
+            ))
+        } else if coordinators.contains(candidate.role) {
+            let play = Double(candidate.playCalling)
+            let plan = Double(candidate.gamePlanning)
+            let efficiency = max(-3.0, min(3.0, ((play + plan) / 2.0 - leagueAvg) * 0.05))
+            let side = candidate.role == .offensiveCoordinator ? "offensive"
+                : candidate.role == .defensiveCoordinator ? "defensive" : "special teams"
+            items.append((
+                label: "\(side.capitalized) efficiency",
+                value: "\(efficiency >= 0 ? "+" : "")\(String(format: "%.1f", efficiency))%",
+                icon: "bolt.horizontal.fill",
+                color: efficiency >= 0 ? .success : .danger
+            ))
+
+            let dev = Double(candidate.playerDevelopment)
+            let devPct = max(-2.0, min(2.0, (dev - leagueAvg) * 0.03))
+            items.append((
+                label: "Unit development",
+                value: "\(devPct >= 0 ? "+" : "")\(String(format: "%.1f", devPct))% / season",
+                icon: "chart.line.uptrend.xyaxis",
+                color: devPct >= 0 ? .success : .danger
+            ))
+        } else if topRoles.contains(candidate.role) {
+            // Projected wins: blend overall + motivation + discipline.
+            let ovr = Double(coachOverall(candidate))
+            let mot = Double(candidate.motivation)
+            let disc = Double(candidate.discipline)
+            let blend = (ovr * 0.5 + mot * 0.25 + disc * 0.25 - leagueAvg)
+            let wins = max(-2.0, min(2.0, blend * 0.04))
+            items.append((
+                label: "Projected wins",
+                value: "\(wins >= 0 ? "+" : "")\(String(format: "%.1f", wins)) / season",
+                icon: "trophy.fill",
+                color: wins >= 0 ? .success : .danger
+            ))
+
+            let dev = Double(candidate.playerDevelopment)
+            let devPct = max(-2.0, min(2.0, (dev - leagueAvg) * 0.03))
+            items.append((
+                label: "Roster-wide dev",
+                value: "\(devPct >= 0 ? "+" : "")\(String(format: "%.1f", devPct))% / season",
+                icon: "chart.line.uptrend.xyaxis",
+                color: devPct >= 0 ? .success : .danger
+            ))
+
+            let media = Double(candidate.mediaHandling)
+            let repPct = max(-2.0, min(2.0, (media - leagueAvg) * 0.03))
+            items.append((
+                label: "Team reputation",
+                value: "\(repPct >= 0 ? "+" : "")\(String(format: "%.1f", repPct))%",
+                icon: "star.fill",
+                color: repPct >= 0 ? .success : .danger
+            ))
+        } else {
+            // Strength / medical / etc.
+            let dev = Double(candidate.playerDevelopment)
+            let pct = max(-2.0, min(2.0, (dev - leagueAvg) * 0.04))
+            items.append((
+                label: "Roster development",
+                value: "\(pct >= 0 ? "+" : "")\(String(format: "%.1f", pct))% / season",
+                icon: "chart.line.uptrend.xyaxis",
+                color: pct >= 0 ? .success : .danger
+            ))
+        }
+
+        return Array(items.prefix(3))
+    }
+
+    private var projectedImpactCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("PROJECTED CONTRIBUTION")
+                .font(.system(size: 11, weight: .black))
+                .tracking(1.5)
+                .foregroundStyle(Color.accentGold)
+
+            ForEach(projectedImpactEstimates, id: \.label) { item in
+                HStack(spacing: 10) {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(item.color)
+                        .frame(width: 18)
+                    Text(item.label)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer()
+                    Text(item.value)
+                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .foregroundStyle(item.color)
+                }
+            }
+
+            Text("Estimates based on attribute deltas vs. league average.")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
     // MARK: - #91: Other Teams' Interest
 
     private var demandBadge: some View {
@@ -1043,8 +1385,12 @@ private struct CandidateDetailSheet: View {
                             VStack(spacing: 12) {
                                 // All attributes
                                 attributesCard
-                                // #90: Position group impact
+                                // #22: Role-aware projected contribution.
+                                projectedImpactCard
+                                // #90: Position group impact (kept for finer-grained efficiency view).
                                 positionGroupImpactCard
+                                // #21: Career history
+                                careerHistoryCard
                                 // Background story
                                 if !candidate.background.isEmpty {
                                     backgroundCard

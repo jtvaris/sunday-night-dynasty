@@ -688,7 +688,12 @@ enum LeagueGenerator {
         // Experience bonus: up to 10% of spread for 25+ years
         let expFraction = min(Double(yearsExperience) / 25.0, 1.0) * 0.10
 
-        let rawSalary = Double(range.min) + Double(spread) * (ovrFraction * 0.90 + expFraction)
+        // Power curve: lower-OVR coaches get a steeper discount so the visible
+        // salary spread widens. OVR ~70 maps to ~50% of spread (vs ~67% linear)
+        // while OVR 85+ still hits near max.
+        let curvedOvrFraction = pow(ovrFraction, 1.6)
+
+        let rawSalary = Double(range.min) + Double(spread) * (curvedOvrFraction * 0.90 + expFraction)
 
         // Add +-5% noise so coaches with identical OVR don't all cost the same
         let noise = rawSalary * Double.random(in: -0.05...0.05)
