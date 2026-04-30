@@ -1526,6 +1526,7 @@ struct DraftView: View {
                     .foregroundStyle(Color.textTertiary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss trade offer")
         }
         .padding(12)
         .background(

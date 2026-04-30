@@ -215,6 +215,7 @@ struct ProspectListView: View {
                                             .frame(width: 32)
                                     }
                                     .buttonStyle(.plain)
+                                    .accessibilityLabel(isSelectedForCompare(prospect) ? "Deselect \(prospect.fullName) for compare" : "Select \(prospect.fullName) for compare")
 
                                     ProspectRowView(
                                         prospect: prospect,
@@ -620,6 +621,7 @@ struct ProspectListView: View {
                         .font(.body)
                         .foregroundStyle(Color.textTertiary)
                 }
+                .accessibilityLabel("Clear compare selection")
             }
             Button {
                 showCompareSheet = true

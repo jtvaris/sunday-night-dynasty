@@ -59,6 +59,10 @@ struct PlayerDetailView: View {
     /// All teams — used together with coaches to look up the player's team scheme.
     @Query private var allTeams: [Team]
 
+    /// All season-history rows in the store. Filtered to this player by
+    /// `playerSeasonHistory` below. Recorded by WeekAdvancer at end of week 18.
+    @Query(sort: \PlayerSeasonHistory.season) private var allSeasonHistory: [PlayerSeasonHistory]
+
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
@@ -97,6 +101,8 @@ struct PlayerDetailView: View {
                         compactOverviewContractRow
                         compactDevelopmentRow
                         seasonStatsSummarySection
+                        careerTrendSection
+                        careerStatsHistorySection
                         actionButtonsSection
                         versatilitySection
                         injuryHistorySection
@@ -125,6 +131,8 @@ struct PlayerDetailView: View {
                     compactOverviewContractRow
                     compactDevelopmentRow
                     seasonStatsSummarySection
+                    careerTrendSection
+                    careerStatsHistorySection
                     tradeValueSection
                     actionButtonsSection
                     versatilitySection
@@ -144,6 +152,8 @@ struct PlayerDetailView: View {
                     compactOverviewContractRow
                     compactDevelopmentRow
                     seasonStatsSummarySection
+                    careerTrendSection
+                    careerStatsHistorySection
                     tradeValueSection
                     actionButtonsSection
                     versatilitySection
@@ -708,6 +718,155 @@ struct PlayerDetailView: View {
             total.fieldGoalsAttempted += game.fieldGoalsAttempted
         }
         return total
+    }
+
+    // MARK: - Career Trend & History (Performance Trend Phase 1)
+
+    /// History rows for this player, oldest → newest. Empty until the player
+    /// has finished at least one regular season under the new persistence layer.
+    private var playerSeasonHistory: [PlayerSeasonHistory] {
+        allSeasonHistory.filter { $0.playerID == player.id }
+    }
+
+    /// Mini OVR-trend chart over the last up-to-5 recorded seasons.
+    /// Hidden entirely when no history exists so we don't show a dead section.
+    @ViewBuilder
+    private var careerTrendSection: some View {
+        let history = playerSeasonHistory.suffix(5)
+        if !history.isEmpty {
+            Section("Career Trend") {
+                let points = Array(history)
+                let ovrs = points.map(\.overallAtEndOfSeason)
+                let minOVR = max(0, (ovrs.min() ?? 0) - 2)
+                let maxOVR = min(99, (ovrs.max() ?? 99) + 2)
+                let range = max(1, maxOVR - minOVR)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .bottom, spacing: 6) {
+                        ForEach(Array(points.enumerated()), id: \.element.id) { _, entry in
+                            VStack(spacing: 4) {
+                                Text("\(entry.overallAtEndOfSeason)")
+                                    .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(Color.textSecondary)
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.forRating(entry.overallAtEndOfSeason))
+                                    .frame(
+                                        height: max(
+                                            4,
+                                            CGFloat(entry.overallAtEndOfSeason - minOVR) /
+                                            CGFloat(range) * 60
+                                        )
+                                    )
+                                Text("'\(String(entry.season % 100))")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(Color.textTertiary)
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .frame(height: 90)
+
+                    HStack(spacing: 4) {
+                        Image(systemName: trendDirectionIcon)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(trendDirectionColor)
+                        Text(trendDirectionLabel)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        }
+    }
+
+    /// Direction summary based on first vs last OVR snapshot in the trend window.
+    private var trendDirectionIcon: String {
+        guard let first = playerSeasonHistory.first?.overallAtEndOfSeason,
+              let last = playerSeasonHistory.last?.overallAtEndOfSeason,
+              playerSeasonHistory.count >= 2 else { return "arrow.right" }
+        if last > first { return "arrow.up.right" }
+        if last < first { return "arrow.down.right" }
+        return "arrow.right"
+    }
+
+    private var trendDirectionColor: Color {
+        guard let first = playerSeasonHistory.first?.overallAtEndOfSeason,
+              let last = playerSeasonHistory.last?.overallAtEndOfSeason,
+              playerSeasonHistory.count >= 2 else { return Color.textSecondary }
+        if last > first { return .success }
+        if last < first { return .danger }
+        return Color.textSecondary
+    }
+
+    private var trendDirectionLabel: String {
+        guard let first = playerSeasonHistory.first?.overallAtEndOfSeason,
+              let last = playerSeasonHistory.last?.overallAtEndOfSeason,
+              playerSeasonHistory.count >= 2 else { return "Not enough seasons recorded yet" }
+        let delta = last - first
+        if delta > 0 { return "Up \(delta) OVR over last \(playerSeasonHistory.count) seasons" }
+        if delta < 0 { return "Down \(-delta) OVR over last \(playerSeasonHistory.count) seasons" }
+        return "Flat over last \(playerSeasonHistory.count) seasons"
+    }
+
+    /// Expandable per-season totals. Stats columns are placeholders (0) until
+    /// per-season aggregated stats are wired up — the row still shows season,
+    /// age, and end-of-season OVR which are recorded today.
+    @ViewBuilder
+    private var careerStatsHistorySection: some View {
+        if !playerSeasonHistory.isEmpty {
+            Section {
+                DisclosureGroup("Career Stats by Season") {
+                    VStack(spacing: 6) {
+                        // Header row
+                        HStack {
+                            Text("Season")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color.textTertiary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text("Age")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color.textTertiary)
+                                .frame(width: 40, alignment: .trailing)
+                            Text("OVR")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color.textTertiary)
+                                .frame(width: 40, alignment: .trailing)
+                            Text("GP")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color.textTertiary)
+                                .frame(width: 40, alignment: .trailing)
+                        }
+
+                        ForEach(playerSeasonHistory.reversed(), id: \.id) { entry in
+                            HStack {
+                                Text("\(String(entry.season))")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(Color.textPrimary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text("\(entry.ageAtEndOfSeason)")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(Color.textSecondary)
+                                    .frame(width: 40, alignment: .trailing)
+                                Text("\(entry.overallAtEndOfSeason)")
+                                    .font(.caption.weight(.bold).monospacedDigit())
+                                    .foregroundStyle(Color.forRating(entry.overallAtEndOfSeason))
+                                    .frame(width: 40, alignment: .trailing)
+                                Text("\(entry.gamesPlayed)")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(Color.textSecondary)
+                                    .frame(width: 40, alignment: .trailing)
+                            }
+                            // TODO: render keyStat1/2/3 once season-stat aggregation is recorded.
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .tint(Color.accentGold)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        }
     }
 
     // MARK: - Trade Value Section (#37)

@@ -460,6 +460,7 @@ struct BigBoardView: View {
                                         .font(.caption)
                                         .foregroundStyle(Color.textTertiary)
                                 }
+                                .accessibilityLabel("Clear search")
                             }
                         }
                         .padding(.horizontal, 10)
@@ -513,6 +514,7 @@ struct BigBoardView: View {
                                 .font(.body)
                                 .foregroundStyle(hasActiveFilter ? Color.accentBlue : Color.textSecondary)
                         }
+                        .accessibilityLabel("Filter prospects")
 
                         // Auto-rank button (#12)
                         Button {
@@ -523,6 +525,7 @@ struct BigBoardView: View {
                                 .foregroundStyle(Color.textSecondary)
                         }
                         .help("Auto-rank board by composite score")
+                        .accessibilityLabel("Auto-rank board by composite score")
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 6)
@@ -659,6 +662,7 @@ struct BigBoardView: View {
                     Image(systemName: "arrow.up.arrow.down")
                         .foregroundStyle(boardSortOrder == .boardRank ? Color.textSecondary : Color.accentBlue)
                 }
+                .accessibilityLabel("Sort by, currently \(boardSortOrder.label)")
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -668,6 +672,7 @@ struct BigBoardView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(showMyBoard ? Color.accentGold : Color.textSecondary)
                 }
+                .accessibilityHint("Switch between your custom-ranked board and the scouts' board")
             }
             // #2: MyBoard vs Media Board comparison toggle
             ToolbarItem(placement: .topBarTrailing) {
@@ -1434,6 +1439,7 @@ struct BigBoardView: View {
                 Image(systemName: showWatchlistOnly ? "bookmark.fill" : "bookmark")
                     .foregroundStyle(showWatchlistOnly ? Color.accentGold : Color.textSecondary)
             }
+            .accessibilityLabel(showWatchlistOnly ? "Show all prospects" : "Show watchlist only")
         }
     }
 

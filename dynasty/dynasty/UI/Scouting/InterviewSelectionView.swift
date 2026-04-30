@@ -426,6 +426,7 @@ struct InterviewSelectionView: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Color.textTertiary)
             }
+            .accessibilityLabel("Dismiss info banner")
         }
         .padding(10)
         .background(

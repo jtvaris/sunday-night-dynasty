@@ -10,10 +10,9 @@ struct NewCareerView: View {
         case custom
     }
 
-    /// Local-only cap selection that adds a third "Sandbox" option on top of
-    /// the persisted `CapMode` enum. Sandbox currently maps to `.simple` when
-    /// passed downstream; a dedicated engine-side `CapMode.sandbox` is a
-    /// follow-up (see TODO at the bottom of this file).
+    /// Local-only cap selection mirroring the persisted `CapMode` enum. Each
+    /// case maps 1:1 onto a `CapMode` value; sandbox flows through to the
+    /// engine-side `CapMode.sandbox` short-circuits.
     private enum CapModeSelection: Hashable {
         case simple
         case realistic
@@ -21,8 +20,9 @@ struct NewCareerView: View {
 
         var capMode: CapMode {
             switch self {
-            case .simple, .sandbox: return .simple
-            case .realistic:        return .realistic
+            case .simple:    return .simple
+            case .realistic: return .realistic
+            case .sandbox:   return .sandbox
             }
         }
     }
@@ -741,9 +741,8 @@ private struct CoachingStyleCard: View {
     .modelContainer(for: Career.self, inMemory: true)
 }
 
-// TODO(sandbox-cap): Sandbox cap mode is currently a UI-only selection that
-// downgrades to `CapMode.simple` when handed to TeamSelectionView. Add a
-// proper `CapMode.sandbox` case in `Domain/Enums/CapMode.swift` and have
-// `CapManagementEngine` / `ContractEngine` / `FreeAgencyEngine` short-circuit
-// cap checks when that case is active. Surface the new case in TeamSelection,
-// LeagueGenerator, and any persisted league config.
+// Sandbox cap mode is now wired end-to-end: `CapMode.sandbox` flows from this
+// view into TeamSelectionView and is consumed by `ContractEngine`,
+// `CapManagementEngine`, and `FreeAgencyEngine` via cap-mode-aware overloads
+// that short-circuit cap accounting (no contract validation, no cap room
+// blocking, no franchise tag costs, no salary floor enforcement).

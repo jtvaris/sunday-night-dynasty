@@ -128,8 +128,8 @@ struct FinalPushView: View {
         }
         .padding(32)
         .frame(maxWidth: .infinity)
-        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: DSCornerRadius.card))
+        .overlay(RoundedRectangle(cornerRadius: DSCornerRadius.card).strokeBorder(Color.surfaceBorder, lineWidth: 1))
     }
 
     // MARK: - Expiring Player Card

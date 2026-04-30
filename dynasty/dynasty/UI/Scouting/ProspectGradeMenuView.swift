@@ -60,6 +60,7 @@ struct ProspectStarButton: View {
         .buttonStyle(.plain)
         .frame(width: 44, height: 44)
         .contentShape(Rectangle())
+        .accessibilityLabel(store.isStarred(prospectID) ? "Unstar prospect" : "Star prospect")
     }
 }
 
@@ -85,12 +86,15 @@ struct DualGradeDisplay: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Color.accentGold)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("My grade \(userGrade.letterGrade), scout grade \(scoutGradeText)")
         } else {
             Text(scoutGradeText)
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(scoutGradeColor)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                .accessibilityLabel("Scout grade \(scoutGradeText)")
         }
     }
 }

@@ -361,11 +361,9 @@ struct FranchiseTagView: View {
     }
 
     private func emptyStateRow(_ text: String) -> some View {
-        Text(text)
-            .font(.subheadline)
-            .foregroundStyle(Color.textTertiary)
-            .padding(20)
-            .frame(maxWidth: .infinity)
+        CompactEmptyStateView(icon: "tray", message: text)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 12)
     }
 
     // MARK: - Skip Tag Button

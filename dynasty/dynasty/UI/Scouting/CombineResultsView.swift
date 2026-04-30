@@ -177,6 +177,8 @@ struct CombineResultsView: View {
                                                 .background(index % 2 == 0 ? Color.backgroundPrimary : Color.backgroundSecondary.opacity(0.5))
                                         }
                                         .buttonStyle(.plain)
+                                        .accessibilityElement(children: .combine)
+                                        .accessibilityHint("Tap to view prospect details")
                                         .contextMenu {
                                             ProspectGradeContextMenu(prospectID: prospect.id)
                                         }
@@ -401,6 +403,9 @@ struct CombineResultsView: View {
                         )) {
                             mediaBubble(prospect.combineMediaMention!)
                         }
+                        .accessibilityLabel("Media mention")
+                        .accessibilityHint("Tap to view media commentary")
+                        .accessibilityAddTraits(.isButton)
                 }
 
                 if teamNeeds.contains(prospect.position) {

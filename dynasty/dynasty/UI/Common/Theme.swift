@@ -73,3 +73,50 @@ extension Color {
         }
     }
 }
+
+// MARK: - Spacing Scale
+//
+// Standardized spacing tokens. Prefer these over magic numbers so vertical
+// rhythm stays consistent across views.
+
+enum DSSpacing {
+    /// 4 — micro spacing inside chips / tight clusters
+    static let xxs: CGFloat = 4
+    /// 8 — between tightly related elements (label + value)
+    static let xs: CGFloat = 8
+    /// 12 — default inner spacing inside cards
+    static let sm: CGFloat = 12
+    /// 16 — between cards in a stack, between paragraphs
+    static let md: CGFloat = 16
+    /// 24 — between major sections
+    static let lg: CGFloat = 24
+    /// 32 — top of screen / hero spacing
+    static let xl: CGFloat = 32
+}
+
+// MARK: - Corner Radius Tokens
+//
+// Two scales: 8 for inline pills/buttons/chips, 12 for cards. Anything
+// else should be a deliberate exception.
+
+enum DSCornerRadius {
+    /// 8 — buttons, pills, chips, small inline rectangles
+    static let inline: CGFloat = 8
+    /// 12 — cards, sheets, containers
+    static let card: CGFloat = 12
+}
+
+// MARK: - Section Header
+
+/// Uniform section header — uppercase, semibold, accent gold, tracked.
+/// Use across views to keep section titles consistent.
+struct SectionHeaderText: View {
+    let title: String
+
+    var body: some View {
+        Text(title.uppercased())
+            .font(.caption.weight(.semibold))
+            .tracking(1.2)
+            .foregroundStyle(Color.accentGold)
+    }
+}

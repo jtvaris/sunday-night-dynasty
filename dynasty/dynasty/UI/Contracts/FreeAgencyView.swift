@@ -371,6 +371,7 @@ struct FreeAgencyView: View {
                         .buttonStyle(.plain)
                         .listRowBackground(rowBackground(for: player))
                         .listRowSeparatorTint(Color.surfaceBorder)
+                        .accessibilityHint("Tap to open contract negotiation")
                     }
                 }
                 .scrollContentBackground(.hidden)
@@ -494,6 +495,7 @@ struct FreeAgencyView: View {
                         .foregroundStyle(isTargeted ? Color.accentGold : Color.textTertiary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(isTargeted ? "Untarget \(player.fullName)" : "Target \(player.fullName)")
             }
 
             // Second row: badges and comparison info

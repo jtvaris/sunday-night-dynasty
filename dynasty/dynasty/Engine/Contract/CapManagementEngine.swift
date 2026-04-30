@@ -24,6 +24,16 @@ enum CapManagementEngine {
         return min(unusedCap, maxRollover)
     }
 
+    /// Cap-mode-aware rollover. Sandbox returns 0 since the cap is not enforced.
+    static func calculateCapRollover(team: Team, season: Int, capMode: CapMode) -> Int {
+        switch capMode {
+        case .simple, .realistic:
+            return calculateCapRollover(team: team, season: season)
+        case .sandbox:
+            return 0
+        }
+    }
+
     // MARK: - Compensatory Picks
 
     /// Awards compensatory draft picks to teams that lost more valuable free agents
@@ -113,6 +123,16 @@ enum CapManagementEngine {
         return contract.deadCap
     }
 
+    /// Cap-mode-aware dead cap. Sandbox always returns 0 — releases are free.
+    static func calculateDeadCap(for contract: Contract, team: Team, capMode: CapMode) -> Int {
+        switch capMode {
+        case .simple, .realistic:
+            return calculateDeadCap(for: contract, team: team)
+        case .sandbox:
+            return 0
+        }
+    }
+
     // MARK: - Cap Growth
 
     /// Grows the salary cap by the specified annual rate (default ~5% per year in the NFL).
@@ -144,6 +164,28 @@ enum CapManagementEngine {
         return team.availableCap + rolloverAmount
     }
 
+    /// Cap-mode-aware projection. Sandbox treats cap room as effectively
+    /// unlimited so signing UIs never block on availability.
+    static func projectedCapSpace(team: Team, rolloverAmount: Int, capMode: CapMode) -> Int {
+        switch capMode {
+        case .simple, .realistic:
+            return projectedCapSpace(team: team, rolloverAmount: rolloverAmount)
+        case .sandbox:
+            return Int.max
+        }
+    }
+
+    /// True if the team can afford a contract of `cost` thousand dollars under
+    /// the active cap mode. Sandbox always returns `true`.
+    static func canAfford(team: Team, cost: Int, capMode: CapMode) -> Bool {
+        switch capMode {
+        case .simple, .realistic:
+            return team.availableCap >= cost
+        case .sandbox:
+            return true
+        }
+    }
+
     // MARK: - Minimum Salary Floor
 
     /// Estimates whether the team is meeting the NFL's minimum salary spending requirement
@@ -156,11 +198,32 @@ enum CapManagementEngine {
         return team.currentCapUsage >= floorThreshold
     }
 
+    /// Cap-mode-aware salary floor check. Sandbox always returns `true` — there
+    /// is no minimum spend requirement when cap rules are off.
+    static func isAboveSalaryFloor(team: Team, capMode: CapMode) -> Bool {
+        switch capMode {
+        case .simple, .realistic:
+            return isAboveSalaryFloor(team: team)
+        case .sandbox:
+            return true
+        }
+    }
+
     /// The dollar amount (in thousands) the team must still spend to reach the salary floor.
     /// Returns 0 if the team is already above the floor.
     static func amountBelowFloor(team: Team) -> Int {
         let floorThreshold = Int(Double(team.salaryCap) * 0.89)
         let shortfall = floorThreshold - team.currentCapUsage
         return max(0, shortfall)
+    }
+
+    /// Cap-mode-aware version. Sandbox always returns 0.
+    static func amountBelowFloor(team: Team, capMode: CapMode) -> Int {
+        switch capMode {
+        case .simple, .realistic:
+            return amountBelowFloor(team: team)
+        case .sandbox:
+            return 0
+        }
     }
 }

@@ -429,6 +429,7 @@ struct HireCoachView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(Color.textTertiary)
                     }
+                    .accessibilityLabel("Dismiss value legend")
                 }
                 .padding(8)
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 6))
@@ -452,6 +453,7 @@ struct HireCoachView: View {
                                 .font(.system(size: 12))
                                 .foregroundStyle(Color.textTertiary)
                         }
+                        .accessibilityLabel("Dismiss scheme tip")
                     }
                     .padding(8)
                     .background(Color.accentBlue.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
@@ -474,6 +476,7 @@ struct HireCoachView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(Color.textTertiary)
                     }
+                    .accessibilityLabel("Dismiss color legend")
                 }
                 .padding(8)
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 6))
@@ -527,6 +530,8 @@ struct HireCoachView: View {
                 .frame(width: 62)
             }
             .foregroundStyle(sortColumn == .scheme ? Color.accentGold : Color.textTertiary)
+            .accessibilityLabel("Scheme column")
+            .accessibilityHint("Toggle scheme info")
             // Fix #38: Scheme fit column header — only when team has a comparable scheme.
             if hasInferableTeamScheme {
                 Text("Fit")
@@ -551,6 +556,8 @@ struct HireCoachView: View {
                 .frame(width: 40)
             }
             .foregroundStyle(sortColumn == .value ? Color.accentGold : Color.textTertiary)
+            .accessibilityLabel("Value column")
+            .accessibilityHint("Toggle value legend")
             // Status column
             Text("")
                 .frame(width: 64)
@@ -815,6 +822,7 @@ struct HireCoachView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(candidate.fullName), \(candidate.personality.displayName), age \(candidate.age), overall \(ovr), salary \(candidate.salary) thousand, value \(val.label)")
+        .accessibilityHint(isRejected ? "Already rejected" : "Tap to view candidate details")
     }
 
     // MARK: - Helpers

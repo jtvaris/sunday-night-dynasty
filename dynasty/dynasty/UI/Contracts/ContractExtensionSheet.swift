@@ -295,6 +295,7 @@ struct ContractExtensionSheet: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityHint(showYearlyBreakdown ? "Collapse yearly breakdown" : "Expand yearly breakdown")
 
             if showYearlyBreakdown {
                 Divider().overlay(Color.surfaceBorder)

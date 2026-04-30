@@ -439,12 +439,8 @@ struct MentoringView: View {
     }
 
     private func emptyStateText(_ message: String) -> some View {
-        Text(message)
-            .font(.subheadline)
-            .foregroundStyle(Color.textTertiary)
-            .multilineTextAlignment(.center)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity)
+        CompactEmptyStateView(icon: "person.2.slash", message: message)
+            .padding(.vertical, 4)
     }
 
     private func positionBadge(_ position: Position) -> some View {

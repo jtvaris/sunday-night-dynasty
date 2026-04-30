@@ -23,6 +23,58 @@ enum ContractEngine {
         player.annualSalary = 0
     }
 
+    // MARK: - Sandbox Mode
+
+    /// Sign a player in sandbox cap mode: roster is updated but no cap is debited.
+    /// Annual salary is still recorded for UI/display, but the team's cap usage is left alone.
+    static func signPlayerSandbox(player: Player, years: Int, annualSalary: Int, team: Team) {
+        player.contractYearsRemaining = years
+        player.annualSalary = annualSalary
+        player.teamID = team.id
+        // Intentionally no `team.currentCapUsage` mutation — sandbox ignores cap.
+    }
+
+    /// Cut a player in sandbox cap mode without touching cap usage.
+    static func cutPlayerSandbox(player: Player) {
+        player.teamID = nil
+        player.contractYearsRemaining = 0
+        player.annualSalary = 0
+    }
+
+    // MARK: - Cap-Mode-Aware Wrappers
+
+    /// Sign a player using whichever pathway matches the active cap mode.
+    /// Sandbox mode skips all cap accounting and contract bookkeeping.
+    static func signPlayer(
+        player: Player,
+        years: Int,
+        annualSalary: Int,
+        team: Team,
+        capMode: CapMode
+    ) {
+        switch capMode {
+        case .simple, .realistic:
+            // Both call paths debit cap usage by `annualSalary`. The realistic-mode
+            // entry point that creates a full Contract object lives in
+            // `FreeAgencyEngine.signFreeAgent`; this wrapper is for the simple
+            // `Player.annualSalary`-only flow.
+            signPlayerSimple(player: player, years: years, annualSalary: annualSalary, team: team)
+        case .sandbox:
+            signPlayerSandbox(player: player, years: years, annualSalary: annualSalary, team: team)
+        }
+    }
+
+    /// Cut a player using the path that matches the active cap mode.
+    /// Sandbox skips dead cap entirely; simple mode frees cap space.
+    static func cutPlayer(player: Player, team: Team, capMode: CapMode) {
+        switch capMode {
+        case .simple, .realistic:
+            cutPlayerSimple(player: player, team: team)
+        case .sandbox:
+            cutPlayerSandbox(player: player)
+        }
+    }
+
     /// Estimate the annual market value (in thousands) a player would command
     /// on the open market based on position, age, and overall rating.
     ///
@@ -296,6 +348,17 @@ enum ContractEngine {
         return currentYearHit
     }
 
+    /// Cap-mode-aware realistic cut. Sandbox releases the player with zero dead
+    /// cap and no cap mutation; realistic and simple defer to the existing path.
+    static func cutPlayerRealistic(contract: Contract, team: Team, postJune1: Bool, capMode: CapMode) -> Int {
+        switch capMode {
+        case .simple, .realistic:
+            return cutPlayerRealistic(contract: contract, team: team, postJune1: postJune1)
+        case .sandbox:
+            return 0
+        }
+    }
+
     // MARK: - Franchise Tag
 
     /// Calculate the franchise-tag value for a position: the average of the
@@ -305,6 +368,17 @@ enum ContractEngine {
         let topFive = Array(sorted.prefix(5))
         guard !topFive.isEmpty else { return 0 }
         return topFive.reduce(0, +) / topFive.count
+    }
+
+    /// Cap-mode-aware franchise-tag value. Sandbox returns `0` so the UI shows
+    /// the tag as costing nothing and no cap accounting is needed.
+    static func franchiseTagValue(position: Position, topSalaries: [Int], capMode: CapMode) -> Int {
+        switch capMode {
+        case .simple, .realistic:
+            return franchiseTagValue(position: position, topSalaries: topSalaries)
+        case .sandbox:
+            return 0
+        }
     }
 
     /// Apply franchise tag to a player. Sets their salary to the tag value
@@ -322,6 +396,25 @@ enum ContractEngine {
 
         // Update team cap: remove old salary, add new tag salary
         team.currentCapUsage = team.currentCapUsage - previousSalary + tagValue
+    }
+
+    /// Cap-mode-aware franchise-tag application. In sandbox mode the tag is free
+    /// and team cap is never touched — the player is just flagged as tagged for
+    /// one extra year of team control.
+    static func applyFranchiseTag(
+        player: Player,
+        tagValue: Int,
+        team: Team,
+        capMode: CapMode
+    ) {
+        switch capMode {
+        case .simple, .realistic:
+            applyFranchiseTag(player: player, tagValue: tagValue, team: team)
+        case .sandbox:
+            player.contractYearsRemaining = 1
+            player.annualSalary = 0
+            player.isFranchiseTagged = true
+        }
     }
 
     // MARK: - FA Preview
@@ -408,6 +501,18 @@ enum ContractEngine {
 
         // Free up the tag salary from team cap
         team.currentCapUsage -= tagSalary
+    }
+
+    /// Cap-mode-aware franchise tag removal. Sandbox skips cap refund logic.
+    static func removeFranchiseTag(player: Player, team: Team, capMode: CapMode) {
+        switch capMode {
+        case .simple, .realistic:
+            removeFranchiseTag(player: player, team: team)
+        case .sandbox:
+            player.isFranchiseTagged = false
+            player.contractYearsRemaining = 0
+            player.annualSalary = 0
+        }
     }
 
     // MARK: - Natural Position Helpers

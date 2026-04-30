@@ -391,6 +391,7 @@ struct ContractNegotiationView: View {
                 .padding(.horizontal, 4)
             }
             .buttonStyle(.plain)
+            .accessibilityHint(showYearlyBreakdown ? "Collapse yearly breakdown" : "Expand yearly breakdown")
 
             if showYearlyBreakdown {
                 let currentOffer = NegotiationOffer(

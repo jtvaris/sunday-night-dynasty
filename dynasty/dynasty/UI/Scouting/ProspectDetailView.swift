@@ -679,6 +679,31 @@ struct ProspectDetailView: View {
                 }
             }
 
+            // Bust-risk delta card (replicated from InterviewSelectionView).
+            // Shows pre- vs post-interview bust risk to give the user a single
+            // glanceable decision-support number alongside the interview grade.
+            if let iq = prospect.interviewFootballIQ {
+                let baseRisk = estimateBustRiskPct(hasInterview: false)
+                let postRisk = estimateBustRiskPct(
+                    hasInterview: true,
+                    iq: iq,
+                    personality: prospect.scoutedPersonality,
+                    hasOffField: prospect.interviewCharacterNotes?
+                        .contains(where: { $0.contains("\u{1F6A9}") }) ?? false
+                )
+                if baseRisk != postRisk {
+                    BustRiskDeltaCard(
+                        label: "Bust risk",
+                        before: baseRisk,
+                        after: postRisk,
+                        unit: "%",
+                        direction: .lowerIsBetter,
+                        trailingContext: "after interview",
+                        prominent: true
+                    )
+                }
+            }
+
             // Personality badge with colored background (Task 1)
             if let personality = prospect.scoutedPersonality {
                 HStack {
@@ -905,6 +930,39 @@ struct ProspectDetailView: View {
         if iq >= 65 { return .warning }
         if iq >= 55 { return .danger }
         return .danger
+    }
+
+    /// Estimate bust risk percentage. Mirrors the formula in
+    /// `InterviewSelectionView.estimateBustRisk` so both views display
+    /// consistent numbers for the same prospect.
+    private func estimateBustRiskPct(
+        hasInterview: Bool,
+        iq: Int = 65,
+        personality: PersonalityArchetype? = nil,
+        hasOffField: Bool = false
+    ) -> Int {
+        var risk = 35
+
+        if prospect.position == .QB { risk += 10 }
+        else if prospect.position == .WR || prospect.position == .CB { risk += 5 }
+
+        if prospect.age <= 20 { risk += 5 }
+
+        if hasInterview {
+            if iq >= 85 { risk -= 15 }
+            else if iq >= 75 { risk -= 10 }
+            else if iq >= 65 { risk -= 5 }
+            else if iq < 50 { risk += 10 }
+
+            if let p = personality {
+                if p.tier == .positive { risk -= 5 }
+                else if p.tier == .risky { risk += 5 }
+            }
+
+            if hasOffField { risk += 10 }
+        }
+
+        return max(5, min(80, risk))
     }
 
     // MARK: - College Production Section (Position Skills)

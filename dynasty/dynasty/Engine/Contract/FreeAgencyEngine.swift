@@ -121,8 +121,11 @@ enum FreeAgencyEngine {
 
     // MARK: - Signing
 
-    /// Sign a free agent to a team. Works in both simple and realistic cap modes.
-    /// In realistic mode a full Contract is created with escalating/front-loaded structure.
+    /// Sign a free agent to a team. Works in all cap modes.
+    /// - Simple: writes annual salary into team cap usage.
+    /// - Realistic: builds a full Contract with escalating/front-loaded structure.
+    /// - Sandbox: stamps the player onto the roster but skips any cap accounting,
+    ///   so the team can sign unlimited players regardless of cap room.
     static func signFreeAgent(
         player: Player,
         team: Team,
@@ -157,6 +160,13 @@ enum FreeAgencyEngine {
             player.annualSalary = salary
             player.teamID = team.id
             team.currentCapUsage += contract.capHit
+
+        case .sandbox:
+            // Sandbox: assign the player to the team without touching cap usage.
+            // Salary is recorded for display purposes but never debits the cap.
+            player.contractYearsRemaining = years
+            player.annualSalary = salary
+            player.teamID = team.id
         }
     }
 
@@ -245,22 +255,25 @@ enum FreeAgencyEngine {
         allPlayers: [Player],
         allTeams: [Team],
         playerTeamID: UUID?,
-        modelContext: ModelContext
+        modelContext: ModelContext,
+        capMode: CapMode = .simple
     ) {
         // Use average cap across all teams for market valuation
         let avgCap = allTeams.isEmpty ? 265_000 : allTeams.reduce(0) { $0 + $1.salaryCap } / allTeams.count
         let freeAgents = generateFreeAgentMarket(allPlayers: allPlayers, salaryCap: avgCap)
         let aiTeams = allTeams.filter { $0.id != playerTeamID }
-        simulateAIFreeAgency(freeAgents: freeAgents, teams: aiTeams, modelContext: modelContext)
+        simulateAIFreeAgency(freeAgents: freeAgents, teams: aiTeams, modelContext: modelContext, capMode: capMode)
     }
 
     // MARK: - AI Free Agency Simulation
 
     /// Let AI-controlled teams sign available free agents based on need and cap room.
+    /// In sandbox cap mode the cap-room filter is dropped so any team can sign anyone.
     static func simulateAIFreeAgency(
         freeAgents: [FreeAgent],
         teams: [Team],
-        modelContext: ModelContext
+        modelContext: ModelContext,
+        capMode: CapMode = .simple
     ) {
         // Sort free agents by overall (best first) so elite players go first
         let sortedAgents = freeAgents.sorted { $0.player.overall > $1.player.overall }
@@ -269,10 +282,16 @@ enum FreeAgencyEngine {
             // Skip players who were already signed this cycle
             guard agent.player.teamID == nil else { continue }
 
-            // Find teams with enough cap space, sorted by most available cap
-            let eligibleTeams = teams
-                .filter { $0.availableCap >= agent.askingPrice }
-                .sorted { $0.availableCap > $1.availableCap }
+            // In sandbox mode, every team is eligible regardless of cap.
+            let eligibleTeams: [Team]
+            switch capMode {
+            case .simple, .realistic:
+                eligibleTeams = teams
+                    .filter { $0.availableCap >= agent.askingPrice }
+                    .sorted { $0.availableCap > $1.availableCap }
+            case .sandbox:
+                eligibleTeams = teams.shuffled()
+            }
 
             // Pick from the top interested teams (capped by marketInterest)
             let candidateCount = min(agent.marketInterest, eligibleTeams.count)
@@ -288,12 +307,14 @@ enum FreeAgencyEngine {
             let agreedSalary = max(Int(Double(agent.askingPrice) * Double.random(in: 0.85...1.0)), minimum)
             let agreedYears = agent.desiredYears
 
-            // Use simple mode for AI signings to keep simulation fast
-            ContractEngine.signPlayerSimple(
+            // Route the signing through the cap-mode-aware wrapper so sandbox
+            // skips cap accounting entirely.
+            ContractEngine.signPlayer(
                 player: agent.player,
                 years: agreedYears,
                 annualSalary: agreedSalary,
-                team: winningTeam
+                team: winningTeam,
+                capMode: capMode
             )
         }
     }
@@ -373,12 +394,14 @@ enum FreeAgencyEngine {
     /// Generate AI team offers for each free agent in a given round.
     /// AI teams now bid based on positional need and cap space.
     /// Returns a dictionary keyed by player ID with arrays of competing bids.
+    /// In sandbox cap mode the cap-room precondition is dropped so any team can bid.
     static func generateAIOffers(
         freeAgents: [FreeAgent],
         round: Int,
         allTeams: [Team],
         allPlayers: [Player]? = nil,
-        playerTeamID: UUID?
+        playerTeamID: UUID?,
+        capMode: CapMode = .simple
     ) -> [UUID: [AIBid]] {
         let aggression = FreeAgencyStep.aiAggression(round)
         var offers: [UUID: [AIBid]] = [:]
@@ -406,7 +429,10 @@ enum FreeAgencyEngine {
             var bids: [AIBid] = []
 
             for team in aiTeams {
-                guard team.availableCap >= fa.askingPrice else { continue }
+                // Skip cap gating entirely in sandbox mode.
+                if capMode != .sandbox {
+                    guard team.availableCap >= fa.askingPrice else { continue }
+                }
 
                 // Assess this team's need for the player's position
                 let need: PositionNeedLevel
@@ -430,11 +456,17 @@ enum FreeAgencyEngine {
                 // Combine need with round aggression
                 let salaryMultiplier = needFactor * Double.random(in: (aggression * 0.85)...(aggression * 1.05 + 0.05))
 
-                // Cap-aware: don't bid more than 30% of remaining cap on one player
-                let maxBid = Int(Double(team.availableCap) * 0.30)
+                // Cap-aware: don't bid more than 30% of remaining cap on one player.
+                // Sandbox skips this clamp so bids reflect raw demand only.
                 let minimum = max(Int(0.0028 * Double(team.salaryCap)), 750)
                 let rawOffer = Int(Double(fa.askingPrice) * salaryMultiplier)
-                let offeredSalary = max(min(rawOffer, maxBid), minimum)
+                let offeredSalary: Int
+                if capMode == .sandbox {
+                    offeredSalary = max(rawOffer, minimum)
+                } else {
+                    let maxBid = Int(Double(team.availableCap) * 0.30)
+                    offeredSalary = max(min(rawOffer, maxBid), minimum)
+                }
 
                 bids.append(AIBid(
                     teamID: team.id,
@@ -497,10 +529,12 @@ enum FreeAgencyEngine {
 
     /// Detect and escalate bidding wars when 4+ teams bid on the same player.
     /// Returns escalated bids and info about which teams dropped out.
+    /// In sandbox cap mode every team can afford every escalation.
     static func processBiddingWars(
         aiBids: inout [UUID: [AIBid]],
         freeAgents: [FreeAgent],
-        allTeams: [Team]
+        allTeams: [Team],
+        capMode: CapMode = .simple
     ) -> [BiddingWarInfo] {
         var wars: [BiddingWarInfo] = []
 
@@ -519,7 +553,7 @@ enum FreeAgencyEngine {
 
             for bid in bids {
                 guard let team = allTeams.first(where: { $0.id == bid.teamID }) else { continue }
-                let canAfford = team.availableCap >= escalatedPrice
+                let canAfford = (capMode == .sandbox) ? true : (team.availableCap >= escalatedPrice)
                 // Critical-need teams push harder to stay in
                 let staysIn: Bool
                 if bid.needLevel == .critical {
@@ -533,10 +567,13 @@ enum FreeAgencyEngine {
                 if staysIn {
                     // Raise their bid to compete
                     let raisedSalary = Int(Double(bid.salary) * escalation)
+                    let clampedSalary = (capMode == .sandbox)
+                        ? raisedSalary
+                        : min(raisedSalary, team.availableCap)
                     survivingBids.append(AIBid(
                         teamID: bid.teamID,
                         teamAbbr: bid.teamAbbr,
-                        salary: min(raisedSalary, team.availableCap),
+                        salary: clampedSalary,
                         years: bid.years,
                         needLevel: bid.needLevel
                     ))

@@ -67,6 +67,7 @@ struct ScoutingHubView: View {
                         Image(systemName: "person.badge.plus")
                     }
                     .tint(Color.accentGold)
+                    .accessibilityLabel("Hire scout")
                 }
             }
         }
@@ -1458,6 +1459,7 @@ struct ProDayListView: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityHint(expandedColleges.contains(info.college) ? "Collapse college details" : "Expand college details")
 
             // Expanded prospect list (Task 3)
             if expandedColleges.contains(info.college) {
@@ -1779,6 +1781,7 @@ private struct ProDaySendScoutSheet: View {
                                 .disabled(isFull)
                                 .opacity(isFull ? 0.5 : 1.0)
                                 .listRowBackground(Color.backgroundSecondary)
+                                .accessibilityLabel("\(scout.fullName)\(selectedScoutID == scout.id ? ", selected" : "")\(isFull ? ", schedule full" : "")")
                             }
                         }
 
@@ -1938,6 +1941,8 @@ private struct PersonalWorkoutSheet: View {
                             .buttonStyle(.plain)
                             .opacity(canSelect || isSelected ? 1.0 : 0.4)
                             .listRowBackground(Color.backgroundSecondary)
+                            .accessibilityLabel("\(prospect.fullName), \(prospect.position.rawValue), \(prospect.college), grade \(prospect.overallGradeDisplay)\(isSelected ? ", selected" : "")")
+                            .accessibilityHint(isSelected ? "Tap to deselect" : (canSelect ? "Tap to select for interview" : "Selection limit reached"))
                         }
                     }
                     .scrollContentBackground(.hidden)

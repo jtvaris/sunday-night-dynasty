@@ -111,19 +111,11 @@ struct PlayerStatsView: View {
         List {
             if seasonStats.isEmpty {
                 Section {
-                    HStack {
-                        Spacer()
-                        VStack(spacing: 8) {
-                            Image(systemName: "chart.bar.xaxis")
-                                .font(.largeTitle)
-                                .foregroundStyle(Color.textTertiary)
-                            Text("No game data available")
-                                .font(.subheadline)
-                                .foregroundStyle(Color.textSecondary)
-                        }
-                        Spacer()
-                    }
-                    .padding(.vertical, 24)
+                    EmptyStateView(
+                        icon: "chart.bar.xaxis",
+                        title: "No game data yet",
+                        message: "Once the season starts, this player's per-game performance will appear here."
+                    )
                 }
                 .listRowBackground(Color.backgroundSecondary)
             } else {

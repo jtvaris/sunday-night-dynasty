@@ -460,8 +460,15 @@ enum WeekAdvancer {
             )
         }
 
-        // 9. At season end (week 18): decrement contract years and expire contracts
+        // 9. At season end (week 18): record season history snapshot per player,
+        //    then decrement contract years and expire contracts.
         if week == 18 {
+            recordSeasonHistory(
+                players: allPlayers,
+                season: season,
+                modelContext: modelContext
+            )
+
             for player in allPlayers where player.contractYearsRemaining > 0 {
                 player.contractYearsRemaining -= 1
                 if player.contractYearsRemaining == 0 {
@@ -1143,6 +1150,44 @@ enum WeekAdvancer {
     private static func fetchAllScouts(modelContext: ModelContext) -> [Scout] {
         let descriptor = FetchDescriptor<Scout>()
         return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    // MARK: - Private: Season History Recording
+
+    /// Inserts a `PlayerSeasonHistory` snapshot for every player at season's end.
+    /// Idempotent per (playerID, season) — re-running on the same season won't
+    /// duplicate rows. Captures OVR/age before offseason development changes them.
+    ///
+    /// NOTE: per-season aggregated stats (`keyStat1/2/3`) are not yet populated
+    /// because per-game `PlayerGameStats` aren't persisted league-wide. They
+    /// remain 0 until that pipeline lands. The OVR snapshot alone is enough to
+    /// drive the Career Trend chart (#36 follow-up).
+    private static func recordSeasonHistory(
+        players: [Player],
+        season: Int,
+        modelContext: ModelContext
+    ) {
+        // Fetch any history rows already written for this season so we don't dupe.
+        let existingDescriptor = FetchDescriptor<PlayerSeasonHistory>(
+            predicate: #Predicate { $0.season == season }
+        )
+        let existing = (try? modelContext.fetch(existingDescriptor)) ?? []
+        let existingPlayerIDs = Set(existing.map(\.playerID))
+
+        for player in players where !existingPlayerIDs.contains(player.id) {
+            let entry = PlayerSeasonHistory(
+                playerID: player.id,
+                season: season,
+                overallAtEndOfSeason: player.overall,
+                gamesPlayed: 0,            // TODO: wire when season stats persist
+                ageAtEndOfSeason: player.age,
+                teamID: player.teamID,
+                keyStat1: 0,               // TODO: position-appropriate season totals
+                keyStat2: 0,
+                keyStat3: 0
+            )
+            modelContext.insert(entry)
+        }
     }
 
     private static func fetchAllGamesForSeason(

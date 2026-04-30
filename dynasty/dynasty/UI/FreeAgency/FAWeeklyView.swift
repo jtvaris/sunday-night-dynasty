@@ -650,6 +650,7 @@ struct FAWeeklyView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityHint(hasOffer ? "Tap to update your offer" : "Tap to make an offer")
     }
 
     // MARK: - Cap Impact Badge (preview)

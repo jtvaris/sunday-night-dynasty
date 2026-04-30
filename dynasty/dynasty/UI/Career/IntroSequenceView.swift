@@ -535,33 +535,6 @@ private struct TeamOverviewStep: View {
         }
     }
 
-    private static func gradeForAverage(_ avg: Int) -> String {
-        switch avg {
-        case 90...:    return "A+"
-        case 85...89:  return "A"
-        case 80...84:  return "A-"
-        case 77...79:  return "B+"
-        case 73...76:  return "B"
-        case 70...72:  return "B-"
-        case 67...69:  return "C+"
-        case 63...66:  return "C"
-        case 60...62:  return "C-"
-        case 55...59:  return "D+"
-        case 50...54:  return "D"
-        default:       return "F"
-        }
-    }
-
-    private static func colorForGrade(_ avg: Int) -> Color {
-        switch avg {
-        case 80...:   return Color.success
-        case 70...79: return Color.accentBlue
-        case 60...69: return Color.accentGold
-        case 50...59: return Color.warning
-        default:      return Color.danger
-        }
-    }
-
     /// Ideal minimum roster counts per position group.
     private static let idealGroupSize: [String: Int] = [
         "QB": 3, "RB": 4, "WR": 6, "TE": 3, "OL": 9,

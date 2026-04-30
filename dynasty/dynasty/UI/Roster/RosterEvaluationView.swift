@@ -641,6 +641,7 @@ struct RosterEvaluationView: View {
                                 keyDecisionRow(decision)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityHint(expandedDecisions.contains(decision.id) ? "Collapse financial details" : "Expand financial details")
 
                             // #251: Expandable financial details
                             if expandedDecisions.contains(decision.id) {
