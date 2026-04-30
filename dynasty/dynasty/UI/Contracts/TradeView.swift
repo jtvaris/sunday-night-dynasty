@@ -30,6 +30,16 @@ struct TradeView: View {
     @State private var showResultAlert = false
     @State private var resultIsSuccess = false
 
+    // MARK: UI toggles
+    @State private var showValueBreakdown = false
+
+    // MARK: Trade history (session, this season)
+    @State private var tradeHistory: [CompletedTrade] = []
+
+    // MARK: Picks-only wizard
+    @State private var wizardPickID: UUID?
+    @State private var wizardPartnerID: UUID?
+
     // MARK: - Body
 
     var body: some View {
@@ -41,7 +51,9 @@ struct TradeView: View {
                 ScrollView {
                     VStack(spacing: 24) {
                         proposeSectionCard
+                        pickWizardCard
                         incomingSectionCard
+                        tradeHistoryCard
                     }
                     .padding(24)
                     .frame(maxWidth: 720)
@@ -93,6 +105,11 @@ struct TradeView: View {
                 assetsGrid(partner: partner)
                 Divider().overlay(Color.surfaceBorder)
                 valueMeter
+                valueBreakdownSection(partner: partner)
+                Divider().overlay(Color.surfaceBorder)
+                aiWillingnessRow(partner: partner)
+                Divider().overlay(Color.surfaceBorder)
+                capImpactSection(partner: partner)
                 Divider().overlay(Color.surfaceBorder)
                 proposeButton(partner: partner)
             }
@@ -537,6 +554,642 @@ struct TradeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    // MARK: - Value Breakdown
+
+    @ViewBuilder
+    private func valueBreakdownSection(partner: Team) -> some View {
+        let lines = currentProposalBreakdown(partner: partner)
+        let hasAny = !lines.yourLines.isEmpty || !lines.theirLines.isEmpty
+        if hasAny {
+            DisclosureGroup(isExpanded: $showValueBreakdown) {
+                VStack(alignment: .leading, spacing: 10) {
+                    breakdownColumn(
+                        title: "You Send",
+                        items: lines.yourLines,
+                        accentColor: Color.accentBlue
+                    )
+                    breakdownColumn(
+                        title: "You Receive",
+                        items: lines.theirLines,
+                        accentColor: Color.accentGold
+                    )
+                    Divider().overlay(Color.surfaceBorder)
+                    HStack {
+                        Text("Net to you")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        let net = lines.theirTotal - lines.yourTotal
+                        Text(net >= 0 ? "+\(net)" : "−\(abs(net))")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(net >= 0 ? Color.success : Color.danger)
+                    }
+                }
+                .padding(.top, 8)
+            } label: {
+                HStack {
+                    Text("Value Breakdown")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textSecondary)
+                    Spacer()
+                }
+            }
+            .tint(Color.textSecondary)
+        }
+    }
+
+    private func breakdownColumn(
+        title: String,
+        items: [BreakdownLine],
+        accentColor: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 11).weight(.bold))
+                    .foregroundStyle(accentColor)
+                Spacer()
+                Text("Total \(items.reduce(0) { $0 + $1.value })")
+                    .font(.system(size: 11).weight(.bold).monospacedDigit())
+                    .foregroundStyle(accentColor)
+            }
+            if items.isEmpty {
+                Text("Nothing selected")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+            } else {
+                ForEach(items) { line in
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(line.label)
+                                .font(.system(size: 11).weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                            Text(line.detail)
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                        Spacer()
+                        Text("\(line.value)")
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                }
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.backgroundSecondary)
+        )
+    }
+
+    // MARK: - AI Willingness
+
+    @ViewBuilder
+    private func aiWillingnessRow(partner: Team) -> some View {
+        let values = currentProposalValues
+        let hasAssets = !mySelectedPlayers.isEmpty || !mySelectedPicks.isEmpty ||
+                        !theirSelectedPlayers.isEmpty || !theirSelectedPicks.isEmpty
+
+        let willingness = aiWillingnessForCurrentProposal(partner: partner)
+
+        HStack(spacing: 10) {
+            Image(systemName: willingness.icon)
+                .foregroundStyle(willingness.color)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("AI Willingness")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textSecondary)
+                Text(hasAssets ? willingness.label : "Select assets to gauge interest")
+                    .font(.system(size: 13).weight(.bold))
+                    .foregroundStyle(hasAssets ? willingness.color : Color.textTertiary)
+            }
+            Spacer()
+            if hasAssets, values.receivingValue > 0 {
+                let ratio = Double(values.sendingValue) / Double(max(values.receivingValue, 1))
+                Text(String(format: "%.0f%%", ratio * 100.0))
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(willingness.color.opacity(hasAssets ? 0.10 : 0.0))
+        )
+    }
+
+    private func aiWillingnessForCurrentProposal(partner: Team) -> (label: String, icon: String, color: Color) {
+        guard let myTeam = playerTeam else {
+            return ("Rejects", "xmark.circle.fill", Color.danger)
+        }
+        let proposal = TradeProposal(
+            offeringTeamID: myTeam.id,
+            receivingTeamID: partner.id,
+            sendingPlayers: Array(mySelectedPlayers),
+            receivingPlayers: Array(theirSelectedPlayers),
+            sendingPicks: Array(mySelectedPicks),
+            receivingPicks: Array(theirSelectedPicks)
+        )
+        let values = TradeEngine.evaluateTradeValue(
+            proposal: proposal,
+            allPlayers: allPlayers,
+            allPicks: allPicks
+        )
+
+        // From AI's perspective: AI gives proposal.receivingValue, gets proposal.sendingValue
+        let aiGives    = values.receivingValue
+        let aiReceives = values.sendingValue
+
+        if aiGives <= 0 && aiReceives <= 0 {
+            return ("Rejects", "xmark.circle.fill", Color.danger)
+        }
+        if aiGives <= 0 {
+            return ("Likely accepts", "checkmark.circle.fill", Color.success)
+        }
+
+        let ratio = Double(aiReceives) / Double(aiGives)
+        if ratio >= 0.95 {
+            return ("Likely accepts", "checkmark.circle.fill", Color.success)
+        } else if ratio >= 0.80 {
+            return ("Will counter", "arrow.left.arrow.right.circle.fill", Color.warning)
+        } else {
+            return ("Rejects", "xmark.circle.fill", Color.danger)
+        }
+    }
+
+    // MARK: - Cap Impact
+
+    @ViewBuilder
+    private func capImpactSection(partner: Team) -> some View {
+        if let myTeam = playerTeam {
+            let impact = computeCapImpact(myTeam: myTeam, partner: partner)
+            let hasAny = impact.yourDelta != 0 || impact.theirDelta != 0
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "dollarsign.circle.fill")
+                        .foregroundStyle(Color.accentGold)
+                    Text("Cap Impact")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textSecondary)
+                }
+
+                HStack(alignment: .top, spacing: 12) {
+                    capImpactColumn(
+                        teamLabel: myTeam.abbreviation,
+                        beforeRoom: myTeam.salaryCap - myTeam.currentCapUsage,
+                        afterRoom: (myTeam.salaryCap - myTeam.currentCapUsage) - impact.yourDelta,
+                        delta: -impact.yourDelta
+                    )
+                    Divider().overlay(Color.surfaceBorder).frame(maxHeight: 70)
+                    capImpactColumn(
+                        teamLabel: partner.abbreviation,
+                        beforeRoom: partner.salaryCap - partner.currentCapUsage,
+                        afterRoom: (partner.salaryCap - partner.currentCapUsage) - impact.theirDelta,
+                        delta: -impact.theirDelta
+                    )
+                }
+
+                if !hasAny {
+                    Text("No salary changes hands.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+        }
+    }
+
+    private func capImpactColumn(
+        teamLabel: String,
+        beforeRoom: Int,
+        afterRoom: Int,
+        delta: Int
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(teamLabel)
+                .font(.system(size: 11).weight(.bold))
+                .foregroundStyle(Color.textPrimary)
+            HStack {
+                Text("Before:")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+                Spacer()
+                Text(formatMillions(beforeRoom))
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+            }
+            HStack {
+                Text("After:")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+                Spacer()
+                Text(formatMillions(afterRoom))
+                    .font(.system(size: 11).weight(.semibold).monospacedDigit())
+                    .foregroundStyle(afterRoom < 0 ? Color.danger : Color.textPrimary)
+            }
+            HStack {
+                Text("Δ")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+                Spacer()
+                let prefix: String = delta == 0 ? "" : (delta > 0 ? "+" : "−")
+                Text("\(prefix)\(formatMillions(abs(delta)))")
+                    .font(.system(size: 11).weight(.bold).monospacedDigit())
+                    .foregroundStyle(delta > 0 ? Color.success : (delta < 0 ? Color.warning : Color.textTertiary))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func computeCapImpact(myTeam: Team, partner: Team) -> (yourDelta: Int, theirDelta: Int) {
+        // yourDelta = net cap added to your team (positive = more salary on books)
+        let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
+        let outgoingSalary = mySelectedPlayers
+            .compactMap { playerLookup[$0]?.annualSalary }
+            .reduce(0, +)
+        let incomingSalary = theirSelectedPlayers
+            .compactMap { playerLookup[$0]?.annualSalary }
+            .reduce(0, +)
+        let yourDelta = incomingSalary - outgoingSalary
+        let theirDelta = outgoingSalary - incomingSalary
+        return (yourDelta, theirDelta)
+    }
+
+    // MARK: - Picks-Only Wizard
+
+    private var pickWizardCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            sectionHeader(title: "Pick Trade Simulator", icon: "wand.and.stars")
+
+            Text("Choose one of your picks and a partner team — see Trade Up / Trade Down packages from their available picks.")
+                .font(.caption)
+                .foregroundStyle(Color.textTertiary)
+
+            wizardPickPicker
+            wizardPartnerPicker
+
+            if let myPick = wizardSelectedPick, let partner = wizardSelectedPartner {
+                Divider().overlay(Color.surfaceBorder)
+                wizardSuggestions(myPick: myPick, partner: partner)
+            } else {
+                HStack {
+                    Spacer()
+                    Text("Pick a draft pick and a partner team.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    Spacer()
+                }
+                .padding(.vertical, 12)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .cardBackground()
+    }
+
+    private var wizardPickPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Your Pick")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.textSecondary)
+
+            if myPicks.isEmpty {
+                Text("You have no draft picks.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(myPicks) { pick in
+                            wizardPickChip(pick: pick, isSelected: wizardPickID == pick.id) {
+                                wizardPickID = (wizardPickID == pick.id) ? nil : pick.id
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func wizardPickChip(pick: DraftPick, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 1) {
+                Text(pickLabelShort(pick))
+                    .font(.system(size: 11).weight(.bold))
+                Text("\(DraftEngine.pickValue(pick.pickNumber)) pts")
+                    .font(.system(size: 9))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? Color.accentGold : Color.backgroundTertiary)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var wizardPartnerPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Partner Team")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.textSecondary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(otherTeams) { team in
+                        Button {
+                            wizardPartnerID = (wizardPartnerID == team.id) ? nil : team.id
+                        } label: {
+                            Text(team.abbreviation)
+                                .font(.caption.weight(.bold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .foregroundStyle(
+                                    wizardPartnerID == team.id
+                                        ? Color.backgroundPrimary
+                                        : Color.textSecondary
+                                )
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .fill(wizardPartnerID == team.id ? Color.accentBlue : Color.backgroundTertiary)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func wizardSuggestions(myPick: DraftPick, partner: Team) -> some View {
+        let myValue = DraftEngine.pickValue(myPick.pickNumber)
+        let partnerPicks = theirPicks(partner: partner)
+
+        let upSuggestions = tradeUpSuggestions(myPickValue: myValue, partnerPicks: partnerPicks)
+        let downSuggestions = tradeDownSuggestions(myPickValue: myValue, partnerPicks: partnerPicks)
+
+        VStack(alignment: .leading, spacing: 14) {
+            // Trade Up
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up.right.circle.fill")
+                        .foregroundStyle(Color.success)
+                    Text("Trade Up")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.success)
+                    Spacer()
+                    Text("Get a better pick")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                if upSuggestions.isEmpty {
+                    Text("No realistic trade-up packages available.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                } else {
+                    ForEach(Array(upSuggestions.enumerated()), id: \.offset) { _, sug in
+                        wizardSuggestionRow(suggestion: sug, myValue: myValue, accent: Color.success)
+                    }
+                }
+            }
+
+            // Trade Down
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.right.circle.fill")
+                        .foregroundStyle(Color.accentBlue)
+                    Text("Trade Down")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.accentBlue)
+                    Spacer()
+                    Text("Acquire extra picks")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                if downSuggestions.isEmpty {
+                    Text("No realistic trade-down packages available.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                } else {
+                    ForEach(Array(downSuggestions.enumerated()), id: \.offset) { _, sug in
+                        wizardSuggestionRow(suggestion: sug, myValue: myValue, accent: Color.accentBlue)
+                    }
+                }
+            }
+        }
+    }
+
+    private func wizardSuggestionRow(suggestion: WizardSuggestion, myValue: Int, accent: Color) -> some View {
+        let totalValue = suggestion.picks.reduce(0) { $0 + DraftEngine.pickValue($1.pickNumber) }
+        let ratio: Double = myValue > 0 ? Double(totalValue) / Double(myValue) : 0
+        let label = String(format: "%.0f%%", ratio * 100.0)
+
+        return HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(suggestion.picks) { p in
+                    Text(pickLabelShort(p) + "  \(DraftEngine.pickValue(p.pickNumber)) pts")
+                        .font(.system(size: 11).weight(.semibold).monospacedDigit())
+                        .foregroundStyle(Color.textPrimary)
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(totalValue) pts")
+                    .font(.system(size: 11).weight(.bold).monospacedDigit())
+                    .foregroundStyle(accent)
+                Text(label)
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.backgroundTertiary)
+        )
+    }
+
+    private func tradeUpSuggestions(myPickValue: Int, partnerPicks: [DraftPick]) -> [WizardSuggestion] {
+        var results: [WizardSuggestion] = []
+        let betterPicks = partnerPicks
+            .filter { DraftEngine.pickValue($0.pickNumber) > Int(Double(myPickValue) * 1.05) }
+            .sorted { DraftEngine.pickValue($0.pickNumber) < DraftEngine.pickValue($1.pickNumber) }
+            .prefix(3)
+        for pick in betterPicks {
+            results.append(WizardSuggestion(picks: [pick]))
+        }
+        return results
+    }
+
+    private func tradeDownSuggestions(myPickValue: Int, partnerPicks: [DraftPick]) -> [WizardSuggestion] {
+        let lesser = partnerPicks
+            .filter { DraftEngine.pickValue($0.pickNumber) < myPickValue }
+            .sorted { DraftEngine.pickValue($0.pickNumber) > DraftEngine.pickValue($1.pickNumber) }
+
+        guard !lesser.isEmpty else { return [] }
+
+        var results: [WizardSuggestion] = []
+        let lower = Int(Double(myPickValue) * 0.85)
+        let upper = Int(Double(myPickValue) * 1.15)
+
+        for i in 0..<lesser.count {
+            let v1 = DraftEngine.pickValue(lesser[i].pickNumber)
+            if v1 >= lower && v1 <= upper {
+                results.append(WizardSuggestion(picks: [lesser[i]]))
+                if results.count >= 3 { return results }
+            }
+            for j in (i + 1)..<lesser.count {
+                let v2 = v1 + DraftEngine.pickValue(lesser[j].pickNumber)
+                if v2 >= lower && v2 <= upper {
+                    results.append(WizardSuggestion(picks: [lesser[i], lesser[j]]))
+                    if results.count >= 3 { return results }
+                }
+                if lesser.count > j + 1 {
+                    for k in (j + 1)..<lesser.count {
+                        let v3 = v2 + DraftEngine.pickValue(lesser[k].pickNumber)
+                        if v3 >= lower && v3 <= upper {
+                            results.append(WizardSuggestion(picks: [lesser[i], lesser[j], lesser[k]]))
+                            if results.count >= 3 { return results }
+                        }
+                    }
+                }
+            }
+        }
+        return Array(results.prefix(3))
+    }
+
+    private var wizardSelectedPick: DraftPick? {
+        guard let id = wizardPickID else { return nil }
+        return myPicks.first { $0.id == id }
+    }
+
+    private var wizardSelectedPartner: Team? {
+        guard let id = wizardPartnerID else { return nil }
+        return allTeams.first { $0.id == id }
+    }
+
+    // MARK: - Trade History
+
+    private var tradeHistoryCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            sectionHeader(title: "Trade History (\(career.currentSeason))", icon: "clock.arrow.circlepath")
+
+            if tradeHistory.isEmpty {
+                HStack {
+                    Spacer()
+                    Text("No trades completed yet this season.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    Spacer()
+                }
+                .padding(.vertical, 12)
+            } else {
+                ForEach(tradeHistory) { entry in
+                    tradeHistoryRow(entry)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .cardBackground()
+    }
+
+    private func tradeHistoryRow(_ entry: CompletedTrade) -> some View {
+        HStack(spacing: 10) {
+            Text(entry.grade)
+                .font(.system(size: 18, weight: .heavy))
+                .foregroundStyle(historyGradeColor(entry.grade))
+                .frame(width: 36, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("with \(entry.counterpartyAbbr)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.textPrimary)
+                Text(entry.headline)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 1) {
+                Text("Sent \(formatMillions(entry.sentValue))")
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(Color.accentBlue)
+                Text("Got \(formatMillions(entry.receivedValue))")
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(Color.accentGold)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.backgroundTertiary)
+        )
+    }
+
+    private func historyGradeColor(_ grade: String) -> Color {
+        switch grade {
+        case "A+", "A": return .success
+        case "B": return .accentGold
+        case "C": return .warning
+        default: return .danger
+        }
+    }
+
+    private func recordCompletedTrade(
+        proposal: TradeProposal,
+        counterpartyAbbr: String,
+        userIsOfferingTeam: Bool
+    ) {
+        let values = TradeEngine.evaluateTradeValue(
+            proposal: proposal,
+            allPlayers: allPlayers,
+            allPicks: allPicks
+        )
+        // From user's perspective:
+        //  if user is the offering team:    user sends sendingValue,   gets receivingValue
+        //  if offer came FROM AI to user:   user sends receivingValue, gets sendingValue
+        let userSent     = userIsOfferingTeam ? values.sendingValue   : values.receivingValue
+        let userReceived = userIsOfferingTeam ? values.receivingValue : values.sendingValue
+
+        let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
+        let pickLookup   = Dictionary(uniqueKeysWithValues: allPicks.map   { ($0.id, $0) })
+
+        let outgoingPlayerIDs = userIsOfferingTeam ? proposal.sendingPlayers   : proposal.receivingPlayers
+        let outgoingPickIDs   = userIsOfferingTeam ? proposal.sendingPicks     : proposal.receivingPicks
+        let incomingPlayerIDs = userIsOfferingTeam ? proposal.receivingPlayers : proposal.sendingPlayers
+        let incomingPickIDs   = userIsOfferingTeam ? proposal.receivingPicks   : proposal.sendingPicks
+
+        let outNames = outgoingPlayerIDs.compactMap { playerLookup[$0]?.fullName } +
+                       outgoingPickIDs.compactMap { pickLookup[$0].map { pickLabelShort($0) } }
+        let inNames  = incomingPlayerIDs.compactMap { playerLookup[$0]?.fullName } +
+                       incomingPickIDs.compactMap { pickLookup[$0].map { pickLabelShort($0) } }
+
+        let headline = "Sent: \(outNames.isEmpty ? "—" : outNames.joined(separator: ", "))  |  Got: \(inNames.isEmpty ? "—" : inNames.joined(separator: ", "))"
+
+        let entry = CompletedTrade(
+            counterpartyAbbr: counterpartyAbbr,
+            sentValue: userSent,
+            receivedValue: userReceived,
+            grade: gradeForTrade(sent: userSent, received: userReceived),
+            headline: headline
+        )
+        tradeHistory.insert(entry, at: 0)
+    }
+
+    private func gradeForTrade(sent: Int, received: Int) -> String {
+        guard sent > 0 else { return received > 0 ? "A+" : "C" }
+        let ratio = Double(received) / Double(sent)
+        if ratio >= 1.20 { return "A+" }
+        if ratio >= 1.05 { return "A" }
+        if ratio >= 0.90 { return "B" }
+        if ratio >= 0.75 { return "C" }
+        return "D"
+    }
+
     // MARK: - Section Header
 
     private func sectionHeader(title: String, icon: String) -> some View {
@@ -571,6 +1224,12 @@ struct TradeView: View {
         )
 
         if accepted {
+            // Capture history before mutating roster
+            recordCompletedTrade(
+                proposal: proposal,
+                counterpartyAbbr: partner.abbreviation,
+                userIsOfferingTeam: true
+            )
             TradeEngine.executeTrade(
                 proposal: proposal,
                 allPlayers: allPlayers,
@@ -591,6 +1250,13 @@ struct TradeView: View {
     }
 
     private func acceptOffer(_ offer: TradeProposal) {
+        let teamName = allTeams.first(where: { $0.id == offer.offeringTeamID })?.abbreviation ?? "AI"
+        // Record before executing so lookups still resolve
+        recordCompletedTrade(
+            proposal: offer,
+            counterpartyAbbr: teamName,
+            userIsOfferingTeam: false
+        )
         TradeEngine.executeTrade(
             proposal: offer,
             allPlayers: allPlayers,
@@ -599,7 +1265,6 @@ struct TradeView: View {
         )
         incomingOffers.removeAll { $0.id == offer.id }
         loadData()
-        let teamName = allTeams.first(where: { $0.id == offer.offeringTeamID })?.abbreviation ?? "AI"
         tradeResultMessage = "Trade with \(teamName) completed!"
         resultIsSuccess = true
         showResultAlert = true
@@ -841,6 +1506,102 @@ struct TradeView: View {
             return "$\(thousands)K"
         }
     }
+
+    // MARK: - Breakdown helpers
+
+    private func pickLabelShort(_ pick: DraftPick) -> String {
+        let suffix: String
+        switch pick.round {
+        case 1: suffix = "1st"
+        case 2: suffix = "2nd"
+        case 3: suffix = "3rd"
+        default: suffix = "\(pick.round)th"
+        }
+        return "\(pick.seasonYear) \(suffix) (#\(pick.pickNumber))"
+    }
+
+    private func currentProposalBreakdown(partner: Team) -> ProposalBreakdown {
+        let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
+        let pickLookup   = Dictionary(uniqueKeysWithValues: allPicks.map   { ($0.id, $0) })
+
+        var yourLines: [BreakdownLine] = []
+        for id in mySelectedPlayers {
+            guard let p = playerLookup[id] else { continue }
+            let v = ContractEngine.estimateMarketValue(player: p)
+            yourLines.append(BreakdownLine(
+                label: p.fullName,
+                detail: "\(p.position.rawValue) · \(p.overall) OVR · Age \(p.age)",
+                value: v
+            ))
+        }
+        for id in mySelectedPicks {
+            guard let pick = pickLookup[id] else { continue }
+            let v = DraftEngine.pickValue(pick.pickNumber)
+            yourLines.append(BreakdownLine(
+                label: pickLabelShort(pick),
+                detail: "Pick chart value",
+                value: v
+            ))
+        }
+
+        var theirLines: [BreakdownLine] = []
+        for id in theirSelectedPlayers {
+            guard let p = playerLookup[id] else { continue }
+            let v = ContractEngine.estimateMarketValue(player: p)
+            theirLines.append(BreakdownLine(
+                label: p.fullName,
+                detail: "\(p.position.rawValue) · \(p.overall) OVR · Age \(p.age)",
+                value: v
+            ))
+        }
+        for id in theirSelectedPicks {
+            guard let pick = pickLookup[id] else { continue }
+            let v = DraftEngine.pickValue(pick.pickNumber)
+            theirLines.append(BreakdownLine(
+                label: pickLabelShort(pick),
+                detail: "Pick chart value",
+                value: v
+            ))
+        }
+
+        let yourTotal = yourLines.reduce(0) { $0 + $1.value }
+        let theirTotal = theirLines.reduce(0) { $0 + $1.value }
+        return ProposalBreakdown(
+            yourLines: yourLines,
+            theirLines: theirLines,
+            yourTotal: yourTotal,
+            theirTotal: theirTotal
+        )
+    }
+}
+
+// MARK: - Local Helper Types
+
+private struct BreakdownLine: Identifiable {
+    let id = UUID()
+    let label: String
+    let detail: String
+    let value: Int
+}
+
+private struct ProposalBreakdown {
+    let yourLines: [BreakdownLine]
+    let theirLines: [BreakdownLine]
+    let yourTotal: Int
+    let theirTotal: Int
+}
+
+private struct CompletedTrade: Identifiable {
+    let id = UUID()
+    let counterpartyAbbr: String
+    let sentValue: Int
+    let receivedValue: Int
+    let grade: String
+    let headline: String
+}
+
+private struct WizardSuggestion {
+    let picks: [DraftPick]
 }
 
 // MARK: - Preview

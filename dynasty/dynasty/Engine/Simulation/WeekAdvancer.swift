@@ -1159,10 +1159,14 @@ enum WeekAdvancer {
 
     // MARK: - Private: Owner Demand Generation (#248)
 
-    /// Generates owner demands based on weakest position groups and owner personality.
+    /// Generates owner demands tied to actual roster needs (via `DraftEngine.topTeamNeeds`).
+    /// Each demand is a single string that includes the weak area, a timeline, and the
+    /// satisfaction consequence so the player knows exactly what's at stake.
     private static func generateOwnerDemands(owner: Owner, players: [Player]) -> [String] {
-        // Evaluate all position groups and sort by average OVR (weakest first)
-        let groups: [(label: String, positions: [Position])] = [
+        guard !players.isEmpty else { return [] }
+
+        // Build position-group OVR map so we can show "current ~64 OVR" context.
+        let groupDefs: [(label: String, positions: [Position])] = [
             ("QB",  [.QB]),
             ("RB",  [.RB, .FB]),
             ("WR",  [.WR]),
@@ -1172,14 +1176,19 @@ enum WeekAdvancer {
             ("LB",  [.OLB, .MLB]),
             ("DB",  [.CB, .FS, .SS]),
         ]
-
-        let ranked = groups.map { group -> (label: String, avgOVR: Int) in
+        var groupOVRByPosition: [Position: (label: String, avgOVR: Int)] = [:]
+        for group in groupDefs {
             let groupPlayers = players.filter { group.positions.contains($0.position) }
             let avg = groupPlayers.isEmpty ? 0 : groupPlayers.map(\.overall).reduce(0, +) / groupPlayers.count
-            return (group.label, avg)
-        }.sorted { $0.avgOVR < $1.avgOVR }
+            for pos in group.positions {
+                groupOVRByPosition[pos] = (group.label, avg)
+            }
+        }
 
-        // Determine demand count based on meddling
+        // Use DraftEngine's roster-need evaluator for priority order (matches scouting/draft logic).
+        let needPositions = DraftEngine.topTeamNeeds(roster: players, limit: 5)
+
+        // Determine demand count based on meddling.
         let demandCount: Int
         if owner.meddling >= 70 {
             demandCount = 3
@@ -1189,26 +1198,42 @@ enum WeekAdvancer {
             demandCount = 1
         }
 
-        let weakest = Array(ranked.prefix(demandCount))
+        // Penalty per ignored demand (mirrors application logic below).
+        let penalty = owner.patience <= 3 ? 15 : 10
+
         var demands: [String] = []
+        var seenLabels = Set<String>()
 
-        for group in weakest {
-            // Low meddling owners give vague demands
+        for pos in needPositions {
+            guard demands.count < demandCount else { break }
+            guard let group = groupOVRByPosition[pos] else { continue }
+            // Avoid duplicate position-group demands (e.g. multiple OL holes).
+            guard !seenLabels.contains(group.label) else { continue }
+            seenLabels.insert(group.label)
+
+            let action: String
+            let timeline: String
+
+            // Low-meddling owners stay vague; mid/high meddling owners get specific.
             if owner.meddling < 30 {
-                let side = ["QB", "RB", "WR", "TE", "OL"].contains(group.label) ? "offense" : "defense"
-                let demand = "Improve the \(side)"
-                if !demands.contains(demand) {
-                    demands.append(demand)
-                }
-                continue
+                let side = group.label == "DL" || group.label == "LB" || group.label == "DB" ? "defense" : "offense"
+                action = "Improve the \(side) (current \(group.label) avg \(group.avgOVR) OVR)"
+                timeline = owner.prefersWinNow ? "before Week 1" : "this offseason"
+            } else if owner.prefersWinNow {
+                action = "Sign or trade for a starting-caliber \(group.label) (current avg \(group.avgOVR) OVR)"
+                timeline = "before the season opener"
+            } else {
+                action = "Draft or develop a franchise \(group.label) (current avg \(group.avgOVR) OVR)"
+                timeline = "by the end of the draft"
             }
 
-            // Specific demand based on owner personality
-            if owner.prefersWinNow {
-                demands.append("Sign an elite \(group.label)")
-            } else {
-                demands.append("Draft a franchise \(group.label)")
-            }
+            demands.append("\(action) — \(timeline). Ignoring costs -\(penalty) satisfaction.")
+        }
+
+        // Fallback: if we got no need positions (empty roster edge case), keep one vague demand.
+        if demands.isEmpty {
+            let fallback = owner.prefersWinNow ? "Make a splash signing this offseason" : "Build through the draft this offseason"
+            demands.append("\(fallback) — by the season opener. Ignoring costs -\(penalty) satisfaction.")
         }
 
         return demands

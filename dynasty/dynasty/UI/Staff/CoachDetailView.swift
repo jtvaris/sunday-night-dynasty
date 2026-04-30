@@ -79,6 +79,7 @@ struct CoachDetailView: View {
                 avatarSection
                 overviewSection
                 developmentSection
+                projectedImpactSection
                 attributesSection
                 personalitySection
                 schemeSection
@@ -97,7 +98,7 @@ struct CoachDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will remove \(coach.firstName) from your coaching staff. This action cannot be undone.")
+            Text(fireConfirmationMessage)
         }
         // Fix #53: Extend contract alert
         .alert("Extend \(coach.fullName)'s Contract?", isPresented: $showExtendAlert) {
@@ -568,6 +569,166 @@ struct CoachDetailView: View {
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    // MARK: - Projected Impact (concrete bonuses for the role)
+
+    /// Concrete impact bullets for this coach in their current role.
+    /// Combines role-baseline expected bonuses with attribute-driven multipliers.
+    private struct ImpactRow: Identifiable {
+        let id = UUID()
+        let icon: String
+        let color: Color
+        let text: String
+    }
+
+    /// Returns up to 4 concrete projected-impact bullets for the coach's role.
+    private var projectedImpacts: [ImpactRow] {
+        var rows: [ImpactRow] = []
+
+        // Role-driven core bonus (what this position contributes when staffed)
+        switch coach.role {
+        case .headCoach:
+            rows.append(.init(icon: "trophy.fill", color: .accentGold,
+                              text: "+\(scaled(15, by: coach.motivation))% team-wide morale & game-day performance"))
+        case .assistantHeadCoach:
+            rows.append(.init(icon: "person.2.fill", color: .accentBlue,
+                              text: "+\(scaled(5, by: coach.moraleInfluence))% staff chemistry, +\(scaled(3, by: coach.gamePlanning))% halftime adjustments"))
+        case .offensiveCoordinator:
+            rows.append(.init(icon: "football.fill", color: .accentBlue,
+                              text: "+\(scaled(12, by: coach.playCalling))% offensive efficiency in games"))
+            if let scheme = coach.offensiveScheme {
+                rows.append(.init(icon: "checkmark.seal.fill", color: .success,
+                                  text: "Players gain scheme familiarity faster (\(scheme.displayName))"))
+            }
+        case .defensiveCoordinator:
+            rows.append(.init(icon: "shield.fill", color: .danger,
+                              text: "+\(scaled(12, by: coach.playCalling))% defensive efficiency in games"))
+            if let scheme = coach.defensiveScheme {
+                rows.append(.init(icon: "checkmark.seal.fill", color: .success,
+                                  text: "Defenders gain scheme familiarity faster (\(scheme.displayName))"))
+            }
+        case .specialTeamsCoordinator:
+            rows.append(.init(icon: "figure.american.football", color: .success,
+                              text: "+\(scaled(8, by: coach.playCalling))% special teams performance"))
+        case .qbCoach:
+            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
+                              text: "+\(scaled(10, by: coach.playerDevelopment))% QB development per season"))
+        case .rbCoach:
+            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
+                              text: "+\(scaled(10, by: coach.playerDevelopment))% RB development per season"))
+        case .wrCoach:
+            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
+                              text: "+\(scaled(10, by: coach.playerDevelopment))% WR development per season"))
+        case .olCoach:
+            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
+                              text: "+\(scaled(10, by: coach.playerDevelopment))% OL development per season"))
+        case .dlCoach:
+            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
+                              text: "+\(scaled(10, by: coach.playerDevelopment))% DL development per season"))
+        case .lbCoach:
+            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
+                              text: "+\(scaled(10, by: coach.playerDevelopment))% LB development per season"))
+        case .dbCoach:
+            rows.append(.init(icon: "arrow.up.forward.circle.fill", color: .success,
+                              text: "+\(scaled(10, by: coach.playerDevelopment))% DB development per season"))
+        case .strengthCoach:
+            rows.append(.init(icon: "heart.fill", color: .danger,
+                              text: "-\(scaled(15, by: coach.discipline))% injury risk across the roster"))
+        case .teamDoctor:
+            rows.append(.init(icon: "cross.case.fill", color: .accentBlue,
+                              text: "-\(scaled(30, by: coach.reputation))% injury severity"))
+        case .physio:
+            rows.append(.init(icon: "bandage.fill", color: .accentBlue,
+                              text: "+\(scaled(25, by: coach.reputation))% recovery speed"))
+        }
+
+        // Generic motivation/morale bonus when high
+        if coach.moraleInfluence >= 75 {
+            rows.append(.init(icon: "flame.fill", color: .accentGold,
+                              text: "Strong locker-room presence (+\(coach.moraleInfluence / 10) team morale tick)"))
+        }
+
+        // Reputation-based recruiting bonus
+        if coach.reputation >= 75 {
+            rows.append(.init(icon: "person.3.fill", color: .accentBlue,
+                              text: "Reputation attracts higher-tier prospects in offseason"))
+        }
+
+        // Adjustment penalty hint
+        if coach.isInAdjustmentPeriod {
+            rows.append(.init(icon: "hourglass", color: .warning,
+                              text: "Currently adjusting — bonuses reduced ~25% this season"))
+        }
+
+        return Array(rows.prefix(4))
+    }
+
+    /// Scales a baseline percentage by an attribute (50 = baseline, 99 = +50% relative).
+    private func scaled(_ baseline: Int, by attribute: Int) -> Int {
+        let mult = 0.5 + (Double(attribute) / 99.0)
+        return max(1, Int(Double(baseline) * mult))
+    }
+
+    @ViewBuilder
+    private var projectedImpactSection: some View {
+        let rows = projectedImpacts
+        if !rows.isEmpty {
+            Section("Projected Impact") {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(rows) { row in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: row.icon)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(row.color)
+                                .frame(width: 18)
+                            Text(row.text)
+                                .font(.subheadline)
+                                .foregroundStyle(Color.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        }
+    }
+
+    // MARK: - Severance Preview (fire flow polish)
+
+    /// Estimated severance owed if the coach is fired now (in $K).
+    /// Roughly 50% of remaining contract value, capped at one full year.
+    private var estimatedSeveranceK: Int {
+        let remainingYears = max(0, coach.contractYearsRemaining)
+        guard remainingYears > 0 else { return 0 }
+        let totalRemaining = coach.salary * remainingYears
+        let half = totalRemaining / 2
+        return min(half, coach.salary) // cap at one year salary
+    }
+
+    /// Formatted severance string for display.
+    private var severanceDisplay: String {
+        let amountK = estimatedSeveranceK
+        if amountK <= 0 {
+            return "no severance owed"
+        }
+        let millions = Double(amountK) / 1_000.0
+        if millions >= 1.0 {
+            return "approx $\(String(format: "%.1f", millions))M severance"
+        }
+        return "approx $\(amountK)K severance"
+    }
+
+    /// Full message for the fire confirmation alert with severance preview.
+    private var fireConfirmationMessage: String {
+        let years = coach.contractYearsRemaining
+        let yearsText: String
+        switch years {
+        case 0, 1:  yearsText = "Contract expires after this season."
+        default:    yearsText = "\(years) years remain on contract — \(severanceDisplay)."
+        }
+        return "This will remove \(coach.firstName) from your coaching staff. \(yearsText) This action cannot be undone."
     }
 
     // MARK: - Helpers

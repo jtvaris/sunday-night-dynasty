@@ -26,6 +26,7 @@ struct BigBoardView: View {
     @State private var showFilterMenu: Bool = false
     @State private var filterStarredOnly: Bool = false
     @State private var filterMyGradeFirstRound: Bool = false
+    @State private var showBoardComparison: Bool = false
     @ObservedObject private var userGradeStore = UserProspectGradeStore.shared
     @State private var isLoading: Bool = true
     @State private var debouncedSearchText: String = ""
@@ -539,6 +540,9 @@ struct BigBoardView: View {
                     List {
                         recommendationsSection
                         depthAnalysisSection
+                        if showBoardComparison {
+                            boardComparisonSection
+                        }
                         if showMyBoard {
                             // Flat custom-ordered list
                             Section {
@@ -664,6 +668,18 @@ struct BigBoardView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(showMyBoard ? Color.accentGold : Color.textSecondary)
                 }
+            }
+            // #2: MyBoard vs Media Board comparison toggle
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showBoardComparison.toggle()
+                    }
+                } label: {
+                    Image(systemName: showBoardComparison ? "arrow.left.arrow.right.circle.fill" : "arrow.left.arrow.right.circle")
+                        .foregroundStyle(showBoardComparison ? Color.accentBlue : Color.textSecondary)
+                }
+                .accessibilityLabel(showBoardComparison ? "Hide media comparison" : "Show media comparison")
             }
         }
         .task {
@@ -1104,6 +1120,131 @@ struct BigBoardView: View {
         }
     }
 
+    // MARK: - #2: Board Comparison Section (MyBoard vs Media Board)
+
+    /// Disagreements between user's board rank and media's draft projection.
+    /// Returns prospects where the rank gap suggests a meaningful disagreement.
+    private struct BoardComparisonEntry: Identifiable {
+        let id: UUID
+        let prospect: CollegeProspect
+        let myRank: Int
+        let mediaPick: Int
+        let gap: Int           // myRank - mediaPick (negative = user has higher than media)
+        let direction: Direction
+
+        enum Direction {
+            case userHigher    // user ranks them better than media
+            case mediaHigher   // media ranks them better than user
+        }
+    }
+
+    private var boardComparisonEntries: [BoardComparisonEntry] {
+        let board = showMyBoard ? cachedCustomOrderedBoard : cachedOrderedBoard
+        var entries: [BoardComparisonEntry] = []
+        for (index, prospect) in board.enumerated() {
+            let myRank = index + 1
+            // Use round-based projection scaled to a pick number (heuristic).
+            guard let projRound = prospect.draftProjection else { continue }
+            // Estimate media pick number from round: round 1 = 1-32, round 2 = 33-64, etc.
+            // Use mid-round position as a proxy.
+            let mediaPick = (projRound - 1) * 32 + 16
+            let gap = myRank - mediaPick
+            // Only show meaningful disagreements (>= 12 picks apart).
+            guard abs(gap) >= 12 else { continue }
+            let direction: BoardComparisonEntry.Direction = gap < 0 ? .userHigher : .mediaHigher
+            entries.append(BoardComparisonEntry(
+                id: prospect.id,
+                prospect: prospect,
+                myRank: myRank,
+                mediaPick: mediaPick,
+                gap: gap,
+                direction: direction
+            ))
+        }
+        // Sort by absolute gap descending, take top 8.
+        return entries
+            .sorted { abs($0.gap) > abs($1.gap) }
+            .prefix(8)
+            .map { $0 }
+    }
+
+    @ViewBuilder
+    private var boardComparisonSection: some View {
+        let entries = boardComparisonEntries
+        Section {
+            if entries.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.success)
+                        .font(.caption)
+                    Text("Your board aligns with the media consensus.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                }
+                .listRowBackground(Color.backgroundSecondary)
+            } else {
+                // Summary header
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(Color.accentBlue)
+                        .font(.caption)
+                    Text("\(entries.count) prospect\(entries.count == 1 ? "" : "s") rated very differently from media")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.textPrimary)
+                }
+                .listRowBackground(Color.backgroundSecondary)
+
+                ForEach(entries) { entry in
+                    boardComparisonRow(entry: entry)
+                        .listRowBackground(Color.backgroundSecondary)
+                }
+            }
+        } header: {
+            Label("Board Diff: \(showMyBoard ? "My" : "Scout") vs Media", systemImage: "arrow.left.arrow.right")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.accentBlue)
+                .textCase(nil)
+        }
+    }
+
+    private func boardComparisonRow(entry: BoardComparisonEntry) -> some View {
+        let isUserHigher = entry.direction == .userHigher
+        let icon = isUserHigher ? "arrow.up.right.circle.fill" : "arrow.down.right.circle.fill"
+        let color: Color = isUserHigher ? Color.success : Color.warning
+        let label = isUserHigher ? "You're high" : "Media's high"
+        return HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(color)
+
+            Text(entry.prospect.position.rawValue)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(Color.textPrimary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(positionColorForProspect(entry.prospect), in: RoundedRectangle(cornerRadius: 3))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.prospect.fullName)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                Text("You: #\(entry.myRank)  Media: ~#\(entry.mediaPick)  (\(label) by \(abs(entry.gap)))")
+                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+            }
+            Spacer()
+        }
+    }
+
+    private func positionColorForProspect(_ prospect: CollegeProspect) -> Color {
+        switch prospect.position.side {
+        case .offense:      return .accentBlue.opacity(0.3)
+        case .defense:      return .danger.opacity(0.3)
+        case .specialTeams: return .accentGold.opacity(0.3)
+        }
+    }
+
     // MARK: - Tier Header (#214)
 
     private func tierHeader(tier: Int, count: Int) -> some View {
@@ -1111,6 +1252,24 @@ struct BigBoardView: View {
         let tierProspects = cachedTieredBoard.first(where: { $0.tier == tier })?.prospects ?? []
         let needCount = tierProspects.filter { teamNeedPositions.contains($0.position) }.count
         let starCount = tierProspects.filter { isOnWatchlist($0.id) }.count
+        // Availability summary: prospects in this tier likely available at user's first pick (#1)
+        let firstPick = teamDraftPicks
+            .filter { !$0.isComplete }
+            .sorted { $0.pickNumber < $1.pickNumber }
+            .first
+        let availableAtPickCount: Int? = firstPick.map { _ in
+            tierProspects.filter { p in
+                guard let prob = availableAtPickProbability(for: p) else { return false }
+                return prob >= 0.5
+            }.count
+        }
+        // Tier-level "available" probability rollup: average prob across tier prospects
+        let tierAvailabilityProb: Double? = {
+            guard firstPick != nil, !tierProspects.isEmpty else { return nil }
+            let probs = tierProspects.compactMap { availableAtPickProbability(for: $0) }
+            guard !probs.isEmpty else { return nil }
+            return probs.reduce(0, +) / Double(probs.count)
+        }()
         return VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
                 Circle()
@@ -1143,6 +1302,18 @@ struct BigBoardView: View {
                             .font(.system(size: 8, weight: .semibold))
                     }
                     .foregroundStyle(Color.accentGold)
+                }
+                // #1: Available at user's pick (probability rollup for tier)
+                if let pick = firstPick,
+                   let availCount = availableAtPickCount,
+                   let avgProb = tierAvailabilityProb {
+                    HStack(spacing: 2) {
+                        Image(systemName: "percent")
+                            .font(.system(size: 7))
+                        Text("\(availCount)/\(count) avail @#\(pick.pickNumber) (\(Int(avgProb * 100))%)")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .foregroundStyle(avgProb >= 0.6 ? Color.success : (avgProb >= 0.3 ? Color.accentBlue : Color.warning))
                 }
             }
             // Tier description (#8)

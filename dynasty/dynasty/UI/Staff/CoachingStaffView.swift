@@ -1071,8 +1071,11 @@ struct CoachingStaffView: View {
     private var schemesTabContent: some View {
         ScrollView {
             VStack(spacing: 16) {
-                // Offensive Scheme Card
+                // Offensive Scheme Card (current selection)
                 offensiveSchemeCard
+
+                // Offensive Scheme Family tree (browse + see staff coverage)
+                offensiveSchemeFamiliesCard
 
                 // Offensive Roster Fit
                 if let oc = coaches.first(where: { $0.role == .offensiveCoordinator }),
@@ -1087,8 +1090,11 @@ struct CoachingStaffView: View {
                     )
                 }
 
-                // Defensive Scheme Card
+                // Defensive Scheme Card (current selection)
                 defensiveSchemeCard
+
+                // Defensive Scheme Family tree
+                defensiveSchemeFamiliesCard
 
                 // Defensive Roster Fit
                 if let dc = coaches.first(where: { $0.role == .defensiveCoordinator }),
@@ -1109,6 +1115,245 @@ struct CoachingStaffView: View {
             .padding(16)
         }
         // Scheme selection sheets moved to unified activeHireSheet
+    }
+
+    // MARK: - Scheme Family Trees (#schemes-page-tree)
+
+    /// Static groupings for offensive scheme families.
+    private var offensiveSchemeFamilies: [(family: String, schemes: [OffensiveScheme])] {
+        [
+            ("Pass-First Family", [.westCoast, .airRaid, .proPassing, .spread]),
+            ("Run-First Family",  [.powerRun, .shanahan, .option, .rpo])
+        ]
+    }
+
+    /// Static groupings for defensive scheme families.
+    private var defensiveSchemeFamilies: [(family: String, schemes: [DefensiveScheme])] {
+        [
+            ("Aggressive / Man",  [.pressMan, .base43]),
+            ("Zone-Heavy",        [.cover3, .tampa2, .base34]),
+            ("Hybrid / Multiple", [.multiple, .hybrid])
+        ]
+    }
+
+    /// Number of coaches on this team with >= 60 expertise in a given scheme.
+    private func coachesKnowing(offensiveScheme scheme: OffensiveScheme) -> Int {
+        coaches.filter { $0.expertise(for: scheme.rawValue) >= 60 }.count
+    }
+
+    private func coachesKnowing(defensiveScheme scheme: DefensiveScheme) -> Int {
+        coaches.filter { $0.expertise(for: scheme.rawValue) >= 60 }.count
+    }
+
+    /// Offensive scheme family card -- shows families with selectable scheme cards inside.
+    private var offensiveSchemeFamiliesCard: some View {
+        let oc = coaches.first(where: { $0.role == .offensiveCoordinator })
+        let activeScheme = oc?.offensiveScheme
+        let canChange = oc != nil
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("OFFENSIVE SCHEME FAMILIES")
+                    .font(.system(size: 11, weight: .black))
+                    .tracking(1.5)
+                    .foregroundStyle(Color.accentGold)
+                Spacer()
+                Text("Tap to apply")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.textTertiary)
+            }
+
+            ForEach(offensiveSchemeFamilies, id: \.family) { group in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(group.family.uppercased())
+                        .font(.system(size: 10, weight: .heavy))
+                        .tracking(1.0)
+                        .foregroundStyle(Color.textSecondary)
+
+                    LazyVGrid(columns: [
+                        GridItem(.flexible(), spacing: 8),
+                        GridItem(.flexible(), spacing: 8)
+                    ], spacing: 8) {
+                        ForEach(group.schemes, id: \.self) { scheme in
+                            offensiveSchemeFamilyCell(
+                                scheme: scheme,
+                                isActive: scheme == activeScheme,
+                                canChange: canChange
+                            )
+                        }
+                    }
+                }
+            }
+
+            if !canChange {
+                Text("Hire an Offensive Coordinator to enable scheme selection.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
+    /// One scheme cell used inside the family card.
+    @ViewBuilder
+    private func offensiveSchemeFamilyCell(
+        scheme: OffensiveScheme,
+        isActive: Bool,
+        canChange: Bool
+    ) -> some View {
+        let count = coachesKnowing(offensiveScheme: scheme)
+        Button {
+            if canChange { activeHireSheet = .offensiveScheme }
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: isActive ? "checkmark.seal.fill" : "football")
+                        .font(.system(size: 11))
+                        .foregroundStyle(isActive ? Color.accentGold : Color.accentBlue.opacity(0.8))
+                    Text(scheme.displayName)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(isActive ? Color.accentGold : Color.textPrimary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+
+                HStack(spacing: 4) {
+                    Image(systemName: "person.2.fill")
+                        .font(.system(size: 8))
+                    Text(count == 0 ? "No staff knows this" : "\(count) coach\(count == 1 ? "" : "es") know this")
+                        .font(.system(size: 9, weight: .medium))
+                }
+                .foregroundStyle(coachCountColor(count))
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isActive ? Color.accentGold.opacity(0.10) : Color.backgroundTertiary.opacity(0.4))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(
+                                isActive ? Color.accentGold.opacity(0.6) : Color.surfaceBorder.opacity(0.5),
+                                lineWidth: isActive ? 1.5 : 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!canChange)
+        .opacity(canChange ? 1.0 : 0.6)
+    }
+
+    /// Defensive scheme family card.
+    private var defensiveSchemeFamiliesCard: some View {
+        let dc = coaches.first(where: { $0.role == .defensiveCoordinator })
+        let activeScheme = dc?.defensiveScheme
+        let canChange = dc != nil
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("DEFENSIVE SCHEME FAMILIES")
+                    .font(.system(size: 11, weight: .black))
+                    .tracking(1.5)
+                    .foregroundStyle(Color.accentGold)
+                Spacer()
+                Text("Tap to apply")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.textTertiary)
+            }
+
+            ForEach(defensiveSchemeFamilies, id: \.family) { group in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(group.family.uppercased())
+                        .font(.system(size: 10, weight: .heavy))
+                        .tracking(1.0)
+                        .foregroundStyle(Color.textSecondary)
+
+                    LazyVGrid(columns: [
+                        GridItem(.flexible(), spacing: 8),
+                        GridItem(.flexible(), spacing: 8)
+                    ], spacing: 8) {
+                        ForEach(group.schemes, id: \.self) { scheme in
+                            defensiveSchemeFamilyCell(
+                                scheme: scheme,
+                                isActive: scheme == activeScheme,
+                                canChange: canChange
+                            )
+                        }
+                    }
+                }
+            }
+
+            if !canChange {
+                Text("Hire a Defensive Coordinator to enable scheme selection.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
+    @ViewBuilder
+    private func defensiveSchemeFamilyCell(
+        scheme: DefensiveScheme,
+        isActive: Bool,
+        canChange: Bool
+    ) -> some View {
+        let count = coachesKnowing(defensiveScheme: scheme)
+        Button {
+            if canChange { activeHireSheet = .defensiveScheme }
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: isActive ? "checkmark.seal.fill" : "shield")
+                        .font(.system(size: 11))
+                        .foregroundStyle(isActive ? Color.accentGold : Color.danger.opacity(0.8))
+                    Text(scheme.displayName)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(isActive ? Color.accentGold : Color.textPrimary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+
+                HStack(spacing: 4) {
+                    Image(systemName: "person.2.fill")
+                        .font(.system(size: 8))
+                    Text(count == 0 ? "No staff knows this" : "\(count) coach\(count == 1 ? "" : "es") know this")
+                        .font(.system(size: 9, weight: .medium))
+                }
+                .foregroundStyle(coachCountColor(count))
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isActive ? Color.accentGold.opacity(0.10) : Color.backgroundTertiary.opacity(0.4))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(
+                                isActive ? Color.accentGold.opacity(0.6) : Color.surfaceBorder.opacity(0.5),
+                                lineWidth: isActive ? 1.5 : 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!canChange)
+        .opacity(canChange ? 1.0 : 0.6)
+    }
+
+    /// Color for the staff-coverage count.
+    private func coachCountColor(_ count: Int) -> Color {
+        switch count {
+        case 0:    return .danger
+        case 1:    return .warning
+        case 2:    return .accentGold
+        default:   return .success
+        }
     }
 
     // MARK: - Offensive Scheme Card
@@ -1433,6 +1678,17 @@ struct CoachingStaffView: View {
                     }
 
                     HStack {
+                        Spacer()
+                        Text(budgetContext.label)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(budgetContext.color)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(budgetContext.color.opacity(0.15), in: Capsule())
+                            .overlay(Capsule().strokeBorder(budgetContext.color.opacity(0.4), lineWidth: 1))
+                    }
+
+                    HStack {
                         Text("Coaching Salaries")
                             .font(.subheadline)
                             .foregroundStyle(Color.textSecondary)
@@ -1625,6 +1881,26 @@ struct CoachingStaffView: View {
         return coachingBudget - prev
     }
 
+    /// League-average coaching budget in thousands. Used for context indicator.
+    /// Hardcoded to $35M for now — see `LeagueGenerator.swift` (default 35) and `NFLTeamData.swift`.
+    private static let leagueAverageCoachingBudget: Int = 35_000
+
+    /// Context for the team's coaching budget vs the league average.
+    private var budgetContext: (label: String, color: Color) {
+        let avg = Self.leagueAverageCoachingBudget
+        let lowerThreshold = Int(Double(avg) * 0.9)   // within 10% = league avg
+        let upperThreshold = Int(Double(avg) * 1.1)
+        let avgM = avg / 1_000
+
+        if coachingBudget < lowerThreshold {
+            return ("Below league avg (~$\(avgM)M)", Color.warning)
+        } else if coachingBudget > upperThreshold {
+            return ("Above league avg (~$\(avgM)M)", Color.success)
+        } else {
+            return ("League avg (~$\(avgM)M)", Color.textTertiary)
+        }
+    }
+
     @ViewBuilder
     private var budgetHeaderView: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1645,6 +1921,15 @@ struct CoachingStaffView: View {
                                 .foregroundStyle(change > 0 ? Color.success : Color.danger)
                         }
                     }
+
+                    // League-average context indicator
+                    Text(budgetContext.label)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(budgetContext.color)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(budgetContext.color.opacity(0.15), in: Capsule())
+                        .overlay(Capsule().strokeBorder(budgetContext.color.opacity(0.4), lineWidth: 1))
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
@@ -1819,11 +2104,22 @@ struct CoachingStaffView: View {
             HStack(spacing: 4) {
                 Text("\(coach.yearsExperience)yr")
                     .font(.system(size: 9).monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
                 Text("\u{00B7}")
+                    .foregroundStyle(Color.textTertiary)
                 Text("$\(coach.salary)K")
                     .font(.system(size: 9).monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+
+                // Chemistry pip vs HC (small inline checkmark / warning / X)
+                if coach.role != .headCoach, let chem = chemistryWithHC(coach: coach) {
+                    Spacer(minLength: 2)
+                    Text(CoachingEngine.chemistrySymbol(score: chem))
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(chemistryColor(for: chem))
+                        .accessibilityLabel("Chemistry with head coach: \(CoachingEngine.chemistryLabel(score: chem))")
+                }
             }
-            .foregroundStyle(Color.textTertiary)
         }
         .padding(8)
         .background(

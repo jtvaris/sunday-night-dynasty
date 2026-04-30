@@ -3,11 +3,48 @@ import SwiftData
 
 // MARK: - News Filter
 
-private enum NewsFilter: String, CaseIterable {
-    case all      = "All"
-    case myTeam   = "My Team"
-    case league   = "League"
-    case draft    = "Draft"
+private enum NewsFilter: String, CaseIterable, Identifiable {
+    case all       = "All"
+    case trending  = "Trending"
+    case myTeam    = "My Team"
+    case trades    = "Trades"
+    case awards    = "Awards"
+    case injuries  = "Injuries"
+    case statLines = "Stat Lines"
+    case league    = "League"
+    case draft     = "Draft"
+
+    var id: String { rawValue }
+
+    var iconName: String {
+        switch self {
+        case .all:       return "newspaper"
+        case .trending:  return "flame.fill"
+        case .myTeam:    return "star.fill"
+        case .trades:    return "arrow.left.arrow.right"
+        case .awards:    return "trophy.fill"
+        case .injuries:  return "cross.case.fill"
+        case .statLines: return "chart.bar.fill"
+        case .league:    return "sportscourt.fill"
+        case .draft:     return "person.crop.square.filled.and.at.rectangle"
+        }
+    }
+}
+
+// MARK: - Date Bucket
+
+private enum DateBucket: String, CaseIterable {
+    case today    = "Today"
+    case thisWeek = "This Week"
+    case earlier  = "Earlier"
+
+    var sortOrder: Int {
+        switch self {
+        case .today:    return 0
+        case .thisWeek: return 1
+        case .earlier:  return 2
+        }
+    }
 }
 
 // MARK: - NewsView
@@ -20,22 +57,68 @@ struct NewsView: View {
     @State private var activeFilter: NewsFilter = .all
     @State private var expandedItemIDs: Set<UUID> = []
 
-    private var filteredItems: [NewsItem] {
-        let sorted = newsItems.sorted { $0.week > $1.week }
-        switch activeFilter {
-        case .all:
-            return sorted
-        case .myTeam:
-            guard let teamID = career.teamID else { return [] }
-            return sorted.filter { $0.relatedTeamID == teamID }
-        case .league:
-            return sorted.filter {
-                [.gameResult, .teamRanking, .coachingChange, .offFieldIncident, .retirement, .award].contains($0.category)
-            }
-        case .draft:
-            return sorted.filter { $0.category == .draft }
+    // MARK: Filtering
+
+    private var sortedItems: [NewsItem] {
+        newsItems.sorted {
+            if $0.season != $1.season { return $0.season > $1.season }
+            return $0.week > $1.week
         }
     }
+
+    private func itemsMatching(_ filter: NewsFilter) -> [NewsItem] {
+        switch filter {
+        case .all:
+            return sortedItems
+        case .trending:
+            return sortedItems.filter { isTrending($0) }
+        case .myTeam:
+            guard let teamID = career.teamID else { return [] }
+            return sortedItems.filter { $0.relatedTeamID == teamID }
+        case .trades:
+            return sortedItems.filter { $0.category == .trade }
+        case .awards:
+            return sortedItems.filter { $0.category == .award }
+        case .injuries:
+            return sortedItems.filter { $0.category == .injury }
+        case .statLines:
+            return sortedItems.filter { $0.category == .playerPerformance }
+        case .league:
+            return sortedItems.filter {
+                [.gameResult, .teamRanking, .coachingChange,
+                 .offFieldIncident, .retirement, .freeAgency, .contract].contains($0.category)
+            }
+        case .draft:
+            return sortedItems.filter { $0.category == .draft }
+        }
+    }
+
+    private var filteredItems: [NewsItem] { itemsMatching(activeFilter) }
+
+    /// Pinned stories shown at the top of the feed (1-3 items max).
+    private var pinnedTrending: [NewsItem] {
+        // Don't double-show pinned items when "Trending" is the active filter.
+        guard activeFilter != .trending else { return [] }
+        let trending = sortedItems.filter { isTrending($0) }
+        return Array(trending.prefix(3))
+    }
+
+    private var pinnedIDs: Set<UUID> {
+        Set(pinnedTrending.map(\.id))
+    }
+
+    private var groupedItems: [(bucket: DateBucket, items: [NewsItem])] {
+        // Exclude pinned items so they aren't duplicated below.
+        let visible = filteredItems.filter { !pinnedIDs.contains($0.id) }
+        let groups = Dictionary(grouping: visible, by: bucket(for:))
+        return DateBucket.allCases
+            .compactMap { bucket -> (DateBucket, [NewsItem])? in
+                guard let items = groups[bucket], !items.isEmpty else { return nil }
+                return (bucket, items)
+            }
+    }
+
+    // MARK: - Body
 
     var body: some View {
         ZStack {
@@ -56,8 +139,8 @@ struct NewsView: View {
 
     private var filterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(NewsFilter.allCases, id: \.self) { filter in
+            HStack(spacing: 8) {
+                ForEach(NewsFilter.allCases) { filter in
                     filterChip(filter)
                 }
             }
@@ -72,20 +155,39 @@ struct NewsView: View {
 
     private func filterChip(_ filter: NewsFilter) -> some View {
         let isSelected = activeFilter == filter
+        let count = itemsMatching(filter).count
         return Button {
             withAnimation(.easeInOut(duration: 0.2)) {
                 activeFilter = filter
             }
         } label: {
-            Text(filter.rawValue)
-                .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
-                .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
-                .padding(.horizontal, 16)
-                .frame(minHeight: 36)
-                .background(
-                    Capsule()
-                        .fill(isSelected ? Color.accentBlue : Color.backgroundTertiary)
-                )
+            HStack(spacing: 6) {
+                Image(systemName: filter.iconName)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(filter.rawValue)
+                    .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .monospacedDigit()
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(
+                                isSelected
+                                    ? Color.backgroundPrimary.opacity(0.25)
+                                    : Color.backgroundPrimary.opacity(0.5)
+                            )
+                        )
+                }
+            }
+            .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 36)
+            .background(
+                Capsule()
+                    .fill(isSelected ? Color.accentBlue : Color.backgroundTertiary)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -98,21 +200,12 @@ struct NewsView: View {
                 emptyState
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(filteredItems) { item in
-                            NewsItemCard(
-                                item: item,
-                                isMyTeam: item.relatedTeamID == career.teamID,
-                                isExpanded: expandedItemIDs.contains(item.id)
-                            ) {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    if expandedItemIDs.contains(item.id) {
-                                        expandedItemIDs.remove(item.id)
-                                    } else {
-                                        expandedItemIDs.insert(item.id)
-                                    }
-                                }
-                            }
+                    LazyVStack(alignment: .leading, spacing: 20) {
+                        if !pinnedTrending.isEmpty {
+                            trendingSection
+                        }
+                        ForEach(groupedItems, id: \.bucket) { group in
+                            dateGroupSection(bucket: group.bucket, items: group.items)
                         }
                     }
                     .padding(20)
@@ -123,22 +216,151 @@ struct NewsView: View {
         }
     }
 
+    // MARK: Trending Section
+
+    private var trendingSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "flame.fill")
+                    .foregroundStyle(Color.accentGold)
+                Text("Trending")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+            }
+            VStack(spacing: 12) {
+                ForEach(pinnedTrending) { item in
+                    NewsItemCard(
+                        item: item,
+                        isMyTeam: item.relatedTeamID == career.teamID,
+                        isExpanded: expandedItemIDs.contains(item.id),
+                        isPinned: true
+                    ) {
+                        toggleExpansion(item.id)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Date Group Section
+
+    private func dateGroupSection(bucket: DateBucket, items: [NewsItem]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text(bucket.rawValue)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(Color.textPrimary)
+                Text("\(items.count)")
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.textTertiary)
+                Spacer()
+            }
+            VStack(spacing: 12) {
+                ForEach(items) { item in
+                    NewsItemCard(
+                        item: item,
+                        isMyTeam: item.relatedTeamID == career.teamID,
+                        isExpanded: expandedItemIDs.contains(item.id),
+                        isPinned: false
+                    ) {
+                        toggleExpansion(item.id)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Empty State
+
     private var emptyState: some View {
         VStack(spacing: 16) {
             Spacer()
-            Image(systemName: "newspaper")
+            Image(systemName: activeFilter == .all ? "newspaper" : activeFilter.iconName)
                 .font(.system(size: 48))
                 .foregroundStyle(Color.textTertiary)
-            Text("No news yet")
+            Text(emptyStateTitle)
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(Color.textSecondary)
-            Text("Stories will appear here as the season progresses.")
+            Text(emptyStateMessage)
                 .font(.subheadline)
                 .foregroundStyle(Color.textTertiary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
             Spacer()
         }
+    }
+
+    private var emptyStateTitle: String {
+        switch activeFilter {
+        case .all:    return "No news yet"
+        default:      return "No \(activeFilter.rawValue.lowercased()) stories"
+        }
+    }
+
+    private var emptyStateMessage: String {
+        switch activeFilter {
+        case .all:
+            return "Stories will appear here as the season progresses."
+        case .myTeam:
+            return "Stories involving your team will be highlighted here."
+        case .trending:
+            return "Big stories — championships, blockbuster trades, major awards — show up here."
+        default:
+            return "Try a different filter or come back later in the season."
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func toggleExpansion(_ id: UUID) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            if expandedItemIDs.contains(id) {
+                expandedItemIDs.remove(id)
+            } else {
+                expandedItemIDs.insert(id)
+            }
+        }
+    }
+
+    /// A story is "trending" / high impact if it's a championship-level award,
+    /// a blockbuster trade, a major coaching change, or a notable retirement.
+    private func isTrending(_ item: NewsItem) -> Bool {
+        switch item.category {
+        case .award where item.sentiment == .positive:
+            return true
+        case .trade:
+            return true
+        case .retirement:
+            return true
+        case .coachingChange where item.sentiment != .neutral:
+            return true
+        case .teamRanking where item.sentiment == .positive:
+            // championship / playoff clinches are typically positive ranking stories
+            let lowered = item.headline.lowercased()
+            return lowered.contains("champion")
+                || lowered.contains("super bowl")
+                || lowered.contains("playoff")
+                || lowered.contains("clinch")
+        default:
+            return false
+        }
+    }
+
+    private func bucket(for item: NewsItem) -> DateBucket {
+        // "Today" = same season + same week as the career clock.
+        // "This Week" = within 1 week of the career clock (same season).
+        // "Earlier" = anything older.
+        if item.season == career.currentSeason && item.week == career.currentWeek {
+            return .today
+        }
+        if item.season == career.currentSeason &&
+           career.currentWeek - item.week <= 1 &&
+           career.currentWeek - item.week >= 0 {
+            return .thisWeek
+        }
+        return .earlier
     }
 
     // MARK: - Data
@@ -158,13 +380,14 @@ private struct NewsItemCard: View {
     let item: NewsItem
     let isMyTeam: Bool
     let isExpanded: Bool
+    let isPinned: Bool
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 0) {
-                // Gold left border for player's team items
-                if isMyTeam {
+                // Left accent strip — gold for "my team", flame-gold for pinned.
+                if isPinned || isMyTeam {
                     Rectangle()
                         .fill(Color.accentGold)
                         .frame(width: 4)
@@ -179,9 +402,30 @@ private struct NewsItemCard: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    // Header row: category badge + sentiment + week
+                    // Header row: pinned flag + category badge + sentiment + week
                     HStack(spacing: 8) {
+                        if isPinned {
+                            HStack(spacing: 3) {
+                                Image(systemName: "flame.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text("TRENDING")
+                                    .font(.system(size: 10, weight: .heavy))
+                                    .tracking(0.6)
+                            }
+                            .foregroundStyle(Color.accentGold)
+                        }
                         categoryBadge(item.category)
+                        if isMyTeam {
+                            Text("MY TEAM")
+                                .font(.system(size: 9, weight: .heavy))
+                                .tracking(0.5)
+                                .foregroundStyle(Color.accentGold)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule().stroke(Color.accentGold.opacity(0.5), lineWidth: 1)
+                                )
+                        }
                         Spacer()
                         sentimentDot(item.sentiment)
                         Text("Wk \(item.week)")
@@ -192,38 +436,56 @@ private struct NewsItemCard: View {
 
                     // Headline
                     Text(item.headline)
-                        .font(.subheadline.weight(.bold))
+                        .font(isPinned
+                              ? .headline.weight(.bold)
+                              : .subheadline.weight(.bold))
                         .foregroundStyle(Color.textPrimary)
                         .multilineTextAlignment(.leading)
 
-                    // Body
+                    // Body — full text when expanded, 3 lines preview otherwise.
                     Text(item.body)
                         .font(.caption)
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(isExpanded ? nil : 3)
                         .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                    if !isExpanded {
-                        Text("Read more")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(Color.accentBlue)
+                    // Read more / Show less affordance
+                    HStack(spacing: 4) {
+                        Text(isExpanded ? "Show less" : "Read more")
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.caption2.weight(.semibold))
                     }
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.accentBlue)
                 }
                 .padding(16)
             }
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.backgroundSecondary)
+                    .fill(cardFill)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(
-                                isMyTeam ? Color.accentGold.opacity(0.4) : Color.surfaceBorder,
-                                lineWidth: 1
-                            )
+                            .strokeBorder(borderColor, lineWidth: borderWidth)
                     )
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private var cardFill: Color {
+        // Pinned cards get a slightly elevated tint for emphasis.
+        isPinned ? Color.backgroundTertiary : Color.backgroundSecondary
+    }
+
+    private var borderColor: Color {
+        if isPinned { return Color.accentGold.opacity(0.55) }
+        if isMyTeam { return Color.accentGold.opacity(0.4) }
+        return Color.surfaceBorder
+    }
+
+    private var borderWidth: CGFloat {
+        isPinned ? 1.25 : 1
     }
 
     private func categoryBadge(_ category: NewsCategory) -> some View {

@@ -22,6 +22,8 @@ struct WeeklyPressConferenceView: View {
     @State private var selectedResponseIndex: Int? = nil
     @State private var showReaction = false
     @State private var reactionText = ""
+    /// Index of the response whose headline preview is currently expanded.
+    @State private var headlinePreviewIndex: Int? = nil
 
     private enum Phase {
         case questioning
@@ -156,7 +158,8 @@ struct WeeklyPressConferenceView: View {
 
     private var runningTotalsStrip: some View {
         let totals = runningTotals
-        return VStack(spacing: 4) {
+        let feedback = sessionFeedback(for: totals)
+        return VStack(spacing: 6) {
             Text("RUNNING IMPACT")
                 .font(.system(size: 9, weight: .bold))
                 .tracking(1.5)
@@ -168,6 +171,26 @@ struct WeeklyPressConferenceView: View {
                 runningTotalChip(icon: "hands.clap.fill", label: "Fans", value: totals.fanExcitement)
                 runningTotalChip(icon: "newspaper.fill", label: "Media", value: totals.mediaPerception)
             }
+
+            // Session feedback — interprets how the answers are landing in real-time.
+            HStack(spacing: 6) {
+                Image(systemName: feedback.icon)
+                    .font(.system(size: 10, weight: .bold))
+                Text(feedback.text)
+                    .font(.system(size: 11, weight: .semibold))
+                    .multilineTextAlignment(.center)
+            }
+            .foregroundStyle(feedback.color)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(feedback.color.opacity(0.10))
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(feedback.color.opacity(0.3), lineWidth: 1)
+                    )
+            )
         }
         .padding(.horizontal, 20)
     }
@@ -198,7 +221,8 @@ struct WeeklyPressConferenceView: View {
     // MARK: - Reporter Card
 
     private func reporterCard(question: PressQuestion) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let tone = reporterTone(for: question)
+        return VStack(alignment: .leading, spacing: 14) {
             // Reporter badge
             HStack(spacing: 10) {
                 Image(systemName: "person.crop.circle.fill")
@@ -210,9 +234,19 @@ struct WeeklyPressConferenceView: View {
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(Color.textPrimary)
 
-                    Text(question.outlet)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentGold)
+                    HStack(spacing: 6) {
+                        Text(question.outlet)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentGold)
+
+                        // Reporter tone indicator: colored dot + small descriptor
+                        Circle()
+                            .fill(reporterToneColor(tone))
+                            .frame(width: 6, height: 6)
+                        Text(tone.label)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(reporterToneColor(tone))
+                    }
                 }
 
                 Spacer()
@@ -253,6 +287,7 @@ struct WeeklyPressConferenceView: View {
     private func responseCard(response: PressResponse, index: Int) -> some View {
         let isSelected = selectedResponseIndex == index
         let isDisabled = selectedResponseIndex != nil && !isSelected
+        let isHeadlineExpanded = headlinePreviewIndex == index
 
         return Button(action: { selectResponse(index: index) }) {
             VStack(alignment: .leading, spacing: 10) {
@@ -283,6 +318,14 @@ struct WeeklyPressConferenceView: View {
                     .foregroundStyle(isDisabled ? Color.textTertiary : Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
+
+                // Headline preview toggle — shows what the media headline COULD be
+                headlinePreviewSection(
+                    response: response,
+                    index: index,
+                    isExpanded: isHeadlineExpanded,
+                    isDisabled: isDisabled
+                )
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -302,6 +345,72 @@ struct WeeklyPressConferenceView: View {
         .buttonStyle(.plain)
         .disabled(selectedResponseIndex != nil)
         .animation(.easeInOut(duration: 0.25), value: selectedResponseIndex)
+        .animation(.easeInOut(duration: 0.2), value: headlinePreviewIndex)
+    }
+
+    /// Headline preview section under each response. Tapping the chevron toggles
+    /// a small box showing what the media headline COULD be if this answer is chosen.
+    private func headlinePreviewSection(
+        response: PressResponse,
+        index: Int,
+        isExpanded: Bool,
+        isDisabled: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: { toggleHeadlinePreview(index: index) }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "newspaper")
+                        .font(.system(size: 10))
+                    Text(isExpanded ? "Hide headline" : "Preview headline")
+                        .font(.system(size: 10, weight: .semibold))
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .foregroundStyle(Color.textTertiary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .strokeBorder(Color.textTertiary.opacity(0.3), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(isDisabled)
+
+            if isExpanded {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "quote.opening")
+                        .font(.caption2)
+                        .foregroundStyle(Color.accentGold.opacity(0.7))
+                    Text(response.mediaReaction)
+                        .font(.caption.weight(.medium))
+                        .italic()
+                        .foregroundStyle(Color.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.accentGold.opacity(0.06))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.accentGold.opacity(0.2), lineWidth: 1)
+                        )
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    private func toggleHeadlinePreview(index: Int) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            if headlinePreviewIndex == index {
+                headlinePreviewIndex = nil
+            } else {
+                headlinePreviewIndex = index
+            }
+        }
     }
 
     // MARK: - Effect Preview
@@ -552,6 +661,7 @@ struct WeeklyPressConferenceView: View {
         showResponses = false
         showReaction = false
         selectedResponseIndex = nil
+        headlinePreviewIndex = nil
 
         withAnimation(.easeOut(duration: 0.5).delay(0.2)) { showReporter = true }
         withAnimation(.easeOut(duration: 0.5).delay(0.6)) { showResponses = true }
@@ -601,6 +711,83 @@ struct WeeklyPressConferenceView: View {
     }
 
     // MARK: - Helpers
+
+    /// Reporter "tone" hint — derived from the outlet (and reporter style).
+    /// Engine doesn't expose this directly, so we use a stable mapping based on outlet.
+    private enum ReporterTone {
+        case friendly
+        case neutral
+        case hostile
+
+        var label: String {
+            switch self {
+            case .friendly: return "Friendly"
+            case .neutral:  return "Neutral"
+            case .hostile:  return "Tough"
+            }
+        }
+    }
+
+    /// Maps a reporter/outlet to a tone. Local outlets lean friendly,
+    /// FOX/CBS lean tough/hostile, the rest stay neutral.
+    private func reporterTone(for question: PressQuestion) -> ReporterTone {
+        let outlet = question.outlet.lowercased()
+        let local = ["local press", "city tribune", "local news 9"]
+        if local.contains(where: { outlet.contains($0) }) {
+            return .friendly
+        }
+        let toughOutlets = ["fox sports", "cbs sports"]
+        if toughOutlets.contains(where: { outlet.contains($0) }) {
+            return .hostile
+        }
+        return .neutral
+    }
+
+    private func reporterToneColor(_ tone: ReporterTone) -> Color {
+        switch tone {
+        case .friendly: return Color.success
+        case .neutral:  return Color.textSecondary
+        case .hostile:  return Color.danger
+        }
+    }
+
+    /// Real-time session feedback derived from accumulated running totals.
+    /// Returns a short verdict on how the player's answers are landing.
+    private func sessionFeedback(
+        for totals: PressEffects
+    ) -> (text: String, icon: String, color: Color) {
+        let owner = totals.ownerSatisfaction
+        let morale = totals.playerMorale
+        let fans = totals.fanExcitement
+        let media = totals.mediaPerception
+        let net = owner + morale + fans + media
+
+        if owner <= -8 {
+            return ("Owner growing impatient", "exclamationmark.triangle.fill", Color.danger)
+        }
+        if morale <= -10 {
+            return ("Locker room is restless", "person.3.fill", Color.danger)
+        }
+        if media >= 15 {
+            return ("Media buzzing — you're driving headlines", "newspaper.fill", Color.warning)
+        }
+        if fans >= 15 {
+            return ("Fans are fired up", "hands.clap.fill", Color.success)
+        }
+        if owner >= 10 && morale >= 5 {
+            return ("Front office and locker room aligned", "checkmark.seal.fill", Color.success)
+        }
+        if net >= 10 {
+            return ("Landing well across the board", "hand.thumbsup.fill", Color.success)
+        }
+        if net <= -10 {
+            return ("Tough room — losing them", "hand.thumbsdown.fill", Color.danger)
+        }
+        if net == 0 {
+            return ("Reporters waiting for a real take", "ellipsis.circle.fill", Color.textSecondary)
+        }
+        return ("Steady so far", "equal.circle.fill", Color.textSecondary)
+    }
 
     private func toneColor(_ tone: ResponseTone) -> Color {
         switch tone {

@@ -8,6 +8,7 @@ struct MockDraftView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var teams: [Team] = []
     @State private var players: [Player] = []
+    @State private var teamDraftPicks: [DraftPick] = []
     @State private var selectedRound: Int = 1
     @State private var isLoading: Bool = true
 
@@ -16,6 +17,7 @@ struct MockDraftView: View {
     @State private var cachedTargetAvailability: [TargetAvailabilityInfo] = []
     @State private var cachedTradeHints: [TradeHint] = []
     @State private var cachedPicksForRound: [ScoutingEngine.MockDraftPick] = []
+    @State private var cachedTargetCountdown: TargetCountdownInfo? = nil
 
     private var mockDraft: [ScoutingEngine.MockDraftPick] {
         WeekAdvancer.currentMockDraft
@@ -100,6 +102,7 @@ struct MockDraftView: View {
         cachedStrategyRecommendation = computeStrategyRecommendation()
         cachedTargetAvailability = selectedRound == 1 ? computeTargetAvailability() : []
         cachedTradeHints = selectedRound == 1 ? computeTradeHints() : []
+        cachedTargetCountdown = selectedRound == 1 ? computeTargetCountdown() : nil
     }
 
     var body: some View {
@@ -164,6 +167,9 @@ struct MockDraftView: View {
                             .listRowBackground(Color.accentGold.opacity(0.08))
                         }
 
+                        // Top targets countdown summary (#5)
+                        targetCountdownSection
+
                         // Draft availability for user targets
                         targetAvailabilitySection
 
@@ -219,6 +225,7 @@ struct MockDraftView: View {
         }
         .onChange(of: selectedRound) { _, _ in refreshCaches() }
         .onChange(of: players.count) { _, _ in refreshCaches() }
+        .onChange(of: teamDraftPicks.count) { _, _ in refreshCaches() }
     }
 
     // MARK: - Header
@@ -619,12 +626,23 @@ struct MockDraftView: View {
         let projectedPick: Int
         let userPick: Int
         let estimatedCost: String
+        /// Concrete user-pick description (e.g. "Rd1 #14 + Rd2 #46").
+        let offerDescription: String
+        /// Whether the user has the picks to make this realistic.
+        let feasible: Bool
+        /// Surplus or deficit in pick value (negative = user falls short).
+        let valueDelta: Int
     }
 
     private func computeTradeHints() -> [TradeHint] {
         guard let userAbbr = userTeamAbbreviation else { return [] }
         let userPicks = mockDraft.filter { $0.teamAbbreviation == userAbbr && $0.round == 1 }.map { $0.pickNumber }.sorted()
         guard let firstUserPick = userPicks.first else { return [] }
+
+        // Real user picks from DraftPick model, sorted by pick number ascending.
+        let realPicks = teamDraftPicks
+            .filter { !$0.isComplete }
+            .sorted { $0.pickNumber < $1.pickNumber }
 
         // Find user-scouted prospects that are projected above the user's pick
         return scoutedProspects.values
@@ -636,16 +654,45 @@ struct MockDraftView: View {
                 let gap = firstUserPick - mockPick
                 guard gap >= 3 else { return nil } // Only show if meaningful trade up needed
 
-                // Estimate trade cost using draft pick value chart logic
+                // Required value: target pick value minus what user gives up at their pick.
+                // Approximate Jimmy-Johnson-style: value(target) - value(currentPick) = value of additional picks needed.
+                let targetValue = DraftEngine.pickValue(mockPick)
+                let currentValue = DraftEngine.pickValue(firstUserPick)
+                let needed = max(0, targetValue - currentValue)
+
+                // Greedily pick from user's remaining picks (skip the first round one we are already trading) to cover `needed`.
+                let candidates = realPicks.filter { $0.pickNumber != firstUserPick }
+                var offerPicks: [DraftPick] = []
+                var coverage = 0
+                for pick in candidates {
+                    if coverage >= needed { break }
+                    offerPicks.append(pick)
+                    coverage += DraftEngine.pickValue(pick.pickNumber)
+                }
+                let feasible = coverage >= needed
+                let valueDelta = coverage - needed
+
+                let offerDesc: String = {
+                    let primary = "Rd\(realPicks.first(where: { $0.pickNumber == firstUserPick })?.round ?? 1) #\(firstUserPick)"
+                    if offerPicks.isEmpty {
+                        return primary
+                    }
+                    let extras = offerPicks.map { "Rd\($0.round) #\($0.pickNumber)" }.joined(separator: " + ")
+                    return "\(primary) + \(extras)"
+                }()
+
+                // Cost description, fallback to round-based summary if no picks loaded.
                 let cost: String
-                if gap <= 5 {
-                    cost = "~2nd round pick"
+                if !realPicks.isEmpty && !offerPicks.isEmpty {
+                    cost = offerPicks.map { "Rd\($0.round)" }.joined(separator: " + ")
+                } else if gap <= 5 {
+                    cost = "~Rd 2"
                 } else if gap <= 10 {
-                    cost = "~1st + 3rd"
+                    cost = "~Rd 1 + Rd 3"
                 } else if gap <= 15 {
-                    cost = "~1st + 2nd"
+                    cost = "~Rd 1 + Rd 2"
                 } else {
-                    cost = "~2 1sts"
+                    cost = "~2 Rd 1s"
                 }
 
                 return TradeHint(
@@ -654,7 +701,10 @@ struct MockDraftView: View {
                     position: prospect.position,
                     projectedPick: mockPick,
                     userPick: firstUserPick,
-                    estimatedCost: cost
+                    estimatedCost: cost,
+                    offerDescription: offerDesc,
+                    feasible: feasible,
+                    valueDelta: valueDelta
                 )
             }
             .sorted { $0.projectedPick < $1.projectedPick }
@@ -664,20 +714,128 @@ struct MockDraftView: View {
 
     private func tradeHintRow(hint: TradeHint) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "arrow.up.circle.fill")
+            Image(systemName: hint.feasible ? "arrow.up.circle.fill" : "arrow.up.circle")
                 .font(.caption)
-                .foregroundStyle(Color.accentBlue)
+                .foregroundStyle(hint.feasible ? Color.accentBlue : Color.warning)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Trade up for \(hint.name)?")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(Color.textPrimary)
-                Text("Projected #\(hint.projectedPick) | Your pick #\(hint.userPick) | Cost: \(hint.estimatedCost)")
+                HStack(spacing: 4) {
+                    Text("Trade up for \(hint.name)?")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.textPrimary)
+                    if !hint.feasible {
+                        Text("short")
+                            .font(.system(size: 8, weight: .heavy))
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.warning, in: Capsule())
+                    }
+                }
+                Text("Projected #\(hint.projectedPick) - need ~\(hint.estimatedCost)")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
+                if !teamDraftPicks.isEmpty {
+                    Text("Send: \(hint.offerDescription)")
+                        .font(.system(size: 9, weight: .medium).monospacedDigit())
+                        .foregroundStyle(hint.feasible ? Color.success : Color.warning)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
             }
 
             Spacer()
+        }
+    }
+
+    // MARK: - #5: Top Targets Countdown
+
+    /// Snapshot of how many of the user's "top targets" are likely to still be on the board at their pick.
+    private struct TargetCountdownInfo {
+        let userPickNumber: Int
+        let totalTargets: Int
+        let likelyAvailable: Int   // probability >= 0.5
+        let coinflipAvailable: Int // probability >= 0.25 && < 0.5
+        let topAvailableNames: [String]
+    }
+
+    /// Determine "targets" — top user-graded prospects (or top-board prospects) above mid-tier.
+    private func computeTargetCountdown() -> TargetCountdownInfo? {
+        guard let userAbbr = userTeamAbbreviation else { return nil }
+        let userPicks = mockDraft.filter { $0.teamAbbreviation == userAbbr }.map { $0.pickNumber }.sorted()
+        guard let firstUserPick = userPicks.first else { return nil }
+
+        // Targets = top 10 prospects on the user's big board (sorted by scoutedOverall).
+        let targets = prospects
+            .filter { $0.scoutedOverall != nil }
+            .sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
+            .prefix(10)
+
+        guard !targets.isEmpty else { return nil }
+
+        var likely = 0
+        var coinflip = 0
+        var availableNames: [String] = []
+        for prospect in targets {
+            let prob = availabilityProbability(for: prospect, userPick: firstUserPick)
+            if prob >= 0.5 {
+                likely += 1
+                if availableNames.count < 3 { availableNames.append(prospect.lastName) }
+            } else if prob >= 0.25 {
+                coinflip += 1
+            }
+        }
+
+        return TargetCountdownInfo(
+            userPickNumber: firstUserPick,
+            totalTargets: targets.count,
+            likelyAvailable: likely,
+            coinflipAvailable: coinflip,
+            topAvailableNames: availableNames
+        )
+    }
+
+    /// Probability a prospect is still available at the user's pick, mirroring target availability logic.
+    private func availabilityProbability(for prospect: CollegeProspect, userPick: Int) -> Double {
+        guard let mockPick = prospect.mockDraftPickNumber else { return 0.5 }
+        let diff = mockPick - userPick
+        if diff > 5 { return min(0.95, 0.70 + Double(diff) * 0.03) }
+        if diff > 0 { return min(0.85, 0.55 + Double(diff) * 0.05) }
+        if diff == 0 { return 0.45 }
+        return max(0.05, 0.40 + Double(diff) * 0.08)
+    }
+
+    @ViewBuilder
+    private var targetCountdownSection: some View {
+        if let info = cachedTargetCountdown {
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "scope")
+                            .font(.caption)
+                            .foregroundStyle(Color.accentBlue)
+                        Text("\(info.likelyAvailable) of \(info.totalTargets) top targets likely at #\(info.userPickNumber)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.textPrimary)
+                    }
+                    if info.coinflipAvailable > 0 {
+                        Text("\(info.coinflipAvailable) coinflip — could go either way")
+                            .font(.caption2)
+                            .foregroundStyle(Color.warning)
+                    }
+                    if !info.topAvailableNames.isEmpty {
+                        Text("Likely available: \(info.topAvailableNames.joined(separator: ", "))")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
+                            .lineLimit(2)
+                    }
+                }
+            } header: {
+                Text("TOP TARGETS COUNTDOWN")
+                    .font(.caption2.weight(.heavy))
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .listRowBackground(Color.backgroundSecondary)
         }
     }
 
@@ -774,6 +932,11 @@ struct MockDraftView: View {
 
         let playerDesc = FetchDescriptor<Player>()
         players = (try? modelContext.fetch(playerDesc)) ?? []
+
+        if let teamID = career.teamID {
+            let pickDesc = FetchDescriptor<DraftPick>(predicate: #Predicate { $0.currentTeamID == teamID })
+            teamDraftPicks = (try? modelContext.fetch(pickDesc)) ?? []
+        }
     }
 
     private func accessibilityLabel(pick: ScoutingEngine.MockDraftPick, prospect: CollegeProspect?, isUserPick: Bool) -> String {

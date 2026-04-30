@@ -22,14 +22,34 @@ struct SchemeSelectionView: View {
                     // Coordinator info header
                     coordinatorHeader
 
-                    // Scheme options
+                    // Scheme options grouped by family
                     if isOffensive {
-                        ForEach(OffensiveScheme.allCases, id: \.self) { scheme in
-                            offensiveSchemeRow(scheme)
+                        ForEach(offensiveFamilies, id: \.family) { group in
+                            schemeFamilySection(
+                                family: group.family,
+                                description: group.description,
+                                content: AnyView(
+                                    VStack(spacing: 8) {
+                                        ForEach(group.schemes, id: \.self) { scheme in
+                                            offensiveSchemeRow(scheme)
+                                        }
+                                    }
+                                )
+                            )
                         }
                     } else {
-                        ForEach(DefensiveScheme.allCases, id: \.self) { scheme in
-                            defensiveSchemeRow(scheme)
+                        ForEach(defensiveFamilies, id: \.family) { group in
+                            schemeFamilySection(
+                                family: group.family,
+                                description: group.description,
+                                content: AnyView(
+                                    VStack(spacing: 8) {
+                                        ForEach(group.schemes, id: \.self) { scheme in
+                                            defensiveSchemeRow(scheme)
+                                        }
+                                    }
+                                )
+                            )
                         }
                     }
 
@@ -51,6 +71,67 @@ struct SchemeSelectionView: View {
             }
             .toolbarColorScheme(.dark, for: .navigationBar)
         }
+    }
+
+    // MARK: - Scheme Family Groupings
+
+    /// Pretty grouping for offensive schemes shown in this picker.
+    private var offensiveFamilies: [(family: String, description: String, schemes: [OffensiveScheme])] {
+        [
+            (
+                family: "Pass-First",
+                description: "Spread the field and attack through the air.",
+                schemes: [.westCoast, .airRaid, .proPassing, .spread]
+            ),
+            (
+                family: "Run-First",
+                description: "Establish the run and use play-action off it.",
+                schemes: [.powerRun, .shanahan, .option, .rpo]
+            )
+        ]
+    }
+
+    /// Pretty grouping for defensive schemes.
+    private var defensiveFamilies: [(family: String, description: String, schemes: [DefensiveScheme])] {
+        [
+            (
+                family: "Aggressive / Man",
+                description: "Press at the line and pressure the QB.",
+                schemes: [.pressMan, .base43]
+            ),
+            (
+                family: "Zone-Heavy",
+                description: "Read-and-react with disciplined zone coverage.",
+                schemes: [.cover3, .tampa2, .base34]
+            ),
+            (
+                family: "Hybrid / Multiple",
+                description: "Disguise looks and rotate fronts pre-snap.",
+                schemes: [.multiple, .hybrid]
+            )
+        ]
+    }
+
+    /// Wraps a family of schemes with a header.
+    @ViewBuilder
+    private func schemeFamilySection(family: String, description: String, content: AnyView) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "rectangle.stack.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.accentGold)
+                Text(family.uppercased())
+                    .font(.system(size: 11, weight: .black))
+                    .tracking(1.5)
+                    .foregroundStyle(Color.accentGold)
+            }
+            Text(description)
+                .font(.system(size: 10))
+                .foregroundStyle(Color.textTertiary)
+
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Coordinator Header
@@ -93,6 +174,7 @@ struct SchemeSelectionView: View {
         let expertiseColor = schemeExpertiseColor(expertiseValue)
         let coachFit = staffCoachFit(schemeKey: scheme.rawValue, isOffensive: true)
         let rosterFam = rosterFamiliarity(schemeKey: scheme.rawValue, side: .offense)
+        let coachesKnowing = coachesKnowingScheme(key: scheme.rawValue)
 
         return Button {
             selectOffensiveScheme(scheme)
@@ -109,9 +191,14 @@ struct SchemeSelectionView: View {
                         .frame(width: 20, height: 20)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(scheme.displayName)
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(isSelected ? Color.accentGold : Color.textPrimary)
+                        HStack(spacing: 6) {
+                            Text(scheme.displayName)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(isSelected ? Color.accentGold : Color.textPrimary)
+
+                            // Per-scheme coach availability badge
+                            coachAvailabilityBadge(count: coachesKnowing)
+                        }
 
                         Text(offensiveSchemeDescription(scheme))
                             .font(.system(size: 10))
@@ -184,6 +271,7 @@ struct SchemeSelectionView: View {
         let expertiseColor = schemeExpertiseColor(expertiseValue)
         let coachFit = staffCoachFit(schemeKey: scheme.rawValue, isOffensive: false)
         let rosterFam = rosterFamiliarity(schemeKey: scheme.rawValue, side: .defense)
+        let coachesKnowing = coachesKnowingScheme(key: scheme.rawValue)
 
         return Button {
             selectDefensiveScheme(scheme)
@@ -199,9 +287,14 @@ struct SchemeSelectionView: View {
                         .frame(width: 20, height: 20)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(scheme.displayName)
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(isSelected ? Color.accentGold : Color.textPrimary)
+                        HStack(spacing: 6) {
+                            Text(scheme.displayName)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(isSelected ? Color.accentGold : Color.textPrimary)
+
+                            // Per-scheme coach availability badge
+                            coachAvailabilityBadge(count: coachesKnowing)
+                        }
 
                         Text(defensiveSchemeDescription(scheme))
                             .font(.system(size: 10))
@@ -343,6 +436,48 @@ struct SchemeSelectionView: View {
             }
             .frame(height: 5)
         }
+    }
+
+    // MARK: - Coach Availability
+
+    /// Count of coaches on the staff (including coordinator) with >= 60 expertise in the given scheme.
+    private func coachesKnowingScheme(key: String) -> Int {
+        var staff = coaches
+        if !staff.contains(where: { $0.id == coordinator.id }) {
+            staff.append(coordinator)
+        }
+        return staff.filter { $0.expertise(for: key) >= 60 }.count
+    }
+
+    /// Compact badge showing how many coaches on staff know the scheme.
+    @ViewBuilder
+    private func coachAvailabilityBadge(count: Int) -> some View {
+        let color: Color = {
+            switch count {
+            case 0:  return .danger
+            case 1:  return .warning
+            case 2:  return .accentGold
+            default: return .success
+            }
+        }()
+        HStack(spacing: 3) {
+            Image(systemName: "person.2.fill")
+                .font(.system(size: 8))
+            Text(count == 0 ? "0 coaches" : "\(count)")
+                .font(.system(size: 9, weight: .bold).monospacedDigit())
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(
+            Capsule()
+                .fill(color.opacity(0.15))
+                .overlay(
+                    Capsule()
+                        .strokeBorder(color.opacity(0.4), lineWidth: 1)
+                )
+        )
+        .accessibilityLabel("\(count) coaches on staff know this scheme")
     }
 
     // MARK: - Fit Calculations

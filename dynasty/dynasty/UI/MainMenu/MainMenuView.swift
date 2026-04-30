@@ -7,6 +7,7 @@ struct MainMenuView: View {
     @Query private var teams: [Team]
     @State private var showSettings = false
     @State private var showTutorial = false
+    @State private var showSlotPicker = false
     @State private var continueCareer: Career?
 
     var body: some View {
@@ -86,6 +87,18 @@ struct MainMenuView: View {
         .sheet(isPresented: $showTutorial) {
             TutorialSheet()
         }
+        .sheet(isPresented: $showSlotPicker) {
+            SaveSlotPickerSheet(
+                onContinue: { career in
+                    showSlotPicker = false
+                    // Defer presentation of the full-screen cover until the sheet
+                    // has dismissed to avoid a presentation conflict.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        continueCareer = career
+                    }
+                }
+            )
+        }
         .fullScreenCover(item: $continueCareer) { career in
             CareerShellView(career: career)
         }
@@ -118,9 +131,19 @@ struct MainMenuView: View {
 
     /// Hint that appears above the buttons when a saved career exists.
     /// Format: "Continue: Green Bay Packers — Week 6, 2026 season"
+    /// When multiple careers exist the picker provides full context, so the
+    /// hint is replaced with a simpler count line.
     @ViewBuilder
     private var continueHintBlock: some View {
-        if let mostRecent = careers.first {
+        if careers.count > 1 {
+            Text("\(careers.count) ACTIVE DYNASTIES")
+                .font(.system(size: 13, weight: .medium))
+                .tracking(1.5)
+                .foregroundStyle(Color.white.opacity(0.75))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+                .padding(.bottom, 12)
+        } else if let mostRecent = careers.first {
             Text(continueHintText(for: mostRecent))
                 .font(.system(size: 13, weight: .medium))
                 .tracking(1.5)
@@ -174,8 +197,21 @@ struct MainMenuView: View {
 
     private var buttonsBlock: some View {
         VStack(spacing: 16) {
-            if let mostRecentCareer = careers.first {
-                // Continue Career is the primary action when a saved career exists
+            if careers.count > 1 {
+                // Multiple saved careers — open the save slot picker
+                Button {
+                    showSlotPicker = true
+                } label: {
+                    MenuButton(title: "Continue / Load", icon: "play.circle.fill", isPrimary: true)
+                }
+                .accessibilityLabel("Continue or Load Career")
+
+                NavigationLink(destination: NewCareerView()) {
+                    MenuButton(title: "New Career", icon: "plus.circle.fill", isPrimary: false)
+                }
+                .accessibilityLabel("New Career")
+            } else if let mostRecentCareer = careers.first {
+                // Exactly one saved career — keep simple Continue behavior
                 Button {
                     continueCareer = mostRecentCareer
                 } label: {
@@ -187,13 +223,6 @@ struct MainMenuView: View {
                     MenuButton(title: "New Career", icon: "plus.circle.fill", isPrimary: false)
                 }
                 .accessibilityLabel("New Career")
-
-                if careers.count > 1 {
-                    NavigationLink(destination: CareerListView()) {
-                        MenuButton(title: "All Careers", icon: "list.bullet", isPrimary: false)
-                    }
-                    .accessibilityLabel("All Careers")
-                }
             } else {
                 // No saved careers — New Career is the primary action
                 NavigationLink(destination: NewCareerView()) {
@@ -282,80 +311,551 @@ private struct MenuButton: View {
 
 // MARK: - Tutorial Sheet
 
-/// Lightweight onboarding sheet shown from the main menu.
-/// Acts as a placeholder until the full tutorial flow ships.
+/// Multi-page onboarding flow shown from the main menu.
+/// Walks first-time players through the major systems of the game so they know
+/// where to look once they hit the Career Dashboard.
 private struct TutorialSheet: View {
 
     @Environment(\.dismiss) private var dismiss
+    @State private var currentPage: Int = 0
 
-    private let bullets: [(icon: String, title: String, body: String)] = [
-        (
-            "person.crop.circle.badge.plus",
-            "Build your career",
-            "Choose to be a General Manager or take on both GM and Head Coach duties. Your decisions shape the franchise."
-        ),
-        (
-            "sportscourt.fill",
-            "Run your team week by week",
-            "Manage the roster, hire coaches, scout prospects, and advance the season one week at a time from the Career Dashboard."
-        ),
-        (
-            "magnifyingglass",
-            "Scout, draft, and sign players",
-            "Use the Scouting Hub for the combine and Big Board, then build your team in Free Agency and the Draft."
-        ),
-        (
-            "trophy.fill",
-            "Win championships, build a legacy",
-            "Hit owner demands, keep the locker room happy, and chase Super Bowl glory across multiple seasons."
-        ),
-    ]
+    private let pages: [TutorialPage] = TutorialPage.all
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text("Welcome to Sunday Night Dynasty")
-                        .font(.title2.bold())
-                        .padding(.top, 8)
+            VStack(spacing: 0) {
+                // Paginated content — swipe horizontally between pages.
+                TabView(selection: $currentPage) {
+                    ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
+                        TutorialPageView(page: page)
+                            .tag(index)
+                            .padding(.horizontal, 4)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
 
-                    Text("A full tutorial is on the way. Here is the short version:")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                // Page indicator dots
+                HStack(spacing: 8) {
+                    ForEach(0..<pages.count, id: \.self) { index in
+                        Circle()
+                            .fill(index == currentPage ? Color.accentBlue : Color.secondary.opacity(0.3))
+                            .frame(width: 8, height: 8)
+                            .animation(.easeInOut(duration: 0.2), value: currentPage)
+                    }
+                }
+                .padding(.vertical, 12)
 
-                    VStack(alignment: .leading, spacing: 16) {
-                        ForEach(bullets, id: \.title) { bullet in
-                            HStack(alignment: .top, spacing: 14) {
-                                Image(systemName: bullet.icon)
-                                    .font(.system(size: 22, weight: .semibold))
-                                    .foregroundStyle(Color.accentBlue)
-                                    .frame(width: 32)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(bullet.title)
-                                        .font(.headline)
-                                    Text(bullet.body)
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
+                // Navigation buttons (Back / Next or Done)
+                HStack(spacing: 12) {
+                    if currentPage > 0 {
+                        Button {
+                            withAnimation { currentPage -= 1 }
+                        } label: {
+                            Label("Back", systemImage: "chevron.left")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(Color.secondary.opacity(0.15))
+                                )
                         }
                     }
-                    .padding(.top, 4)
 
-                    Text("Tip: Tap the help icon inside any screen for context-specific guidance (coming soon).")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 12)
+                    if currentPage < pages.count - 1 {
+                        Button {
+                            withAnimation { currentPage += 1 }
+                        } label: {
+                            HStack {
+                                Text("Next")
+                                Image(systemName: "chevron.right")
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 48)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.accentBlue)
+                            )
+                        }
+                    } else {
+                        Button {
+                            dismiss()
+                        } label: {
+                            Label("Get Started", systemImage: "checkmark.circle.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(Color.accentBlue)
+                                )
+                        }
+                    }
                 }
-                .padding(20)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
+                .padding(.top, 4)
             }
             .navigationTitle("How to Play")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Skip Tutorial") { dismiss() }
+                        .font(.subheadline)
+                }
+                ToolbarItem(placement: .principal) {
+                    Text("Page \(currentPage + 1) of \(pages.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+}
+
+// MARK: - Tutorial Page Model
+
+private struct TutorialPage: Identifiable {
+    let id: String
+    let icon: String
+    let iconTint: Color
+    let title: String
+    let subtitle: String
+    let body: String
+    /// Optional bulleted list of supporting points (icon + text).
+    let points: [(icon: String, text: String)]
+
+    static let all: [TutorialPage] = [
+        // 1. Welcome
+        TutorialPage(
+            id: "welcome",
+            icon: "trophy.fill",
+            iconTint: .accentGold,
+            title: "Welcome to Sunday Night Dynasty",
+            subtitle: "Your NFL franchise. Your decisions.",
+            body: "Take the reins of an NFL franchise as either a General Manager or a dual-role GM and Head Coach. Build a roster through scouting, free agency, and the draft, then guide your team to a Super Bowl title across multiple seasons.",
+            points: [
+                ("calendar", "Advance the season one week at a time"),
+                ("person.3.fill", "Manage roster, coaches, and scouts"),
+                ("chart.line.uptrend.xyaxis", "Track owner demands and franchise legacy")
+            ]
+        ),
+
+        // 2. Career flow
+        TutorialPage(
+            id: "career",
+            icon: "map.fill",
+            iconTint: .accentBlue,
+            title: "Your Weekly Career Flow",
+            subtitle: "Each week walks you through key tasks",
+            body: "The Career Dashboard surfaces the right action at the right time. The yearly cycle moves through press conferences, coaching changes, roster review, the combine, free agency, the draft, training camp, and the regular season.",
+            points: [
+                ("mic.fill", "Press Conf — answer questions, set tone"),
+                ("sportscourt.fill", "Coaching — hire and develop staff"),
+                ("checklist", "Roster Eval — find weaknesses"),
+                ("stopwatch.fill", "Combine — measure prospects"),
+                ("dollarsign.circle.fill", "Free Agency — bid on veterans"),
+                ("rectangle.stack.person.crop.fill", "Draft — pick the future")
+            ]
+        ),
+
+        // 3. Scouting
+        TutorialPage(
+            id: "scouting",
+            icon: "magnifyingglass",
+            iconTint: .accentBlue,
+            title: "Scouting & The Big Board",
+            subtitle: "Information is your edge",
+            body: "Scout reports are estimates, not facts. Each scout has a role (College, Pro, National) and an accuracy rating — better scouts give tighter percentile ranges. The Big Board ranks prospects by your scouts' consensus, but their grades are educated guesses.",
+            points: [
+                ("person.fill.checkmark", "Hire scouts that match your needs"),
+                ("chart.bar.fill", "Percentile ranges show uncertainty"),
+                ("a.square.fill", "Letter grades (A+ to F), not raw numbers"),
+                ("eye.fill", "Combine and pro days narrow ranges")
+            ]
+        ),
+
+        // 4. Free Agency
+        TutorialPage(
+            id: "freeAgency",
+            icon: "dollarsign.circle.fill",
+            iconTint: .accentGold,
+            title: "Free Agency & The Cap",
+            subtitle: "Spend smart, not loud",
+            body: "Free Agency runs in weekly rounds. You bid on players using cap space, and rumors hint at competing offers. The strongest bid plus team fit wins — but overspending on one star can lock you out of building depth.",
+            points: [
+                ("creditcard.fill", "Stay under the salary cap"),
+                ("ear.fill", "Rumor system reveals rival interest"),
+                ("percent", "Cap % matters more than raw dollars"),
+                ("clock.fill", "Top players sign earlier in rounds")
+            ]
+        ),
+
+        // 5. Draft
+        TutorialPage(
+            id: "draft",
+            icon: "rectangle.stack.person.crop.fill",
+            iconTint: .accentBlue,
+            title: "The Draft",
+            subtitle: "Best Player Available vs. Need",
+            body: "When your pick is up, you'll see your scouts' top recommendations and incoming trade offers. BPA (Best Player Available) builds long-term talent; drafting for need fills a hole now. A good GM balances both — and isn't afraid to trade back for picks.",
+            points: [
+                ("star.fill", "BPA — pick the highest grade"),
+                ("target", "Need — fill weak position groups"),
+                ("arrow.left.arrow.right", "Trade up, down, or for future picks"),
+                ("checkmark.seal.fill", "Scout recommendations highlight value")
+            ]
+        ),
+
+        // 6. Coaching
+        TutorialPage(
+            id: "coaching",
+            icon: "person.crop.square.filled.and.at.rectangle.fill",
+            iconTint: .accentBlue,
+            title: "Coaching Staff & Schemes",
+            subtitle: "The right scheme amplifies talent",
+            body: "Coaches have schemes (e.g. Air Raid, 4-3 Over) and personality archetypes. Players gain familiarity with a scheme over time, and coaches develop expertise as they run it. Locker room chemistry rises when archetypes align.",
+            points: [
+                ("rectangle.3.group.fill", "Hire by role: HC, OC, DC, position coaches"),
+                ("book.fill", "Scheme expertise grows year over year"),
+                ("link", "Player familiarity boosts on-field play"),
+                ("heart.fill", "Personality fit drives chemistry")
+            ]
+        ),
+
+        // 7. Tips & FAQ
+        TutorialPage(
+            id: "tips",
+            icon: "lightbulb.fill",
+            iconTint: .accentGold,
+            title: "Tips & Common Pitfalls",
+            subtitle: "Wisdom from the front office",
+            body: "A few hard-earned lessons: don't blow your cap on Day 1 of free agency, don't trust a single scout's grade, and don't fire a coach mid-scheme-install. Patience compounds. So does player development.",
+            points: [
+                ("exclamationmark.triangle.fill", "Avoid huge contracts for aging stars"),
+                ("brain.head.profile", "Cross-check scout reports before drafting"),
+                ("arrow.up.right.circle.fill", "Rookies improve fastest in years 2-3"),
+                ("hand.raised.fill", "Owner demands hint at job security"),
+                ("questionmark.circle.fill", "Tap any (?) icon for context help")
+            ]
+        )
+    ]
+}
+
+// MARK: - Tutorial Page View
+
+private struct TutorialPageView: View {
+    let page: TutorialPage
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // Hero icon
+                HStack {
+                    Spacer()
+                    Image(systemName: page.icon)
+                        .font(.system(size: 64, weight: .semibold))
+                        .foregroundStyle(page.iconTint)
+                        .frame(width: 120, height: 120)
+                        .background(
+                            Circle()
+                                .fill(page.iconTint.opacity(0.15))
+                        )
+                    Spacer()
+                }
+                .padding(.top, 20)
+                .padding(.bottom, 8)
+
+                // Title + subtitle
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(page.title)
+                        .font(.title2.bold())
+                    Text(page.subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                // Body copy
+                Text(page.body)
+                    .font(.body)
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // Bulleted points
+                if !page.points.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(Array(page.points.enumerated()), id: \.offset) { _, point in
+                            HStack(alignment: .top, spacing: 12) {
+                                Image(systemName: point.icon)
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(page.iconTint)
+                                    .frame(width: 24)
+                                Text(point.text)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.primary.opacity(0.9))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+
+                Spacer(minLength: 12)
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 20)
+            .frame(maxWidth: 560)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - Save Slot Picker
+
+/// Sheet shown from the main menu when more than one saved career exists.
+/// Lists every Career as a card so the player can pick which dynasty to load
+/// (or delete obsolete ones).
+private struct SaveSlotPickerSheet: View {
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \Career.currentSeason, order: .reverse) private var careers: [Career]
+    @Query private var teams: [Team]
+
+    /// Invoked when the player taps Continue on a row.
+    /// The parent dismisses the sheet and presents the Career shell.
+    let onContinue: (Career) -> Void
+
+    @State private var pendingDeletion: Career?
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
+
+                if careers.isEmpty {
+                    Text("No saved careers.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textSecondary)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 14) {
+                            ForEach(careers) { career in
+                                SaveSlotCard(
+                                    career: career,
+                                    team: team(for: career),
+                                    onContinue: { onContinue(career) },
+                                    onDelete: { pendingDeletion = career }
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 16)
+                    }
+                }
+            }
+            .navigationTitle("Load Career")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+            .alert(
+                "Delete Career?",
+                isPresented: Binding(
+                    get: { pendingDeletion != nil },
+                    set: { if !$0 { pendingDeletion = nil } }
+                ),
+                presenting: pendingDeletion
+            ) { career in
+                Button("Delete", role: .destructive) {
+                    modelContext.delete(career)
+                    pendingDeletion = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingDeletion = nil
+                }
+            } message: { career in
+                Text("This permanently removes \(career.playerName)'s dynasty. This cannot be undone.")
+            }
+        }
+    }
+
+    private func team(for career: Career) -> Team? {
+        guard let teamID = career.teamID else { return nil }
+        return teams.first { $0.id == teamID }
+    }
+}
+
+// MARK: - Save Slot Card
+
+private struct SaveSlotCard: View {
+    let career: Career
+    let team: Team?
+    let onContinue: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // Header: logo + team / player
+            HStack(spacing: 14) {
+                TeamLogoPlaceholder(
+                    abbreviation: team?.abbreviation ?? "—",
+                    size: 56
+                )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(team?.fullName ?? "Free Agent")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+
+                    HStack(spacing: 6) {
+                        Image(systemName: career.role == .gm ? "briefcase.fill" : "sportscourt.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(career.playerName)
+                            .lineLimit(1)
+                        Text("•")
+                            .foregroundStyle(Color.textSecondary.opacity(0.5))
+                        Text(roleLabel)
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.textSecondary)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            // Stats row
+            HStack(alignment: .top, spacing: 12) {
+                statBlock(
+                    title: "Season",
+                    value: "\(career.currentSeason)",
+                    detail: weekDetail
+                )
+                Divider()
+                    .background(Color.white.opacity(0.1))
+                    .frame(height: 36)
+                statBlock(
+                    title: "Phase",
+                    value: phaseLabel(career.currentPhase),
+                    detail: nil
+                )
+                Divider()
+                    .background(Color.white.opacity(0.1))
+                    .frame(height: 36)
+                statBlock(
+                    title: "Wins",
+                    value: "\(career.totalWins)",
+                    detail: "\(career.totalLosses) L"
+                )
+                Divider()
+                    .background(Color.white.opacity(0.1))
+                    .frame(height: 36)
+                statBlock(
+                    title: "Rings",
+                    value: "\(career.championships)",
+                    detail: nil
+                )
+            }
+
+            // Actions
+            HStack(spacing: 10) {
+                Button(action: onContinue) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "play.fill")
+                        Text("Continue")
+                    }
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 40)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.accentGold)
+                    )
+                    .foregroundStyle(Color.backgroundPrimary)
+                }
+                .buttonStyle(.plain)
+
+                Button(action: onDelete) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "trash")
+                        Text("Delete")
+                    }
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 110)
+                    .frame(height: 40)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(Color.red.opacity(0.6), lineWidth: 1)
+                    )
+                    .foregroundStyle(Color.red.opacity(0.9))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                )
+        )
+    }
+
+    private var roleLabel: String {
+        career.role == .gm ? "General Manager" : "GM & Head Coach"
+    }
+
+    private var weekDetail: String? {
+        career.currentWeek > 0 ? "Wk \(career.currentWeek)" : nil
+    }
+
+    private func statBlock(title: String, value: String, detail: String?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .bold))
+                .tracking(1)
+                .foregroundStyle(Color.textSecondary.opacity(0.7))
+            Text(value)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            if let detail {
+                Text(detail)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func phaseLabel(_ phase: SeasonPhase) -> String {
+        switch phase {
+        case .proBowl: return "Pro Bowl"
+        case .superBowl: return "Super Bowl"
+        case .coachingChanges: return "Coaching"
+        case .reviewRoster: return "Review"
+        case .combine: return "Combine"
+        case .freeAgency: return "Free Agency"
+        case .proDays: return "Pro Days"
+        case .draft: return "Draft"
+        case .otas: return "OTAs"
+        case .trainingCamp: return "Camp"
+        case .preseason: return "Preseason"
+        case .rosterCuts: return "Cuts"
+        case .regularSeason: return "Regular"
+        case .tradeDeadline: return "Trade DL"
+        case .playoffs: return "Playoffs"
         }
     }
 }

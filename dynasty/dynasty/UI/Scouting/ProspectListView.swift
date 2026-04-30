@@ -44,6 +44,11 @@ struct ProspectListView: View {
     @State private var cachedDisplayed: [CollegeProspect] = []
     @State private var cachedPositionRanks: [UUID: Int] = [:]
 
+    // MARK: - #3: Compare 2 Prospects mode
+    @State private var compareMode: Bool = false
+    @State private var compareSelection: [CollegeProspect] = []
+    @State private var showCompareSheet: Bool = false
+
     // MARK: - Filtered & Sorted Prospects
 
     private var displayed: [CollegeProspect] {
@@ -193,12 +198,24 @@ struct ProspectListView: View {
 
                     Divider().overlay(Color.surfaceBorder)
 
+                    if compareMode {
+                        compareModeBar
+                    }
+
                     List {
                         ForEach(cachedDisplayed) { prospect in
                             HStack(spacing: 0) {
-                                ProspectStarButton(prospectID: prospect.id)
+                                if compareMode {
+                                    Button {
+                                        toggleCompareSelection(for: prospect)
+                                    } label: {
+                                        Image(systemName: isSelectedForCompare(prospect) ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size: 18))
+                                            .foregroundStyle(isSelectedForCompare(prospect) ? Color.accentBlue : Color.textTertiary)
+                                            .frame(width: 32)
+                                    }
+                                    .buttonStyle(.plain)
 
-                                NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
                                     ProspectRowView(
                                         prospect: prospect,
                                         positionRank: cachedPositionRanks[prospect.id],
@@ -209,9 +226,30 @@ struct ProspectListView: View {
                                         needLevel: needLevel(for: prospect.position),
                                         starterComparison: starterComparison(for: prospect)
                                     )
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { toggleCompareSelection(for: prospect) }
+                                } else {
+                                    ProspectStarButton(prospectID: prospect.id)
+
+                                    NavigationLink(destination: ProspectDetailView(career: career, prospect: prospect)) {
+                                        ProspectRowView(
+                                            prospect: prospect,
+                                            positionRank: cachedPositionRanks[prospect.id],
+                                            attributeTab: attributeTab,
+                                            scoutsSentToCombine: scoutsSentToCombine,
+                                            schemeFit: schemeFitLabel(for: prospect),
+                                            isTeamNeed: teamNeeds.contains(prospect.position),
+                                            needLevel: needLevel(for: prospect.position),
+                                            starterComparison: starterComparison(for: prospect)
+                                        )
+                                    }
                                 }
                             }
-                            .listRowBackground(Color.backgroundSecondary)
+                            .listRowBackground(
+                                isSelectedForCompare(prospect)
+                                    ? Color.accentBlue.opacity(0.15)
+                                    : Color.backgroundSecondary
+                            )
                             .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
                             .contextMenu {
                                 ProspectGradeContextMenu(prospectID: prospect.id)
@@ -227,6 +265,30 @@ struct ProspectListView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 sortMenu
+            }
+            ToolbarItem(placement: .secondaryAction) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        compareMode.toggle()
+                        if !compareMode { compareSelection.removeAll() }
+                    }
+                } label: {
+                    Label(compareMode ? "Cancel Compare" : "Compare", systemImage: compareMode ? "xmark.circle" : "rectangle.on.rectangle.angled")
+                }
+            }
+        }
+        .sheet(isPresented: $showCompareSheet) {
+            if compareSelection.count == 2 {
+                ProspectCompareSheet(
+                    career: career,
+                    left: compareSelection[0],
+                    right: compareSelection[1],
+                    schemeFitLeft: schemeFitLabel(for: compareSelection[0]),
+                    schemeFitRight: schemeFitLabel(for: compareSelection[1]),
+                    starterComparisonLeft: starterComparison(for: compareSelection[0]),
+                    starterComparisonRight: starterComparison(for: compareSelection[1]),
+                    onDismiss: { showCompareSheet = false }
+                )
             }
         }
         .task {
@@ -513,6 +575,75 @@ struct ProspectListView: View {
             Label("Sort", systemImage: "arrow.up.arrow.down")
         }
         .accessibilityLabel("Sort prospects, currently by \(sortOrder.label)")
+    }
+
+    // MARK: - #3: Compare Mode UI
+
+    private func isSelectedForCompare(_ prospect: CollegeProspect) -> Bool {
+        compareSelection.contains(where: { $0.id == prospect.id })
+    }
+
+    private func toggleCompareSelection(for prospect: CollegeProspect) {
+        if let idx = compareSelection.firstIndex(where: { $0.id == prospect.id }) {
+            compareSelection.remove(at: idx)
+        } else {
+            if compareSelection.count >= 2 {
+                // Replace oldest selection.
+                compareSelection.removeFirst()
+            }
+            compareSelection.append(prospect)
+        }
+    }
+
+    private var compareModeBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "rectangle.on.rectangle.angled")
+                .font(.caption)
+                .foregroundStyle(Color.accentBlue)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Compare Mode")
+                    .font(.system(size: 11, weight: .heavy))
+                    .foregroundStyle(Color.accentBlue)
+                Text(compareSelection.isEmpty
+                     ? "Tap two prospects to compare"
+                     : "Selected: \(compareSelection.map { $0.lastName }.joined(separator: " vs ")) (\(compareSelection.count)/2)")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            if !compareSelection.isEmpty {
+                Button {
+                    compareSelection.removeAll()
+                } label: {
+                    Image(systemName: "trash.circle.fill")
+                        .font(.body)
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+            Button {
+                showCompareSheet = true
+            } label: {
+                Text("Compare")
+                    .font(.system(size: 11, weight: .heavy))
+                    .foregroundStyle(compareSelection.count == 2 ? Color.backgroundPrimary : Color.textTertiary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        compareSelection.count == 2 ? Color.accentBlue : Color.backgroundTertiary,
+                        in: Capsule()
+                    )
+            }
+            .disabled(compareSelection.count != 2)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color.backgroundSecondary)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.accentBlue)
+                .frame(height: 1)
+        }
     }
 
     // MARK: - Empty State
@@ -1135,6 +1266,258 @@ enum ProspectSort: String, CaseIterable, Identifiable {
         case .scoutedOverall:  return "star.fill"
         case .position:        return "rectangle.3.group"
         case .name:            return "textformat"
+        }
+    }
+}
+
+// MARK: - #3: Prospect Compare Sheet
+
+/// Side-by-side comparison view for two prospects.
+struct ProspectCompareSheet: View {
+    let career: Career
+    let left: CollegeProspect
+    let right: CollegeProspect
+    let schemeFitLeft: String?
+    let schemeFitRight: String?
+    let starterComparisonLeft: String?
+    let starterComparisonRight: String?
+    let onDismiss: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 12) {
+                    headerRow
+                    compareSection(title: "Overview", rows: overviewRows)
+                    compareSection(title: "Physical (True)", rows: physicalRows)
+                    compareSection(title: "Mental Grades", rows: mentalRows)
+                    compareSection(title: "Position Skills", rows: positionRows)
+                    compareSection(title: "Scouting", rows: scoutingRows)
+                    Spacer(minLength: 24)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
+            .background(Color.backgroundPrimary.ignoresSafeArea())
+            .navigationTitle("Compare")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { onDismiss() }
+                        .foregroundStyle(Color.accentGold)
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+
+    // MARK: - Header
+
+    private var headerRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            prospectHeaderColumn(prospect: left)
+            Image(systemName: "arrow.left.arrow.right")
+                .font(.title3)
+                .foregroundStyle(Color.accentBlue)
+                .padding(.top, 24)
+            prospectHeaderColumn(prospect: right)
+        }
+    }
+
+    private func prospectHeaderColumn(prospect: CollegeProspect) -> some View {
+        VStack(spacing: 4) {
+            Text(prospect.position.rawValue)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.textPrimary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(positionColor(for: prospect), in: RoundedRectangle(cornerRadius: 4))
+            Text(prospect.fullName)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(Color.textPrimary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+            Text(prospect.college)
+                .font(.caption2)
+                .foregroundStyle(Color.textSecondary)
+            HStack(spacing: 4) {
+                Text("OVR")
+                    .font(.system(size: 8, weight: .heavy))
+                    .foregroundStyle(Color.textTertiary)
+                Text(prospect.scoutedOverall.map { "\($0)" } ?? "?")
+                    .font(.title3.weight(.heavy).monospacedDigit())
+                    .foregroundStyle(Color.forRating(prospect.scoutedOverall ?? 0))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(8)
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    // MARK: - Section
+
+    private func compareSection(title: String, rows: [CompareRow]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.heavy))
+                .foregroundStyle(Color.accentBlue)
+            VStack(spacing: 4) {
+                ForEach(rows) { row in
+                    compareRowView(row: row)
+                }
+            }
+            .padding(8)
+            .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private func compareRowView(row: CompareRow) -> some View {
+        HStack(spacing: 8) {
+            Text(row.leftValue)
+                .font(.caption.monospacedDigit())
+                .fontWeight(row.leftBetter ? .heavy : .medium)
+                .foregroundStyle(row.leftBetter ? Color.success : Color.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            Text(row.label)
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: 64, alignment: .center)
+            Text(row.rightValue)
+                .font(.caption.monospacedDigit())
+                .fontWeight(row.rightBetter ? .heavy : .medium)
+                .foregroundStyle(row.rightBetter ? Color.success : Color.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: - Rows
+
+    private struct CompareRow: Identifiable {
+        let id = UUID()
+        let label: String
+        let leftValue: String
+        let rightValue: String
+        let leftBetter: Bool
+        let rightBetter: Bool
+    }
+
+    private func numericRow(label: String, lhs: Int?, rhs: Int?) -> CompareRow {
+        let l = lhs.map { "\($0)" } ?? "--"
+        let r = rhs.map { "\($0)" } ?? "--"
+        let lBetter = (lhs ?? -1) > (rhs ?? -1)
+        let rBetter = (rhs ?? -1) > (lhs ?? -1)
+        return CompareRow(label: label, leftValue: l, rightValue: r, leftBetter: lBetter, rightBetter: rBetter)
+    }
+
+    private func textRow(label: String, lhs: String, rhs: String, lhsBetter: Bool = false, rhsBetter: Bool = false) -> CompareRow {
+        CompareRow(label: label, leftValue: lhs, rightValue: rhs, leftBetter: lhsBetter, rightBetter: rhsBetter)
+    }
+
+    private var overviewRows: [CompareRow] {
+        [
+            numericRow(label: "AGE", lhs: left.age, rhs: right.age),
+            textRow(label: "HT", lhs: heightString(left.height), rhs: heightString(right.height)),
+            numericRow(label: "WT", lhs: left.weight, rhs: right.weight),
+            numericRow(label: "PROJ RD", lhs: left.draftProjection, rhs: right.draftProjection),
+            textRow(label: "FIT", lhs: schemeFitLeft ?? "--", rhs: schemeFitRight ?? "--",
+                    lhsBetter: schemeFitLeft == "Good" && schemeFitRight != "Good",
+                    rhsBetter: schemeFitRight == "Good" && schemeFitLeft != "Good"),
+            textRow(label: "RISK", lhs: riskString(left.riskLevel), rhs: riskString(right.riskLevel)),
+            textRow(label: "vs STARTER", lhs: starterComparisonLeft ?? "--", rhs: starterComparisonRight ?? "--")
+        ]
+    }
+
+    private var physicalRows: [CompareRow] {
+        let lp = left.truePhysical
+        let rp = right.truePhysical
+        return [
+            numericRow(label: "SPD", lhs: lp.speed, rhs: rp.speed),
+            numericRow(label: "STR", lhs: lp.strength, rhs: rp.strength),
+            numericRow(label: "AGI", lhs: lp.agility, rhs: rp.agility),
+            numericRow(label: "ACC", lhs: lp.acceleration, rhs: rp.acceleration),
+            numericRow(label: "STA", lhs: lp.stamina, rhs: rp.stamina),
+            numericRow(label: "DUR", lhs: lp.durability, rhs: rp.durability)
+        ]
+    }
+
+    private var mentalRows: [CompareRow] {
+        let keys = ["AWR", "DEC", "WRK", "CLT", "COA", "LDR"]
+        return keys.map { k in
+            let l = left.scoutedMentalGrades?[k]?.displayText ?? "?"
+            let r = right.scoutedMentalGrades?[k]?.displayText ?? "?"
+            let lRank = left.scoutedMentalGrades?[k]?.midGrade.rank ?? -1
+            let rRank = right.scoutedMentalGrades?[k]?.midGrade.rank ?? -1
+            return CompareRow(label: k, leftValue: l, rightValue: r,
+                              leftBetter: lRank > rRank, rightBetter: rRank > lRank)
+        }
+    }
+
+    private var positionRows: [CompareRow] {
+        // Only meaningful when both prospects share a position; otherwise show note.
+        guard left.position == right.position else {
+            return [CompareRow(label: "Note",
+                               leftValue: left.position.rawValue,
+                               rightValue: right.position.rawValue,
+                               leftBetter: false,
+                               rightBetter: false)]
+        }
+        let keys = positionSkillKeys(for: left)
+        return keys.map { k in
+            let l = left.scoutedPositionGrades?[k]?.displayText ?? "?"
+            let r = right.scoutedPositionGrades?[k]?.displayText ?? "?"
+            let lRank = left.scoutedPositionGrades?[k]?.midGrade.rank ?? -1
+            let rRank = right.scoutedPositionGrades?[k]?.midGrade.rank ?? -1
+            return CompareRow(label: k, leftValue: l, rightValue: r,
+                              leftBetter: lRank > rRank, rightBetter: rRank > lRank)
+        }
+    }
+
+    private var scoutingRows: [CompareRow] {
+        [
+            numericRow(label: "REPORTS", lhs: left.scoutReportCount, rhs: right.scoutReportCount),
+            textRow(label: "GRADE", lhs: left.scoutGrade ?? "--", rhs: right.scoutGrade ?? "--"),
+            textRow(label: "FLAG", lhs: left.prospectFlag.rawValue, rhs: right.prospectFlag.rawValue),
+            textRow(label: "INTERVIEW", lhs: left.interviewCompleted ? "Yes" : "No", rhs: right.interviewCompleted ? "Yes" : "No"),
+            textRow(label: "COMBINE", lhs: left.combineInvite ? "Invited" : "—", rhs: right.combineInvite ? "Invited" : "—")
+        ]
+    }
+
+    // MARK: - Helpers
+
+    private func positionSkillKeys(for prospect: CollegeProspect) -> [String] {
+        switch prospect.truePositionAttributes {
+        case .quarterback:    return ["ARM", "SAc", "DAc", "PKT"]
+        case .wideReceiver:   return ["RTE", "CTH", "RLS", "SPC"]
+        case .runningBack:    return ["VIS", "ELU", "BTK", "RCV"]
+        case .tightEnd:       return ["BLK", "CTH", "RTE", "SPD"]
+        case .offensiveLine:  return ["RBK", "PBK", "PUL", "ANC"]
+        case .defensiveLine:  return ["PRU", "BSH", "PWR", "FIN"]
+        case .linebacker:     return ["TAK", "ZCV", "MCV", "BLZ"]
+        case .defensiveBack:  return ["MCV", "ZCV", "PRS", "BSK"]
+        case .kicking:        return ["PWR", "ACC"]
+        }
+    }
+
+    private func heightString(_ inches: Int) -> String {
+        let ft = inches / 12
+        let inch = inches % 12
+        return "\(ft)'\(inch)\""
+    }
+
+    private func riskString(_ risk: ProspectRiskLevel) -> String {
+        switch risk {
+        case .safePick:    return "Safe"
+        case .highCeiling: return "Ceiling"
+        case .boomOrBust:  return "Boom/Bust"
+        case .unknown:     return "?"
+        }
+    }
+
+    private func positionColor(for prospect: CollegeProspect) -> Color {
+        switch prospect.position.side {
+        case .offense:      return .accentBlue
+        case .defense:      return .danger
+        case .specialTeams: return .accentGold
         }
     }
 }
