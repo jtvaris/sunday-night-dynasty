@@ -158,7 +158,8 @@ struct TradeView: View {
                 picks: myPicks,
                 selectedPlayers: $mySelectedPlayers,
                 selectedPicks: $mySelectedPicks,
-                accentColor: Color.accentBlue
+                accentColor: Color.accentBlue,
+                isTradeTargets: false
             )
             Divider()
                 .overlay(Color.surfaceBorder)
@@ -169,7 +170,8 @@ struct TradeView: View {
                 picks: theirPicks(partner: partner),
                 selectedPlayers: $theirSelectedPlayers,
                 selectedPicks: $theirSelectedPicks,
-                accentColor: Color.accentGold
+                accentColor: Color.accentGold,
+                isTradeTargets: true
             )
         }
     }
@@ -180,7 +182,8 @@ struct TradeView: View {
         picks: [DraftPick],
         selectedPlayers: Binding<Set<UUID>>,
         selectedPicks: Binding<Set<UUID>>,
-        accentColor: Color
+        accentColor: Color,
+        isTradeTargets: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
@@ -189,14 +192,21 @@ struct TradeView: View {
 
             // Players
             ForEach(players) { player in
-                assetToggleRow(
-                    label: player.fullName,
-                    sublabel: "\(player.position.rawValue) · \(player.overall) OVR",
-                    valueLabel: formatMillions(ContractEngine.estimateMarketValue(player: player)),
-                    isSelected: selectedPlayers.wrappedValue.contains(player.id),
-                    accentColor: accentColor
-                ) {
-                    toggle(id: player.id, in: selectedPlayers)
+                VStack(alignment: .leading, spacing: 6) {
+                    assetToggleRow(
+                        label: player.fullName,
+                        sublabel: "\(player.position.rawValue) · \(player.overall) OVR",
+                        valueLabel: formatMillions(ContractEngine.estimateMarketValue(player: player)),
+                        isSelected: selectedPlayers.wrappedValue.contains(player.id),
+                        accentColor: accentColor
+                    ) {
+                        toggle(id: player.id, in: selectedPlayers)
+                    }
+
+                    // Show "vs Current Starter" card for selected trade targets
+                    if isTradeTargets && selectedPlayers.wrappedValue.contains(player.id) {
+                        vsCurrentStarterCard(for: player)
+                    }
                 }
             }
 
@@ -716,6 +726,110 @@ struct TradeView: View {
         case .offense:      return .accentBlue
         case .defense:      return .danger
         case .specialTeams: return .accentGold
+        }
+    }
+
+    // MARK: - vs Current Starter Card (decision support — letter-grade comparison)
+
+    @ViewBuilder
+    private func vsCurrentStarterCard(for target: Player) -> some View {
+        let starter = myPlayers
+            .filter { $0.position == target.position && $0.id != target.id }
+            .max(by: { $0.overall < $1.overall })
+
+        if let starter {
+            let diff = target.overall - starter.overall
+            let conclusion = starterConclusionLabel(diff)
+            let conclusionColor = starterConclusionColor(diff)
+            let targetGrade = LetterGrade.from(numericValue: target.overall)
+            let starterGrade = LetterGrade.from(numericValue: starter.overall)
+
+            HStack(spacing: 8) {
+                // Trade target side
+                VStack(spacing: 1) {
+                    Text(target.fullName)
+                        .font(.system(size: 10).weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    Text(targetGrade.rawValue)
+                        .font(.subheadline.weight(.heavy))
+                        .foregroundStyle(rowGradeColor(targetGrade))
+                    Text("Target")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .frame(maxWidth: .infinity)
+
+                // Comparison conclusion
+                VStack(spacing: 1) {
+                    Text("vs")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(conclusion)
+                        .font(.system(size: 10).weight(.heavy))
+                        .foregroundStyle(conclusionColor)
+                        .multilineTextAlignment(.center)
+                }
+
+                // Current starter side
+                VStack(spacing: 1) {
+                    Text(starter.fullName)
+                        .font(.system(size: 10).weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    Text(starterGrade.rawValue)
+                        .font(.subheadline.weight(.heavy))
+                        .foregroundStyle(rowGradeColor(starterGrade))
+                    Text("Starter")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.backgroundSecondary)
+            )
+        } else {
+            HStack(spacing: 8) {
+                Image(systemName: "person.fill.badge.plus")
+                    .font(.caption)
+                    .foregroundStyle(Color.success)
+                Text("No \(target.position.rawValue) on roster — immediate starter")
+                    .font(.system(size: 10).weight(.semibold))
+                    .foregroundStyle(Color.success)
+                Spacer()
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.success.opacity(0.1))
+            )
+        }
+    }
+
+    private func starterConclusionLabel(_ diff: Int) -> String {
+        if diff >= 3 { return "Upgrade" }
+        if diff >= -2 { return "Lateral" }
+        return "Downgrade"
+    }
+
+    private func starterConclusionColor(_ diff: Int) -> Color {
+        if diff >= 3 { return .success }
+        if diff >= -2 { return .accentGold }
+        return .textSecondary
+    }
+
+    private func rowGradeColor(_ grade: LetterGrade) -> Color {
+        switch grade.rank {
+        case 10...12: return .success
+        case 7...9:   return .accentGold
+        case 4...6:   return .warning
+        case 2...3:   return .danger
+        default:      return .danger
         }
     }
 

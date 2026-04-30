@@ -294,6 +294,14 @@ struct TimelineTasksPanel: View {
         .opacity(task.status == .done ? 0.55 : (locked ? 0.45 : 1.0))
     }
 
+    /// First incomplete required task that is also unlocked (no prerequisite blocking).
+    /// Used to surface a "Next: <task> — Tap to start" hint when the user is stuck.
+    private var nextActionableTask: GameTask? {
+        tasks.first { task in
+            task.isRequired && task.status != .done && !isTaskLocked(task)
+        }
+    }
+
     /// Determines if a combine/proDays task is locked behind an unfinished prerequisite.
     private func isTaskLocked(_ task: GameTask) -> Bool {
         guard task.status == .todo, task.isRequired else { return false }
@@ -339,12 +347,53 @@ struct TimelineTasksPanel: View {
         VStack(spacing: 6) {
             if !canAdvance {
                 let count = TaskGenerator.incompleteRequiredCount(in: tasks)
-                Label(
-                    "Complete \(count) required task\(count == 1 ? "" : "s") to advance",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Color.danger)
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(
+                        "Complete \(count) required task\(count == 1 ? "" : "s") to advance",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.system(size: 12, weight: .heavy))
+                    .foregroundStyle(Color.danger)
+
+                    // Next-action hint: tappable row that jumps directly to the
+                    // first incomplete & unlocked required task. Helps users who
+                    // can't tell what to do next.
+                    if let next = nextActionableTask {
+                        Button {
+                            onTaskSelected(next.destination)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.right.circle.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Color.accentGold)
+                                Text("Next: \(next.title)")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(Color.textPrimary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Spacer(minLength: 4)
+                                Text("Tap to start")
+                                    .font(.system(size: 9, weight: .heavy))
+                                    .foregroundStyle(Color.accentGold)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(Color.accentGold.opacity(0.15)))
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.accentGold.opacity(0.08))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .strokeBorder(Color.accentGold.opacity(0.3), lineWidth: 1)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             Button {

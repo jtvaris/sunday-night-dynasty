@@ -375,56 +375,56 @@ enum PressConferenceEngine {
             outlet: r.outlet,
             question: "What's your vision for this franchise?",
             responses: [
-                // Confident: Big legacy/fans upside, moderate risk if owner disagrees
+                // Confident: Best Fans, big Legacy. Risk: Owner penalty if not win-now, slight Morale hit
                 PressResponse(
                     text: "We're going to bring a championship to \(team.city). That's the only goal.",
                     tone: .confident,
                     mediaReaction: "\(r.outlet): \"Bold promise from the new front office leader!\"",
                     effects: PressEffects(
-                        ownerSatisfaction: ownerWinNow ? 5 : -4,
-                        playerMorale: -3,
+                        ownerSatisfaction: ownerWinNow ? 4 : -6,
+                        playerMorale: -2,
                         mediaPerception: 5,
                         legacyPoints: 10,
-                        fanExcitement: 12
+                        fanExcitement: 14
                     )
                 ),
-                // Humble: Good for owner/media, fans disappointed
+                // Humble: Best Owner trust, best Morale. Cost: Fans bored
                 PressResponse(
                     text: "First, I need to understand what we have. Then we build, brick by brick.",
                     tone: .humble,
                     mediaReaction: "\(r.outlet): \"New leader takes measured approach in \(team.city).\"",
                     effects: PressEffects(
-                        ownerSatisfaction: 8,
-                        playerMorale: 2,
-                        mediaPerception: 6,
+                        ownerSatisfaction: 10,
+                        playerMorale: 6,
+                        mediaPerception: 3,
                         legacyPoints: 2,
-                        fanExcitement: -3
+                        fanExcitement: -5
                     )
                 ),
-                // Aggressive: Huge media buzz, but tanks morale and risks owner
+                // Aggressive: Best Media buzz. Cost: Morale tanks, owner unhappy
                 PressResponse(
                     text: "This roster needs a complete overhaul. There are going to be a lot of changes.",
                     tone: .aggressive,
                     mediaReaction: "\(r.outlet): \"New GM already critical of \(team.name) roster!\"",
                     effects: PressEffects(
-                        ownerSatisfaction: ownerWinNow ? -8 : 3,
-                        playerMorale: -10,
-                        mediaPerception: 18,
+                        ownerSatisfaction: ownerWinNow ? -10 : 2,
+                        playerMorale: -12,
+                        mediaPerception: 20,
                         legacyPoints: 5,
-                        fanExcitement: 3
+                        fanExcitement: 4
                     )
                 ),
-                // Diplomatic: All small positives, no risk, no big reward
+                // Diplomatic: Balanced positives across all axes, never negative — the safe choice
                 PressResponse(
                     text: "There's talent here. We'll evaluate everything and add the right pieces.",
                     tone: .diplomatic,
                     mediaReaction: "\(r.outlet): \"Steady hand takes the reins in \(team.city).\"",
                     effects: PressEffects(
-                        ownerSatisfaction: 2,
-                        playerMorale: 2,
-                        mediaPerception: 1,
-                        legacyPoints: 1,
-                        fanExcitement: 1
+                        ownerSatisfaction: 4,
+                        playerMorale: 4,
+                        mediaPerception: 4,
+                        legacyPoints: 3,
+                        fanExcitement: 4
                     )
                 ),
             ]
@@ -440,56 +440,56 @@ enum PressConferenceEngine {
             outlet: r.outlet,
             question: "How do you plan to handle the salary cap situation?",
             responses: [
-                // Confident: Big fan/legacy boost, risk with owner if cap is tight
+                // Confident: Best Fans excitement, strong Legacy. Risk: Owner penalty if cap tight
                 PressResponse(
                     text: "We'll be aggressive. You have to spend money to win in this league.",
                     tone: .confident,
                     mediaReaction: "\(r.outlet): \"\(team.name) expected to be big spenders this offseason.\"",
                     effects: PressEffects(
-                        ownerSatisfaction: capTight ? -5 : 3,
-                        playerMorale: 3,
+                        ownerSatisfaction: capTight ? -8 : 2,
+                        playerMorale: 4,
                         mediaPerception: 4,
                         legacyPoints: 8,
-                        fanExcitement: 12
+                        fanExcitement: 14
                     )
                 ),
-                // Diplomatic: Small all-around positives
+                // Diplomatic: Balanced positives, no negatives — the safe choice
                 PressResponse(
                     text: "The cap is a tool. We need to be smart, not reckless.",
                     tone: .diplomatic,
                     mediaReaction: "\(r.outlet): \"New front office preaches fiscal discipline.\"",
                     effects: PressEffects(
-                        ownerSatisfaction: 3,
-                        playerMorale: 1,
-                        mediaPerception: 2,
-                        legacyPoints: 2,
-                        fanExcitement: 1
+                        ownerSatisfaction: 5,
+                        playerMorale: 3,
+                        mediaPerception: 3,
+                        legacyPoints: 3,
+                        fanExcitement: 3
                     )
                 ),
-                // Aggressive: Huge media splash, tanks morale and risks owner
+                // Aggressive: Best Media buzz, hurts everything else
                 PressResponse(
                     text: "Some of these contracts are... let's just say I have a lot of work to do.",
                     tone: .aggressive,
                     mediaReaction: "\(r.outlet): \"Shots fired? New GM hints at roster purge.\"",
                     effects: PressEffects(
-                        ownerSatisfaction: -5,
-                        playerMorale: -8,
-                        mediaPerception: 18,
+                        ownerSatisfaction: -6,
+                        playerMorale: -10,
+                        mediaPerception: 20,
                         legacyPoints: 5,
-                        fanExcitement: 3
+                        fanExcitement: 2
                     )
                 ),
-                // Humble: Good for owner/media, fans bored
+                // Humble: Best Owner satisfaction, best Morale. Cost: Fans bored
                 PressResponse(
                     text: "I inherited a situation. I'll learn the books, then make my moves.",
                     tone: .humble,
                     mediaReaction: "\(r.outlet): \"Patience is the word in \(team.city).\"",
                     effects: PressEffects(
-                        ownerSatisfaction: 7,
-                        playerMorale: 2,
-                        mediaPerception: 5,
+                        ownerSatisfaction: 10,
+                        playerMorale: 6,
+                        mediaPerception: 4,
                         legacyPoints: 2,
-                        fanExcitement: -3
+                        fanExcitement: -5
                     )
                 ),
             ]
@@ -504,57 +504,57 @@ enum PressConferenceEngine {
             outlet: r.outlet,
             question: "What's your message to the fans of the \(team.name)?",
             responses: [
-                // Confident (parade route): TRUE high risk/high reward
-                // +20 legacy if delivered (tracked via promise), big fan spike, but owner/morale risk
+                // Confident (parade route): TRUE high risk/high reward — best Legacy, big Fans
+                // +20 legacy if delivered (tracked via promise), but owner/morale risk
                 PressResponse(
                     text: "Start planning the parade route.",
                     tone: .confident,
                     mediaReaction: "\(r.outlet): \"PARADE ROUTE?! New GM goes all-in on championship promise.\"",
                     effects: PressEffects(
-                        ownerSatisfaction: -5,
-                        playerMorale: -3,
+                        ownerSatisfaction: -7,
+                        playerMorale: -4,
                         mediaPerception: 8,
                         legacyPoints: 20,
-                        fanExcitement: 15
+                        fanExcitement: 14
                     )
                 ),
-                // Humble: Good for owner/media, fans meh
+                // Humble: Best Owner trust, best Morale. Cost: Fans disappointed
                 PressResponse(
                     text: "Trust the process. We're going to earn your support every single day.",
                     tone: .humble,
                     mediaReaction: "\(r.outlet): \"New leadership asks fans for patience and trust.\"",
                     effects: PressEffects(
-                        ownerSatisfaction: 6,
-                        playerMorale: 3,
-                        mediaPerception: 5,
+                        ownerSatisfaction: 9,
+                        playerMorale: 6,
+                        mediaPerception: 4,
                         legacyPoints: 2,
-                        fanExcitement: -3
+                        fanExcitement: -5
                     )
                 ),
-                // Funny: Big fan boost, slight media credibility hit, good for locker room
+                // Funny: Best Fans, big locker room boost. Cost: Media credibility hit
                 PressResponse(
                     text: "I promise -- the hot dogs at the stadium are going to be better this year.",
                     tone: .funny,
                     mediaReaction: "\(r.outlet): \"LOL -- new GM wins over the press room with humor.\"",
                     effects: PressEffects(
                         ownerSatisfaction: 1,
-                        playerMorale: 5,
-                        mediaPerception: -2,
+                        playerMorale: 7,
+                        mediaPerception: -4,
                         legacyPoints: 1,
-                        fanExcitement: 12
+                        fanExcitement: 16
                     )
                 ),
-                // Diplomatic: Small all-around positives
+                // Diplomatic: Balanced positives, no negatives — the safe choice
                 PressResponse(
                     text: "This is your team. I'm just here to make sure we give you something to cheer about.",
                     tone: .diplomatic,
                     mediaReaction: "\(r.outlet): \"Humble words from the new man in charge.\"",
                     effects: PressEffects(
-                        ownerSatisfaction: 2,
-                        playerMorale: 2,
-                        mediaPerception: 2,
-                        legacyPoints: 1,
-                        fanExcitement: 3
+                        ownerSatisfaction: 4,
+                        playerMorale: 4,
+                        mediaPerception: 4,
+                        legacyPoints: 3,
+                        fanExcitement: 5
                     )
                 ),
             ]
@@ -569,56 +569,56 @@ enum PressConferenceEngine {
             outlet: r.outlet,
             question: "What about the upcoming draft? How are you approaching it?",
             responses: [
-                // Confident: Big legacy/fan payoff, slight owner risk
+                // Confident: Best Fans/Legacy. Cost: Owner penalty (perceived as inflexible)
                 PressResponse(
                     text: "We're going to take the best player available. Period. No reaching.",
                     tone: .confident,
                     mediaReaction: "\(r.outlet): \"BPA philosophy for the new \(team.name) regime.\"",
                     effects: PressEffects(
-                        ownerSatisfaction: -3,
-                        playerMorale: 1,
+                        ownerSatisfaction: -5,
+                        playerMorale: 2,
                         mediaPerception: 4,
                         legacyPoints: 10,
-                        fanExcitement: 8
+                        fanExcitement: 10
                     )
                 ),
-                // Humble: Good for owner/media, fans disappointed
+                // Humble: Best Owner trust, best Morale. Cost: Fans bored
                 PressResponse(
                     text: "I need to study the tape. I don't want to commit to a strategy before I've done my homework.",
                     tone: .humble,
                     mediaReaction: "\(r.outlet): \"New GM wants to see film before making draft plans.\"",
                     effects: PressEffects(
-                        ownerSatisfaction: 5,
-                        playerMorale: 1,
-                        mediaPerception: 5,
+                        ownerSatisfaction: 8,
+                        playerMorale: 5,
+                        mediaPerception: 4,
                         legacyPoints: 2,
-                        fanExcitement: -3
+                        fanExcitement: -5
                     )
                 ),
-                // Aggressive: Big media splash, hurts morale and owner
+                // Aggressive: Best Media buzz. Cost: hurts everything else
                 PressResponse(
                     text: "If we can trade back and stockpile picks, that's what we're doing. Quantity has a quality of its own.",
                     tone: .aggressive,
                     mediaReaction: "\(r.outlet): \"Trade-back strategy on the table for \(team.city).\"",
                     effects: PressEffects(
-                        ownerSatisfaction: -6,
-                        playerMorale: -7,
-                        mediaPerception: 15,
+                        ownerSatisfaction: -7,
+                        playerMorale: -8,
+                        mediaPerception: 18,
                         legacyPoints: 5,
                         fanExcitement: -3
                     )
                 ),
-                // Diplomatic: All small positives
+                // Diplomatic: Balanced positives, no negatives — the safe choice
                 PressResponse(
                     text: "The draft is how you build dynasties. We're going to nail this.",
                     tone: .diplomatic,
                     mediaReaction: "\(r.outlet): \"\(team.name) putting emphasis on the draft.\"",
                     effects: PressEffects(
-                        ownerSatisfaction: 2,
-                        playerMorale: 2,
-                        mediaPerception: 2,
-                        legacyPoints: 1,
-                        fanExcitement: 2
+                        ownerSatisfaction: 4,
+                        playerMorale: 4,
+                        mediaPerception: 3,
+                        legacyPoints: 3,
+                        fanExcitement: 4
                     )
                 ),
             ]
@@ -633,56 +633,56 @@ enum PressConferenceEngine {
             outlet: r.outlet,
             question: "How do you handle the media pressure in \(team.city)?",
             responses: [
-                // Confident: Big legacy/fans, slight owner/morale risk
+                // Confident: Big Legacy, strong Fans. Cost: Owner/Morale risk
                 PressResponse(
                     text: "I thrive in it. The bigger the stage, the better I perform.",
                     tone: .confident,
                     mediaReaction: "\(r.outlet): \"Fearless attitude from the new front office boss.\"",
                     effects: PressEffects(
-                        ownerSatisfaction: -3,
+                        ownerSatisfaction: -4,
                         playerMorale: -3,
                         mediaPerception: 5,
                         legacyPoints: 12,
                         fanExcitement: 10
                     )
                 ),
-                // Aggressive: Very high media reward, clear negatives in owner/media relationship
+                // Aggressive: Best Legacy. Cost: Media tanked, owner unhappy
                 PressResponse(
                     text: "I don't read the papers. I just do my job.",
                     tone: .aggressive,
                     mediaReaction: "\(r.outlet): \"New GM seems uninterested in cozy media relationships.\"",
                     effects: PressEffects(
-                        ownerSatisfaction: -5,
-                        playerMorale: 5,
-                        mediaPerception: -8,
+                        ownerSatisfaction: -6,
+                        playerMorale: 6,
+                        mediaPerception: -10,
                         legacyPoints: 15,
                         fanExcitement: 8
                     )
                 ),
-                // Diplomatic: Small all-around positives
+                // Diplomatic: Best Owner trust + best Media, balanced positives, no negatives
                 PressResponse(
                     text: "I respect the media. You have a job to do, and so do I. Let's work together.",
                     tone: .diplomatic,
                     mediaReaction: "\(r.outlet): \"Refreshing transparency from the new regime.\"",
                     effects: PressEffects(
-                        ownerSatisfaction: 2,
-                        playerMorale: 1,
-                        mediaPerception: 3,
-                        legacyPoints: 1,
-                        fanExcitement: 2
+                        ownerSatisfaction: 6,
+                        playerMorale: 3,
+                        mediaPerception: 6,
+                        legacyPoints: 3,
+                        fanExcitement: 3
                     )
                 ),
-                // Funny: Big fan boost, slight media credibility hit, good for locker room
+                // Funny: Best Fans, best Morale. Cost: Media credibility hit
                 PressResponse(
                     text: "Pressure? I've been under pressure my whole career. This is Tuesday for me.",
                     tone: .funny,
                     mediaReaction: "\(r.outlet): \"Ha! New GM keeps it cool under the bright lights.\"",
                     effects: PressEffects(
-                        ownerSatisfaction: 1,
-                        playerMorale: 5,
+                        ownerSatisfaction: 2,
+                        playerMorale: 8,
                         mediaPerception: -3,
                         legacyPoints: 2,
-                        fanExcitement: 15
+                        fanExcitement: 16
                     )
                 ),
             ]

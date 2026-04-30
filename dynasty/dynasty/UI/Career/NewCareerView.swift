@@ -62,7 +62,7 @@ struct NewCareerView: View {
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
-            UISegmentedControl.appearance().selectedSegmentTintColor = UIColor(Color.accentGold)
+            UISegmentedControl.appearance().selectedSegmentTintColor = UIColor(Color.accentBlue)
             UISegmentedControl.appearance().setTitleTextAttributes(
                 [.foregroundColor: UIColor(Color.backgroundPrimary)], for: .selected
             )
@@ -97,7 +97,7 @@ struct NewCareerView: View {
                         .frame(height: 6)
 
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(Color.accentGold)
+                        .fill(Color.accentBlue)
                         .frame(width: geo.size.width * (currentStep == 1 ? 0.5 : 1.0), height: 6)
                         .animation(.easeInOut(duration: 0.3), value: currentStep)
                 }
@@ -481,10 +481,10 @@ struct NewCareerView: View {
             HStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                 Text(title)
                     .font(.headline.weight(.bold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textPrimary)
             }
 
             content()
@@ -521,18 +521,18 @@ private struct CoachingStyleCard: View {
         HStack(spacing: 8) {
             ZStack {
                 Circle()
-                    .fill(isSelected ? Color.accentGold.opacity(0.2) : Color.backgroundSecondary)
+                    .fill(isSelected ? Color.accentBlue.opacity(0.2) : Color.backgroundSecondary)
                     .frame(width: 30, height: 30)
                 Image(systemName: style.icon)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(isSelected ? Color.accentGold : Color.textSecondary)
+                    .foregroundStyle(isSelected ? Color.accentBlue : Color.textSecondary)
             }
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(style.displayName)
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(isSelected ? Color.accentGold : Color.textPrimary)
+                        .foregroundStyle(isSelected ? Color.textPrimary : Color.textPrimary)
 
                     // #107: Beginner guidance tag
                     if isRecommended {
@@ -549,7 +549,7 @@ private struct CoachingStyleCard: View {
 
                 Text(gameplayEffect)
                     .font(.system(size: 9, weight: .medium).italic())
-                    .foregroundStyle(isSelected ? Color.accentGold.opacity(0.7) : Color.textTertiary)
+                    .foregroundStyle(isSelected ? Color.textSecondary : Color.textTertiary)
             }
 
             Spacer(minLength: 4)
@@ -558,10 +558,10 @@ private struct CoachingStyleCard: View {
             VStack(spacing: 1) {
                 Text("+\(style.bonusValue)")
                     .font(.system(size: 13, weight: .bold).monospacedDigit())
-                    .foregroundStyle(isSelected ? Color.accentGold : Color.textTertiary)
+                    .foregroundStyle(isSelected ? Color.accentBlue : Color.textTertiary)
                 Text(style.bonusAttribute)
                     .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(isSelected ? Color.accentGold.opacity(0.8) : Color.textTertiary)
+                    .foregroundStyle(isSelected ? Color.textSecondary : Color.textTertiary)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
             }
@@ -571,12 +571,12 @@ private struct CoachingStyleCard: View {
         .padding(.vertical, 5)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(isSelected ? Color.accentGold.opacity(0.08) : Color.backgroundPrimary)
+                .fill(isSelected ? Color.accentBlue.opacity(0.08) : Color.backgroundPrimary)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(
-                    isSelected ? Color.accentGold : Color.surfaceBorder,
+                    isSelected ? Color.accentBlue : Color.surfaceBorder,
                     lineWidth: isSelected ? 2 : 1
                 )
         )

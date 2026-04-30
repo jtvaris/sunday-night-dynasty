@@ -476,18 +476,19 @@ private struct TeamOverviewStep: View {
         Array(players.sorted { $0.overall > $1.overall }.prefix(3))
     }
 
-    /// Position group with the lowest average overall, including grade and OVR.
+    /// Position group with the lowest starter-average overall, including grade and OVR.
+    /// Uses `PositionGradeCalculator` so it stays consistent with the
+    /// "Position Group Strengths" card (both rely on the top-N starter average).
     private var weakestPositionGroup: String {
         guard !players.isEmpty else { return "N/A" }
-        let grouped = Dictionary(grouping: players, by: { Self.positionGroupName(for: $0.position) })
-        guard let weakest = grouped.min(by: {
-            let avg0 = $0.value.map(\.overall).reduce(0, +) / max($0.value.count, 1)
-            let avg1 = $1.value.map(\.overall).reduce(0, +) / max($1.value.count, 1)
-            return avg0 < avg1
-        }) else { return "N/A" }
-        let avg = weakest.value.map(\.overall).reduce(0, +) / max(weakest.value.count, 1)
-        let grade = Self.gradeForAverage(avg)
-        return "\(weakest.key) (\(grade), \(avg) OVR)"
+        let groupGrades: [(name: String, grade: String, ovr: Int)] = Self.groupPositions.compactMap { group in
+            let groupPlayers = players.filter { group.positions.contains($0.position) }
+            guard !groupPlayers.isEmpty else { return nil }
+            let g = PositionGradeCalculator.calculatePositionGrades(players: groupPlayers, positions: group.positions)
+            return (group.name, g.starterGrade, g.starterOVR)
+        }
+        guard let weakest = groupGrades.min(by: { $0.ovr < $1.ovr }) else { return "N/A" }
+        return "\(weakest.name) (\(weakest.grade), \(weakest.ovr) OVR)"
     }
 
     private var filledCoachingSlots: Int {

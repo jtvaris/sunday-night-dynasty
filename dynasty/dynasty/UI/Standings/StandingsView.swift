@@ -64,15 +64,15 @@ struct StandingsView: View {
             }
         }
         .pickerStyle(.segmented)
-        .tint(Color.accentGold)
-        // Force gold selection tint via UISegmentedControl appearance
-        .onAppear { applyGoldSegmentAppearance() }
+        .tint(Color.accentBlue)
+        // Force tab-style selection tint via UISegmentedControl appearance
+        .onAppear { applySegmentAppearance() }
     }
 
-    private func applyGoldSegmentAppearance() {
-        let gold = UIColor(Color.accentGold)
+    private func applySegmentAppearance() {
+        let blue = UIColor(Color.accentBlue)
         let navy = UIColor(Color.backgroundPrimary)
-        UISegmentedControl.appearance().selectedSegmentTintColor = gold
+        UISegmentedControl.appearance().selectedSegmentTintColor = blue
         UISegmentedControl.appearance().setTitleTextAttributes(
             [.foregroundColor: navy],
             for: .selected
@@ -140,7 +140,7 @@ private struct DivisionStandingsSection: View {
         HStack {
             Text("\(conference.rawValue) \(division.rawValue.uppercased())")
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.textSecondary)
                 .tracking(1.5)
             Spacer()
         }

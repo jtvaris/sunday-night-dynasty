@@ -158,7 +158,7 @@ struct ProspectDetailView: View {
         let confidenceColor: Color = {
             switch count {
             case 0:  return .textTertiary
-            case 1:  return .accentGold
+            case 1:  return .warning
             case 2:  return .accentBlue
             default: return .success
             }
@@ -283,8 +283,8 @@ struct ProspectDetailView: View {
 
     private var athleticProfileColor: Color {
         switch athleticProfileLabel {
-        case "Elite": return .success
-        case "Above Average": return .accentGold
+        case "Elite": return .accentGold
+        case "Above Average": return .success
         case "Average": return .accentBlue
         case "Below Average": return .warning
         default: return .danger
@@ -479,7 +479,7 @@ struct ProspectDetailView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "figure.run.circle.fill")
                         .font(.subheadline)
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.textSecondary)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Position Drills")
                             .font(.subheadline.weight(.semibold))
@@ -558,7 +558,7 @@ struct ProspectDetailView: View {
                 LabeledContent("Scout Grade") {
                     Text(grade)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.textPrimary)
                 }
             }
 
@@ -658,7 +658,7 @@ struct ProspectDetailView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "bubble.left.and.bubble.right.fill")
                         .font(.subheadline)
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.accentBlue)
                     Text("Interview Results")
                         .font(.headline.weight(.bold))
                         .foregroundStyle(Color.textPrimary)
@@ -875,8 +875,8 @@ struct ProspectDetailView: View {
 
     private func interviewDetailGradeColor(_ grade: String) -> Color {
         switch grade {
-        case "A": return .success
-        case "B": return .accentGold
+        case "A": return .accentGold
+        case "B": return .success
         case "C": return .warning
         case "D": return .danger
         default:  return .danger
@@ -900,8 +900,8 @@ struct ProspectDetailView: View {
     }
 
     private func footballIQDetailColor(_ iq: Int) -> Color {
-        if iq >= 85 { return .success }
-        if iq >= 75 { return .accentGold }
+        if iq >= 85 { return .accentGold }
+        if iq >= 75 { return .success }
         if iq >= 65 { return .warning }
         if iq >= 55 { return .danger }
         return .danger
@@ -1333,7 +1333,7 @@ struct ProspectDetailView: View {
                 } label: {
                     HStack {
                         Label("Invite for Workout", systemImage: "figure.run")
-                            .foregroundStyle(Color.accentGold)
+                            .foregroundStyle(Color.accentBlue)
                         Spacer()
                         Text("Workouts: \(career.workoutsUsed)/30 used")
                             .font(.caption)
@@ -1430,8 +1430,8 @@ struct ProspectDetailView: View {
 
     private func projectionColor(_ round: Int) -> Color {
         switch round {
-        case 1:    return .success
-        case 2...3: return .accentGold
+        case 1:    return .accentGold
+        case 2...3: return .success
         case 4...5: return .warning
         default:   return .textSecondary
         }
@@ -1439,8 +1439,8 @@ struct ProspectDetailView: View {
 
     private func detailGradeColor(_ grade: LetterGrade) -> Color {
         switch grade.rank {
-        case 10...12: return .success      // A range
-        case 7...9:   return .accentGold   // B range
+        case 10...12: return .accentGold   // A range — elite
+        case 7...9:   return .success      // B range
         case 4...6:   return .warning      // C range
         case 2...3:   return .danger       // D range
         default:      return .danger       // F
@@ -1449,8 +1449,8 @@ struct ProspectDetailView: View {
 
     private func potentialLabelColor(_ label: PotentialLabel) -> Color {
         switch label {
-        case .eliteCeiling:  return .success
-        case .highUpside:    return .accentGold
+        case .eliteCeiling:  return .accentGold
+        case .highUpside:    return .success
         case .solidStarter:  return .accentBlue
         case .average:       return .warning
         case .limitedUpside: return .danger
@@ -1642,8 +1642,9 @@ private struct CombineMeasurableRow: View {
     }
 
     private func percentileColor(_ pct: Int) -> Color {
+        if pct >= 90 { return .accentGold }
         if pct >= 75 { return .success }
-        if pct >= 50 { return .accentGold }
+        if pct >= 50 { return .accentBlue }
         if pct >= 25 { return .warning }
         return .danger
     }
@@ -1742,7 +1743,7 @@ private struct SendScoutSheet: View {
                         Section {
                             HStack(spacing: 8) {
                                 Image(systemName: "info.circle")
-                                    .foregroundStyle(Color.accentGold)
+                                    .foregroundStyle(Color.accentBlue.opacity(0.6))
                                 Text("Phase: \(scoutingPhase.displayName) (Confidence: \(Int(scoutingPhase.confidenceLevel * 100))%)")
                                     .font(.subheadline)
                                     .foregroundStyle(Color.textSecondary)

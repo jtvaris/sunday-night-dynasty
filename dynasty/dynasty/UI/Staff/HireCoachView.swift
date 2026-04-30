@@ -283,6 +283,10 @@ struct HireCoachView: View {
                 candidateRank: candidateRank(for: candidate),
                 totalCandidates: filteredCandidates.count,
                 schemeFitResult: schemeFit(for: candidate),
+                // BUG FIX: When user is GM+HC, no .headCoach Coach record exists.
+                // Pass user's coaching style so chemistry can be evaluated against the user.
+                userIsHeadCoach: allCareers.first?.role == .gmAndHeadCoach,
+                userCoachingStyle: allCareers.first?.coachingStyle,
                 onHire: { hire(candidate) },
                 onRejected: { rejectedCandidates.insert(candidate.id) }
             )
@@ -975,6 +979,10 @@ private struct CandidateDetailSheet: View {
     let candidateRank: Int
     let totalCandidates: Int
     let schemeFitResult: (color: Color, label: String)?
+    /// BUG FIX: True when the user's career role is .gmAndHeadCoach (no HC Coach record exists).
+    let userIsHeadCoach: Bool
+    /// BUG FIX: User's coaching style — used as the HC reference for chemistry when userIsHeadCoach.
+    let userCoachingStyle: CoachingStyle?
     let onHire: () -> Void
     /// #271: Callback when candidate rejects offer
     var onRejected: (() -> Void)?
@@ -985,7 +993,7 @@ private struct CandidateDetailSheet: View {
     @State private var proposedYears: Int = 3
     @State private var negotiationResult: NegotiationResult?
 
-    init(candidate: Coach, remainingBudget: Int, isHired: Bool, headCoach: Coach?, currentCoach: Coach?, candidateRank: Int, totalCandidates: Int, schemeFitResult: (color: Color, label: String)?, onHire: @escaping () -> Void, onRejected: (() -> Void)? = nil) {
+    init(candidate: Coach, remainingBudget: Int, isHired: Bool, headCoach: Coach?, currentCoach: Coach?, candidateRank: Int, totalCandidates: Int, schemeFitResult: (color: Color, label: String)?, userIsHeadCoach: Bool = false, userCoachingStyle: CoachingStyle? = nil, onHire: @escaping () -> Void, onRejected: (() -> Void)? = nil) {
         self.candidate = candidate
         self.remainingBudget = remainingBudget
         self.isHired = isHired
@@ -994,6 +1002,8 @@ private struct CandidateDetailSheet: View {
         self.candidateRank = candidateRank
         self.totalCandidates = totalCandidates
         self.schemeFitResult = schemeFitResult
+        self.userIsHeadCoach = userIsHeadCoach
+        self.userCoachingStyle = userCoachingStyle
         self.onHire = onHire
         self.onRejected = onRejected
         self._proposedSalary = State(initialValue: Double(candidate.salary))
@@ -1323,6 +1333,37 @@ private struct CandidateDetailSheet: View {
 
     /// Fix #70: Pre-hire chemistry prediction with HC.
     private var chemistryPrediction: (label: String, color: Color, description: String) {
+        // BUG FIX: When the user IS the head coach (career.role == .gmAndHeadCoach),
+        // no Coach record exists for the HC, so `headCoach` is nil. Evaluate chemistry
+        // against the user's coaching style instead of showing "No HC hired".
+        if headCoach == nil, userIsHeadCoach, let style = userCoachingStyle {
+            // Coaching-style ↔ candidate-personality compatibility heuristic.
+            let strongFits: [CoachingStyle: Set<PersonalityArchetype>] = [
+                .tactician:      [.quietProfessional, .steadyPerformer],
+                .playersCoach:   [.teamLeader, .mentor, .feelPlayer],
+                .disciplinarian: [.quietProfessional, .steadyPerformer],
+                .innovator:      [.feelPlayer, .mentor],
+                .motivator:      [.fieryCompetitor, .teamLeader]
+            ]
+            let weakFits: [CoachingStyle: Set<PersonalityArchetype>] = [
+                .tactician:      [.classClown, .dramaQueen],
+                .playersCoach:   [.loneWolf],
+                .disciplinarian: [.classClown, .dramaQueen, .loneWolf],
+                .innovator:      [.steadyPerformer],
+                .motivator:      [.quietProfessional]
+            ]
+            if strongFits[style]?.contains(candidate.personality) == true {
+                return ("Strong", .success,
+                        "\(candidate.personality.displayName) fits well with your \(style.displayName) approach.")
+            }
+            if weakFits[style]?.contains(candidate.personality) == true {
+                return ("Weak", .danger,
+                        "\(candidate.personality.displayName) may clash with your \(style.displayName) approach.")
+            }
+            return ("Average", .textSecondary,
+                    "Neutral fit with your \(style.displayName) approach.")
+        }
+
         guard let hc = headCoach else {
             return ("Unknown", .textTertiary, "No Head Coach on staff to evaluate chemistry.")
         }

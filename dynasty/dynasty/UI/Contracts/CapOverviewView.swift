@@ -23,7 +23,7 @@ struct CapOverviewView: View {
                         contractListCard(team: team)
                     } else {
                         ProgressView()
-                            .tint(Color.accentGold)
+                            .tint(Color.accentBlue)
                             .padding(.top, 80)
                     }
                 }
@@ -45,7 +45,7 @@ struct CapOverviewView: View {
             HStack(spacing: 8) {
                 Image(systemName: "dollarsign.circle.fill")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                 Text("Cap Summary")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(Color.textPrimary)
@@ -58,7 +58,7 @@ struct CapOverviewView: View {
                 capStatColumn(
                     label: "Total Cap",
                     value: formatMillions(team.salaryCap),
-                    color: .accentGold
+                    color: .textPrimary
                 )
                 capStatColumn(
                     label: "Used Cap",
@@ -156,7 +156,7 @@ struct CapOverviewView: View {
             HStack(spacing: 8) {
                 Image(systemName: "calendar.badge.clock")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                 Text("Next Season Outlook")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(Color.textPrimary)
@@ -175,7 +175,7 @@ struct CapOverviewView: View {
                 capStatColumn(
                     label: "Projected Cap",
                     value: formatMillions(projectedCap),
-                    color: .accentGold
+                    color: .textPrimary
                 )
             }
 
@@ -270,7 +270,7 @@ struct CapOverviewView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "doc.text.fill")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.textSecondary)
                     Text("Player Contracts")
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
@@ -316,7 +316,7 @@ struct CapOverviewView: View {
                     Spacer()
                     Text(formatMillions(players.reduce(0) { $0 + $1.annualSalary }))
                         .font(.subheadline.weight(.bold).monospacedDigit())
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.textPrimary)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 14)
@@ -392,7 +392,7 @@ struct CapOverviewView: View {
 
     private func capBarGradient(team: Team) -> LinearGradient {
         let pct = usagePercentage(team: team)
-        let color: Color = pct > 1.0 ? .danger : (pct > 0.9 ? .warning : .accentGold)
+        let color: Color = pct > 1.0 ? .danger : (pct > 0.9 ? .warning : .accentBlue)
         return LinearGradient(
             colors: [color.opacity(0.7), color],
             startPoint: .leading,

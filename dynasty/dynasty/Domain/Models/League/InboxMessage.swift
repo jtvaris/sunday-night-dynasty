@@ -147,32 +147,57 @@ struct MessageAttachment: Codable, Identifiable {
 // MARK: - Inbox Filter
 
 enum InboxFilter: String, CaseIterable {
-    case all       = "All"
-    case owner     = "Owner"
-    case staff     = "Staff"
-    case scouting  = "Scouting"
-    case media     = "Media"
+    case all             = "All"
+    case actionRequired  = "Action Required"
+    case unread          = "Unread"
 
     func matches(_ message: InboxMessage) -> Bool {
         switch self {
         case .all:
             return true
-        case .owner:
-            if case .owner = message.sender { return true }
-            return message.category == .ownerDirective
-        case .staff:
-            switch message.sender {
-            case .offensiveCoordinator, .defensiveCoordinator:
-                return true
-            default:
-                return message.category == .staffUpdate
-            }
-        case .scouting:
-            if case .scout = message.sender { return true }
-            return message.category == .scoutingReport || message.category == .draftPrep
-        case .media:
-            if case .media = message.sender { return true }
-            return message.category == .mediaRequest
+        case .actionRequired:
+            return message.actionRequired
+        case .unread:
+            return !message.isRead
+        }
+    }
+}
+
+// MARK: - Task Destination Display
+
+extension TaskDestination {
+    /// Human-readable label suitable for button copy in messages
+    /// (e.g. "Open Combine Results →"). Falls back to a formatted version
+    /// of the case name for any destinations that don't have a curated label.
+    var inboxDisplayName: String {
+        switch self {
+        case .roster:               return "Roster"
+        case .depthChart:           return "Depth Chart"
+        case .gamePlan:             return "Game Plan"
+        case .schedule:             return "Schedule"
+        case .standings:            return "Standings"
+        case .coachingStaff:        return "Coaching Staff"
+        case .hireCoach:            return "Hire Coach"
+        case .hireHC:               return "Hire Head Coach"
+        case .hireOC:               return "Hire Offensive Coordinator"
+        case .hireDC:               return "Hire Defensive Coordinator"
+        case .scouting:             return "Scouting Hub"
+        case .prospectList:         return "Prospect List"
+        case .bigBoard:             return "Big Board"
+        case .capOverview:          return "Cap Overview"
+        case .freeAgency:           return "Free Agency"
+        case .contractTimeline:     return "Contract Timeline"
+        case .draft:                return "Draft Room"
+        case .mentoring:            return "Mentoring"
+        case .trades:               return "Trades"
+        case .news:                 return "News"
+        case .ownerMeeting:         return "Owner Meeting"
+        case .lockerRoom:           return "Locker Room"
+        case .inbox:                return "Inbox"
+        case .rosterEvaluation:     return "Roster Evaluation"
+        case .franchiseTag:         return "Franchise Tag"
+        case .interviewReport:      return "Interview Report"
+        case .personalWorkouts:     return "Personal Workouts"
         }
     }
 }

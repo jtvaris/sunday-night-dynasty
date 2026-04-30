@@ -115,3 +115,88 @@ struct UserGradeBadge: View {
         }
     }
 }
+
+// MARK: - Info Tooltip Button (reusable explainer popover)
+
+/// A small "(i)" button that opens an explainer popover. Use next to column headers
+/// or inline with rating displays to explain notation like `87 (79)` (scout vs true).
+///
+/// Optional `showLetterGradeKey` adds the A/B/C/D/F tier color legend.
+struct InfoTooltipButton: View {
+    let text: String
+    var showLetterGradeKey: Bool = false
+    var size: CGFloat = 11
+    var tint: Color = .accentBlue
+
+    @State private var showing = false
+
+    var body: some View {
+        Button {
+            showing = true
+        } label: {
+            Image(systemName: "info.circle")
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(tint)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("More info")
+        .popover(isPresented: $showing, attachmentAnchor: .point(.center), arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(text)
+                    .font(.footnote)
+                    .foregroundStyle(Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if showLetterGradeKey {
+                    Divider().overlay(Color.surfaceBorder)
+                    Text("Grade tiers")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.textSecondary)
+                        .textCase(.uppercase)
+                    LetterGradeLegend()
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: 280)
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
+/// Color legend for letter grades A-F. Matches `gradeColor(_:)` palette used in
+/// ProspectListView / BigBoardView (success / accentGold / warning / danger).
+struct LetterGradeLegend: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            legendCell("A", color: .success)
+            legendCell("B", color: .accentGold)
+            legendCell("C", color: .warning)
+            legendCell("D", color: .danger)
+            legendCell("F", color: .danger)
+        }
+    }
+
+    private func legendCell(_ letter: String, color: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(letter)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 22, height: 22)
+                .background(color, in: RoundedRectangle(cornerRadius: 4))
+            Text(tierLabel(letter))
+                .font(.system(size: 8, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
+        }
+    }
+
+    private func tierLabel(_ letter: String) -> String {
+        switch letter {
+        case "A": return "Elite"
+        case "B": return "Quality"
+        case "C": return "Avg"
+        case "D": return "Below"
+        case "F": return "Poor"
+        default:  return ""
+        }
+    }
+}

@@ -42,7 +42,7 @@ struct FormationView: View {
                         .foregroundStyle(Color.textPrimary)
                     Text(layout.formationName)
                         .font(.caption)
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.textSecondary)
                 }
                 Spacer()
 
@@ -201,11 +201,11 @@ struct FormationView: View {
                             .padding(.vertical, 5)
                             .background(
                                 Capsule()
-                                    .fill(layout == formation ? Color.accentGold : Color.backgroundPrimary.opacity(0.5))
+                                    .fill(layout == formation ? Color.accentBlue : Color.backgroundPrimary.opacity(0.5))
                             )
                             .overlay(
                                 Capsule()
-                                    .strokeBorder(layout == formation ? Color.accentGold : Color.surfaceBorder, lineWidth: 0.5)
+                                    .strokeBorder(layout == formation ? Color.accentBlue : Color.surfaceBorder, lineWidth: 0.5)
                             )
                     }
                     .contentShape(Capsule())
@@ -364,7 +364,7 @@ struct FormationView: View {
 
             // Line of scrimmage
             Rectangle()
-                .fill(Color.accentGold.opacity(0.4))
+                .fill(Color.white.opacity(0.25))
                 .frame(height: 2)
                 .offset(y: (layout.lineOfScrimmageY - 0.5) * height)
         }
@@ -509,7 +509,7 @@ struct FormationView: View {
                                         .padding(.vertical, 2)
                                         .background(
                                             Capsule()
-                                                .fill(Color.accentGold.opacity(0.2))
+                                                .fill(Color.backgroundTertiary)
                                         )
 
                                     // #187: "K. Moore" format
@@ -817,7 +817,7 @@ struct PlayerSlotPicker: View {
                     Section {
                         HStack(spacing: 10) {
                             Image(systemName: "person.fill.checkmark")
-                                .foregroundStyle(Color.accentGold)
+                                .foregroundStyle(Color.success)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Current: \(current.fullName)")
                                     .font(.system(size: 14, weight: .semibold))
@@ -896,7 +896,7 @@ struct PlayerSlotPicker: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.textSecondary)
                 }
             }
         }
@@ -977,7 +977,7 @@ struct PlayerSlotPicker: View {
             // Current assignment indicator
             if let current = currentPlayer, current.id == player.id {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.success)
             }
         }
         .padding(.vertical, 4)
@@ -1051,7 +1051,7 @@ struct StarterBackupComparisonSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.textSecondary)
                 }
             }
         }
@@ -1071,7 +1071,7 @@ struct StarterBackupComparisonSheet: View {
                 HStack(spacing: 8) {
                     Text(role)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(highlight ? Color.accentGold : Color.textSecondary)
+                        .foregroundStyle(highlight ? Color.textPrimary : Color.textSecondary)
                     Text("Age \(player.age)")
                         .font(.system(size: 11))
                         .foregroundStyle(Color.textTertiary)
@@ -1093,7 +1093,7 @@ struct StarterBackupComparisonSheet: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(highlight ? Color.accentGold : Color.surfaceBorder, lineWidth: highlight ? 1.5 : 0.5)
+                .strokeBorder(highlight ? Color.accentBlue : Color.surfaceBorder, lineWidth: highlight ? 1.5 : 0.5)
         )
     }
 }

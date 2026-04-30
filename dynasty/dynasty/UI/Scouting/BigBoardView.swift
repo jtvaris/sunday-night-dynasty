@@ -435,7 +435,7 @@ struct BigBoardView: View {
                     ProgressView()
                         .progressViewStyle(.circular)
                         .scaleEffect(1.5)
-                        .tint(Color.accentGold)
+                        .tint(Color.accentBlue)
                     Text("Loading Big Board...")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
@@ -510,7 +510,7 @@ struct BigBoardView: View {
                             let hasActiveFilter = filterProjectedRoundMin > 1 || filterProjectedRoundMax < 8 || filterRisk != nil || filterStarredOnly || filterMyGradeFirstRound
                             Image(systemName: hasActiveFilter ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                                 .font(.body)
-                                .foregroundStyle(hasActiveFilter ? Color.accentGold : Color.textSecondary)
+                                .foregroundStyle(hasActiveFilter ? Color.accentBlue : Color.textSecondary)
                         }
 
                         // Auto-rank button (#12)
@@ -580,7 +580,7 @@ struct BigBoardView: View {
                             } header: {
                                 Label("My Board (\(cachedCustomOrderedBoard.count))", systemImage: "person.fill")
                                     .font(.caption.weight(.bold))
-                                    .foregroundStyle(Color.accentGold)
+                                    .foregroundStyle(Color.textSecondary)
                                     .textCase(nil)
                             }
                         } else {
@@ -653,7 +653,7 @@ struct BigBoardView: View {
                     }
                 } label: {
                     Image(systemName: "arrow.up.arrow.down")
-                        .foregroundStyle(boardSortOrder == .boardRank ? Color.textSecondary : Color.accentGold)
+                        .foregroundStyle(boardSortOrder == .boardRank ? Color.textSecondary : Color.accentBlue)
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -724,13 +724,13 @@ struct BigBoardView: View {
                         .padding(.vertical, 6)
                         .foregroundStyle(attributeTab == tab ? Color.backgroundPrimary : Color.textSecondary)
                         .background(
-                            attributeTab == tab ? Color.accentGold : Color.backgroundTertiary,
+                            attributeTab == tab ? Color.accentBlue : Color.backgroundTertiary,
                             in: Capsule()
                         )
                         .overlay(
                             Capsule()
                                 .strokeBorder(
-                                    attributeTab == tab ? Color.accentGold : Color.surfaceBorder,
+                                    attributeTab == tab ? Color.accentBlue : Color.surfaceBorder,
                                     lineWidth: 1
                                 )
                         )
@@ -776,17 +776,31 @@ struct BigBoardView: View {
                 bigBoardPositionHeaders
             }
 
-            // Always-visible: OVR
-            Text("OVR")
-                .frame(width: 50, alignment: .center)
+            // Always-visible: OVR (with tooltip explaining dual grade format)
+            HStack(spacing: 2) {
+                Text("OVR")
+                InfoTooltipButton(
+                    text: "Scout's read on the prospect. When you have logged your own grade you'll see \"Yours / Scout\" — a wider gap means more uncertainty in the scout's evaluation. Letter grades use the standard A-F tiers (see legend).",
+                    showLetterGradeKey: true,
+                    size: 9
+                )
+            }
+            .frame(width: 50, alignment: .center)
 
             // Always-visible: Proj Rd (overview) or Grade (others)
             if attributeTab == .overview {
                 Text("PROJ")
                     .frame(width: 52, alignment: .center)
             } else {
-                Text("GRD")
-                    .frame(width: 30, alignment: .center)
+                HStack(spacing: 2) {
+                    Text("GRD")
+                    InfoTooltipButton(
+                        text: "Letter grade summarizes the scout's overall evaluation. A = elite / first-round talent, B = quality starter, C = average, D = back-end roster, F = undraftable.",
+                        showLetterGradeKey: true,
+                        size: 9
+                    )
+                }
+                .frame(width: 30, alignment: .center)
             }
 
             // Drag handle spacer
@@ -915,7 +929,7 @@ struct BigBoardView: View {
         } header: {
             Label("Recommendations", systemImage: "lightbulb.fill")
                 .font(.caption.weight(.bold))
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.textSecondary)
                 .textCase(nil)
         }
     }
@@ -998,7 +1012,7 @@ struct BigBoardView: View {
                     } else {
                         Text("You: Priority \(userPriorityPositions.joined(separator: ", "))")
                             .font(.caption)
-                            .foregroundStyle(Color.accentGold)
+                            .foregroundStyle(Color.accentBlue)
                     }
                 }
             }
@@ -1024,7 +1038,7 @@ struct BigBoardView: View {
                     if let best = bestAvailableForPosition(item.position) {
                         Text("Best: \(best.lastName) (\(bestAvailableGradeText(best)))")
                             .font(.caption2)
-                            .foregroundStyle(Color.accentGold)
+                            .foregroundStyle(Color.textSecondary)
                     }
 
                     let groupID = positionGroupID(for: item.position)
@@ -1227,7 +1241,7 @@ struct BigBoardView: View {
                                 .padding(.vertical, 6)
                                 .background(
                                     Capsule()
-                                        .fill(isSelected ? Color.accentGold : Color.backgroundTertiary)
+                                        .fill(isSelected ? Color.accentBlue : Color.backgroundTertiary)
                                 )
                         }
                         .buttonStyle(.plain)
@@ -1291,7 +1305,7 @@ struct BigBoardView: View {
 
                 Text("Your Assessment")
                     .font(.headline)
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textPrimary)
 
                 LazyVGrid(columns: [
                     GridItem(.flexible()),
@@ -1650,7 +1664,7 @@ struct BigBoardRowView: View {
                     if prospect.scoutReportCount > 0 {
                         Text(prospect.scoutConfidenceDots)
                             .font(.system(size: 7))
-                            .foregroundStyle(prospect.scoutReportCount >= 3 ? Color.success : prospect.scoutReportCount >= 2 ? Color.accentGold : Color.textTertiary)
+                            .foregroundStyle(prospect.scoutReportCount >= 3 ? Color.success : prospect.scoutReportCount >= 2 ? Color.accentBlue : Color.textTertiary)
                     }
 
                     // CMB badge with color coding (#7)
@@ -1893,8 +1907,8 @@ struct BigBoardRowView: View {
 
     private func boardGradeColor(_ grade: LetterGrade) -> Color {
         switch grade {
-        case .aPlus, .a, .aMinus: return .success       // A range = green
-        case .bPlus:              return .accentGold     // B+ = gold
+        case .aPlus, .a, .aMinus: return .accentGold     // A range = elite gold
+        case .bPlus:              return .success        // B+ = green
         case .b:                  return .yellow         // B = yellow
         case .bMinus, .cPlus:     return .warning        // B-/C+ = orange
         default:                  return .danger         // C and below = red
@@ -1965,7 +1979,7 @@ struct BigBoardRowView: View {
             if let grade = prospect.scoutGrade {
                 Text(grade)
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textPrimary)
             } else {
                 Text("--")
                     .font(.system(size: 10, weight: .medium))

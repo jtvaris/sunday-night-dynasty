@@ -111,7 +111,7 @@ struct MockDraftView: View {
                     ProgressView()
                         .progressViewStyle(.circular)
                         .scaleEffect(1.5)
-                        .tint(Color.accentGold)
+                        .tint(Color.accentBlue)
                     Text("Loading Mock Draft...")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
@@ -128,7 +128,7 @@ struct MockDraftView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "lightbulb.fill")
                             .font(.caption2)
-                            .foregroundStyle(Color.accentGold)
+                            .foregroundStyle(Color.accentBlue)
                         Text(strategyRecommendation)
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(Color.textSecondary)
@@ -232,7 +232,7 @@ struct MockDraftView: View {
 
                 Text("Season \(String(career.currentSeason)) \u{2022} Week \(String(career.currentWeek))")
                     .font(.caption)
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
             }
 
             Spacer()
@@ -265,7 +265,7 @@ struct MockDraftView: View {
                         .padding(.vertical, 8)
                         .background(
                             selectedRound == round
-                                ? Color.accentGold.opacity(0.15)
+                                ? Color.accentBlue.opacity(0.18)
                                 : Color.clear,
                             in: RoundedRectangle(cornerRadius: 8)
                         )
@@ -366,9 +366,16 @@ struct MockDraftView: View {
                             scoutGradeText: scouted.overallGradeDisplay,
                             scoutGradeColor: PositionGradeCalculator.gradeColorForLetter(scouted.overallGradeDisplay)
                         )
-                        Text("Scout Grade")
-                            .font(.caption2)
-                            .foregroundStyle(Color.textTertiary)
+                        HStack(spacing: 3) {
+                            Text("Scout Grade")
+                                .font(.caption2)
+                                .foregroundStyle(Color.textTertiary)
+                            InfoTooltipButton(
+                                text: "Your scout's read on this prospect. If you've logged a personal grade it appears as \"Yours / Scout\" — a wider gap means more uncertainty. Letter grades follow standard A-F tiers (see legend).",
+                                showLetterGradeKey: true,
+                                size: 10
+                            )
+                        }
                     }
                 }
             }
@@ -377,7 +384,7 @@ struct MockDraftView: View {
             HStack(spacing: 6) {
                 Image(systemName: "text.bubble.fill")
                     .font(.caption2)
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textTertiary)
                 Text(pick.pickRationale)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.textSecondary)
@@ -659,7 +666,7 @@ struct MockDraftView: View {
         HStack(spacing: 10) {
             Image(systemName: "arrow.up.circle.fill")
                 .font(.caption)
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.accentBlue)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Trade up for \(hint.name)?")
@@ -734,7 +741,7 @@ struct MockDraftView: View {
     /// Color for confidence percentage: 85%+ green, 70-84% gold, <70% orange/red.
     private func confidenceColor(for confidence: Int) -> Color {
         if confidence >= 85 { return .success }
-        if confidence >= 70 { return .accentGold }
+        if confidence >= 70 { return .accentBlue }
         return .warning
     }
 
@@ -751,7 +758,7 @@ struct MockDraftView: View {
 
     private func availabilityColor(_ percent: Int) -> Color {
         if percent >= 70 { return .success }
-        if percent >= 40 { return .accentGold }
+        if percent >= 40 { return .accentBlue }
         return .danger
     }
 

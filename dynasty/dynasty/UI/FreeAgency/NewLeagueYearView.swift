@@ -28,7 +28,7 @@ struct NewLeagueYearView: View {
             } else {
                 VStack(spacing: 16) {
                     ProgressView()
-                        .tint(Color.accentGold)
+                        .tint(Color.accentBlue)
                     Text("Advancing contracts...")
                         .font(.subheadline)
                         .foregroundStyle(Color.textSecondary)
@@ -60,7 +60,7 @@ struct NewLeagueYearView: View {
         .padding(.vertical, 20)
         .frame(maxWidth: .infinity)
         .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.accentGold.opacity(0.4), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
     }
 
     // MARK: - Cap Summary
@@ -69,11 +69,11 @@ struct NewLeagueYearView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "dollarsign.circle.fill")
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                     .font(.system(size: 15))
                 Text("Your Cap Situation")
                     .font(.headline)
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textPrimary)
                 Spacer()
             }
             .padding(.horizontal, 16)
@@ -111,11 +111,11 @@ struct NewLeagueYearView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "star.fill")
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                     .font(.system(size: 15))
                 Text("Notable New Free Agents")
                     .font(.headline)
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textPrimary)
                 Spacer()
             }
             .padding(.horizontal, 16)

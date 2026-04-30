@@ -167,7 +167,7 @@ struct ProspectListView: View {
                     ProgressView()
                         .progressViewStyle(.circular)
                         .scaleEffect(1.5)
-                        .tint(Color.accentGold)
+                        .tint(Color.accentBlue)
                     Text("Loading Prospects...")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
@@ -268,7 +268,7 @@ struct ProspectListView: View {
                     .foregroundStyle(Color.textSecondary)
                 Text(draftPicksSummary)
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
                 Spacer()
             }
@@ -332,17 +332,31 @@ struct ProspectListView: View {
                 positionHeaders
             }
 
-            // Always-visible: OVR
-            Text("OVR")
-                .frame(width: 50, alignment: .center)
+            // Always-visible: OVR (with tooltip explaining the dual grade format)
+            HStack(spacing: 2) {
+                Text("OVR")
+                InfoTooltipButton(
+                    text: "Scout's read on the prospect. When you have logged your own grade you'll see \"Yours / Scout\" — a wider gap means more uncertainty in the scout's evaluation. Letter grades use the standard A-F tiers (see legend).",
+                    showLetterGradeKey: true,
+                    size: 9
+                )
+            }
+            .frame(width: 50, alignment: .center)
 
             // Always-visible: Proj Rd (overview only shows text, others show grade)
             if attributeTab == .overview {
                 Text("PROJ")
                     .frame(width: 52, alignment: .center)
             } else {
-                Text("GRD")
-                    .frame(width: 30, alignment: .center)
+                HStack(spacing: 2) {
+                    Text("GRD")
+                    InfoTooltipButton(
+                        text: "Letter grade summarizes the scout's overall evaluation. A = elite / first-round talent, B = quality starter, C = average, D = back-end roster, F = undraftable.",
+                        showLetterGradeKey: true,
+                        size: 9
+                    )
+                }
+                .frame(width: 30, alignment: .center)
             }
         }
         .font(.system(size: 8, weight: .bold))
@@ -438,7 +452,7 @@ struct ProspectListView: View {
                     .foregroundStyle(attributeTab == tab ? Color.backgroundPrimary : Color.textSecondary)
                     .background(
                         attributeTab == tab
-                            ? Color.accentGold
+                            ? Color.accentBlue
                             : Color.backgroundTertiary
                     )
                 }
@@ -566,7 +580,7 @@ struct ProspectRowView: View {
                     if prospect.scoutReportCount > 0 {
                         Text(prospect.scoutConfidenceDots)
                             .font(.system(size: 7))
-                            .foregroundStyle(prospect.scoutReportCount >= 3 ? Color.success : prospect.scoutReportCount >= 2 ? Color.accentGold : Color.textTertiary)
+                            .foregroundStyle(prospect.scoutReportCount >= 3 ? Color.success : prospect.scoutReportCount >= 2 ? Color.accentBlue : Color.textTertiary)
                     }
                     if prospect.combineInvite {
                         Text("CMB")
@@ -807,8 +821,8 @@ struct ProspectRowView: View {
 
     private func gradeColor(_ grade: LetterGrade) -> Color {
         switch grade.rank {
-        case 10...12: return .success      // A range
-        case 7...9:   return .accentGold   // B range
+        case 10...12: return .accentGold   // A range — elite
+        case 7...9:   return .success      // B range
         case 4...6:   return .warning      // C range
         case 2...3:   return .danger       // D range
         default:      return .danger       // F
@@ -838,7 +852,7 @@ struct ProspectRowView: View {
                 DualGradeDisplay(
                     prospectID: prospect.id,
                     scoutGradeText: grade,
-                    scoutGradeColor: Color.accentGold
+                    scoutGradeColor: Color.textPrimary
                 )
             } else if prospect.scoutedOverall != nil {
                 Text("\(prospect.scoutedOverall!)")
@@ -872,7 +886,7 @@ struct ProspectRowView: View {
             if let grade = prospect.scoutGrade {
                 Text(grade)
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textPrimary)
             } else {
                 Text("--")
                     .font(.system(size: 10, weight: .medium))

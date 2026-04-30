@@ -19,6 +19,11 @@ struct TeamSelectionView: View {
     @State private var sortMode: TeamSortMode = .division
     @State private var viewWidth: CGFloat = 0
 
+    // Compare mode (#117 polish): user picks 2-4 teams to compare side-by-side.
+    @State private var compareModeOn: Bool = false
+    @State private var selectedForCompare: Set<String> = []
+    @State private var showCompareSheet: Bool = false
+
     /// iPad always reports .regular for both size classes, so use actual width
     private var isLandscape: Bool { viewWidth > 900 }
 
@@ -46,6 +51,8 @@ struct TeamSelectionView: View {
                 teams = divTeams.sorted { $0.preview.difficulty < $1.preview.difficulty }
             case .overall:
                 teams = divTeams.sorted { $0.preview.estimatedOVR > $1.preview.estimatedOVR }
+            case .wins:
+                teams = divTeams.sorted { $0.preview.lastSeasonWins > $1.preview.lastSeasonWins }
             }
             guard !teams.isEmpty else { return nil }
             return (division: division, teams: teams)
@@ -56,15 +63,29 @@ struct TeamSelectionView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            GeometryReader { geo in
-                Image("BgStadiumNight")
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .clipped()
-                    .opacity(0.15)
+            // Stadium hero photo — clipped to top hero band only so it doesn't
+            // bleed beneath the team list. (#117 polish)
+            VStack(spacing: 0) {
+                GeometryReader { geo in
+                    Image("BgStadiumNight")
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                        .overlay(
+                            LinearGradient(
+                                colors: [.clear, Color.backgroundPrimary.opacity(0.85), Color.backgroundPrimary],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .opacity(0.35)
+                }
+                .frame(height: 180)
+                .clipped()
+                Spacer(minLength: 0)
             }
-            .ignoresSafeArea()
+            .ignoresSafeArea(edges: .top)
 
             VStack(spacing: 0) {
                 // Conference tab picker
@@ -72,9 +93,14 @@ struct TeamSelectionView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 8)
 
-                // Filter/sort bar (#115)
+                // Filter/sort bar (#115) + Compare toggle
                 filterSortBar
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 6)
+
+                // Column header row — labels otherwise-mystery numeric columns
+                columnHeaderRow
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 4)
 
                 // Compact table rows — all 16 teams with minimal scrolling
                 ScrollView {
@@ -84,10 +110,7 @@ struct TeamSelectionView: View {
                             ForEach(divisionsForConference, id: \.division) { group in
                                 Section {
                                     ForEach(group.teams, id: \.abbreviation) { team in
-                                        Button { detailTeam = team } label: {
-                                            CompactTeamRow(team: team)
-                                        }
-                                        .buttonStyle(.plain)
+                                        teamRowButton(for: team)
                                     }
                                 } header: {
                                     divisionHeader(group.division.rawValue)
@@ -103,10 +126,7 @@ struct TeamSelectionView: View {
                             ForEach(divisionsForConference, id: \.division) { group in
                                 divisionHeader(group.division.rawValue)
                                 ForEach(group.teams, id: \.abbreviation) { team in
-                                    Button { detailTeam = team } label: {
-                                        CompactTeamRow(team: team)
-                                    }
-                                    .buttonStyle(.plain)
+                                    teamRowButton(for: team)
                                 }
                             }
                         }
@@ -119,13 +139,40 @@ struct TeamSelectionView: View {
             }
             .disabled(isLoading)
 
+            // Floating "Compare (n)" button when compare mode is active
+            if compareModeOn && selectedForCompare.count >= 2 {
+                VStack {
+                    Spacer()
+                    Button {
+                        showCompareSheet = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "rectangle.split.3x1.fill")
+                                .font(.system(size: 14, weight: .bold))
+                            Text("Compare (\(selectedForCompare.count))")
+                                .font(.system(size: 15, weight: .bold))
+                                .tracking(0.5)
+                        }
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 22)
+                        .padding(.vertical, 12)
+                        .background(
+                            Capsule().fill(Color.accentGold)
+                        )
+                        .shadow(color: Color.black.opacity(0.35), radius: 8, x: 0, y: 4)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 24)
+                }
+            }
+
             if isLoading {
                 ZStack {
                     Color.backgroundPrimary.opacity(0.85).ignoresSafeArea()
                     VStack(spacing: 16) {
                         ProgressView()
                             .controlSize(.large)
-                            .tint(Color.accentGold)
+                            .tint(Color.accentBlue)
                         Text("Generating League...")
                             .font(.headline)
                             .foregroundStyle(Color.textPrimary)
@@ -150,7 +197,7 @@ struct TeamSelectionView: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Back") { detailTeam = nil }
-                            .foregroundStyle(Color.accentGold)
+                            .foregroundStyle(Color.textSecondary)
                     }
                 }
                 .toolbarColorScheme(.dark, for: .navigationBar)
@@ -159,6 +206,61 @@ struct TeamSelectionView: View {
         .navigationDestination(item: $selectedCareer) { career in
             IntroSequenceView(career: career)
         }
+        .sheet(isPresented: $showCompareSheet) {
+            CompareTeamsSheet(
+                teams: allTeams.filter { selectedForCompare.contains($0.abbreviation) }
+            )
+        }
+    }
+
+    // MARK: - Row builder (handles compare-mode tap behavior)
+
+    @ViewBuilder
+    private func teamRowButton(for team: NFLTeamDefinition) -> some View {
+        Button {
+            if compareModeOn {
+                toggleCompare(team)
+            } else {
+                detailTeam = team
+            }
+        } label: {
+            CompactTeamRow(
+                team: team,
+                compareModeOn: compareModeOn,
+                isSelectedForCompare: selectedForCompare.contains(team.abbreviation)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func toggleCompare(_ team: NFLTeamDefinition) {
+        let abbr = team.abbreviation
+        if selectedForCompare.contains(abbr) {
+            selectedForCompare.remove(abbr)
+        } else if selectedForCompare.count < 4 {
+            selectedForCompare.insert(abbr)
+        }
+    }
+
+    // MARK: - Column Header Row (#117 polish)
+    /// Lightweight column labels so the numeric columns aren't ambiguous.
+    private var columnHeaderRow: some View {
+        HStack(spacing: 10) {
+            // Aligns with logo + name+QB column on the left of CompactTeamRow.
+            Text("TEAM")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("DIFFICULTY")
+                .frame(width: 60, alignment: .trailing)
+            Text("CAP / STAFF")
+                .frame(width: 64, alignment: .center)
+            Text("OWNER")
+                .frame(width: 42, alignment: .center)
+            Spacer().frame(width: 16) // matches chevron column
+        }
+        .font(.system(size: 9, weight: .heavy))
+        .tracking(1.2)
+        .foregroundStyle(Color.textTertiary)
+        .padding(.leading, 56) // skip past logo
     }
 
     // MARK: - Filter/Sort Bar (#115)
@@ -188,12 +290,12 @@ struct TeamSelectionView: View {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .bold))
                 }
-                .foregroundStyle(situationFilter == "All" ? Color.textSecondary : Color.accentGold)
+                .foregroundStyle(situationFilter == "All" ? Color.textSecondary : Color.accentBlue)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(
                     Capsule()
-                        .fill(situationFilter == "All" ? Color.backgroundSecondary : Color.accentGold.opacity(0.15))
+                        .fill(situationFilter == "All" ? Color.backgroundSecondary : Color.accentBlue.opacity(0.15))
                         .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 0.5))
                 )
             }
@@ -221,17 +323,44 @@ struct TeamSelectionView: View {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .bold))
                 }
-                .foregroundStyle(sortMode == .division ? Color.textSecondary : Color.accentGold)
+                .foregroundStyle(sortMode == .division ? Color.textSecondary : Color.accentBlue)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(
                     Capsule()
-                        .fill(sortMode == .division ? Color.backgroundSecondary : Color.accentGold.opacity(0.15))
+                        .fill(sortMode == .division ? Color.backgroundSecondary : Color.accentBlue.opacity(0.15))
                         .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 0.5))
                 )
             }
 
             Spacer()
+
+            // Compare-mode toggle (#117 polish)
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    compareModeOn.toggle()
+                    if !compareModeOn {
+                        selectedForCompare.removeAll()
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: compareModeOn ? "checkmark.square.fill" : "square.grid.2x2")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(compareModeOn ? "Compare On" : "Compare")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(compareModeOn ? Color.accentBlue : Color.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(compareModeOn ? Color.accentBlue.opacity(0.15) : Color.backgroundSecondary)
+                        .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 0.5))
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(compareModeOn ? "Compare mode on" : "Enter compare mode")
         }
         .padding(.horizontal, 16)
     }
@@ -254,7 +383,7 @@ struct TeamSelectionView: View {
                         .padding(.vertical, 10)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(selectedConference == conference ? Color.accentGold : Color.clear)
+                                .fill(selectedConference == conference ? Color.accentBlue : Color.clear)
                         )
                         .contentShape(Rectangle())
                 }
@@ -279,16 +408,16 @@ struct TeamSelectionView: View {
     private func divisionHeader(_ name: String) -> some View {
         HStack(spacing: 8) {
             Rectangle()
-                .fill(Color.accentGold.opacity(0.4))
+                .fill(Color.surfaceBorder)
                 .frame(height: 1)
             Text(name)
                 .font(.system(size: 12, weight: .bold))
                 .tracking(2)
                 .textCase(.uppercase)
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.textSecondary)
                 .layoutPriority(1)
             Rectangle()
-                .fill(Color.accentGold.opacity(0.4))
+                .fill(Color.surfaceBorder)
                 .frame(height: 1)
         }
         .padding(.vertical, 6)
@@ -370,24 +499,15 @@ extension NFLTeamDefinition: Identifiable {
 
 private struct CompactTeamRow: View {
     let team: NFLTeamDefinition
+    var compareModeOn: Bool = false
+    var isSelectedForCompare: Bool = false
 
     private var preview: TeamPreview { team.preview }
-
-    private var situationColor: Color {
-        switch preview.situation {
-        case "Rebuilding": return .accentBlue
-        case "Rising":     return .success
-        case "Contender":  return .accentGold
-        case "Win Now":    return .warning
-        case "Dynasty":    return .danger
-        default:           return .textSecondary
-        }
-    }
 
     private var difficultyColor: Color {
         switch preview.difficulty {
         case 1, 2: return .success
-        case 3:    return .accentGold
+        case 3:    return .accentBlue
         case 4:    return .warning
         case 5:    return .danger
         default:   return .textSecondary
@@ -398,7 +518,7 @@ private struct CompactTeamRow: View {
         switch preview.ownerPatience {
         case "Very Patient": return .success
         case "Patient":      return .success.opacity(0.8)
-        case "Moderate":     return .accentGold
+        case "Moderate":     return .accentBlue
         case "Demanding":    return .warning
         case "Win Now":      return .danger
         default:             return .textSecondary
@@ -407,6 +527,14 @@ private struct CompactTeamRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            // Compare-mode checkbox (replaces chevron affordance during compare).
+            if compareModeOn {
+                Image(systemName: isSelectedForCompare ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(isSelectedForCompare ? Color.accentBlue : Color.textTertiary)
+                    .frame(width: 22)
+            }
+
             // Team logo placeholder (with lock overlay if locked)
             ZStack(alignment: .bottomTrailing) {
                 TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 36)
@@ -450,29 +578,18 @@ private struct CompactTeamRow: View {
 
             Spacer(minLength: 4)
 
-            // Difficulty stars
+            // Difficulty stars (single source-of-truth — tier label removed to
+            // de-duplicate signal, per #117 polish).
             HStack(spacing: 1) {
                 ForEach(1...5, id: \.self) { star in
                     Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundStyle(star <= preview.difficulty ? difficultyColor : Color.textTertiary.opacity(0.3))
                 }
             }
+            .frame(width: 60, alignment: .trailing)
 
-            // Situation badge
-            Text(preview.situation)
-                .font(.system(size: 10, weight: .bold))
-                .textCase(.uppercase)
-                .foregroundStyle(situationColor)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(situationColor.opacity(0.15))
-                )
-                .frame(minWidth: 75)
-
-            // Cap + Budget combined column (#112, #114)
+            // Cap + Coaching budget combined column (#112, #114)
             VStack(spacing: 2) {
                 HStack(spacing: 3) {
                     Text("CAP")
@@ -480,7 +597,7 @@ private struct CompactTeamRow: View {
                         .foregroundStyle(Color.textTertiary)
                     Text("$\(preview.estimatedCapSpace)M")
                         .font(.system(size: 11, weight: .bold).monospacedDigit())
-                        .foregroundStyle(preview.estimatedCapSpace > 30 ? Color.success : preview.estimatedCapSpace > 15 ? Color.accentGold : Color.warning)
+                        .foregroundStyle(preview.estimatedCapSpace > 30 ? Color.success : preview.estimatedCapSpace > 15 ? Color.accentBlue : Color.warning)
                 }
                 HStack(spacing: 3) {
                     Text("STF")
@@ -488,7 +605,7 @@ private struct CompactTeamRow: View {
                         .foregroundStyle(Color.textTertiary)
                     Text("$\(preview.coachingBudget)M")
                         .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(preview.coachingBudget >= 40 ? Color.success : preview.coachingBudget >= 30 ? Color.accentGold : Color.warning)
+                        .foregroundStyle(preview.coachingBudget >= 40 ? Color.success : preview.coachingBudget >= 30 ? Color.accentBlue : Color.warning)
                 }
             }
             .frame(width: 64)
@@ -504,23 +621,27 @@ private struct CompactTeamRow: View {
             }
             .frame(width: 42)
 
-            Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.textTertiary)
-                .frame(width: 16)
+            if !compareModeOn {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.textTertiary)
+                    .frame(width: 16)
+            } else {
+                Color.clear.frame(width: 16)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.backgroundSecondary)
+                .fill(isSelectedForCompare ? Color.accentBlue.opacity(0.12) : Color.backgroundSecondary)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.surfaceBorder, lineWidth: 0.5)
+                        .strokeBorder(isSelectedForCompare ? Color.accentBlue.opacity(0.7) : Color.surfaceBorder, lineWidth: isSelectedForCompare ? 1 : 0.5)
                 )
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(team.city) \(team.name), \(preview.lastSeasonRecord), \(preview.situation), difficulty \(preview.difficulty) of 5, QB \(preview.startingQBName) \(preview.startingQBOverall) OVR\(preview.isLocked ? ", locked" : "")")
+        .accessibilityLabel("\(team.city) \(team.name), \(preview.lastSeasonRecord), \(preview.situation), difficulty \(preview.difficulty) of 5, QB \(preview.startingQBName) \(preview.startingQBOverall) OVR\(preview.isLocked ? ", locked" : "")\(compareModeOn ? (isSelectedForCompare ? ", selected for compare" : ", not selected") : "")")
     }
 }
 
@@ -564,7 +685,7 @@ private struct MiniTeamCard: View {
                 ForEach(1...5, id: \.self) { star in
                     Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
                         .font(.system(size: min(7, height * 0.05)))
-                        .foregroundStyle(star <= preview.difficulty ? Color.accentGold : Color.textTertiary)
+                        .foregroundStyle(star <= preview.difficulty ? Color.warning : Color.textTertiary)
                 }
             }
 
@@ -624,7 +745,7 @@ private struct TeamGridCard: View {
                 ForEach(1...5, id: \.self) { star in
                     Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
                         .font(.system(size: 8))
-                        .foregroundStyle(star <= preview.difficulty ? Color.accentGold : Color.textTertiary)
+                        .foregroundStyle(star <= preview.difficulty ? Color.warning : Color.textTertiary)
                 }
             }
 
@@ -761,7 +882,7 @@ private struct TeamDetailSheet: View {
     private var difficultyColor: Color {
         switch preview.difficulty {
         case 1, 2: return .success
-        case 3:    return .accentGold
+        case 3:    return .accentBlue
         case 4:    return .warning
         case 5:    return .danger
         default:   return .textSecondary
@@ -772,7 +893,7 @@ private struct TeamDetailSheet: View {
         switch preview.ownerPatience {
         case "Very Patient": return .success
         case "Patient":      return .success.opacity(0.8)
-        case "Moderate":     return .accentGold
+        case "Moderate":     return .accentBlue
         case "Demanding":    return .warning
         case "Win Now":      return .danger
         default:             return .textSecondary
@@ -832,7 +953,7 @@ private struct TeamDetailSheet: View {
             .font(.system(size: 11, weight: .bold))
             .tracking(1.5)
             .textCase(.uppercase)
-            .foregroundStyle(Color.accentGold)
+            .foregroundStyle(Color.textSecondary)
     }
 
     private func detailStat(icon: String, label: String, value: String, valueColor: Color) -> some View {
@@ -955,7 +1076,7 @@ private struct TeamDetailSheet: View {
                 icon: "dollarsign.circle.fill",
                 label: "Cap Space",
                 value: "$\(preview.estimatedCapSpace)M",
-                valueColor: preview.estimatedCapSpace > 30 ? .success : preview.estimatedCapSpace > 15 ? .accentGold : .warning
+                valueColor: preview.estimatedCapSpace > 30 ? .success : preview.estimatedCapSpace > 15 ? .accentBlue : .warning
             )
             detailStat(
                 icon: "doc.text.fill",
@@ -977,7 +1098,7 @@ private struct TeamDetailSheet: View {
             HStack(spacing: 12) {
                 Image(systemName: "figure.american.football")
                     .font(.system(size: 20))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(preview.startingQBName)
@@ -1061,10 +1182,10 @@ private struct TeamDetailSheet: View {
             HStack(spacing: 8) {
                 Image(systemName: "dollarsign.square.fill")
                     .font(.system(size: 16))
-                    .foregroundStyle(preview.coachingBudget >= 40 ? Color.success : preview.coachingBudget >= 30 ? Color.accentGold : Color.warning)
+                    .foregroundStyle(preview.coachingBudget >= 40 ? Color.success : preview.coachingBudget >= 30 ? Color.accentBlue : Color.warning)
                 Text("$\(preview.coachingBudget)M")
                     .font(.title3.weight(.bold))
-                    .foregroundStyle(preview.coachingBudget >= 40 ? Color.success : preview.coachingBudget >= 30 ? Color.accentGold : Color.warning)
+                    .foregroundStyle(preview.coachingBudget >= 40 ? Color.success : preview.coachingBudget >= 30 ? Color.accentBlue : Color.warning)
                 Text("for coaching & scouting staff")
                     .font(.caption)
                     .foregroundStyle(Color.textTertiary)
@@ -1150,7 +1271,7 @@ private struct TeamDetailSheet: View {
 // MARK: - Team Sort Mode (#115)
 
 private enum TeamSortMode: String, CaseIterable {
-    case division, capSpace, difficulty, overall
+    case division, capSpace, difficulty, overall, wins
 
     var label: String {
         switch self {
@@ -1158,6 +1279,162 @@ private enum TeamSortMode: String, CaseIterable {
         case .capSpace:  return "Cap Space"
         case .difficulty: return "Difficulty"
         case .overall:   return "Overall"
+        case .wins:      return "Wins"
+        }
+    }
+}
+
+// MARK: - Compare Teams Sheet (#117 polish)
+
+private struct CompareTeamsSheet: View {
+    let teams: [NFLTeamDefinition]
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
+
+                ScrollView([.horizontal, .vertical]) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Header row: team logos + names
+                        HStack(alignment: .top, spacing: 0) {
+                            rowLabel("")
+                            ForEach(teams, id: \.abbreviation) { team in
+                                VStack(spacing: 6) {
+                                    TeamLogoPlaceholder(abbreviation: team.abbreviation, size: 44)
+                                    Text(team.name)
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(Color.textPrimary)
+                                        .lineLimit(1)
+                                    Text(team.city)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Color.textSecondary)
+                                        .lineLimit(1)
+                                }
+                                .frame(width: 130)
+                                .padding(.vertical, 12)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .background(Color.backgroundSecondary)
+
+                        Divider()
+
+                        comparisonRow(label: "Difficulty") { team in
+                            HStack(spacing: 1) {
+                                ForEach(1...5, id: \.self) { star in
+                                    Image(systemName: star <= team.preview.difficulty ? "star.fill" : "star")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(star <= team.preview.difficulty ? Color.warning : Color.textTertiary.opacity(0.4))
+                                }
+                            }
+                        }
+
+                        comparisonRow(label: "Situation") { team in
+                            Text(team.preview.situation.uppercased())
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(Color.textPrimary)
+                        }
+
+                        comparisonRow(label: "Last Season") { team in
+                            Text(team.preview.lastSeasonRecord)
+                                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(Color.textPrimary)
+                        }
+
+                        comparisonRow(label: "Roster OVR") { team in
+                            Text("\(team.preview.estimatedOVR)")
+                                .font(.system(size: 14, weight: .bold).monospacedDigit())
+                                .foregroundStyle(Color.forRating(team.preview.estimatedOVR))
+                        }
+
+                        comparisonRow(label: "Cap Space") { team in
+                            Text("$\(team.preview.estimatedCapSpace)M")
+                                .font(.system(size: 13, weight: .bold).monospacedDigit())
+                                .foregroundStyle(team.preview.estimatedCapSpace > 30 ? Color.success : team.preview.estimatedCapSpace > 15 ? Color.accentBlue : Color.warning)
+                        }
+
+                        comparisonRow(label: "Coaching Budget") { team in
+                            Text("$\(team.preview.coachingBudget)M")
+                                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(team.preview.coachingBudget >= 40 ? Color.success : team.preview.coachingBudget >= 30 ? Color.accentBlue : Color.warning)
+                        }
+
+                        comparisonRow(label: "Draft Picks") { team in
+                            Text("\(team.preview.estimatedDraftPicks)")
+                                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(Color.textPrimary)
+                        }
+
+                        comparisonRow(label: "Owner Patience") { team in
+                            VStack(spacing: 2) {
+                                Text(team.preview.ownerPatience)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(Color.textPrimary)
+                                Text("\(team.preview.patienceSeasons)yr")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Color.textTertiary)
+                            }
+                        }
+
+                        comparisonRow(label: "Starting QB") { team in
+                            VStack(spacing: 2) {
+                                Text(team.preview.startingQBName)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(Color.textPrimary)
+                                    .lineLimit(1)
+                                Text("\(team.preview.startingQBOverall) OVR")
+                                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(Color.forRating(team.preview.startingQBOverall))
+                            }
+                        }
+
+                        comparisonRow(label: "Market") { team in
+                            Text(team.mediaMarket.rawValue)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.textPrimary)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+            .navigationTitle("Compare Teams")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(Color.textPrimary)
+                }
+            }
+            .toolbarColorScheme(.dark, for: .navigationBar)
+        }
+    }
+
+    private func rowLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .bold))
+            .tracking(1.0)
+            .textCase(.uppercase)
+            .foregroundStyle(Color.textTertiary)
+            .frame(width: 130, alignment: .leading)
+    }
+
+    private func comparisonRow<Content: View>(label: String, @ViewBuilder cell: @escaping (NFLTeamDefinition) -> Content) -> some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 0) {
+                rowLabel(label)
+                ForEach(teams, id: \.abbreviation) { team in
+                    cell(team)
+                        .frame(width: 130)
+                        .padding(.vertical, 10)
+                }
+            }
+            .padding(.horizontal, 16)
+            Divider().opacity(0.4)
         }
     }
 }

@@ -11,6 +11,10 @@ struct InterviewSelectionView: View {
     @State private var prospects: [CollegeProspect] = []
     @State private var showResults = false
     @State private var interviewResults: [InterviewResult] = []
+    /// When the user explicitly opens the saved report (e.g. tapping "View Past Report"
+    /// while there are still interview slots remaining), we route to the report view
+    /// rebuilt from prospects with `interviewCompleted == true`.
+    @State private var viewingPastReport = false
     @State private var positionFilter: Position?
     @State private var roundFilter: Int?
     @State private var needFilter: Bool = false
@@ -85,6 +89,28 @@ struct InterviewSelectionView: View {
         return selectableProspects.filter { !recommendedIDs.contains($0.id) }
     }
 
+    /// Recomputes interview results from any prospects that have already been
+    /// interviewed (data persisted on `CollegeProspect`). Used to render the
+    /// saved report when the user revisits the Interviews tab post-completion.
+    private var completedInterviewResults: [InterviewResult] {
+        prospects
+            .filter { $0.interviewCompleted }
+            .compactMap { prospect -> InterviewResult? in
+                guard let personality = prospect.scoutedPersonality,
+                      let iq = prospect.interviewFootballIQ else { return nil }
+                return InterviewResult(
+                    prospect: prospect,
+                    personality: personality,
+                    footballIQ: iq,
+                    notes: prospect.interviewCharacterNotes ?? []
+                )
+            }
+    }
+
+    private var hasCompletedInterviews: Bool {
+        prospects.contains { $0.interviewCompleted }
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -108,12 +134,26 @@ struct InterviewSelectionView: View {
             Divider().overlay(Color.surfaceBorder.opacity(0.6))
 
             if showResults {
+                // Just-conducted interviews — show the live report from this batch.
                 InterviewReportView(results: interviewResults) {
                     showResults = false
                     interviewResults = []
                     loadProspects()
                 }
+            } else if viewingPastReport && hasCompletedInterviews {
+                // User explicitly requested the saved report view (still has slots).
+                InterviewReportView(results: completedInterviewResults) {
+                    viewingPastReport = false
+                    loadProspects()
+                }
+            } else if remainingSlots == 0 && hasCompletedInterviews {
+                // All slots used and we have data — render the saved report directly.
+                InterviewReportView(results: completedInterviewResults) {
+                    UserDefaults.standard.set(true, forKey: "interviewReportReviewed")
+                    loadProspects()
+                }
             } else if remainingSlots == 0 {
+                // Edge case: slots used but no data (legacy save). Show empty state.
                 allInterviewsUsedView
             } else {
                 selectionList
@@ -274,6 +314,27 @@ struct InterviewSelectionView: View {
                     .foregroundStyle(remainingSlots < 10 ? Color.danger : Color.textPrimary)
 
                 Spacer()
+
+                // View Past Report button — surfaces prior interview results
+                // so the dashboard "Review interview report" task can be completed
+                // mid-combine, before all slots are used.
+                if hasCompletedInterviews {
+                    Button {
+                        viewingPastReport = true
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(.system(size: 9))
+                            Text("View Report (\(completedInterviewResults.count))")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundStyle(Color.accentGold)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.accentGold.opacity(0.12)))
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 // Task 20: Select All Recommended
                 if !recommendedProspects.isEmpty {
@@ -640,7 +701,7 @@ struct InterviewSelectionView: View {
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(Color.textPrimary)
 
-            Text("You've used all \(maxInterviews) interviews this combine.")
+            Text("You've used all \(maxInterviews) interviews this combine, but no interview data is available to display.")
                 .font(.system(size: 14))
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
@@ -962,6 +1023,8 @@ struct InterviewReportView: View {
 
             // Task 15: Complete Review button with clarity
             Button {
+                // Mark the "Review interview report" dashboard task as reviewed.
+                UserDefaults.standard.set(true, forKey: "interviewReportReviewed")
                 onDismiss()
             } label: {
                 HStack(spacing: 8) {
@@ -980,6 +1043,12 @@ struct InterviewReportView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+        }
+        .onAppear {
+            // Viewing the report itself counts as "reviewing" — guarantees the
+            // dashboard task can complete even if the user navigates away
+            // before tapping the explicit "Complete Review" button.
+            UserDefaults.standard.set(true, forKey: "interviewReportReviewed")
         }
     }
 

@@ -8,6 +8,9 @@ struct MessageDetailView: View {
 
     let message: InboxMessage
     var onNavigate: ((TaskDestination) -> Void)?
+    /// Called once when the detail view appears so the caller can mark
+    /// the message as read in the source list.
+    var onAppear: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -54,9 +57,12 @@ struct MessageDetailView: View {
                         attachmentsSection
                     }
 
-                    // Action button for actionRequired messages
+                    // CTA to open the related screen. Shown for any message
+                    // that has a destination — Action Required messages get
+                    // a high-emphasis gold button, regular messages get a
+                    // softer outlined "Open [destination] →" link.
                     if let destination = message.actionDestination {
-                        actionButton(destination: destination)
+                        actionButton(destination: destination, emphasized: message.actionRequired)
                     }
                 }
                 .padding(20)
@@ -73,6 +79,9 @@ struct MessageDetailView: View {
                 }
                 .foregroundStyle(Color.accentGold)
             }
+        }
+        .onAppear {
+            onAppear?()
         }
     }
 
@@ -183,7 +192,7 @@ struct MessageDetailView: View {
 
     // MARK: - Action Button
 
-    private func actionButton(destination: TaskDestination) -> some View {
+    private func actionButton(destination: TaskDestination, emphasized: Bool) -> some View {
         Button {
             dismiss()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
@@ -193,16 +202,23 @@ struct MessageDetailView: View {
             HStack(spacing: 10) {
                 Image(systemName: "arrow.right.circle.fill")
                     .font(.system(size: 18))
-                Text("Take Action")
+                Text("Open \(destination.inboxDisplayName)")
                     .font(.system(size: 16, weight: .bold))
             }
-            .foregroundStyle(Color.backgroundPrimary)
+            .foregroundStyle(emphasized ? Color.backgroundPrimary : Color.accentGold)
             .frame(maxWidth: .infinity)
             .frame(minHeight: 44)
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.accentGold)
+                    .fill(emphasized ? Color.accentGold : Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(
+                                emphasized ? Color.clear : Color.accentGold.opacity(0.6),
+                                lineWidth: 1.5
+                            )
+                    )
             )
         }
         .buttonStyle(.plain)

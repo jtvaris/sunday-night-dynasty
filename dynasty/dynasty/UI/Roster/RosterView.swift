@@ -393,13 +393,13 @@ struct RosterView: View {
                         .padding(.vertical, 6)
                         .foregroundStyle(analysisMode == mode ? Color.backgroundPrimary : Color.textSecondary)
                         .background(
-                            analysisMode == mode ? Color.accentGold : Color.backgroundTertiary,
+                            analysisMode == mode ? Color.accentBlue : Color.backgroundTertiary,
                             in: Capsule()
                         )
                         .overlay(
                             Capsule()
                                 .strokeBorder(
-                                    analysisMode == mode ? Color.accentGold : Color.surfaceBorder,
+                                    analysisMode == mode ? Color.accentBlue : Color.surfaceBorder,
                                     lineWidth: 1
                                 )
                         )
@@ -634,7 +634,7 @@ struct RosterView: View {
                     Text("Tap column headers to sort")
                         .font(.system(size: 9, weight: .medium))
                 }
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.textTertiary)
                 .onAppear {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
                         withAnimation { sortHintSeen = true }
@@ -743,7 +743,7 @@ struct RosterView: View {
             }
             .frame(width: width, alignment: .center)
         }
-        .foregroundStyle(sortOrder == sort ? Color.accentGold : Color.textTertiary)
+        .foregroundStyle(sortOrder == sort ? Color.accentBlue : Color.textTertiary)
     }
 
     // MARK: - Formation Content
@@ -803,7 +803,7 @@ struct RosterView: View {
                         .padding(.vertical, 12)
                         .padding(.horizontal, 8)
                         .background(
-                            selectedSide == filter ? Color.accentGold : Color.clear,
+                            selectedSide == filter ? Color.accentBlue : Color.clear,
                             in: RoundedRectangle(cornerRadius: 10)
                         )
                         .overlay(
@@ -1043,7 +1043,7 @@ struct RosterView: View {
                     Section {
                         HStack(spacing: 10) {
                             Image(systemName: "person.fill.checkmark")
-                                .foregroundStyle(Color.accentGold)
+                                .foregroundStyle(Color.success)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Current: \(current.fullName)  \(current.position.rawValue)  OVR \(current.overall)")
                                     .font(.system(size: 14, weight: .semibold))
@@ -1145,7 +1145,7 @@ struct RosterView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { starterPickerPosition = nil }
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.textSecondary)
                 }
             }
         }
@@ -1243,7 +1243,7 @@ struct RosterView: View {
             // Current starter checkmark
             if let current = currentStarter, current.id == player.id {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.success)
             }
         }
         .padding(.vertical, 4)
@@ -1559,11 +1559,11 @@ struct PositionGroupHeader: View {
                     Text("Review")
                         .font(.system(size: 9, weight: .semibold))
                 }
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.accentBlue)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
-                .background(Color.accentGold.opacity(0.12), in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.accentGold.opacity(0.3), lineWidth: 1))
+                .background(Color.accentBlue.opacity(0.12), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.accentBlue.opacity(0.3), lineWidth: 1))
             }
         }
         .textCase(nil)

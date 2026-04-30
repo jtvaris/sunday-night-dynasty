@@ -937,35 +937,35 @@ enum ScoutingEngine {
             let isDE = position == .DE
 
             // --- 40-yard dash ---
-            // Direct SPD-to-40-time correlation for realism
+            // Position-based normal distribution + SPD attribute bias.
             var fortyResult = fortyTimeFromSpeed(speed: phys.speed, position: position, combineModifier: combineModifier)
             if isDE { fortyResult -= 0.03 }
-            prospects[i].fortyTime = max(4.24, min(5.50, fortyResult))
+            prospects[i].fortyTime = max(4.22, min(5.55, fortyResult))
 
             // --- Bench press (225 lb reps) ---
             let benchResult = drillResult(tiers: tiers.bench, attribute: phys.strength, combineModifier: combineModifier, lowerIsBetter: false)
-            prospects[i].benchPress = max(6, min(45, Int(benchResult.rounded())))
+            prospects[i].benchPress = max(3, min(45, Int(benchResult.rounded())))
 
             // --- Vertical jump ---
             let vertAttr = (phys.agility + phys.acceleration) / 2
             let vertResult = drillResult(tiers: tiers.vert, attribute: vertAttr, combineModifier: combineModifier, lowerIsBetter: false)
-            prospects[i].verticalJump = max(22.0, min(46.0, vertResult))
+            prospects[i].verticalJump = max(20.0, min(46.0, vertResult))
 
             // --- Broad jump ---
             let broadAttr = (phys.strength + phys.acceleration) / 2
             let broadResult = drillResult(tiers: tiers.broad, attribute: broadAttr, combineModifier: combineModifier, lowerIsBetter: false)
-            prospects[i].broadJump = max(88, min(145, Int(broadResult.rounded())))
+            prospects[i].broadJump = max(84, min(146, Int(broadResult.rounded())))
 
             // --- 3-cone drill ---
             let coneAttr = (phys.agility + phys.acceleration) / 2
             var coneResult = drillResult(tiers: tiers.cone, attribute: coneAttr, combineModifier: combineModifier, lowerIsBetter: true)
             if isDE { coneResult -= 0.05 }
-            prospects[i].coneDrill = max(6.40, min(8.00, coneResult))
+            prospects[i].coneDrill = max(6.30, min(8.30, coneResult))
 
             // --- Shuttle time ---
             let shuttleAttr = (phys.agility + phys.speed) / 2
             let shuttleResult = drillResult(tiers: tiers.shuttle, attribute: shuttleAttr, combineModifier: combineModifier, lowerIsBetter: true)
-            prospects[i].shuttleTime = max(3.90, min(5.00, shuttleResult))
+            prospects[i].shuttleTime = max(3.90, min(5.10, shuttleResult))
 
             // Position drill grade — imprecise estimate from position-specific attributes
             // Better scouting staff → more accurate grade
@@ -1102,38 +1102,43 @@ enum ScoutingEngine {
         shuttle: CombineDrillTiers
     ) {
         switch group {
+        // Tier ranges define the elite..below-average envelope used by `drillResult`,
+        // which now uses a normal-ish distribution (mean = midpoint, sigma = span/4).
+        // Wider envelopes produce a more realistic spread with outliers on both ends.
         case .speedster:
             return (
-                forty:   CombineDrillTiers(elite: (4.25, 4.35), good: (4.36, 4.45), average: (4.46, 4.55), belowAvg: (4.56, 4.70)),
-                bench:   CombineDrillTiers(elite: (14, 18), good: (10, 14), average: (8, 12), belowAvg: (6, 10)),
-                vert:    CombineDrillTiers(elite: (39, 43), good: (36, 39), average: (33, 36), belowAvg: (30, 33)),
-                broad:   CombineDrillTiers(elite: (128, 140), good: (120, 128), average: (112, 120), belowAvg: (104, 112)),
-                cone:    CombineDrillTiers(elite: (6.50, 6.70), good: (6.70, 6.90), average: (6.90, 7.10), belowAvg: (7.10, 7.30)),
-                shuttle: CombineDrillTiers(elite: (3.95, 4.10), good: (4.10, 4.20), average: (4.20, 4.35), belowAvg: (4.35, 4.50))
+                forty:   CombineDrillTiers(elite: (4.25, 4.35), good: (4.36, 4.45), average: (4.46, 4.55), belowAvg: (4.56, 4.75)),
+                bench:   CombineDrillTiers(elite: (16, 22), good: (12, 16), average: (8, 12), belowAvg: (4, 8)),
+                vert:    CombineDrillTiers(elite: (40, 44), good: (36, 40), average: (32, 36), belowAvg: (28, 32)),
+                broad:   CombineDrillTiers(elite: (128, 138), good: (120, 128), average: (112, 120), belowAvg: (104, 112)),
+                cone:    CombineDrillTiers(elite: (6.50, 6.70), good: (6.70, 6.90), average: (6.90, 7.10), belowAvg: (7.10, 7.40)),
+                shuttle: CombineDrillTiers(elite: (3.95, 4.10), good: (4.10, 4.25), average: (4.25, 4.40), belowAvg: (4.40, 4.60))
             )
         case .bigman:
             return (
-                forty:   CombineDrillTiers(elite: (4.80, 5.00), good: (5.00, 5.15), average: (5.15, 5.30), belowAvg: (5.30, 5.50)),
-                bench:   CombineDrillTiers(elite: (30, 40), good: (25, 30), average: (20, 25), belowAvg: (15, 20)),
-                vert:    CombineDrillTiers(elite: (30, 35), good: (27, 30), average: (24, 27), belowAvg: (22, 24)),
-                broad:   CombineDrillTiers(elite: (108, 120), good: (100, 108), average: (94, 100), belowAvg: (88, 94)),
-                cone:    CombineDrillTiers(elite: (7.20, 7.40), good: (7.40, 7.60), average: (7.60, 7.80), belowAvg: (7.80, 8.00)),
-                shuttle: CombineDrillTiers(elite: (4.40, 4.55), good: (4.55, 4.70), average: (4.70, 4.85), belowAvg: (4.85, 5.00))
+                forty:   CombineDrillTiers(elite: (4.80, 5.00), good: (5.00, 5.15), average: (5.15, 5.30), belowAvg: (5.30, 5.55)),
+                bench:   CombineDrillTiers(elite: (30, 38), good: (25, 30), average: (20, 25), belowAvg: (14, 20)),
+                vert:    CombineDrillTiers(elite: (30, 34), good: (27, 30), average: (24, 27), belowAvg: (20, 24)),
+                broad:   CombineDrillTiers(elite: (108, 118), good: (100, 108), average: (94, 100), belowAvg: (86, 94)),
+                cone:    CombineDrillTiers(elite: (7.20, 7.45), good: (7.45, 7.65), average: (7.65, 7.85), belowAvg: (7.85, 8.20)),
+                shuttle: CombineDrillTiers(elite: (4.40, 4.60), good: (4.60, 4.75), average: (4.75, 4.90), belowAvg: (4.90, 5.10))
             )
         case .balanced:
             return (
-                forty:   CombineDrillTiers(elite: (4.35, 4.48), good: (4.48, 4.58), average: (4.58, 4.70), belowAvg: (4.70, 4.85)),
-                bench:   CombineDrillTiers(elite: (20, 28), good: (16, 22), average: (12, 18), belowAvg: (10, 14)),
-                vert:    CombineDrillTiers(elite: (36, 40), good: (33, 36), average: (30, 33), belowAvg: (27, 30)),
-                broad:   CombineDrillTiers(elite: (118, 132), good: (110, 120), average: (104, 112), belowAvg: (98, 106)),
-                cone:    CombineDrillTiers(elite: (6.70, 6.95), good: (6.95, 7.15), average: (7.15, 7.35), belowAvg: (7.35, 7.55)),
-                shuttle: CombineDrillTiers(elite: (4.10, 4.25), good: (4.25, 4.40), average: (4.40, 4.55), belowAvg: (4.55, 4.70))
+                forty:   CombineDrillTiers(elite: (4.35, 4.48), good: (4.48, 4.60), average: (4.60, 4.72), belowAvg: (4.72, 4.90)),
+                bench:   CombineDrillTiers(elite: (22, 30), good: (16, 22), average: (12, 16), belowAvg: (8, 12)),
+                vert:    CombineDrillTiers(elite: (37, 42), good: (33, 37), average: (29, 33), belowAvg: (25, 29)),
+                broad:   CombineDrillTiers(elite: (120, 132), good: (110, 120), average: (102, 110), belowAvg: (94, 102)),
+                cone:    CombineDrillTiers(elite: (6.70, 6.95), good: (6.95, 7.15), average: (7.15, 7.35), belowAvg: (7.35, 7.65)),
+                shuttle: CombineDrillTiers(elite: (4.10, 4.25), good: (4.25, 4.40), average: (4.40, 4.55), belowAvg: (4.55, 4.75))
             )
         }
     }
 
-    /// Generates a drill result within a tier's range, placing the value based on
-    /// where the attribute sits within that tier, plus ±1-2% noise and personality modifier.
+    /// Generates a drill result using a normal-ish distribution (sum of 3 uniform rolls)
+    /// centered on the attribute-driven midpoint of the tier range. This produces a
+    /// realistic spread with most prospects clustering around the mean and a few
+    /// outliers on both ends.
     /// For time-based drills (lower = better), higher attributes produce lower results.
     /// For rep/distance drills (higher = better), higher attributes produce higher results.
     private static func drillResult(
@@ -1142,92 +1147,94 @@ enum ScoutingEngine {
         combineModifier: Double,
         lowerIsBetter: Bool
     ) -> Double {
-        let (lo, hi) = tiers.range(for: attribute)
-
-        // 1% chance of "workout warrior" — bump result into the next tier up
-        let isWorkoutWarrior = Int.random(in: 1...100) == 1
-        let effectiveRange: (Double, Double)
-        if isWorkoutWarrior {
-            if lowerIsBetter {
-                // For time drills, one tier up means faster (lower values)
-                effectiveRange = (lo - (hi - lo) * 0.5, lo)
-            } else {
-                // For rep/distance drills, one tier up means higher values
-                effectiveRange = (hi, hi + (hi - lo) * 0.5)
-            }
-        } else {
-            effectiveRange = (lo, hi)
-        }
-
-        // Place within range: higher attribute → better end
-        // For time drills: higher attr → lower time (near lo end)
-        // For rep/distance: higher attr → higher value (near hi end)
-        let tierSpread = effectiveRange.1 - effectiveRange.0
-        let t = Double.random(in: 0.0...1.0) // Random placement within range
-        let base: Double
+        // Span the full position range from elite to belowAvg.
+        // Use the mid of average tier as the population mean, and use the full
+        // elite-to-belowAvg span as ~4 standard deviations.
+        let bestEnd: Double  // fastest time / most reps
+        let worstEnd: Double // slowest time / fewest reps
         if lowerIsBetter {
-            base = effectiveRange.0 + t * tierSpread
+            bestEnd  = min(tiers.elite.0, tiers.elite.1)
+            worstEnd = max(tiers.belowAvg.0, tiers.belowAvg.1)
         } else {
-            base = effectiveRange.0 + t * tierSpread
+            bestEnd  = max(tiers.elite.0, tiers.elite.1)
+            worstEnd = min(tiers.belowAvg.0, tiers.belowAvg.1)
         }
+        let mean = (bestEnd + worstEnd) / 2.0
+        let stdDev = abs(bestEnd - worstEnd) / 4.0  // ~95% of values fall within elite..belowAvg
 
-        // ±1-2% noise
-        let noisePct = Double.random(in: -0.02...0.02)
-        let noise = base * noisePct
+        // Normal-ish distribution (avg of 3 uniform rolls in [-1, 1])
+        let roll = (Double.random(in: -1.0...1.0)
+                  + Double.random(in: -1.0...1.0)
+                  + Double.random(in: -1.0...1.0)) / 3.0
 
-        // Combine personality modifier: warriors test better, bad testers worse
-        // For time drills: negative modifier = faster (better)
-        // For rep/distance: positive modifier = more reps/distance (better)
-        let modifierEffect: Double
-        if lowerIsBetter {
-            modifierEffect = -combineModifier * base * 0.01
-        } else {
-            modifierEffect = combineModifier * base * 0.01
-        }
+        // Attribute bias: maps 40-99 attribute to ~+1.4..-1.4 std-dev shift.
+        // attr 70 (median) → 0 shift, attr 99 (elite) → toward best end, attr 40 → toward worst.
+        let attrBias = (70.0 - Double(attribute)) / 20.0  // higher attr → smaller (negative) bias
 
-        return base + noise + modifierEffect
+        // Combine modifier shifts ~0.5 std-dev
+        let modBias = combineModifier * 0.5
+
+        // For "lowerIsBetter" drills, higher attribute should reduce the value.
+        // attrBias positive = lower attr = should be slower (higher value if lowerIsBetter).
+        let signedAttrBias = lowerIsBetter ? attrBias : -attrBias
+        let signedModBias = lowerIsBetter ? -modBias : modBias
+
+        return mean + (roll + signedAttrBias + signedModBias) * stdDev
     }
 
     /// Converts a speed attribute (40-99) to a realistic 40-yard dash time.
-    /// Uses position-specific adjustments: OL/DL run slower regardless of SPD rating.
-    /// WR/CB/FS/SS get a slight speed bonus to produce sub-4.40 runners.
+    /// Uses position-specific mean + standard deviation (normal-ish distribution).
+    /// Speed attribute biases the result: high SPD shifts toward fast end of position curve,
+    /// low SPD shifts toward slow end, but position is the dominant factor (a 99-SPD OL
+    /// still runs ~4.95, a 60-SPD WR still runs ~4.55).
     private static func fortyTimeFromSpeed(speed: Int, position: Position, combineModifier: Double) -> Double {
-        // Base time range by SPD attribute
-        let (lo, hi): (Double, Double)
-        switch speed {
-        case 90...99: (lo, hi) = (4.25, 4.38)   // Elite speed
-        case 85...89: (lo, hi) = (4.38, 4.48)
-        case 80...84: (lo, hi) = (4.45, 4.55)
-        case 75...79: (lo, hi) = (4.52, 4.62)
-        case 70...74: (lo, hi) = (4.58, 4.70)
-        default:      (lo, hi) = (4.65, 4.85)   // Below average
-        }
-
-        // Position-specific adjustment: big men run slower
-        let posAdjust: Double
+        // Position-specific mean + std dev (in seconds).
+        // Calibrated to real NFL Combine distributions.
+        let mean: Double
+        let stdDev: Double
         switch position {
-        case .LT, .LG, .C, .RG, .RT:
-            posAdjust = 0.40   // OL: 4.80-5.40 range
-        case .DT:
-            posAdjust = 0.30   // DT: 4.80-5.20 range
-        case .DE:
-            posAdjust = 0.15   // DE: faster than OL but slower than skill
-        case .TE, .MLB, .OLB, .FB:
-            posAdjust = 0.08   // Medium-speed positions
         case .WR, .CB, .FS, .SS:
-            posAdjust = -0.02  // Slight bonus for speed positions
-        default:
-            posAdjust = 0.0
+            mean = 4.46;  stdDev = 0.09   // Most 4.30-4.62, top performers 4.25-4.38
+        case .RB:
+            mean = 4.52;  stdDev = 0.09   // Most 4.38-4.66
+        case .QB:
+            mean = 4.78;  stdDev = 0.13   // Most 4.55-5.00 (Mahomes 4.80, Lamar 4.34)
+        case .OLB:
+            mean = 4.66;  stdDev = 0.10   // Most 4.50-4.85
+        case .MLB:
+            mean = 4.72;  stdDev = 0.10   // Most 4.55-4.90
+        case .TE:
+            mean = 4.68;  stdDev = 0.10   // Most 4.50-4.85
+        case .FB:
+            mean = 4.78;  stdDev = 0.12   // Most 4.60-5.00
+        case .DE:
+            mean = 4.76;  stdDev = 0.11   // Most 4.55-4.95, top edge 4.40-4.55
+        case .DT:
+            mean = 4.95;  stdDev = 0.11   // Most 4.75-5.15
+        case .LT, .LG, .C, .RG, .RT:
+            mean = 5.13;  stdDev = 0.13   // Most 4.90-5.40
+        case .K, .P:
+            mean = 4.95;  stdDev = 0.15
         }
 
-        // Random placement within range
-        let base = Double.random(in: lo...hi) + posAdjust
+        // Sum of 3 uniform rolls (averaged) approximates a normal distribution.
+        // Each roll yields a value in [-1, 1]; the average is roughly bell-curved
+        // around 0 with most values between -0.5 and 0.5.
+        let roll = (Double.random(in: -1.0...1.0)
+                  + Double.random(in: -1.0...1.0)
+                  + Double.random(in: -1.0...1.0)) / 3.0
 
-        // ±1% noise + combine modifier
-        let noise = base * Double.random(in: -0.01...0.01)
-        let modEffect = -combineModifier * base * 0.005
+        // Speed attribute bias: shift the curve based on SPD rating.
+        // SPD 50 (mediocre) → +0.6 stddev (slower than position avg)
+        // SPD 75 (average) → 0 (right at position avg)
+        // SPD 99 (elite)   → -0.96 stddev (faster than position avg)
+        let speedBias = (75.0 - Double(speed)) / 25.0  // ~ -0.96 to +1.0
 
-        return base + noise + modEffect
+        // Combine modifier: warriors (-0.6 std), bad testers (+0.6 std)
+        let modBias = -combineModifier * 0.6
+
+        let result = mean + (roll + speedBias + modBias) * stdDev
+        return result
     }
 
     /// Returns a modifier: positive = combine warrior (tests better), negative = bad tester.

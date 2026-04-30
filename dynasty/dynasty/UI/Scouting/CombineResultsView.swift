@@ -15,6 +15,10 @@ struct CombineResultsView: View {
     @State private var isLoading: Bool = true
     @State private var cachedSortedProspects: [CollegeProspect] = []
 
+    /// Population-based percentile lookup tables.
+    /// Key: position, Value: sorted list of drill values for percentile rank lookup.
+    @State private var percentilePools: PercentilePools = PercentilePools()
+
     // MARK: - Filtered & Sorted Data
 
     private var combineInvitees: [CollegeProspect] {
@@ -114,6 +118,10 @@ struct CombineResultsView: View {
         cachedSortedProspects = sortedProspects
     }
 
+    private func rebuildPercentilePools() {
+        percentilePools = PercentilePools(prospects: combineInvitees)
+    }
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -185,6 +193,7 @@ struct CombineResultsView: View {
         }
         .task {
             loadTeamPlayers()
+            rebuildPercentilePools()
             refreshCachedData()
             isLoading = false
         }
@@ -435,28 +444,28 @@ struct CombineResultsView: View {
                 .frame(width: 110, alignment: .leading)
 
             drillCell(value: prospect.fortyTime.map { String(format: "%.2f", $0) },
-                      tier: prospect.fortyTime.map { fortyTier($0) }, width: 60,
-                      percentile: prospect.fortyTime.map { drillPercentile($0, \.fortyYard, prospect.position) })
+                      tier: prospect.fortyTime.map { fortyTierForPosition($0, prospect.position) }, width: 60,
+                      percentile: prospect.fortyTime.map { drillPercentile($0, drill: .forty, prospect.position) })
 
             drillCell(value: prospect.benchPress.map { "\($0)" },
                       tier: prospect.benchPress.map { benchTier($0) }, width: 60,
-                      percentile: prospect.benchPress.map { drillPercentile(Double($0), \.benchPress, prospect.position) })
+                      percentile: prospect.benchPress.map { drillPercentile(Double($0), drill: .bench, prospect.position) })
 
             drillCell(value: prospect.verticalJump.map { String(format: "%.1f\"", $0) },
                       tier: prospect.verticalJump.map { verticalTier($0) }, width: 60,
-                      percentile: prospect.verticalJump.map { drillPercentile($0, \.verticalJump, prospect.position) })
+                      percentile: prospect.verticalJump.map { drillPercentile($0, drill: .vertical, prospect.position) })
 
             drillCell(value: prospect.broadJump.map { "\($0)in" },
                       tier: prospect.broadJump.map { broadTier($0) }, width: 60,
-                      percentile: prospect.broadJump.map { drillPercentile(Double($0), \.broadJump, prospect.position) })
+                      percentile: prospect.broadJump.map { drillPercentile(Double($0), drill: .broad, prospect.position) })
 
             drillCell(value: prospect.coneDrill.map { String(format: "%.2f", $0) },
                       tier: prospect.coneDrill.map { coneTier($0) }, width: 66,
-                      percentile: prospect.coneDrill.map { drillPercentile($0, \.threeCone, prospect.position) })
+                      percentile: prospect.coneDrill.map { drillPercentile($0, drill: .threeCone, prospect.position) })
 
             drillCell(value: prospect.shuttleTime.map { String(format: "%.2f", $0) },
                       tier: prospect.shuttleTime.map { shuttleTier($0) }, width: 66,
-                      percentile: prospect.shuttleTime.map { drillPercentile($0, \.shuttle, prospect.position) })
+                      percentile: prospect.shuttleTime.map { drillPercentile($0, drill: .shuttle, prospect.position) })
 
             // Position drill grade
             Text(prospect.positionDrillGrade ?? "--")
@@ -479,19 +488,26 @@ struct CombineResultsView: View {
                 .foregroundStyle(tier?.color ?? Color.textTertiary)
 
             if let pct = percentile {
-                Text("\(pct)th")
-                    .font(.system(size: 8, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(percentileColor(pct))
+                let tier = tierLabel(for: pct)
+                Text(tier.text)
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(tier.color)
             }
         }
         .frame(width: width)
     }
 
-    private func percentileColor(_ pct: Int) -> Color {
-        if pct >= 75 { return .success }
-        if pct >= 50 { return .accentGold }
-        if pct >= 25 { return .textSecondary }
-        return .danger
+    /// Maps a 1-99 percentile to a human-friendly tier label and color.
+    /// Tiers are language-friendly and immediately scannable on the combine
+    /// results table compared to raw "Nth" rank text.
+    private func tierLabel(for percentile: Int) -> (text: String, color: Color) {
+        switch percentile {
+        case 90...:    return ("Top 10%", .accentGold)
+        case 75..<90:  return ("Top 25%", .success)
+        case 50..<75:  return ("Above Avg", .accentBlue)
+        case 25..<50:  return ("Below Avg", .warning)
+        default:       return ("Bottom 25%", .danger)
+        }
     }
 
     // MARK: - Empty State
@@ -604,9 +620,12 @@ struct CombineResultsView: View {
 
     // MARK: - Percentile Helper
 
-    private func drillPercentile(_ value: Double, _ keyPath: KeyPath<CombineBenchmarks.PositionBenchmarks, CombineBenchmarks.DrillBenchmark>, _ position: Position) -> Int {
-        let benchmarks = CombineBenchmarks.benchmarks(for: position)
-        return CombineBenchmarks.percentile(value: value, benchmark: benchmarks[keyPath: keyPath])
+    /// Population-based percentile within position group.
+    /// `value` is the prospect's drill value, `drill` selects which sorted pool to use.
+    /// Returns 1-99 where 99 = best in position, 50 = median, 1 = worst.
+    /// Identical values produce identical percentiles (uses rank-based with tie handling).
+    private func drillPercentile(_ value: Double, drill: DrillKind, _ position: Position) -> Int {
+        return percentilePools.percentile(value: value, drill: drill, position: position)
     }
 
     // MARK: - Sorting Helpers
@@ -625,6 +644,19 @@ struct CombineResultsView: View {
         if time < 4.40 { return .elite }
         if time < 4.55 { return .good }
         if time < 4.70 { return .average }
+        return .poor
+    }
+
+    /// Position-relative 40yd tier coloring. Uses the percentile pool for the
+    /// player's position so an OL running 5.05 can be "elite" and a WR running
+    /// 4.55 can be "average". Falls back to absolute tier if the pool is empty.
+    private func fortyTierForPosition(_ time: Double, _ position: Position) -> DrillTier {
+        let pct = percentilePools.percentile(value: time, drill: .forty, position: position)
+        // Pools may not be built yet (during initial load) — guard with absolute tier.
+        if percentilePools.isEmpty { return fortyTier(time) }
+        if pct >= 75 { return .elite }
+        if pct >= 50 { return .good }
+        if pct >= 25 { return .average }
         return .poor
     }
 
@@ -683,6 +715,96 @@ private enum DrillTier {
         case .average: return .textPrimary
         case .poor:    return .warning
         }
+    }
+}
+
+// MARK: - Population-Based Percentile Pools
+
+/// Identifies a combine drill for percentile lookup.
+enum DrillKind: Hashable {
+    case forty, bench, vertical, broad, threeCone, shuttle
+
+    /// True if a lower value is better (timed drills).
+    var lowerIsBetter: Bool {
+        switch self {
+        case .forty, .threeCone, .shuttle: return true
+        case .bench, .vertical, .broad:    return false
+        }
+    }
+}
+
+/// Percentile pools per (position, drill) computed from the combine invitee population.
+/// Same value within the same pool always produces the same percentile.
+/// Best in pool ~= 99th percentile, median ~= 50th, worst ~= 1st.
+struct PercentilePools {
+    /// Sorted (ascending) values per position+drill.
+    private var pools: [PoolKey: [Double]]
+
+    private struct PoolKey: Hashable {
+        let position: Position
+        let drill: DrillKind
+    }
+
+    var isEmpty: Bool { pools.isEmpty }
+
+    init() {
+        self.pools = [:]
+    }
+
+    init(prospects: [CollegeProspect]) {
+        var collected: [PoolKey: [Double]] = [:]
+        for prospect in prospects {
+            let pos = prospect.position
+            if let v = prospect.fortyTime {
+                collected[PoolKey(position: pos, drill: .forty), default: []].append(v)
+            }
+            if let v = prospect.benchPress {
+                collected[PoolKey(position: pos, drill: .bench), default: []].append(Double(v))
+            }
+            if let v = prospect.verticalJump {
+                collected[PoolKey(position: pos, drill: .vertical), default: []].append(v)
+            }
+            if let v = prospect.broadJump {
+                collected[PoolKey(position: pos, drill: .broad), default: []].append(Double(v))
+            }
+            if let v = prospect.coneDrill {
+                collected[PoolKey(position: pos, drill: .threeCone), default: []].append(v)
+            }
+            if let v = prospect.shuttleTime {
+                collected[PoolKey(position: pos, drill: .shuttle), default: []].append(v)
+            }
+        }
+        // Sort each pool ascending for binary-search percentile.
+        for key in collected.keys {
+            collected[key]?.sort()
+        }
+        self.pools = collected
+    }
+
+    /// Population-based percentile for `value` within position+drill pool.
+    /// Returns 1-99 with ties producing the same percentile.
+    /// - Best value in pool ~= 99
+    /// - Median ~= 50
+    /// - Worst value ~= 1
+    func percentile(value: Double, drill: DrillKind, position: Position) -> Int {
+        let key = PoolKey(position: position, drill: drill)
+        guard let pool = pools[key], !pool.isEmpty else { return 50 }
+        let n = pool.count
+        if n == 1 { return 99 }
+
+        // Count strictly worse (so all ties get the same percentile).
+        let countWorse: Int
+        if drill.lowerIsBetter {
+            // Worse = larger value
+            countWorse = pool.filter { $0 > value }.count
+        } else {
+            countWorse = pool.filter { $0 < value }.count
+        }
+
+        // Map [0, n-1] → [1, 99]; best (countWorse == n-1) → 99, worst → 1.
+        // Use rank-fraction so two prospects with the same value get the same percentile.
+        let pct = Int(round(Double(countWorse) / Double(n - 1) * 98.0)) + 1
+        return max(1, min(99, pct))
     }
 }
 

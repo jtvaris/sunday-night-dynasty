@@ -183,10 +183,10 @@ struct DraftView: View {
             HStack(spacing: 8) {
                 Image(systemName: "chart.bar.fill")
                     .font(.system(size: 10))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textTertiary)
                 Text("TEAM NEEDS")
                     .font(.system(size: 10, weight: .heavy))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textTertiary)
                     .tracking(1.5)
 
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -265,7 +265,7 @@ struct DraftView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("NFL DRAFT")
                     .font(.system(size: 12, weight: .heavy))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                     .tracking(2)
                 if let pick = currentPick {
                     Text("Round \(pick.round)  ·  Pick \(pick.pickNumber) of \(allPicks.count)")
@@ -290,7 +290,7 @@ struct DraftView: View {
                         .foregroundStyle(Color.textSecondary)
                     ProgressView(value: fraction)
                         .progressViewStyle(.linear)
-                        .tint(Color.accentGold)
+                        .tint(Color.accentBlue)
                         .frame(width: 100)
                 }
             }
@@ -300,8 +300,8 @@ struct DraftView: View {
         .background(Color.backgroundSecondary)
         .overlay(
             Rectangle()
-                .fill(Color.accentGold)
-                .frame(height: 2),
+                .fill(Color.surfaceBorder)
+                .frame(height: 1),
             alignment: .bottom
         )
     }
@@ -372,7 +372,7 @@ struct DraftView: View {
                     .frame(width: 8, height: 8)
                 Text("YOU'RE ON THE CLOCK")
                     .font(.system(size: 12, weight: .heavy))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textPrimary)
                     .tracking(2)
                 Circle()
                     .fill(Color.accentGold)
@@ -388,10 +388,10 @@ struct DraftView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "clock.fill")
                         .font(.system(size: 12))
-                        .foregroundStyle(clockSeconds <= 30 ? Color.danger : Color.accentGold)
+                        .foregroundStyle(clockSeconds <= 30 ? Color.danger : Color.textSecondary)
                     Text(String(format: "%d:%02d", clockSeconds / 60, clockSeconds % 60))
                         .font(.system(size: 16, weight: .bold).monospacedDigit())
-                        .foregroundStyle(clockSeconds <= 30 ? Color.danger : Color.accentGold)
+                        .foregroundStyle(clockSeconds <= 30 ? Color.danger : Color.textPrimary)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
@@ -449,10 +449,7 @@ struct DraftView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(20)
-        .background(
-            Color.backgroundSecondary
-                .overlay(Color.accentGold.opacity(0.04))
-        )
+        .background(Color.backgroundSecondary)
         .overlay(
             Rectangle()
                 .fill(Color.surfaceBorder)
@@ -571,12 +568,12 @@ struct DraftView: View {
                 Text(title)
                     .font(.system(size: 12, weight: .semibold))
             }
-            .foregroundStyle(isActive ? Color.accentGold : Color.textTertiary)
+            .foregroundStyle(isActive ? Color.accentBlue : Color.textTertiary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             .overlay(
                 Rectangle()
-                    .fill(isActive ? Color.accentGold : Color.clear)
+                    .fill(isActive ? Color.accentBlue : Color.clear)
                     .frame(height: 2),
                 alignment: .bottom
             )
@@ -726,7 +723,7 @@ struct DraftView: View {
         HStack {
             Text("Your Big Board")
                 .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.textPrimary)
             Spacer()
             Text("\(availableProspects.filter { $0.scoutedOverall != nil }.count) left")
                 .font(.caption.monospacedDigit())
@@ -1082,10 +1079,10 @@ struct DraftView: View {
             HStack(spacing: 8) {
                 Image(systemName: "person.3.fill")
                     .font(.system(size: 11))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textTertiary)
                 Text("WAR ROOM")
                     .font(.system(size: 10, weight: .heavy))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textTertiary)
                     .tracking(1.5)
                 Spacer()
                 Text("\(staffRecommendations.count) suggestions")
@@ -1105,10 +1102,7 @@ struct DraftView: View {
                 .padding(.bottom, 12)
             }
         }
-        .background(
-            Color.backgroundSecondary
-                .overlay(Color.accentGold.opacity(0.03))
-        )
+        .background(Color.backgroundSecondary)
         .overlay(
             Rectangle()
                 .fill(Color.surfaceBorder)
@@ -1122,10 +1116,10 @@ struct DraftView: View {
             HStack(spacing: 6) {
                 Image(systemName: recommendation.icon)
                     .font(.system(size: 11))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.accentBlue)
                 Text(recommendation.staffTitle)
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textPrimary)
             }
             Text(recommendation.message)
                 .font(.system(size: 12, weight: .medium))
@@ -1276,7 +1270,7 @@ struct DraftView: View {
                     .foregroundStyle(Color.textTertiary)
                 Text("#\(pick.pickNumber)")
                     .font(.system(size: 16, weight: .heavy).monospacedDigit())
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textPrimary)
             }
             .frame(width: 44)
 
@@ -1329,7 +1323,7 @@ struct DraftView: View {
                 .fill(Color.backgroundSecondary)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.accentGold.opacity(0.3), lineWidth: 1.5)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                 )
         )
     }

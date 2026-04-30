@@ -117,7 +117,7 @@ struct PlayerContractView: View {
                 Text(formatMillions(estimatedMarketValue))
                     .fontWeight(.semibold)
                     .monospacedDigit()
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textPrimary)
             }
             LabeledContent("Current vs. Market") {
                 HStack(spacing: 6) {
@@ -243,7 +243,7 @@ struct PlayerContractView: View {
                 .foregroundStyle(Color.success)
         case 2:
             return Text("Stable")
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.textSecondary)
         case 1:
             return Text("Expiring Soon")
                 .foregroundStyle(Color.warning)

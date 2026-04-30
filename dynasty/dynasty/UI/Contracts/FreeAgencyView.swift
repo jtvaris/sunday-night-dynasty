@@ -121,7 +121,7 @@ struct FreeAgencyView: View {
                     ProgressView()
                         .progressViewStyle(.circular)
                         .scaleEffect(1.5)
-                        .tint(Color.accentGold)
+                        .tint(Color.accentBlue)
                     Text("Loading Free Agency...")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
@@ -166,7 +166,7 @@ struct FreeAgencyView: View {
         HStack(spacing: 8) {
             Text(FreeAgencyStep.roundLabel(currentRound))
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.textPrimary)
 
             Text("of \(totalRounds)")
                 .font(.subheadline)
@@ -178,7 +178,7 @@ struct FreeAgencyView: View {
             HStack(spacing: 4) {
                 ForEach(1...totalRounds, id: \.self) { round in
                     Circle()
-                        .fill(round <= currentRound ? Color.accentGold : Color.backgroundTertiary)
+                        .fill(round <= currentRound ? Color.accentBlue : Color.backgroundTertiary)
                         .frame(width: 8, height: 8)
                 }
             }
@@ -301,7 +301,7 @@ struct FreeAgencyView: View {
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 20)
-                        .fill(positionFilter == filter ? Color.accentGold : Color.backgroundTertiary)
+                        .fill(positionFilter == filter ? Color.accentBlue : Color.backgroundTertiary)
                 )
         }
         .buttonStyle(.plain)
@@ -323,7 +323,7 @@ struct FreeAgencyView: View {
                     } label: {
                         Text(option.rawValue)
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(sortOption == option ? Color.accentGold : Color.textSecondary)
+                            .foregroundStyle(sortOption == option ? Color.accentBlue : Color.textSecondary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 8)
                     }
@@ -478,7 +478,7 @@ struct FreeAgencyView: View {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(formatMillions(marketValue))
                         .font(.subheadline.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.textPrimary)
                     Text("Est./yr")
                         .font(.system(size: 9).weight(.medium))
                         .foregroundStyle(Color.textTertiary)
@@ -560,9 +560,117 @@ struct FreeAgencyView: View {
                         .italic()
                 }
             }
+
+            // Fourth row: vs Current Starter card (decision support)
+            vsCurrentStarterCard(for: player)
         }
         .padding(.vertical, 8)
         .contentShape(Rectangle())
+    }
+
+    // MARK: - vs Current Starter Card (decision support — letter-grade comparison)
+
+    @ViewBuilder
+    private func vsCurrentStarterCard(for player: Player) -> some View {
+        let starter = teamRoster
+            .filter { $0.position == player.position }
+            .max(by: { $0.overall < $1.overall })
+
+        if let starter {
+            let diff = player.overall - starter.overall
+            let conclusion = starterConclusionLabel(diff)
+            let conclusionColor = starterConclusionColor(diff)
+            let faGrade = LetterGrade.from(numericValue: player.overall)
+            let starterGrade = LetterGrade.from(numericValue: starter.overall)
+
+            HStack(spacing: 10) {
+                // Free agent side
+                VStack(spacing: 1) {
+                    Text(player.fullName)
+                        .font(.system(size: 11).weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    Text(faGrade.rawValue)
+                        .font(.subheadline.weight(.heavy))
+                        .foregroundStyle(rowGradeColor(faGrade))
+                    Text("Free Agent")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .frame(maxWidth: .infinity)
+
+                // Comparison conclusion
+                VStack(spacing: 1) {
+                    Text("vs")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(conclusion)
+                        .font(.system(size: 11).weight(.heavy))
+                        .foregroundStyle(conclusionColor)
+                        .multilineTextAlignment(.center)
+                }
+
+                // Starter side
+                VStack(spacing: 1) {
+                    Text(starter.fullName)
+                        .font(.system(size: 11).weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    Text(starterGrade.rawValue)
+                        .font(.subheadline.weight(.heavy))
+                        .foregroundStyle(rowGradeColor(starterGrade))
+                    Text("Starter")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.backgroundTertiary.opacity(0.5))
+            )
+        } else {
+            // No starter at this position — clear win
+            HStack(spacing: 8) {
+                Image(systemName: "person.fill.badge.plus")
+                    .font(.caption)
+                    .foregroundStyle(Color.success)
+                Text("No \(player.position.rawValue) on roster — immediate starter")
+                    .font(.system(size: 11).weight(.semibold))
+                    .foregroundStyle(Color.success)
+                Spacer()
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.success.opacity(0.1))
+            )
+        }
+    }
+
+    private func starterConclusionLabel(_ diff: Int) -> String {
+        if diff >= 3 { return "Upgrade" }
+        if diff >= -2 { return "Lateral" }
+        return "Downgrade"
+    }
+
+    private func starterConclusionColor(_ diff: Int) -> Color {
+        if diff >= 3 { return .success }
+        if diff >= -2 { return .accentGold }
+        return .textSecondary
+    }
+
+    private func rowGradeColor(_ grade: LetterGrade) -> Color {
+        switch grade.rank {
+        case 10...12: return .success
+        case 7...9:   return .accentGold
+        case 4...6:   return .warning
+        case 2...3:   return .danger
+        default:      return .danger
+        }
     }
 
     // MARK: - Motivation Badge (Task 3)
@@ -686,7 +794,7 @@ struct FreeAgencyView: View {
 
             Text("~\(formatMillions(totalSalary))/yr")
                 .font(.caption.weight(.semibold).monospacedDigit())
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(Color.textPrimary)
 
             Text("\u{2022}")
                 .foregroundStyle(Color.textTertiary)
@@ -711,7 +819,7 @@ struct FreeAgencyView: View {
         .background(Color.backgroundSecondary)
         .overlay(
             Rectangle()
-                .fill(Color.accentGold.opacity(0.4))
+                .fill(Color.surfaceBorder)
                 .frame(height: 1),
             alignment: .top
         )

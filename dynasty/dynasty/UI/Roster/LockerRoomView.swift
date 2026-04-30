@@ -75,7 +75,7 @@ struct LockerRoomView: View {
             HStack(spacing: 12) {
                 Image(systemName: "person.3.sequence.fill")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.accentBlue)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Squad Dynamics")
                         .font(.subheadline.weight(.semibold))
@@ -87,10 +87,10 @@ struct LockerRoomView: View {
                 Spacer()
                 Text("View Full Squad Dynamics")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.accentBlue)
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.accentGold.opacity(0.7))
+                    .foregroundStyle(Color.textTertiary)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
@@ -186,7 +186,7 @@ struct LockerRoomView: View {
         VStack(spacing: 12) {
             HStack {
                 Image(systemName: "chart.bar.fill")
-                    .foregroundStyle(Color.accentGold)
+                    .foregroundStyle(Color.textSecondary)
                 Text("Morale Distribution")
                     .font(.headline)
                     .foregroundStyle(Color.textPrimary)
@@ -338,7 +338,7 @@ struct LockerRoomView: View {
                 HStack(spacing: 6) {
                     Text(player.position.rawValue)
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.textSecondary)
                     Text("·")
                         .foregroundStyle(Color.textTertiary)
                     Text(player.personality.archetype.displayName)
@@ -409,8 +409,9 @@ struct LockerRoomView: View {
 
     private func chemistryColor(_ value: Int) -> Color {
         switch value {
-        case 75...100: return Color.success
-        case 55..<75:  return Color.accentGold
+        case 90...100: return Color.accentGold
+        case 75..<90:  return Color.success
+        case 55..<75:  return Color.accentBlue
         case 40..<55:  return Color.warning
         default:       return Color.danger
         }

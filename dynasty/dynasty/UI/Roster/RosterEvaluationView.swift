@@ -82,6 +82,10 @@ struct RosterEvaluationView: View {
     // #251: Expandable key decision rows
     @State private var expandedDecisions: Set<UUID> = []
 
+    // #252: Cap Scenario selection (persists across sessions)
+    @AppStorage("rosterCapScenario") private var selectedCapScenario: String = ""
+    @State private var capScenarioConfirmation: String?
+
     // Own assessment options (#266)
     private static let ownAssessmentOptions = [
         "none", "Solid", "Starter needed", "Depth needed", "Upgrade needed", "Aging", "Priority"
@@ -1594,10 +1598,13 @@ struct RosterEvaluationView: View {
     }
 
     private var biggestNeedGroup: EvalPositionGroup? {
-        EvalPositionGroup.allGroups.min(by: { a, b in
-            averageOverall(players.filter { a.positions.contains($0.position) })
-            < averageOverall(players.filter { b.positions.contains($0.position) })
-        })
+        // Single source of truth: DraftEngine.topTeamNeeds (used by Scouting Hub,
+        // Big Board, Prospect List, Combine, Interviews). Map the #1 Position need
+        // to its containing position group for display in the Roster Evaluation UI.
+        guard let topNeed = DraftEngine.topTeamNeeds(roster: players, limit: 1).first else {
+            return nil
+        }
+        return EvalPositionGroup.allGroups.first(where: { $0.positions.contains(topNeed) })
     }
 
     // MARK: - Key Decision Builder
@@ -1866,6 +1873,9 @@ struct RosterEvaluationView: View {
         let scenCSpace = cap - scenCUsage
         let scenCPct = cap > 0 ? Double(scenCUsage) / Double(cap) : 0
 
+        let topThreeNames = top3Expiring.map(\.lastName).joined(separator: ", ")
+        let releaseRest = max(expiringCount - 3, 0)
+
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.branch")
@@ -1874,32 +1884,102 @@ struct RosterEvaluationView: View {
                 Text("Cap Scenarios")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.textPrimary)
+
+                Spacer()
+
+                if !selectedCapScenario.isEmpty {
+                    Button {
+                        selectedCapScenario = ""
+                        capScenarioConfirmation = nil
+                    } label: {
+                        Text("Clear")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
 
-            capScenarioCard(
-                label: "A",
-                title: "Release All Expiring",
-                capPct: scenAPct,
-                available: scenASpace,
-                tradeoff: "Max flexibility, lose \(expiringCount) player\(expiringCount == 1 ? "" : "s")"
-            )
+            Button {
+                selectScenario(
+                    "A",
+                    confirmation: "Scenario A queued: \(expiringCount) player\(expiringCount == 1 ? "" : "s") will be released after FA. Confirm in Free Agency."
+                )
+            } label: {
+                capScenarioCard(
+                    label: "A",
+                    title: "Release All Expiring",
+                    capPct: scenAPct,
+                    available: scenASpace,
+                    tradeoff: "Max flexibility, lose \(expiringCount) player\(expiringCount == 1 ? "" : "s")",
+                    isSelected: selectedCapScenario == "A"
+                )
+            }
+            .buttonStyle(.plain)
 
-            capScenarioCard(
-                label: "B",
-                title: "Re-sign Top 3",
-                capPct: scenBPct,
-                available: scenBSpace,
-                tradeoff: "Keep core\(top3Expiring.isEmpty ? "" : " (\(top3Expiring.map(\.lastName).joined(separator: ", ")))"), release \(max(expiringCount - 3, 0))"
-            )
+            Button {
+                selectScenario(
+                    "B",
+                    confirmation: "Scenario B queued: re-sign top 3\(topThreeNames.isEmpty ? "" : " (\(topThreeNames))"), release \(releaseRest). Confirm in Free Agency."
+                )
+            } label: {
+                capScenarioCard(
+                    label: "B",
+                    title: "Re-sign Top 3",
+                    capPct: scenBPct,
+                    available: scenBSpace,
+                    tradeoff: "Keep core\(top3Expiring.isEmpty ? "" : " (\(topThreeNames))"), release \(releaseRest)",
+                    isSelected: selectedCapScenario == "B"
+                )
+            }
+            .buttonStyle(.plain)
 
-            capScenarioCard(
-                label: "C",
-                title: "Re-sign All",
-                capPct: scenCPct,
-                available: scenCSpace,
-                tradeoff: scenCSpace < 5_000 ? "Retain all, very tight cap" : "Retain all, moderate flexibility"
-            )
+            Button {
+                selectScenario(
+                    "C",
+                    confirmation: "Scenario C queued: re-sign all \(expiringCount) expiring player\(expiringCount == 1 ? "" : "s"). Confirm in Free Agency."
+                )
+            } label: {
+                capScenarioCard(
+                    label: "C",
+                    title: "Re-sign All",
+                    capPct: scenCPct,
+                    available: scenCSpace,
+                    tradeoff: scenCSpace < 5_000 ? "Retain all, very tight cap" : "Retain all, moderate flexibility",
+                    isSelected: selectedCapScenario == "C"
+                )
+            }
+            .buttonStyle(.plain)
+
+            if let message = capScenarioConfirmation {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.success)
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.success.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.success.opacity(0.4), lineWidth: 1)
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
+        .animation(.easeInOut(duration: 0.2), value: selectedCapScenario)
+        .animation(.easeInOut(duration: 0.2), value: capScenarioConfirmation)
+    }
+
+    private func selectScenario(_ label: String, confirmation: String) {
+        // TODO(#252): Actually mutate contracts (queue releases / extension offers).
+        // For now we just record selection state so FA flow can read it later.
+        selectedCapScenario = label
+        capScenarioConfirmation = confirmation
     }
 
     private func capScenarioCard(
@@ -1907,7 +1987,8 @@ struct RosterEvaluationView: View {
         title: String,
         capPct: Double,
         available: Int,
-        tradeoff: String
+        tradeoff: String,
+        isSelected: Bool = false
     ) -> some View {
         let pctClamped = min(max(capPct, 0), 1.5)
         let pctColor: Color = pctClamped > 1.0 ? .danger : (pctClamped > 0.9 ? .warning : .success)
@@ -1923,6 +2004,13 @@ struct RosterEvaluationView: View {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.textPrimary)
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.accentGold)
+                        .accessibilityLabel("Selected")
+                }
 
                 Spacer()
 
@@ -1959,11 +2047,18 @@ struct RosterEvaluationView: View {
             }
         }
         .padding(12)
-        .background(Color.backgroundSecondary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .background(
+            (isSelected ? Color.accentGold.opacity(0.12) : Color.backgroundSecondary.opacity(0.5)),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.surfaceBorder.opacity(0.5), lineWidth: 1)
+                .strokeBorder(
+                    isSelected ? Color.accentGold : Color.surfaceBorder.opacity(0.5),
+                    lineWidth: isSelected ? 2 : 1
+                )
         )
+        .contentShape(RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Grade Helpers (delegates to PositionGradeCalculator)

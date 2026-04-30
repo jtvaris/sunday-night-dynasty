@@ -402,7 +402,11 @@ struct CareerShellView: View {
         case .inbox:              shellDest = .inbox
         case .rosterEvaluation:   shellDest = .rosterEvaluation
         case .franchiseTag:       shellDest = .franchiseTag
-        case .interviewReport:    shellDest = .scouting
+        case .interviewReport:
+            // Hint to ScoutingHubView to auto-select the Interviews tab so the
+            // saved interview report is visible immediately.
+            UserDefaults.standard.set("interviews", forKey: "scoutingPendingTab")
+            shellDest = .scouting
         case .personalWorkouts:   shellDest = .scouting
         }
 
@@ -537,8 +541,13 @@ struct CareerShellView: View {
                 let interviewsDone = currentTasks.first(where: { $0.title == "Conduct prospect interviews" })?.status == .done
                 if !interviewsDone {
                     currentTasks[index].status = .todo
-                } else if currentTasks[index].status == .inProgress {
-                    // Visited scouting after interviews → report reviewed
+                } else if UserDefaults.standard.bool(forKey: "interviewReportReviewed") {
+                    // User opened/closed the InterviewReportView → report reviewed
+                    currentTasks[index].status = .done
+                } else if career.interviewsUsed >= 60 {
+                    // Backstop for stuck saves: all 60 interviews used means the
+                    // post-interview report was shown automatically; treat as reviewed.
+                    UserDefaults.standard.set(true, forKey: "interviewReportReviewed")
                     currentTasks[index].status = .done
                 }
 

@@ -84,7 +84,7 @@ struct NewsView: View {
                 .frame(minHeight: 36)
                 .background(
                     Capsule()
-                        .fill(isSelected ? Color.accentGold : Color.backgroundTertiary)
+                        .fill(isSelected ? Color.accentBlue : Color.backgroundTertiary)
                 )
         }
         .buttonStyle(.plain)
@@ -269,7 +269,7 @@ extension NewsCategory {
         switch self {
         case .gameResult:        return Color.accentBlue
         case .injury:            return Color.danger
-        case .trade:             return Color.accentGold
+        case .trade:             return Color(red: 0.55, green: 0.45, blue: 0.85)
         case .freeAgency:        return Color(red: 0.6, green: 0.3, blue: 0.9)
         case .draft:             return Color.success
         case .coachingChange:    return Color(red: 0.9, green: 0.45, blue: 0.1)

@@ -72,8 +72,22 @@ struct ScoutingHubView: View {
         }
         .task {
             loadData()
-            // Auto-select Pro Days tab when in proDays phase
-            if career.currentPhase == .proDays {
+            // Honor a pending tab hint set by CareerShellView when the user
+            // tapped a task that should land them on a specific tab
+            // (e.g. "Review interview report" → Interviews tab).
+            if let pending = UserDefaults.standard.string(forKey: "scoutingPendingTab"),
+               !pending.isEmpty {
+                switch pending {
+                case "interviews": if career.currentPhase == .combine { selectedTab = .interviews }
+                case "combine":    selectedTab = .combine
+                case "bigBoard":   selectedTab = .bigBoard
+                case "prospects":  selectedTab = .prospects
+                case "proDays":    selectedTab = .proDays
+                default: break
+                }
+                UserDefaults.standard.removeObject(forKey: "scoutingPendingTab")
+            } else if career.currentPhase == .proDays {
+                // Auto-select Pro Days tab when in proDays phase
                 selectedTab = .proDays
             }
             isLoading = false
@@ -95,24 +109,62 @@ struct ScoutingHubView: View {
 
     private var sendScoutsToCombineButton: some View {
         Group {
-            if scoutsSentToCombine {
-                HStack(spacing: 10) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(Color.success)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Scouts at Combine")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(Color.success)
-                        Text("Results are in — check the Combine tab")
-                            .font(.caption)
+            if scoutsSentToCombine && combineResultsReviewed {
+                // State 3: scouts sent + results reviewed — show a quiet, completed banner
+                // (or hide entirely on the Combine tab to reduce noise).
+                if selectedTab != .combine {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.title3)
                             .foregroundStyle(Color.textSecondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Combine Reviewed")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(Color.textPrimary)
+                            Text("Combine results have been reviewed.")
+                                .font(.caption)
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                        Spacer()
+                        Button {
+                            selectedTab = .combine
+                        } label: {
+                            Text("Re-open")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.accentGold)
+                        }
                     }
-                    Spacer()
+                    .padding(12)
+                    .background(Color.backgroundTertiary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.surfaceBorder, lineWidth: 1))
                 }
-                .padding(12)
-                .background(Color.success.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.success.opacity(0.3), lineWidth: 1))
+            } else if scoutsSentToCombine {
+                // State 2: scouts sent, results NOT yet reviewed — actionable green banner
+                Button {
+                    selectedTab = .combine
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(Color.success)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Scouts at Combine")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(Color.success)
+                            Text("Results are in \u{2014} tap to review")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                        Spacer()
+                        Image(systemName: "arrow.right.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(Color.success)
+                    }
+                    .padding(12)
+                    .background(Color.success.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.success.opacity(0.3), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
             } else {
                 // #22: More visually prominent CTA
                 Button {

@@ -15,9 +15,25 @@ struct InboxView: View {
     @State private var selectedMessage: InboxMessage?
 
     private var filteredMessages: [InboxMessage] {
-        messages
-            .filter { activeFilter.matches($0) }
-            .reversed() // newest first (messages are appended chronologically)
+        // Newest first, then sort by importance bucket:
+        // 1) Action Required (unread first), 2) Unread, 3) Read
+        let chronological = Array(messages.reversed())
+        let filtered = chronological.filter { activeFilter.matches($0) }
+        return filtered.enumerated()
+            .sorted { lhs, rhs in
+                let l = sortRank(for: lhs.element)
+                let r = sortRank(for: rhs.element)
+                if l != r { return l < r }
+                return lhs.offset < rhs.offset // preserve newest-first within bucket
+            }
+            .map { $0.element }
+    }
+
+    private func sortRank(for message: InboxMessage) -> Int {
+        if message.actionRequired && !message.isRead { return 0 }
+        if message.actionRequired                    { return 1 }
+        if !message.isRead                           { return 2 }
+        return 3
     }
 
     private var unreadCount: Int {
@@ -41,7 +57,7 @@ struct InboxView: View {
                 if unreadCount > 0 {
                     Text("\(unreadCount) unread")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentGold)
+                        .foregroundStyle(Color.accentBlue)
                 }
             }
         }
@@ -54,9 +70,19 @@ struct InboxView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                             onNavigate?(destination)
                         }
+                    },
+                    onAppear: {
+                        markAsRead(messageID: message.id)
                     }
                 )
             }
+        }
+    }
+
+    private func markAsRead(messageID: UUID) {
+        guard let index = messages.firstIndex(where: { $0.id == messageID }) else { return }
+        if !messages[index].isRead {
+            messages[index].isRead = true
         }
     }
 
@@ -98,14 +124,14 @@ struct InboxView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.accentGold))
+                        .background(Capsule().fill(Color.accentBlue))
                 }
             }
             .padding(.horizontal, 16)
             .frame(minHeight: 36)
             .background(
                 Capsule()
-                    .fill(isSelected ? Color.accentGold : Color.backgroundTertiary)
+                    .fill(isSelected ? Color.accentBlue : Color.backgroundTertiary)
             )
         }
         .buttonStyle(.plain)
@@ -134,16 +160,14 @@ struct InboxView: View {
 
     private func messageRow(_ message: InboxMessage) -> some View {
         Button {
-            // Mark as read
-            if let index = messages.firstIndex(where: { $0.id == message.id }) {
-                messages[index].isRead = true
-                selectedMessage = messages[index]
-            }
+            // Open the detail sheet — MessageDetailView reports `onAppear`
+            // which marks the message as read in the source array.
+            selectedMessage = message
         } label: {
             HStack(spacing: 12) {
                 // Unread indicator
                 Circle()
-                    .fill(message.isRead ? Color.clear : Color.accentGold)
+                    .fill(message.isRead ? Color.clear : Color.accentBlue)
                     .frame(width: 8, height: 8)
 
                 // Sender icon
@@ -198,17 +222,30 @@ struct InboxView: View {
             .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(message.isRead ? Color.backgroundSecondary : Color.backgroundSecondary.opacity(0.9))
+                    .fill(rowFill(for: message))
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
                             .strokeBorder(
-                                message.actionRequired ? Color.accentGold.opacity(0.4) : Color.surfaceBorder,
+                                rowBorderColor(for: message),
                                 lineWidth: message.actionRequired ? 1.5 : 1
                             )
                     )
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private func rowFill(for message: InboxMessage) -> Color {
+        if message.actionRequired {
+            // Subtle red tint so Action Required messages clearly pop above the rest.
+            return Color.danger.opacity(0.12)
+        }
+        return message.isRead ? Color.backgroundSecondary : Color.backgroundSecondary.opacity(0.9)
+    }
+
+    private func rowBorderColor(for message: InboxMessage) -> Color {
+        if message.actionRequired { return Color.danger.opacity(0.7) }
+        return Color.surfaceBorder
     }
 
     private var emptyState: some View {

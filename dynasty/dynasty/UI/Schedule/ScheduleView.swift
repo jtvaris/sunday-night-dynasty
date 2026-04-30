@@ -139,11 +139,11 @@ private struct WeekChip: View {
         .frame(width: 44, height: 44)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? Color.accentGold : Color.backgroundTertiary)
+                .fill(isSelected ? Color.accentBlue : Color.backgroundTertiary)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(
-                            isCurrent && !isSelected ? Color.accentGold.opacity(0.5) : Color.clear,
+                            isCurrent && !isSelected ? Color.accentGold.opacity(0.6) : Color.clear,
                             lineWidth: 1.5
                         )
                 )
@@ -274,7 +274,7 @@ private struct GameCard: View {
         VStack(alignment: alignment, spacing: 4) {
             Text(team?.abbreviation ?? "???")
                 .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(isWinner ? Color.accentGold : Color.textPrimary)
+                .foregroundStyle(isWinner ? Color.success : Color.textPrimary)
 
             Text(team?.city ?? "")
                 .font(.system(size: 12))
@@ -284,7 +284,7 @@ private struct GameCard: View {
             if let score {
                 Text("\(score)")
                     .font(.system(size: 28, weight: .heavy).monospacedDigit())
-                    .foregroundStyle(isWinner ? Color.accentGold : isTie ? Color.warning : Color.textSecondary)
+                    .foregroundStyle(isWinner ? Color.success : isTie ? Color.warning : Color.textSecondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
