@@ -122,22 +122,136 @@ struct FACompleteView: View {
 
     // MARK: - Header
 
+    /// Narrative tone derived from the FA grade.
+    private struct GradeNarrative {
+        let icon: String
+        let iconColor: Color
+        let title: String
+        let subtitle: String
+        let backgroundOpacity: Double
+    }
+
+    private func gradeNarrative(_ grade: FAGradeResult) -> GradeNarrative {
+        switch grade.score {
+        case 90...:
+            return GradeNarrative(
+                icon: "trophy.fill",
+                iconColor: .accentGold,
+                title: "MASTERFUL OFFSEASON",
+                subtitle: "Front-office of the year material — fans are ecstatic.",
+                backgroundOpacity: 0.20
+            )
+        case 80..<90:
+            return GradeNarrative(
+                icon: "star.circle.fill",
+                iconColor: .accentGold,
+                title: "EXCELLENT FREE AGENCY",
+                subtitle: "Major needs addressed at fair prices. Confidence is high.",
+                backgroundOpacity: 0.16
+            )
+        case 70..<80:
+            return GradeNarrative(
+                icon: "checkmark.seal.fill",
+                iconColor: .success,
+                title: "SOLID FREE AGENCY",
+                subtitle: "Smart pickups improve the roster heading into the draft.",
+                backgroundOpacity: 0.12
+            )
+        case 60..<70:
+            return GradeNarrative(
+                icon: "hand.thumbsup",
+                iconColor: .accentBlue,
+                title: "DECENT WORK",
+                subtitle: "Some good moves — but a few key needs still linger.",
+                backgroundOpacity: 0.10
+            )
+        case 50..<60:
+            return GradeNarrative(
+                icon: "minus.circle",
+                iconColor: .warning,
+                title: "MIXED RESULTS",
+                subtitle: "Modest improvements. The draft will need to do heavier lifting.",
+                backgroundOpacity: 0.10
+            )
+        case 40..<50:
+            return GradeNarrative(
+                icon: "exclamationmark.triangle.fill",
+                iconColor: .warning,
+                title: "DISAPPOINTING FA",
+                subtitle: "Critical needs went unaddressed. The pressure is on the GM.",
+                backgroundOpacity: 0.12
+            )
+        default:
+            return GradeNarrative(
+                icon: "xmark.octagon.fill",
+                iconColor: .danger,
+                title: "FREE AGENCY DISASTER",
+                subtitle: "Roster gaps remain and the cap sheet looks rough. Damage control time.",
+                backgroundOpacity: 0.16
+            )
+        }
+    }
+
     private var headerSection: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(Color.success)
+        let narrative = gradeNarrative(faGrade)
 
-            Text("FREE AGENCY COMPLETE")
+        return VStack(spacing: 12) {
+            Image(systemName: narrative.icon)
+                .font(.system(size: 56))
+                .foregroundStyle(narrative.iconColor)
+                .shadow(color: narrative.iconColor.opacity(0.4), radius: 12)
+
+            Text(narrative.title)
                 .font(.title2.weight(.black))
-                .foregroundStyle(Color.accentGold)
+                .foregroundStyle(narrative.iconColor)
+                .multilineTextAlignment(.center)
 
-            Text("All free agency rounds are finished. Your roster has been updated.")
+            Text(narrative.subtitle)
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Quick highlight bar: top signing or biggest loss
+            if let topSigning = recentSignings.first {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up.right.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.success)
+                    Text("Headline signing: \(topSigning.name) (\(topSigning.position.rawValue), \(topSigning.overall) OVR)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.success.opacity(0.10), in: Capsule())
+            } else if let topLoss = lostPlayers.first {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.right.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.danger)
+                    Text("Biggest loss: \(topLoss.name) → \(topLoss.newTeam)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.danger.opacity(0.10), in: Capsule())
+            }
         }
-        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
+        .padding(.horizontal, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(narrative.iconColor.opacity(narrative.backgroundOpacity))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(narrative.iconColor.opacity(0.3), lineWidth: 1)
+        )
     }
 
     // MARK: - Cap Summary

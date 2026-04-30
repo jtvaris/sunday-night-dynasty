@@ -186,30 +186,52 @@ struct FormationView: View {
     @ViewBuilder
     private var formationPicker: some View {
         let formations = layout.availableFormations
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(formations, id: \.formationName) { formation in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            layout = formation
-                        }
-                    } label: {
-                        Text(formation.formationName)
-                            .font(.system(size: 11, weight: layout == formation ? .bold : .medium))
-                            .foregroundStyle(layout == formation ? Color.backgroundPrimary : Color.textSecondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                Capsule()
-                                    .fill(layout == formation ? Color.accentBlue : Color.backgroundPrimary.opacity(0.5))
-                            )
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(layout == formation ? Color.accentBlue : Color.surfaceBorder, lineWidth: 0.5)
-                            )
-                    }
-                    .contentShape(Capsule())
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: "rectangle.3.group.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.textTertiary)
+                Text("FORMATION")
+                    .font(.system(size: 9, weight: .heavy))
+                    .foregroundStyle(Color.textTertiary)
+                    .tracking(0.5)
+                Spacer()
+                HStack(spacing: 3) {
+                    Image(systemName: "hand.tap")
+                        .font(.system(size: 9))
+                    Text("Tap any player to swap")
+                        .font(.system(size: 9, weight: .medium))
                 }
+                .foregroundStyle(Color.textTertiary)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(formations, id: \.formationName) { formation in
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                layout = formation
+                            }
+                        } label: {
+                            Text(formation.formationName)
+                                .font(.system(size: 11, weight: layout == formation ? .bold : .medium))
+                                .foregroundStyle(layout == formation ? Color.backgroundPrimary : Color.textSecondary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule()
+                                        .fill(layout == formation ? Color.accentBlue : Color.backgroundPrimary.opacity(0.5))
+                                )
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(layout == formation ? Color.accentBlue : Color.surfaceBorder, lineWidth: layout == formation ? 1.5 : 0.5)
+                                )
+                                .shadow(color: layout == formation ? Color.accentBlue.opacity(0.3) : .clear, radius: 3, y: 1)
+                        }
+                        .contentShape(Capsule())
+                        .accessibilityAddTraits(layout == formation ? .isSelected : [])
+                    }
+                }
+                .padding(.vertical, 2)
             }
         }
     }
@@ -1017,41 +1039,74 @@ struct StarterBackupComparisonSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                if let starter = starter {
-                    // Starter card
-                    comparisonCard(player: starter, role: "Starter", highlight: true)
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
+                ScrollView {
+                    VStack(spacing: 14) {
+                        if let starter = starter {
+                            // Starter card
+                            comparisonCard(player: starter, role: "Starter", highlight: true)
 
-                    if backups.isEmpty {
-                        Text("No backups at this position")
-                            .font(.system(size: 13))
-                            .foregroundStyle(Color.textTertiary)
-                            .padding()
-                    } else {
-                        Text("vs Backups")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(Color.textTertiary)
+                            if backups.isEmpty {
+                                VStack(spacing: 6) {
+                                    Image(systemName: "person.fill.questionmark")
+                                        .font(.system(size: 22))
+                                        .foregroundStyle(Color.warning.opacity(0.7))
+                                    Text("No backups at this position")
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundStyle(Color.textSecondary)
+                                    Text("Consider drafting or signing depth")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color.textTertiary)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 24)
+                                .background(Color.warning.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .strokeBorder(Color.warning.opacity(0.25), lineWidth: 0.5)
+                                )
+                            } else {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.left.arrow.right")
+                                        .font(.system(size: 10, weight: .bold))
+                                    Text("vs Backups")
+                                        .font(.system(size: 11, weight: .heavy))
+                                        .tracking(0.5)
+                                }
+                                .foregroundStyle(Color.textTertiary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 4)
 
-                        ForEach(backups.prefix(3)) { backup in
-                            let diff = backup.overall - starter.overall
-                            comparisonCard(player: backup, role: "Backup (\(diff >= 0 ? "+" : "")\(diff))", highlight: false)
+                                ForEach(backups.prefix(3)) { backup in
+                                    let diff = backup.overall - starter.overall
+                                    comparisonCard(player: backup, role: "Backup (\(diff >= 0 ? "+" : "")\(diff))", highlight: false)
+                                }
+                            }
+                        } else {
+                            VStack(spacing: 8) {
+                                Image(systemName: "person.fill.xmark")
+                                    .font(.system(size: 28))
+                                    .foregroundStyle(Color.warning)
+                                Text("No starter assigned")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Color.textSecondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 32)
                         }
                     }
-                } else {
-                    Text("No starter assigned")
-                        .foregroundStyle(Color.textTertiary)
+                    .padding()
                 }
-
-                Spacer()
             }
-            .padding()
-            .background(Color.backgroundPrimary)
             .navigationTitle("\(slot.label) Comparison")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
-                        .foregroundStyle(Color.textSecondary)
+                        .foregroundStyle(Color.accentGold)
+                        .fontWeight(.semibold)
                 }
             }
         }

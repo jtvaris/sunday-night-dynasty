@@ -8,6 +8,11 @@ import SwiftData
 /// pauses and presents the selection sheet.
 struct DraftView: View {
 
+    /// Tabs for the right-side sidebar shown on iPad.
+    enum SidebarTab: String, CaseIterable {
+        case bigBoard, history, warRoom
+    }
+
     let career: Career
 
     @Environment(\.modelContext) private var modelContext
@@ -45,8 +50,8 @@ struct DraftView: View {
     @State private var showMediaToast: Bool = false
     /// Staff recommendations shown in the war room panel.
     @State private var staffRecommendations: [DraftEngine.StaffRecommendation] = []
-    /// Whether the war room panel is expanded.
-    @State private var showWarRoom: Bool = false
+    /// Currently active right-sidebar tab on iPad.
+    @State private var activeSidebarTab: SidebarTab = .bigBoard
     /// The current round for round-transition banners.
     @State private var lastAnnouncedRound: Int = 0
     /// Whether the round transition banner is visible.
@@ -61,6 +66,12 @@ struct DraftView: View {
     @State private var fanReactions: [String] = []
     /// Whether the fan reactions panel is visible.
     @State private var showFanReactions: Bool = false
+    /// Whether the "YOUR PICK" badge / on-clock card is currently pulsing.
+    @State private var isPulsing: Bool = false
+    /// Whether a slide-in trade-offer banner is currently visible.
+    @State private var showTradeOfferBanner: Bool = false
+    /// Whether the trade-offer modal sheet is presented (separate from the banner).
+    @State private var showTradeOfferSheet: Bool = false
 
     // MARK: - Computed
 
@@ -118,12 +129,25 @@ struct DraftView: View {
                 }
                 .zIndex(5)
             }
+
+            // MARK: Trade Offer Slide-in Banner
+            if showTradeOfferBanner, let offer = pendingTradeOffer {
+                VStack {
+                    tradeOfferBanner(offer)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                    Spacer()
+                }
+                .zIndex(8)
+            }
         }
         .navigationTitle("NFL Draft \(career.currentSeason)")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar { toolbarContent }
         .task { loadDraftData() }
+        .onAppear { startPulse() }
         .sheet(isPresented: $showSelectionSheet) {
             if let pick = currentPick {
                 DraftSelectionSheet(
@@ -139,14 +163,16 @@ struct DraftView: View {
                 )
             }
         }
-        .sheet(item: $pendingTradeOffer) { displayOffer in
-            TradeOfferView(
-                offer: displayOffer,
-                availableProspects: availableProspects,
-                teamNeeds: teamNeeds,
-                onAccept: { acceptTradeOffer(displayOffer) },
-                onDecline: { pendingTradeOffer = nil }
-            )
+        .sheet(isPresented: $showTradeOfferSheet) {
+            if let displayOffer = pendingTradeOffer {
+                TradeOfferView(
+                    offer: displayOffer,
+                    availableProspects: availableProspects,
+                    teamNeeds: teamNeeds,
+                    onAccept: { acceptTradeOffer(displayOffer) },
+                    onDecline: { dismissTradeOffer() }
+                )
+            }
         }
         .sheet(isPresented: $showDraftSummary) {
             draftSummarySheet
@@ -161,6 +187,9 @@ struct DraftView: View {
             onTheClockCard
             if !teamNeeds.isEmpty {
                 teamNeedsStrip
+            }
+            if isPlayerTurn {
+                pickRecommendationsPanel
             }
             if isPlayerTurn && !staffRecommendations.isEmpty {
                 warRoomPanel
@@ -365,43 +394,73 @@ struct DraftView: View {
     }
 
     private func playerOnClockCard(pick: DraftPick) -> some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 8) {
+        let clockColor: Color = clockSeconds <= 30 ? Color.danger : Color.accentGold
+
+        return VStack(spacing: 16) {
+            // Pulsing "YOUR PICK" header.
+            HStack(spacing: 10) {
                 Circle()
                     .fill(Color.accentGold)
-                    .frame(width: 8, height: 8)
+                    .frame(width: 10, height: 10)
+                    .scaleEffect(isPulsing ? 1.4 : 1.0)
+                    .opacity(isPulsing ? 0.5 : 1.0)
                 Text("YOU'RE ON THE CLOCK")
-                    .font(.system(size: 12, weight: .heavy))
-                    .foregroundStyle(Color.textPrimary)
-                    .tracking(2)
+                    .font(.system(size: 13, weight: .heavy))
+                    .foregroundStyle(Color.accentGold)
+                    .tracking(2.5)
                 Circle()
                     .fill(Color.accentGold)
-                    .frame(width: 8, height: 8)
+                    .frame(width: 10, height: 10)
+                    .scaleEffect(isPulsing ? 1.4 : 1.0)
+                    .opacity(isPulsing ? 0.5 : 1.0)
             }
 
-            HStack(spacing: 16) {
-                Text("Round \(pick.round)  ·  Pick \(pick.pickNumber)")
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(Color.textPrimary)
-
-                // On-the-clock timer
-                HStack(spacing: 4) {
-                    Image(systemName: "clock.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(clockSeconds <= 30 ? Color.danger : Color.textSecondary)
-                    Text(String(format: "%d:%02d", clockSeconds / 60, clockSeconds % 60))
-                        .font(.system(size: 16, weight: .bold).monospacedDigit())
-                        .foregroundStyle(clockSeconds <= 30 ? Color.danger : Color.textPrimary)
+            // Hero row: team logo · big countdown · pick info
+            HStack(alignment: .center, spacing: 18) {
+                // Team "logo" tile
+                if let teamID = career.teamID {
+                    Text(teamAbbreviation(for: teamID) ?? "—")
+                        .font(.system(size: 22, weight: .heavy))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .frame(width: 64, height: 64)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.accentGold)
+                                .shadow(color: Color.accentGold.opacity(0.4), radius: 8, x: 0, y: 3)
+                        )
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.backgroundTertiary)
-                )
+
+                // Big countdown clock
+                VStack(spacing: 2) {
+                    Text(String(format: "%d:%02d", clockSeconds / 60, clockSeconds % 60))
+                        .font(.system(size: 44, weight: .heavy, design: .rounded).monospacedDigit())
+                        .foregroundStyle(clockColor)
+                        .scaleEffect(clockSeconds <= 30 && isPulsing ? 1.05 : 1.0)
+                    Text("ON THE CLOCK")
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundStyle(Color.textTertiary)
+                        .tracking(2)
+                }
+                .frame(maxWidth: .infinity)
                 .onAppear { startClockTimer() }
+
+                // Pick info
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("ROUND \(pick.round)")
+                        .font(.system(size: 11, weight: .heavy))
+                        .foregroundStyle(Color.textTertiary)
+                        .tracking(1.5)
+                    Text("#\(pick.pickNumber)")
+                        .font(.system(size: 28, weight: .heavy).monospacedDigit())
+                        .foregroundStyle(Color.textPrimary)
+                    Text("of \(allPicks.count)")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.textTertiary)
+                        .monospacedDigit()
+                }
             }
 
+            // Action buttons
             HStack(spacing: 12) {
                 Button {
                     showSelectionSheet = true
@@ -413,8 +472,8 @@ struct DraftView: View {
                             .font(.system(size: 16, weight: .bold))
                     }
                     .foregroundStyle(Color.backgroundPrimary)
-                    .padding(.horizontal, 24)
-                    .frame(minHeight: 44)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 46)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
                             .fill(Color.accentGold)
@@ -433,8 +492,8 @@ struct DraftView: View {
                             .font(.system(size: 16, weight: .semibold))
                     }
                     .foregroundStyle(Color.textSecondary)
-                    .padding(.horizontal, 24)
-                    .frame(minHeight: 44)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 46)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
                             .fill(Color.backgroundTertiary)
@@ -449,13 +508,29 @@ struct DraftView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(20)
-        .background(Color.backgroundSecondary)
+        .background(
+            ZStack {
+                Color.backgroundSecondary
+                LinearGradient(
+                    colors: [Color.accentGold.opacity(0.08), Color.clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+        )
+        .overlay(
+            Rectangle()
+                .fill(Color.accentGold.opacity(0.6))
+                .frame(height: 2),
+            alignment: .top
+        )
         .overlay(
             Rectangle()
                 .fill(Color.surfaceBorder)
                 .frame(height: 1),
             alignment: .bottom
         )
+        .onAppear { startPulse() }
     }
 
     private func aiOnClockCard(pick: DraftPick) -> some View {
@@ -531,16 +606,19 @@ struct DraftView: View {
 
     // MARK: - Right Sidebar (iPad)
 
-    /// Combined sidebar with Big Board and War Room tabs on iPad.
+    /// Combined sidebar with Big Board, History, and War Room tabs on iPad.
     private var rightSidebar: some View {
         VStack(spacing: 0) {
             // Tab selector
             HStack(spacing: 0) {
-                sidebarTab(title: "Big Board", icon: "list.star", isActive: !showWarRoom) {
-                    showWarRoom = false
+                sidebarTab(title: "Big Board", icon: "list.star", isActive: activeSidebarTab == .bigBoard) {
+                    activeSidebarTab = .bigBoard
                 }
-                sidebarTab(title: "War Room", icon: "person.3.fill", isActive: showWarRoom) {
-                    showWarRoom = true
+                sidebarTab(title: "History", icon: "clock.arrow.circlepath", isActive: activeSidebarTab == .history) {
+                    activeSidebarTab = .history
+                }
+                sidebarTab(title: "War Room", icon: "person.3.fill", isActive: activeSidebarTab == .warRoom) {
+                    activeSidebarTab = .warRoom
                 }
             }
             .background(Color.backgroundTertiary)
@@ -551,10 +629,13 @@ struct DraftView: View {
                 alignment: .bottom
             )
 
-            if showWarRoom {
-                warRoomSidebarContent
-            } else {
+            switch activeSidebarTab {
+            case .bigBoard:
                 bigBoardContent
+            case .history:
+                pickHistorySidebarContent
+            case .warRoom:
+                warRoomSidebarContent
             }
         }
         .background(Color.backgroundSecondary)
@@ -580,6 +661,142 @@ struct DraftView: View {
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
+    }
+
+    /// Pick history sidebar content — scrollable list of every completed pick with media grade.
+    private var pickHistorySidebarContent: some View {
+        let picks = allPicks.prefix(currentPickIndex)
+
+        return Group {
+            if picks.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 36))
+                        .foregroundStyle(Color.textTertiary)
+                    Text("No picks yet")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 40)
+            } else {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("Picks 1–\(currentPickIndex)")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Color.textPrimary)
+                        Spacer()
+                        Text("\(currentPickIndex)/\(allPicks.count)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+
+                    Divider().overlay(Color.surfaceBorder)
+
+                    ScrollView {
+                        LazyVStack(spacing: 4) {
+                            ForEach(Array(picks)) { pick in
+                                pickHistoryRow(pick)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                    }
+                }
+            }
+        }
+    }
+
+    private func pickHistoryRow(_ pick: DraftPick) -> some View {
+        let isPlayerTeam = pick.currentTeamID == career.teamID
+
+        return HStack(spacing: 8) {
+            // Pick number
+            VStack(spacing: 0) {
+                Text("R\(pick.round)")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color.textTertiary)
+                Text("#\(pick.pickNumber)")
+                    .font(.system(size: 13, weight: .heavy).monospacedDigit())
+                    .foregroundStyle(isPlayerTeam ? Color.accentGold : Color.textPrimary)
+            }
+            .frame(width: 30)
+
+            // Team abbreviation
+            Text(pick.teamAbbreviation ?? teamAbbreviation(for: pick.currentTeamID) ?? "—")
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundStyle(Color.textPrimary)
+                .frame(width: 32, height: 22)
+                .background(
+                    (isPlayerTeam ? Color.accentGold : Color.accentBlue),
+                    in: RoundedRectangle(cornerRadius: 4)
+                )
+
+            // Player info
+            VStack(alignment: .leading, spacing: 2) {
+                if pick.isComplete {
+                    Text(pick.playerName ?? "—")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        if let pos = pick.playerPosition {
+                            Text(pos)
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                        if let college = pick.playerCollege {
+                            Text("·")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.textTertiary)
+                            Text(college)
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.textTertiary)
+                                .lineLimit(1)
+                        }
+                    }
+                } else {
+                    Text("Pending")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.textTertiary)
+                        .italic()
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            // Media grade pill
+            if let grade = pick.mediaGrade {
+                Text(grade)
+                    .font(.system(size: 11, weight: .heavy))
+                    .foregroundStyle(mediaGradeColor(grade))
+                    .frame(minWidth: 26, minHeight: 22)
+                    .padding(.horizontal, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(mediaGradeColor(grade).opacity(0.15))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .strokeBorder(mediaGradeColor(grade).opacity(0.4), lineWidth: 1)
+                            )
+                    )
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isPlayerTeam ? Color.accentGold.opacity(0.08) : Color.backgroundPrimary.opacity(0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(
+                            isPlayerTeam ? Color.accentGold.opacity(0.3) : Color.clear,
+                            lineWidth: 1
+                        )
+                )
+        )
     }
 
     /// War room content for the iPad sidebar.
@@ -944,9 +1161,23 @@ struct DraftView: View {
             teams: teams
         )
 
-        // Present only the first offer as a display model
+        // Present only the first offer as a display model — surface as a slide-in banner.
         guard let engineOffer = engineOffers.first else { return }
         pendingTradeOffer = buildDisplayOffer(from: engineOffer)
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.78)) {
+            showTradeOfferBanner = true
+        }
+    }
+
+    /// Dismisses the slide-in trade-offer banner and clears any pending offer.
+    private func dismissTradeOffer() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            showTradeOfferBanner = false
+        }
+        showTradeOfferSheet = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            pendingTradeOffer = nil
+        }
     }
 
     /// Accepts a trade offer: reassigns pick ownership and saves changes.
@@ -966,6 +1197,10 @@ struct DraftView: View {
             }
         }
 
+        showTradeOfferSheet = false
+        withAnimation(.easeInOut(duration: 0.25)) {
+            showTradeOfferBanner = false
+        }
         pendingTradeOffer = nil
         // Re-evaluate — the player now owns a later pick, so advance AI picks
         advanceIfNeeded()
@@ -1071,6 +1306,243 @@ struct DraftView: View {
         )
     }
 
+    // MARK: - Top Pick Recommendations
+
+    /// A lightweight recommendation shown to the player when on the clock — combines big board with team needs.
+    private struct PickRecommendation: Identifiable {
+        let id = UUID()
+        let prospect: CollegeProspect
+        let rationale: String
+        let badge: String
+    }
+
+    /// Computes the top-3 pick recommendations using the big board (scoutedOverall) and current team needs.
+    private var topPickRecommendations: [PickRecommendation] {
+        let scouted = availableProspects.filter { $0.scoutedOverall != nil }
+        guard !scouted.isEmpty else { return [] }
+
+        let needsSet = Set(teamNeeds.prefix(5))
+
+        // Score each prospect: scouted overall + need bonus.
+        let scored: [(CollegeProspect, Int, Bool)] = scouted.map { prospect in
+            let base = prospect.scoutedOverall ?? 0
+            let needsMatch = needsSet.contains(prospect.position)
+            let needBonus = needsMatch ? 8 : 0
+            return (prospect, base + needBonus, needsMatch)
+        }
+
+        let sorted = scored.sorted { $0.1 > $1.1 }
+        let topThree = sorted.prefix(3)
+
+        return topThree.enumerated().map { index, tuple in
+            let (prospect, _, needsMatch) = tuple
+            let badge: String
+            let rationale: String
+            switch index {
+            case 0:
+                badge = "BEST PICK"
+                if needsMatch {
+                    rationale = "Top of your board and fills your #\(needRank(prospect.position)) need at \(prospect.position.rawValue)."
+                } else {
+                    rationale = "Highest-graded player on your board — too good to pass on."
+                }
+            case 1:
+                badge = "NEED FIT"
+                if needsMatch {
+                    rationale = "Strong value at \(prospect.position.rawValue), one of your top roster needs."
+                } else {
+                    rationale = "Premium talent on the board behind your top option."
+                }
+            default:
+                badge = "VALUE"
+                if needsMatch {
+                    rationale = "Solid \(prospect.position.rawValue) prospect that addresses a real gap."
+                } else {
+                    rationale = "Best player available — long-term ceiling pick."
+                }
+            }
+            return PickRecommendation(prospect: prospect, rationale: rationale, badge: badge)
+        }
+    }
+
+    /// Returns the 1-indexed rank of a position in `teamNeeds`, or 0 if absent.
+    private func needRank(_ position: Position) -> Int {
+        (teamNeeds.firstIndex(of: position) ?? -1) + 1
+    }
+
+    /// Panel showing the top 3 recommended picks with one-line rationale.
+    @ViewBuilder
+    private var pickRecommendationsPanel: some View {
+        let recs = topPickRecommendations
+        if !recs.isEmpty {
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "star.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.accentGold)
+                    Text("RECOMMENDED PICKS")
+                        .font(.system(size: 10, weight: .heavy))
+                        .foregroundStyle(Color.accentGold)
+                        .tracking(1.5)
+                    Spacer()
+                    Text("BIG BOARD + NEEDS")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.textTertiary)
+                        .tracking(1)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(Array(recs.enumerated()), id: \.element.id) { index, rec in
+                            recommendationCard(rec, rank: index + 1)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                }
+            }
+            .background(Color.backgroundSecondary)
+            .overlay(
+                Rectangle()
+                    .fill(Color.surfaceBorder)
+                    .frame(height: 1),
+                alignment: .bottom
+            )
+        }
+    }
+
+    private func recommendationCard(_ rec: PickRecommendation, rank: Int) -> some View {
+        let badgeColor: Color = rank == 1 ? .accentGold : (rank == 2 ? .accentBlue : .textSecondary)
+
+        return Button {
+            showSelectionSheet = true
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text("#\(rank)")
+                        .font(.system(size: 11, weight: .heavy).monospacedDigit())
+                        .foregroundStyle(badgeColor)
+                    Text(rec.badge)
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundStyle(badgeColor)
+                        .tracking(1.2)
+                    Spacer(minLength: 0)
+                    if let overall = rec.prospect.scoutedOverall {
+                        Text("\(overall)")
+                            .font(.system(size: 13, weight: .heavy).monospacedDigit())
+                            .foregroundStyle(Color.forRating(overall))
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    Text(rec.prospect.position.rawValue)
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundStyle(Color.textPrimary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(positionColor(rec.prospect.position), in: RoundedRectangle(cornerRadius: 3))
+                    Text(rec.prospect.fullName)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                }
+
+                Text(rec.rationale)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+            }
+            .padding(12)
+            .frame(width: 260, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.backgroundTertiary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(badgeColor.opacity(rank == 1 ? 0.55 : 0.25), lineWidth: rank == 1 ? 1.5 : 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Trade Offer Slide-in Banner
+
+    /// Compact slide-in banner shown when an AI team sends a trade offer. Tapping it opens the full sheet.
+    private func tradeOfferBanner(_ offer: DraftTradeOfferDisplay) -> some View {
+        HStack(spacing: 12) {
+            // Team logo tile
+            Text(offer.offeringTeamAbbreviation)
+                .font(.system(size: 14, weight: .heavy))
+                .foregroundStyle(Color.backgroundPrimary)
+                .frame(width: 40, height: 40)
+                .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.left.arrow.right.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.accentBlue)
+                    Text("INCOMING TRADE OFFER")
+                        .font(.system(size: 10, weight: .heavy))
+                        .foregroundStyle(Color.accentBlue)
+                        .tracking(1.5)
+                }
+                Text(offer.offeringTeamName)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                Text("Tap to review · \(offer.assetsOffered.count) for \(offer.assetsRequested.count)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            // Review button
+            Button {
+                showTradeOfferSheet = true
+            } label: {
+                Text("Review")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+
+            // Dismiss button
+            Button {
+                dismissTradeOffer()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(Color.accentBlue.opacity(0.6), lineWidth: 1.5)
+                )
+                .shadow(color: Color.black.opacity(0.35), radius: 12, x: 0, y: 4)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            showTradeOfferSheet = true
+        }
+    }
+
     // MARK: - War Room Panel
 
     /// Inline war room panel shown below the on-the-clock card when it's the player's turn.
@@ -1155,10 +1627,17 @@ struct DraftView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 if toast.isPlayerPick {
-                    Text("YOUR PICK")
-                        .font(.system(size: 9, weight: .heavy))
-                        .foregroundStyle(Color.accentGold)
-                        .tracking(1)
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(Color.accentGold)
+                            .frame(width: 6, height: 6)
+                            .scaleEffect(isPulsing ? 1.4 : 1.0)
+                            .opacity(isPulsing ? 0.5 : 1.0)
+                        Text("YOUR PICK")
+                            .font(.system(size: 9, weight: .heavy))
+                            .foregroundStyle(Color.accentGold)
+                            .tracking(1)
+                    }
                 }
                 Text(toast.headline)
                     .font(.system(size: 13, weight: .bold))
@@ -1215,38 +1694,51 @@ struct DraftView: View {
             ZStack {
                 Color.backgroundPrimary.ignoresSafeArea()
                 ScrollView {
-                    VStack(spacing: 20) {
-                        // Header
-                        VStack(spacing: 8) {
-                            Image(systemName: "trophy.fill")
-                                .font(.system(size: 40))
-                                .foregroundStyle(Color.accentGold)
-                            Text("Your Draft Class")
-                                .font(.title2.weight(.bold))
-                                .foregroundStyle(Color.textPrimary)
+                    let playerPicks = allPicks.filter { $0.currentTeamID == career.teamID && $0.isComplete }
+                    let avgGrade = averageGradeLabel(for: playerPicks)
 
-                            let playerPicks = allPicks.filter { $0.currentTeamID == career.teamID && $0.isComplete }
-                            let avgGrade = averageGradeLabel(for: playerPicks)
-                            Text("Overall Grade: \(avgGrade)")
-                                .font(.headline)
-                                .foregroundStyle(Color.accentGold)
-                        }
-                        .padding(.top, 8)
+                    VStack(spacing: 24) {
+                        // Hero overall-grade card
+                        draftSummaryHeroCard(grade: avgGrade, playerPicks: playerPicks)
 
-                        // Individual picks
-                        let playerPicks = allPicks.filter { $0.currentTeamID == career.teamID && $0.isComplete }
-                        ForEach(playerPicks) { pick in
-                            draftSummaryRow(pick)
-                        }
+                        // Pick-by-pick breakdown
+                        if !playerPicks.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "list.clipboard.fill")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(Color.textTertiary)
+                                    Text("PICK-BY-PICK BREAKDOWN")
+                                        .font(.system(size: 11, weight: .heavy))
+                                        .foregroundStyle(Color.textTertiary)
+                                        .tracking(1.5)
+                                    Spacer()
+                                    Text("\(playerPicks.count) picks")
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(Color.textTertiary)
+                                }
+                                .padding(.horizontal, 4)
 
-                        if playerPicks.isEmpty {
-                            Text("No picks made.")
-                                .font(.subheadline)
-                                .foregroundStyle(Color.textSecondary)
+                                VStack(spacing: 10) {
+                                    ForEach(playerPicks) { pick in
+                                        draftSummaryRow(pick)
+                                    }
+                                }
+                            }
+                        } else {
+                            VStack(spacing: 8) {
+                                Image(systemName: "tray")
+                                    .font(.system(size: 36))
+                                    .foregroundStyle(Color.textTertiary)
+                                Text("No picks made.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.textSecondary)
+                            }
+                            .padding(.top, 40)
                         }
                     }
                     .padding(24)
-                    .frame(maxWidth: 600)
+                    .frame(maxWidth: 640)
                     .frame(maxWidth: .infinity)
                 }
             }
@@ -1261,8 +1753,134 @@ struct DraftView: View {
         }
     }
 
+    /// Hero card showing the overall draft grade prominently along with pick stats.
+    private func draftSummaryHeroCard(grade: String, playerPicks: [DraftPick]) -> some View {
+        let gradeColor = mediaGradeColor(grade)
+
+        let gradeDistribution: [(String, Int)] = {
+            let grades = playerPicks.compactMap(\.mediaGrade)
+            let buckets: [String] = ["A", "B", "C", "D", "F"]
+            return buckets.map { letter in
+                (letter, grades.filter { $0.hasPrefix(letter) }.count)
+            }
+        }()
+
+        return VStack(spacing: 18) {
+            // Trophy + heading
+            VStack(spacing: 6) {
+                Image(systemName: "trophy.fill")
+                    .font(.system(size: 36))
+                    .foregroundStyle(Color.accentGold)
+                Text("YOUR DRAFT CLASS")
+                    .font(.system(size: 11, weight: .heavy))
+                    .foregroundStyle(Color.textTertiary)
+                    .tracking(2)
+                Text(career.currentSeason.description)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .monospacedDigit()
+            }
+
+            // Big grade circle
+            ZStack {
+                Circle()
+                    .fill(gradeColor.opacity(0.12))
+                    .frame(width: 140, height: 140)
+                Circle()
+                    .strokeBorder(gradeColor.opacity(0.45), lineWidth: 3)
+                    .frame(width: 140, height: 140)
+                VStack(spacing: 2) {
+                    Text(grade)
+                        .font(.system(size: 56, weight: .heavy, design: .rounded))
+                        .foregroundStyle(gradeColor)
+                    Text("OVERALL")
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundStyle(Color.textTertiary)
+                        .tracking(2)
+                }
+            }
+
+            // Stats row
+            HStack(spacing: 0) {
+                heroStat(label: "PICKS", value: "\(playerPicks.count)")
+                Divider().frame(height: 32).overlay(Color.surfaceBorder)
+                heroStat(label: "BEST", value: bestGradeLabel(for: playerPicks))
+                Divider().frame(height: 32).overlay(Color.surfaceBorder)
+                heroStat(label: "AVG", value: grade)
+            }
+
+            // Grade distribution
+            if !playerPicks.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(gradeDistribution, id: \.0) { letter, count in
+                        VStack(spacing: 4) {
+                            Text("\(count)")
+                                .font(.system(size: 16, weight: .heavy).monospacedDigit())
+                                .foregroundStyle(count > 0 ? letterColor(letter) : Color.textTertiary)
+                            Text(letter)
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundStyle(Color.textTertiary)
+                                .tracking(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(count > 0 ? letterColor(letter).opacity(0.12) : Color.backgroundTertiary)
+                        )
+                    }
+                }
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .strokeBorder(gradeColor.opacity(0.35), lineWidth: 1.5)
+                )
+        )
+    }
+
+    private func heroStat(label: String, value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.system(size: 16, weight: .heavy))
+                .foregroundStyle(Color.textPrimary)
+            Text(label)
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundStyle(Color.textTertiary)
+                .tracking(1.5)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func letterColor(_ letter: String) -> Color {
+        switch letter {
+        case "A": return .success
+        case "B": return .accentBlue
+        case "C": return .accentGold
+        case "D": return .warning
+        default:  return .danger
+        }
+    }
+
+    private func bestGradeLabel(for picks: [DraftPick]) -> String {
+        let gradeScale = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D", "F"]
+        let grades = picks.compactMap(\.mediaGrade)
+        guard !grades.isEmpty else { return "—" }
+        let best = grades.min { lhs, rhs in
+            (gradeScale.firstIndex(of: lhs) ?? 99) < (gradeScale.firstIndex(of: rhs) ?? 99)
+        }
+        return best ?? "—"
+    }
+
     private func draftSummaryRow(_ pick: DraftPick) -> some View {
-        HStack(spacing: 14) {
+        let gradeColor = pick.mediaGrade.map { mediaGradeColor($0) } ?? Color.textTertiary
+
+        return HStack(spacing: 14) {
             // Pick number
             VStack(spacing: 2) {
                 Text("R\(pick.round)")
@@ -1274,7 +1892,7 @@ struct DraftView: View {
             }
             .frame(width: 44)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(pick.playerName ?? "Unknown")
                     .font(.headline)
                     .foregroundStyle(Color.textPrimary)
@@ -1291,6 +1909,7 @@ struct DraftView: View {
                         Text(college)
                             .font(.caption)
                             .foregroundStyle(Color.textSecondary)
+                            .lineLimit(1)
                     }
                 }
                 if let headline = pick.mediaHeadline {
@@ -1298,23 +1917,26 @@ struct DraftView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(Color.textTertiary)
                         .italic()
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
-            // Media grade
+            // Media grade — bold circle.
             if let grade = pick.mediaGrade {
-                VStack(spacing: 2) {
+                ZStack {
+                    Circle()
+                        .fill(gradeColor.opacity(0.15))
+                        .frame(width: 52, height: 52)
+                    Circle()
+                        .strokeBorder(gradeColor.opacity(0.5), lineWidth: 1.5)
+                        .frame(width: 52, height: 52)
                     Text(grade)
                         .font(.system(size: 20, weight: .heavy))
-                        .foregroundStyle(mediaGradeColor(grade))
-                    Text("GRADE")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(Color.textTertiary)
-                        .tracking(0.5)
+                        .foregroundStyle(gradeColor)
                 }
-                .frame(width: 50)
             }
         }
         .padding(14)
@@ -1323,7 +1945,7 @@ struct DraftView: View {
                 .fill(Color.backgroundSecondary)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                        .strokeBorder(gradeColor.opacity(0.3), lineWidth: 1)
                 )
         )
     }
@@ -1392,6 +2014,14 @@ struct DraftView: View {
         guard let teamID = career.teamID else { return }
         let roster = fetchRoster(for: teamID)
         teamNeeds = DraftEngine.topTeamNeeds(roster: roster)
+    }
+
+    /// Starts (or restarts) a continuous pulse animation used by the YOUR PICK badge / chip.
+    private func startPulse() {
+        isPulsing = false
+        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+            isPulsing = true
+        }
     }
 
     /// Starts the cosmetic on-the-clock countdown timer.

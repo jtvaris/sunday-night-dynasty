@@ -31,6 +31,18 @@ struct PressConferenceView: View {
         case summary
     }
 
+    // MARK: - Running totals (computed from selectedIndices so far)
+
+    private var runningTotals: PressEffects {
+        var totals = PressEffects()
+        for (qIdx, respIdx) in selectedIndices.enumerated() {
+            guard qIdx < questions.count,
+                  respIdx < questions[qIdx].responses.count else { continue }
+            totals = totals + questions[qIdx].responses[respIdx].effects
+        }
+        return totals
+    }
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -111,6 +123,10 @@ struct PressConferenceView: View {
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 40)
                             .padding(.top, 4)
+
+                        // Question N of 4 progress bar visualization (intro preview)
+                        introProgressPreview
+                            .padding(.top, 8)
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 }
@@ -150,6 +166,35 @@ struct PressConferenceView: View {
         }
     }
 
+    /// Visualization on the intro screen previewing the 4-question structure.
+    private var introProgressPreview: some View {
+        let count = max(questions.count, 1)
+        return VStack(spacing: 8) {
+            Text("Question 0 of \(count)")
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(Color.textSecondary)
+
+            HStack(spacing: 6) {
+                ForEach(0..<count, id: \.self) { i in
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.accentGold.opacity(0.25))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3)
+                                .strokeBorder(Color.accentGold.opacity(0.5), lineWidth: 1)
+                        )
+                        .frame(height: 6)
+                        .overlay(
+                            Text("\(i + 1)")
+                                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                .foregroundStyle(Color.accentGold.opacity(0.8))
+                                .padding(.top, 16)
+                        )
+                }
+            }
+            .frame(maxWidth: 240)
+        }
+    }
+
     // MARK: - Questioning Phase
 
     private var questioningContent: some View {
@@ -162,6 +207,12 @@ struct PressConferenceView: View {
 
                 currentStatsBar
                     .padding(.top, 12)
+
+                // Running totals strip — shows accumulated impact after each question
+                if !selectedIndices.isEmpty {
+                    runningTotalsStrip
+                        .padding(.top, 10)
+                }
 
                 if currentQuestionIndex < questions.count {
                     let question = questions[currentQuestionIndex]
@@ -201,6 +252,50 @@ struct PressConferenceView: View {
         }
         .scrollIndicators(.hidden)
         }
+    }
+
+    // MARK: - Running Totals Strip
+
+    /// Live deltas accumulated from the responses chosen so far. Updates after each question.
+    private var runningTotalsStrip: some View {
+        let totals = runningTotals
+        return VStack(spacing: 4) {
+            Text("RUNNING IMPACT")
+                .font(.system(size: 9, weight: .bold))
+                .tracking(1.5)
+                .foregroundStyle(Color.textTertiary)
+
+            HStack(spacing: 6) {
+                runningTotalChip(icon: "building.2.fill", label: "Owner", value: totals.ownerSatisfaction)
+                runningTotalChip(icon: "person.3.fill", label: "Morale", value: totals.playerMorale)
+                runningTotalChip(icon: "hands.clap.fill", label: "Fans", value: totals.fanExcitement)
+                runningTotalChip(icon: "newspaper.fill", label: "Media", value: totals.mediaPerception)
+            }
+        }
+        .padding(.horizontal, 20)
+    }
+
+    private func runningTotalChip(icon: String, label: String, value: Int) -> some View {
+        let color: Color = value > 0 ? Color.success : value < 0 ? Color.danger : Color.textTertiary
+        return HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+            Text(label)
+                .font(.caption2.weight(.semibold))
+            Text(value > 0 ? "+\(value)" : "\(value)")
+                .font(.caption2.weight(.bold).monospacedDigit())
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(color.opacity(0.12))
+                .overlay(
+                    Capsule()
+                        .strokeBorder(color.opacity(0.3), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - #61 Current Stats Bar
@@ -394,24 +489,44 @@ struct PressConferenceView: View {
     }
 
     private func effectPreview(effects: PressEffects) -> some View {
-        HStack(spacing: 6) {
+        // Determine the metric this answer hurts most (most negative). Ties broken by order.
+        let weakestKey = weakestMetricKey(for: effects)
+        return HStack(spacing: 6) {
             if effects.ownerSatisfaction != 0 {
-                effectPill(icon: "building.2.fill", label: "Owner", value: effects.ownerSatisfaction)
+                effectPill(icon: "building.2.fill", label: "Owner", value: effects.ownerSatisfaction,
+                           isWeakest: weakestKey == "owner")
             }
             if effects.playerMorale != 0 {
-                effectPill(icon: "person.3.fill", label: "Morale", value: effects.playerMorale)
+                effectPill(icon: "person.3.fill", label: "Morale", value: effects.playerMorale,
+                           isWeakest: weakestKey == "morale")
             }
             if effects.fanExcitement != 0 {
-                effectPill(icon: "hands.clap.fill", label: "Fans", value: effects.fanExcitement)
+                effectPill(icon: "hands.clap.fill", label: "Fans", value: effects.fanExcitement,
+                           isWeakest: weakestKey == "fans")
             }
             if effects.mediaPerception != 0 {
-                effectPill(icon: "newspaper.fill", label: "Media", value: effects.mediaPerception)
+                effectPill(icon: "newspaper.fill", label: "Media", value: effects.mediaPerception,
+                           isWeakest: weakestKey == "media")
             }
         }
     }
 
+    /// Returns the metric key (or nil) for the most-negative effect on a response.
+    /// Only flags the worst metric when there is at least one negative effect.
+    private func weakestMetricKey(for effects: PressEffects) -> String? {
+        let candidates: [(key: String, value: Int)] = [
+            ("owner",  effects.ownerSatisfaction),
+            ("morale", effects.playerMorale),
+            ("fans",   effects.fanExcitement),
+            ("media",  effects.mediaPerception)
+        ]
+        let negatives = candidates.filter { $0.value < 0 }
+        guard let worst = negatives.min(by: { $0.value < $1.value }) else { return nil }
+        return worst.key
+    }
+
     // #116: Larger pill fonts; #118: Intensity scaling for negative effects
-    private func effectPill(icon: String, label: String, value: Int) -> some View {
+    private func effectPill(icon: String, label: String, value: Int, isWeakest: Bool = false) -> some View {
         let pillColor: Color = {
             if value > 0 { return Color.success }
             // Intensity scaling: light red for small negatives, dark red for large
@@ -444,6 +559,19 @@ struct PressConferenceView: View {
                         .strokeBorder(pillColor.opacity(0.3), lineWidth: value < 0 && abs(value) >= 6 ? 1.5 : 1)
                 )
         )
+        .overlay(alignment: .topTrailing) {
+            // Red dot marks the metric this answer hurts the most.
+            if isWeakest {
+                Circle()
+                    .fill(Color.danger)
+                    .frame(width: 8, height: 8)
+                    .overlay(
+                        Circle().strokeBorder(Color.backgroundSecondary, lineWidth: 1.5)
+                    )
+                    .offset(x: 3, y: -3)
+                    .accessibilityLabel("Weakest impact")
+            }
+        }
     }
 
     private var mediaReactionBanner: some View {

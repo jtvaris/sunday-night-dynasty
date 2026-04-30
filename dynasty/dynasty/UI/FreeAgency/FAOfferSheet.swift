@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 struct FAOfferSheet: View {
 
@@ -9,9 +10,22 @@ struct FAOfferSheet: View {
     let onSubmit: (Int, Int) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
 
     @State private var offerSalary: Int = 5000
     @State private var offerYears: Int = 2
+    @State private var comparables: [ComparableSigning] = []
+
+    /// A recent contract used to ground player expectations.
+    struct ComparableSigning: Identifiable {
+        let id: UUID
+        let name: String
+        let position: Position
+        let overall: Int
+        let annualSalary: Int
+        let years: Int
+        let teamAbbr: String
+    }
 
     var body: some View {
         NavigationStack {
@@ -23,6 +37,9 @@ struct FAOfferSheet: View {
                         playerInfoCard
                         offerTermsCard
                         capImpactCard
+                        if !comparables.isEmpty {
+                            comparablesCard
+                        }
                         submitButton
                     }
                     .padding(24)
@@ -42,6 +59,7 @@ struct FAOfferSheet: View {
             .onAppear {
                 offerSalary = marketValue
                 offerYears = 2
+                loadComparables()
             }
         }
     }
@@ -152,13 +170,41 @@ struct FAOfferSheet: View {
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
     }
 
-    // MARK: - Cap Impact
+    // MARK: - Cap Impact (live recalculation as slider moves)
 
     private var capImpactCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Cap Impact")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.textSecondary)
+        let remaining = team.availableCap - offerSalary
+        let capPct = team.salaryCap > 0 ? Double(offerSalary) / Double(team.salaryCap) : 0
+        let usagePct = max(0, min(1, capPct))
+        let barColor: Color = {
+            if remaining < 0 { return .danger }
+            if usagePct > 0.15 { return .warning }
+            return .success
+        }()
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Cap Impact")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+                Text(String(format: "%.1f%% of cap", usagePct * 100))
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(barColor)
+            }
+
+            // Live cap usage bar
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.backgroundTertiary)
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(barColor)
+                        .frame(width: geo.size.width * usagePct)
+                }
+            }
+            .frame(height: 8)
+            .animation(.easeOut(duration: 0.15), value: offerSalary)
 
             HStack {
                 Text("Current Available:")
@@ -174,15 +220,141 @@ struct FAOfferSheet: View {
                     .font(.caption)
                     .foregroundStyle(Color.textTertiary)
                 Spacer()
-                let remaining = team.availableCap - offerSalary
                 Text(formatMillions(remaining))
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(remaining >= 0 ? Color.success : Color.danger)
+            }
+
+            // Multi-year total commitment
+            HStack {
+                Text("Total Commitment (\(offerYears)yr):")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                Spacer()
+                Text(formatMillions(offerSalary * offerYears))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.textPrimary)
             }
         }
         .padding(16)
         .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+    }
+
+    // MARK: - Comparable Recent Signings
+
+    private var comparablesCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "chart.bar.doc.horizontal")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentBlue)
+                Text("Comparable Recent Signings")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+                Text("\(comparables.count)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+            }
+            Text("Similar \(player.position.rawValue)s, OVR \(player.overall - 4)–\(player.overall + 4)")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+
+            Divider().overlay(Color.surfaceBorder)
+
+            ForEach(comparables) { comp in
+                HStack(spacing: 8) {
+                    Text(comp.position.rawValue)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+                        .frame(width: 28)
+                        .padding(.vertical, 2)
+                        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 3))
+                    Text(comp.name)
+                        .font(.caption)
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    Text("\(comp.overall)")
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(Color.forRating(comp.overall))
+                    Spacer()
+                    Text(comp.teamAbbr)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(Color.accentBlue)
+                    Text(formatMillions(comp.annualSalary) + "/yr")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(highlightSalary(comp.annualSalary))
+                    Text("(\(comp.years)yr)")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+
+            // Avg
+            let avgSalary = comparables.reduce(0) { $0 + $1.annualSalary } / max(1, comparables.count)
+            Divider().overlay(Color.surfaceBorder)
+            HStack {
+                Text("Avg comparable:")
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+                Text(formatMillions(avgSalary) + "/yr")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(Color.accentGold)
+                let diff = offerSalary - avgSalary
+                Text(diff >= 0 ? "(+\(formatMillions(diff)))" : "(\(formatMillions(diff)))")
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(diff >= 0 ? Color.success : Color.warning)
+            }
+        }
+        .padding(16)
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+    }
+
+    private func highlightSalary(_ salary: Int) -> Color {
+        // Color the comp salary relative to the user's current offer
+        let diff = Double(salary - offerSalary) / Double(max(offerSalary, 1))
+        if abs(diff) < 0.10 { return .textPrimary }
+        return diff > 0 ? .success : .warning
+    }
+
+    // MARK: - Load Comparables
+
+    private func loadComparables() {
+        // Find players at the same position, similar OVR, currently under contract
+        // (i.e. recently signed). Sample up to 4.
+        let targetOVR = player.overall
+        let position = player.position
+        let descriptor = FetchDescriptor<Player>(
+            predicate: #Predicate { p in
+                p.contractYearsRemaining > 0 && p.teamID != nil
+            }
+        )
+        let allSigned = (try? modelContext.fetch(descriptor)) ?? []
+        let similar = allSigned
+            .filter { $0.id != player.id && $0.position == position && abs($0.overall - targetOVR) <= 4 }
+            .sorted { abs($0.overall - targetOVR) < abs($1.overall - targetOVR) }
+            .prefix(8)
+
+        // Map to display, looking up team abbreviations
+        let allTeams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
+        let mapped = similar.compactMap { p -> ComparableSigning? in
+            guard p.annualSalary > 0 else { return nil }
+            let abbr = allTeams.first(where: { $0.id == p.teamID })?.abbreviation ?? "?"
+            return ComparableSigning(
+                id: p.id,
+                name: p.fullName,
+                position: p.position,
+                overall: p.overall,
+                annualSalary: p.annualSalary,
+                years: max(1, p.contractYearsRemaining),
+                teamAbbr: abbr
+            )
+        }
+        // Take top 4
+        comparables = Array(mapped.prefix(4))
     }
 
     // MARK: - Submit

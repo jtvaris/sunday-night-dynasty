@@ -52,10 +52,35 @@ struct CareerDashboardView: View {
     @State private var showCoachingStaffReview = false
     @State private var allCoaches: [Coach] = []
 
+    /// Tracks which Position-Grades letter is currently showing its explainer popover.
+    /// Encoded as "<group>:S" or "<group>:D" (e.g. "QB:S" for QB starter grade).
+    @State private var positionGradePopoverID: String?
+
     // MARK: - Derived
 
     private var canAdvance: Bool {
         TaskGenerator.allRequiredComplete(in: tasks)
+    }
+
+    /// Topmost incomplete required task (mirrors TimelineTasksPanel.nextActionableTask).
+    /// Used to surface a Next Action hero banner above the dashboard tiles.
+    private var nextActionTask: GameTask? {
+        tasks.first { task in
+            task.isRequired && task.status != .done && !isHeroTaskLocked(task)
+        }
+    }
+
+    /// Mirror of TimelineTasksPanel.isTaskLocked for hero-banner gating.
+    private func isHeroTaskLocked(_ task: GameTask) -> Bool {
+        guard task.status == .todo, task.isRequired else { return false }
+        let combineChain = ["Send scouts to Combine", "Review Combine results", "Conduct prospect interviews", "Review interview report"]
+        if let taskIdx = combineChain.firstIndex(of: task.title), taskIdx > 0 {
+            let prereqTitle = combineChain[taskIdx - 1]
+            if let prereq = tasks.first(where: { $0.title == prereqTitle }), prereq.status != .done {
+                return true
+            }
+        }
+        return false
     }
 
     /// Use horizontalSizeClass instead of GeometryReader for layout switching.
@@ -654,6 +679,10 @@ struct CareerDashboardView: View {
 
     private var centerTilesGrid: some View {
         VStack(spacing: 12) {
+            // Next Action hero banner — promotes the topmost incomplete required task.
+            // Sits above all other dashboard content for maximum prominence.
+            nextActionHero
+
             // Satisfaction/Reputation scores row
             satisfactionScoresRow
 
@@ -770,6 +799,9 @@ struct CareerDashboardView: View {
                 Text("Loading...")
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)
+            } else if isPreSeasonNoGamesPlayed {
+                // Empty state — replace 0-0 rows with a "Week 1 in N" countdown.
+                preSeasonCountdownRow
             } else {
                 // Header row
                 HStack {
@@ -1117,15 +1149,25 @@ struct CareerDashboardView: View {
                         let usedFraction = t.salaryCap > 0
                             ? Double(t.currentCapUsage) / Double(t.salaryCap)
                             : 0
+                        let isCapTight = usedFraction > 0.85
 
                         HStack(alignment: .firstTextBaseline) {
                             Text("Used")
                                 .font(.system(size: 10))
                                 .foregroundStyle(Color.textSecondary)
+                            if isCapTight {
+                                Text("CAP TIGHT")
+                                    .font(.system(size: 8, weight: .black))
+                                    .foregroundStyle(.white)
+                                    .tracking(0.5)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(usedFraction > 0.95 ? Color.danger : Color.warning))
+                            }
                             Spacer()
                             Text(formatCap(t.currentCapUsage))
                                 .font(.system(size: 16, weight: .bold).monospacedDigit())
-                                .foregroundStyle(Color.textPrimary)
+                                .foregroundStyle(isCapTight ? Color.warning : Color.textPrimary)
                         }
 
                         // Larger progress bar
@@ -1297,39 +1339,41 @@ struct CareerDashboardView: View {
     // MARK: - Position Group Strengths Tile (#17)
 
     private var positionStrengthsTile: some View {
-        NavigationLink {
-            RosterViewWrapper(career: career)
-        } label: {
-            DashboardTile(icon: "chart.bar.fill", title: "Position Grades") {
-                VStack(alignment: .leading, spacing: 4) {
-                    if positionGroupGrades.isEmpty {
-                        Text("No roster data")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.textSecondary)
-                    } else {
-                        // Find weakest group (#146)
-                        let weakestGroup = positionGroupGrades.min(by: { $0.starterOVR < $1.starterOVR })?.group
-                        // Show in two columns
-                        let halfCount = (positionGroupGrades.count + 1) / 2
-                        let leftCol = Array(positionGroupGrades.prefix(halfCount))
-                        let rightCol = Array(positionGroupGrades.dropFirst(halfCount))
-                        HStack(alignment: .top, spacing: 8) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                ForEach(leftCol, id: \.group) { item in
-                                    positionGradeRow(item, isWeakest: item.group == weakestGroup)
-                                }
+        // NOTE: Outer NavigationLink intentionally removed — per-grade letters are now
+        // tap targets that open an explainer popover. A "View" link is still available
+        // in the header.
+        DashboardTile(icon: "chart.bar.fill", title: "Position Grades") {
+            VStack(alignment: .leading, spacing: 4) {
+                if positionGroupGrades.isEmpty {
+                    Text("No roster data")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.textSecondary)
+                } else {
+                    // Find weakest group (#146)
+                    let weakestGroup = positionGroupGrades.min(by: { $0.starterOVR < $1.starterOVR })?.group
+                    // Show in two columns
+                    let halfCount = (positionGroupGrades.count + 1) / 2
+                    let leftCol = Array(positionGroupGrades.prefix(halfCount))
+                    let rightCol = Array(positionGroupGrades.dropFirst(halfCount))
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(leftCol, id: \.group) { item in
+                                positionGradeRow(item, isWeakest: item.group == weakestGroup)
                             }
-                            VStack(alignment: .leading, spacing: 4) {
-                                ForEach(rightCol, id: \.group) { item in
-                                    positionGradeRow(item, isWeakest: item.group == weakestGroup)
-                                }
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(rightCol, id: \.group) { item in
+                                positionGradeRow(item, isWeakest: item.group == weakestGroup)
                             }
                         }
                     }
+                    Text("Tap a grade for details")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Color.textTertiary)
+                        .padding(.top, 2)
                 }
             }
         }
-        .buttonStyle(.plain)
     }
 
     private func positionGradeRow(_ item: (group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int), isWeakest: Bool = false) -> some View {
@@ -1341,18 +1385,14 @@ struct CareerDashboardView: View {
             Text("S:")
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
-            Text(item.starterGrade)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(item.starterGrade))
+            gradeButton(group: item.group, kind: "S", grade: item.starterGrade, ovr: item.starterOVR)
             Text("/")
                 .font(.system(size: 11))
                 .foregroundStyle(Color.textTertiary)
             Text("D:")
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(Color.textTertiary)
-            Text(item.depthGrade)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(item.depthGrade))
+            gradeButton(group: item.group, kind: "D", grade: item.depthGrade, ovr: item.depthOVR)
             if isWeakest {
                 Text("NEED")
                     .font(.system(size: 7, weight: .heavy))
@@ -1367,14 +1407,137 @@ struct CareerDashboardView: View {
         }
     }
 
+    /// Tappable grade letter that surfaces an explainer popover.
+    /// `kind` is "S" (starter) or "D" (depth) — used to disambiguate the popover binding.
+    private func gradeButton(group: String, kind: String, grade: String, ovr: Int) -> some View {
+        let id = "\(group):\(kind)"
+        return Button {
+            positionGradePopoverID = id
+        } label: {
+            Text(grade)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(grade))
+                .padding(.horizontal, 2)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(
+            isPresented: Binding(
+                get: { positionGradePopoverID == id },
+                set: { if !$0 { positionGradePopoverID = nil } }
+            ),
+            attachmentAnchor: .point(.center),
+            arrowEdge: .top
+        ) {
+            gradeExplainerContent(group: group, kind: kind, grade: grade, ovr: ovr)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    /// Explainer card content shown inside the position-grade popover.
+    private func gradeExplainerContent(group: String, kind: String, grade: String, ovr: Int) -> some View {
+        let kindLabel = kind == "S" ? "Starter" : "Depth"
+        let (description, percentile) = gradeExplainerCopy(grade)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(group)
+                    .font(.system(size: 11, weight: .heavy))
+                    .foregroundStyle(Color.accentGold)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.accentGold.opacity(0.15)))
+                Text(kindLabel)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+                Text(grade)
+                    .font(.system(size: 22, weight: .black))
+                    .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(grade))
+            }
+
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(grade): \(description)")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.textPrimary)
+                Text(percentile)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.textSecondary)
+                Text("Average OVR: \(ovr)")
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .padding(12)
+        .frame(width: 240)
+        .background(Color.backgroundSecondary)
+    }
+
+    /// Plain-language copy describing what each letter grade means relative to the league.
+    private func gradeExplainerCopy(_ grade: String) -> (description: String, percentile: String) {
+        switch grade {
+        case "A+":
+            return ("elite, top 5% league-wide", "Championship-caliber unit at this position group.")
+        case "A":
+            return ("excellent, top 10%", "Among the best in the league at this position group.")
+        case "A-":
+            return ("very strong, top 15%", "Clear strength of the roster.")
+        case "B+":
+            return ("above league average, top 25%", "Above-average for this position group league-wide.")
+        case "B":
+            return ("solid starter quality", "Roughly league average — dependable, not a weakness.")
+        case "B-":
+            return ("average, mid-tier", "Average starter quality, some upside.")
+        case "C+":
+            return ("below average", "Slightly below the league bar at this position group.")
+        case "C":
+            return ("weak starter / good depth", "Below average — consider an upgrade.")
+        case "C-":
+            return ("weakness, bottom 25%", "A position-group hole that opponents will target.")
+        case "D+", "D":
+            return ("bottom 15% league-wide", "Major roster need — prioritize in FA or the draft.")
+        case "F":
+            return ("worst in league tier", "Critical hole — fix immediately.")
+        default:
+            return ("position group grade", "Higher letters indicate stronger units relative to the league.")
+        }
+    }
+
     // MARK: - Expiring Contracts Tile (#19)
+
+    /// True when expiring contracts warrant a HIGH PRIORITY callout on the Contracts tile.
+    /// Triggers when there are 5+ expiring deals or when the average annual salary
+    /// of expiring players is high (>= $5M, indicating expensive tag/extension cost).
+    private var contractsHighPriority: Bool {
+        let count = expiringContractPlayers.count
+        guard count > 0 else { return false }
+        if count >= 5 { return true }
+        let avgSalaryThousands = expiringContractPlayers.reduce(0) { $0 + $1.annualSalary } / count
+        return avgSalaryThousands >= 5_000  // $5M average — tag/extension cost will be steep
+    }
 
     private var expiringContractsTile: some View {
         NavigationLink {
             CapOverviewView(career: career)
         } label: {
-            DashboardTile(icon: "clock.badge.exclamationmark", title: "Contracts") {
+            DashboardTile(icon: "clock.badge.exclamationmark", title: "Contracts", highlighted: contractsHighPriority) {
                 VStack(alignment: .leading, spacing: 6) {
+                    if contractsHighPriority {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.octagon.fill")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                            Text("HIGH PRIORITY")
+                                .font(.system(size: 9, weight: .black))
+                                .foregroundStyle(.white)
+                                .tracking(0.5)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.danger))
+                    }
+
                     if expiringContractPlayers.isEmpty {
                         Text("No expiring contracts")
                             .font(.system(size: 11))
@@ -1383,7 +1546,7 @@ struct CareerDashboardView: View {
                         HStack(alignment: .firstTextBaseline) {
                             Text("\(expiringContractPlayers.count)")
                                 .font(.system(size: 20, weight: .bold).monospacedDigit())
-                                .foregroundStyle(Color.warning)
+                                .foregroundStyle(contractsHighPriority ? Color.danger : Color.warning)
                             Text("expiring contract\(expiringContractPlayers.count == 1 ? "" : "s")")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(Color.textSecondary)
@@ -1637,6 +1800,69 @@ struct CareerDashboardView: View {
         .background(Color.success.opacity(0.1))
     }
 
+    // MARK: - Next Action Hero Banner
+
+    /// Prominent banner that promotes the topmost incomplete required task.
+    /// Shown at the top of the right-column dashboard area as a "hero" call-to-action.
+    @ViewBuilder
+    private var nextActionHero: some View {
+        if let task = nextActionTask {
+            Button {
+                onTaskSelected(task.destination)
+            } label: {
+                HStack(alignment: .center, spacing: 12) {
+                    // Gold pulse pill
+                    ZStack {
+                        Circle()
+                            .fill(Color.accentGold)
+                            .frame(width: 36, height: 36)
+                        Image(systemName: task.icon)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(Color.backgroundPrimary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text("NEXT")
+                                .font(.system(size: 9, weight: .black))
+                                .foregroundStyle(Color.backgroundPrimary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color.accentGold))
+                            Text(task.title)
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
+                        }
+                        Text("Tap to start \u{2014} \(task.description)")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Color.textSecondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.accentGold)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.accentGold.opacity(0.10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(Color.accentGold, lineWidth: 1.5)
+                        )
+                )
+                .shadow(color: Color.accentGold.opacity(0.25), radius: 6, x: 0, y: 2)
+                .contentShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     // MARK: - Satisfaction Scores Row
 
     private var satisfactionScoresRow: some View {
@@ -1784,6 +2010,79 @@ struct CareerDashboardView: View {
         default:
             return true
         }
+    }
+
+    /// True when no division team has played a regular-season game yet —
+    /// i.e. the standings would all read 0-0 and a countdown is more useful.
+    private var isPreSeasonNoGamesPlayed: Bool {
+        guard isOffseasonPhase else { return false }
+        return divisionRecords.allSatisfy { $0.wins == 0 && $0.losses == 0 && $0.ties == 0 }
+    }
+
+    /// Approximate "weeks until Week 1" mapped from the current SeasonPhase.
+    /// Used by the standings empty state.
+    private var weeksUntilWeek1: Int {
+        switch career.currentPhase {
+        case .coachingChanges: return 28
+        case .reviewRoster:    return 26
+        case .combine:         return 24
+        case .freeAgency:      return 22
+        case .proDays:         return 20
+        case .draft:           return 18
+        case .otas:            return 14
+        case .trainingCamp:    return 8
+        case .preseason:       return 4
+        case .rosterCuts:      return 1
+        default:               return 0
+        }
+    }
+
+    @ViewBuilder
+    private var preSeasonCountdownRow: some View {
+        let weeks = weeksUntilWeek1
+        let phaseLabel: String = {
+            switch career.currentPhase {
+            case .coachingChanges: return "Coaching Changes"
+            case .reviewRoster:    return "Roster Review"
+            case .combine:         return "Combine"
+            case .freeAgency:      return "Free Agency"
+            case .proDays:         return "Pro Days"
+            case .draft:           return "Draft"
+            case .otas:            return "OTAs"
+            case .trainingCamp:    return "Training Camp"
+            case .preseason:       return "Preseason"
+            case .rosterCuts:      return "Roster Cuts"
+            default:               return "Offseason"
+            }
+        }()
+
+        HStack(spacing: 10) {
+            Image(systemName: "calendar.badge.clock")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(Color.accentGold)
+
+            VStack(alignment: .leading, spacing: 2) {
+                if weeks > 0 {
+                    Text("Week 1 in ~\(weeks) week\(weeks == 1 ? "" : "s")")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                } else {
+                    Text("Season starts soon")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                }
+                Text("Currently: \(phaseLabel)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.textSecondary)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.accentGold.opacity(0.08))
+        )
     }
 
     /// Streak info derived from recent played games.

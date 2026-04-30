@@ -374,38 +374,67 @@ struct RosterView: View {
     // MARK: - Analysis Mode Picker (#96, #98)
 
     private var analysisModePicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                ForEach(RosterAnalysisMode.allCases) { mode in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            analysisMode = mode
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.textTertiary)
+                Text("ANALYSIS")
+                    .font(.system(size: 9, weight: .heavy))
+                    .foregroundStyle(Color.textTertiary)
+                    .tracking(0.5)
+                Text("·")
+                    .font(.system(size: 9, weight: .heavy))
+                    .foregroundStyle(Color.textTertiary)
+                Text(analysisMode.label.uppercased())
+                    .font(.system(size: 9, weight: .heavy))
+                    .foregroundStyle(Color.accentBlue)
+                    .tracking(0.5)
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(RosterAnalysisMode.allCases) { mode in
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                analysisMode = mode
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: mode.icon)
+                                    .font(.system(size: 11, weight: analysisMode == mode ? .bold : .regular))
+                                Text(mode.label)
+                                    .font(.caption)
+                                    .fontWeight(analysisMode == mode ? .bold : .medium)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .foregroundStyle(analysisMode == mode ? Color.backgroundPrimary : Color.textSecondary)
+                            .background(
+                                analysisMode == mode ? Color.accentBlue : Color.backgroundTertiary,
+                                in: Capsule()
+                            )
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(
+                                        analysisMode == mode ? Color.accentBlue : Color.surfaceBorder,
+                                        lineWidth: analysisMode == mode ? 1.5 : 1
+                                    )
+                            )
+                            .shadow(
+                                color: analysisMode == mode ? Color.accentBlue.opacity(0.3) : .clear,
+                                radius: analysisMode == mode ? 4 : 0,
+                                y: analysisMode == mode ? 1 : 0
+                            )
                         }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: mode.icon)
-                                .font(.system(size: 10))
-                            Text(mode.label)
-                                .font(.caption)
-                                .fontWeight(.medium)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .foregroundStyle(analysisMode == mode ? Color.backgroundPrimary : Color.textSecondary)
-                        .background(
-                            analysisMode == mode ? Color.accentBlue : Color.backgroundTertiary,
-                            in: Capsule()
-                        )
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(
-                                    analysisMode == mode ? Color.accentBlue : Color.surfaceBorder,
-                                    lineWidth: 1
-                                )
-                        )
+                        .accessibilityLabel("Analysis mode: \(mode.label)\(analysisMode == mode ? ", selected" : "")")
+                        .accessibilityAddTraits(analysisMode == mode ? .isSelected : [])
                     }
-                    .accessibilityLabel("Analysis mode: \(mode.label)")
                 }
+                .padding(.horizontal, 1)
+                .padding(.vertical, 2)
             }
         }
     }
@@ -1441,6 +1470,30 @@ struct PositionGroupHeader: View {
         players.reduce(0) { $0 + $1.annualSalary }
     }
 
+    /// Mock development trend for the position group based on a deterministic
+    /// hash of the group name + roster composition. Shows whether the group is
+    /// trending up, flat, or down compared to last season.
+    /// TODO: wire to actual season-over-season delta when development tracking is in place.
+    private var developmentTrend: (icon: String, color: Color, label: String, delta: Int) {
+        let nameHash = group.name.unicodeScalars.reduce(0) { $0 + Int($1.value) }
+        let rosterHash = players.reduce(0) { $0 + $1.overall + $1.age }
+        let combined = (nameHash * 7 + rosterHash) % 100
+
+        switch combined {
+        case 0..<35:
+            // Trending up
+            let delta = (combined % 4) + 1
+            return ("arrow.up.right", .success, "+\(delta)", delta)
+        case 35..<70:
+            // Flat / stable
+            return ("arrow.right", .textTertiary, "±0", 0)
+        default:
+            // Trending down
+            let delta = (combined % 4) + 1
+            return ("arrow.down.right", .danger, "-\(delta)", -delta)
+        }
+    }
+
     private var formattedCap: String {
         let millions = Double(totalCapAllocation) / 1000.0
         if millions >= 1.0 {
@@ -1489,6 +1542,21 @@ struct PositionGroupHeader: View {
                     .font(.system(size: 18, weight: .black))
                     .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.depthGrade))
             }
+
+            // Development trend arrow — shows recent group trajectory
+            let trend = developmentTrend
+            HStack(spacing: 2) {
+                Image(systemName: trend.icon)
+                    .font(.system(size: 10, weight: .heavy))
+                Text(trend.label)
+                    .font(.system(size: 9, weight: .bold).monospacedDigit())
+            }
+            .foregroundStyle(trend.color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(trend.color.opacity(0.12), in: Capsule())
+            .overlay(Capsule().strokeBorder(trend.color.opacity(0.3), lineWidth: 0.5))
+            .accessibilityLabel("Development trend \(trend.delta >= 0 ? "up" : "down") \(abs(trend.delta))")
 
             // Cap allocation
             Text(formattedCap)

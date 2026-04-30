@@ -3,11 +3,36 @@ import SwiftData
 
 struct NewCareerView: View {
 
+    /// Local-only UI flow mode. Quick Start pre-fills sensible defaults and
+    /// jumps straight to team selection; Custom League keeps the full 2-step flow.
+    private enum FlowMode: Hashable {
+        case quickStart
+        case custom
+    }
+
+    /// Local-only cap selection that adds a third "Sandbox" option on top of
+    /// the persisted `CapMode` enum. Sandbox currently maps to `.simple` when
+    /// passed downstream; a dedicated engine-side `CapMode.sandbox` is a
+    /// follow-up (see TODO at the bottom of this file).
+    private enum CapModeSelection: Hashable {
+        case simple
+        case realistic
+        case sandbox
+
+        var capMode: CapMode {
+            switch self {
+            case .simple, .sandbox: return .simple
+            case .realistic:        return .realistic
+            }
+        }
+    }
+
+    @State private var flowMode: FlowMode = .quickStart
     @State private var playerName: String = ""
     @State private var selectedAvatarID: String = "coach_m1"
     @State private var selectedCoachingStyle: CoachingStyle = .tactician
     @State private var selectedRole: CareerRole = .gmAndHeadCoach
-    @State private var selectedCapMode: CapMode = .realistic
+    @State private var capSelection: CapModeSelection = .realistic
     @State private var currentStep = 1
     @State private var showNameError = false
 
@@ -17,8 +42,12 @@ struct NewCareerView: View {
     private var isLandscape: Bool { viewWidth > 900 }
 
     private var isNameValid: Bool {
-        !playerName.trimmingCharacters(in: .whitespaces).isEmpty
+        playerName.trimmingCharacters(in: .whitespaces).count >= 2
     }
+
+    /// Quick Start skips Step 2 entirely, so the indicator should reflect a
+    /// single-step flow when that mode is active.
+    private var totalSteps: Int { flowMode == .quickStart ? 1 : 2 }
 
     var body: some View {
         ZStack {
@@ -44,6 +73,11 @@ struct NewCareerView: View {
             VStack(spacing: 0) {
                 // MARK: - Step Indicator
                 stepIndicator
+
+                // MARK: - Flow Mode Toggle (Quick Start vs Custom League)
+                if currentStep == 1 {
+                    flowModeToggle
+                }
 
                 // MARK: - Page Content
                 if currentStep == 1 {
@@ -78,7 +112,7 @@ struct NewCareerView: View {
     private var stepIndicator: some View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
-                Text("Step \(currentStep) of 2")
+                Text("Step \(currentStep) of \(totalSteps)")
                     .font(.callout.weight(.bold))
                     .foregroundStyle(Color.textPrimary)
 
@@ -96,16 +130,51 @@ struct NewCareerView: View {
                         .fill(Color.surfaceBorder)
                         .frame(height: 6)
 
+                    let progress: CGFloat = {
+                        if totalSteps == 1 { return 1.0 }
+                        return currentStep == 1 ? 0.5 : 1.0
+                    }()
+
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Color.accentBlue)
-                        .frame(width: geo.size.width * (currentStep == 1 ? 0.5 : 1.0), height: 6)
+                        .frame(width: geo.size.width * progress, height: 6)
                         .animation(.easeInOut(duration: 0.3), value: currentStep)
+                        .animation(.easeInOut(duration: 0.3), value: totalSteps)
                 }
             }
             .frame(height: 6)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
+    }
+
+    // MARK: - Flow Mode Toggle (Quick Start vs Custom League)
+
+    private var flowModeToggle: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Flow", selection: $flowMode) {
+                Text("Quick Start").tag(FlowMode.quickStart)
+                Text("Custom League").tag(FlowMode.custom)
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: flowMode) { _, newValue in
+                if newValue == .quickStart {
+                    // Pre-fill sensible defaults so the team-selection screen
+                    // gets a coherent setup straight out of the gate.
+                    selectedRole = .gmAndHeadCoach
+                    capSelection = .realistic
+                    selectedCoachingStyle = .tactician
+                }
+            }
+
+            Text(flowMode == .quickStart
+                 ? "Jump straight in with sensible defaults: GM & Head Coach, Realistic cap, Tactician style."
+                 : "Tailor every detail of your career: role, salary cap rules, coaching style, and avatar.")
+                .font(.subheadline)
+                .foregroundStyle(Color.textSecondary)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 4)
     }
 
     // MARK: - Page 1: Your Career (#97: wider content, more vertical space)
@@ -115,7 +184,11 @@ struct NewCareerView: View {
         ScrollView {
             VStack(spacing: 0) {
                 VStack(spacing: 24) {
-                    if isLandscape {
+                    if flowMode == .quickStart {
+                        // Quick Start: only the name section is needed; defaults
+                        // cover the rest of the configuration surface.
+                        nameSection
+                    } else if isLandscape {
                         nameSection
                         HStack(alignment: .top, spacing: 16) {
                             roleSection
@@ -130,11 +203,18 @@ struct NewCareerView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 16)
 
-                // Next button
-                nextButton
-                    .padding(.horizontal, 20)
-                    .padding(.top, 12)
-                    .padding(.bottom, 16)
+                // Action button: Quick Start jumps straight to team selection,
+                // Custom League advances to Step 2 (Your Identity).
+                Group {
+                    if flowMode == .quickStart {
+                        quickStartChooseTeamButton
+                    } else {
+                        nextButton
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 16)
             }
         }
     }
@@ -192,9 +272,15 @@ struct NewCareerView: View {
                     )
 
                 if showNameError && !isNameValid {
-                    Text("Please enter your name to continue.")
+                    Text("Please enter at least 2 characters to continue.")
                         .font(.subheadline)
                         .foregroundStyle(Color.danger)
+                } else if !playerName.isEmpty && !isNameValid {
+                    // Inline hint while the user is typing but hasn't yet hit
+                    // the minimum length.
+                    Text("Names need to be at least 2 characters.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textTertiary)
                 } else {
                     // #99: larger explanation text with better contrast
                     Text("This is how you'll be known around the league.")
@@ -267,32 +353,49 @@ struct NewCareerView: View {
     private var capModeSection: some View {
         cardSection(icon: "dollarsign.circle.fill", title: "Salary Cap Mode") {
             VStack(alignment: .leading, spacing: 12) {
-                Picker("Salary Cap", selection: $selectedCapMode) {
-                    Text("Simple").tag(CapMode.simple)
-                    Text("Realistic").tag(CapMode.realistic)
+                Picker("Salary Cap", selection: $capSelection) {
+                    Text("Simple").tag(CapModeSelection.simple)
+                    Text("Realistic").tag(CapModeSelection.realistic)
+                    Text("Sandbox").tag(CapModeSelection.sandbox)
                 }
                 .pickerStyle(.segmented)
 
                 // Feature checklist comparison
                 VStack(alignment: .leading, spacing: 10) {
-                    capFeatureRow(feature: "Annual salary cap", simple: true, realistic: true)
-                    capFeatureRow(feature: "Signing bonuses", simple: false, realistic: true)
-                    capFeatureRow(feature: "Dead cap penalties", simple: false, realistic: true)
-                    capFeatureRow(feature: "Contract restructures", simple: false, realistic: true)
-                    capFeatureRow(feature: "Franchise tags", simple: false, realistic: true)
-                    capFeatureRow(feature: "Cap rollover", simple: false, realistic: true)
+                    capFeatureRow(feature: "Annual salary cap",
+                                  simple: true, realistic: true, sandbox: false)
+                    capFeatureRow(feature: "Signing bonuses",
+                                  simple: false, realistic: true, sandbox: false)
+                    capFeatureRow(feature: "Dead cap penalties",
+                                  simple: false, realistic: true, sandbox: false)
+                    capFeatureRow(feature: "Contract restructures",
+                                  simple: false, realistic: true, sandbox: false)
+                    capFeatureRow(feature: "Franchise tags",
+                                  simple: false, realistic: true, sandbox: false)
+                    capFeatureRow(feature: "Cap rollover",
+                                  simple: false, realistic: true, sandbox: false)
                 }
 
                 Group {
-                    switch selectedCapMode {
+                    switch capSelection {
                     case .simple:
                         Text("Great for new players. Straightforward salaries, no hidden penalties.")
                     case .realistic:
                         Text("Full NFL cap rules. Every dollar and bonus structure matters.")
+                    case .sandbox:
+                        Text("No salary cap restrictions. Sign whoever you want, however you want.")
                     }
                 }
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
+
+                // Rationale footnote for the Recommended badge shown on Simple.
+                if capSelection == .simple {
+                    Label("Recommended for first-time players: easier learning curve.",
+                          systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
             }
         }
     }
@@ -365,7 +468,7 @@ struct NewCareerView: View {
     }
 
     // #103: Cap feature comparison row
-    private func capFeatureRow(feature: String, simple: Bool, realistic: Bool) -> some View {
+    private func capFeatureRow(feature: String, simple: Bool, realistic: Bool, sandbox: Bool) -> some View {
         HStack(spacing: 8) {
             Text(feature)
                 .font(.caption)
@@ -382,6 +485,11 @@ struct NewCareerView: View {
                     .font(.caption)
                     .foregroundStyle(realistic ? Color.success : Color.textTertiary)
                     .frame(width: 30)
+
+                Image(systemName: sandbox ? "checkmark.circle.fill" : "minus.circle")
+                    .font(.caption)
+                    .foregroundStyle(sandbox ? Color.success : Color.textTertiary)
+                    .frame(width: 30)
             }
         }
     }
@@ -390,13 +498,10 @@ struct NewCareerView: View {
 
     private var nextButton: some View {
         Button {
-            if isNameValid {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    currentStep = 2
-                    showNameError = false
-                }
-            } else {
-                showNameError = true
+            guard isNameValid else { return }
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentStep = 2
+                showNameError = false
             }
         } label: {
             HStack(spacing: 10) {
@@ -410,13 +515,59 @@ struct NewCareerView: View {
             .frame(height: 52)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.accentGold)
+                    .fill(isNameValid ? Color.accentGold : Color.surfaceBorder)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(Color.accentGold.opacity(0.6), lineWidth: 1)
+                    .strokeBorder(
+                        (isNameValid ? Color.accentGold : Color.surfaceBorder).opacity(0.6),
+                        lineWidth: 1
+                    )
             )
+            .opacity(isNameValid ? 1.0 : 0.7)
         }
+        .disabled(!isNameValid)
+        .accessibilityHint(isNameValid
+                           ? "Continues to Step 2"
+                           : "Enter your name (at least 2 characters) to continue")
+        .padding(.top, 4)
+    }
+
+    /// Quick Start path: skips Step 2 and feeds the same destination with
+    /// the pre-filled defaults. Disabled until the name is valid.
+    private var quickStartChooseTeamButton: some View {
+        NavigationLink(destination: TeamSelectionView(
+            playerName: playerName,
+            avatarID: selectedAvatarID,
+            coachingStyle: selectedCoachingStyle,
+            selectedRole: selectedRole,
+            selectedCapMode: capSelection.capMode
+        )) {
+            HStack(spacing: 10) {
+                Image(systemName: "sportscourt.fill")
+                    .font(.body.weight(.semibold))
+                Text("Choose Your Team")
+                    .font(.headline)
+                Image(systemName: "arrow.right")
+                    .font(.body.weight(.semibold))
+            }
+            .foregroundStyle(Color.backgroundPrimary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isNameValid ? Color.accentGold : Color.surfaceBorder)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(
+                        (isNameValid ? Color.accentGold : Color.surfaceBorder).opacity(0.6),
+                        lineWidth: 1
+                    )
+            )
+            .opacity(isNameValid ? 1.0 : 0.7)
+        }
+        .disabled(!isNameValid)
         .padding(.top, 4)
     }
 
@@ -426,7 +577,7 @@ struct NewCareerView: View {
             avatarID: selectedAvatarID,
             coachingStyle: selectedCoachingStyle,
             selectedRole: selectedRole,
-            selectedCapMode: selectedCapMode
+            selectedCapMode: capSelection.capMode
         )) {
             HStack(spacing: 10) {
                 Image(systemName: "sportscourt.fill")
@@ -501,38 +652,39 @@ private struct CoachingStyleCard: View {
     let isSelected: Bool
     var isRecommended: Bool = false
 
-    /// #111: Gameplay effect description for each style
+    /// Concrete, gameplay-facing effect for each style. Replaces the previous
+    /// vague "+10 <Attribute>" badge so players understand the actual impact.
     private var gameplayEffect: String {
         switch style {
         case .tactician:
-            return "Better play-calling in close games"
+            return "+10% play-call accuracy in close-game situations"
         case .playersCoach:
-            return "Faster player progression each season"
+            return "+10% player development speed during practices"
         case .disciplinarian:
-            return "Fewer penalties and turnovers"
+            return "-10% penalties and fumbles drawn each game"
         case .innovator:
-            return "Faster scheme adaptation mid-season"
+            return "+10% scheme familiarity gain when teaching playbooks"
         case .motivator:
-            return "Bigger morale boosts from wins"
+            return "+10% morale boost from wins and locker-room moments"
         }
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 10) {
             ZStack {
                 Circle()
                     .fill(isSelected ? Color.accentBlue.opacity(0.2) : Color.backgroundSecondary)
-                    .frame(width: 30, height: 30)
+                    .frame(width: 32, height: 32)
                 Image(systemName: style.icon)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(isSelected ? Color.accentBlue : Color.textSecondary)
             }
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(style.displayName)
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(isSelected ? Color.textPrimary : Color.textPrimary)
+                        .foregroundStyle(Color.textPrimary)
 
                     // #107: Beginner guidance tag
                     if isRecommended {
@@ -548,27 +700,23 @@ private struct CoachingStyleCard: View {
                 }
 
                 Text(gameplayEffect)
-                    .font(.system(size: 9, weight: .medium).italic())
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(isSelected ? Color.textSecondary : Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if isRecommended {
+                    // Footnote rationale — prevents the badge from feeling arbitrary.
+                    Text("Recommended for first-time players: easier learning curve.")
+                        .font(.system(size: 9, weight: .regular).italic())
+                        .foregroundStyle(Color.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Spacer(minLength: 4)
-
-            // #104: Wider bonus area to prevent truncation
-            VStack(spacing: 1) {
-                Text("+\(style.bonusValue)")
-                    .font(.system(size: 13, weight: .bold).monospacedDigit())
-                    .foregroundStyle(isSelected ? Color.accentBlue : Color.textTertiary)
-                Text(style.bonusAttribute)
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(isSelected ? Color.textSecondary : Color.textTertiary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(width: 65)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(isSelected ? Color.accentBlue.opacity(0.08) : Color.backgroundPrimary)
@@ -581,7 +729,7 @@ private struct CoachingStyleCard: View {
                 )
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(style.displayName), \(style.description), plus \(style.bonusValue) \(style.bonusAttribute)")
+        .accessibilityLabel("\(style.displayName). \(gameplayEffect).")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
@@ -592,3 +740,10 @@ private struct CoachingStyleCard: View {
     }
     .modelContainer(for: Career.self, inMemory: true)
 }
+
+// TODO(sandbox-cap): Sandbox cap mode is currently a UI-only selection that
+// downgrades to `CapMode.simple` when handed to TeamSelectionView. Add a
+// proper `CapMode.sandbox` case in `Domain/Enums/CapMode.swift` and have
+// `CapManagementEngine` / `ContractEngine` / `FreeAgencyEngine` short-circuit
+// cap checks when that case is active. Surface the new case in TeamSelection,
+// LeagueGenerator, and any persisted league config.

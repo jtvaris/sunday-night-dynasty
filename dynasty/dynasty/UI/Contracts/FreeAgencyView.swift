@@ -534,13 +534,27 @@ struct FreeAgencyView: View {
                     competitionIndicator(info.marketInterest)
                 }
 
-                // Cap impact preview (Task 11)
+                // Cap impact preview (Task 11): "Will use X% of cap"
+                capImpactPctBadge(asking: marketValue)
+
                 if let teamObj = team {
                     let capAfter = teamObj.availableCap - marketValue
                     Text("Cap after: \(formatMillions(capAfter))")
                         .font(.system(size: 9).monospacedDigit())
                         .foregroundStyle(capAfter >= 0 ? Color.textTertiary : Color.danger)
                 }
+            }
+
+            // Rumor row (decision support)
+            if let rumor = rumorText(for: player, info: freeAgentData[player.id]) {
+                HStack(spacing: 4) {
+                    Image(systemName: rumor.icon)
+                        .font(.system(size: 8))
+                    Text(rumor.text)
+                        .font(.system(size: 9).italic())
+                    Spacer()
+                }
+                .foregroundStyle(rumor.color)
             }
 
             // Third row: contract structure + draft alternative (Tasks 13, 16)
@@ -725,6 +739,59 @@ struct FreeAgencyView: View {
         return Text(text)
             .font(.system(size: 9).weight(interest >= 7 ? .bold : .medium))
             .foregroundStyle(color)
+    }
+
+    // MARK: - Cap Impact % Badge (Task 1: "Will use X% of cap")
+
+    private func capImpactPctBadge(asking: Int) -> some View {
+        // Use team salaryCap if available, else $260M baseline
+        let cap = team?.salaryCap ?? 260_000
+        let pct = cap > 0 ? Double(asking) / Double(cap) * 100 : 0
+        let pctRounded = Int(pct.rounded())
+        let color: Color = {
+            if pct >= 12 { return .danger }
+            if pct >= 7 { return .warning }
+            return .textSecondary
+        }()
+        let labelText = pctRounded <= 0 ? "<1% of cap" : "\(pctRounded)% of cap"
+        return Text(labelText)
+            .font(.system(size: 9, weight: .semibold).monospacedDigit())
+            .foregroundStyle(color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+    }
+
+    // MARK: - Rumor System (Task 2)
+
+    private struct Rumor {
+        let text: String
+        let icon: String
+        let color: Color
+    }
+
+    private func rumorText(for player: Player, info: FreeAgentInfo?) -> Rumor? {
+        if player.personality.motivation == .loyalty {
+            return Rumor(text: "Hometown discount possible", icon: "house.fill", color: .accentBlue)
+        }
+        if let info = info {
+            if info.marketInterest >= 7 {
+                return Rumor(text: "\(info.marketInterest) teams interested — bidding war", icon: "flame.fill", color: .danger)
+            }
+            if info.marketInterest >= 4 {
+                return Rumor(text: "\(info.marketInterest) teams interested", icon: "person.3.fill", color: .warning)
+            }
+        }
+        if player.personality.motivation == .money && player.overall >= 80 {
+            return Rumor(text: "Wants top-of-market money", icon: "dollarsign.circle.fill", color: .accentGold)
+        }
+        if player.personality.motivation == .winning {
+            return Rumor(text: "Will take less for a contender", icon: "trophy.fill", color: .success)
+        }
+        if player.age >= 32 {
+            return Rumor(text: "Likely short prove-it deal", icon: "clock.fill", color: .textSecondary)
+        }
+        return nil
     }
 
     // MARK: - Contract Structure Hint (Task 16)

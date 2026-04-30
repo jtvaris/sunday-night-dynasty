@@ -43,6 +43,108 @@ struct LockerRoomView: View {
     private var medMorale: Int   { players.filter { LockerRoomEngine.moraleTier($0.morale) == .medium }.count }
     private var lowMorale: Int   { players.filter { LockerRoomEngine.moraleTier($0.morale) == .low }.count }
 
+    // MARK: - Position Group Breakdown
+
+    private struct PositionGroupSummary: Identifiable {
+        let id: String
+        let label: String
+        let icon: String
+        let count: Int
+        let avgMorale: Int
+        let lowCount: Int
+
+        var moraleColor: Color {
+            switch avgMorale {
+            case 75...100: return Color.success
+            case 45..<75:  return Color.warning
+            default:       return Color.danger
+            }
+        }
+    }
+
+    private var positionGroups: [PositionGroupSummary] {
+        let groups: [(id: String, label: String, icon: String, positions: Set<Position>)] = [
+            ("offense_skill", "Offense - Skill", "figure.american.football", [.QB, .RB, .FB, .WR, .TE]),
+            ("offense_line",  "Offensive Line",  "shield.lefthalf.filled",  [.LT, .LG, .C, .RG, .RT]),
+            ("defense_front", "Defensive Front", "shield.fill",             [.DE, .DT, .OLB, .MLB]),
+            ("defense_back",  "Secondary",       "eye.fill",                [.CB, .FS, .SS]),
+            ("special_teams", "Special Teams",   "figure.kickboxing",       [.K, .P])
+        ]
+
+        return groups.compactMap { group in
+            let groupPlayers = players.filter { group.positions.contains($0.position) }
+            guard !groupPlayers.isEmpty else { return nil }
+            let avg = groupPlayers.map { $0.morale }.reduce(0, +) / max(groupPlayers.count, 1)
+            let low = groupPlayers.filter { LockerRoomEngine.moraleTier($0.morale) == .low }.count
+            return PositionGroupSummary(
+                id: group.id,
+                label: group.label,
+                icon: group.icon,
+                count: groupPlayers.count,
+                avgMorale: avg,
+                lowCount: low
+            )
+        }
+    }
+
+    /// Top issues — surfaces the most concerning chemistry/morale problems.
+    private var topIssues: [String] {
+        var issues: [(String, Int)] = []
+
+        // Issue 1: Toxic personalities with low morale (highest priority)
+        let toxicLowMorale = players.filter {
+            ($0.personality.archetype == .dramaQueen || $0.personality.archetype == .fieryCompetitor)
+            && $0.morale < 50
+        }
+        if !toxicLowMorale.isEmpty {
+            let names = toxicLowMorale.prefix(2).map { $0.fullName }.joined(separator: ", ")
+            issues.append((
+                "\(toxicLowMorale.count) toxic personalit\(toxicLowMorale.count == 1 ? "y" : "ies") frustrated (\(names))",
+                100 - (toxicLowMorale.first?.morale ?? 0)
+            ))
+        }
+
+        // Issue 2: Star players (top 25% by overall) with low morale
+        let sortedByOverall = players.sorted { $0.overall > $1.overall }
+        let starCount = max(1, players.count / 4)
+        let stars = Array(sortedByOverall.prefix(starCount))
+        let unhappyStars = stars.filter { $0.morale < 50 }
+        if !unhappyStars.isEmpty {
+            let names = unhappyStars.prefix(2).map { $0.fullName }.joined(separator: ", ")
+            issues.append((
+                "\(unhappyStars.count) star player\(unhappyStars.count == 1 ? "" : "s") unhappy (\(names))",
+                90 - (unhappyStars.first?.morale ?? 0)
+            ))
+        }
+
+        // Issue 3: Position group with widespread low morale
+        let troubledGroups = positionGroups
+            .filter { $0.lowCount >= 2 || ($0.count > 0 && $0.avgMorale < 50) }
+            .sorted { $0.avgMorale < $1.avgMorale }
+        if let worst = troubledGroups.first {
+            issues.append((
+                "\(worst.label) morale low (avg \(worst.avgMorale))",
+                80 - worst.avgMorale
+            ))
+        }
+
+        // Issue 4: Net negative leadership/toxicity
+        if let state = lockerRoomState, state.toxicityScore > state.leadershipScore {
+            let gap = state.toxicityScore - state.leadershipScore
+            issues.append((
+                "Toxicity outweighs leadership (-\(gap))",
+                60 + gap
+            ))
+        }
+
+        // Issue 5: Fall-through if nothing else surfaced
+        if issues.isEmpty && lowMorale > 0 {
+            issues.append(("\(lowMorale) player\(lowMorale == 1 ? "" : "s") with low morale", lowMorale))
+        }
+
+        return issues.sorted { $0.1 > $1.1 }.prefix(3).map { $0.0 }
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -53,7 +155,11 @@ struct LockerRoomView: View {
                 VStack(spacing: 20) {
                     squadDynamicsLink
                     chemistryCard
+                    if chemistry < 60 {
+                        topIssuesCard
+                    }
                     moraleDistributionCard
+                    positionGroupCard
                     leadersCard
                     risksCard
                     eventsCard
@@ -239,9 +345,157 @@ struct LockerRoomView: View {
                 .frame(height: 10)
             }
             .frame(height: 10)
+
+            // Axis labels — clarify what the morale tiers mean
+            HStack {
+                axisTick(label: "Low", range: "0-44", color: Color.danger)
+                Spacer()
+                axisTick(label: "Medium", range: "45-74", color: Color.warning)
+                Spacer()
+                axisTick(label: "High", range: "75-100", color: Color.success)
+            }
+            .padding(.top, 2)
         }
         .padding(20)
         .cardBackground()
+    }
+
+    private func axisTick(label: String, range: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text("\(label) \(range)")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(Color.textTertiary)
+        }
+    }
+
+    // MARK: - Top Issues Card (only shown when chemistry < 60)
+
+    private var topIssuesCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "exclamationmark.octagon.fill")
+                    .foregroundStyle(Color.danger)
+                Text("Top Issues")
+                    .font(.headline)
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+                Text("Chemistry \(chemistry)")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.danger)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule().fill(Color.danger.opacity(0.15))
+                    )
+            }
+
+            Divider().overlay(Color.surfaceBorder)
+
+            let issues = topIssues
+            if issues.isEmpty {
+                Text("Chemistry is fragile but no specific hotspots identified yet.")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
+            } else {
+                ForEach(Array(issues.enumerated()), id: \.offset) { index, issue in
+                    HStack(alignment: .top, spacing: 10) {
+                        Text("\(index + 1)")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Color.danger)
+                            .frame(width: 18, height: 18)
+                            .background(
+                                Circle().fill(Color.danger.opacity(0.15))
+                            )
+                        Text(issue)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(Color.danger.opacity(0.3), lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Position Group Card
+
+    private var positionGroupCard: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Image(systemName: "person.2.fill")
+                    .foregroundStyle(Color.textSecondary)
+                Text("Position Group Morale")
+                    .font(.headline)
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+            }
+
+            Divider().overlay(Color.surfaceBorder)
+
+            let groups = positionGroups
+            if groups.isEmpty {
+                Text("No players on the roster.")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
+            } else {
+                ForEach(groups) { group in
+                    positionGroupRow(group: group)
+                    if group.id != groups.last?.id {
+                        Divider().overlay(Color.surfaceBorder.opacity(0.5))
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .cardBackground()
+    }
+
+    private func positionGroupRow(group: PositionGroupSummary) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: group.icon)
+                .font(.subheadline)
+                .foregroundStyle(group.moraleColor)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(group.label)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                Text("\(group.count) player\(group.count == 1 ? "" : "s")\(group.lowCount > 0 ? " - \(group.lowCount) low morale" : "")")
+                    .font(.caption)
+                    .foregroundStyle(group.lowCount > 0 ? Color.danger : Color.textTertiary)
+            }
+
+            Spacer()
+
+            // Mini bar showing avg morale
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("\(group.avgMorale)")
+                    .font(.subheadline.weight(.bold).monospacedDigit())
+                    .foregroundStyle(group.moraleColor)
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.backgroundTertiary)
+                        .frame(width: 60, height: 4)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(group.moraleColor)
+                        .frame(width: 60 * CGFloat(group.avgMorale) / 100.0, height: 4)
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     private func moraleColumn(label: String, count: Int, total: Int, color: Color, icon: String) -> some View {

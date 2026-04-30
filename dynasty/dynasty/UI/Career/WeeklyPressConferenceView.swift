@@ -28,6 +28,18 @@ struct WeeklyPressConferenceView: View {
         case summary
     }
 
+    // MARK: - Running totals (computed from selectedIndices so far)
+
+    private var runningTotals: PressEffects {
+        var totals = PressEffects()
+        for (qIdx, respIdx) in selectedIndices.enumerated() {
+            guard qIdx < questions.count,
+                  respIdx < questions[qIdx].responses.count else { continue }
+            totals = totals + questions[qIdx].responses[respIdx].effects
+        }
+        return totals
+    }
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -72,6 +84,12 @@ struct WeeklyPressConferenceView: View {
             VStack(spacing: 0) {
                 questioningHeader
                     .padding(.top, 16)
+
+                // Running totals strip — shows accumulated impact after each question
+                if !selectedIndices.isEmpty {
+                    runningTotalsStrip
+                        .padding(.top, 12)
+                }
 
                 if currentQuestionIndex < questions.count {
                     let question = questions[currentQuestionIndex]
@@ -132,6 +150,49 @@ struct WeeklyPressConferenceView: View {
                 .font(.caption)
                 .foregroundStyle(Color.textTertiary)
         }
+    }
+
+    // MARK: - Running Totals Strip
+
+    private var runningTotalsStrip: some View {
+        let totals = runningTotals
+        return VStack(spacing: 4) {
+            Text("RUNNING IMPACT")
+                .font(.system(size: 9, weight: .bold))
+                .tracking(1.5)
+                .foregroundStyle(Color.textTertiary)
+
+            HStack(spacing: 6) {
+                runningTotalChip(icon: "building.2.fill", label: "Owner", value: totals.ownerSatisfaction)
+                runningTotalChip(icon: "person.3.fill", label: "Morale", value: totals.playerMorale)
+                runningTotalChip(icon: "hands.clap.fill", label: "Fans", value: totals.fanExcitement)
+                runningTotalChip(icon: "newspaper.fill", label: "Media", value: totals.mediaPerception)
+            }
+        }
+        .padding(.horizontal, 20)
+    }
+
+    private func runningTotalChip(icon: String, label: String, value: Int) -> some View {
+        let color: Color = value > 0 ? Color.success : value < 0 ? Color.danger : Color.textTertiary
+        return HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+            Text(label)
+                .font(.caption2.weight(.semibold))
+            Text(value > 0 ? "+\(value)" : "\(value)")
+                .font(.caption2.weight(.bold).monospacedDigit())
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(color.opacity(0.12))
+                .overlay(
+                    Capsule()
+                        .strokeBorder(color.opacity(0.3), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - Reporter Card
@@ -246,23 +307,41 @@ struct WeeklyPressConferenceView: View {
     // MARK: - Effect Preview
 
     private func effectPreview(effects: PressEffects) -> some View {
-        HStack(spacing: 6) {
+        let weakestKey = weakestMetricKey(for: effects)
+        return HStack(spacing: 6) {
             if effects.ownerSatisfaction != 0 {
-                effectDot(icon: "building.2.fill", value: effects.ownerSatisfaction)
+                effectDot(icon: "building.2.fill", value: effects.ownerSatisfaction,
+                          isWeakest: weakestKey == "owner")
             }
             if effects.playerMorale != 0 {
-                effectDot(icon: "person.3.fill", value: effects.playerMorale)
+                effectDot(icon: "person.3.fill", value: effects.playerMorale,
+                          isWeakest: weakestKey == "morale")
             }
             if effects.fanExcitement != 0 {
-                effectDot(icon: "hands.clap.fill", value: effects.fanExcitement)
+                effectDot(icon: "hands.clap.fill", value: effects.fanExcitement,
+                          isWeakest: weakestKey == "fans")
             }
             if effects.mediaPerception != 0 {
-                effectDot(icon: "newspaper.fill", value: effects.mediaPerception)
+                effectDot(icon: "newspaper.fill", value: effects.mediaPerception,
+                          isWeakest: weakestKey == "media")
             }
         }
     }
 
-    private func effectDot(icon: String, value: Int) -> some View {
+    /// Returns the metric key for the most-negative effect on a response, if any.
+    private func weakestMetricKey(for effects: PressEffects) -> String? {
+        let candidates: [(key: String, value: Int)] = [
+            ("owner",  effects.ownerSatisfaction),
+            ("morale", effects.playerMorale),
+            ("fans",   effects.fanExcitement),
+            ("media",  effects.mediaPerception)
+        ]
+        let negatives = candidates.filter { $0.value < 0 }
+        guard let worst = negatives.min(by: { $0.value < $1.value }) else { return nil }
+        return worst.key
+    }
+
+    private func effectDot(icon: String, value: Int, isWeakest: Bool = false) -> some View {
         HStack(spacing: 3) {
             Image(systemName: icon)
                 .font(.system(size: 11))
@@ -270,6 +349,18 @@ struct WeeklyPressConferenceView: View {
                 .font(.system(size: 12, weight: .bold))
         }
         .foregroundStyle(value > 0 ? Color.success : value < 0 ? Color.danger : Color.textTertiary)
+        .overlay(alignment: .topTrailing) {
+            if isWeakest {
+                Circle()
+                    .fill(Color.danger)
+                    .frame(width: 7, height: 7)
+                    .overlay(
+                        Circle().strokeBorder(Color.backgroundSecondary, lineWidth: 1.5)
+                    )
+                    .offset(x: 4, y: -4)
+                    .accessibilityLabel("Weakest impact")
+            }
+        }
     }
 
     // MARK: - Media Reaction Banner

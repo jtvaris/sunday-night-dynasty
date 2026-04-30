@@ -13,6 +13,10 @@ struct DepthChartView: View {
     @State private var depthChart = DepthChart()
     @State private var selectedTab: PositionSide = .offense
     @State private var comparisonState: ComparisonState? = nil
+    /// Tracks which slots are collapsed. By default all are expanded.
+    @State private var collapsedSlots: Set<String> = []
+    /// Tracks which position groups are collapsed (e.g. "DL", "LB").
+    @State private var collapsedGroups: Set<String> = []
 
     // MARK: - Derived roster
 
@@ -32,6 +36,40 @@ struct DepthChartView: View {
         case .offense:      return DepthChartSlot.offenseSlots
         case .defense:      return DepthChartSlot.defenseSlots
         case .specialTeams: return DepthChartSlot.specialTeamsSlots
+        }
+    }
+
+    // MARK: - Grouped Slots
+
+    /// A position group containing related depth chart slots, used for collapse/expand.
+    private struct SlotGroup: Identifiable {
+        let id: String
+        let name: String
+        let icon: String
+        let slots: [DepthChartSlot]
+    }
+
+    /// Returns slots grouped by position family for the active tab.
+    private var activeSlotGroups: [SlotGroup] {
+        switch selectedTab {
+        case .offense:
+            return [
+                SlotGroup(id: "QB", name: "Quarterbacks", icon: "figure.american.football", slots: [.QB]),
+                SlotGroup(id: "Backfield", name: "Backfield", icon: "figure.run", slots: [.RB, .FB]),
+                SlotGroup(id: "Receivers", name: "Receivers", icon: "hand.wave", slots: [.WR1, .WR2, .WR3, .TE]),
+                SlotGroup(id: "OL", name: "Offensive Line", icon: "shield.lefthalf.filled", slots: [.LT, .LG, .C, .RG, .RT]),
+            ]
+        case .defense:
+            return [
+                SlotGroup(id: "DL", name: "Defensive Line", icon: "bolt.shield", slots: [.LE, .DT, .RE]),
+                SlotGroup(id: "LB", name: "Linebackers", icon: "shield", slots: [.LOLB, .MLB, .ROLB]),
+                SlotGroup(id: "DB", name: "Secondary", icon: "eye", slots: [.CB1, .CB2, .FS, .SS]),
+            ]
+        case .specialTeams:
+            return [
+                SlotGroup(id: "Kickers", name: "Kickers & Punters", icon: "sportscourt", slots: [.K, .P]),
+                SlotGroup(id: "Returners", name: "Returners", icon: "arrow.uturn.backward", slots: [.KR, .PR]),
+            ]
         }
     }
 
@@ -65,12 +103,18 @@ struct DepthChartView: View {
                     .padding(.top, 12)
 
                 ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(activeSlots) { slot in
-                            slotCard(slot: slot)
+                    LazyVStack(spacing: 14) {
+                        // Collapse-all / expand-all controls
+                        groupCollapseControls
+                            .padding(.horizontal, 20)
+                            .padding(.top, 4)
+
+                        ForEach(activeSlotGroups) { group in
+                            groupSection(group)
+                                .padding(.horizontal, 20)
                         }
                     }
-                    .padding(20)
+                    .padding(.vertical, 16)
                     .frame(maxWidth: 760)
                     .frame(maxWidth: .infinity)
                 }
@@ -191,6 +235,133 @@ struct DepthChartView: View {
         }
         .foregroundStyle(Color.accentGold)
         .accessibilityLabel("Auto-fill depth chart by overall rating")
+    }
+
+    // MARK: - Group Collapse Controls
+
+    private var groupCollapseControls: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "list.bullet.indent")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.textTertiary)
+            Text("\(activeSlotGroups.count) groups · \(activeSlots.count) positions")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color.textTertiary)
+            Spacer()
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if collapsedGroups.intersection(activeSlotGroups.map(\.id)).count == activeSlotGroups.count {
+                        // All collapsed → expand all
+                        for g in activeSlotGroups { collapsedGroups.remove(g.id) }
+                    } else {
+                        // Collapse all
+                        for g in activeSlotGroups { collapsedGroups.insert(g.id) }
+                    }
+                }
+            } label: {
+                let allCollapsed = collapsedGroups.intersection(activeSlotGroups.map(\.id)).count == activeSlotGroups.count
+                HStack(spacing: 3) {
+                    Image(systemName: allCollapsed ? "chevron.down.square" : "chevron.up.square")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(allCollapsed ? "Expand all" : "Collapse all")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundStyle(Color.accentBlue)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(collapsedGroups.intersection(activeSlotGroups.map(\.id)).count == activeSlotGroups.count ? "Expand all groups" : "Collapse all groups")
+        }
+    }
+
+    // MARK: - Group Section
+
+    private func groupSection(_ group: SlotGroup) -> some View {
+        let isCollapsed = collapsedGroups.contains(group.id)
+        let groupSlots = group.slots
+        let filledStarters = groupSlots.filter { depthChart.depthOrder(for: $0).first.flatMap { playerLookup[$0] } != nil }.count
+        let starterAvg: Int = {
+            let starters = groupSlots.compactMap { slot -> Int? in
+                guard let pid = depthChart.depthOrder(for: slot).first, let p = playerLookup[pid] else { return nil }
+                return p.overall
+            }
+            return starters.isEmpty ? 0 : starters.reduce(0, +) / starters.count
+        }()
+
+        return VStack(spacing: 10) {
+            // Group header (tappable to collapse/expand)
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if isCollapsed {
+                        collapsedGroups.remove(group.id)
+                    } else {
+                        collapsedGroups.insert(group.id)
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 11, weight: .heavy))
+                        .foregroundStyle(Color.accentGold)
+                        .frame(width: 14)
+                    Image(systemName: group.icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.textSecondary)
+                    Text(group.name)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                    Spacer()
+                    // Filled count
+                    HStack(spacing: 3) {
+                        Image(systemName: filledStarters == groupSlots.count ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                            .font(.system(size: 10))
+                        Text("\(filledStarters)/\(groupSlots.count)")
+                            .font(.system(size: 11, weight: .bold).monospacedDigit())
+                    }
+                    .foregroundStyle(filledStarters == groupSlots.count ? Color.success : Color.warning)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        (filledStarters == groupSlots.count ? Color.success : Color.warning).opacity(0.12),
+                        in: Capsule()
+                    )
+                    // Average starter OVR
+                    if starterAvg > 0 {
+                        Text("AVG \(starterAvg)")
+                            .font(.system(size: 11, weight: .bold).monospacedDigit())
+                            .foregroundStyle(Color.forRating(starterAvg))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.forRating(starterAvg).opacity(0.12), in: Capsule())
+                            .overlay(Capsule().strokeBorder(Color.forRating(starterAvg).opacity(0.3), lineWidth: 0.5))
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.backgroundSecondary)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(group.name), \(filledStarters) of \(groupSlots.count) starters filled, \(isCollapsed ? "collapsed, tap to expand" : "expanded, tap to collapse")")
+
+            // Slots — only render when expanded
+            if !isCollapsed {
+                VStack(spacing: 10) {
+                    ForEach(groupSlots) { slot in
+                        slotCard(slot: slot)
+                    }
+                }
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .move(edge: .top)),
+                    removal: .opacity
+                ))
+            }
+        }
     }
 
     // MARK: - Slot Card

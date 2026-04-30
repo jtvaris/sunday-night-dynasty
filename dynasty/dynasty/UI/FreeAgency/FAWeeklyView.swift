@@ -227,8 +227,29 @@ struct FAWeeklyView: View {
 
     // MARK: - Round Header
 
+    /// Phase metadata for the progression indicator.
+    private struct PhaseInfo {
+        let label: String
+        let description: String
+        let isFrenzy: Bool
+    }
+
+    private func phaseInfo(for round: Int) -> PhaseInfo {
+        switch round {
+        case 1: return PhaseInfo(label: "Day 1", description: "Frenzy: top FAs sign fast", isFrenzy: true)
+        case 2: return PhaseInfo(label: "Day 2", description: "Frenzy: bidding wars peak", isFrenzy: true)
+        case 3: return PhaseInfo(label: "Day 3", description: "Mid-tier FAs settle", isFrenzy: false)
+        case 4: return PhaseInfo(label: "Week 2", description: "Bargains begin to appear", isFrenzy: false)
+        case 5: return PhaseInfo(label: "Week 3", description: "Late market: depth signings", isFrenzy: false)
+        case 6: return PhaseInfo(label: "Week 4", description: "Final round: cleanup signings", isFrenzy: false)
+        default: return PhaseInfo(label: "Complete", description: "FA closed", isFrenzy: false)
+        }
+    }
+
     private var roundHeader: some View {
-        VStack(spacing: 8) {
+        let phase = phaseInfo(for: currentRound)
+
+        return VStack(spacing: 8) {
             HStack(spacing: 12) {
                 Text("FREE AGENCY")
                     .font(.caption.weight(.black))
@@ -236,6 +257,14 @@ struct FAWeeklyView: View {
                 Text(roundLabel)
                     .font(.title3.weight(.bold))
                     .foregroundStyle(Color.textPrimary)
+                if phase.isFrenzy {
+                    Text("FRENZY")
+                        .font(.system(size: 9, weight: .black))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.danger, in: Capsule())
+                }
                 Spacer()
                 if let team {
                     VStack(alignment: .trailing, spacing: 2) {
@@ -249,24 +278,58 @@ struct FAWeeklyView: View {
                 }
             }
 
-            // Round dots
+            // Phase description
             HStack(spacing: 6) {
-                ForEach(1...6, id: \.self) { round in
-                    Circle()
-                        .fill(round < currentRound ? Color.success :
-                              round == currentRound ? Color.accentGold :
-                              Color.backgroundTertiary)
-                        .frame(width: 8, height: 8)
-                    if round == 3 && round < 6 {
-                        Rectangle()
-                            .fill(Color.surfaceBorder)
-                            .frame(width: 1, height: 12)
+                Image(systemName: phase.isFrenzy ? "flame.fill" : "calendar")
+                    .font(.system(size: 9))
+                    .foregroundStyle(phase.isFrenzy ? Color.danger : Color.textTertiary)
+                Text(phase.description)
+                    .font(.system(size: 10).italic())
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+            }
+
+            // Phase progression bar with labels
+            VStack(spacing: 4) {
+                HStack(spacing: 0) {
+                    ForEach(1...6, id: \.self) { round in
+                        let isPast = round < currentRound
+                        let isCurrent = round == currentRound
+                        VStack(spacing: 3) {
+                            Circle()
+                                .fill(isPast ? Color.success :
+                                      isCurrent ? Color.accentGold :
+                                      Color.backgroundTertiary)
+                                .frame(width: isCurrent ? 10 : 8, height: isCurrent ? 10 : 8)
+                                .overlay(
+                                    Circle()
+                                        .strokeBorder(isCurrent ? Color.accentGold.opacity(0.4) : Color.clear, lineWidth: 2)
+                                        .frame(width: 16, height: 16)
+                                )
+                            Text(phaseInfo(for: round).label)
+                                .font(.system(size: 8).weight(isCurrent ? .bold : .regular))
+                                .foregroundStyle(isCurrent ? Color.accentGold :
+                                                 isPast ? Color.textSecondary :
+                                                 Color.textTertiary)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+
+                        if round < 6 {
+                            Rectangle()
+                                .fill(round < currentRound ? Color.success.opacity(0.5) : Color.surfaceBorder)
+                                .frame(height: 1)
+                                .frame(maxWidth: .infinity)
+                                .offset(y: -8)
+                        }
                     }
                 }
-                Spacer()
-                Text("\(freeAgents.count) available")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textTertiary)
+                HStack {
+                    Spacer()
+                    Text("\(freeAgents.count) available")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                }
             }
         }
         .padding(.horizontal, 16)
@@ -509,59 +572,77 @@ struct FAWeeklyView: View {
         return Button {
             selectedFA = fa
         } label: {
-            HStack(spacing: 10) {
-                // Position badge
-                Text(fa.player.position.rawValue)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.textPrimary)
-                    .frame(width: 30)
-                    .padding(.vertical, 3)
-                    .background(positionSideColor(fa.player.position), in: RoundedRectangle(cornerRadius: 4))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 10) {
+                    // Position badge
+                    Text(fa.player.position.rawValue)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+                        .frame(width: 30)
+                        .padding(.vertical, 3)
+                        .background(positionSideColor(fa.player.position), in: RoundedRectangle(cornerRadius: 4))
 
-                // Player info
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(fa.player.fullName)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.textPrimary)
-                            .lineLimit(1)
-                        if hasOffer {
-                            Text("OFFER PENDING")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(Color.accentGold)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Color.accentGold.opacity(0.15), in: Capsule())
+                    // Player info
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(fa.player.fullName)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
+                            if hasOffer {
+                                Text("OFFER PENDING")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(Color.accentGold)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(Color.accentGold.opacity(0.15), in: Capsule())
+                            }
+                        }
+                        HStack(spacing: 8) {
+                            Text("\(fa.player.overall) OVR")
+                                .font(.caption.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(Color.forRating(fa.player.overall))
+                            Text("Age \(fa.player.age)")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                            motivationBadge(fa.player.personality.motivation)
+                            // AI interest with progressive visibility
+                            aiInterestLabel(fa: fa)
                         }
                     }
-                    HStack(spacing: 8) {
-                        Text("\(fa.player.overall) OVR")
-                            .font(.caption.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(Color.forRating(fa.player.overall))
-                        Text("Age \(fa.player.age)")
-                            .font(.caption)
-                            .foregroundStyle(Color.textSecondary)
-                        motivationBadge(fa.player.personality.motivation)
-                        // AI interest with progressive visibility
-                        aiInterestLabel(fa: fa)
+
+                    Spacer()
+
+                    // Asking price
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(formatMillions(fa.askingPrice))
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Color.textPrimary)
+                        Text("\(fa.desiredYears)yr")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
                     }
-                }
 
-                Spacer()
-
-                // Asking price
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(formatMillions(fa.askingPrice))
-                        .font(.caption.weight(.bold).monospacedDigit())
-                        .foregroundStyle(Color.textPrimary)
-                    Text("\(fa.desiredYears)yr")
+                    Image(systemName: "chevron.right")
                         .font(.caption2)
                         .foregroundStyle(Color.textTertiary)
                 }
 
-                Image(systemName: "chevron.right")
-                    .font(.caption2)
-                    .foregroundStyle(Color.textTertiary)
+                // Cap impact preview + rumor row (decision support)
+                HStack(spacing: 6) {
+                    capImpactBadge(asking: fa.askingPrice)
+                    if let rumor = rumorText(for: fa) {
+                        HStack(spacing: 3) {
+                            Image(systemName: rumor.icon)
+                                .font(.system(size: 8))
+                            Text(rumor.text)
+                                .font(.system(size: 9).italic())
+                        }
+                        .foregroundStyle(rumor.color)
+                    }
+                    Spacer()
+                }
+                .padding(.leading, 40) // align with player info
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -569,6 +650,63 @@ struct FAWeeklyView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Cap Impact Badge (preview)
+
+    private func capImpactBadge(asking: Int) -> some View {
+        // Base on team salaryCap if available, else $260M baseline
+        let cap = team?.salaryCap ?? 260_000
+        let pct = cap > 0 ? Double(asking) / Double(cap) * 100 : 0
+        let pctRounded = Int(pct.rounded())
+        let color: Color = {
+            if pct >= 12 { return .danger }
+            if pct >= 7 { return .warning }
+            return .textSecondary
+        }()
+        let labelText = pctRounded <= 0 ? "<1% of cap" : "Will use \(pctRounded)% of cap"
+        return Text(labelText)
+            .font(.system(size: 9, weight: .semibold).monospacedDigit())
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+    }
+
+    // MARK: - Rumor System
+
+    private struct Rumor {
+        let text: String
+        let icon: String
+        let color: Color
+    }
+
+    private func rumorText(for fa: FreeAgencyEngine.FreeAgent) -> Rumor? {
+        // Pick a single rumor in priority order (most signal first)
+        // 1. Loyalty motivation -> hometown discount
+        if fa.player.personality.motivation == .loyalty {
+            return Rumor(text: "Hometown discount possible", icon: "house.fill", color: .accentBlue)
+        }
+        // 2. Heavy market interest -> bidding war chatter
+        if fa.marketInterest >= 7 {
+            return Rumor(text: "\(fa.marketInterest) teams interested — bidding war", icon: "flame.fill", color: .danger)
+        }
+        if fa.marketInterest >= 4 {
+            return Rumor(text: "\(fa.marketInterest) teams interested", icon: "person.3.fill", color: .warning)
+        }
+        // 3. Money motivation -> wants top dollar
+        if fa.player.personality.motivation == .money && fa.askingPrice > 8_000 {
+            return Rumor(text: "Wants top-of-market money", icon: "dollarsign.circle.fill", color: .accentGold)
+        }
+        // 4. Winning motivation -> contender discount
+        if fa.player.personality.motivation == .winning {
+            return Rumor(text: "Will take less for a contender", icon: "trophy.fill", color: .success)
+        }
+        // 5. Aging veteran -> short deal likely
+        if fa.player.age >= 32 && fa.desiredYears <= 2 {
+            return Rumor(text: "Likely short prove-it deal", icon: "clock.fill", color: .textSecondary)
+        }
+        return nil
     }
 
     // MARK: - AI Interest Label

@@ -53,6 +53,12 @@ struct PlayerDetailView: View {
     // #178: Use @Query to fetch all players for league ranking context
     @Query private var allLeaguePlayers: [Player]
 
+    /// All coaches in the league — used to detect scheme mismatch vs the player's team HC.
+    @Query private var allCoaches: [Coach]
+
+    /// All teams — used together with coaches to look up the player's team scheme.
+    @Query private var allTeams: [Team]
+
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
@@ -87,6 +93,7 @@ struct PlayerDetailView: View {
                     // Left column: header + compact info + actions
                     List {
                         playerHeader
+                        schemeMismatchSection
                         compactOverviewContractRow
                         compactDevelopmentRow
                         seasonStatsSummarySection
@@ -114,6 +121,7 @@ struct PlayerDetailView: View {
                 // iPad portrait: two-column grid for compact sections
                 List {
                     playerHeader
+                    schemeMismatchSection
                     compactOverviewContractRow
                     compactDevelopmentRow
                     seasonStatsSummarySection
@@ -132,6 +140,7 @@ struct PlayerDetailView: View {
             } else {
                 List {
                     playerHeader
+                    schemeMismatchSection
                     compactOverviewContractRow
                     compactDevelopmentRow
                     seasonStatsSummarySection
@@ -204,7 +213,7 @@ struct PlayerDetailView: View {
 
                     // Large OVR circle with ranking
                     VStack(spacing: 4) {
-                        ZStack {
+                        ZStack(alignment: .topTrailing) {
                             Circle()
                                 .strokeBorder(Color.forRating(player.overall), lineWidth: 3)
                                 .frame(width: 64, height: 64)
@@ -217,6 +226,17 @@ struct PlayerDetailView: View {
                                     .font(.system(size: 9, weight: .medium))
                                     .foregroundStyle(Color.textTertiary)
                             }
+                            .frame(width: 64, height: 64)
+
+                            // Career trend arrow — shows whether the player is rising,
+                            // in prime, or declining based on age vs position peak window.
+                            Image(systemName: careerTrendArrow.icon)
+                                .font(.system(size: 11, weight: .heavy))
+                                .foregroundStyle(Color.backgroundPrimary)
+                                .padding(4)
+                                .background(careerTrendArrow.color, in: Circle())
+                                .accessibilityLabel("Career trend: \(careerTrendArrow.label)")
+                                .offset(x: 4, y: -4)
                         }
                         // League ranking (#33) — promoted to a clear gold pill for at-a-glance prestige.
                         if let rankInfo = leagueRanking {
@@ -406,6 +426,49 @@ struct PlayerDetailView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
                 }
+            }
+
+            // Year-by-year cap hit breakdown for multi-year contracts.
+            // Approximated from base salary with a typical 6%/yr escalator until a
+            // full Contract object is wired through to this view.
+            let yearly = yearByYearCapHits
+            if !yearly.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "calendar.badge.clock")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Color.textTertiary)
+                        Text("Year-by-Year")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    ForEach(yearly, id: \.year) { row in
+                        HStack(spacing: 4) {
+                            Text("Yr \(row.year)")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.textTertiary)
+                                .frame(width: 28, alignment: .leading)
+                            // Mini bar visualizing relative cap hit.
+                            GeometryReader { geo in
+                                let maxHit = max(yearly.map { $0.capHitK }.max() ?? 1, 1)
+                                let frac = CGFloat(row.capHitK) / CGFloat(maxHit)
+                                ZStack(alignment: .leading) {
+                                    Capsule()
+                                        .fill(Color.surfaceBorder.opacity(0.4))
+                                    Capsule()
+                                        .fill(Color.accentGold.opacity(0.7))
+                                        .frame(width: geo.size.width * frac)
+                                }
+                            }
+                            .frame(height: 4)
+                            Text(formatCapHit(row.capHitK))
+                                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(Color.textSecondary)
+                                .frame(width: 48, alignment: .trailing)
+                        }
+                    }
+                }
+                .padding(.top, 2)
             }
 
             if player.isFranchiseTagged {
@@ -688,6 +751,27 @@ struct PlayerDetailView: View {
                             .foregroundStyle(Color.textTertiary)
                     }
                     Spacer()
+                }
+            }
+
+            // Comparable players in the league at the same position with similar OVR (±3).
+            // Helps anchor the player's trade value against real peers and their salaries.
+            if let comparables = comparablesText {
+                Divider().overlay(Color.surfaceBorder)
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "person.3.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Comparables")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.textSecondary)
+                        Text("Similar: \(comparables)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(Color.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
                 }
             }
         }
@@ -1872,6 +1956,153 @@ struct PlayerDetailView: View {
         default:
             return "\(rating.label) fit based on physical attributes. Max ceiling: \(ceilingPct)%."
         }
+    }
+
+    // MARK: - Career Trend Arrow
+
+    /// Arrow indicator (rising / prime / declining) shown next to the OVR circle.
+    /// Derived directly from the existing `developmentPhase` enum so it stays in sync.
+    private var careerTrendArrow: (icon: String, color: Color, label: String) {
+        switch developmentPhase {
+        case .rising:    return ("arrow.up", .success, "Rising")
+        case .prime:     return ("arrow.right", .accentGold, "In Prime")
+        case .declining: return ("arrow.down", .danger, "Declining")
+        }
+    }
+
+    // MARK: - Scheme Mismatch CTA
+
+    /// Head coach of the player's team, if any. Used for scheme-mismatch detection.
+    private var teamHeadCoach: Coach? {
+        guard let teamID = player.teamID else { return nil }
+        return allCoaches.first { $0.teamID == teamID && $0.role == .headCoach }
+    }
+
+    /// Display name of the team's offensive or defensive scheme for the player's side.
+    /// For offense players we read the HC's offensive scheme; for defense, the defensive scheme.
+    /// Special teams players have no scheme assignment so this returns nil.
+    private var teamSchemeForPlayer: (key: String, displayName: String)? {
+        guard let hc = teamHeadCoach else { return nil }
+        switch player.position.side {
+        case .offense:
+            if let s = hc.offensiveScheme { return (s.rawValue, s.displayName) }
+        case .defense:
+            if let s = hc.defensiveScheme { return (s.rawValue, s.displayName) }
+        case .specialTeams:
+            return nil
+        }
+        return nil
+    }
+
+    /// True when the player's best scheme fit is materially different from the team scheme,
+    /// AND the player has low familiarity in the team scheme. Threshold mirrors the
+    /// CareerDashboard mismatch warning logic (familiarity < 50 in current scheme).
+    private var schemeMismatchInfo: (playerScheme: String, teamScheme: String, hcName: String)? {
+        guard let best = bestSchemeFit,
+              let team = teamSchemeForPlayer,
+              let hc = teamHeadCoach else { return nil }
+        // Skip if the player's best scheme already matches the team scheme.
+        if best.scheme.caseInsensitiveCompare(team.key) == .orderedSame { return nil }
+        if best.scheme.caseInsensitiveCompare(team.displayName) == .orderedSame { return nil }
+        // Only warn when the player isn't already comfortable in the team scheme.
+        let teamFamiliarity = player.schemeFamiliarity[team.key] ?? 0
+        guard teamFamiliarity < 50 else { return nil }
+        // Pretty-print the player's best scheme: try to match an enum displayName.
+        let bestDisplay: String = {
+            if let s = OffensiveScheme(rawValue: best.scheme) { return s.displayName }
+            if let s = DefensiveScheme(rawValue: best.scheme) { return s.displayName }
+            return best.scheme
+        }()
+        return (playerScheme: bestDisplay, teamScheme: team.displayName, hcName: "Coach \(hc.lastName)")
+    }
+
+    /// Yellow callout shown when the player's best scheme doesn't match the team's scheme.
+    /// Surfaces the mismatch so the user can consider trading the player or changing scheme.
+    @ViewBuilder
+    private var schemeMismatchSection: some View {
+        if let info = schemeMismatchInfo {
+            Section {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.body)
+                        .foregroundStyle(Color.warning)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Scheme Mismatch")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Color.warning)
+                        Text("\(player.lastName) (\(info.playerScheme)) vs \(info.hcName) (\(info.teamScheme)).")
+                            .font(.caption)
+                            .foregroundStyle(Color.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Consider a trade or changing the team scheme.")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
+                .background(Color.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.warning.opacity(0.4), lineWidth: 1)
+                )
+            }
+            .listRowBackground(Color.backgroundSecondary)
+        }
+    }
+
+    // MARK: - Comparable Players (Trade Value)
+
+    /// Up to 3 players in the league at the same position with OVR within ±3 of this player.
+    /// Used to anchor the player's trade value against real peers.
+    private var comparablePlayers: [Player] {
+        allLeaguePlayers
+            .filter { $0.id != player.id
+                && $0.position == player.position
+                && abs($0.overall - player.overall) <= 3 }
+            .sorted { $0.overall > $1.overall }
+            .prefix(3)
+            .map { $0 }
+    }
+
+    /// Formatted line: "Allen 86 ($45M) / Burrow 84 ($52M) / Hurts 82 ($48M)".
+    private var comparablesText: String? {
+        let peers = comparablePlayers
+        guard !peers.isEmpty else { return nil }
+        return peers.map { p -> String in
+            let salaryStr: String
+            if p.annualSalary >= 1_000 {
+                salaryStr = String(format: "$%.0fM", Double(p.annualSalary) / 1_000.0)
+            } else if p.annualSalary > 0 {
+                salaryStr = "$\(p.annualSalary)K"
+            } else {
+                salaryStr = "—"
+            }
+            return "\(p.lastName) \(p.overall) (\(salaryStr))"
+        }.joined(separator: " / ")
+    }
+
+    // MARK: - Year-by-Year Contract Breakdown
+
+    /// Estimated cap hit per remaining contract year. Without a live Contract object on
+    /// the player here, we approximate using a simple ramp: year 1 = base, then +6% per year
+    /// to mirror typical NFL escalators. Returns at least 2 entries to be worth showing.
+    private var yearByYearCapHits: [(year: Int, capHitK: Int)] {
+        let years = max(0, player.contractYearsRemaining)
+        guard years >= 2, player.annualSalary > 0 else { return [] }
+        let base = Double(player.annualSalary)
+        return (0..<years).map { offset in
+            let multiplier = 1.0 + Double(offset) * 0.06
+            return (year: offset + 1, capHitK: Int((base * multiplier).rounded()))
+        }
+    }
+
+    private func formatCapHit(_ thousands: Int) -> String {
+        if thousands >= 1_000 {
+            return String(format: "$%.1fM", Double(thousands) / 1_000.0)
+        }
+        return "$\(thousands)K"
     }
 }
 
