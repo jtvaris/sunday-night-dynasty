@@ -17,6 +17,9 @@ enum DataContainer {
             Scout.self,
             CollegeProspect.self,
             DraftPick.self,
+            DraftEvent.self,
+            DraftPickGrade.self,
+            CareerArcState.self,
             PlayerSeasonHistory.self,
         ])
         let config = ModelConfiguration(isStoredInMemoryOnly: false)
