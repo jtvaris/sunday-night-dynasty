@@ -106,6 +106,28 @@ enum DSCornerRadius {
     static let card: CGFloat = 12
 }
 
+// MARK: - Draft Day Tokens
+
+extension Color {
+    /// Urgent clock — last 30 s of the on-the-clock countdown
+    static let draftClockUrgent = Color(red: 0.949, green: 0.227, blue: 0.227)
+    /// Steal banner accent / gem badge gold (slightly warmer than accentGold)
+    static let draftStealGold = Color(red: 1.0, green: 0.792, blue: 0.298)
+    /// Reach indicator background
+    static let draftReachRed = Color(red: 0.706, green: 0.157, blue: 0.157)
+    /// Solid pick / neutral chip background
+    static let draftSolidNeutral = Color(red: 0.227, green: 0.282, blue: 0.380)
+}
+
+enum DraftAnimation {
+    static let bannerIn: Double = 0.35
+    static let bannerOut: Double = 0.25
+    static let pickReveal: Double = 0.6
+    static let toastIn: Double = 0.30
+    static let toastDwell: Double = 2.0
+    static let clockTickInterval: Double = 1.0
+}
+
 // MARK: - Section Header
 
 /// Uniform section header — uppercase, semibold, accent gold, tracked.
