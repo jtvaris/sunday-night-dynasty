@@ -95,27 +95,45 @@ final class DraftDayCoordinator: ObservableObject {
 
     func loadData() async {
         let season = career.currentSeason
-
         let teamFetch = FetchDescriptor<Team>()
-        let prospectFetch = FetchDescriptor<CollegeProspect>()
+        let playerFetch = FetchDescriptor<Player>()
         let pickFetch = FetchDescriptor<DraftPick>(
             predicate: #Predicate { $0.seasonYear == season },
             sortBy: [SortDescriptor(\.pickNumber)]
         )
-        let playerFetch = FetchDescriptor<Player>()
 
         let teams = (try? modelContext.fetch(teamFetch)) ?? []
-        let allProspects = (try? modelContext.fetch(prospectFetch)) ?? []
-        let allPicks = (try? modelContext.fetch(pickFetch)) ?? []
         let allPlayers = (try? modelContext.fetch(playerFetch)) ?? []
+        let persistedPicks = (try? modelContext.fetch(pickFetch)) ?? []
 
-        // A prospect is considered "drafted" if any DraftPick has playerID matching
-        // a Player created from this prospect. We approximate by checking whether
-        // any pick already references a player whose name matches the prospect's.
-        let draftedNames: Set<String> = Set(allPicks.compactMap { $0.playerName })
+        // Picks: prefer in-memory (current cycle) but fall back to SwiftData
+        // if the in-memory list is empty (e.g. fresh launch).
+        let inMemoryPicks = WeekAdvancer.currentDraftPicks
+            .filter { $0.seasonYear == season }
+            .sorted { $0.pickNumber < $1.pickNumber }
+        let draftPicks = !inMemoryPicks.isEmpty ? inMemoryPicks : persistedPicks
+
+        // Prospects: prefer in-memory (live cycle); fall back to SwiftData; finally
+        // generate a fresh class on demand so the draft is never blocked by
+        // missing scouting data.
+        let inMemoryClass = WeekAdvancer.currentDraftClass
+        let prospectFetch = FetchDescriptor<CollegeProspect>()
+        let persistedClass = (try? modelContext.fetch(prospectFetch)) ?? []
+        let draftClass: [CollegeProspect]
+        if !inMemoryClass.isEmpty {
+            draftClass = inMemoryClass
+        } else if !persistedClass.isEmpty {
+            draftClass = persistedClass
+        } else {
+            let generated = ScoutingEngine.generateDraftClass()
+            WeekAdvancer.currentDraftClass = generated
+            draftClass = generated
+        }
+
+        let draftedNames: Set<String> = Set(draftPicks.compactMap { $0.playerName })
         self.teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
-        self.picks = allPicks
-        self.availableProspects = allProspects.filter { prospect in
+        self.picks = draftPicks
+        self.availableProspects = draftClass.filter { prospect in
             !draftedNames.contains("\(prospect.firstName) \(prospect.lastName)")
         }
         self.rosters = Dictionary(grouping: allPlayers, by: { $0.teamID ?? UUID() })
