@@ -199,7 +199,7 @@ struct CareerShellView: View {
                     refreshTaskCompletionStatus()
                 }
         case .draft:
-            DraftView(career: career)
+            DraftDayView(career: career)
                 .onAppear {
                     markTaskVisited(for: .draft)
                     refreshTaskCompletionStatus()

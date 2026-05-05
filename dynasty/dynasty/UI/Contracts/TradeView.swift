@@ -232,7 +232,7 @@ struct TradeView: View {
                 assetToggleRow(
                     label: pickLabel(pick),
                     sublabel: "\(pick.seasonYear)",
-                    valueLabel: "\(DraftEngine.pickValue(pick.pickNumber))",
+                    valueLabel: "\(PickValueChart.points(forPick: pick.pickNumber))",
                     isSelected: selectedPicks.wrappedValue.contains(pick.id),
                     accentColor: accentColor
                 ) {
@@ -877,7 +877,7 @@ struct TradeView: View {
             VStack(spacing: 1) {
                 Text(pickLabelShort(pick))
                     .font(.system(size: 11).weight(.bold))
-                Text("\(DraftEngine.pickValue(pick.pickNumber)) pts")
+                Text("\(PickValueChart.points(forPick: pick.pickNumber)) pts")
                     .font(.system(size: 9))
             }
             .padding(.horizontal, 10)
@@ -926,7 +926,7 @@ struct TradeView: View {
 
     @ViewBuilder
     private func wizardSuggestions(myPick: DraftPick, partner: Team) -> some View {
-        let myValue = DraftEngine.pickValue(myPick.pickNumber)
+        let myValue = PickValueChart.points(forPick: myPick.pickNumber)
         let partnerPicks = theirPicks(partner: partner)
 
         let upSuggestions = tradeUpSuggestions(myPickValue: myValue, partnerPicks: partnerPicks)
@@ -984,14 +984,14 @@ struct TradeView: View {
     }
 
     private func wizardSuggestionRow(suggestion: WizardSuggestion, myValue: Int, accent: Color) -> some View {
-        let totalValue = suggestion.picks.reduce(0) { $0 + DraftEngine.pickValue($1.pickNumber) }
+        let totalValue = suggestion.picks.reduce(0) { $0 + PickValueChart.points(forPick: $1.pickNumber) }
         let ratio: Double = myValue > 0 ? Double(totalValue) / Double(myValue) : 0
         let label = String(format: "%.0f%%", ratio * 100.0)
 
         return HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(suggestion.picks) { p in
-                    Text(pickLabelShort(p) + "  \(DraftEngine.pickValue(p.pickNumber)) pts")
+                    Text(pickLabelShort(p) + "  \(PickValueChart.points(forPick: p.pickNumber)) pts")
                         .font(.system(size: 11).weight(.semibold).monospacedDigit())
                         .foregroundStyle(Color.textPrimary)
                 }
@@ -1016,8 +1016,8 @@ struct TradeView: View {
     private func tradeUpSuggestions(myPickValue: Int, partnerPicks: [DraftPick]) -> [WizardSuggestion] {
         var results: [WizardSuggestion] = []
         let betterPicks = partnerPicks
-            .filter { DraftEngine.pickValue($0.pickNumber) > Int(Double(myPickValue) * 1.05) }
-            .sorted { DraftEngine.pickValue($0.pickNumber) < DraftEngine.pickValue($1.pickNumber) }
+            .filter { PickValueChart.points(forPick: $0.pickNumber) > Int(Double(myPickValue) * 1.05) }
+            .sorted { PickValueChart.points(forPick: $0.pickNumber) < PickValueChart.points(forPick: $1.pickNumber) }
             .prefix(3)
         for pick in betterPicks {
             results.append(WizardSuggestion(picks: [pick]))
@@ -1027,8 +1027,8 @@ struct TradeView: View {
 
     private func tradeDownSuggestions(myPickValue: Int, partnerPicks: [DraftPick]) -> [WizardSuggestion] {
         let lesser = partnerPicks
-            .filter { DraftEngine.pickValue($0.pickNumber) < myPickValue }
-            .sorted { DraftEngine.pickValue($0.pickNumber) > DraftEngine.pickValue($1.pickNumber) }
+            .filter { PickValueChart.points(forPick: $0.pickNumber) < myPickValue }
+            .sorted { PickValueChart.points(forPick: $0.pickNumber) > PickValueChart.points(forPick: $1.pickNumber) }
 
         guard !lesser.isEmpty else { return [] }
 
@@ -1037,20 +1037,20 @@ struct TradeView: View {
         let upper = Int(Double(myPickValue) * 1.15)
 
         for i in 0..<lesser.count {
-            let v1 = DraftEngine.pickValue(lesser[i].pickNumber)
+            let v1 = PickValueChart.points(forPick: lesser[i].pickNumber)
             if v1 >= lower && v1 <= upper {
                 results.append(WizardSuggestion(picks: [lesser[i]]))
                 if results.count >= 3 { return results }
             }
             for j in (i + 1)..<lesser.count {
-                let v2 = v1 + DraftEngine.pickValue(lesser[j].pickNumber)
+                let v2 = v1 + PickValueChart.points(forPick: lesser[j].pickNumber)
                 if v2 >= lower && v2 <= upper {
                     results.append(WizardSuggestion(picks: [lesser[i], lesser[j]]))
                     if results.count >= 3 { return results }
                 }
                 if lesser.count > j + 1 {
                     for k in (j + 1)..<lesser.count {
-                        let v3 = v2 + DraftEngine.pickValue(lesser[k].pickNumber)
+                        let v3 = v2 + PickValueChart.points(forPick: lesser[k].pickNumber)
                         if v3 >= lower && v3 <= upper {
                             results.append(WizardSuggestion(picks: [lesser[i], lesser[j], lesser[k]]))
                             if results.count >= 3 { return results }
@@ -1536,7 +1536,7 @@ struct TradeView: View {
         }
         for id in mySelectedPicks {
             guard let pick = pickLookup[id] else { continue }
-            let v = DraftEngine.pickValue(pick.pickNumber)
+            let v = PickValueChart.points(forPick: pick.pickNumber)
             yourLines.append(BreakdownLine(
                 label: pickLabelShort(pick),
                 detail: "Pick chart value",
@@ -1556,7 +1556,7 @@ struct TradeView: View {
         }
         for id in theirSelectedPicks {
             guard let pick = pickLookup[id] else { continue }
-            let v = DraftEngine.pickValue(pick.pickNumber)
+            let v = PickValueChart.points(forPick: pick.pickNumber)
             theirLines.append(BreakdownLine(
                 label: pickLabelShort(pick),
                 detail: "Pick chart value",

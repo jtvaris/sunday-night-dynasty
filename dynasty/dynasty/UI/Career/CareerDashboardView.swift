@@ -1695,7 +1695,7 @@ struct CareerDashboardView: View {
 
     private var draftTile: some View {
         NavigationLink {
-            DraftView(career: career)
+            DraftDayView(career: career)
         } label: {
             DashboardTile(icon: "list.clipboard.fill", title: "Draft", highlighted: currentPhaseHighlightedTiles.contains("Draft")) {
                 VStack(alignment: .leading, spacing: 4) {
