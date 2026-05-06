@@ -471,7 +471,7 @@ struct ScoutingHubView: View {
         ScoutingTab.allCases.filter { tab in
             switch tab {
             case .interviews:
-                return career.currentPhase == .combine
+                return career.currentPhase == .combine || career.currentPhase == .proDays
             default:
                 return true
             }
@@ -719,6 +719,15 @@ struct ProDayListView: View {
     @State private var personalWorkoutIDs: Set<UUID> = []
     @AppStorage("personalWorkoutsUsed") private var personalWorkoutsUsed: Int = 0
 
+    // Top-30 Visits state
+    @State private var showTop30Result = false
+    @State private var top30ResultProspectName: String = ""
+    @State private var top30ResultSummary: ScoutingEngine.Top30VisitResult?
+
+    // Focus-prospect-per-college state (Task C)
+    @State private var showFocusProspectSheet = false
+    @State private var focusCollege: String?
+
     // MARK: - Computed Data
 
     private var teamNeeds: Set<Position> {
@@ -810,6 +819,55 @@ struct ProDayListView: View {
 
     private var isProDayPhase: Bool {
         career.currentPhase == .combine || career.currentPhase == .proDays || career.currentPhase == .draft || career.currentPhase == .freeAgency
+    }
+
+    // MARK: - Top-30 Visits Helpers (Task B)
+
+    /// Average accuracy of all scouts on the staff. Used as `interviewerQuality`
+    /// for Top-30 visits. Defaults to 60 if no scouts present.
+    private var avgScoutAccuracy: Int {
+        guard !scouts.isEmpty else { return 60 }
+        let total = scouts.reduce(0) { $0 + $1.accuracy }
+        return total / scouts.count
+    }
+
+    /// Whether the user's team has already used a Top-30 visit on a prospect.
+    private func hasTop30Visited(_ prospect: CollegeProspect) -> Bool {
+        guard let teamID = career.teamID else { return false }
+        return prospect.top30VisitedByTeams.contains(teamID)
+    }
+
+    /// Recommended Top-30 candidates: top 10 prospects this team hasn't visited
+    /// yet, ranked by starred (mustHave) -> need position -> top-50 board rank.
+    private var top30Recommendations: [CollegeProspect] {
+        prospects
+            .filter { $0.isDeclaringForDraft && !hasTop30Visited($0) }
+            .sorted { a, b in
+                let aStar = isStarred(a) ? 1 : 0
+                let bStar = isStarred(b) ? 1 : 0
+                if aStar != bStar { return aStar > bStar }
+
+                let aNeed = isNeedPosition(a) ? 1 : 0
+                let bNeed = isNeedPosition(b) ? 1 : 0
+                if aNeed != bNeed { return aNeed > bNeed }
+
+                let aTop = isTopProspect(a) ? 1 : 0
+                let bTop = isTopProspect(b) ? 1 : 0
+                if aTop != bTop { return aTop > bTop }
+
+                return (a.scoutedOverall ?? 0) > (b.scoutedOverall ?? 0)
+            }
+            .prefix(10)
+            .map { $0 }
+    }
+
+    // MARK: - Pro Day Calendar Helpers (Task C)
+
+    /// Stable week-in-cycle tag (1...5) derived deterministically from college name hash.
+    private func proDayWeek(for college: String) -> Int {
+        // Use absolute value of stable hash to avoid negatives.
+        let h = abs(college.unicodeScalars.reduce(into: 0) { $0 = $0 &* 31 &+ Int($1.value) })
+        return (h % 5) + 1
     }
 
     // MARK: - Scout-School Matching
@@ -937,6 +995,9 @@ struct ProDayListView: View {
                 }
                 .listRowBackground(Color.backgroundSecondary)
 
+                // Top-30 Visits Pre-Draft (Task B)
+                top30VisitsSection
+
                 // Recommended Schools (Task 5, 6, 10)
                 if !recommendedColleges.isEmpty {
                     Section {
@@ -972,21 +1033,26 @@ struct ProDayListView: View {
                     .listRowBackground(Color.backgroundSecondary)
                 }
 
-                // All Schools (Task 3, 4, 9, 12, 13)
-                Section {
-                    ForEach(collegeData, id: \.college) { info in
-                        proDaySchoolCard(info)
+                // All Schools grouped by Pro Day calendar week (Task 3, 4, 9, 12, 13, C)
+                let weekGroups = Dictionary(grouping: collegeData) { proDayWeek(for: $0.college) }
+                ForEach(weekGroups.keys.sorted(), id: \.self) { week in
+                    Section {
+                        ForEach(weekGroups[week] ?? [], id: \.college) { info in
+                            proDaySchoolCard(info)
+                        }
+                    } header: {
+                        HStack {
+                            Text("WEEK \(week)")
+                                .font(.caption.weight(.heavy))
+                                .foregroundStyle(Color.accentGold)
+                            Spacer()
+                            Text("\((weekGroups[week] ?? []).count) school\((weekGroups[week] ?? []).count == 1 ? "" : "s")")
+                                .font(.caption2)
+                                .foregroundStyle(Color.textTertiary)
+                        }
                     }
-                } header: {
-                    HStack {
-                        Text("All Pro Days")
-                        Spacer()
-                        Text("\(collegeData.count) schools")
-                            .font(.caption2)
-                            .foregroundStyle(Color.textTertiary)
-                    }
+                    .listRowBackground(Color.backgroundSecondary)
                 }
-                .listRowBackground(Color.backgroundSecondary)
 
                 // Task 9: "Send Scouts to Pro Days" confirmation + results
                 if totalAssigned > 0 && proDayResultSummary == nil {
@@ -1114,23 +1180,223 @@ struct ProDayListView: View {
                     }
                 )
             }
+            .sheet(isPresented: $showFocusProspectSheet) {
+                if let college = focusCollege {
+                    FocusProspectSheet(
+                        college: college,
+                        prospects: prospects.filter { $0.college == college && $0.isDeclaringForDraft },
+                        onSelect: { prospect in
+                            focusProspect(prospect)
+                            showFocusProspectSheet = false
+                        },
+                        onCancel: { showFocusProspectSheet = false }
+                    )
+                }
+            }
+            .alert(
+                "Top-30 Visit: \(top30ResultProspectName)",
+                isPresented: $showTop30Result,
+                presenting: top30ResultSummary
+            ) { _ in
+                Button("Done", role: .cancel) { }
+            } message: { result in
+                let medical = result.medicalConcerns.isEmpty ? "No new concerns" : result.medicalConcerns.joined(separator: ", ")
+                let workout = result.workoutImpressions.joined(separator: ", ")
+                let fitPct = Int((result.teamFitScore * 100).rounded())
+                Text("Football IQ: \(result.footballIQRevised)\nMedical: \(medical)\nWorkout: \(workout)\nTeam Fit: \(fitPct)%")
+            }
         }
+    }
+
+    // MARK: - Top-30 Visits Section (Task B)
+
+    @ViewBuilder
+    private var top30VisitsSection: some View {
+        let used = career.top30VisitsUsed
+        let limit = 30
+        let remaining = max(0, limit - used)
+        let recs = top30Recommendations
+
+        Section {
+            // Explanation row
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "house.fill")
+                        .foregroundStyle(Color.accentGold)
+                        .font(.caption)
+                    Text("Bring a prospect to your facility")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                }
+                Text("Deep evaluation: interview, focused workout, medical check. Limited to 30 per cycle.")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .padding(.vertical, 2)
+
+            if recs.isEmpty {
+                Text("No remaining recommended candidates — every priority prospect already received a visit.")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+                    .padding(.vertical, 4)
+            } else {
+                ForEach(recs) { prospect in
+                    top30ProspectRow(prospect, disabled: used >= limit)
+                }
+            }
+        } header: {
+            HStack {
+                Label("TOP-30 VISITS", systemImage: "person.crop.circle.badge.checkmark")
+                    .foregroundStyle(Color.accentGold)
+                Spacer()
+                Text("\(used) / 30 used \u{2022} \(remaining) left")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(used >= limit ? Color.danger : Color.textSecondary)
+            }
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private func top30ProspectRow(_ prospect: CollegeProspect, disabled: Bool) -> some View {
+        HStack(spacing: 8) {
+            // Position chip
+            Text(prospect.position.rawValue)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.textPrimary)
+                .frame(width: 28, height: 18)
+                .background(positionColor(prospect.position), in: RoundedRectangle(cornerRadius: 3))
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(prospect.fullName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    if isStarred(prospect) {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(Color.accentGold)
+                    }
+                }
+                HStack(spacing: 6) {
+                    if let ovr = prospect.scoutedOverall {
+                        Text("OVR \(ovr)")
+                            .font(.system(size: 9, weight: .bold).monospacedDigit())
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                    if let proj = prospect.draftProjection {
+                        Text("Rd \(projectedRound(proj))")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    if isNeedPosition(prospect) {
+                        Text("NEED")
+                            .font(.system(size: 8, weight: .black))
+                            .foregroundStyle(Color.danger)
+                    }
+                }
+            }
+
+            Spacer()
+
+            Button {
+                scheduleTop30Visit(prospect)
+            } label: {
+                Text("Schedule Visit")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(disabled ? Color.textTertiary : Color.backgroundPrimary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(disabled ? Color.backgroundTertiary : Color.accentGold, in: RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .disabled(disabled)
+        }
+        .padding(.vertical, 2)
+    }
+
+    /// Schedule + execute a Top-30 visit for the given prospect via the scouting engine.
+    private func scheduleTop30Visit(_ prospect: CollegeProspect) {
+        guard let teamID = career.teamID else { return }
+        guard career.top30VisitsUsed < 30 else { return }
+
+        // Mutate the prospect inside the canonical draft class so persistence sticks.
+        var localClass = WeekAdvancer.currentDraftClass
+        guard let idx = localClass.firstIndex(where: { $0.id == prospect.id }) else { return }
+
+        let result = ScoutingEngine.conductTop30Visit(
+            prospect: &localClass[idx],
+            visitingTeamID: teamID,
+            interviewerQuality: avgScoutAccuracy
+        )
+
+        career.top30VisitsUsed += 1
+
+        // Sync + persist.
+        WeekAdvancer.currentDraftClass = localClass
+        WeekAdvancer.persistDraftClass(localClass, to: modelContext)
+        try? modelContext.save()
+
+        top30ResultProspectName = prospect.fullName
+        top30ResultSummary = result
+        showTop30Result = true
+
+        onRefresh()
+    }
+
+    // MARK: - Focus Prospect (Task C)
+
+    /// Marks the chosen prospect as `mustHave` so the rest of the scouting flow
+    /// surfaces them as a high-priority focus.
+    private func focusProspect(_ prospect: CollegeProspect) {
+        // Mutate the canonical draft class instance.
+        var localClass = WeekAdvancer.currentDraftClass
+        guard let idx = localClass.firstIndex(where: { $0.id == prospect.id }) else { return }
+        localClass[idx].prospectFlag = .mustHave
+
+        WeekAdvancer.currentDraftClass = localClass
+        WeekAdvancer.persistDraftClass(localClass, to: modelContext)
+        try? modelContext.save()
+        onRefresh()
     }
 
     // MARK: - Execute Pro Days (Task 9)
 
+    /// CRITICAL FIX: actually run the scouting engine for every scout-college assignment,
+    /// then sync mutated prospects back to `WeekAdvancer.currentDraftClass` and persist
+    /// to SwiftData so reports + drill improvements survive an app restart.
     private func executeProDays() {
+        // Pull the canonical, full draft class so we mutate the source-of-truth.
+        var localProspects = WeekAdvancer.currentDraftClass
+
         var findings: [String] = []
         var schoolsVisited = 0
         var prospectsEvaluated = 0
 
+        // For each scout × college pair, run the engine if any prospect at that
+        // college has not yet had a Pro Day. This is idempotent: if all prospects
+        // at the college are already `proDayCompleted`, the engine call is skipped.
+        for scout in scouts {
+            for college in scout.proDayColleges {
+                let needsRun = localProspects.contains { p in
+                    p.college == college && p.isDeclaringForDraft && !p.proDayCompleted
+                }
+                guard needsRun else { continue }
+
+                ScoutingEngine.attendProDay(
+                    scout: scout,
+                    college: college,
+                    prospects: &localProspects
+                )
+            }
+        }
+
+        // Build the result summary off the fresh, mutated prospect list.
         let assignedColleges = Set(scouts.flatMap { $0.proDayColleges })
         schoolsVisited = assignedColleges.count
-
         for college in assignedColleges {
-            let collegePros = prospects.filter { $0.college == college && $0.isDeclaringForDraft }
+            let collegePros = localProspects.filter { $0.college == college && $0.isDeclaringForDraft }
             prospectsEvaluated += collegePros.count
-            // Check for notable findings
             for p in collegePros {
                 if let ovr = p.scoutedOverall, ovr >= 80 {
                     findings.append("\(p.fullName) (\(p.position.rawValue)) impressed at \(college) pro day")
@@ -1138,11 +1404,19 @@ struct ProDayListView: View {
             }
         }
 
+        // Sync back to in-memory source-of-truth and persist to SwiftData.
+        WeekAdvancer.currentDraftClass = localProspects
+        WeekAdvancer.persistDraftClass(localProspects, to: modelContext)
+        try? modelContext.save()
+
         proDayResultSummary = ProDayResultSummary(
             schoolsVisited: schoolsVisited,
             prospectsEvaluated: prospectsEvaluated,
             keyFindings: Array(findings.prefix(5))
         )
+
+        // Refresh hub state so prospect/scout views pick up changes.
+        onRefresh()
     }
 
     // MARK: - Personal Workouts (Task 10)
@@ -1402,8 +1676,16 @@ struct ProDayListView: View {
                         }
                     }
 
-                    // Position breakdown (Task 12)
+                    // Position breakdown (Task 12) + Pro Day week tag (Task C)
                     HStack(spacing: 6) {
+                        // Week tag (e.g. "W3")
+                        Text("W\(proDayWeek(for: info.college))")
+                            .font(.system(size: 9, weight: .black))
+                            .foregroundStyle(Color.accentBlue)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.accentBlue.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+
                         Text("\(info.prospects.count) prospect\(info.prospects.count == 1 ? "" : "s")")
                             .font(.caption2)
                             .foregroundStyle(Color.textSecondary)
@@ -1471,6 +1753,27 @@ struct ProDayListView: View {
             }
             .buttonStyle(.plain)
             .accessibilityHint(expandedColleges.contains(info.college) ? "Collapse college details" : "Expand college details")
+
+            // Focus prospect (Task C) — picks one prospect from this school as a high-priority focus.
+            if info.prospects.count > 1 {
+                HStack(spacing: 6) {
+                    Spacer()
+                    Button {
+                        focusCollege = info.college
+                        showFocusProspectSheet = true
+                    } label: {
+                        Label("Focus prospect", systemImage: "scope")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.accentBlue)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.accentBlue.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.top, 4)
+                .padding(.leading, 22)
+            }
 
             // Expanded prospect list (Task 3)
             if expandedColleges.contains(info.college) {
@@ -1684,6 +1987,97 @@ private struct ProDayResultSummary {
     let schoolsVisited: Int
     let prospectsEvaluated: Int
     let keyFindings: [String]
+}
+
+// MARK: - Focus Prospect Sheet (Task C)
+
+/// Sheet that lets the user pick one prospect from a college as the focus
+/// of that Pro Day visit. Selecting a prospect marks them `mustHave`.
+private struct FocusProspectSheet: View {
+    let college: String
+    let prospects: [CollegeProspect]
+    let onSelect: (CollegeProspect) -> Void
+    let onCancel: () -> Void
+
+    private var sortedProspects: [CollegeProspect] {
+        prospects.sorted { ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.backgroundPrimary.ignoresSafeArea()
+                List {
+                    Section {
+                        Text("Pick one prospect from \(college) to focus your scouting on. They'll be marked as a must-have priority.")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+
+                    Section("Prospects") {
+                        ForEach(sortedProspects) { prospect in
+                            Button {
+                                onSelect(prospect)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Text(prospect.position.rawValue)
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(Color.textPrimary)
+                                        .frame(width: 30, height: 20)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 3)
+                                                .fill(prospect.position.side == .offense ? Color.accentBlue.opacity(0.25) : Color.danger.opacity(0.25))
+                                        )
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(prospect.fullName)
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(Color.textPrimary)
+                                        HStack(spacing: 6) {
+                                            if let ovr = prospect.scoutedOverall {
+                                                Text("OVR \(ovr)")
+                                                    .font(.caption2.monospacedDigit())
+                                                    .foregroundStyle(Color.textSecondary)
+                                            }
+                                            if let proj = prospect.draftProjection {
+                                                Text("Rd \(proj)")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(Color.textTertiary)
+                                            }
+                                            if prospect.prospectFlag == .mustHave {
+                                                Image(systemName: "star.fill")
+                                                    .font(.system(size: 9))
+                                                    .foregroundStyle(Color.accentGold)
+                                            }
+                                        }
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(Color.textTertiary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .listRowBackground(Color.backgroundSecondary)
+                        }
+                    }
+                }
+                .scrollContentBackground(.hidden)
+                .listStyle(.insetGrouped)
+            }
+            .navigationTitle("Focus Prospect")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { onCancel() }
+                }
+            }
+        }
+    }
 }
 
 // MARK: - Send Scout to Pro Day Sheet (Tasks 1-6)

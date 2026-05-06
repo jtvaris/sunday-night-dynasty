@@ -103,6 +103,33 @@ final class CollegeProspect {
 
     var prospectFlag: ProspectFlag = ProspectFlag.none
 
+    // MARK: - Top-30 Visits
+
+    /// UUIDs of teams that have used a Top-30 visit on this prospect.
+    /// Empty by default. Filled by `ScoutingEngine.conductTop30Visit`.
+    var top30VisitedByTeams: [UUID] = []
+
+    // MARK: - Medical & Character Risk Flags
+
+    /// Medical concerns surfaced during scouting (combine medical, top-30 visit, or generation).
+    /// `nil` means no flags reported. Examples: "ACL repair 2024", "Chronic shoulder".
+    var medicalConcerns: [String]?
+
+    /// Off-field / character red flags. `nil` means no flags reported.
+    /// Examples: "Off-field arrest", "Failed drug test", "Practice habits".
+    var redFlags: [String]?
+
+    // MARK: - Combine Anthropometrics
+
+    /// Hand size in inches (8.0 - 11.5). Position-specific: QB premium.
+    var handSize: Double = 9.5
+
+    /// Arm length in inches (30 - 37). Position-specific: OL/DB premium.
+    var armLength: Double = 32.5
+
+    /// Wingspan in inches (70 - 90). Position-specific: DB/DL premium.
+    var wingspan: Double = 78.0
+
     // MARK: - Computed Properties
 
     /// Always returns a grade — uses scoutedOverallGrade if available, otherwise converts
@@ -252,10 +279,17 @@ final class CollegeProspect {
             if avgConfidence < 0.5 { riskScore += 1 }
         }
 
+        // 7. Red flags cap risk upward — character/off-field concerns make any prospect riskier.
+        let redFlagCount = redFlags?.count ?? 0
+        if redFlagCount > 0 {
+            riskScore += 2 + redFlagCount  // 1 flag = +3, 2 flags = +4
+        }
+
         // Classify
-        if riskScore >= 4 || (riskScore >= 3 && hasBigCeiling) {
+        // If any red flag exists, cap minimum risk at .highCeiling — never .safePick.
+        if riskScore >= 4 || (riskScore >= 3 && hasBigCeiling) || redFlagCount >= 2 {
             return .boomOrBust
-        } else if riskScore >= 2 || hasBigCeiling {
+        } else if riskScore >= 2 || hasBigCeiling || redFlagCount >= 1 {
             return .highCeiling
         } else {
             return .safePick

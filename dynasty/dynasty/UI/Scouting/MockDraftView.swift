@@ -11,6 +11,9 @@ struct MockDraftView: View {
     @State private var teamDraftPicks: [DraftPick] = []
     @State private var selectedRound: Int = 1
     @State private var isLoading: Bool = true
+    /// Currently selected snapshot tag. "Latest" reads `currentMockDraft`,
+    /// any other key reads `mockDraftHistory[selectedSnapshot]`.
+    @State private var selectedSnapshot: String = "Latest"
 
     // MARK: - Performance caches
     @State private var cachedStrategyRecommendation: String = ""
@@ -19,8 +22,22 @@ struct MockDraftView: View {
     @State private var cachedPicksForRound: [ScoutingEngine.MockDraftPick] = []
     @State private var cachedTargetCountdown: TargetCountdownInfo? = nil
 
+    /// Ordered snapshot tags shown in the picker.
+    private let snapshotTags: [String] = ["Latest", "Mid-Season", "Combine", "Post-FA", "Pre-Draft"]
+
     private var mockDraft: [ScoutingEngine.MockDraftPick] {
-        WeekAdvancer.currentMockDraft
+        if selectedSnapshot == "Latest" {
+            return WeekAdvancer.currentMockDraft
+        }
+        return WeekAdvancer.mockDraftHistory[selectedSnapshot] ?? []
+    }
+
+    /// Whether a snapshot tag has any data backing it.
+    private func snapshotHasData(_ tag: String) -> Bool {
+        if tag == "Latest" {
+            return !WeekAdvancer.currentMockDraft.isEmpty
+        }
+        return !(WeekAdvancer.mockDraftHistory[tag]?.isEmpty ?? true)
     }
 
     private var picksForRound: [ScoutingEngine.MockDraftPick] { cachedPicksForRound }
@@ -126,6 +143,18 @@ struct MockDraftView: View {
                     .padding(.top, 16)
                     .padding(.bottom, 8)
 
+                // Snapshot picker (history)
+                snapshotPicker
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+
+                // Consensus media mock (only on Latest + when there's a user pick)
+                if selectedSnapshot == "Latest", !consensusMock.isEmpty {
+                    consensusMockSection
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
+                }
+
                 // Strategy recommendation
                 if !strategyRecommendation.isEmpty && !mockDraft.isEmpty {
                     HStack(spacing: 6) {
@@ -226,6 +255,7 @@ struct MockDraftView: View {
         .onChange(of: selectedRound) { _, _ in refreshCaches() }
         .onChange(of: players.count) { _, _ in refreshCaches() }
         .onChange(of: teamDraftPicks.count) { _, _ in refreshCaches() }
+        .onChange(of: selectedSnapshot) { _, _ in refreshCaches() }
     }
 
     // MARK: - Header
@@ -283,6 +313,183 @@ struct MockDraftView: View {
         .padding(3)
         .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+    }
+
+    // MARK: - Snapshot Picker
+
+    private var snapshotPicker: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(snapshotTags, id: \.self) { tag in
+                    let hasData = snapshotHasData(tag)
+                    let isSelected = selectedSnapshot == tag
+                    Button {
+                        guard hasData else { return }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedSnapshot = tag
+                        }
+                    } label: {
+                        Text(tag)
+                            .font(.caption2.weight(isSelected ? .heavy : .semibold))
+                            .foregroundStyle(snapshotLabelColor(isSelected: isSelected, hasData: hasData))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                snapshotBackground(isSelected: isSelected, hasData: hasData),
+                                in: Capsule()
+                            )
+                            .overlay(
+                                Capsule().strokeBorder(
+                                    isSelected ? Color.accentBlue : Color.surfaceBorder,
+                                    lineWidth: isSelected ? 1.5 : 1
+                                )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!hasData)
+                    .accessibilityLabel("\(tag) mock draft snapshot\(hasData ? "" : ", unavailable")")
+                }
+            }
+        }
+    }
+
+    private func snapshotLabelColor(isSelected: Bool, hasData: Bool) -> Color {
+        if !hasData { return Color.textTertiary.opacity(0.5) }
+        return isSelected ? Color.accentBlue : Color.textSecondary
+    }
+
+    private func snapshotBackground(isSelected: Bool, hasData: Bool) -> Color {
+        if !hasData { return Color.backgroundSecondary.opacity(0.4) }
+        return isSelected ? Color.accentBlue.opacity(0.18) : Color.backgroundSecondary
+    }
+
+    // MARK: - Consensus Mock (Media)
+
+    private struct ConsensusEntry: Identifiable {
+        let id = UUID()
+        let brand: String
+        let symbol: String
+        let prospectName: String
+        let confidence: Int
+    }
+
+    /// Three "media outlets" with deterministically nudged predictions for
+    /// the user's first projected pick.
+    private var consensusMock: [ConsensusEntry] {
+        guard let userAbbr = userTeamAbbreviation,
+              let userPick = WeekAdvancer.currentMockDraft.first(where: { $0.teamAbbreviation == userAbbr }),
+              let actualProspect = prospects.first(where: { $0.id == userPick.prospectID })
+        else { return [] }
+
+        // ESPN: matches the engine's prediction (most accurate, ~88% confidence).
+        let espn = ConsensusEntry(
+            brand: "ESPN",
+            symbol: "tv",
+            prospectName: actualProspect.fullName,
+            confidence: 88
+        )
+
+        // NFL Network: nudge ~2 picks (medium accuracy).
+        let nflProspect = nudgedPredictionProspect(
+            forPickNumber: userPick.pickNumber,
+            seedSalt: 11,
+            maxNudge: 4
+        ) ?? actualProspect
+        let nfln = ConsensusEntry(
+            brand: "NFL Network",
+            symbol: "antenna.radiowaves.left.and.right",
+            prospectName: nflProspect.fullName,
+            confidence: 72
+        )
+
+        // The Athletic: bias-heavy, larger variance.
+        let athleticProspect = nudgedPredictionProspect(
+            forPickNumber: userPick.pickNumber,
+            seedSalt: 29,
+            maxNudge: 12
+        ) ?? actualProspect
+        let athletic = ConsensusEntry(
+            brand: "The Athletic",
+            symbol: "newspaper",
+            prospectName: athleticProspect.fullName,
+            confidence: 60
+        )
+
+        return [espn, nfln, athletic]
+    }
+
+    /// Returns the prospect projected at `pickNumber + offset` in the current
+    /// mock draft, where offset is a deterministic pseudo-random nudge driven
+    /// by `seedSalt` and bounded to ±`maxNudge`.
+    private func nudgedPredictionProspect(forPickNumber pickNumber: Int, seedSalt: Int, maxNudge: Int) -> CollegeProspect? {
+        let raw = (pickNumber * 7 + seedSalt * 13 + 17) % (maxNudge * 2 + 1)
+        let offset = raw - maxNudge
+        let target = max(1, pickNumber + offset)
+        let mock = WeekAdvancer.currentMockDraft
+        if let pick = mock.first(where: { $0.pickNumber == target }),
+           let prospect = prospects.first(where: { $0.id == pick.prospectID }) {
+            return prospect
+        }
+        // Fallback to nearest existing pick.
+        if let pick = mock.min(by: { abs($0.pickNumber - target) < abs($1.pickNumber - target) }),
+           let prospect = prospects.first(where: { $0.id == pick.prospectID }) {
+            return prospect
+        }
+        return nil
+    }
+
+    private var consensusMockSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.3.sequence.fill")
+                    .font(.caption2)
+                    .foregroundStyle(Color.accentBlue)
+                Text("CONSENSUS MOCK \u{2014} YOUR PICK")
+                    .font(.caption2.weight(.heavy))
+                    .foregroundStyle(Color.textSecondary)
+            }
+
+            HStack(spacing: 8) {
+                ForEach(consensusMock) { entry in
+                    consensusCard(entry: entry)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+    }
+
+    private func consensusCard(entry: ConsensusEntry) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: entry.symbol)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.accentBlue)
+                Text(entry.brand)
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundStyle(Color.textPrimary)
+            }
+            Text(entry.prospectName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            HStack(spacing: 3) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(confidenceColor(for: entry.confidence))
+                Text("\(entry.confidence)% confidence")
+                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                    .foregroundStyle(confidenceColor(for: entry.confidence))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(Color.backgroundPrimary, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(entry.brand) projects \(entry.prospectName), \(entry.confidence) percent confidence")
     }
 
     // MARK: - Target Availability Section

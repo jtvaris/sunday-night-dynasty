@@ -37,6 +37,11 @@ enum WeekAdvancer {
     /// Latest mock draft projection (generated at midseason, combine, and pre-draft).
     static var currentMockDraft: [ScoutingEngine.MockDraftPick] = []
 
+    /// Historical mock draft snapshots, keyed by phase tag (e.g. "Mid-Season",
+    /// "Combine", "Post-FA", "Pre-Draft"). Each value is a copy of
+    /// `currentMockDraft` taken right after that phase's mock was generated.
+    static var mockDraftHistory: [String: [ScoutingEngine.MockDraftPick]] = [:]
+
     // MARK: - Draft Class Persistence
 
     /// Inserts every prospect of the current draft class into the SwiftData
@@ -182,6 +187,7 @@ enum WeekAdvancer {
         currentDraftClass = []
         currentDraftPicks = []
         currentMockDraft = []
+        mockDraftHistory = [:]
     }
 
     // MARK: - Private: Regular Season
@@ -473,6 +479,7 @@ enum WeekAdvancer {
                 prospects: &currentDraftClass,
                 mockDraft: currentMockDraft
             )
+            mockDraftHistory["Mid-Season"] = currentMockDraft
         }
 
         // 9. At season end (week 18): record season history snapshot per player,
@@ -811,6 +818,7 @@ enum WeekAdvancer {
                 prospects: &currentDraftClass,
                 mockDraft: currentMockDraft
             )
+            mockDraftHistory["Combine"] = currentMockDraft
 
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .combine,
@@ -863,6 +871,7 @@ enum WeekAdvancer {
                     prospects: &currentDraftClass,
                     mockDraft: currentMockDraft
                 )
+                mockDraftHistory["Post-FA"] = currentMockDraft
             }
 
         case .proDays:
@@ -930,6 +939,7 @@ enum WeekAdvancer {
                 prospects: &currentDraftClass,
                 mockDraft: currentMockDraft
             )
+            mockDraftHistory["Pre-Draft"] = currentMockDraft
 
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .draft,

@@ -50,6 +50,8 @@ final class Career {
     var interviewsUsed: Int = 0
     /// Number of personal workouts conducted this year (max 30).
     var workoutsUsed: Int = 0
+    /// Number of pre-draft Top-30 visits used this year (max 30).
+    var top30VisitsUsed: Int = 0
 
     // MARK: - Owner Demands (#248)
     /// Roster demands set by the owner during the review roster phase.

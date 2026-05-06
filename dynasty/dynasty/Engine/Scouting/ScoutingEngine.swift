@@ -223,6 +223,11 @@ enum ScoutingEngine {
             prospects[i].truePhysical = tieredPhysical(forRound: round)
         }
 
+        // Generate medical/character risk profile for each prospect
+        for i in prospects.indices {
+            generateRiskProfile(for: &prospects[i])
+        }
+
         prospects.shuffle()
         return prospects
     }
@@ -273,8 +278,9 @@ enum ScoutingEngine {
             motivation: Motivation.allCases.randomElement()!
         )
         let potential = bellCurveRating(min: 35, max: 99, center: 60)
+        let anthro = generateAnthropometrics(for: position)
 
-        return CollegeProspect(
+        let prospect = CollegeProspect(
             firstName: name.first,
             lastName: name.last,
             college: college,
@@ -287,6 +293,95 @@ enum ScoutingEngine {
             truePositionAttributes: posAttrs,
             truePersonality: personality,
             truePotential: potential
+        )
+        prospect.handSize = anthro.handSize
+        prospect.armLength = anthro.armLength
+        prospect.wingspan = anthro.wingspan
+        return prospect
+    }
+
+    // MARK: - Anthropometrics (Hand Size / Arm Length / Wingspan)
+
+    /// Generates position-appropriate hand size, arm length, and wingspan in inches.
+    /// Heuristic distributions — premium positions skew larger.
+    static func generateAnthropometrics(for position: Position) -> (handSize: Double, armLength: Double, wingspan: Double) {
+        let handRange: ClosedRange<Double>
+        let armRange: ClosedRange<Double>
+        let wingspanRange: ClosedRange<Double>
+
+        switch position {
+        case .QB:
+            // Large hands premium: 9.0-10.5 typical
+            handRange = 8.75...10.5
+            armRange = 31.0...33.5
+            wingspanRange = 74.0...80.0
+        case .LT, .RT, .LG, .RG, .C:
+            // Long arms premium for OL: 33-36 elite tackles
+            handRange = 9.25...10.75
+            armRange = 32.5...36.0
+            wingspanRange = 78.0...86.0
+        case .DE, .DT:
+            // DL: long arms + wingspan elite
+            handRange = 9.0...10.5
+            armRange = 32.0...35.5
+            wingspanRange = 78.0...85.0
+        case .CB, .FS, .SS:
+            // DB: arm length 31-34, wingspan premium
+            handRange = 8.5...10.0
+            armRange = 30.5...34.0
+            wingspanRange = 73.0...82.0
+        case .WR:
+            // WR: balanced, taller WRs benefit from longer arms
+            handRange = 8.75...10.25
+            armRange = 30.5...33.5
+            wingspanRange = 72.0...80.0
+        case .TE:
+            // TE: longer arms aid blocking & catch radius
+            handRange = 9.0...10.5
+            armRange = 31.5...34.5
+            wingspanRange = 76.0...83.0
+        case .RB, .FB:
+            // Average build
+            handRange = 8.5...10.0
+            armRange = 30.0...32.5
+            wingspanRange = 72.0...78.0
+        case .OLB, .MLB:
+            // LB: balanced
+            handRange = 9.0...10.25
+            armRange = 31.0...34.0
+            wingspanRange = 75.0...81.0
+        case .K, .P:
+            handRange = 8.0...9.5
+            armRange = 30.0...32.5
+            wingspanRange = 70.0...76.0
+        }
+
+        func roundToTwo(_ v: Double) -> Double {
+            (v * 100).rounded() / 100
+        }
+        func clamp(_ v: Double, _ range: ClosedRange<Double>) -> Double {
+            Swift.min(range.upperBound, Swift.max(range.lowerBound, v))
+        }
+
+        // Slight noise around the midpoint biased toward center for realism
+        func rollInRange(_ range: ClosedRange<Double>) -> Double {
+            let center = (range.lowerBound + range.upperBound) / 2.0
+            let raw = Double.random(in: range)
+            // Bias toward center via simple averaging
+            return roundToTwo((raw + center) / 2.0)
+        }
+
+        let hand = rollInRange(handRange)
+        let arm = rollInRange(armRange)
+        // Wingspan is loosely correlated with arm length — add small jitter
+        let wingBase = rollInRange(wingspanRange)
+        let armCenter = (armRange.lowerBound + armRange.upperBound) / 2.0
+        let wingspan = roundToTwo(wingBase + (arm - armCenter))
+
+        return (
+            handSize: clamp(hand, 8.0...11.5),
+            armLength: clamp(arm, 30.0...37.0),
+            wingspan: clamp(wingspan, 70.0...90.0)
         )
     }
 
@@ -2867,6 +2962,220 @@ enum ScoutingEngine {
             return "Unknown \(p.position.rawValue) \(p.fullName) runs \(String(format: "%.2f", ft)) 40, turns heads at combine"
         }
         return "Late-round prospect \(p.fullName) steals the show with elite testing"
+    }
+
+    // MARK: - Risk Profile (Medical & Character)
+
+    /// Generates a medical / character risk profile for a prospect.
+    /// Distribution (heuristic):
+    ///   - 80% clean (no flags)
+    ///   - 14% one medical flag
+    ///   - 4%  one red (off-field/character) flag
+    ///   - 2%  both medical AND red flag
+    /// Modifies `medicalConcerns` and `redFlags` on the prospect.
+    static func generateRiskProfile(for prospect: inout CollegeProspect) {
+        let medicalPool = [
+            "ACL repair 2024",
+            "Past concussion history",
+            "Chronic shoulder",
+            "Knee soreness flagged",
+            "Lower back tightness",
+            "Prior hamstring strain",
+            "Previous foot fracture",
+            "Hip flexor history"
+        ]
+        let redFlagPool = [
+            "Off-field arrest",
+            "Failed drug test",
+            "Practice habits questioned",
+            "Locker-room concerns",
+            "Missed team meetings",
+            "Coach clashed with player",
+            "Social media incident"
+        ]
+
+        let roll = Int.random(in: 1...100)
+        switch roll {
+        case 1...80:
+            // Clean — leave nil
+            prospect.medicalConcerns = nil
+            prospect.redFlags = nil
+        case 81...94:
+            // One medical flag
+            prospect.medicalConcerns = [medicalPool.randomElement()!]
+            prospect.redFlags = nil
+        case 95...98:
+            // One red flag
+            prospect.medicalConcerns = nil
+            prospect.redFlags = [redFlagPool.randomElement()!]
+        default:
+            // Both
+            prospect.medicalConcerns = [medicalPool.randomElement()!]
+            prospect.redFlags = [redFlagPool.randomElement()!]
+        }
+    }
+
+    // MARK: - Top-30 Visit System
+
+    /// Result of a Top-30 visit, returned for caller to surface in UI.
+    /// The visit itself mutates the prospect (sets `interviewCompleted`, appends visiting team,
+    /// fills `medicalConcerns` etc.). The struct is returned so callers can show a summary.
+    struct Top30VisitResult {
+        /// 2-3 character / leadership notes from a deep interview.
+        let interviewNotes: [String]
+        /// Football IQ revealed in the interview, 40..99.
+        let footballIQRevised: Int
+        /// 0-2 medical concerns surfaced during the medical exam.
+        let medicalConcerns: [String]
+        /// 1-2 workout impressions tailored to the visiting team's needs.
+        let workoutImpressions: [String]
+        /// Team-fit score (0..1) versus visiting team's roster context.
+        let teamFitScore: Double
+    }
+
+    /// Conducts a Top-30 visit which combines (a) a deep interview,
+    /// (b) a focused workout for the visiting team's needs,
+    /// (c) a medical check.
+    /// Mutates the prospect:
+    ///   - sets `interviewCompleted = true`
+    ///   - appends `visitingTeamID` to `top30VisitedByTeams` (idempotent)
+    ///   - merges generated medical concerns into `medicalConcerns`
+    ///   - revises `interviewFootballIQ` and persists character notes
+    /// Returns enriched results that the caller can surface in UI / persist further.
+    static func conductTop30Visit(
+        prospect: inout CollegeProspect,
+        visitingTeamID: UUID,
+        interviewerQuality: Int
+    ) -> Top30VisitResult {
+        // 1. Mark as visited by this team (idempotent).
+        if !prospect.top30VisitedByTeams.contains(visitingTeamID) {
+            prospect.top30VisitedByTeams.append(visitingTeamID)
+        }
+
+        // 2. Deep interview — reuse the existing interview engine.
+        let interview = conductInterview(prospect: prospect, interviewerQuality: interviewerQuality)
+        // conductInterview already mutates interviewCompleted, scoutedPersonality,
+        // interviewFootballIQ, interviewCharacterNotes, interviewNotes. We pass
+        // a copy via the non-inout overload, then re-apply onto the inout binding.
+        prospect.interviewCompleted = true
+        prospect.scoutedPersonality = interview.personality
+        prospect.interviewFootballIQ = interview.footballIQ
+        prospect.interviewCharacterNotes = interview.characterNotes
+
+        // 3. Medical check — 25% chance per visit to surface a concern.
+        var newMedicalConcerns: [String] = []
+        if Int.random(in: 1...100) <= 25 {
+            let medicalPool = [
+                "Knee soreness flagged",
+                "Past concussion history",
+                "Shoulder labrum noted",
+                "Lingering ankle issue",
+                "Back stiffness on exam",
+                "Hip mobility limited"
+            ]
+            newMedicalConcerns.append(medicalPool.randomElement()!)
+            // Small chance of a second concern.
+            if Int.random(in: 1...100) <= 25 {
+                let second = medicalPool.randomElement()!
+                if !newMedicalConcerns.contains(second) {
+                    newMedicalConcerns.append(second)
+                }
+            }
+
+            // Merge into prospect
+            var existing = prospect.medicalConcerns ?? []
+            for c in newMedicalConcerns where !existing.contains(c) {
+                existing.append(c)
+            }
+            prospect.medicalConcerns = existing.isEmpty ? nil : existing
+        }
+
+        // 4. Workout impressions — position-specific.
+        let workoutImpressions = generateWorkoutImpressions(for: prospect.position, prospect: prospect)
+
+        // 5. Team-fit score — heuristic combining trueOverall, position value, and personality fit.
+        // Without a roster handle here, we approximate fit using the prospect's traits
+        // and let UI/coordinator refine with team-context if needed.
+        let baseFit = Double(prospect.trueOverall) / 99.0
+        let posValue = positionalDraftValue(for: prospect.position)
+        let personalityBonus: Double
+        switch prospect.truePersonality.archetype {
+        case .teamLeader, .quietProfessional, .mentor: personalityBonus = 0.10
+        case .steadyPerformer:                          personalityBonus = 0.05
+        case .dramaQueen, .feelPlayer:                  personalityBonus = -0.10
+        case .classClown:                               personalityBonus = -0.03
+        default:                                        personalityBonus = 0.0
+        }
+        let rawFit = baseFit * 0.6 + posValue * 0.3 + personalityBonus
+        let teamFit = Swift.min(1.0, Swift.max(0.0, rawFit + Double.random(in: -0.05...0.05)))
+
+        return Top30VisitResult(
+            interviewNotes: interview.characterNotes,
+            footballIQRevised: interview.footballIQ,
+            medicalConcerns: newMedicalConcerns,
+            workoutImpressions: workoutImpressions,
+            teamFitScore: teamFit
+        )
+    }
+
+    /// Generates 1-2 position-specific workout impressions for a Top-30 visit.
+    private static func generateWorkoutImpressions(for position: Position, prospect: CollegeProspect) -> [String] {
+        let positives: [String]
+        let negatives: [String]
+        switch position {
+        case .QB:
+            positives = ["Crisp ball placement", "Quick processing on whiteboard", "Clean throwing motion", "Velocity on intermediate routes"]
+            negatives = ["Mechanics break down under pressure", "Slow second-read progression", "Footwork inconsistent"]
+        case .WR:
+            positives = ["Smooth route running", "Strong hands at the catch", "Crisp releases off press", "Adjusts well to off-target throws"]
+            negatives = ["Drops at the catch point", "Lacks burst out of breaks", "Limited release package"]
+        case .RB, .FB:
+            positives = ["Patient runner with vision", "Strong contact balance", "Soft hands out of backfield"]
+            negatives = ["Lacks burst through hole", "Pass protection needs work", "Limited route tree"]
+        case .TE:
+            positives = ["Reliable hands in traffic", "Functional in-line blocking", "Adjusts to ball in air"]
+            negatives = ["Stiff in space", "Loses leverage as a blocker"]
+        case .LT, .RT, .LG, .RG, .C:
+            positives = ["Anchors well in pass pro", "Quick out of stance", "Plays with leverage"]
+            negatives = ["Late hands in pass pro", "Struggles with second-level blocks", "Over-extends and lunges"]
+        case .DE, .DT:
+            positives = ["Active hands at point of attack", "Quick first step", "Diverse pass-rush plan"]
+            negatives = ["Limited counter moves", "Plays high off the snap", "Loses gap integrity"]
+        case .OLB, .MLB:
+            positives = ["Reads keys quickly", "Smooth in coverage drops", "Sheds blocks well"]
+            negatives = ["Late to trigger downhill", "Stiff hips in coverage"]
+        case .CB:
+            positives = ["Fluid hips in transition", "Sticky in press coverage", "Good ball skills at catch point"]
+            negatives = ["Grabby downfield", "Bites on double moves", "Tackling inconsistent"]
+        case .FS, .SS:
+            positives = ["Range to the deep middle", "Aggressive downhill trigger", "Tackles in space"]
+            negatives = ["Takes poor angles", "Coverage discipline lapses"]
+        case .K, .P:
+            positives = ["Consistent ball flight", "Good leg under pressure"]
+            negatives = ["Inconsistent operation time", "Leg speed average"]
+        }
+
+        // Bias the impressions toward the prospect's true ability so high-overall prospects
+        // skew positive, low-overall ones skew negative.
+        let posValue = prospect.truePositionAttributes.overall
+        let positiveWeight: Int
+        if posValue >= 80 { positiveWeight = 80 }
+        else if posValue >= 70 { positiveWeight = 60 }
+        else if posValue >= 60 { positiveWeight = 45 }
+        else { positiveWeight = 30 }
+
+        var result: [String] = []
+        let count = Int.random(in: 1...2)
+        for _ in 0..<count {
+            let pool = (Int.random(in: 1...100) <= positiveWeight) ? positives : negatives
+            if let pick = pool.randomElement(), !result.contains(pick) {
+                result.append(pick)
+            }
+        }
+        if result.isEmpty, let p = positives.randomElement() {
+            result.append(p)
+        }
+        return result
     }
 }
 
