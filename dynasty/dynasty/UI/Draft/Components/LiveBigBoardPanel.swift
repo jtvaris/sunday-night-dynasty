@@ -99,6 +99,13 @@ struct LiveBigBoardPanel: View {
             RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                 .fill(needHighlight(for: prospect))
         )
+        .overlay(
+            Rectangle()
+                .fill(Color.draftStealGold)
+                .frame(width: (coordinator.teamNeedScores[prospect.position] ?? 0) >= 0.7 ? 3 : 0)
+            , alignment: .leading
+        )
+        .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.inline))
     }
 
     private func stars(for prospect: CollegeProspect) -> String {
@@ -107,9 +114,9 @@ struct LiveBigBoardPanel: View {
     }
 
     private func needHighlight(for prospect: CollegeProspect) -> Color {
-        if (coordinator.teamNeedScores[prospect.position] ?? 0) >= 0.7 {
-            return Color.draftStealGold.opacity(0.18)
-        }
+        let need = coordinator.teamNeedScores[prospect.position] ?? 0
+        if need >= 0.7  { return Color.draftStealGold.opacity(0.30) }
+        if need >= 0.5  { return Color.draftStealGold.opacity(0.15) }
         return Color.backgroundTertiary.opacity(0.4)
     }
 }

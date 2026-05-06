@@ -81,43 +81,44 @@ struct ReactionToast: View {
     @ViewBuilder
     private func toast(for reaction: ReactionsEngine.Reaction) -> some View {
         HStack(alignment: .top, spacing: DSSpacing.sm) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
                     Text(actorIcon(for: reaction.actor))
-                        .font(.body)
+                        .font(.title3)
                     Text(actorName(for: reaction.actor))
-                        .font(.caption.weight(.heavy))
+                        .font(.subheadline.weight(.heavy))
                         .foregroundStyle(Color.textPrimary)
-                        .tracking(0.6)
+                        .tracking(0.8)
                 }
                 Text(reaction.message)
-                    .font(.caption)
-                    .foregroundStyle(Color.textPrimary.opacity(0.92))
-                    .lineLimit(2)
+                    .font(.body)
+                    .foregroundStyle(Color.textPrimary.opacity(0.94))
+                    .lineLimit(3)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if reaction.mechanicalDelta != 0 {
                 Text(formattedDelta(reaction.mechanicalDelta))
-                    .font(.caption.weight(.bold))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
+                    .font(.callout.weight(.bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
                     .background(deltaBackground(for: reaction.sentiment))
                     .foregroundStyle(deltaForeground(for: reaction.sentiment))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
             }
         }
-        .padding(DSSpacing.sm)
-        .frame(width: 320, height: 60)
+        .padding(DSSpacing.md)
+        .frame(width: 380)
         .background(
             RoundedRectangle(cornerRadius: DSCornerRadius.card)
                 .fill(backgroundTint(for: reaction.sentiment))
                 .overlay(
                     RoundedRectangle(cornerRadius: DSCornerRadius.card)
-                        .strokeBorder(borderColor(for: reaction.sentiment), lineWidth: 1)
+                        .strokeBorder(borderColor(for: reaction.sentiment),
+                                      lineWidth: reaction.sentiment == .critical ? 2 : 1)
                 )
         )
-        .shadow(color: .black.opacity(0.45), radius: 8, x: 0, y: 4)
+        .shadow(color: .black.opacity(0.5), radius: 10, x: 0, y: 5)
     }
 
     // MARK: - Styling
@@ -142,10 +143,10 @@ struct ReactionToast: View {
 
     private func backgroundTint(for sentiment: ReactionsEngine.Sentiment) -> Color {
         switch sentiment {
-        case .positive: return Color.draftStealGold.opacity(0.20)
-        case .mixed:    return Color.draftSolidNeutral.opacity(0.30)
-        case .negative: return Color.draftReachRed.opacity(0.25)
-        case .critical: return Color.draftReachRed.opacity(0.40)
+        case .positive: return Color.draftStealGold.opacity(0.32)
+        case .mixed:    return Color.draftSolidNeutral.opacity(0.42)
+        case .negative: return Color.draftReachRed.opacity(0.38)
+        case .critical: return Color.draftReachRed.opacity(0.55)
         }
     }
 

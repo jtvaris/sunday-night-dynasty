@@ -31,36 +31,40 @@ struct DraftStickyHeader: View {
         let picksAway = coordinator.picksUntilUserPick
         let pulse = picksAway > 0 && picksAway <= 3
         return Text("Your next pick: #\(nextUserPickNumber()) (\(picksAway) picks away) • \(coordinator.userPicksRemaining) remaining")
-            .font(.caption.weight(pulse ? .bold : .regular))
-            .foregroundStyle(pulse ? Color.draftStealGold : Color.textTertiary)
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(pulse ? Color.draftStealGold : Color.textSecondary)
     }
 
     private var teamNeedsStrip: some View {
         let needs = coordinator.teamNeedScores
             .sorted { $0.value > $1.value }
             .prefix(5)
-        return HStack(spacing: 6) {
+        return HStack(spacing: 8) {
             Text("NEEDS")
-                .font(.caption2.weight(.heavy))
+                .font(.caption.weight(.heavy))
                 .foregroundStyle(Color.accentGold)
-                .tracking(0.8)
+                .tracking(1.0)
+                .padding(.vertical, 2)
             ForEach(Array(needs), id: \.key) { entry in
                 Text(entry.key.rawValue)
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(Color.textPrimary)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
                             .fill(Color.draftStealGold.opacity(needIntensity(entry.value)))
                     )
+                    .shadow(color: Color.black.opacity(0.25), radius: 2, x: 0, y: 1)
             }
             Spacer()
         }
+        .padding(.vertical, 2)
     }
 
     private func needIntensity(_ score: Double) -> Double {
-        // 0.30 → 0.10, 1.0 → 0.40
-        return max(0.08, min(0.42, (score - 0.2) * 0.55))
+        // Boost intensity by 1.5×: 0.30 → 0.15, 1.0 → 0.60
+        let raw = (score - 0.2) * 0.55 * 1.5
+        return max(0.12, min(0.62, raw))
     }
 
     private func roundRelativePick() -> Int {

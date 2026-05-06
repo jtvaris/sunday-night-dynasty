@@ -43,6 +43,18 @@ final class DraftDayCoordinator: ObservableObject {
     @Published private(set) var pendingRoundRecap: RoundRecapData?
     @Published private(set) var allPickResults: [PickResult] = []
     @Published private(set) var lastRoundShown: Int = 0
+    @Published private(set) var pendingTradeOffer: TradeEvaluator.ProposedOffer?
+
+    // MARK: - Reputation snapshot (used to compute round-recap deltas)
+
+    private struct ReputationSnapshot {
+        let ownerTrust: Int
+        let fanMood: Int
+        let lockerRoomMood: Int
+        let narrative: MediaNarrative
+    }
+
+    private var roundStartReputationSnapshot: ReputationSnapshot?
 
     // MARK: - Dependencies
 
@@ -200,6 +212,14 @@ final class DraftDayCoordinator: ObservableObject {
     func start() {
         guard mode == .preDraft else { return }
         recordEvent(type: .draftStarted)
+        if let rep = reputation {
+            roundStartReputationSnapshot = ReputationSnapshot(
+                ownerTrust: rep.ownerTrust,
+                fanMood: rep.fanMood,
+                lockerRoomMood: rep.lockerRoomMood,
+                narrative: rep.mediaNarrative
+            )
+        }
         announceCurrentRoundIfNeeded()
         beginCurrentPick()
     }
@@ -255,6 +275,79 @@ final class DraftDayCoordinator: ObservableObject {
         advance()
     }
 
+    // MARK: - Trade offers
+
+    /// Called by UI when the user accepts the pending offer.
+    func acceptTradeOffer() {
+        guard let offer = pendingTradeOffer else { return }
+        // Move user's outgoing pick to partner's currentTeamID and incoming
+        // picks to user. Simplification: only swap pick.currentTeamID; future
+        // picks not yet implemented.
+        if let outgoing = offer.partnerReceives.first {
+            if let idx = picks.firstIndex(where: { $0.pickNumber == outgoing.pickNumber }) {
+                picks[idx].currentTeamID = offer.partnerTeamID
+            }
+        }
+        if let incoming = offer.partnerGives.first, let userTeamID = userTeamID {
+            if let idx = picks.firstIndex(where: { $0.pickNumber == incoming.pickNumber }) {
+                picks[idx].currentTeamID = userTeamID
+            }
+        }
+        recordEvent(
+            type: .tradeAccepted,
+            teamID: offer.partnerTeamID,
+            pickNumber: offer.partnerReceives.first?.pickNumber,
+            round: nil
+        )
+        try? modelContext.save()
+        pendingTradeOffer = nil
+    }
+
+    /// Called by UI when the user rejects the pending offer.
+    func declineTradeOffer() {
+        if let offer = pendingTradeOffer {
+            recordEvent(
+                type: .tradeDeclined,
+                teamID: offer.partnerTeamID,
+                pickNumber: nil,
+                round: nil
+            )
+        }
+        pendingTradeOffer = nil
+    }
+
+    /// Called from beginCurrentPick to optionally generate an AI offer.
+    private func considerTradeOffer() {
+        guard !isUserOnClock,
+              pendingTradeOffer == nil,
+              let teamID = userTeamID,
+              let userPick = picks.dropFirst(currentPickIndex).first(where: { $0.currentTeamID == teamID }),
+              let pick = currentPick else { return }
+        // Only consider when the AI is meaningfully ahead of the user.
+        if pick.pickNumber > userPick.pickNumber - 5 { return }
+        // 5% per-pick gate so offers stay rare.
+        if Int.random(in: 1...100) > 5 { return }
+        let topProspects = availableProspects.prefix(5).enumerated().map { (idx, prospect) in
+            (prospectID: prospect.id, position: prospect.position, rank: idx + 1)
+        }
+        if let offer = TradeEvaluator.aiInitiatedOfferConsidered(
+            partnerTeamID: pick.currentTeamID,
+            partnerNeeds: DraftIntel.teamNeedScores(roster: rosters[pick.currentTeamID] ?? []),
+            partnerPersonality: .balanced,
+            currentPick: pick.pickNumber,
+            userPick: userPick.pickNumber,
+            boardTopProspects: Array(topProspects)
+        ) {
+            pendingTradeOffer = offer
+            recordEvent(
+                type: .tradeOffered,
+                teamID: offer.partnerTeamID,
+                pickNumber: pick.pickNumber,
+                round: pick.round
+            )
+        }
+    }
+
     // MARK: - Internal pick flow
 
     private func beginCurrentPick() {
@@ -270,6 +363,8 @@ final class DraftDayCoordinator: ObservableObject {
             pickNumber: pick.pickNumber,
             round: pick.round
         )
+
+        considerTradeOffer()
 
         if pick.currentTeamID == userTeamID {
             mode = .userPick
@@ -441,6 +536,14 @@ final class DraftDayCoordinator: ObservableObject {
                 recordEvent(type: type, teamID: pick.currentTeamID, pickNumber: pick.pickNumber, round: pick.round)
             }
         }
+        if !isUserPick {
+            // AI picks only get a single media reaction when the value delta is dramatic.
+            // We never apply these to the user's DraftReputation — they exist purely for
+            // UI flavour so the news-ticker stays alive between user picks.
+            let aiReactions = ReactionsEngine.reactions(to: result, isUserTeam: false)
+            let mediaOnly = aiReactions.filter { $0.actor == .media }
+            pendingReactions.append(contentsOf: mediaOnly)
+        }
 
         // Drama events trigger banners / overlays in the UI.
         let drama = DraftDramaEngine.dramaEventsFor(
@@ -492,17 +595,36 @@ final class DraftDayCoordinator: ObservableObject {
     }
 
     private func triggerRoundRecap(forRound round: Int) {
-        guard let teamID = userTeamID else { return }
-        let beforeReputation: DraftReputation? = nil  // V1 baseline; V5 wiring
+        guard let teamID = userTeamID, let rep = reputation else { return }
+        // Build a synthetic "before" reputation from the snapshot so the
+        // recap can compute meaningful round-over-round deltas.
+        let beforeRep: DraftReputation? = {
+            guard let snap = roundStartReputationSnapshot else { return nil }
+            return DraftReputation(
+                seasonYear: rep.seasonYear,
+                careerID: rep.careerID,
+                ownerTrust: snap.ownerTrust,
+                fanMood: snap.fanMood,
+                lockerRoomMood: snap.lockerRoomMood,
+                mediaNarrative: snap.narrative
+            )
+        }()
         let recap = RoundRecapBuilder.build(
             round: round,
             allPickResults: allPickResults,
             userTeamID: teamID,
-            beforeReputation: beforeReputation,
-            afterReputation: reputation
+            beforeReputation: beforeRep,
+            afterReputation: rep
         )
         pendingRoundRecap = recap
         lastRoundShown = round
+        // Reset snapshot for next round
+        roundStartReputationSnapshot = ReputationSnapshot(
+            ownerTrust: rep.ownerTrust,
+            fanMood: rep.fanMood,
+            lockerRoomMood: rep.lockerRoomMood,
+            narrative: rep.mediaNarrative
+        )
     }
 
     private func autoAdvanceUntil(_ predicate: (DraftDayCoordinator) -> Bool) {
@@ -514,7 +636,8 @@ final class DraftDayCoordinator: ObservableObject {
             if safety > picks.count + 5 { break }
             guard let pick = currentPick else { break }
             if pick.currentTeamID == userTeamID { break }
-            // immediate AI pick
+            // Capture round before pick
+            let roundBefore = pick.round
             announceCurrentRoundIfNeeded()
             recordEvent(
                 type: .onTheClock,
@@ -524,6 +647,12 @@ final class DraftDayCoordinator: ObservableObject {
             )
             aiMakePickForCurrent()
             currentPickIndex += 1
+            // Check round transition AFTER advancing — keeps round-recap firing
+            // even when the user skips through AI picks.
+            let roundAfter = currentPick?.round ?? roundBefore
+            if roundAfter != roundBefore {
+                triggerRoundRecap(forRound: roundBefore)
+            }
         }
         if currentPickIndex >= picks.count {
             mode = .complete

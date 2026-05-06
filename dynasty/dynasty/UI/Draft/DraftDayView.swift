@@ -67,13 +67,40 @@ struct DraftDayView: View {
                 ReactionToast(coordinator: coord)
                     .padding(.bottom, DSSpacing.xl)
             }
+
+            // Trade offer banner pinned to the top edge when an AI partner
+            // proposes a deal.
+            if let offer = coord.pendingTradeOffer {
+                VStack {
+                    TradeOfferBanner(
+                        motive: offer.motive,
+                        outgoing: offer.partnerReceives.map { "#\($0.pickNumber)" }.joined(separator: " + "),
+                        incoming: offer.partnerGives.map { "#\($0.pickNumber)" }.joined(separator: " + "),
+                        onAccept: { coord.acceptTradeOffer() },
+                        onDecline: { coord.declineTradeOffer() }
+                    )
+                    .padding(.top, DSSpacing.md)
+                    .padding(.horizontal, DSSpacing.md)
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
         }
         .background {
-            Image("BgDraft")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .opacity(0.15)
-                .ignoresSafeArea()
+            ZStack {
+                Image("BgDraft")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .opacity(0.30)
+                LinearGradient(
+                    colors: [
+                        Color.backgroundPrimary.opacity(0.55),
+                        Color.backgroundPrimary.opacity(0.85)
+                    ],
+                    startPoint: .top, endPoint: .bottom
+                )
+            }
+            .ignoresSafeArea()
         }
         .sheet(isPresented: Binding(
             get: { coord.mode == .userPick },
