@@ -35,6 +35,8 @@ final class DraftDayCoordinator: ObservableObject {
     @Published private(set) var rosters: [UUID: [Player]] = [:]
     @Published private(set) var recentEvents: [PlannedDraftEvent] = []
     @Published private(set) var lastPickResult: PickResult?
+    @Published private(set) var publicBoardRanks: [UUID: Int] = [:]
+    @Published private(set) var teamNeedScores: [Position: Double] = [:]
 
     // MARK: - Dependencies
 
@@ -137,6 +139,16 @@ final class DraftDayCoordinator: ObservableObject {
             !draftedNames.contains("\(prospect.firstName) \(prospect.lastName)")
         }
         self.rosters = Dictionary(grouping: allPlayers, by: { $0.teamID ?? UUID() })
+
+        // Compute public board ranks once on load — these stay stable for the
+        // whole draft (the consensus board doesn't shift mid-event).
+        self.publicBoardRanks = DraftIntel.publicBoardRanks(for: draftClass)
+
+        // Team needs for the user's roster — refreshes each time the user
+        // makes a pick so the picture stays current.
+        if let teamID = career.teamID {
+            self.teamNeedScores = DraftIntel.teamNeedScores(roster: rosters[teamID] ?? [])
+        }
 
         // Skip ahead through picks already completed in a partially-played draft.
         if let firstUnfinished = picks.firstIndex(where: { !$0.isComplete }) {
@@ -333,6 +345,12 @@ final class DraftDayCoordinator: ObservableObject {
         }
         rosters[pick.currentTeamID, default: []].append(player)
 
+        // Refresh team needs for the user after every pick (their or otherwise)
+        // since AI picks may slot into shared positional needs and shift trades.
+        if let userTeamID = userTeamID {
+            self.teamNeedScores = DraftIntel.teamNeedScores(roster: rosters[userTeamID] ?? [])
+        }
+
         // Record events
         recordEvent(
             type: .pickMade,
@@ -434,20 +452,15 @@ final class DraftDayCoordinator: ObservableObject {
     }
 
     private func computePickGrade(pick: DraftPick, prospect: CollegeProspect) -> GradeBundle {
-        let bbRank = prospect.draftProjection ?? pick.pickNumber
+        let bbRank = publicBoardRanks[prospect.id] ?? pick.pickNumber
         let valueDelta = pick.pickNumber - bbRank   // positive = drafted later than projected = steal
 
         let roster = rosters[pick.currentTeamID] ?? []
-        let topNeeds = DraftEngine.topTeamNeeds(roster: roster, limit: 5)
-        let needScore: Double = {
-            if let idx = topNeeds.firstIndex(of: prospect.position) {
-                return max(0.3, 1.0 - Double(idx) * 0.15)
-            }
-            return 0.2
-        }()
+        let teamNeeds = DraftIntel.teamNeedScores(roster: roster)
+        let needScore = teamNeeds[prospect.position] ?? 0.2
 
         let publicOVR = prospect.trueOverall  // V1: use true overall as visible OVR
-        let schemeFit: Double = 0.6  // V1: placeholder; refined in Vaihe 2 with DraftIntel
+        let schemeFit: Double = 0.6  // V1: placeholder; refined further with scheme data
 
         let inputs = PickGradeCalculator.Inputs(
             valueDelta: valueDelta,
