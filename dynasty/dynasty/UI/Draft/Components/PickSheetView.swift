@@ -39,37 +39,50 @@ struct PickSheetView: View {
     private var topProspects: [CollegeProspect] {
         Array(
             coordinator.availableProspects
-                .sorted { ($0.draftProjection ?? 999) < ($1.draftProjection ?? 999) }
+                .sorted {
+                    (coordinator.publicBoardRanks[$0.id] ?? 999) <
+                    (coordinator.publicBoardRanks[$1.id] ?? 999)
+                }
                 .prefix(20)
         )
     }
 
     private func prospectButton(_ prospect: CollegeProspect) -> some View {
-        Button {
+        let bbRank = coordinator.publicBoardRanks[prospect.id]
+        let pickNumber = coordinator.currentPick?.pickNumber ?? 0
+        let needScore = coordinator.teamNeedScores[prospect.position] ?? 0.2
+        let preview = pickGradePreview(prospect: prospect, bbRank: bbRank, pickNumber: pickNumber, needScore: needScore)
+
+        return Button {
             coordinator.selectProspect(prospect)
             dismiss()
         } label: {
             HStack(spacing: DSSpacing.sm) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(prospect.firstName) \(prospect.lastName)")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(Color.textPrimary)
-                    Text("\(prospect.position.rawValue) · \(prospect.college) · OVR \(prospect.trueOverall)")
+                    HStack(spacing: 6) {
+                        Text("\(prospect.firstName) \(prospect.lastName)")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(Color.textPrimary)
+                        if needScore >= 0.7 {
+                            Text("NEED")
+                                .font(.caption2.weight(.heavy))
+                                .padding(.horizontal, 5).padding(.vertical, 2)
+                                .background(Color.draftStealGold.opacity(0.25))
+                                .foregroundStyle(Color.draftStealGold)
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                        }
+                    }
+                    Text("\(prospect.position.rawValue) · \(prospect.college) · OVR \(prospect.trueOverall) · \(stars(prospect))")
                         .font(.caption)
                         .foregroundStyle(Color.textSecondary)
                 }
                 Spacer()
-                if let bb = prospect.draftProjection {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text("BB #\(bb)")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(Color.accentGold)
-                        if let pick = coordinator.currentPick {
-                            let delta = pick.pickNumber - bb
-                            Text(delta >= 0 ? "STEAL +\(delta)" : "REACH \(delta)")
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(delta >= 0 ? Color.success : Color.warning)
-                        }
+                VStack(alignment: .trailing, spacing: 4) {
+                    gradeChip(preview.grade)
+                    if let bb = bbRank {
+                        Text("BB #\(bb) · \(reachLabel(bb: bb, pick: pickNumber))")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textSecondary)
                     }
                 }
             }
@@ -80,10 +93,62 @@ struct PickSheetView: View {
                     .fill(Color.backgroundSecondary)
                     .overlay(
                         RoundedRectangle(cornerRadius: DSCornerRadius.card)
-                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                            .strokeBorder(borderColor(for: preview.grade),
+                                          lineWidth: preview.isGemCandidate ? 2 : 1)
                     )
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private func pickGradePreview(prospect: CollegeProspect, bbRank: Int?, pickNumber: Int, needScore: Double) -> PickGradeCalculator.Output {
+        let valueDelta = pickNumber - (bbRank ?? pickNumber)
+        let inputs = PickGradeCalculator.Inputs(
+            valueDelta: valueDelta,
+            needScore: needScore,
+            publicOVR: prospect.trueOverall,
+            schemeFit: 0.6
+        )
+        return PickGradeCalculator.compute(inputs)
+    }
+
+    private func gradeChip(_ grade: PickGrade) -> some View {
+        Text(grade.rawValue)
+            .font(.caption.weight(.heavy))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .foregroundStyle(Color.textPrimary)
+            .background(gradeColor(grade))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+
+    private func gradeColor(_ grade: PickGrade) -> Color {
+        switch grade {
+        case .stealAPlus, .hofTrack: return Color.draftStealGold
+        case .smartA:                return Color.success
+        case .solid:                 return Color.draftSolidNeutral
+        case .reach:                 return Color.warning
+        case .bigReach:              return Color.draftReachRed
+        }
+    }
+
+    private func borderColor(for grade: PickGrade) -> Color {
+        switch grade {
+        case .stealAPlus, .hofTrack: return Color.draftStealGold
+        case .smartA:                return Color.success.opacity(0.6)
+        case .reach, .bigReach:      return Color.draftReachRed.opacity(0.6)
+        default:                     return Color.surfaceBorder
+        }
+    }
+
+    private func reachLabel(bb: Int, pick: Int) -> String {
+        let delta = pick - bb
+        if delta >= 4  { return "STEAL +\(delta)" }
+        if delta <= -4 { return "REACH \(delta)" }
+        return "FAIR"
+    }
+
+    private func stars(_ prospect: CollegeProspect) -> String {
+        let n = DraftIntel.scoutConfidence(for: prospect)
+        return String(repeating: "★", count: n)
     }
 }

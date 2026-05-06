@@ -37,6 +37,20 @@ enum WeekAdvancer {
     /// Latest mock draft projection (generated at midseason, combine, and pre-draft).
     static var currentMockDraft: [ScoutingEngine.MockDraftPick] = []
 
+    // MARK: - Draft Class Persistence
+
+    /// Inserts every prospect of the current draft class into the SwiftData
+    /// context and persists the change. Safe to call repeatedly — `insert`
+    /// is idempotent for managed instances and will register fresh ones so
+    /// subsequent `save()` calls flush their property changes too.
+    @MainActor
+    static func persistDraftClass(_ prospects: [CollegeProspect], to context: ModelContext) {
+        for prospect in prospects {
+            context.insert(prospect)
+        }
+        try? context.save()
+    }
+
     // MARK: - Public API
 
     /// Advances the career state by exactly one week.
@@ -442,6 +456,7 @@ enum WeekAdvancer {
             if !draftClassGenerated {
                 currentDraftClass = ScoutingEngine.generateDraftClass()
                 draftClassGenerated = true
+                persistDraftClass(currentDraftClass, to: modelContext)
             }
             currentMockDraft = ScoutingEngine.generateMockDraft(
                 prospects: currentDraftClass,
@@ -633,6 +648,7 @@ enum WeekAdvancer {
                 if totalWins == 0 && totalLosses == 0 {
                     ScoutingEngine.applyPreScoutedData(prospects: &currentDraftClass)
                 }
+                persistDraftClass(currentDraftClass, to: modelContext)
             }
 
             // Check coordinator poaching for all teams (legacy system)
@@ -746,6 +762,7 @@ enum WeekAdvancer {
                 if isFirstSeason {
                     ScoutingEngine.applyPreScoutedData(prospects: &currentDraftClass)
                 }
+                persistDraftClass(currentDraftClass, to: modelContext)
             }
 
             // Combine results are NOT auto-generated here — they should only be

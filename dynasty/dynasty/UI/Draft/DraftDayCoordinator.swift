@@ -115,34 +115,48 @@ final class DraftDayCoordinator: ObservableObject {
             .sorted { $0.pickNumber < $1.pickNumber }
         let draftPicks = !inMemoryPicks.isEmpty ? inMemoryPicks : persistedPicks
 
-        // Prospects: prefer in-memory (live cycle); fall back to SwiftData; finally
-        // generate a fresh class on demand so the draft is never blocked by
-        // missing scouting data.
+        // Prospects: SwiftData is the source of truth (preserves Scouting/Big Board
+        // edits across app restarts). Fall back to in-memory only if SwiftData is
+        // empty, and finally generate a fresh class on demand so the draft is
+        // never blocked by missing scouting data.
         let inMemoryClass = WeekAdvancer.currentDraftClass
         let prospectFetch = FetchDescriptor<CollegeProspect>()
         let persistedClass = (try? modelContext.fetch(prospectFetch)) ?? []
         let draftClass: [CollegeProspect]
-        if !inMemoryClass.isEmpty {
-            draftClass = inMemoryClass
-        } else if !persistedClass.isEmpty {
+        if !persistedClass.isEmpty {
             draftClass = persistedClass
+            WeekAdvancer.currentDraftClass = persistedClass
+        } else if !inMemoryClass.isEmpty {
+            draftClass = inMemoryClass
+            // In-memory but never persisted — flush to SwiftData now.
+            WeekAdvancer.persistDraftClass(inMemoryClass, to: modelContext)
         } else {
             let generated = ScoutingEngine.generateDraftClass()
             WeekAdvancer.currentDraftClass = generated
+            WeekAdvancer.persistDraftClass(generated, to: modelContext)
             draftClass = generated
         }
 
         let draftedNames: Set<String> = Set(draftPicks.compactMap { $0.playerName })
+        // Build the player-facing pool: declared, not already drafted by name
+        // (across this and any earlier sessions persisted in SwiftData), and
+        // deduplicated by UUID (SwiftData can carry stale dupes from earlier
+        // generation cycles).
+        var seenIDs = Set<UUID>()
+        let availablePool = draftClass
+            .filter { $0.isDeclaringForDraft }
+            .filter { !draftedNames.contains("\($0.firstName) \($0.lastName)") }
+            .filter { seenIDs.insert($0.id).inserted }
+
         self.teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
         self.picks = draftPicks
-        self.availableProspects = draftClass.filter { prospect in
-            !draftedNames.contains("\(prospect.firstName) \(prospect.lastName)")
-        }
+        self.availableProspects = availablePool
         self.rosters = Dictionary(grouping: allPlayers, by: { $0.teamID ?? UUID() })
 
-        // Compute public board ranks once on load — these stay stable for the
-        // whole draft (the consensus board doesn't shift mid-event).
-        self.publicBoardRanks = DraftIntel.publicBoardRanks(for: draftClass)
+        // Compute public board ranks for the visible pool only — guarantees
+        // contiguous 1..N rankings even when SwiftData carries leftover
+        // already-drafted prospects from previous sessions.
+        self.publicBoardRanks = DraftIntel.publicBoardRanks(for: availablePool)
 
         // Team needs for the user's roster — refreshes each time the user
         // makes a pick so the picture stays current.

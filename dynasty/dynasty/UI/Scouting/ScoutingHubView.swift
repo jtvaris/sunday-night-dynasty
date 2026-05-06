@@ -234,6 +234,9 @@ struct ScoutingHubView: View {
 
         combineMedia = ScoutingEngine.generateCombineMedia(prospects: &draftClass)
         WeekAdvancer.currentDraftClass = draftClass
+        // Ensure prospects are tracked + flush combine results to SwiftData so
+        // they survive an app restart (#data-flow-bug).
+        WeekAdvancer.persistDraftClass(WeekAdvancer.currentDraftClass, to: modelContext)
         scoutsSentToCombine = true
         loadData()
         showCombineReport = true
@@ -425,14 +428,22 @@ struct ScoutingHubView: View {
         )
         scouts = (try? modelContext.fetch(scoutDesc)) ?? []
 
-        // Re-generate draft class if lost (app restart)
+        // Restore draft class on app restart: prefer SwiftData, then re-generate.
         if WeekAdvancer.currentDraftClass.isEmpty {
-            let validPhases: [SeasonPhase] = [.coachingChanges, .reviewRoster, .combine, .freeAgency, .proDays, .draft, .otas]
-            if validPhases.contains(career.currentPhase) {
-                WeekAdvancer.currentDraftClass = ScoutingEngine.generateDraftClass()
+            let prospectFetch = FetchDescriptor<CollegeProspect>()
+            let persisted = (try? modelContext.fetch(prospectFetch)) ?? []
+            if !persisted.isEmpty {
+                WeekAdvancer.currentDraftClass = persisted
                 WeekAdvancer.draftClassGenerated = true
-                // Apply pre-scouted data for first season
-                ScoutingEngine.applyPreScoutedData(prospects: &WeekAdvancer.currentDraftClass)
+            } else {
+                let validPhases: [SeasonPhase] = [.coachingChanges, .reviewRoster, .combine, .freeAgency, .proDays, .draft, .otas]
+                if validPhases.contains(career.currentPhase) {
+                    WeekAdvancer.currentDraftClass = ScoutingEngine.generateDraftClass()
+                    WeekAdvancer.draftClassGenerated = true
+                    // Apply pre-scouted data for first season
+                    ScoutingEngine.applyPreScoutedData(prospects: &WeekAdvancer.currentDraftClass)
+                    WeekAdvancer.persistDraftClass(WeekAdvancer.currentDraftClass, to: modelContext)
+                }
             }
         }
 

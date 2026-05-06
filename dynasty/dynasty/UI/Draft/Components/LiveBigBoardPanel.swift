@@ -53,7 +53,8 @@ struct LiveBigBoardPanel: View {
         switch sortMode {
         case .projection:
             return pool.sorted {
-                ($0.draftProjection ?? 999) < ($1.draftProjection ?? 999)
+                (coordinator.publicBoardRanks[$0.id] ?? 999) <
+                (coordinator.publicBoardRanks[$1.id] ?? 999)
             }
         case .ovr:
             return pool.sorted { $0.trueOverall > $1.trueOverall }
@@ -64,16 +65,16 @@ struct LiveBigBoardPanel: View {
 
     private func prospectRow(_ prospect: CollegeProspect) -> some View {
         HStack(spacing: DSSpacing.xs) {
-            if let rank = prospect.draftProjection {
+            if let rank = coordinator.publicBoardRanks[prospect.id] {
                 Text("#\(rank)")
                     .font(.caption.monospaced().weight(.bold))
                     .foregroundStyle(Color.accentGold)
-                    .frame(width: 36, alignment: .leading)
+                    .frame(width: 40, alignment: .leading)
             } else {
                 Text("—")
                     .font(.caption.monospaced())
                     .foregroundStyle(Color.textTertiary)
-                    .frame(width: 36, alignment: .leading)
+                    .frame(width: 40, alignment: .leading)
             }
             Text(prospect.position.rawValue)
                 .font(.caption2.weight(.bold))
@@ -84,15 +85,31 @@ struct LiveBigBoardPanel: View {
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
             Spacer()
-            Text("OVR \(prospect.trueOverall)")
-                .font(.caption2.monospaced())
+            Text(stars(for: prospect))
+                .font(.caption2)
+                .foregroundStyle(Color.draftStealGold)
+            Text("\(prospect.trueOverall)")
+                .font(.caption2.monospaced().weight(.bold))
                 .foregroundStyle(Color.forRating(prospect.trueOverall))
+                .frame(width: 28, alignment: .trailing)
         }
         .padding(.vertical, 3)
         .padding(.horizontal, DSSpacing.xs)
         .background(
             RoundedRectangle(cornerRadius: DSCornerRadius.inline)
-                .fill(Color.backgroundTertiary.opacity(0.4))
+                .fill(needHighlight(for: prospect))
         )
+    }
+
+    private func stars(for prospect: CollegeProspect) -> String {
+        let n = DraftIntel.scoutConfidence(for: prospect)
+        return String(repeating: "★", count: n) + String(repeating: "☆", count: 5 - n)
+    }
+
+    private func needHighlight(for prospect: CollegeProspect) -> Color {
+        if (coordinator.teamNeedScores[prospect.position] ?? 0) >= 0.7 {
+            return Color.draftStealGold.opacity(0.18)
+        }
+        return Color.backgroundTertiary.opacity(0.4)
     }
 }
