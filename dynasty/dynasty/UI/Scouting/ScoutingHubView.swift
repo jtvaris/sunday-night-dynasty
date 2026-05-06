@@ -268,12 +268,21 @@ struct ScoutingHubView: View {
 
     private var phaseLabel: String {
         switch career.currentPhase {
-        case .combine:      return "NFL Combine"
-        case .freeAgency:   return "Free Agency"
-        case .proDays:      return "Pro Days & Workouts"
-        case .draft:        return "NFL Draft"
-        case .regularSeason: return "Regular Season"
-        default:            return career.currentPhase.rawValue
+        case .proBowl:          return "Pro Bowl"
+        case .superBowl:        return "Super Bowl"
+        case .coachingChanges:  return "Coaching Changes"
+        case .reviewRoster:     return "Review Roster"
+        case .combine:          return "NFL Combine"
+        case .freeAgency:       return "Free Agency"
+        case .proDays:          return "Pro Days & Workouts"
+        case .draft:            return "NFL Draft"
+        case .otas:             return "OTAs"
+        case .trainingCamp:     return "Training Camp"
+        case .preseason:        return "Preseason"
+        case .rosterCuts:       return "Roster Cuts"
+        case .regularSeason:    return "Regular Season"
+        case .tradeDeadline:    return "Trade Deadline"
+        case .playoffs:         return "Playoffs"
         }
     }
 

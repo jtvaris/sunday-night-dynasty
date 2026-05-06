@@ -16,6 +16,7 @@ struct DraftOrderView: View {
     @State private var cachedAbbreviationLookup: [UUID: String] = [:]
     @State private var cachedUserPickNumbers: Set<Int> = []
     @State private var cachedUserTotalPicks: Int = 0
+    @State private var cachedUserPickRounds: [Int] = []
 
     private var userTeamID: UUID? { career.teamID }
 
@@ -32,6 +33,9 @@ struct DraftOrderView: View {
     /// Total picks the user has.
     private var userTotalPicks: Int { cachedUserTotalPicks }
 
+    /// Sorted unique round numbers where the user has picks (incomplete only).
+    private var userPickRounds: [Int] { cachedUserPickRounds }
+
     private func refreshCaches() {
         cachedTeamLookup = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
         cachedAbbreviationLookup = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0.abbreviation) })
@@ -42,6 +46,12 @@ struct DraftOrderView: View {
         }
         cachedUserPickNumbers = Set(draftPicks.filter { $0.currentTeamID == userTeamID }.map { $0.pickNumber })
         cachedUserTotalPicks = draftPicks.filter { $0.currentTeamID == userTeamID && !$0.isComplete }.count
+        let userRounds = Set(draftPicks.filter { $0.currentTeamID == userTeamID && !$0.isComplete }.map { $0.round })
+        cachedUserPickRounds = userRounds.sorted()
+        // Auto-expand rounds where the user has picks so they're visible immediately.
+        if !userRounds.isEmpty {
+            expandedRounds.formUnion(userRounds)
+        }
     }
 
     var body: some View {
@@ -134,11 +144,25 @@ struct DraftOrderView: View {
                 Text("Your Picks: \(userTotalPicks)")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.accentGold)
-                Text("7 rounds")
+                Text(userPicksSubtitle)
                     .font(.caption2)
                     .foregroundStyle(Color.textTertiary)
             }
         }
+    }
+
+    /// Subtitle that explains where the user's picks are located, so they know to
+    /// expand the right rounds (default state shows only Round 1).
+    private var userPicksSubtitle: String {
+        guard !userPickRounds.isEmpty else { return "no picks this draft" }
+        if userPickRounds.count == 1, let only = userPickRounds.first {
+            return "Round \(only)"
+        }
+        if let first = userPickRounds.first, let last = userPickRounds.last,
+           userPickRounds == Array(first...last) {
+            return "across rounds \(first)-\(last)"
+        }
+        return "rounds " + userPickRounds.map(String.init).joined(separator: ", ")
     }
 
     // MARK: - User Picks Summary

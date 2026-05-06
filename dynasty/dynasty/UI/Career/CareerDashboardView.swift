@@ -58,8 +58,25 @@ struct CareerDashboardView: View {
 
     // MARK: - Derived
 
+    /// Coaching budget overage in thousands. Returns 0 when within budget,
+    /// positive value (in thousands) when staff salaries exceed the owner's
+    /// coaching budget. Only relevant during the `.coachingChanges` phase.
+    private var coachingOverage: Int {
+        guard coachingBudgetTotal > 0 else { return 0 }
+        return max(0, -coachingBudgetRemaining)
+    }
+
+    /// True when the user is in coachingChanges phase and has overspent the
+    /// staff budget. Blocks advancement until staff are released or salaries
+    /// reduced. (#54)
+    private var isBlockedByCoachingBudget: Bool {
+        career.currentPhase == .coachingChanges && coachingOverage > 0
+    }
+
     private var canAdvance: Bool {
-        TaskGenerator.allRequiredComplete(in: tasks)
+        guard TaskGenerator.allRequiredComplete(in: tasks) else { return false }
+        if isBlockedByCoachingBudget { return false }
+        return true
     }
 
     /// Topmost incomplete required task (mirrors TimelineTasksPanel.nextActionableTask).
@@ -198,6 +215,7 @@ struct CareerDashboardView: View {
                     if canAdvance {
                         allTasksCompleteBanner
                     }
+                    coachingBudgetBlockerBanner
                     TimelineTasksPanel(
                         career: career,
                         tasks: $tasks,
@@ -257,6 +275,7 @@ struct CareerDashboardView: View {
                 if canAdvance {
                     allTasksCompleteBanner
                 }
+                coachingBudgetBlockerBanner
                 TimelineTasksPanel(
                     career: career,
                     tasks: $tasks,
@@ -309,6 +328,7 @@ struct CareerDashboardView: View {
                     if canAdvance {
                         allTasksCompleteBanner
                     }
+                    coachingBudgetBlockerBanner
                     TimelineTasksPanel(
                         career: career,
                         tasks: $tasks,
@@ -1798,6 +1818,33 @@ struct CareerDashboardView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color.success.opacity(0.1))
+    }
+
+    /// Blocker banner shown when advance is gated by coaching-budget overage. (#54)
+    @ViewBuilder
+    private var coachingBudgetBlockerBanner: some View {
+        if isBlockedByCoachingBudget {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.octagon.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Color.danger)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Resolve coaching budget overage first")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.danger)
+                    Text("You are \(formatCap(coachingOverage)) over the staff budget. Release staff or reduce salaries to advance.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.danger.opacity(0.10))
+            .accessibilityElement(children: .combine)
+            .accessibilityHint("Resolve coaching budget overage first")
+        }
     }
 
     // MARK: - Next Action Hero Banner

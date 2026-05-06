@@ -37,7 +37,23 @@ struct RosterSummaryBar: View {
         return min(Double(totalCapUsed) / Double(salaryCap), 1.0)
     }
 
+    /// True when total cap used exceeds the salary cap ceiling.
+    private var isOverCap: Bool {
+        totalCapUsed > salaryCap
+    }
+
+    /// Cap overage in thousands (positive when over cap, 0 otherwise).
+    private var capOverage: Int {
+        max(0, totalCapUsed - salaryCap)
+    }
+
+    private var formattedCapOverage: String {
+        let millions = Double(capOverage) / 1000.0
+        return String(format: "$%.1fM", millions)
+    }
+
     private var capColor: Color {
+        if isOverCap { return .danger }
         switch capUsageRatio {
         case 0.9...:  return .danger
         case 0.75..<0.9: return .warning
@@ -66,7 +82,42 @@ struct RosterSummaryBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        VStack(spacing: 0) {
+            // Over-cap warning banner (#55) — shown when usedCap > salaryCap.
+            if isOverCap {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.danger)
+                    Text("OVER CAP")
+                        .font(.system(size: 11, weight: .heavy))
+                        .foregroundStyle(Color.danger)
+                        .tracking(0.5)
+                    Text("-\(formattedCapOverage)")
+                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .foregroundStyle(Color.danger)
+                    Text("\u{2014} Resolve before adding players")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    Spacer(minLength: 4)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.danger.opacity(0.12))
+                .overlay(
+                    Rectangle()
+                        .frame(height: 1)
+                        .foregroundStyle(Color.danger.opacity(0.4)),
+                    alignment: .bottom
+                )
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Over salary cap by \(formattedCapOverage). Resolve before adding players.")
+            }
+
+            HStack(spacing: 0) {
             summaryItem(
                 label: "Players",
                 value: "\(totalCount)",
@@ -155,9 +206,10 @@ struct RosterSummaryBar: View {
                     .foregroundStyle(Color.textTertiary)
             }
             .frame(maxWidth: .infinity)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 4)
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 4)
         .background(Color.backgroundSecondary)
         .overlay(
             Rectangle()

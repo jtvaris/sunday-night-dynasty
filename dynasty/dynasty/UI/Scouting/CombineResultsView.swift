@@ -22,7 +22,20 @@ struct CombineResultsView: View {
     // MARK: - Filtered & Sorted Data
 
     private var combineInvitees: [CollegeProspect] {
-        prospects.filter { $0.combineInvite }
+        // Prefer prospects with actual combine measurements so results stay
+        // visible after the Combine phase ends (e.g. during Free Agency).
+        // Fall back to the invite flag for the pre-results window.
+        let withResults = prospects.filter { $0.fortyTime != nil }
+        if !withResults.isEmpty {
+            return withResults
+        }
+        return prospects.filter { $0.combineInvite }
+    }
+
+    /// True when at least one prospect has persisted combine measurements.
+    /// Used to keep results visible regardless of the current season phase.
+    private var hasResults: Bool {
+        prospects.contains { $0.fortyTime != nil }
     }
 
     private var filteredProspects: [CollegeProspect] {
@@ -523,11 +536,13 @@ struct CombineResultsView: View {
                 .font(.system(size: 52))
                 .foregroundStyle(Color.textTertiary)
 
-            Text("No Combine Results Yet")
+            Text(hasResults ? "No Combine Invitees" : "No Combine Results Yet")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(Color.textPrimary)
 
-            Text("Combine results will be available during the Combine phase.")
+            Text(hasResults
+                 ? "No prospects in this draft class were invited to the Combine."
+                 : "Combine results will be available during the Combine phase.")
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
