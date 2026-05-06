@@ -29,13 +29,46 @@ struct CombineResultsView: View {
         if !withResults.isEmpty {
             return withResults
         }
-        return prospects.filter { $0.combineInvite }
+        let invited = prospects.filter { $0.combineInvite }
+        if !invited.isEmpty {
+            return invited
+        }
+        // Last-resort fallback: if the game has advanced past the Combine
+        // phase but neither combineInvite nor fortyTime data persisted on
+        // the draft class (data desync), surface scouted prospects so the
+        // tab is at least readable and not a confusing empty state.
+        if isPastCombinePhase {
+            return prospects.filter { $0.scoutedOverall != nil }
+        }
+        return []
     }
 
     /// True when at least one prospect has persisted combine measurements.
     /// Used to keep results visible regardless of the current season phase.
     private var hasResults: Bool {
         prospects.contains { $0.fortyTime != nil }
+    }
+
+    /// True when at least one prospect has been scouted but no combine
+    /// measurements exist — used to drive a "needs simulation" empty state.
+    private var hasScoutedOnly: Bool {
+        !hasResults
+            && !prospects.contains { $0.combineInvite }
+            && prospects.contains { $0.scoutedOverall != nil }
+    }
+
+    /// True when the season has advanced past the Combine phase. Used to
+    /// gate the scouted-only fallback so we don't surface a misleading
+    /// table during the pre-Combine window.
+    private var isPastCombinePhase: Bool {
+        switch career.currentPhase {
+        case .freeAgency, .proDays, .draft, .otas, .trainingCamp,
+             .preseason, .rosterCuts, .regularSeason, .tradeDeadline,
+             .playoffs, .proBowl, .superBowl:
+            return true
+        default:
+            return false
+        }
     }
 
     private var filteredProspects: [CollegeProspect] {
@@ -536,19 +569,33 @@ struct CombineResultsView: View {
                 .font(.system(size: 52))
                 .foregroundStyle(Color.textTertiary)
 
-            Text(hasResults ? "No Combine Invitees" : "No Combine Results Yet")
+            Text(emptyStateTitle)
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(Color.textPrimary)
 
-            Text(hasResults
-                 ? "No prospects in this draft class were invited to the Combine."
-                 : "Combine results will be available during the Combine phase.")
+            Text(emptyStateMessage)
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyStateTitle: String {
+        if hasResults { return "No Combine Invitees" }
+        if hasScoutedOnly { return "Combine Not Simulated" }
+        return "No Combine Results Yet"
+    }
+
+    private var emptyStateMessage: String {
+        if hasResults {
+            return "No prospects in this draft class were invited to the Combine."
+        }
+        if hasScoutedOnly {
+            return "Combine simulation needed for this draft class \u{2014} run \u{201C}Send Scouts to Combine\u{201D} from the Scout Team tab."
+        }
+        return "Combine results will be available during the Combine phase."
     }
 
     // MARK: - Media Mention Helpers

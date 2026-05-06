@@ -24,12 +24,12 @@ struct RosterSummaryBar: View {
 
     private var formattedCapUsed: String {
         let millions = Double(totalCapUsed) / 1000.0
-        return String(format: "$%.0fM", millions)
+        return String(format: "$%.1fM", millions)
     }
 
     private var formattedCapTotal: String {
         let millions = Double(salaryCap) / 1000.0
-        return String(format: "$%.0fM", millions)
+        return String(format: "$%.1fM", millions)
     }
 
     private var capUsageRatio: Double {
@@ -47,9 +47,18 @@ struct RosterSummaryBar: View {
         max(0, totalCapUsed - salaryCap)
     }
 
+    /// Cap overage in millions (Double) for display formatting.
+    private var capOverageMillions: Double {
+        Double(capOverage) / 1000.0
+    }
+
     private var formattedCapOverage: String {
-        let millions = Double(capOverage) / 1000.0
-        return String(format: "$%.1fM", millions)
+        // Use 2-decimal precision when the overage is < $1M so a small but
+        // real overage isn't masked as "$0.0M" by single-decimal rounding.
+        if capOverageMillions > 0 && capOverageMillions < 1.0 {
+            return String(format: "$%.2fM", capOverageMillions)
+        }
+        return String(format: "$%.1fM", capOverageMillions)
     }
 
     private var capColor: Color {
