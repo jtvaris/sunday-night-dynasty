@@ -6,6 +6,7 @@ struct FACompleteView: View {
     let career: Career
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
 
     @State private var team: Team?
     @State private var recentSignings: [SigningDetail] = []
@@ -621,6 +622,9 @@ struct FACompleteView: View {
     private var continueButton: some View {
         Button {
             WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+            // Pop the FA modal stack back to the Career Dashboard so the user
+            // can see the new .proDays phase tasks.
+            dismiss()
         } label: {
             HStack(spacing: 10) {
                 Text("Continue to Pro Days")
