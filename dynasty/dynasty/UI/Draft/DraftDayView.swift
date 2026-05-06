@@ -41,18 +41,39 @@ struct DraftDayView: View {
 
     @ViewBuilder
     private func contentView(coord: DraftDayCoordinator) -> some View {
-        VStack(spacing: 0) {
-            DraftStickyHeader(coordinator: coord)
-            HStack(spacing: 0) {
-                LiveBigBoardPanel(coordinator: coord)
-                    .frame(maxWidth: 320)
-                Divider().overlay(Color.surfaceBorder)
-                DraftTickerPanel(coordinator: coord)
-                Divider().overlay(Color.surfaceBorder)
-                WarRoomPanel(coordinator: coord)
-                    .frame(maxWidth: 280)
+        ZStack {
+            VStack(spacing: 0) {
+                DraftStickyHeader(coordinator: coord)
+                HStack(spacing: 0) {
+                    LiveBigBoardPanel(coordinator: coord)
+                        .frame(maxWidth: 320)
+                    Divider().overlay(Color.surfaceBorder)
+                    DraftTickerPanel(coordinator: coord)
+                    Divider().overlay(Color.surfaceBorder)
+                    WarRoomPanel(coordinator: coord)
+                        .frame(maxWidth: 280)
+                }
+                DraftControlBar(coordinator: coord)
             }
-            DraftControlBar(coordinator: coord)
+
+            // Drama overlays at the top of the Z stack — banners, curtains,
+            // gem flashes, Mr. Irrelevant.
+            DramaOverlayView(coordinator: coord)
+
+            // Reaction toasts pinned to the bottom edge — owner / media /
+            // locker room / fans react to user picks.
+            VStack {
+                Spacer()
+                ReactionToast(coordinator: coord)
+                    .padding(.bottom, DSSpacing.xl)
+            }
+        }
+        .background {
+            Image("BgDraft")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .opacity(0.15)
+                .ignoresSafeArea()
         }
         .sheet(isPresented: Binding(
             get: { coord.mode == .userPick },
@@ -60,6 +81,14 @@ struct DraftDayView: View {
         )) {
             PickSheetView(coordinator: coord)
                 .interactiveDismissDisabled()
+        }
+        .sheet(isPresented: Binding(
+            get: { coord.pendingRoundRecap != nil },
+            set: { _ in }
+        )) {
+            if let recap = coord.pendingRoundRecap {
+                RoundRecapSheet(coordinator: coord, recap: recap)
+            }
         }
     }
 }

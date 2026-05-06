@@ -37,6 +37,12 @@ final class DraftDayCoordinator: ObservableObject {
     @Published private(set) var lastPickResult: PickResult?
     @Published private(set) var publicBoardRanks: [UUID: Int] = [:]
     @Published private(set) var teamNeedScores: [Position: Double] = [:]
+    @Published private(set) var reputation: DraftReputation?
+    @Published private(set) var pendingReactions: [ReactionsEngine.Reaction] = []
+    @Published private(set) var pendingDrama: [DraftDramaEngine.DramaEvent] = []
+    @Published private(set) var pendingRoundRecap: RoundRecapData?
+    @Published private(set) var allPickResults: [PickResult] = []
+    @Published private(set) var lastRoundShown: Int = 0
 
     // MARK: - Dependencies
 
@@ -162,6 +168,20 @@ final class DraftDayCoordinator: ObservableObject {
         // makes a pick so the picture stays current.
         if let teamID = career.teamID {
             self.teamNeedScores = DraftIntel.teamNeedScores(roster: rosters[teamID] ?? [])
+        }
+
+        // Load or create the DraftReputation row for this season.
+        let careerID = career.id
+        let repFetch = FetchDescriptor<DraftReputation>(
+            predicate: #Predicate { $0.seasonYear == season && $0.careerID == careerID }
+        )
+        if let existing = (try? modelContext.fetch(repFetch))?.first {
+            self.reputation = existing
+        } else {
+            let fresh = DraftReputation(seasonYear: season, careerID: careerID)
+            modelContext.insert(fresh)
+            try? modelContext.save()
+            self.reputation = fresh
         }
 
         // Skip ahead through picks already completed in a partially-played draft.
@@ -388,7 +408,7 @@ final class DraftDayCoordinator: ObservableObject {
             return pick.pickNumber > projection + 8
         }()
 
-        lastPickResult = PickResult(
+        let result = PickResult(
             pickNumber: pick.pickNumber,
             round: pick.round,
             teamAbbrev: pick.teamAbbreviation ?? "—",
@@ -400,20 +420,89 @@ final class DraftDayCoordinator: ObservableObject {
             isUserPick: isUserPick,
             ownerOverride: ownerOverride
         )
+        lastPickResult = result
+        allPickResults.append(result)
+
+        // Reactions for the user's own picks (mechanical effects only)
+        if isUserPick, let rep = reputation {
+            let reactions = ReactionsEngine.reactions(to: result, isUserTeam: true)
+            ReactionsEngine.apply(reactions, to: rep)
+            ReactionsEngine.updateNarrative(rep, recentPicks: allPickResults.filter { $0.isUserPick })
+            pendingReactions.append(contentsOf: reactions)
+            for r in reactions {
+                let type: DraftEventType = {
+                    switch r.actor {
+                    case .owner:      return .ownerReaction
+                    case .media:      return .mediaReaction
+                    case .lockerRoom: return .lockerRoomReaction
+                    case .fans:       return .fanReaction
+                    }
+                }()
+                recordEvent(type: type, teamID: pick.currentTeamID, pickNumber: pick.pickNumber, round: pick.round)
+            }
+        }
+
+        // Drama events trigger banners / overlays in the UI.
+        let drama = DraftDramaEngine.dramaEventsFor(
+            result: result,
+            currentRound: pick.round,
+            previousRound: pick.round,
+            picksUntilUserPick: picksUntilUserPick,
+            isFinalPick: pick.pickNumber == picks.last?.pickNumber
+        )
+        pendingDrama.append(contentsOf: drama)
 
         try? modelContext.save()
     }
 
     private func advance() {
         clockTask?.cancel()
+        let previousRound = currentPick?.round ?? 1
         currentPickIndex += 1
         if currentPickIndex >= picks.count {
             mode = .complete
             recordEvent(type: .draftCompleted)
             return
         }
+        let nextRound = currentPick?.round ?? 1
+        if nextRound != previousRound {
+            triggerRoundRecap(forRound: previousRound)
+        }
         announceCurrentRoundIfNeeded()
         beginCurrentPick()
+    }
+
+    // MARK: - Reactions / Drama / Recap consumption
+
+    /// UI calls this once it has shown the next pending reaction toast.
+    func consumeOldestReaction() {
+        guard !pendingReactions.isEmpty else { return }
+        pendingReactions.removeFirst()
+    }
+
+    /// UI calls this once it has shown the next pending drama overlay.
+    func consumeOldestDrama() {
+        guard !pendingDrama.isEmpty else { return }
+        pendingDrama.removeFirst()
+    }
+
+    /// UI calls this once the round recap card has been dismissed.
+    func dismissRoundRecap() {
+        pendingRoundRecap = nil
+    }
+
+    private func triggerRoundRecap(forRound round: Int) {
+        guard let teamID = userTeamID else { return }
+        let beforeReputation: DraftReputation? = nil  // V1 baseline; V5 wiring
+        let recap = RoundRecapBuilder.build(
+            round: round,
+            allPickResults: allPickResults,
+            userTeamID: teamID,
+            beforeReputation: beforeReputation,
+            afterReputation: reputation
+        )
+        pendingRoundRecap = recap
+        lastRoundShown = round
     }
 
     private func autoAdvanceUntil(_ predicate: (DraftDayCoordinator) -> Bool) {

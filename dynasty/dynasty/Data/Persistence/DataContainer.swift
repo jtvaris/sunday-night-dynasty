@@ -19,6 +19,7 @@ enum DataContainer {
             DraftPick.self,
             DraftEvent.self,
             DraftPickGrade.self,
+            DraftReputation.self,
             CareerArcState.self,
             PlayerSeasonHistory.self,
         ])
