@@ -63,6 +63,10 @@ struct PlayerDetailView: View {
     /// `playerSeasonHistory` below. Recorded by WeekAdvancer at end of week 18.
     @Query(sort: \PlayerSeasonHistory.season) private var allSeasonHistory: [PlayerSeasonHistory]
 
+    /// All persisted draft pick grades. Filtered to this player to render the
+    /// Public/True/Gem badge row in the header.
+    @Query private var allDraftPickGrades: [DraftPickGrade]
+
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
@@ -285,6 +289,10 @@ struct PlayerDetailView: View {
                     Spacer()
                 }
 
+                // Draft grade badges (Public / True / Hidden Gem) — only shown
+                // when the player was actually drafted and has a persisted grade.
+                draftBadgeRow
+
                 // Quick stats row
                 HStack(spacing: 0) {
                     quickStat(label: "Morale", value: "\(player.morale)", color: moraleColor)
@@ -313,6 +321,69 @@ struct PlayerDetailView: View {
             .padding(.vertical, 4)
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    // MARK: - Draft Grade Badges (Vaihe 5)
+
+    /// Badge row showing Public Grade, True Grade and Hidden-Gem indicator for
+    /// drafted players. Hidden when the player wasn't drafted or has no
+    /// persisted `DraftPickGrade` entry.
+    @ViewBuilder
+    private var draftBadgeRow: some View {
+        if player.draftPickNumber != nil,
+           let grade = allDraftPickGrades.first(where: { $0.playerID == player.id }) {
+            HStack(spacing: 12) {
+                gradeBadge(label: "Public", grade: grade.publicGrade)
+                if let trueGrade = grade.trueGrade {
+                    gradeBadge(label: "True", grade: trueGrade)
+                }
+                if grade.isGem {
+                    Text("💎 Hidden Gem")
+                        .font(.caption.weight(.heavy))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.draftStealGold.opacity(0.25))
+                        .foregroundStyle(Color.draftStealGold)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                if grade.isBust {
+                    Text("BUST")
+                        .font(.caption.weight(.heavy))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.draftReachRed.opacity(0.25))
+                        .foregroundStyle(Color.draftReachRed)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                Spacer()
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private func gradeBadge(label: String, grade: PickGrade) -> some View {
+        VStack(spacing: 2) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+            Text(grade.rawValue)
+                .font(.caption.weight(.heavy))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(badgeColor(grade))
+                .foregroundStyle(Color.textPrimary)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+    }
+
+    private func badgeColor(_ grade: PickGrade) -> Color {
+        switch grade {
+        case .stealAPlus, .hofTrack: return Color.draftStealGold
+        case .smartA:                return Color.success
+        case .solid:                 return Color.draftSolidNeutral
+        case .reach:                 return Color.warning
+        case .bigReach:              return Color.draftReachRed
+        }
     }
 
     private func quickStat(label: String, value: String, color: Color) -> some View {

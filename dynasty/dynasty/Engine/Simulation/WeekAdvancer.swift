@@ -635,6 +635,33 @@ enum WeekAdvancer {
                 teams: teams
             )
 
+            // Vaihe 5: Career arc evaluation — refresh trueGrade for every drafted
+            // player and surface "Hidden Gem" flashbacks for the user's team.
+            // Runs once per offseason at the proBowl → coachingChanges boundary.
+            let gemFlashbacks = CareerArcEngine.evaluateAllDraftedPlayers(
+                currentSeason: career.currentSeason,
+                userTeamID: career.teamID,
+                modelContext: modelContext
+            )
+            for flashback in gemFlashbacks {
+                let body = """
+                \(flashback.headline)
+
+                Originally selected #\(flashback.draftPickNumber) in the \(flashback.draftYear) draft \
+                with a Public Grade of \(flashback.publicGrade.rawValue), \(flashback.playerName) is \
+                now grading out as a \(flashback.trueGrade.rawValue) (\(flashback.trueGrade.qualifier)) \
+                pick — a true Hidden Gem.
+                """
+                let gemMessage = InboxMessage(
+                    sender: .media(outlet: "NFL Network"),
+                    subject: "Hidden Gem: \(flashback.playerName)",
+                    body: body,
+                    date: "Offseason - Pro Bowl, Season \(career.currentSeason)",
+                    category: .scoutingReport
+                )
+                lastInboxMessages.append(gemMessage)
+            }
+
         case .coachingChanges:
             var newMessages: [InboxMessage] = []
 
