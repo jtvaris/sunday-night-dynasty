@@ -61,15 +61,58 @@ extension View {
     }
 }
 
-// MARK: - Overall Rating Color
+// MARK: - Overall Rating Color (5-tier scale)
+//
+// Unified rating palette used across the entire app. Stay consistent with
+// `Color.ratingTier(_:)` and the named accessors below so badge colors,
+// position grades, and assessment chips all read the same.
+//
+//   90+   Elite    bright green  → eliteGreen
+//   80–89 Good     green         → success
+//   70–79 Solid    blue          → accentBlue
+//   60–69 Average  yellow        → warning
+//   <60   Poor     red           → danger
 
 extension Color {
+    /// Brighter, more saturated green reserved for the elite (90+) tier.
+    /// `#5BE08A`
+    static let eliteGreen = Color(red: 0.357, green: 0.878, blue: 0.541)
+
+    /// Five-tier color for an overall rating value (0–99).
     static func forRating(_ value: Int) -> Color {
         switch value {
-        case 85...:   return .success
-        case 70..<85: return .accentGold
-        case 55..<70: return .warning
-        default:      return .danger
+        case 90...:   return .eliteGreen   // Elite
+        case 80..<90: return .success      // Good
+        case 70..<80: return .accentBlue   // Solid
+        case 60..<70: return .warning      // Average
+        default:      return .danger       // Poor
+        }
+    }
+
+    /// Five-tier color for a position-group / roster-evaluation tier.
+    /// Aligned with the OVR scale so chips and badges share semantics.
+    static func forRatingTier(_ tier: RatingTier) -> Color {
+        switch tier {
+        case .elite:   return .eliteGreen
+        case .good:    return .success
+        case .solid:   return .accentBlue
+        case .average: return .warning
+        case .poor:    return .danger
+        }
+    }
+}
+
+/// Five-tier rating bucket. Keep aligned with `Color.forRating(_:)`.
+enum RatingTier {
+    case elite, good, solid, average, poor
+
+    init(ovr: Int) {
+        switch ovr {
+        case 90...:   self = .elite
+        case 80..<90: self = .good
+        case 70..<80: self = .solid
+        case 60..<70: self = .average
+        default:      self = .poor
         }
     }
 }

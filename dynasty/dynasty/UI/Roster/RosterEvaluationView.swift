@@ -87,8 +87,9 @@ struct RosterEvaluationView: View {
     @State private var capScenarioConfirmation: String?
 
     // Own assessment options (#266)
+    // "Strength" = team strength (bright green) marker the coach can flag.
     private static let ownAssessmentOptions = [
-        "none", "Solid", "Starter needed", "Depth needed", "Upgrade needed", "Aging", "Priority"
+        "none", "Strength", "Solid", "Starter needed", "Depth needed", "Upgrade needed", "Aging", "Priority"
     ]
 
     private var rosterNotes: [String: String] {
@@ -306,6 +307,8 @@ struct RosterEvaluationView: View {
         let avgAge: Int
         let capAllocation: Int
         let needs: [NeedInfo]
+        /// Auto-promoted from "Solid" to "Strength" when starter is A-tier and depth is at least B-tier.
+        let isStrength: Bool
     }
 
     private var sortedGroupRows: [GroupRowData] {
@@ -321,11 +324,16 @@ struct RosterEvaluationView: View {
             let needs = assessNeeds(group: group, players: groupPlayers, grades: grades)
             let avgAge = groupPlayers.isEmpty ? 0 : groupPlayers.map(\.age).reduce(0, +) / groupPlayers.count
             let capAllocation = groupPlayers.reduce(0) { $0 + $1.annualSalary }
+            // Auto-promote to "Strength" only when starter is A-tier and depth is healthy.
+            let starterIsA = grades.starterGrade.hasPrefix("A")
+            let depthIsB_or_better = grades.depthGrade.hasPrefix("A") || grades.depthGrade.hasPrefix("B")
+            let isStrength = needs.isEmpty && starterIsA && depthIsB_or_better
             return GroupRowData(
                 id: group.id, group: group, avgOvr: avgOvr,
                 starterGrade: grades.starterGrade, depthGrade: grades.depthGrade,
                 starterOVR: grades.starterOVR, depthOVR: grades.depthOVR,
-                avgAge: avgAge, capAllocation: capAllocation, needs: needs
+                avgAge: avgAge, capAllocation: capAllocation, needs: needs,
+                isStrength: isStrength
             )
         }
 
@@ -502,7 +510,11 @@ struct RosterEvaluationView: View {
                     // Staff assessment (auto-generated)
                     Group {
                         if rowData.needs.isEmpty {
-                            needBadge(label: "Solid", color: .success, small: true)
+                            // A-tier starter + A-tier depth promotes to "Strength" (green).
+                            // Anything else with no flags stays "Solid" (blue).
+                            let label = rowData.isStrength ? "Strength" : "Solid"
+                            let color: Color = rowData.isStrength ? .eliteGreen : .accentBlue
+                            needBadge(label: label, color: color, small: true)
                         } else {
                             VStack(alignment: .trailing, spacing: 2) {
                                 ForEach(rowData.needs.prefix(2), id: \.label) { need in
@@ -606,11 +618,12 @@ struct RosterEvaluationView: View {
 
     private func ownAssessmentColor(_ assessment: String) -> Color {
         switch assessment {
-        case "Solid":           return .success
+        case "Strength":        return .eliteGreen   // Team strength — top tier
+        case "Solid":           return .accentBlue   // Solid contributor — blue
         case "Starter needed":  return .danger
         case "Depth needed":    return .warning
         case "Upgrade needed":  return .accentGold
-        case "Aging":           return .accentBlue
+        case "Aging":           return .textSecondary // Neutral status, not a quality grade
         case "Priority":        return .danger
         default:                return .textTertiary
         }

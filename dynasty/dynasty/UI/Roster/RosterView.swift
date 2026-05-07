@@ -1387,23 +1387,19 @@ enum PositionGradeCalculator {
         }
     }
 
-    /// Color for a letter grade.
+    /// Color for an OVR value using the unified 5-tier rating palette.
+    /// 90+ eliteGreen, 80-89 green, 70-79 blue, 60-69 yellow, <60 red.
     static func gradeColor(for avgOVR: Int) -> Color {
-        switch avgOVR {
-        case 80...:   return .success
-        case 70..<80: return .accentBlue
-        case 60..<70: return .accentGold
-        case 50..<60: return .warning
-        default:      return .danger
-        }
+        Color.forRating(avgOVR)
     }
 
-    /// Color for a letter grade string (A=green, B=blue, C=gold, D=orange, F=red).
+    /// Color for a letter grade string aligned with the 5-tier OVR palette.
+    /// A+ → bright green, A/A- → green, B → blue, C → yellow, D/F → red.
     static func gradeColorForLetter(_ grade: String) -> Color {
+        if grade == "A+" { return .eliteGreen }
         if grade.hasPrefix("A") { return .success }
         if grade.hasPrefix("B") { return .accentBlue }
-        if grade.hasPrefix("C") { return .accentGold }
-        if grade.hasPrefix("D") { return .warning }
+        if grade.hasPrefix("C") { return .warning }
         return .danger
     }
 
