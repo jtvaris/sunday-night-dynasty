@@ -725,6 +725,9 @@ struct CareerDashboardView: View {
 
     private var centerTilesGrid: some View {
         VStack(spacing: 12) {
+            // Quick Action Bar — 3 phase-specific shortcuts at the top.
+            quickActionBar
+
             // Phase-aware Hero Card — adapts to current SeasonPhase, sits at top.
             phaseHeroCard
 
@@ -735,66 +738,502 @@ struct CareerDashboardView: View {
             // Satisfaction/Reputation scores row
             satisfactionScoresRow
 
-            // Row 1: Team + Roster (equal height via HStack)
+            // Always-visible core tiles (Team + Roster)
             HStack(spacing: 12) {
                 teamTile
                 rosterTile
             }
 
-            // Row 2: Staff + Scouting (equal height via HStack)
+            // Always-visible core tiles (Staff + Cap)
             HStack(spacing: 12) {
                 staffTile
-                scoutingTile
-            }
-
-            // Row 3: Salary Cap + Locker Room (equal height)
-            HStack(spacing: 12) {
                 capTile
+            }
+
+            // Always-visible core tiles (Locker Room + Key Players)
+            HStack(spacing: 12) {
                 lockerRoomTile
-            }
-
-            // Row 4: Key Players + Position Strengths
-            HStack(spacing: 12) {
                 keyPlayersTile
-                positionStrengthsTile
             }
 
-            // Row 5: Expiring Contracts + Owner Expectations
+            // Always-visible core tiles (Position Strengths + Expiring Contracts)
             HStack(spacing: 12) {
+                positionStrengthsTile
                 expiringContractsTile
+            }
+
+            // Always-visible core tile (Owner Expectations + previous season if available)
+            HStack(spacing: 12) {
                 ownerExpectationsTile
+                if previousSeasonRecord != nil {
+                    previousSeasonTile
+                } else {
+                    // Reserve right slot when previous season unavailable
+                    Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
+                }
             }
 
-            // Previous season summary (season 2+)
-            if previousSeasonRecord != nil {
-                previousSeasonTile
+            // Adaptive phase-group tiles
+            adaptiveTileGrid
+        }
+    }
+
+    // MARK: - Adaptive Tile Grid (per Phase Group)
+
+    @ViewBuilder
+    private var adaptiveTileGrid: some View {
+        let group = career.currentPhase.group
+
+        LazyVGrid(columns: tileColumns, spacing: 12) {
+            switch group {
+            case .postseason:
+                awardsHubTile
+                teamAccoladesTile
+                seasonRecapTile
+
+            case .offseason:
+                cap3yearForecastTile
+                offseasonGoalsTile
+                inboxTile
+
+            case .preDraft:
+                scoutingTile
+                if career.currentPhase == .freeAgency { freeAgencyTile }
+                if career.currentPhase == .proDays { proDaysTile }
+                if career.currentPhase == .draft { draftTile }
+                mockDraftTile
+                teamNeedsTile
+
+            case .preSeason:
+                trainingPlanTile
+                workloadTile
+                positionBattlesTile
+                campGradesTile
+                if career.currentPhase == .rosterCuts { rosterCutsTile }
+                if career.currentPhase == .preseason { preseasonGamesTile }
+
+            case .regularSeason:
+                gameWeekPrepTile
+                depthChartTile
+                injuryReportTile
+                opponentScoutTile
+                if career.currentPhase == .tradeDeadline { tradeDeadlineTile }
+                if career.currentPhase == .playoffs { playoffBracketTile }
             }
+        }
+    }
 
-            // Contextual tiles
-            LazyVGrid(columns: tileColumns, spacing: 12) {
-                if career.currentPhase == .draft || career.currentPhase == .combine {
-                    draftTile
-                }
-                if career.currentPhase == .freeAgency {
-                    freeAgencyTile
-                }
-                if career.currentPhase == .regularSeason || career.currentPhase == .tradeDeadline {
-                    tradeTile
-                }
+    // MARK: - Quick Action Bar (per Phase Group)
 
-                // Camp-phase tiles (OTAs / Training Camp / Preseason / Cuts / Game Week)
-                if [.otas, .trainingCamp, .preseason].contains(career.currentPhase) {
-                    trainingPlanTile
-                    workloadTile
-                }
-                if career.currentPhase == .rosterCuts {
-                    rosterCutsTile
-                }
-                if career.currentPhase == .regularSeason {
-                    gameWeekPrepTile
+    private struct QuickAction {
+        let icon: String
+        let label: String
+        let destination: TaskDestination
+    }
+
+    private func quickActions(for group: SeasonPhaseGroup) -> [QuickAction] {
+        switch group {
+        case .postseason:
+            return [
+                QuickAction(icon: "trophy.fill", label: "Awards", destination: .roster),
+                QuickAction(icon: "person.fill", label: "Coach Renewals", destination: .coachingStaff),
+                QuickAction(icon: "doc.text", label: "Season Report", destination: .roster)
+            ]
+        case .offseason:
+            return [
+                QuickAction(icon: "person.fill", label: "Coaching", destination: .coachingStaff),
+                QuickAction(icon: "list.dash", label: "Roster Review", destination: .rosterEvaluation),
+                QuickAction(icon: "chart.line.uptrend.xyaxis", label: "Cap", destination: .capOverview)
+            ]
+        case .preDraft:
+            return [
+                QuickAction(icon: "magnifyingglass", label: "Scouting", destination: .scouting),
+                QuickAction(icon: "list.bullet", label: "Big Board", destination: .bigBoard),
+                QuickAction(icon: "list.bullet.rectangle", label: "Mock Draft", destination: .scouting)
+            ]
+        case .preSeason:
+            return [
+                QuickAction(icon: "figure.run.circle", label: "Training", destination: .trainingPlan),
+                QuickAction(icon: "person.2.fill", label: "Battles", destination: .roster),
+                QuickAction(icon: "graduationcap.fill", label: "Camp Grades", destination: .roster)
+            ]
+        case .regularSeason:
+            return [
+                QuickAction(icon: "scope", label: "Game Plan", destination: .gameWeekPrep),
+                QuickAction(icon: "list.number", label: "Depth Chart", destination: .depthChart),
+                QuickAction(icon: "cross.case.fill", label: "Injuries", destination: .roster)
+            ]
+        }
+    }
+
+    @ViewBuilder
+    private var quickActionBar: some View {
+        let group = career.currentPhase.group
+        HStack(spacing: 8) {
+            ForEach(quickActions(for: group), id: \.label) { action in
+                quickActionButton(action)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
+    }
+
+    private func quickActionButton(_ action: QuickAction) -> some View {
+        Button {
+            onTaskSelected(action.destination)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: action.icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.draftStealGold)
+                Text(action.label)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.textPrimary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .fill(Color.backgroundSecondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                            .strokeBorder(Color.draftStealGold.opacity(0.3), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Phase-Group Stub Tiles
+
+    private var awardsHubTile: some View {
+        Button {
+            onTaskSelected(.roster)
+        } label: {
+            DashboardTile(icon: "trophy.fill", title: "Awards Hub") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Pro Bowl & All-Pro")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.accentGold)
+                    Text("0 Pro Bowlers \u{00B7} 0 All-Pro")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
                 }
             }
         }
+        .buttonStyle(.plain)
+    }
+
+    private var teamAccoladesTile: some View {
+        Button {
+            onTaskSelected(.roster)
+        } label: {
+            DashboardTile(icon: "star.fill", title: "Team Accolades") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Legacy: +\(career.legacy.totalPoints)")
+                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .foregroundStyle(Color.accentGold)
+                    Text("Season grade pending")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var seasonRecapTile: some View {
+        Button {
+            onTaskSelected(.roster)
+        } label: {
+            DashboardTile(icon: "doc.text.fill", title: "Season Recap") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(seasonRecordSummary)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text("Final standings & summary")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var seasonRecordSummary: String {
+        let wins = team?.wins ?? 0
+        let losses = team?.losses ?? 0
+        let ties = team?.ties ?? 0
+        if ties > 0 {
+            return "\(wins)-\(losses)-\(ties) record"
+        }
+        return "\(wins)-\(losses) record"
+    }
+
+    private var cap3yearForecastTile: some View {
+        Button {
+            onTaskSelected(.capOverview)
+        } label: {
+            DashboardTile(icon: "chart.line.uptrend.xyaxis", title: "3-Year Cap") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("$285M \u{2192} $310M")
+                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .foregroundStyle(Color.accentGold)
+                    Text("Projection across 3 seasons")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var offseasonGoalsTile: some View {
+        Button {
+            onTaskSelected(.ownerMeeting)
+        } label: {
+            DashboardTile(icon: "target", title: "Offseason Goals") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("3 of 5 met")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.success)
+                    Text("Owner mandates")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var inboxTile: some View {
+        Button {
+            onTaskSelected(.inbox)
+        } label: {
+            DashboardTile(icon: "tray.fill", title: "Inbox") {
+                VStack(alignment: .leading, spacing: 4) {
+                    let unread = inboxMessages.filter { !$0.isRead }.count
+                    Text("\(unread) unread")
+                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .foregroundStyle(unread > 0 ? Color.accentGold : Color.textSecondary)
+                    Text("Offseason news")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var mockDraftTile: some View {
+        Button {
+            onTaskSelected(.scouting)
+        } label: {
+            DashboardTile(icon: "list.bullet.rectangle.fill", title: "Mock Draft") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Latest: Pre-Draft")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Compare to Big Board")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var teamNeedsTile: some View {
+        Button {
+            onTaskSelected(.roster)
+        } label: {
+            DashboardTile(icon: "exclamationmark.triangle.fill", title: "Team Needs") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("QB CB LT")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Color.warning)
+                    Text("Top draft priorities")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var proDaysTile: some View {
+        Button {
+            onTaskSelected(.scouting)
+        } label: {
+            DashboardTile(icon: "figure.run", title: "Pro Days") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Schedule visits")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Workouts & interviews")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var positionBattlesTile: some View {
+        Button {
+            onTaskSelected(.roster)
+        } label: {
+            DashboardTile(icon: "person.2.fill", title: "Position Battles") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("0 active")
+                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .foregroundStyle(Color.accentGold)
+                    Text("Camp competitions")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var campGradesTile: some View {
+        Button {
+            onTaskSelected(.roster)
+        } label: {
+            DashboardTile(icon: "graduationcap.fill", title: "Camp Grades") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Top: \u{2014}")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Grades update weekly")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var preseasonGamesTile: some View {
+        Button {
+            onTaskSelected(.schedule)
+        } label: {
+            DashboardTile(icon: "sportscourt", title: "Preseason") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("0-0 record")
+                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .foregroundStyle(Color.textPrimary)
+                    Text("3 exhibition games")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var depthChartTile: some View {
+        Button {
+            onTaskSelected(.depthChart)
+        } label: {
+            DashboardTile(icon: "list.number", title: "Depth Chart") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("View")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Starters & backups")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var injuryReportTile: some View {
+        Button {
+            onTaskSelected(.roster)
+        } label: {
+            DashboardTile(icon: "cross.case.fill", title: "Injuries") {
+                VStack(alignment: .leading, spacing: 4) {
+                    let injuredCount = players.filter { $0.injuryWeeksRemaining > 0 }.count
+                    Text("\(injuredCount) out")
+                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .foregroundStyle(injuredCount > 0 ? Color.danger : Color.success)
+                    Text("Status updates weekly")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var opponentScoutTile: some View {
+        Button {
+            onTaskSelected(.gameWeekPrep)
+        } label: {
+            DashboardTile(icon: "binoculars.fill", title: "Opponent Scout") {
+                VStack(alignment: .leading, spacing: 4) {
+                    let opponent = upcomingGames.first.flatMap { game in
+                        allTeamsByID[game.homeTeamID == team?.id ? game.awayTeamID : game.homeTeamID]
+                    }
+                    Text(opponent.map { "Vs \($0.abbreviation)" } ?? "Vs \u{2014}")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Strengths & weaknesses")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var tradeDeadlineTile: some View {
+        Button {
+            onTaskSelected(.trades)
+        } label: {
+            DashboardTile(icon: "clock.fill", title: "TRADE DEADLINE", highlighted: true) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Deadline approaching")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.danger)
+                    Text("Last chance for deals")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var playoffBracketTile: some View {
+        Button {
+            onTaskSelected(.standings)
+        } label: {
+            DashboardTile(icon: "rosette", title: "Playoff Bracket") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("WC / DIV / CONF / SB")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Postseason path")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Camp Tiles

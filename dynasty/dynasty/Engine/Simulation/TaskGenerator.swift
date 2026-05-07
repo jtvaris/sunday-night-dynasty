@@ -229,38 +229,39 @@ enum TaskGenerator {
         interviewsMax: Int = 60,
         allScoutsAssignedToProDays: Bool = false
     ) -> [GameTask] {
+        let phaseTasks: [GameTask]
         switch phase {
         case .superBowl:
-            return superBowlTasks()
+            phaseTasks = superBowlTasks()
         case .proBowl:
-            return proBowlTasks()
+            phaseTasks = proBowlTasks()
         case .coachingChanges:
-            return coachingChangesTasks(
+            phaseTasks = coachingChangesTasks(
                 hasHeadCoach: hasHeadCoach,
                 hasOC: hasOC,
                 hasDC: hasDC,
                 playerIsHC: career.role == .gmAndHeadCoach
             )
         case .combine:
-            return combineTasks(interviewsDone: interviewsDone, interviewsMax: interviewsMax)
+            phaseTasks = combineTasks(interviewsDone: interviewsDone, interviewsMax: interviewsMax)
         case .freeAgency:
-            return freeAgencyTasks(hasExpiringContracts: hasExpiringContracts)
+            phaseTasks = freeAgencyTasks(hasExpiringContracts: hasExpiringContracts)
         case .proDays:
-            return proDaysTasks(allScoutsAssigned: allScoutsAssignedToProDays)
+            phaseTasks = proDaysTasks(allScoutsAssigned: allScoutsAssignedToProDays)
         case .reviewRoster:
-            return reviewRosterTasks()
+            phaseTasks = reviewRosterTasks()
         case .draft:
-            return draftTasks(isDraftComplete: isDraftComplete)
+            phaseTasks = draftTasks(isDraftComplete: isDraftComplete)
         case .otas:
-            return otasTasks()
+            phaseTasks = otasTasks()
         case .trainingCamp:
-            return trainingCampTasks()
+            phaseTasks = trainingCampTasks()
         case .preseason:
-            return preseasonTasks()
+            phaseTasks = preseasonTasks()
         case .rosterCuts:
-            return rosterCutsTasks(rosterCount: rosterCount)
+            phaseTasks = rosterCutsTasks(rosterCount: rosterCount)
         case .regularSeason:
-            return regularSeasonTasks(
+            phaseTasks = regularSeasonTasks(
                 opponentName: opponentName,
                 hasPendingTradeOffers: hasPendingTradeOffers,
                 hasScoutsAssigned: hasScoutsAssigned,
@@ -268,13 +269,29 @@ enum TaskGenerator {
                 ownerSatisfaction: ownerSatisfaction
             )
         case .tradeDeadline:
-            return tradeDeadlineTasks(hasPendingTradeOffers: hasPendingTradeOffers)
+            phaseTasks = tradeDeadlineTasks(hasPendingTradeOffers: hasPendingTradeOffers)
         case .playoffs:
-            return playoffTasks(
+            phaseTasks = playoffTasks(
                 playoffRoundName: playoffRoundName,
                 opponentName: opponentName
             )
         }
+
+        // Read-only group-banner header row pinned to the top of every phase
+        // task list. Marked `.done` so it visually reads as a label rather than
+        // an actionable step. The destination falls through to the inbox so a
+        // stray tap doesn't trap the user.
+        let progress = phase.groupProgress
+        let banner = GameTask(
+            phase: phase,
+            title: "\u{2500} \(phase.group.displayName) \u{2500}",
+            description: "Phase \(progress.current) of \(progress.total) in the \(phase.group.displayName) group.",
+            icon: phase.group.icon,
+            destination: .inbox,
+            isRequired: false,
+            status: .done
+        )
+        return [banner] + phaseTasks
     }
 
     // MARK: - Phase-Specific Task Lists

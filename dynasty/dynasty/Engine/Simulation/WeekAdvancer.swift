@@ -179,8 +179,14 @@ enum WeekAdvancer {
         }
 
         // 4. Update career state.
+        let previousPhase = career.currentPhase
         career.currentPhase = .regularSeason
         career.currentWeek = 1
+        emitGroupTransitionMessageIfNeeded(
+            oldPhase: previousPhase,
+            newPhase: .regularSeason,
+            season: career.currentSeason
+        )
 
         // 5. Reset draft class flag for the new offseason cycle.
         draftClassGenerated = false
@@ -588,7 +594,13 @@ enum WeekAdvancer {
 
         if week >= 21 {
             // Conference Championships complete → Pro Bowl week next.
+            let oldPhase = career.currentPhase
             career.currentPhase = .proBowl
+            emitGroupTransitionMessageIfNeeded(
+                oldPhase: oldPhase,
+                newPhase: .proBowl,
+                season: career.currentSeason
+            )
         } else {
             career.currentWeek += 1
         }
@@ -1153,6 +1165,11 @@ enum WeekAdvancer {
             lastNewsItems.append(contentsOf: scheduleNews)
         } else {
             career.currentPhase = nextPhase
+            emitGroupTransitionMessageIfNeeded(
+                oldPhase: currentPhase,
+                newPhase: nextPhase,
+                season: career.currentSeason
+            )
         }
 
         // Reset FA state when entering the free agency phase
@@ -1174,6 +1191,52 @@ enum WeekAdvancer {
                 owner: playerTeam.owner
             ))
         }
+    }
+
+    // MARK: - Private: Phase Group Transition Banner
+
+    /// Emits an inbox message announcing a phase-group boundary crossing
+    /// (e.g. Pre-Draft → Pre Season). The message is appended to
+    /// `lastInboxMessages` and surfaced to the UI through the same channel
+    /// as other phase-transition messages. No-op when the two phases share
+    /// the same group.
+    private static func emitGroupTransitionMessageIfNeeded(
+        oldPhase: SeasonPhase,
+        newPhase: SeasonPhase,
+        season: Int
+    ) {
+        guard oldPhase.group != newPhase.group else { return }
+
+        let group = newPhase.group
+        let title: String
+        let body: String
+
+        switch group {
+        case .postseason:
+            title = "Postseason Begins"
+            body = "Pro Bowl rosters announced. The hardware is being handed out."
+        case .offseason:
+            title = "Offseason Begins"
+            body = "Time to evaluate. Coach contracts come due, the roster gets a fresh look."
+        case .preDraft:
+            title = "Pre-Draft Phase"
+            body = "Scouts at the Combine. The road to draft night begins."
+        case .preSeason:
+            title = "Pre Season Begins"
+            body = "OTAs open the doors. Training camp battles start. 90 \u{2192} 53."
+        case .regularSeason:
+            title = "Regular Season"
+            body = "Lights on. Cuts settled. Time to play football."
+        }
+
+        let msg = InboxMessage(
+            sender: .leagueOffice,
+            subject: title,
+            body: body,
+            date: "Season \(season) — \(group.displayName)",
+            category: .leagueNotice
+        )
+        lastInboxMessages.append(msg)
     }
 
     // MARK: - Private: Phase Ordering

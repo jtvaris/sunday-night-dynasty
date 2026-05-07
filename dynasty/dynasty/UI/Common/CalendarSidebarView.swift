@@ -15,6 +15,10 @@ struct CalendarSidebarView: View {
     let onAdvancePhase: () -> Void
     let onDismiss: () -> Void
 
+    // MARK: - Group Timeline State
+
+    @State private var expandedGroups: Set<SeasonPhaseGroup> = []
+
     // MARK: - Derived State
 
     private var phaseInfo: TaskGenerator.PhaseInfo {
@@ -287,7 +291,7 @@ struct CalendarSidebarView: View {
         .cardBackground()
     }
 
-    // MARK: - Season Timeline
+    // MARK: - Season Timeline (Grouped)
 
     private var seasonTimelineSection: some View {
         VStack(spacing: 8) {
@@ -301,71 +305,130 @@ struct CalendarSidebarView: View {
             }
 
             VStack(spacing: 0) {
-                ForEach(Self.timelinePhases, id: \.phase) { entry in
-                    timelineRow(event: entry.label, phase: entry.phase)
+                ForEach(SeasonPhaseGroup.allCases, id: \.self) { group in
+                    groupSection(group)
                 }
             }
         }
         .padding(16)
         .cardBackground()
-    }
-
-    private struct TimelineEntry {
-        let label: String
-        let phase: SeasonPhase
-    }
-
-    private static let timelinePhases: [TimelineEntry] = [
-        .init(label: "Preseason", phase: .preseason),
-        .init(label: "Roster Cuts", phase: .rosterCuts),
-        .init(label: "Regular Season", phase: .regularSeason),
-        .init(label: "Trade Deadline", phase: .tradeDeadline),
-        .init(label: "Playoffs", phase: .playoffs),
-        .init(label: "Super Bowl", phase: .superBowl),
-        .init(label: "Pro Bowl", phase: .proBowl),
-        .init(label: "Coaching Changes", phase: .coachingChanges),
-        .init(label: "Review Roster", phase: .reviewRoster),
-        .init(label: "Combine", phase: .combine),
-        .init(label: "Free Agency", phase: .freeAgency),
-        .init(label: "Pro Days", phase: .proDays),
-        .init(label: "NFL Draft", phase: .draft),
-        .init(label: "OTAs", phase: .otas),
-        .init(label: "Training Camp", phase: .trainingCamp),
-    ]
-
-    private func timelineRow(event: String, phase: SeasonPhase) -> some View {
-        let isCurrent = career.currentPhase == phase
-        let isPast = Self.phaseOrder(phase) < Self.phaseOrder(career.currentPhase)
-
-        return HStack(spacing: 12) {
-            // Timeline dot
-            VStack(spacing: 0) {
-                Circle()
-                    .fill(isCurrent ? Color.accentGold : isPast ? Color.textTertiary : Color.backgroundTertiary)
-                    .frame(width: isCurrent ? 12 : 8, height: isCurrent ? 12 : 8)
+        .onAppear {
+            // Auto-expand the group containing the current phase the first time
+            // the sidebar appears.
+            if expandedGroups.isEmpty {
+                expandedGroups.insert(career.currentPhase.group)
             }
-            .frame(width: 16)
+        }
+    }
 
-            Text(event)
-                .font(.subheadline.weight(isCurrent ? .semibold : .regular))
-                .foregroundStyle(isCurrent ? Color.accentGold : isPast ? Color.textTertiary : Color.textSecondary)
+    @ViewBuilder
+    private func groupSection(_ group: SeasonPhaseGroup) -> some View {
+        let isCurrentGroup = career.currentPhase.group == group
+        let isExpanded = expandedGroups.contains(group)
 
+        VStack(spacing: 0) {
+            // Group header (collapsible)
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if isExpanded { expandedGroups.remove(group) }
+                    else { expandedGroups.insert(group) }
+                }
+            } label: {
+                HStack(spacing: DSSpacing.sm) {
+                    Image(systemName: group.icon)
+                        .foregroundStyle(isCurrentGroup ? Color.draftStealGold : Color.textSecondary)
+                    Text(group.displayName.uppercased())
+                        .font(.subheadline.weight(.heavy))
+                        .tracking(0.8)
+                        .foregroundStyle(isCurrentGroup ? Color.draftStealGold : Color.textPrimary)
+                    Spacer()
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .padding(.vertical, DSSpacing.sm)
+                .padding(.horizontal, DSSpacing.md)
+            }
+            .buttonStyle(.plain)
+
+            // Sub-phases (when expanded)
+            if isExpanded {
+                ForEach(group.subPhases, id: \.self) { phase in
+                    subPhaseRow(phase)
+                }
+            }
+        }
+        .background(isCurrentGroup ? Color.draftStealGold.opacity(0.05) : Color.clear)
+        .overlay(
+            Rectangle()
+                .fill(Color.surfaceBorder)
+                .frame(height: 1),
+            alignment: .bottom
+        )
+    }
+
+    @ViewBuilder
+    private func subPhaseRow(_ phase: SeasonPhase) -> some View {
+        let status = phaseStatus(phase)
+        HStack(spacing: DSSpacing.sm) {
+            statusDot(status)
+            Text(phaseLabel(phase))
+                .font(.caption)
+                .foregroundStyle(status == .current ? Color.textPrimary : Color.textSecondary)
+                .fontWeight(status == .current ? .semibold : .regular)
             Spacer()
-
-            if isCurrent {
+            if status == .current {
                 Text("NOW")
                     .font(.caption2.weight(.heavy))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.accentGold))
-            } else if isPast {
+                    .background(Capsule().fill(Color.draftStealGold))
+            } else if status == .done {
                 Image(systemName: "checkmark")
                     .font(.caption2)
-                    .foregroundStyle(Color.textTertiary)
+                    .foregroundStyle(Color.success)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
+        .padding(.leading, DSSpacing.lg)
+        .padding(.trailing, DSSpacing.md)
+        .background(status == .current ? Color.draftStealGold.opacity(0.10) : Color.clear)
+    }
+
+    private enum PhaseStatus { case done, current, upcoming }
+
+    private func phaseStatus(_ phase: SeasonPhase) -> PhaseStatus {
+        if phase == career.currentPhase { return .current }
+        let curIndex = SeasonPhase.allCases.firstIndex(of: career.currentPhase) ?? 0
+        let phaseIndex = SeasonPhase.allCases.firstIndex(of: phase) ?? 0
+        return phaseIndex < curIndex ? .done : .upcoming
+    }
+
+    private func statusDot(_ status: PhaseStatus) -> some View {
+        Circle()
+            .fill(status == .done ? Color.success : status == .current ? Color.draftStealGold : Color.textTertiary)
+            .frame(width: 8, height: 8)
+    }
+
+    private func phaseLabel(_ phase: SeasonPhase) -> String {
+        switch phase {
+        case .proBowl:          return "Pro Bowl"
+        case .superBowl:        return "Super Bowl"
+        case .coachingChanges:  return "Coaching Changes"
+        case .reviewRoster:     return "Roster Review"
+        case .combine:          return "NFL Combine"
+        case .freeAgency:       return "Free Agency"
+        case .proDays:          return "Pro Days"
+        case .draft:            return "NFL Draft"
+        case .otas:             return "OTAs"
+        case .trainingCamp:     return "Training Camp"
+        case .preseason:        return "Preseason Games"
+        case .rosterCuts:       return "Roster Cuts"
+        case .regularSeason:    return "Regular Season"
+        case .tradeDeadline:    return "Trade Deadline"
+        case .playoffs:         return "Playoffs"
+        }
     }
 
     // MARK: - Advance Button
@@ -413,28 +476,6 @@ struct CalendarSidebarView: View {
         }
     }
 
-    // MARK: - Helpers
-
-    /// Rough ordering of phases within a season cycle for timeline display.
-    static func phaseOrder(_ phase: SeasonPhase) -> Int {
-        switch phase {
-        case .preseason:       return 0
-        case .rosterCuts:      return 1
-        case .regularSeason:   return 2
-        case .tradeDeadline:   return 3
-        case .playoffs:        return 4
-        case .proBowl:         return 5
-        case .superBowl:       return 6
-        case .coachingChanges: return 7
-        case .reviewRoster:    return 8
-        case .combine:         return 9
-        case .freeAgency:      return 10
-        case .proDays:         return 11
-        case .draft:           return 12
-        case .otas:            return 13
-        case .trainingCamp:    return 14
-        }
-    }
 }
 
 #Preview {
