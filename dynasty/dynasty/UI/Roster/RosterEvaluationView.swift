@@ -324,6 +324,9 @@ struct RosterEvaluationView: View {
             let needs = assessNeeds(group: group, players: groupPlayers, grades: grades)
             let avgAge = groupPlayers.isEmpty ? 0 : groupPlayers.map(\.age).reduce(0, +) / groupPlayers.count
             let capAllocation = groupPlayers.reduce(0) { $0 + $1.annualSalary }
+            // Headline "Starter" number = best player in the group.
+            // RB shows the actual RB starter (e.g. 81), not the avg of RB+FB starters.
+            let topOVR = groupPlayers.map(\.overall).max() ?? 0
             // Auto-promote to "Strength" only when starter is A-tier and depth is healthy.
             let starterIsA = grades.starterGrade.hasPrefix("A")
             let depthIsB_or_better = grades.depthGrade.hasPrefix("A") || grades.depthGrade.hasPrefix("B")
@@ -331,7 +334,7 @@ struct RosterEvaluationView: View {
             return GroupRowData(
                 id: group.id, group: group, avgOvr: avgOvr,
                 starterGrade: grades.starterGrade, depthGrade: grades.depthGrade,
-                starterOVR: grades.starterOVR, depthOVR: grades.depthOVR,
+                starterOVR: topOVR, depthOVR: grades.depthOVR,
                 avgAge: avgAge, capAllocation: capAllocation, needs: needs,
                 isStrength: isStrength
             )
