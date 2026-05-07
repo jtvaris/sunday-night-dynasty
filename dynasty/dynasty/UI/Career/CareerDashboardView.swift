@@ -3251,7 +3251,10 @@ struct CareerDashboardView: View {
             heroStatRow("Coach contracts expiring", value: "2")
             heroStatRow("Roster OVR", value: "76 → 73 projected")
             heroStatRow("Cap space (next yr)", value: "$58.4M")
-            heroActionLink(title: "Review", destination: .coachingStaff)
+            HStack(spacing: DSSpacing.sm) {
+                heroActionLink(title: "Roster Review", destination: .rosterEvaluation)
+                heroActionLink(title: "Salary Cap", destination: .capOverview)
+            }
         }
     }
 
