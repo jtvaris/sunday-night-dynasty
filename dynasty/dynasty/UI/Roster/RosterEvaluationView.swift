@@ -406,7 +406,7 @@ struct RosterEvaluationView: View {
                 // Column headers — sortable (#250)
                 HStack {
                     sortableHeader("Group", column: .group, width: 44, alignment: .leading)
-                    sortableHeader("Avg OVR", column: .avgOVR, width: 64)
+                    sortableHeader("Starter", column: .starter, width: 64)
                     sortableHeader("Strt / Depth", column: .starter, width: 80)
                     if isIPad {
                         sortableHeader("Avg Age", column: .avgAge, width: 60)
@@ -464,10 +464,10 @@ struct RosterEvaluationView: View {
                     .foregroundStyle(Color.textPrimary)
                     .frame(width: 44, alignment: .leading)
 
-                // Avg overall
-                Text(rowData.avgOvr == 0 ? "\u{2014}" : "\(rowData.avgOvr)")
+                // Starter OVR — what's actually starting at this position.
+                Text(rowData.starterOVR == 0 ? "\u{2014}" : "\(rowData.starterOVR)")
                     .font(.subheadline.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(rowData.avgOvr == 0 ? Color.textTertiary : Color.forRating(rowData.avgOvr))
+                    .foregroundStyle(rowData.starterOVR == 0 ? Color.textTertiary : Color.forRating(rowData.starterOVR))
                     .frame(width: 64, alignment: .center)
 
                 // Dual grade: Starter / Depth
@@ -1538,6 +1538,9 @@ struct RosterEvaluationView: View {
                                     alignment: .topLeading
                                 )
                         }
+
+                        // Roster — players in this group, ordered by OVR desc.
+                        evalGroupPlayerList(group: group)
                     }
                     .padding(24)
                 }
@@ -1571,6 +1574,103 @@ struct RosterEvaluationView: View {
         case "low":    return .accentBlue
         default:       return .clear
         }
+    }
+
+    // MARK: - Eval Modal: Roster List for the Group
+
+    /// Roster of all players in the position group, sorted by OVR desc.
+    /// Helps the GM evaluate the position with concrete data, not just a single grade.
+    @ViewBuilder
+    private func evalGroupPlayerList(group: EvalPositionGroup) -> some View {
+        let groupPlayers = players
+            .filter { group.positions.contains($0.position) }
+            .sorted { $0.overall > $1.overall }
+        let starterCount = PositionGradeCalculator.starterCount(for: group.positions)
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Roster")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+                Text("\(groupPlayers.count) players")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+            }
+
+            if groupPlayers.isEmpty {
+                Text("No players in this group")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                    .padding(.vertical, 8)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(groupPlayers.enumerated()), id: \.element.id) { index, player in
+                        evalPlayerRow(player: player, isStarter: index < starterCount)
+
+                        if index < groupPlayers.count - 1 {
+                            Divider()
+                                .overlay(Color.surfaceBorder.opacity(0.5))
+                        }
+                    }
+                }
+                .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+            }
+        }
+    }
+
+    /// Compact roster row for the eval modal — position chip, S badge, name, age, OVR, contract.
+    private func evalPlayerRow(player: Player, isStarter: Bool) -> some View {
+        HStack(spacing: 10) {
+            // Position chip
+            Text(player.position.rawValue)
+                .font(.system(size: 11, weight: .heavy))
+                .foregroundStyle(Color.textPrimary)
+                .frame(width: 30, height: 22)
+                .background(Color.accentBlue.opacity(0.85), in: RoundedRectangle(cornerRadius: 4))
+
+            // Starter badge
+            if isStarter {
+                Text("S")
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .frame(width: 18, height: 18)
+                    .background(Color.success, in: RoundedRectangle(cornerRadius: 3))
+            } else {
+                Color.clear.frame(width: 18, height: 18)
+            }
+
+            // Name
+            VStack(alignment: .leading, spacing: 1) {
+                Text(player.fullName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                Text("Age \(player.age) · \(player.contractYearsRemaining)yr")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+            }
+
+            Spacer(minLength: 4)
+
+            // OVR (color-coded)
+            Text("\(player.overall)")
+                .font(.system(size: 16, weight: .bold).monospacedDigit())
+                .foregroundStyle(Color.forRating(player.overall))
+                .frame(width: 36, alignment: .trailing)
+
+            // Salary
+            Text(formatMillions(player.annualSalary))
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 56, alignment: .trailing)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Computed Roster Properties
