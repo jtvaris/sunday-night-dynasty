@@ -26,6 +26,13 @@ enum DataContainer {
             FAVisit.self,
             FAStorylineEvent.self,
             Holdout.self,
+            TrainingPlan.self,
+            WorkloadEvent.self,
+            PositionBattle.self,
+            RosterCut.self,
+            OpponentPrepWeek.self,
+            VoluntaryWorkout.self,
+            HardKnocksEvent.self,
         ])
         let config = ModelConfiguration(isStoredInMemoryOnly: false)
         do {

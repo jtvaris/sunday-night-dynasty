@@ -85,6 +85,30 @@ final class Player {
     /// Career milestone enum raw value (e.g. "hofPush", "comeback"). Drives MilestoneTracker.
     var milestoneRaw: String?
 
+    // MARK: - Camp / Workload
+
+    /// Accumulated training-load points across the current camp/season week.
+    /// Reset by `WorkloadEngine` after recovery is applied.
+    var cumulativeLoad: Int = 0
+
+    /// Raw value of `WorkloadStatus`. Defaults to `.healthy` when nil/unknown.
+    var workloadStatusRaw: String?
+
+    /// Raw value of `CampGrade`. nil until camp evaluation has run.
+    var campGradeRaw: String?
+
+    /// Typed accessor for the player's current workload state.
+    var workloadStatus: WorkloadStatus {
+        get { WorkloadStatus(rawValue: workloadStatusRaw ?? "") ?? .healthy }
+        set { workloadStatusRaw = newValue.rawValue }
+    }
+
+    /// Typed accessor for the player's current camp grade (nil before evaluation).
+    var campGrade: CampGrade? {
+        get { campGradeRaw.flatMap(CampGrade.init(rawValue:)) }
+        set { campGradeRaw = newValue?.rawValue }
+    }
+
     // MARK: - Computed Properties
 
     var fullName: String {
