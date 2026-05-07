@@ -67,10 +67,13 @@ struct ProspectStarButton: View {
 // MARK: - Dual Grade Display (Own / Scout)
 
 /// Shows dual grade display: "Own / Scout" format. If no user grade, shows scout grade only.
+/// Optionally renders a stock trajectory chevron (↗ rising / ↘ falling / ✦ new) next to the grade.
 struct DualGradeDisplay: View {
     let prospectID: UUID
     let scoutGradeText: String
     let scoutGradeColor: Color
+    /// Optional trajectory — when supplied, shows a small directional arrow.
+    var trajectory: StockTrajectory? = nil
     @ObservedObject private var store = UserProspectGradeStore.shared
 
     var body: some View {
@@ -85,16 +88,29 @@ struct DualGradeDisplay: View {
                 Text(scoutGradeText)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Color.accentGold)
+                trajectoryArrow
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("My grade \(userGrade.letterGrade), scout grade \(scoutGradeText)")
         } else {
-            Text(scoutGradeText)
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(scoutGradeColor)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .accessibilityLabel("Scout grade \(scoutGradeText)")
+            HStack(spacing: 2) {
+                Text(scoutGradeText)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(scoutGradeColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                trajectoryArrow
+            }
+            .accessibilityLabel("Scout grade \(scoutGradeText)")
+        }
+    }
+
+    @ViewBuilder
+    private var trajectoryArrow: some View {
+        if let traj = trajectory, traj == .rising || traj == .falling {
+            Image(systemName: traj.icon)
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundStyle(traj.color)
         }
     }
 }

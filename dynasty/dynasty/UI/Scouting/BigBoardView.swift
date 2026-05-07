@@ -2108,7 +2108,8 @@ struct BigBoardRowView: View {
                     DualGradeDisplay(
                         prospectID: prospect.id,
                         scoutGradeText: gradeRange.displayText,
-                        scoutGradeColor: boardGradeColor(gradeRange.midGrade)
+                        scoutGradeColor: boardGradeColor(gradeRange.midGrade),
+                        trajectory: prospect.stockTrajectory
                     )
                 } else {
                     Text("?")

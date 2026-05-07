@@ -486,13 +486,14 @@ struct CombineResultsView: View {
                 .background(positionColor(for: prospect), in: RoundedRectangle(cornerRadius: 3))
                 .frame(width: 44)
 
-            // GRD column - dual grade display
+            // GRD column - dual grade display with refinement trend arrow
             DualGradeDisplay(
                 prospectID: prospect.id,
                 scoutGradeText: gradeDisplayText(for: prospect),
-                scoutGradeColor: gradeDisplayColor(for: prospect)
+                scoutGradeColor: gradeDisplayColor(for: prospect),
+                trajectory: prospect.stockTrajectory
             )
-            .frame(width: 54)
+            .frame(width: 64)
 
             // Proj column
             Text(projectionDisplayText(for: prospect))

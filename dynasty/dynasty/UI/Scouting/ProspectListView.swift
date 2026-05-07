@@ -974,13 +974,15 @@ struct ProspectRowView: View {
                 DualGradeDisplay(
                     prospectID: prospect.id,
                     scoutGradeText: gradeRange.displayText,
-                    scoutGradeColor: gradeColor(gradeRange.midGrade)
+                    scoutGradeColor: gradeColor(gradeRange.midGrade),
+                    trajectory: prospect.stockTrajectory
                 )
             } else if let grade = prospect.scoutGrade {
                 DualGradeDisplay(
                     prospectID: prospect.id,
                     scoutGradeText: grade,
-                    scoutGradeColor: Color.textPrimary
+                    scoutGradeColor: Color.textPrimary,
+                    trajectory: prospect.stockTrajectory
                 )
             } else if prospect.scoutedOverall != nil {
                 Text("\(prospect.scoutedOverall!)")
