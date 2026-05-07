@@ -641,20 +641,14 @@ struct CombineResultsView: View {
     // MARK: - Grade Display
 
     private func gradeDisplayText(for prospect: CollegeProspect) -> String {
-        if let gradeRange = prospect.scoutedOverallGrade {
-            return gradeRange.displayText
-        }
-        return prospect.scoutGrade ?? "--"
+        // Single source of truth — same as Big Board, prospect detail, and any
+        // other list. `effectiveOverallGrade` covers all fallbacks.
+        prospect.effectiveOverallGrade?.displayText ?? "--"
     }
 
     private func gradeDisplayColor(for prospect: CollegeProspect) -> Color {
-        if let gradeRange = prospect.scoutedOverallGrade {
-            return PositionGradeCalculator.gradeColorForLetter(gradeRange.midGrade.rawValue)
-        }
-        if let grade = prospect.scoutGrade {
-            return PositionGradeCalculator.gradeColorForLetter(grade)
-        }
-        return Color.textTertiary
+        guard let range = prospect.effectiveOverallGrade else { return Color.textTertiary }
+        return PositionGradeCalculator.gradeColorForLetter(range.midGrade.rawValue)
     }
 
     private func projectionDisplayText(for prospect: CollegeProspect) -> String {
