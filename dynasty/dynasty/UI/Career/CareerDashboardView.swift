@@ -3211,16 +3211,12 @@ struct CareerDashboardView: View {
         let resultsReviewed = tasks.contains { $0.title == "Review Combine results" && $0.status == .done }
 
         let ctaTitle: String
-        let ctaDestination: ShellDestination
         if !scoutsSent {
             ctaTitle = "Send Scouts"
-            ctaDestination = .scouting
         } else if !resultsReviewed {
             ctaTitle = "Review Combine"
-            ctaDestination = .scouting
         } else {
             ctaTitle = "Conduct Interviews"
-            ctaDestination = .scouting
         }
 
         return phaseCardBase(icon: "figure.run", accent: .accentGold) {
@@ -3228,7 +3224,7 @@ struct CareerDashboardView: View {
             heroStatRow("Top prospect", value: "C. Williams (QB) · OVR 88")
             heroStatRow("Risers today", value: "5")
             heroStatRow("Scouts deployed", value: "\(scoutCount) / \(max(scoutCount, 6))")
-            heroActionLink(title: ctaTitle, destination: ctaDestination)
+            heroActionLink(title: ctaTitle, destination: .scouting)
         }
     }
 

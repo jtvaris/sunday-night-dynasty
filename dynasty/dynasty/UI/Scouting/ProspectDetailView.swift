@@ -16,20 +16,11 @@ struct ProspectDetailView: View {
 
     // MARK: - Derived
 
+    /// Always read the grade through the model's `effectiveOverallGrade` extension
+    /// so the detail header, Big Board, prospect lists, and combine table all agree
+    /// on a single value for the same prospect.
     private var effectiveOverallGrade: GradeRange? {
-        // Prefer the modern range-based grade. Fall back to the legacy `scoutGrade`
-        // letter (which is what the prospect lists also show) so the detail header
-        // and the list always display the same value for the same prospect.
-        if let grade = prospect.scoutedOverallGrade { return grade }
-        if let scoutGrade = prospect.scoutGrade,
-           let lg = LetterGrade(rawValue: scoutGrade) {
-            return GradeRange(grade: lg)
-        }
-        if let ovr = prospect.scoutedOverall {
-            let lg = LetterGrade.from(numericValue: ovr)
-            return GradeRange(grade: lg)
-        }
-        return nil
+        prospect.effectiveOverallGrade
     }
 
     private var isScouted: Bool { prospect.scoutedOverall != nil }
@@ -162,28 +153,33 @@ struct ProspectDetailView: View {
 
     private var scoutConfidenceBadge: some View {
         let count = prospect.scoutReportCount
-        let confidenceColor: Color = {
-            switch count {
-            case 0:  return .textTertiary
-            case 1:  return .warning
-            case 2:  return .accentBlue
-            default: return .success
+        let confidenceColor: Color
+        let confidenceLabel: String
+        switch count {
+        case 0:  confidenceColor = .textTertiary; confidenceLabel = "Unscouted"
+        case 1:  confidenceColor = .warning;      confidenceLabel = "Low"
+        case 2:  confidenceColor = .accentBlue;   confidenceLabel = "Medium"
+        default: confidenceColor = .success;      confidenceLabel = "High"
+        }
+        // The grade above is only as reliable as the number of scout visits behind
+        // it — make that explicit so the user knows whether to trust it or send
+        // more scouts.
+        return HStack(spacing: 4) {
+            HStack(spacing: 2) {
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .fill(i < count ? confidenceColor : confidenceColor.opacity(0.3))
+                        .frame(width: 6, height: 6)
+                }
             }
-        }()
-        return HStack(spacing: 2) {
-            ForEach(0..<3, id: \.self) { i in
-                Circle()
-                    .fill(i < count ? confidenceColor : confidenceColor.opacity(0.3))
-                    .frame(width: 6, height: 6)
-            }
-            Text("\(count) report\(count == 1 ? "" : "s")")
+            Text("\(confidenceLabel) confidence · \(count)/3 scouts")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(confidenceColor)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(confidenceColor.opacity(0.12), in: Capsule())
-        .help("\(count) scout report\(count == 1 ? "" : "s") -- \(prospect.scoutConfidenceLabel) confidence")
+        .help("Grade reliability: \(confidenceLabel.lowercased()) — \(count) of 3 possible scout visits completed.")
     }
 
     // MARK: - Potential Badge
