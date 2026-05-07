@@ -888,6 +888,11 @@ struct CareerShellView: View {
     private func loadShellData() {
         guard let teamID = career.teamID else { return }
 
+        // One-time data integrity pass: bring legacy `scoutGrade` and the new
+        // `scoutedOverallGrade` into agreement on existing saves so every list
+        // shows the same letter for the same prospect.
+        syncProspectGrades()
+
         let allTeamsDescriptor = FetchDescriptor<Team>()
         let allTeams = (try? modelContext.fetch(allTeamsDescriptor)) ?? []
         allTeamsByID = Dictionary(uniqueKeysWithValues: allTeams.map { ($0.id, $0) })
@@ -919,6 +924,43 @@ struct CareerShellView: View {
                 owner: playerTeam.owner
             )
             inboxMessages = messages
+        }
+    }
+
+    /// Reconciles the legacy `scoutGrade` letter with the modern `scoutedOverallGrade`
+    /// range, and back-fills `scoutedOverallGrade` from `scoutedOverall` when missing.
+    /// Idempotent — safe to call on every load.
+    private func syncProspectGrades() {
+        let prospects = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>())) ?? []
+        var changed = 0
+
+        for prospect in prospects {
+            // 1. If the modern range is missing but a numeric/legacy grade exists,
+            //    seed it so all readers converge on the same letter.
+            if prospect.scoutedOverallGrade == nil {
+                if let ovr = prospect.scoutedOverall {
+                    let lg = LetterGrade.from(numericValue: ovr)
+                    prospect.scoutedOverallGrade = GradeRange(grade: lg)
+                    changed += 1
+                } else if let raw = prospect.scoutGrade, let lg = LetterGrade(rawValue: raw) {
+                    prospect.scoutedOverallGrade = GradeRange(grade: lg)
+                    changed += 1
+                }
+            }
+
+            // 2. Pin the legacy `scoutGrade` to the range's mid-grade so any
+            //    older code path that still reads `scoutGrade` agrees with the UI.
+            if let range = prospect.scoutedOverallGrade {
+                let canonical = range.midGrade.rawValue
+                if prospect.scoutGrade != canonical {
+                    prospect.scoutGrade = canonical
+                    changed += 1
+                }
+            }
+        }
+
+        if changed > 0 {
+            try? modelContext.save()
         }
     }
 }
