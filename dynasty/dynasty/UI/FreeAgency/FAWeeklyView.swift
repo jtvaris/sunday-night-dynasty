@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import Combine
 
 // MARK: - FA Signing Tracker
 
@@ -104,6 +105,14 @@ struct FAWeeklyView: View {
     @State private var showInstantSigning = false
     @State private var allPlayers: [Player] = []
 
+    // FA Drama Phase 2 — Live Ticker / Heat / Outbid / Day rhythm
+    @State private var allBids: [FABid] = []
+    @State private var allVisits: [FAVisit] = []
+    @State private var visibleOutbidEvent: OutbidEvent?
+    @State private var currentPhase: FABidPhase = .morning
+    @State private var nowTick: Date = Date()
+    private let outbidTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+
     // Position filter
     enum PositionFilter: String, CaseIterable {
         case all = "All"
@@ -137,12 +146,14 @@ struct FAWeeklyView: View {
     }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             Color.backgroundPrimary.ignoresSafeArea()
 
             if team != nil {
                 VStack(spacing: 0) {
                     roundHeader
+                    dayPhaseHeader
+                    liveTicker
                     biddingUpdatesBar
                     pendingOffersBar
                     positionFilterBar
@@ -153,11 +164,22 @@ struct FAWeeklyView: View {
                 ProgressView()
                     .tint(Color.accentGold)
             }
+
+            // Outbid alert banner overlay
+            VStack {
+                outbidBanner
+                Spacer()
+            }
+            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: visibleOutbidEvent?.id)
         }
         .navigationTitle("Free Agency")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task { loadData() }
+        .onReceive(outbidTimer) { _ in
+            nowTick = Date()
+            refreshOutbidEvents()
+        }
         .sheet(item: $selectedFA) { fa in
             if let team {
                 FAOfferSheet(
@@ -602,6 +624,7 @@ struct FAWeeklyView: View {
                             Text("\(fa.player.overall) OVR")
                                 .font(.caption.weight(.semibold).monospacedDigit())
                                 .foregroundStyle(Color.forRating(fa.player.overall))
+                            heatBadge(for: fa.player.id)
                             Text("Age \(fa.player.age)")
                                 .font(.caption)
                                 .foregroundStyle(Color.textSecondary)
@@ -1038,6 +1061,324 @@ struct FAWeeklyView: View {
 
         allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
         freeAgents = FreeAgencyEngine.generateFreeAgentMarket(allPlayers: allPlayers)
+
+        // FA Drama: load bids + visits for heat / ticker / outbid detection
+        allBids = (try? modelContext.fetch(FetchDescriptor<FABid>())) ?? []
+        allVisits = (try? modelContext.fetch(FetchDescriptor<FAVisit>())) ?? []
+        refreshOutbidEvents()
+    }
+
+    // MARK: - FA Drama Phase 2 — Live Ticker
+
+    private struct TickerItem: Identifiable {
+        let id = UUID()
+        let icon: String
+        let tint: Color
+        let text: String
+    }
+
+    @ViewBuilder
+    private var liveTicker: some View {
+        let recentEvents = computeTickerEvents()
+        if !recentEvents.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: DSSpacing.md) {
+                    ForEach(recentEvents) { item in
+                        HStack(spacing: 6) {
+                            Image(systemName: item.icon)
+                                .font(.caption2)
+                                .foregroundStyle(item.tint)
+                            Text(item.text)
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, DSSpacing.sm)
+                        .padding(.vertical, DSSpacing.xs)
+                        .background(
+                            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                                .fill(Color.backgroundTertiary)
+                        )
+                    }
+                }
+                .padding(.horizontal, DSSpacing.md)
+            }
+            .padding(.vertical, DSSpacing.xs)
+            .background(Color.backgroundSecondary)
+            .overlay(
+                Rectangle()
+                    .fill(Color.surfaceBorder.opacity(0.3))
+                    .frame(height: 1),
+                alignment: .bottom
+            )
+        }
+    }
+
+    private func computeTickerEvents() -> [TickerItem] {
+        var items: [TickerItem] = []
+
+        // 1. Counter offers / outbid bids (newest first, max 4)
+        let counters = allBids
+            .filter { $0.status == .countered || $0.status == .outbid }
+            .sorted { $0.submittedAt > $1.submittedAt }
+            .prefix(4)
+        for bid in counters {
+            let teamAbbr = allTeams.first(where: { $0.id == bid.teamID })?.abbreviation ?? "???"
+            let playerName = freeAgents.first(where: { $0.player.id == bid.playerID })?.player.fullName
+                ?? allPlayers.first(where: { $0.id == bid.playerID })?.fullName
+                ?? "Unknown"
+            let aav = bid.baseSalary + (bid.years > 0 ? bid.signingBonus / max(bid.years, 1) : bid.signingBonus)
+            let aavM = max(aav / 1000, 1)
+            let icon = bid.status == .outbid ? "arrow.up.circle.fill" : "arrow.up.right"
+            let tint: Color = bid.status == .outbid ? .draftReachRed : .warning
+            items.append(TickerItem(
+                icon: icon,
+                tint: tint,
+                text: "\(teamAbbr) countered \(playerName) at $\(aavM)M/yr"
+            ))
+        }
+
+        // 2. Active visits (latest 3)
+        let activeVisits = allVisits
+            .filter { $0.status == .active }
+            .sorted { $0.startedAt > $1.startedAt }
+            .prefix(3)
+        for visit in activeVisits {
+            let teamAbbr = allTeams.first(where: { $0.id == visit.teamID })?.abbreviation ?? "???"
+            let playerName = freeAgents.first(where: { $0.player.id == visit.playerID })?.player.fullName
+                ?? allPlayers.first(where: { $0.id == visit.playerID })?.fullName
+                ?? "Unknown"
+            items.append(TickerItem(
+                icon: "airplane",
+                tint: .accentBlue,
+                text: "\(playerName) visiting \(teamAbbr)"
+            ))
+        }
+
+        // 3. Burning-heat players (max 2)
+        var heatPairs: [(FreeAgencyEngine.FreeAgent, FrenzyHeatTier)] = []
+        for fa in freeAgents {
+            let tier = BiddingHeatEngine.computeHeat(
+                playerID: fa.player.id,
+                currentDay: career.freeAgencyRound,
+                bids: allBids,
+                visits: allVisits
+            )
+            if tier == .burning || tier == .red {
+                heatPairs.append((fa, tier))
+                if heatPairs.count >= 2 { break }
+            }
+        }
+        for (fa, tier) in heatPairs {
+            let tint: Color = tier == .burning ? .draftStealGold : .danger
+            let label: String = tier == .burning ? "FIRE" : "HOT"
+            let text = "\(fa.player.fullName) \(tier.emoji) \(label)"
+            items.append(TickerItem(icon: "flame.fill", tint: tint, text: text))
+        }
+
+        // 4. Stub fallback so the UI is visible during early FA when no bid data exists
+        if items.isEmpty {
+            items = [
+                TickerItem(icon: "newspaper", tint: .accentGold, text: "FA market opens — top FAs hitting the wire"),
+                TickerItem(icon: "flame.fill", tint: .danger, text: "Bidding wars expected on premier QBs"),
+                TickerItem(icon: "airplane", tint: .accentBlue, text: "Visit schedules being arranged league-wide"),
+                TickerItem(icon: "dollarsign.circle.fill", tint: .accentGold, text: "Cap-rich teams ready to spend"),
+                TickerItem(icon: "clock.fill", tint: .warning, text: "Early movers shape the market")
+            ]
+        }
+
+        return Array(items.prefix(8))
+    }
+
+    // MARK: - FA Drama Phase 2 — Heat Badge
+
+    private func heatBadge(for playerID: UUID) -> some View {
+        let tier = BiddingHeatEngine.computeHeat(
+            playerID: playerID,
+            currentDay: career.freeAgencyRound,
+            bids: allBids,
+            visits: allVisits
+        )
+        return HStack(spacing: 3) {
+            Text(tier.emoji)
+                .font(.caption2)
+            Text(heatLabel(tier))
+                .font(.caption2.weight(.bold).monospacedDigit())
+                .foregroundStyle(heatColor(tier))
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .background(
+            RoundedRectangle(cornerRadius: 3)
+                .fill(heatColor(tier).opacity(0.15))
+        )
+    }
+
+    private func heatLabel(_ tier: FrenzyHeatTier) -> String {
+        switch tier {
+        case .cool:    return "COOL"
+        case .yellow:  return "WARM"
+        case .red:     return "HOT"
+        case .burning: return "FIRE"
+        }
+    }
+
+    private func heatColor(_ tier: FrenzyHeatTier) -> Color {
+        switch tier {
+        case .cool:    return .accentBlue
+        case .yellow:  return .warning
+        case .red:     return .danger
+        case .burning: return .draftStealGold
+        }
+    }
+
+    // MARK: - FA Drama Phase 2 — Outbid Alert Banner
+
+    @ViewBuilder
+    private var outbidBanner: some View {
+        if let evt = visibleOutbidEvent {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.draftReachRed)
+                    Text("OUTBID")
+                        .font(.caption.weight(.heavy))
+                        .tracking(1)
+                        .foregroundStyle(Color.draftReachRed)
+                    Spacer()
+                    Text(timeRemaining(until: evt.respondByDeadline))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.draftClockUrgent)
+                    Button {
+                        visibleOutbidEvent = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Text("\(evt.outbidByTeamAbbrev) bumped \(evt.playerName) to $\(evt.competingOfferAnnualValue / 1000)M/yr")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                Text("Match by deadline or lose the player.")
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .padding(DSSpacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                    .fill(Color.backgroundSecondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                            .strokeBorder(Color.draftReachRed, lineWidth: 2)
+                    )
+            )
+            .padding(.horizontal, DSSpacing.md)
+            .padding(.top, DSSpacing.xs)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Outbid by \(evt.outbidByTeamAbbrev) on \(evt.playerName)")
+        }
+    }
+
+    private func timeRemaining(until: Date) -> String {
+        let interval = until.timeIntervalSinceNow
+        if interval <= 0 { return "EXPIRED" }
+        let h = Int(interval) / 3600
+        let m = (Int(interval) % 3600) / 60
+        return String(format: "%dh %02dm", h, m)
+    }
+
+    private func refreshOutbidEvents() {
+        guard let teamID = career.teamID else {
+            visibleOutbidEvent = nil
+            return
+        }
+        // Build name + abbreviation lookups
+        var playerNames: [UUID: String] = [:]
+        for fa in freeAgents { playerNames[fa.player.id] = fa.player.fullName }
+        for p in allPlayers where playerNames[p.id] == nil { playerNames[p.id] = p.fullName }
+
+        var teamAbbrevs: [UUID: String] = [:]
+        for t in allTeams { teamAbbrevs[t.id] = t.abbreviation }
+
+        let events = OutbidNotifier.detect(
+            userTeamID: teamID,
+            bids: allBids,
+            playerNames: playerNames,
+            teamAbbrevs: teamAbbrevs
+        )
+        visibleOutbidEvent = events.first
+    }
+
+    // MARK: - FA Drama Phase 2 — Day Phase Header
+
+    @ViewBuilder
+    private var dayPhaseHeader: some View {
+        HStack(spacing: DSSpacing.xs) {
+            Text("Day \(career.freeAgencyRound)")
+                .font(.title3.weight(.heavy))
+                .foregroundStyle(Color.accentGold)
+            if career.freeAgencyRound == 1 || career.freeAgencyRound == 2 {
+                Text("FRENZY")
+                    .font(.system(size: 9, weight: .black))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.danger, in: Capsule())
+            }
+            Spacer()
+            ForEach([
+                ("Morning", FABidPhase.morning),
+                ("Afternoon", FABidPhase.afternoon),
+                ("Evening", FABidPhase.evening)
+            ], id: \.0) { entry in
+                let isActive = currentPhase == entry.1
+                Text(entry.0.uppercased())
+                    .font(.caption2.weight(.bold))
+                    .tracking(0.6)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(isActive ? Color.accentGold : Color.backgroundTertiary)
+                    .foregroundStyle(isActive ? Color.backgroundPrimary : Color.textTertiary)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+            }
+            Button {
+                advancePhase()
+            } label: {
+                HStack(spacing: 3) {
+                    Text("Next")
+                        .font(.caption2.weight(.bold))
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .foregroundStyle(Color.backgroundPrimary)
+                .background(Color.accentGold, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Advance to next phase")
+        }
+        .padding(.horizontal, DSSpacing.md)
+        .padding(.vertical, DSSpacing.xs)
+        .background(Color.backgroundSecondary)
+        .overlay(
+            Rectangle()
+                .fill(Color.surfaceBorder.opacity(0.3))
+                .frame(height: 1),
+            alignment: .bottom
+        )
+    }
+
+    private func advancePhase() {
+        // UI-level cycle: morning -> afternoon -> evening -> next day morning
+        switch currentPhase {
+        case .morning:   currentPhase = .afternoon
+        case .afternoon: currentPhase = .evening
+        case .evening:   currentPhase = .morning
+        }
     }
 }
 
