@@ -771,7 +771,10 @@ struct RosterView: View {
                 }
             }
             .frame(width: width, alignment: .center)
+            // Make the full frame tappable, not just the text glyph itself.
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .foregroundStyle(sortOrder == sort ? Color.accentBlue : Color.textTertiary)
     }
 

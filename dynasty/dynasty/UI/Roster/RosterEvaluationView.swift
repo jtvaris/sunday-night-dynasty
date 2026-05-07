@@ -1627,9 +1627,13 @@ struct RosterEvaluationView: View {
         }
     }
 
-    /// Compact roster row for the eval modal — position chip, S badge, name, age, OVR, contract.
+    /// Compact roster row for the eval modal — position chip, S badge, name, age, OVR,
+    /// trend arrow, potential label, contract, status, morale.
     private func evalPlayerRow(player: Player, isStarter: Bool) -> some View {
-        HStack(spacing: 10) {
+        let trend = developmentTrend(for: player)
+        let potential = potentialLabel(for: player)
+
+        return HStack(spacing: 8) {
             // Position chip
             Text(player.position.rawValue)
                 .font(.system(size: 11, weight: .heavy))
@@ -1648,33 +1652,97 @@ struct RosterEvaluationView: View {
                 Color.clear.frame(width: 18, height: 18)
             }
 
-            // Name
+            // Name + sub-line (potential + contract)
             VStack(alignment: .leading, spacing: 1) {
-                Text(player.fullName)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
-                    .lineLimit(1)
-                Text("Age \(player.age) · \(player.contractYearsRemaining)yr")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(Color.textTertiary)
+                HStack(spacing: 4) {
+                    Text(player.fullName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    if player.isInjured {
+                        Text("INJ")
+                            .font(.system(size: 9, weight: .heavy))
+                            .foregroundStyle(Color.danger)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.danger.opacity(0.18), in: RoundedRectangle(cornerRadius: 3))
+                    }
+                }
+                HStack(spacing: 6) {
+                    Text("Age \(player.age) · \(player.contractYearsRemaining)yr")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                    Text(potential.label)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(potential.color)
+                }
             }
 
             Spacer(minLength: 4)
+
+            // Trend arrow
+            Image(systemName: trend.icon)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(trend.color)
+                .frame(width: 16)
 
             // OVR (color-coded)
             Text("\(player.overall)")
                 .font(.system(size: 16, weight: .bold).monospacedDigit())
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 36, alignment: .trailing)
+                .frame(width: 32, alignment: .trailing)
+
+            // Morale emoji
+            Text(moraleEmoji(player.morale))
+                .font(.system(size: 13))
+                .frame(width: 20, alignment: .center)
 
             // Salary
             Text(formatMillions(player.annualSalary))
                 .font(.caption.weight(.semibold).monospacedDigit())
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 56, alignment: .trailing)
+                .frame(width: 52, alignment: .trailing)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    /// Trend arrow + color from age vs primary peak window.
+    private func developmentTrend(for player: Player) -> (icon: String, color: Color) {
+        let peak = player.position.peakAgeRange
+        if player.age < peak.lowerBound {
+            return ("arrow.up.right", .success)            // Developing
+        } else if player.age <= peak.upperBound {
+            return ("arrow.right", .accentBlue)            // In prime
+        } else {
+            return ("arrow.down.right", .warning)          // Declining
+        }
+    }
+
+    /// Coach's verbal potential label (uses cached assessment, falls back to true potential).
+    private func potentialLabel(for player: Player) -> (label: String, color: Color) {
+        let raw = player.assessedPotential.flatMap(PotentialLabel.init(rawValue:))
+            ?? PotentialLabel.from(potential: player.truePotential, noise: 1)
+        let color: Color
+        switch raw {
+        case .eliteCeiling:  color = .eliteGreen
+        case .highUpside:    color = .success
+        case .solidStarter:  color = .accentBlue
+        case .average:       color = .warning
+        case .limitedUpside: color = .danger
+        case .unknown:       color = .textTertiary
+        }
+        return (raw.rawValue, color)
+    }
+
+    private func moraleEmoji(_ morale: Int) -> String {
+        switch morale {
+        case 80...:   return "😄"
+        case 65..<80: return "🙂"
+        case 50..<65: return "😐"
+        case 35..<50: return "🙁"
+        default:      return "😞"
+        }
     }
 
     // MARK: - Computed Roster Properties
