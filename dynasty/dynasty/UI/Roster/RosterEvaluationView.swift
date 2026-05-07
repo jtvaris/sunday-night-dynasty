@@ -1564,6 +1564,7 @@ struct RosterEvaluationView: View {
             }
         }
         .presentationDetents([.large])
+        .presentationSizing(.page)
         .presentationDragIndicator(.visible)
     }
 
