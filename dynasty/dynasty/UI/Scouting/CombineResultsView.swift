@@ -89,7 +89,13 @@ struct CombineResultsView: View {
             case .college:
                 return compare(a.college, b.college)
             case .grade:
-                return compare(gradeDisplayText(for: b), gradeDisplayText(for: a))
+                // Sort ascending by letter rank (A+ best → F worst). Outer
+                // `sortAscending ? sorted : sorted.reversed()` flips direction.
+                // Ungraded prospects are pinned to the bottom afterwards.
+                let aRank = LetterGrade(rawValue: a.scoutGrade ?? "")?.rank ?? Int.max
+                let bRank = LetterGrade(rawValue: b.scoutGrade ?? "")?.rank ?? Int.max
+                if aRank == bRank { return compare(a.lastName, b.lastName) }
+                return aRank < bRank
             case .projection:
                 return compare(a.draftProjection ?? 999, b.draftProjection ?? 999)
             case .fortyYard:
@@ -110,7 +116,14 @@ struct CombineResultsView: View {
                 return aRank > bRank
             }
         }
-        return sortAscending ? sorted : sorted.reversed()
+        let directional = sortAscending ? sorted : sorted.reversed()
+        // For grade column, pin ungraded prospects to the bottom regardless of direction.
+        if sortColumn == .grade {
+            let graded = directional.filter { $0.scoutGrade != nil }
+            let ungraded = directional.filter { $0.scoutGrade == nil }
+            return graded + ungraded
+        }
+        return directional
     }
 
     // MARK: - Team Needs
@@ -552,8 +565,9 @@ struct CombineResultsView: View {
     /// Tiers are language-friendly and immediately scannable on the combine
     /// results table compared to raw "Nth" rank text.
     private func tierLabel(for percentile: Int) -> (text: String, color: Color) {
+        // Aligned with the unified 5-tier color scale (green = best, red = worst).
         switch percentile {
-        case 90...:    return ("Top 10%", .accentGold)
+        case 90...:    return ("Top 10%", .eliteGreen)
         case 75..<90:  return ("Top 25%", .success)
         case 50..<75:  return ("Above Avg", .accentBlue)
         case 25..<50:  return ("Below Avg", .warning)

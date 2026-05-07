@@ -1284,46 +1284,43 @@ enum ScoutingEngine {
     /// still runs ~4.95, a 60-SPD WR still runs ~4.55).
     private static func fortyTimeFromSpeed(speed: Int, position: Position, combineModifier: Double) -> Double {
         // Position-specific mean + std dev (in seconds).
-        // Calibrated to real NFL Combine distributions.
+        // Calibrated to real NFL Combine distributions — skill positions widened
+        // so an elite 99-SPD WR/CB/RB can post sub-4.35 times like the real combine.
         let mean: Double
         let stdDev: Double
         switch position {
         case .WR, .CB, .FS, .SS:
-            mean = 4.46;  stdDev = 0.09   // Most 4.30-4.62, top performers 4.25-4.38
+            mean = 4.46;  stdDev = 0.11   // Most 4.28-4.64, top performers 4.25-4.36
         case .RB:
-            mean = 4.52;  stdDev = 0.09   // Most 4.38-4.66
+            mean = 4.52;  stdDev = 0.11   // Most 4.34-4.70
         case .QB:
-            mean = 4.78;  stdDev = 0.13   // Most 4.55-5.00 (Mahomes 4.80, Lamar 4.34)
+            mean = 4.78;  stdDev = 0.14   // Most 4.55-5.00 (Mahomes 4.80, Lamar 4.34)
         case .OLB:
-            mean = 4.66;  stdDev = 0.10   // Most 4.50-4.85
+            mean = 4.66;  stdDev = 0.11   // Most 4.50-4.85
         case .MLB:
-            mean = 4.72;  stdDev = 0.10   // Most 4.55-4.90
+            mean = 4.72;  stdDev = 0.11   // Most 4.55-4.90
         case .TE:
-            mean = 4.68;  stdDev = 0.10   // Most 4.50-4.85
+            mean = 4.68;  stdDev = 0.11   // Most 4.50-4.85
         case .FB:
             mean = 4.78;  stdDev = 0.12   // Most 4.60-5.00
         case .DE:
-            mean = 4.76;  stdDev = 0.11   // Most 4.55-4.95, top edge 4.40-4.55
+            mean = 4.76;  stdDev = 0.12   // Most 4.55-4.95, top edge 4.40-4.55
         case .DT:
-            mean = 4.95;  stdDev = 0.11   // Most 4.75-5.15
+            mean = 4.95;  stdDev = 0.12   // Most 4.75-5.15
         case .LT, .LG, .C, .RG, .RT:
-            mean = 5.13;  stdDev = 0.13   // Most 4.90-5.40
+            mean = 5.13;  stdDev = 0.14   // Most 4.90-5.40
         case .K, .P:
             mean = 4.95;  stdDev = 0.15
         }
 
-        // Sum of 3 uniform rolls (averaged) approximates a normal distribution.
-        // Each roll yields a value in [-1, 1]; the average is roughly bell-curved
-        // around 0 with most values between -0.5 and 0.5.
-        let roll = (Double.random(in: -1.0...1.0)
-                  + Double.random(in: -1.0...1.0)
-                  + Double.random(in: -1.0...1.0)) / 3.0
+        // Two uniform rolls averaged → bell-curve roughly [-0.5, +0.5] stddev.
+        let roll = (Double.random(in: -1.0...1.0) + Double.random(in: -1.0...1.0)) / 2.0
 
-        // Speed attribute bias: shift the curve based on SPD rating.
-        // SPD 50 (mediocre) → +0.6 stddev (slower than position avg)
-        // SPD 75 (average) → 0 (right at position avg)
-        // SPD 99 (elite)   → -0.96 stddev (faster than position avg)
-        let speedBias = (75.0 - Double(speed)) / 25.0  // ~ -0.96 to +1.0
+        // Speed attribute bias — wider divisor so elite SPD truly separates from average.
+        // SPD 50 → +1.25 stddev (slower than position avg)
+        // SPD 75 → 0 (position avg)
+        // SPD 99 → -1.20 stddev (clearly faster than position avg)
+        let speedBias = (75.0 - Double(speed)) / 20.0
 
         // Combine modifier: warriors (-0.6 std), bad testers (+0.6 std)
         let modBias = -combineModifier * 0.6

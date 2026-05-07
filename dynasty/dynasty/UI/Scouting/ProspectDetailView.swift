@@ -17,7 +17,14 @@ struct ProspectDetailView: View {
     // MARK: - Derived
 
     private var effectiveOverallGrade: GradeRange? {
+        // Prefer the modern range-based grade. Fall back to the legacy `scoutGrade`
+        // letter (which is what the prospect lists also show) so the detail header
+        // and the list always display the same value for the same prospect.
         if let grade = prospect.scoutedOverallGrade { return grade }
+        if let scoutGrade = prospect.scoutGrade,
+           let lg = LetterGrade(rawValue: scoutGrade) {
+            return GradeRange(grade: lg)
+        }
         if let ovr = prospect.scoutedOverall {
             let lg = LetterGrade.from(numericValue: ovr)
             return GradeRange(grade: lg)
@@ -1425,7 +1432,7 @@ struct ProspectDetailView: View {
 
     private var actionButtonBar: some View {
         HStack(spacing: 12) {
-            // Add to Board / toggle flag
+            // Add to Board / toggle flag — primary CTA, full-width emphasized.
             Button {
                 withAnimation {
                     prospect.prospectFlag = prospect.prospectFlag == .mustHave ? .none : .mustHave
@@ -1436,37 +1443,46 @@ struct ProspectDetailView: View {
                     prospect.prospectFlag == .mustHave ? "On Board" : "Add to Board",
                     systemImage: prospect.prospectFlag == .mustHave ? "star.fill" : "star"
                 )
-                .font(.caption.weight(.semibold))
+                .font(.body.weight(.bold))
                 .foregroundStyle(prospect.prospectFlag == .mustHave ? Color.accentGold : Color.textPrimary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
                 .background(
-                    Capsule()
-                        .fill(prospect.prospectFlag == .mustHave ? Color.accentGold.opacity(0.2) : Color.backgroundSecondary)
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(prospect.prospectFlag == .mustHave ? Color.accentGold.opacity(0.22) : Color.backgroundSecondary)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(
+                            prospect.prospectFlag == .mustHave ? Color.accentGold : Color.surfaceBorder,
+                            lineWidth: prospect.prospectFlag == .mustHave ? 1.5 : 1
+                        )
                 )
             }
 
-            // Interview button — only during combine phase
+            // Interview button — only during combine phase.
             if canInterview {
                 Button {
                     performInterview()
                 } label: {
                     Label("Interview", systemImage: "bubble.left.fill")
-                        .font(.caption.weight(.semibold))
+                        .font(.body.weight(.bold))
                         .foregroundStyle(Color.accentBlue)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
                         .background(
-                            Capsule()
-                                .fill(Color.accentBlue.opacity(0.15))
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(Color.accentBlue.opacity(0.18))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .strokeBorder(Color.accentBlue.opacity(0.5), lineWidth: 1)
                         )
                 }
             }
-
-            Spacer()
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 12)
         .background(.ultraThinMaterial)
     }
 
@@ -1496,13 +1512,9 @@ struct ProspectDetailView: View {
     }
 
     private func detailGradeColor(_ grade: LetterGrade) -> Color {
-        switch grade.rank {
-        case 10...12: return .accentGold   // A range — elite
-        case 7...9:   return .success      // B range
-        case 4...6:   return .warning      // C range
-        case 2...3:   return .danger       // D range
-        default:      return .danger       // F
-        }
+        // Aligned with the unified 5-tier palette so colors match across the app:
+        // A+ → bright green, A/A- → green, B → blue, C → yellow, D/F → red.
+        PositionGradeCalculator.gradeColorForLetter(grade.rawValue)
     }
 
     private func potentialLabelColor(_ label: PotentialLabel) -> Color {
