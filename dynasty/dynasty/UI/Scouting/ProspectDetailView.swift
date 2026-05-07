@@ -44,7 +44,8 @@ struct ProspectDetailView: View {
                 if isScouted { scoutingReportSection }
                 starterComparisonSection
                 combineSection
-                collegeProductionSection
+                collegeProductionSummarySection
+                positionSkillsSection
                 draftSection
                 riskFlagsSection
                 if prospect.interviewCompleted { interviewResultsSection }
@@ -484,10 +485,10 @@ struct ProspectDetailView: View {
                         .font(.subheadline)
                         .foregroundStyle(Color.textSecondary)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Position Drills")
+                        Text("Combine Drill Grade")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Color.textPrimary)
-                        Text("Estimated from \(prospect.position.rawValue)-specific combine drills")
+                        Text("One-shot \(prospect.position.rawValue) drill at the combine — separate from per-skill scouting below.")
                             .font(.caption2)
                             .foregroundStyle(Color.textTertiary)
                     }
@@ -970,13 +971,78 @@ struct ProspectDetailView: View {
 
     // MARK: - College Production Section (Position Skills)
 
+    /// Position-skill letter grades from scouting visits (per-attribute eyes-on
+    /// evaluation). Distinct from "Position Drills" in the combine section, which
+    /// is a one-shot combine snapshot.
     @ViewBuilder
-    private var collegeProductionSection: some View {
+    private var positionSkillsSection: some View {
         if isScouted {
-            Section("Position Skills") {
+            Section {
                 collegeFlavorStats
+            } header: {
+                HStack(spacing: 4) {
+                    Text("Position Skills")
+                    Text("· per-attribute scouting grade")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                        .textCase(nil)
+                }
             }
             .listRowBackground(Color.backgroundSecondary)
+        }
+    }
+
+    /// Snapshot of college playing time + production. Driven by `truePotential`
+    /// and `truePositionAttributes` so it correlates with the prospect's grade.
+    @ViewBuilder
+    private var collegeProductionSummarySection: some View {
+        Section("College Production") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 16) {
+                    productionTile(label: "Years Started", value: "\(prospect.collegeYearsStarted)/4")
+                    productionTile(
+                        label: "Production",
+                        value: prospect.collegeProductionTier.rawValue,
+                        color: productionTierColor(prospect.collegeProductionTier)
+                    )
+                }
+                HStack(spacing: 8) {
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                    Text(prospect.collegeStatLine)
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(Color.textPrimary)
+                }
+                Text("Heavy starter snaps + strong production already factor into the prospect's grade and ceiling.")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .padding(.vertical, 4)
+        }
+        .listRowBackground(Color.backgroundSecondary)
+    }
+
+    private func productionTile(label: String, value: String, color: Color = .textPrimary) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(color)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func productionTierColor(_ tier: CollegeProspect.CollegeProductionTier) -> Color {
+        switch tier {
+        case .elite:    return .eliteGreen
+        case .aboveAvg: return .success
+        case .average:  return .accentBlue
+        case .belowAvg: return .warning
         }
     }
 

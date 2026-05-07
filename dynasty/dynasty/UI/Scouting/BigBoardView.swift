@@ -2083,13 +2083,9 @@ struct BigBoardRowView: View {
     }
 
     private func boardGradeColor(_ grade: LetterGrade) -> Color {
-        switch grade {
-        case .aPlus, .a, .aMinus: return .accentGold     // A range = elite gold
-        case .bPlus:              return .success        // B+ = green
-        case .b:                  return .yellow         // B = yellow
-        case .bMinus, .cPlus:     return .warning        // B-/C+ = orange
-        default:                  return .danger         // C and below = red
-        }
+        // Use the unified 5-tier palette so every screen renders the same color
+        // for the same letter grade (A+ bright green, A green, B blue, C yellow, D/F red).
+        PositionGradeCalculator.gradeColorForLetter(grade.rawValue)
     }
 
     // MARK: - Always-Visible Subviews

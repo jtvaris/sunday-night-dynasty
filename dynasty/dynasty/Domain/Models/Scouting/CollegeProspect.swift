@@ -209,6 +209,86 @@ final class CollegeProspect {
         return String(repeating: "\u{25CF}", count: filled) + String(repeating: "\u{25CB}", count: empty)
     }
 
+    // MARK: - College Production
+    //
+    // Derived deterministically from `truePotential` + `truePositionAttributes`,
+    // which is the same talent signal that drives `scoutedOverallGrade`. This
+    // means a prospect's college production already correlates with their NFL
+    // grade — flashy production reflects underlying talent, not the other way
+    // around. Surfacing it here makes that pipeline visible to the GM.
+
+    enum CollegeProductionTier: String {
+        case elite       = "Elite"
+        case aboveAvg    = "Above Avg"
+        case average     = "Average"
+        case belowAvg    = "Below Avg"
+    }
+
+    /// Number of seasons started in college (1–4). High-talent prospects start earlier.
+    var collegeYearsStarted: Int {
+        let base = max(1, min(3, age - 19))
+        if truePotential >= 88 { return min(4, base + 1) }
+        if truePotential <= 60 { return max(1, base - 1) }
+        return base
+    }
+
+    /// College production tier — Elite/Above Avg/Average/Below Avg. Combines true
+    /// position-attribute average (60%) and potential ceiling (40%).
+    var collegeProductionTier: CollegeProductionTier {
+        let attrOvr = Double(truePositionAttributes.overall)
+        let combined = attrOvr * 0.6 + Double(truePotential) * 0.4
+        switch combined {
+        case 88...:    return .elite
+        case 78..<88:  return .aboveAvg
+        case 65..<78:  return .average
+        default:       return .belowAvg
+        }
+    }
+
+    /// Position-specific representative stat-line (e.g. "3,420 yds · 28 TD" for QB).
+    /// Numbers scale with `collegeProductionTier` so they read naturally.
+    var collegeStatLine: String {
+        let tier = collegeProductionTier
+        let yearsStarted = collegeYearsStarted
+        // Per-tier multipliers applied to a position baseline.
+        let tierMultiplier: Double
+        switch tier {
+        case .elite:    tierMultiplier = 1.30
+        case .aboveAvg: tierMultiplier = 1.10
+        case .average:  tierMultiplier = 0.92
+        case .belowAvg: tierMultiplier = 0.72
+        }
+
+        func scaled(_ baseline: Double) -> Int {
+            Int((baseline * tierMultiplier * Double(yearsStarted) / 3.0).rounded())
+        }
+
+        switch position {
+        case .QB:
+            return "\(scaled(3000)) pass yds · \(scaled(26)) TD · \(scaled(8)) INT"
+        case .RB, .FB:
+            return "\(scaled(1100)) rush yds · \(scaled(11)) TD"
+        case .WR:
+            return "\(scaled(1080)) rec yds · \(scaled(9)) TD"
+        case .TE:
+            return "\(scaled(720)) rec yds · \(scaled(7)) TD"
+        case .LT, .LG, .C, .RG, .RT:
+            return "\(scaled(33)) starts · \(scaled(7)) sacks allowed"
+        case .DE, .DT:
+            return "\(scaled(58)) tkl · \(scaled(8)) sacks · \(scaled(13)) TFL"
+        case .OLB, .MLB:
+            return "\(scaled(95)) tkl · \(scaled(4)) sacks · \(scaled(2)) INT"
+        case .CB:
+            return "\(scaled(46)) tkl · \(scaled(13)) PD · \(scaled(3)) INT"
+        case .FS, .SS:
+            return "\(scaled(82)) tkl · \(scaled(8)) PD · \(scaled(3)) INT"
+        case .K:
+            return "\(scaled(22))/\(scaled(28)) FG · \(scaled(40)) XP"
+        case .P:
+            return "\(scaled(43)) yd avg · \(scaled(28)) inside-20"
+        }
+    }
+
     /// Overall rating as a weighted average of physical (60%) and mental (40%) attributes.
     var trueOverall: Int {
         let physicalAvg = truePhysical.average

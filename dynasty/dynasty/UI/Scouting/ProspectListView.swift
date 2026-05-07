@@ -953,13 +953,8 @@ struct ProspectRowView: View {
     }
 
     private func gradeColor(_ grade: LetterGrade) -> Color {
-        switch grade.rank {
-        case 10...12: return .accentGold   // A range — elite
-        case 7...9:   return .success      // B range
-        case 4...6:   return .warning      // C range
-        case 2...3:   return .danger       // D range
-        default:      return .danger       // F
-        }
+        // Unified 5-tier palette: A+ bright green, A green, B blue, C yellow, D/F red.
+        PositionGradeCalculator.gradeColorForLetter(grade.rawValue)
     }
 
     // MARK: - Always-Visible Subviews
