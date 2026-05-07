@@ -212,6 +212,9 @@ struct CareerDashboardView: View {
             // Left column -- Tasks (fixed 280pt)
             ScrollView {
                 VStack(spacing: 0) {
+                    #if DEBUG
+                    debugSkipToFABanner
+                    #endif
                     if canAdvance {
                         allTasksCompleteBanner
                     }
@@ -271,6 +274,9 @@ struct CareerDashboardView: View {
         HStack(alignment: .top, spacing: 0) {
             // Left column -- Timeline+Tasks Panel (fixed 300pt)
             VStack(spacing: 0) {
+                #if DEBUG
+                debugSkipToFABanner
+                #endif
                 // Fix #64: Clear guidance when all tasks complete
                 if canAdvance {
                     allTasksCompleteBanner
@@ -324,6 +330,9 @@ struct CareerDashboardView: View {
             LazyVStack(spacing: 12) {
                 // Timeline+Tasks panel (full width, collapsible)
                 VStack(spacing: 0) {
+                    #if DEBUG
+                    debugSkipToFABanner
+                    #endif
                     // Fix #64: Clear guidance when all tasks complete
                     if canAdvance {
                         allTasksCompleteBanner
@@ -1819,6 +1828,69 @@ struct CareerDashboardView: View {
         .padding(.vertical, 8)
         .background(Color.success.opacity(0.1))
     }
+
+    // MARK: - Debug Skip-to-FA (DEBUG only)
+
+    #if DEBUG
+    /// Tracks whether a skip operation is currently running so the button can show progress.
+    @State private var debugSkipRunning: Bool = false
+
+    /// Temporary developer-only banner that exposes a "Skip → FA" button.
+    /// Loops `WeekAdvancer.advanceWeek` until the career reaches `.freeAgency`
+    /// or a safety cap is hit. Allows fast iteration on FA flow during Loop 2.
+    private var debugSkipToFABanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "wrench.and.screwdriver.fill")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.accentGold)
+            Text("DEBUG")
+                .font(.system(size: 10, weight: .black))
+                .foregroundStyle(Color.accentGold)
+            Spacer(minLength: 4)
+            Button {
+                guard !debugSkipRunning else { return }
+                Task { await skipToFreeAgency() }
+            } label: {
+                Label(debugSkipRunning ? "Skipping…" : "Skip → FA",
+                      systemImage: debugSkipRunning ? "hourglass" : "forward.end.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.accentGold.opacity(0.18))
+                    .foregroundStyle(Color.accentGold)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(debugSkipRunning || career.currentPhase == .freeAgency)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.accentGold.opacity(0.06))
+    }
+
+    /// Iterates `WeekAdvancer.advanceWeek` until the career reaches `.freeAgency`
+    /// or the safety cap (60 iterations) is hit. Refreshes UI when finished.
+    @MainActor
+    private func skipToFreeAgency() async {
+        debugSkipRunning = true
+        defer { debugSkipRunning = false }
+
+        var safety = 0
+        while career.currentPhase != .freeAgency && safety < 60 {
+            // CoachingChanges normally requires a user-confirmed sheet; bypass it
+            // for the debug skip by mirroring what the confirm-sheet does.
+            if career.currentPhase == .coachingChanges {
+                career.currentPhase = .reviewRoster
+                try? modelContext.save()
+            } else {
+                WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+            }
+            safety += 1
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms — let UI breathe
+        }
+        loadAllData()
+    }
+    #endif
 
     /// Blocker banner shown when advance is gated by coaching-budget overage. (#54)
     @ViewBuilder
