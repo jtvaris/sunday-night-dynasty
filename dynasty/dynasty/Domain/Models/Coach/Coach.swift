@@ -57,6 +57,10 @@ final class Coach {
     var teamID: UUID?
     var yearsExperience: Int
 
+    /// Players this coach previously coached on other teams. Used by CoachReunionMatcher
+    /// during free agency to surface reunion-discount storylines.
+    var coacheePlayerIDs: [UUID] = []
+
     /// Get expertise for a specific scheme (baseline 20 for unknown schemes).
     func expertise(for scheme: String) -> Int {
         return schemeExpertise[scheme] ?? 20

@@ -57,6 +57,34 @@ final class Player {
     /// Stored as PotentialLabel.rawValue. Accuracy depends on coach quality and time with team.
     var assessedPotential: String?
 
+    // MARK: - FA Drama / Storylines
+
+    /// Hometown state (e.g. "California"). Used by HometownDetector for storyline matching.
+    var hometownState: String?
+
+    /// Hometown city (e.g. "Long Beach"). Used by HometownDetector for storyline matching.
+    var hometownCity: String?
+
+    /// If non-nil, the team that previously cut this player. Drives Revenge Tour grudge flag.
+    var cutByTeamID: UUID?
+
+    /// Timestamp of the cut event used to age out the grudge over time.
+    var cutAt: Date?
+
+    /// Number of consecutive seasons the player has been on the current team.
+    /// Used by LoyaltyEngine to compute hometown-discount eligibility.
+    var loyaltyYears: Int = 0
+
+    /// Pair partner — when this veteran is signed, the protégé rookie may be brought in at a discount.
+    var mentorOfPlayerID: UUID?
+
+    /// Community-engagement level (0-3). Higher tier players generate more
+    /// CommunityImpact storyline events and city-loyalty modifiers.
+    var civicTier: Int = 0
+
+    /// Career milestone enum raw value (e.g. "hofPush", "comeback"). Drives MilestoneTracker.
+    var milestoneRaw: String?
+
     // MARK: - Computed Properties
 
     var fullName: String {

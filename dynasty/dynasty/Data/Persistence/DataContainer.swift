@@ -22,6 +22,10 @@ enum DataContainer {
             DraftReputation.self,
             CareerArcState.self,
             PlayerSeasonHistory.self,
+            FABid.self,
+            FAVisit.self,
+            FAStorylineEvent.self,
+            Holdout.self,
         ])
         let config = ModelConfiguration(isStoredInMemoryOnly: false)
         do {

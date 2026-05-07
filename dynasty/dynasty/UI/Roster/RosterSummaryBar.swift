@@ -22,14 +22,22 @@ struct RosterSummaryBar: View {
     /// Salary cap ceiling in thousands (e.g., 265000 = $265M).
     private var salaryCap: Int { teamSalaryCap }
 
+    /// Cap used expressed in millions (Double). Source of truth for all $-display.
+    private var capUsedMillions: Double {
+        Double(totalCapUsed) / 1000.0
+    }
+
+    /// Cap ceiling expressed in millions (Double). Source of truth for all $-display.
+    private var capTotalMillions: Double {
+        Double(salaryCap) / 1000.0
+    }
+
     private var formattedCapUsed: String {
-        let millions = Double(totalCapUsed) / 1000.0
-        return String(format: "$%.1fM", millions)
+        String(format: "$%.1fM", capUsedMillions)
     }
 
     private var formattedCapTotal: String {
-        let millions = Double(salaryCap) / 1000.0
-        return String(format: "$%.1fM", millions)
+        String(format: "$%.1fM", capTotalMillions)
     }
 
     private var capUsageRatio: Double {
@@ -48,8 +56,19 @@ struct RosterSummaryBar: View {
     }
 
     /// Cap overage in millions (Double) for display formatting.
+    /// Computed from the *rounded display millions* so the banner number
+    /// is always consistent with `formattedCapUsed - formattedCapTotal`.
+    /// Falls back to the raw thousands diff when both display values
+    /// round to the same tenth (e.g. used 265.04 vs cap 265.00) so a
+    /// real overage is never masked as "$0.0M".
     private var capOverageMillions: Double {
-        Double(capOverage) / 1000.0
+        let displayDelta = (capUsedMillions * 10).rounded() / 10
+                         - (capTotalMillions * 10).rounded() / 10
+        if displayDelta > 0 {
+            return displayDelta
+        }
+        // Display rounds to the same tenth; surface the true overage.
+        return Double(capOverage) / 1000.0
     }
 
     private var formattedCapOverage: String {

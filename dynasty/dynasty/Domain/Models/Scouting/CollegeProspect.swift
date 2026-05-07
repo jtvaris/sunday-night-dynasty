@@ -130,6 +130,14 @@ final class CollegeProspect {
     /// Wingspan in inches (70 - 90). Position-specific: DB/DL premium.
     var wingspan: Double = 78.0
 
+    // MARK: - Hometown (FA Drama Storylines)
+
+    /// Hometown state (e.g. "California"). Carried over to Player on draft for hometown storylines.
+    var hometownState: String?
+
+    /// Hometown city (e.g. "Long Beach"). Carried over to Player on draft for hometown storylines.
+    var hometownCity: String?
+
     // MARK: - Computed Properties
 
     /// Always returns a grade — uses scoutedOverallGrade if available, otherwise converts
