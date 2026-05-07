@@ -1719,10 +1719,12 @@ struct RosterEvaluationView: View {
         }
     }
 
-    /// Coach's verbal potential label (uses cached assessment, falls back to true potential).
+    /// Coach's verbal potential label. Deterministic — falls back to a noise-free
+    /// derivation from `truePotential` when no cached assessment exists. Random noise
+    /// must be applied once and persisted on the player; never re-rolled at render time.
     private func potentialLabel(for player: Player) -> (label: String, color: Color) {
         let raw = player.assessedPotential.flatMap(PotentialLabel.init(rawValue:))
-            ?? PotentialLabel.from(potential: player.truePotential, noise: 1)
+            ?? PotentialLabel.from(potential: player.truePotential, noise: 0)
         let color: Color
         switch raw {
         case .eliteCeiling:  color = .eliteGreen
