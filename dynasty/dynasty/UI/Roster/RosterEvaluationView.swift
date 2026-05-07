@@ -1627,11 +1627,12 @@ struct RosterEvaluationView: View {
         }
     }
 
-    /// Compact roster row for the eval modal — position chip, S badge, name, age, OVR,
-    /// trend arrow, potential label, contract, status, morale.
+    /// Compact roster row for the eval modal — position chip, S badge, name + potential,
+    /// age, contract yrs, trend, OVR, morale, salary.
     private func evalPlayerRow(player: Player, isStarter: Bool) -> some View {
         let trend = developmentTrend(for: player)
         let potential = potentialLabel(for: player)
+        let isExpiring = player.contractYearsRemaining <= 1
 
         return HStack(spacing: 8) {
             // Position chip
@@ -1652,8 +1653,8 @@ struct RosterEvaluationView: View {
                 Color.clear.frame(width: 18, height: 18)
             }
 
-            // Name + sub-line (potential + contract)
-            VStack(alignment: .leading, spacing: 1) {
+            // Name + potential underneath
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(player.fullName)
                         .font(.subheadline.weight(.semibold))
@@ -1668,17 +1669,36 @@ struct RosterEvaluationView: View {
                             .background(Color.danger.opacity(0.18), in: RoundedRectangle(cornerRadius: 3))
                     }
                 }
-                HStack(spacing: 6) {
-                    Text("Age \(player.age) · \(player.contractYearsRemaining)yr")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(Color.textTertiary)
-                    Text(potential.label)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(potential.color)
-                }
+                Text(potential.label)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(potential.color)
             }
 
             Spacer(minLength: 4)
+
+            // Age
+            VStack(spacing: 1) {
+                Text("\(player.age)")
+                    .font(.system(size: 16, weight: .bold).monospacedDigit())
+                    .foregroundStyle(Color.textPrimary)
+                Text("AGE")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Color.textTertiary)
+                    .tracking(0.5)
+            }
+            .frame(width: 36)
+
+            // Contract years remaining (red flag if expiring)
+            VStack(spacing: 1) {
+                Text("\(player.contractYearsRemaining)")
+                    .font(.system(size: 16, weight: .bold).monospacedDigit())
+                    .foregroundStyle(isExpiring ? Color.danger : Color.textPrimary)
+                Text(isExpiring ? "EXP" : "YRS")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(isExpiring ? Color.danger : Color.textTertiary)
+                    .tracking(0.5)
+            }
+            .frame(width: 36)
 
             // Trend arrow
             Image(systemName: trend.icon)
