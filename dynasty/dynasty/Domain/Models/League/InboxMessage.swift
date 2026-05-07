@@ -198,6 +198,10 @@ extension TaskDestination {
         case .franchiseTag:         return "Franchise Tag"
         case .interviewReport:      return "Interview Report"
         case .personalWorkouts:     return "Personal Workouts"
+        case .trainingPlan:         return "Training Plan"
+        case .workloadDashboard:    return "Workload"
+        case .rosterCuts:           return "Roster Cuts"
+        case .gameWeekPrep:         return "Game Plan"
         }
     }
 }

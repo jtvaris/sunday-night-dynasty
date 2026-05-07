@@ -175,6 +175,8 @@ struct CareerShellView: View {
         case contractTimeline, mentoring, trades, news
         case ownerMeeting, lockerRoom, inbox, rosterEvaluation
         case franchiseTag
+        // Camp destinations
+        case trainingPlan, workloadDashboard, rosterCuts, gameWeekPrep
     }
 
     @ViewBuilder
@@ -336,7 +338,47 @@ struct CareerShellView: View {
                     markTaskVisited(for: .franchiseTag)
                     refreshTaskCompletionStatus()
                 }
+        case .trainingPlan:
+            TrainingPlanView(career: career, roster: teamRoster)
+        case .workloadDashboard:
+            WorkloadDashboard(roster: teamRoster)
+        case .rosterCuts:
+            RosterCutView(career: career, roster: teamRoster)
+        case .gameWeekPrep:
+            GameWeekPrepPicker(
+                career: career,
+                consecutiveOpponentWeeks: consecutiveOpponentPrepWeeks
+            )
         }
+    }
+
+    // MARK: - Camp Helpers
+
+    /// Fetches the user's current roster (used by Camp views as a parameter).
+    /// Returns an empty array when no team is assigned.
+    private var teamRoster: [Player] {
+        guard let teamID = career.teamID else { return [] }
+        let descriptor = FetchDescriptor<Player>(predicate: #Predicate<Player> { $0.teamID == teamID })
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    /// Counts how many consecutive prior weeks the user spent at >=70%
+    /// opponent-specific prep — drives the GameWeekPrepPicker drift warning.
+    private var consecutiveOpponentPrepWeeks: Int {
+        guard let teamID = career.teamID else { return 0 }
+        let season = career.currentSeason
+        let descriptor = FetchDescriptor<OpponentPrepWeek>(
+            predicate: #Predicate<OpponentPrepWeek> {
+                $0.teamID == teamID && $0.seasonYear == season
+            }
+        )
+        let prep = (try? modelContext.fetch(descriptor)) ?? []
+        let sorted = prep.sorted { $0.weekNumber > $1.weekNumber }
+        var streak = 0
+        for week in sorted {
+            if week.opponentPct >= 70 { streak += 1 } else { break }
+        }
+        return streak
     }
 
     // MARK: - Hire Coach Destination Helper
@@ -408,6 +450,10 @@ struct CareerShellView: View {
             UserDefaults.standard.set("interviews", forKey: "scoutingPendingTab")
             shellDest = .scouting
         case .personalWorkouts:   shellDest = .scouting
+        case .trainingPlan:        shellDest = .trainingPlan
+        case .workloadDashboard:   shellDest = .workloadDashboard
+        case .rosterCuts:          shellDest = .rosterCuts
+        case .gameWeekPrep:        shellDest = .gameWeekPrep
         }
 
         // Dismiss calendar, then navigate

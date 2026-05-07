@@ -708,6 +708,9 @@ struct CareerDashboardView: View {
 
     private var centerTilesGrid: some View {
         VStack(spacing: 12) {
+            // Phase-aware Hero Card — adapts to current SeasonPhase, sits at top.
+            phaseHeroCard
+
             // Next Action hero banner — promotes the topmost incomplete required task.
             // Sits above all other dashboard content for maximum prominence.
             nextActionHero
@@ -761,8 +764,96 @@ struct CareerDashboardView: View {
                 if career.currentPhase == .regularSeason || career.currentPhase == .tradeDeadline {
                     tradeTile
                 }
+
+                // Camp-phase tiles (OTAs / Training Camp / Preseason / Cuts / Game Week)
+                if [.otas, .trainingCamp, .preseason].contains(career.currentPhase) {
+                    trainingPlanTile
+                    workloadTile
+                }
+                if career.currentPhase == .rosterCuts {
+                    rosterCutsTile
+                }
+                if career.currentPhase == .regularSeason {
+                    gameWeekPrepTile
+                }
             }
         }
+    }
+
+    // MARK: - Camp Tiles
+
+    private var trainingPlanTile: some View {
+        NavigationLink(value: CareerShellView.ShellDestination.trainingPlan) {
+            DashboardTile(icon: "figure.run.circle.fill", title: "Training Plan") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Set focus")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Tactical / Physical / Technical")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var workloadTile: some View {
+        NavigationLink(value: CareerShellView.ShellDestination.workloadDashboard) {
+            DashboardTile(icon: "heart.text.square.fill", title: "Workload") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Monitor camp load")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Injury & burnout risk")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var rosterCutsTile: some View {
+        let rosterCount: Int = {
+            guard let teamID = career.teamID else { return 0 }
+            let descriptor = FetchDescriptor<Player>(predicate: #Predicate<Player> { $0.teamID == teamID })
+            return (try? modelContext.fetchCount(descriptor)) ?? 0
+        }()
+        let cutsRemaining = max(0, rosterCount - 53)
+
+        return NavigationLink(value: CareerShellView.ShellDestination.rosterCuts) {
+            DashboardTile(icon: "scissors", title: "Roster Cuts", highlighted: cutsRemaining > 0) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(cutsRemaining > 0 ? "\(cutsRemaining) cuts remaining" : "Roster set")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(cutsRemaining > 0 ? Color.warning : Color.success)
+                    Text("90 → 75 → 65 → 53")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var gameWeekPrepTile: some View {
+        NavigationLink(value: CareerShellView.ShellDestination.gameWeekPrep) {
+            DashboardTile(icon: "scope", title: "Game Plan") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Week \(career.currentWeek) prep")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.accentGold)
+                    Text("General vs opponent focus")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - 4. Right Panel (Schedule + Standings)
@@ -2449,6 +2540,249 @@ struct CareerDashboardView: View {
             return CoachRole.allCases.filter { $0 != .headCoach }
         }
         return CoachRole.allCases
+    }
+
+    // MARK: - Phase-Aware Hero Card
+
+    @ViewBuilder
+    private var phaseHeroCard: some View {
+        switch career.currentPhase {
+        case .otas, .trainingCamp:
+            campHeroCard
+        case .preseason:
+            preseasonHeroCard
+        case .rosterCuts:
+            rosterCutsHeroCard
+        case .regularSeason, .tradeDeadline:
+            regularSeasonHeroCard
+        case .playoffs:
+            playoffsHeroCard
+        case .combine:
+            combineHeroCard
+        case .freeAgency:
+            faHeroCard
+        case .proDays:
+            proDaysHeroCard
+        case .draft:
+            draftHeroCard
+        case .coachingChanges, .reviewRoster:
+            offseasonOpenerHeroCard
+        case .proBowl, .superBowl:
+            seasonClimaxHeroCard
+        }
+    }
+
+    // Generic shell for all hero cards
+    @ViewBuilder
+    private func phaseCardBase<Content: View>(
+        icon: String,
+        accent: Color,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(alignment: .top, spacing: DSSpacing.md) {
+            VStack {
+                Image(systemName: icon)
+                    .font(.system(size: 32, weight: .semibold))
+                    .foregroundStyle(accent)
+                    .frame(width: 44, height: 44)
+                Spacer()
+            }
+            VStack(alignment: .leading, spacing: DSSpacing.sm) {
+                content()
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(DSSpacing.lg)
+        .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
+        .background(
+            LinearGradient(
+                colors: [accent.opacity(0.18), Color.backgroundSecondary],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: DSCornerRadius.card)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DSCornerRadius.card)
+                .strokeBorder(accent.opacity(0.45), lineWidth: 1.5)
+        )
+    }
+
+    @ViewBuilder
+    private func heroHeader(_ text: String) -> some View {
+        Text(text)
+            .font(.title2.weight(.heavy))
+            .foregroundStyle(Color.textPrimary)
+            .lineLimit(2)
+            .minimumScaleFactor(0.85)
+    }
+
+    @ViewBuilder
+    private func heroStatRow(_ label: String, value: String, accent: Color = .accentGold) -> some View {
+        HStack(spacing: DSSpacing.sm) {
+            Text(label)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Color.textSecondary)
+            Spacer()
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(accent)
+        }
+    }
+
+    @ViewBuilder
+    private func heroActionLink(title: String, destination: TaskDestination) -> some View {
+        Button {
+            onTaskSelected(destination)
+        } label: {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.subheadline.weight(.bold))
+                Image(systemName: "arrow.right")
+                    .font(.subheadline.weight(.bold))
+            }
+            .foregroundStyle(Color.backgroundPrimary)
+            .padding(.horizontal, DSSpacing.md)
+            .padding(.vertical, 8)
+            .background(Color.accentGold, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Phase-specific hero cards
+
+    private var campHeroCard: some View {
+        let dayNum = max(1, min(21, career.currentWeek == 0 ? 7 : career.currentWeek))
+        return phaseCardBase(icon: "figure.strengthtraining.traditional", accent: .accentGold) {
+            heroHeader("Training Camp · Day \(dayNum) / 21")
+            heroStatRow("Workload heatmap", value: "18% overloaded")
+            heroStatRow("Active battles", value: "3")
+            heroStatRow("Top camp grade", value: bestPlayer.map { "\($0.lastName) · A+" } ?? "—  · A+")
+            heroActionLink(title: "View Training Plan", destination: .roster)
+        }
+    }
+
+    private var preseasonHeroCard: some View {
+        let gameNum = max(1, min(3, career.currentWeek))
+        return phaseCardBase(icon: "sportscourt.fill", accent: .accentGold) {
+            heroHeader("Preseason · Game \(gameNum) / 3")
+            heroStatRow("Snap distribution", value: "60% starters / 40% backups")
+            heroStatRow("Surprise breakouts", value: "2")
+            heroStatRow("Injury risk", value: "Low")
+            heroActionLink(title: "View Snap Counts", destination: .roster)
+        }
+    }
+
+    private var rosterCutsHeroCard: some View {
+        phaseCardBase(icon: "scissors", accent: .draftStealGold) {
+            heroHeader("Roster Cuts · 90 → 53")
+            heroStatRow("Stage", value: "Cut 1 of 3 (90→75)")
+            heroStatRow("Cap savings projected", value: "$4.2M")
+            heroStatRow("Practice squad protected", value: "7")
+            heroActionLink(title: "Make Cuts", destination: .roster)
+        }
+    }
+
+    private var regularSeasonHeroCard: some View {
+        let week = career.currentWeek
+        let nextOpponent = upcomingGames.first.flatMap { game -> (abbr: String, isHome: Bool)? in
+            let isHome = game.homeTeamID == career.teamID
+            let oppID = isHome ? game.awayTeamID : game.homeTeamID
+            return allTeamsByID[oppID].map { (abbr: $0.abbreviation, isHome: isHome) }
+        }
+        let oppText: String = {
+            if let opp = nextOpponent {
+                return opp.isHome ? "vs \(opp.abbr) (Home)" : "@ \(opp.abbr) (Away)"
+            }
+            return "vs TBD"
+        }()
+        return phaseCardBase(icon: "calendar.badge.clock", accent: .accentGold) {
+            heroHeader("Week \(week) · \(oppText)")
+            heroStatRow("Game-week prep", value: "60% Opponent / 40% General")
+            heroStatRow("Streak", value: "W3")
+            heroStatRow("Injuries", value: "2 OUT, 3 questionable")
+            heroActionLink(title: "Set Game Plan", destination: .gamePlan)
+        }
+    }
+
+    private var playoffsHeroCard: some View {
+        phaseCardBase(icon: "trophy.fill", accent: .draftStealGold) {
+            heroHeader("Playoffs · Wild Card")
+            HStack(spacing: 6) {
+                ForEach(["WC", "DIV", "CONF", "SB"], id: \.self) { stage in
+                    Text(stage)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(stage == "WC" ? Color.backgroundPrimary : Color.textTertiary)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(stage == "WC" ? Color.accentGold : Color.backgroundTertiary, in: Capsule())
+                }
+            }
+            heroStatRow("Next opponent", value: "Vs Seed #5 · DOME")
+            heroStatRow("Vegas line", value: "-3.5 (Favored)")
+            heroActionLink(title: "Game Plan", destination: .gamePlan)
+        }
+    }
+
+    private var combineHeroCard: some View {
+        phaseCardBase(icon: "figure.run", accent: .accentGold) {
+            heroHeader("NFL Combine · 42% scouted")
+            heroStatRow("Top prospect", value: "C. Williams (QB) · OVR 88")
+            heroStatRow("Risers today", value: "5")
+            heroStatRow("Scouts deployed", value: "\(scoutCount) / \(max(scoutCount, 6))")
+            heroActionLink(title: "Send Scouts", destination: .scouting)
+        }
+    }
+
+    private var faHeroCard: some View {
+        let stepLabel = FreeAgencyStep(rawValue: career.freeAgencyStep)?.rawValue.capitalized ?? "Open"
+        return phaseCardBase(icon: "dollarsign.circle.fill", accent: .accentGold) {
+            heroHeader("Free Agency · \(stepLabel) · $24M cap")
+            heroStatRow("Frenzy", value: "7 hot · 2 outbid alerts")
+            heroStatRow("Top targets remaining", value: "5")
+            heroStatRow("Pending offers", value: "3")
+            heroActionLink(title: "Open Bidding Room", destination: .freeAgency)
+        }
+    }
+
+    private var proDaysHeroCard: some View {
+        phaseCardBase(icon: "graduationcap.fill", accent: .accentGold) {
+            heroHeader("Pro Days · 12 / 30 visits used")
+            heroStatRow("Top scouts assigned", value: "8 colleges")
+            heroStatRow("Workouts this week", value: "4")
+            heroStatRow("Insights gained", value: "+11%")
+            heroActionLink(title: "Schedule", destination: .scouting)
+        }
+    }
+
+    private var draftHeroCard: some View {
+        phaseCardBase(icon: "pencil.and.list.clipboard", accent: .draftStealGold) {
+            heroHeader("Draft · Round 1 · Pick 14")
+            heroStatRow("Your next pick", value: "#14 (3 picks away)")
+            heroStatRow("Top targets", value: "Williams · Daniels · Maye")
+            heroStatRow("Trade offers", value: "2 active")
+            heroActionLink(title: "Enter Draft", destination: .draft)
+        }
+    }
+
+    private var offseasonOpenerHeroCard: some View {
+        phaseCardBase(icon: "arrow.triangle.2.circlepath", accent: .accentGold) {
+            heroHeader("Offseason Begins")
+            heroStatRow("Coach contracts expiring", value: "2")
+            heroStatRow("Roster OVR", value: "76 → 73 projected")
+            heroStatRow("Cap space (next yr)", value: "$58.4M")
+            heroActionLink(title: "Review", destination: .coachingStaff)
+        }
+    }
+
+    private var seasonClimaxHeroCard: some View {
+        let isProBowl = career.currentPhase == .proBowl
+        return phaseCardBase(icon: isProBowl ? "star.fill" : "trophy.circle.fill", accent: .draftStealGold) {
+            heroHeader(isProBowl ? "Pro Bowl" : "Super Bowl")
+            heroStatRow("Pro Bowlers", value: "4")
+            heroStatRow("MVP candidates", value: "1")
+            heroStatRow("Awards results", value: "Pending")
+            heroActionLink(title: "View Awards", destination: .news)
+        }
     }
 }
 

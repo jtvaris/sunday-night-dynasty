@@ -70,6 +70,11 @@ enum TaskDestination: String, Codable, CaseIterable {
     case franchiseTag
     case interviewReport
     case personalWorkouts
+    // Camp destinations
+    case trainingPlan
+    case workloadDashboard
+    case rosterCuts
+    case gameWeekPrep
 }
 
 // MARK: - Task Generator
@@ -594,6 +599,15 @@ enum TaskGenerator {
                 destination: .depthChart,
                 isRequired: true
             ),
+            // REQUIRED: set training focus
+            GameTask(
+                phase: .otas,
+                title: "Set training focus",
+                description: "Allocate Tactical / Physical / Technical focus for the upcoming week.",
+                icon: "figure.run.circle.fill",
+                destination: .trainingPlan,
+                isRequired: true
+            ),
             // Optional
             GameTask(
                 phase: .otas,
@@ -611,26 +625,51 @@ enum TaskGenerator {
                 destination: .mentoring,
                 isRequired: false
             ),
+            GameTask(
+                phase: .otas,
+                title: "Monitor workload",
+                description: "Watch player camp load — overload risks injuries before camp even starts.",
+                icon: "heart.text.square.fill",
+                destination: .workloadDashboard,
+                isRequired: false
+            ),
         ]
     }
 
     private static func trainingCampTasks() -> [GameTask] {
         [
-            // All optional
+            // REQUIRED: set training focus per camp week
             GameTask(
                 phase: .trainingCamp,
-                title: "Review player development",
-                description: "See which players improved during the offseason training program.",
-                icon: "arrow.up.right.circle.fill",
+                title: "Set training focus",
+                description: "Allocate Tactical / Physical / Technical focus for this camp week.",
+                icon: "figure.run.circle.fill",
+                destination: .trainingPlan,
+                isRequired: true
+            ),
+            // Optional
+            GameTask(
+                phase: .trainingCamp,
+                title: "Review camp grades",
+                description: "See which players are earning roster spots based on camp performance.",
+                icon: "graduationcap.fill",
                 destination: .roster,
                 isRequired: false
             ),
             GameTask(
                 phase: .trainingCamp,
-                title: "Evaluate roster battles",
-                description: "Check position competitions and decide who earns a starting spot.",
+                title: "Resolve position battles",
+                description: "Track daily winners in position competitions and lock in starters.",
                 icon: "figure.wrestling",
                 destination: .depthChart,
+                isRequired: false
+            ),
+            GameTask(
+                phase: .trainingCamp,
+                title: "Monitor workload",
+                description: "Heat-map of injury / burnout risk across the entire roster.",
+                icon: "heart.text.square.fill",
+                destination: .workloadDashboard,
                 isRequired: false
             ),
             GameTask(
@@ -646,10 +685,18 @@ enum TaskGenerator {
 
     private static func preseasonTasks() -> [GameTask] {
         [
-            // All optional
+            // REQUIRED: training focus continues through preseason
             GameTask(
                 phase: .preseason,
-                title: "Watch preseason games",
+                title: "Set training focus",
+                description: "Final preseason week — choose camp focus before final cuts.",
+                icon: "figure.run.circle.fill",
+                destination: .trainingPlan,
+                isRequired: true
+            ),
+            GameTask(
+                phase: .preseason,
+                title: "Review preseason results",
                 description: "Preseason games auto-simulate. Review results and stat lines.",
                 icon: "play.rectangle.fill",
                 destination: .schedule,
@@ -658,10 +705,26 @@ enum TaskGenerator {
             ),
             GameTask(
                 phase: .preseason,
+                title: "Finalize depth chart",
+                description: "Lock in starters and backups before final roster cuts begin.",
+                icon: "list.bullet.rectangle.portrait.fill",
+                destination: .depthChart,
+                isRequired: false
+            ),
+            GameTask(
+                phase: .preseason,
                 title: "Evaluate young players",
                 description: "Check preseason performance of rookies and fringe roster players.",
                 icon: "person.crop.rectangle.stack.fill",
                 destination: .roster,
+                isRequired: false
+            ),
+            GameTask(
+                phase: .preseason,
+                title: "Monitor workload",
+                description: "Final check on player workload before the regular season grind.",
+                icon: "heart.text.square.fill",
+                destination: .workloadDashboard,
                 isRequired: false
             ),
         ]
@@ -680,11 +743,40 @@ enum TaskGenerator {
                     ? "You must release \(rosterCount - 53) player(s) to reach the 53-man limit."
                     : "Your roster meets the 53-man requirement.",
                 icon: "scissors",
-                destination: .roster,
+                destination: .rosterCuts,
                 isRequired: overLimit,
                 status: overLimit ? .todo : .done
             ),
         ]
+
+        // Camp-cut staging tasks. The 90→75 / 75→65 / 65→53 progression is the
+        // canonical NFL flow; tasks deep-link into the multi-stage RosterCutView.
+        tasks.append(GameTask(
+            phase: .rosterCuts,
+            title: "Cut to 75",
+            description: "First wave of camp cuts. Trim the roster from 90 to 75 players.",
+            icon: "scissors",
+            destination: .rosterCuts,
+            isRequired: false
+        ))
+
+        tasks.append(GameTask(
+            phase: .rosterCuts,
+            title: "Cut to 65",
+            description: "Second wave of camp cuts. Trim the roster from 75 to 65 players.",
+            icon: "scissors",
+            destination: .rosterCuts,
+            isRequired: false
+        ))
+
+        tasks.append(GameTask(
+            phase: .rosterCuts,
+            title: "Cut to 53",
+            description: "Final wave — set your 53-man active roster.",
+            icon: "scissors",
+            destination: .rosterCuts,
+            isRequired: false
+        ))
 
         tasks.append(GameTask(
             phase: .rosterCuts,
@@ -715,6 +807,15 @@ enum TaskGenerator {
             description: "Choose your offensive and defensive strategy for this week's matchup.",
             icon: "sportscourt.fill",
             destination: .gamePlan,
+            isRequired: false
+        ))
+
+        tasks.append(GameTask(
+            phase: .regularSeason,
+            title: "Tune week prep vs \(opponent)",
+            description: "Balance general training vs opponent-specific prep — drives audible / read bonuses.",
+            icon: "scope",
+            destination: .gameWeekPrep,
             isRequired: false
         ))
 

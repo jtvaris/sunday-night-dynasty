@@ -196,6 +196,15 @@ enum WeekAdvancer {
         let week = career.currentWeek
         let season = career.currentSeason
 
+        // Camp Phase 1: apply opponent-prep drift penalty if user has been
+        // over-focusing on opponent prep for 3+ consecutive weeks. The
+        // gameBoost() side is consumed inside GameSimulator integration -- here
+        // we only persist the long-term drift consequence (-1..-3 OVR) so it
+        // survives across re-renders.
+        if let teamID = career.teamID {
+            applyOpponentPrepDrift(teamID: teamID, season: season, week: week, modelContext: modelContext)
+        }
+
         // Fetch all unplayed regular-season games for this week.
         let unplayedGames = fetchUnplayedGames(
             week: week,
@@ -948,6 +957,12 @@ enum WeekAdvancer {
             )
 
         case .otas:
+            // Camp Phase 1 hook-up: apply training plan + workload tick + battles
+            // for the user's team during OTAs. AI teams skip the per-player tick
+            // to keep WeekAdvancer fast — their development is handled in bulk
+            // at the .trainingCamp boundary via PlayerDevelopmentEngine.
+            applyCampWeeklyTick(career: career, phase: .otas, modelContext: modelContext, allPlayers: allPlayers)
+
             // UDFA signing: AI teams auto-sign ~12 UDFAs each, present pool to player
             if !currentDraftClass.isEmpty {
                 let udfaPool = ScoutingEngine.getUDFAPool(prospects: currentDraftClass)
@@ -1004,6 +1019,10 @@ enum WeekAdvancer {
             )
 
         case .trainingCamp:
+            // Camp Phase 1 hook-up: per-week training plan + workload + battles
+            // for the user's team. Full-pads camp = higher intensity baseline.
+            applyCampWeeklyTick(career: career, phase: .trainingCamp, modelContext: modelContext, allPlayers: allPlayers)
+
             // Process offseason development for all teams
             for team in teams {
                 let teamPlayers = allPlayers.filter { $0.teamID == team.id }
@@ -1024,6 +1043,9 @@ enum WeekAdvancer {
             )
 
         case .preseason:
+            // Camp Phase 1 hook-up: lighter intensity; preseason snaps drive perf.
+            applyCampWeeklyTick(career: career, phase: .preseason, modelContext: modelContext, allPlayers: allPlayers)
+
             // Generate preseason news
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .preseason,
@@ -1032,6 +1054,17 @@ enum WeekAdvancer {
             )
 
         case .rosterCuts:
+            // Camp Phase 1 hook-up: compute final camp grade for every player on the
+            // user's team before they decide who to cut. AI teams skip the per-player
+            // grade since the UI never surfaces them.
+            applyCampGrades(career: career, modelContext: modelContext, allPlayers: allPlayers)
+
+            // Resolve any open position battles -- the camp is over.
+            let openBattles = fetchOpenPositionBattles(seasonYear: career.currentSeason, modelContext: modelContext)
+            if !openBattles.isEmpty {
+                PositionBattleTracker.resolveBattles(battles: openBattles, modelContext: modelContext)
+            }
+
             // Player handles manually — just generate phase news
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .rosterCuts,
@@ -1067,6 +1100,13 @@ enum WeekAdvancer {
                     lastInboxMessages.append(message)
                 }
             }
+        }
+
+        // --- Camp Phase 1: process waivers when leaving rosterCuts ---
+        // Every cut player passes through 24h waivers before the season starts.
+        // Worst-record teams get higher priority. Claims stamp the cut row.
+        if currentPhase == .rosterCuts && nextPhase == .regularSeason {
+            processCampWaivers(career: career, teams: teams, modelContext: modelContext)
         }
 
         // --- Transition to the next phase ---
@@ -1372,5 +1412,241 @@ enum WeekAdvancer {
 
         let raw = (touchdowns * 7) + (fieldGoals * 3) + homeAdvantage
         return max(0, raw)
+    }
+
+    // MARK: - Camp Phase 1 Hook-ups
+    //
+    // The functions below glue pre-built Camp engines into the offseason flow.
+    // They run only for the user's team to keep advanceWeek snappy — AI teams
+    // continue to use the legacy `PlayerDevelopmentEngine.processOffseason`
+    // path. If/when AI camps need the same per-week granularity, expand these
+    // helpers to iterate over `teams`.
+
+    /// Applies a single weekly camp tick: training plan deltas + 7 days of
+    /// workload + per-active-battle resolutions + a HardKnocks event burst.
+    /// Phase intensity:
+    ///   .otas         -> 0.45 (no pads)
+    ///   .trainingCamp -> 0.85 (full pads)
+    ///   .preseason    -> 0.55 (lighter; preseason snaps drive most signal)
+    private static func applyCampWeeklyTick(
+        career: Career,
+        phase: SeasonPhase,
+        modelContext: ModelContext,
+        allPlayers: [Player]
+    ) {
+        guard let teamID = career.teamID else { return }
+        let roster = allPlayers.filter { $0.teamID == teamID }
+        guard !roster.isEmpty else { return }
+
+        // 1. Apply the user's saved training plan for this week. If none exists,
+        //    seed a balanced 34/33/33 plan so deltas still tick forward.
+        let week = career.currentWeek
+        let season = career.currentSeason
+        let plan = fetchOrSeedTrainingPlan(
+            teamID: teamID,
+            season: season,
+            week: week,
+            phase: phase,
+            modelContext: modelContext
+        )
+        TrainingPlanEngine.applyWeekly(plan: plan, roster: roster, modelContext: modelContext)
+
+        // 2. Tick 7 days of workload per player. Intensity scales with phase.
+        //    Recovery rate is a flat 0.55 (mid-tier strength coach baseline)
+        //    until trainer staff plumbing is wired -- TODO: replace with real
+        //    `coach.staminaCoaching` value once the field is exposed.
+        let intensity: Double
+        switch phase {
+        case .otas:         intensity = 0.45
+        case .trainingCamp: intensity = 0.85
+        case .preseason:    intensity = 0.55
+        default:            intensity = 0.5
+        }
+        let recoveryRate = 0.55
+        for player in roster {
+            for _ in 0..<7 {
+                WorkloadEngine.tickDay(
+                    player: player,
+                    intensity: intensity,
+                    recoveryRate: recoveryRate,
+                    modelContext: modelContext
+                )
+            }
+        }
+
+        // 3. Detect/resolve position battles. Detection is idempotent per season
+        //    -- we only insert if no open battles exist yet. Daily ticks fire 7x
+        //    to mirror the workload week.
+        let openBattles = fetchOpenPositionBattles(seasonYear: season, modelContext: modelContext)
+            .filter { battle in
+                // Only tick battles whose competitors belong to the user's roster.
+                let competitorSet = Set(battle.competitorIDs)
+                return roster.contains { competitorSet.contains($0.id) }
+            }
+        let battles: [PositionBattle]
+        if openBattles.isEmpty {
+            battles = PositionBattleTracker.detectBattles(roster: roster, modelContext: modelContext)
+        } else {
+            battles = openBattles
+        }
+        var rng = SystemRandomNumberGenerator()
+        for battle in battles {
+            for _ in 0..<7 {
+                PositionBattleTracker.tickDay(battle: battle, rng: &rng, modelContext: modelContext)
+            }
+        }
+
+        // 4. Hard Knocks storyline burst -- 1 burst per camp week for the user.
+        let recentInjuries = roster.filter { $0.isInjured }
+        let recentCutsDescriptor = FetchDescriptor<RosterCut>(
+            predicate: #Predicate<RosterCut> { $0.teamID == teamID && $0.seasonYear == season }
+        )
+        let recentCuts = (try? modelContext.fetch(recentCutsDescriptor)) ?? []
+        HardKnocksNarrator.generateCampStorylines(
+            battles: battles,
+            recentInjuries: recentInjuries,
+            recentCuts: recentCuts,
+            roster: roster,
+            modelContext: modelContext
+        )
+    }
+
+    /// Fetches a saved TrainingPlan for (team, season, week, phase) or returns
+    /// a balanced fallback so the engine always has something to apply.
+    private static func fetchOrSeedTrainingPlan(
+        teamID: UUID,
+        season: Int,
+        week: Int,
+        phase: SeasonPhase,
+        modelContext: ModelContext
+    ) -> TrainingPlan {
+        let phaseRaw = phase.rawValue
+        let descriptor = FetchDescriptor<TrainingPlan>(
+            predicate: #Predicate<TrainingPlan> {
+                $0.teamID == teamID
+                    && $0.seasonYear == season
+                    && $0.weekNumber == week
+                    && $0.phaseRaw == phaseRaw
+            }
+        )
+        if let saved = (try? modelContext.fetch(descriptor))?.first {
+            return saved
+        }
+        // Ephemeral fallback — does not persist so the player's saved plan stays canonical.
+        return TrainingPlan(
+            seasonYear: season,
+            weekNumber: week,
+            phaseRaw: phaseRaw,
+            tacticalPct: 34,
+            physicalPct: 33,
+            technicalPct: 33,
+            teamID: teamID
+        )
+    }
+
+    /// Fetches all unresolved position battles for the given season.
+    private static func fetchOpenPositionBattles(
+        seasonYear: Int,
+        modelContext: ModelContext
+    ) -> [PositionBattle] {
+        let descriptor = FetchDescriptor<PositionBattle>(
+            predicate: #Predicate<PositionBattle> {
+                $0.seasonYear == seasonYear && $0.winnerID == nil
+            }
+        )
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    /// End-of-camp grade computation for the user's roster. Uses an estimate
+    /// of training pts (10 pts/week × weeks-in-camp) and preseason snaps from
+    /// `PlayerSeasonHistory` if available -- TODO replace with real stat
+    /// rollup once preseason GameSimulator persists snap counts.
+    private static func applyCampGrades(
+        career: Career,
+        modelContext: ModelContext,
+        allPlayers: [Player]
+    ) {
+        guard let teamID = career.teamID else { return }
+        let roster = allPlayers.filter { $0.teamID == teamID }
+        // Approximation: 3 weeks OTAs + 4 weeks camp + 2 weeks preseason = 9 weeks.
+        // Scale per-player estimated training pts off cumulativeLoad as a proxy
+        // for how engaged each player has been in camp activities.
+        for player in roster {
+            // Load 0..200 → trainingPts 0..30 (matches CampGradeEvaluator's cap).
+            let trainingPts = min(30, max(0, player.cumulativeLoad / 6))
+            // Snap volume estimate from yearsPro: vets coast (40 snaps), rooks
+            // earn it (70 snaps). Real preseason stats override later.
+            let estimatedSnaps = player.yearsPro >= 4 ? 35 : 60
+            let perfFactor: Double = {
+                // Weighted from current OVR — proxy until real preseason perf lands.
+                let ovr = Double(player.overall)
+                return min(1.0, max(0.2, ovr / 100.0))
+            }()
+            let grade = CampGradeEvaluator.computeGrade(
+                player: player,
+                trainingPts: trainingPts,
+                preseasonSnaps: estimatedSnaps,
+                preseasonAvgPerf: perfFactor
+            )
+            player.campGrade = grade
+        }
+    }
+
+    /// Runs the 24h waiver window for every cut made this season for the user's
+    /// team. Worst-record teams get higher claim priority.
+    private static func processCampWaivers(
+        career: Career,
+        teams: [Team],
+        modelContext: ModelContext
+    ) {
+        let season = career.currentSeason
+        let cutsDescriptor = FetchDescriptor<RosterCut>(
+            predicate: #Predicate<RosterCut> {
+                $0.seasonYear == season && $0.claimedByTeamID == nil
+            }
+        )
+        let cuts = (try? modelContext.fetch(cutsDescriptor)) ?? []
+        guard !cuts.isEmpty else { return }
+
+        let teamRecords = teams.map { (teamID: $0.id, wins: $0.wins, losses: $0.losses) }
+        _ = WaiverWireEngine.processWaivers(
+            cuts: cuts,
+            teamRecords: teamRecords,
+            modelContext: modelContext
+        )
+    }
+
+    /// Applies the long-term attribute drift penalty when the user has prepped
+    /// opponent-heavy 3+ consecutive weeks. Penalty is a flat OVR drop applied
+    /// to physical.stamina (proxy for unit-wide drift -- TODO: scope to the
+    /// affected unit only when scheme-attribution lands).
+    private static func applyOpponentPrepDrift(
+        teamID: UUID,
+        season: Int,
+        week: Int,
+        modelContext: ModelContext
+    ) {
+        let descriptor = FetchDescriptor<OpponentPrepWeek>(
+            predicate: #Predicate<OpponentPrepWeek> {
+                $0.teamID == teamID && $0.seasonYear == season
+            }
+        )
+        let prep = (try? modelContext.fetch(descriptor)) ?? []
+        let recent = prep.sorted { $0.weekNumber > $1.weekNumber }
+        var streak = 0
+        for entry in recent where entry.weekNumber < week {
+            if entry.opponentPct >= 70 { streak += 1 } else { break }
+        }
+        let penalty = OpponentPrepEngine.driftPenalty(consecutiveOpponentWeeks: streak)
+        guard penalty < 0 else { return }
+
+        // Apply -1..-3 to stamina across the user's roster as a unit-wide proxy.
+        let playerDescriptor = FetchDescriptor<Player>(
+            predicate: #Predicate<Player> { $0.teamID == teamID }
+        )
+        let roster = (try? modelContext.fetch(playerDescriptor)) ?? []
+        for player in roster {
+            player.physical.stamina = max(40, player.physical.stamina + penalty)
+        }
     }
 }
