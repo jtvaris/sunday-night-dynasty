@@ -53,11 +53,22 @@ enum GameSimulator {
     /// management, momentum shifts, fatigue accumulation, morale/personality modifiers,
     /// and optional overtime. After the game concludes it compiles a ``BoxScore``,
     /// per-player ``PlayerGameStats``, and selects an MVP.
+    ///
+    /// - Parameters:
+    ///   - audibleBoost: 0..0.20 multiplicative bonus to the boosted team's offense
+    ///     (applied as final-score amplification). Wired from `OpponentPrepEngine.gameBoost`.
+    ///   - defReadBoost: 0..0.15 multiplicative bonus to the boosted team's defense
+    ///     (applied as opponent-score dampener).
+    ///   - boostedTeamID: The UUID of the team receiving the boost (typically the user's team).
+    ///     Pass `nil` to disable boosts entirely.
     static func simulate(
         homeTeam: Team,
         awayTeam: Team,
         homeCoaches: [Coach] = [],
-        awayCoaches: [Coach] = []
+        awayCoaches: [Coach] = [],
+        audibleBoost: Double = 0,
+        defReadBoost: Double = 0,
+        boostedTeamID: UUID? = nil
     ) -> GameResult {
         // -----------------------------------------------------------------
         // 1. Setup
@@ -275,6 +286,27 @@ enum GameSimulator {
             awayScore += otResult.awayOTPoints
             homeQuarterScores[4] = otResult.homeOTPoints
             awayQuarterScores[4] = otResult.awayOTPoints
+        }
+
+        // -----------------------------------------------------------------
+        // 6b. Apply OpponentPrepEngine game boost (Camp Phase 1 wire-up)
+        // -----------------------------------------------------------------
+        // The boost is applied as a final-score nudge rather than threading
+        // multipliers through every PlaySimulator call. audibleBoost (0..0.20)
+        // amplifies the boosted team's own scoring; defReadBoost (0..0.15)
+        // dampens the opponent's. Half-strength (×0.5) is intentional —
+        // a 100% opponent-prep week shifts the final by ~+10% offense /
+        // -7.5% defense, matching the design intent without runaway scoring.
+        if let boostedID = boostedTeamID, (audibleBoost > 0 || defReadBoost > 0) {
+            let audibleMult = 1.0 + (max(0.0, min(0.20, audibleBoost)) * 0.5)
+            let defReadMult = 1.0 - (max(0.0, min(0.15, defReadBoost)) * 0.5)
+            if boostedID == homeTeam.id {
+                homeScore = Int((Double(homeScore) * audibleMult).rounded())
+                awayScore = max(0, Int((Double(awayScore) * defReadMult).rounded()))
+            } else if boostedID == awayTeam.id {
+                awayScore = Int((Double(awayScore) * audibleMult).rounded())
+                homeScore = max(0, Int((Double(homeScore) * defReadMult).rounded()))
+            }
         }
 
         // -----------------------------------------------------------------

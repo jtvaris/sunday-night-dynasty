@@ -56,6 +56,12 @@ struct CareerDashboardView: View {
     /// Encoded as "<group>:S" or "<group>:D" (e.g. "QB:S" for QB starter grade).
     @State private var positionGradePopoverID: String?
 
+    /// Camp Phase 1 wire-up: latest Hard Knocks event surfaced as a bottom toast.
+    @State private var latestHardKnocksEvent: HardKnocksEvent?
+    /// Tracks which Hard Knocks event IDs have already been displayed so the
+    /// same event isn't re-shown when the dashboard re-appears.
+    @State private var shownHardKnocksEventIDs: Set<UUID> = []
+
     // MARK: - Derived
 
     /// Coaching budget overage in thousands. Returns 0 when within budget,
@@ -200,6 +206,17 @@ struct CareerDashboardView: View {
                 }
             )
             .presentationDetents([.large])
+        }
+        .overlay(alignment: .bottom) {
+            if let event = latestHardKnocksEvent,
+               !shownHardKnocksEventIDs.contains(event.id) {
+                HardKnocksToast(event: event) {
+                    shownHardKnocksEventIDs.insert(event.id)
+                    latestHardKnocksEvent = nil
+                }
+                .padding(.bottom, DSSpacing.lg)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
     }
 
@@ -2502,6 +2519,31 @@ struct CareerDashboardView: View {
         } else {
             previousSeasonRecord = nil
             previousSeasonYear = nil
+        }
+
+        // Camp Phase 1: surface the most recent Hard Knocks event as a toast.
+        loadLatestHardKnocksEvent()
+    }
+
+    /// Camp Phase 1 wire-up: fetch the newest Hard Knocks event and present it
+    /// as a bottom toast if it is fresh (occurred within the last 30 seconds)
+    /// and not yet displayed in this session.
+    private func loadLatestHardKnocksEvent() {
+        var descriptor = FetchDescriptor<HardKnocksEvent>(
+            sortBy: [SortDescriptor(\.occurredAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        let events = (try? modelContext.fetch(descriptor)) ?? []
+        guard let newest = events.first else {
+            latestHardKnocksEvent = nil
+            return
+        }
+        // Only surface fresh events (≤30s old) that haven't been shown yet.
+        let isFresh = abs(newest.occurredAt.timeIntervalSinceNow) <= 30
+        if isFresh && !shownHardKnocksEventIDs.contains(newest.id) {
+            latestHardKnocksEvent = newest
+        } else {
+            latestHardKnocksEvent = nil
         }
     }
 

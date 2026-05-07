@@ -232,11 +232,39 @@ enum WeekAdvancer {
                 // Full play-by-play simulation for the player's game
                 let homeCoaches = allCoaches.filter { $0.teamID == homeTeam.id }
                 let awayCoaches = allCoaches.filter { $0.teamID == awayTeam.id }
+
+                // Camp Phase 1: fetch this week's OpponentPrepWeek for the user
+                // and convert it into a game-boost via OpponentPrepEngine. The
+                // boost is applied to the user's team only — AI-vs-user games
+                // still get the full play-by-play simulation but with the user
+                // benefiting from their prep choice.
+                let userTeamID = career.teamID
+                var audibleBoost = 0.0
+                var defReadBoost = 0.0
+                if let userTeamID = userTeamID,
+                   userTeamID == homeTeam.id || userTeamID == awayTeam.id {
+                    let prepDescriptor = FetchDescriptor<OpponentPrepWeek>(
+                        predicate: #Predicate<OpponentPrepWeek> {
+                            $0.seasonYear == season
+                                && $0.weekNumber == week
+                                && $0.teamID == userTeamID
+                        }
+                    )
+                    if let prep = (try? modelContext.fetch(prepDescriptor))?.first {
+                        let boost = OpponentPrepEngine.gameBoost(prep: prep)
+                        audibleBoost = boost.audibleBoost
+                        defReadBoost = boost.defensiveReadBoost
+                    }
+                }
+
                 let result = GameSimulator.simulate(
                     homeTeam: homeTeam,
                     awayTeam: awayTeam,
                     homeCoaches: homeCoaches,
-                    awayCoaches: awayCoaches
+                    awayCoaches: awayCoaches,
+                    audibleBoost: audibleBoost,
+                    defReadBoost: defReadBoost,
+                    boostedTeamID: userTeamID
                 )
                 game.homeScore = result.homeScore
                 game.awayScore = result.awayScore
@@ -1452,9 +1480,10 @@ enum WeekAdvancer {
         TrainingPlanEngine.applyWeekly(plan: plan, roster: roster, modelContext: modelContext)
 
         // 2. Tick 7 days of workload per player. Intensity scales with phase.
-        //    Recovery rate is a flat 0.55 (mid-tier strength coach baseline)
-        //    until trainer staff plumbing is wired -- TODO: replace with real
-        //    `coach.staminaCoaching` value once the field is exposed.
+        //    Recovery rate is derived from the user team's strength coach (or
+        //    physio as fallback). A 50-rated coach yields the legacy 0.55
+        //    baseline; elite (99) coaches push toward 0.75; weak (1) coaches
+        //    drop toward 0.40. See `computeRecoveryRate` for the mapping.
         let intensity: Double
         switch phase {
         case .otas:         intensity = 0.45
@@ -1462,7 +1491,9 @@ enum WeekAdvancer {
         case .preseason:    intensity = 0.55
         default:            intensity = 0.5
         }
-        let recoveryRate = 0.55
+        let teamCoaches = fetchAllCoaches(modelContext: modelContext)
+            .filter { $0.teamID == teamID }
+        let recoveryRate = computeRecoveryRate(coaches: teamCoaches)
         for player in roster {
             for _ in 0..<7 {
                 WorkloadEngine.tickDay(
@@ -1509,6 +1540,22 @@ enum WeekAdvancer {
             roster: roster,
             modelContext: modelContext
         )
+    }
+
+    /// Maps the user team's strength coach (or physio as fallback) onto a
+    /// WorkloadEngine recovery rate in 0.40..0.75. The rating used is
+    /// `playerDevelopment` because that's the strength coach's primary focus
+    /// attribute (`CoachRole.strengthCoach.focusAttributes`).
+    /// - A coach rated 50 → 0.575 (close to the legacy 0.55 baseline).
+    /// - A coach rated 99 → 0.749 (elite recovery program).
+    /// - No qualifying coach → 0.55 (legacy fallback).
+    private static func computeRecoveryRate(coaches: [Coach]) -> Double {
+        let strength = coaches.first { $0.role == .strengthCoach }
+        let physio = coaches.first { $0.role == .physio }
+        guard let primary = strength ?? physio else { return 0.55 }
+        let rating = max(1, min(99, primary.playerDevelopment))
+        // 1..99 → 0.40..0.75 linear.
+        return 0.40 + (Double(rating - 1) / 98.0) * 0.35
     }
 
     /// Fetches a saved TrainingPlan for (team, season, week, phase) or returns

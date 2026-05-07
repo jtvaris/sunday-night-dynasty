@@ -170,6 +170,69 @@ enum FreeAgencyEngine {
         }
     }
 
+    // MARK: - FA Drama Storyline Event Generation
+
+    /// Generates storyline events when a player is signed in free agency.
+    /// Inspects FA Drama engines (CoachReunion / Hometown / MentorPair / Community / RevengeTour /
+    /// Loyalty) and persists any matching `FAStorylineEvent` rows to the model context.
+    /// Safe to call after every successful FA signing.
+    @MainActor
+    static func generateStorylineEventsForSigning(
+        player: Player,
+        signingTeam: Team,
+        teamCoaches: [Coach],
+        teamRegion: String?,
+        teamAbbrevs: [UUID: String],
+        allFAs: [Player],
+        modelContext: ModelContext
+    ) {
+        var events: [FAStorylineEvent] = []
+
+        // Coach reunion: any coach on this team previously coached the player?
+        if CoachReunionMatcher.hasReunionAvailable(playerID: player.id, teamCoaches: teamCoaches),
+           let coach = CoachReunionMatcher.reunionCoach(playerID: player.id, teamCoaches: teamCoaches),
+           let evt = CoachReunionMatcher.generateReunionEvent(player: player, coach: coach, teamID: signingTeam.id) {
+            events.append(evt)
+        }
+
+        // Hometown hero: player's hometown state matches team region.
+        if let region = teamRegion,
+           HometownDetector.isHometown(player: player, teamRegion: region),
+           let evt = HometownDetector.generateHometownEvent(player: player, teamID: signingTeam.id, teamRegion: region) {
+            events.append(evt)
+        }
+
+        // Mentor / protégé pair: signing the mentor brings the protégé in too.
+        if let protégé = MentorPairEngine.protegéFor(player: player, allFAs: allFAs),
+           let evt = MentorPairEngine.generateMentorPairEvent(mentor: player, protégé: protégé, teamID: signingTeam.id) {
+            events.append(evt)
+        }
+
+        // Community impact: civic-tier > 0 generates a press storyline.
+        if player.civicTier > 0,
+           let evt = CommunityImpactEngine.generateCommunityEvent(player: player, teamID: signingTeam.id, cityName: signingTeam.city) {
+            events.append(evt)
+        }
+
+        // Revenge tour: player carries an active grudge against a former cutter.
+        if player.cutByTeamID != nil,
+           let evt = RevengeTourEngine.generateRevengeEvent(player: player, signingTeamID: signingTeam.id, teamAbbrevs: teamAbbrevs) {
+            events.append(evt)
+        }
+
+        // Milestone: player chasing a personal milestone.
+        if let milestone = MilestoneTracker.activeMilestones(player: player).first,
+           let evt = MilestoneTracker.generateMilestoneEvent(player: player, milestone: milestone, teamID: signingTeam.id) {
+            events.append(evt)
+        }
+
+        guard !events.isEmpty else { return }
+        for evt in events {
+            modelContext.insert(evt)
+        }
+        try? modelContext.save()
+    }
+
     // MARK: - New League Year Transition
 
     struct LeagueYearSummary {

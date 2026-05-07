@@ -105,6 +105,11 @@ struct FAWeeklyView: View {
     @State private var showInstantSigning = false
     @State private var allPlayers: [Player] = []
 
+    // FA Drama Phase 5 — Milestone signing sheet
+    @State private var milestonePlayer: Player?
+    @State private var milestoneActive: FAMilestone?
+    @State private var milestoneFA: FreeAgencyEngine.FreeAgent?
+
     // FA Drama Phase 2 — Live Ticker / Heat / Outbid / Day rhythm
     @State private var allBids: [FABid] = []
     @State private var allVisits: [FAVisit] = []
@@ -182,12 +187,34 @@ struct FAWeeklyView: View {
         }
         .sheet(item: $selectedFA) { fa in
             if let team {
-                FAOfferSheet(
-                    player: fa.player,
-                    career: career,
-                    team: team,
-                    marketValue: fa.askingPrice,
-                    onSubmit: { salary, years in
+                if let milestone = MilestoneTracker.activeMilestones(player: fa.player).first {
+                    MilestoneSigningSheet(
+                        playerName: fa.player.fullName,
+                        position: fa.player.position.rawValue,
+                        age: fa.player.age,
+                        milestone: milestone,
+                        onSign: { years, multiplier in
+                            let salary = max(Int(Double(fa.askingPrice) * multiplier), 750)
+                            FreeAgencyEngine.signFreeAgent(
+                                player: fa.player,
+                                team: team,
+                                years: years,
+                                salary: salary,
+                                capMode: career.capMode,
+                                modelContext: modelContext
+                            )
+                            FASigningTracker.trackSigning(fa.player.id)
+                            generateStorylinesForSigning(player: fa.player, team: team)
+                            loadData()
+                        }
+                    )
+                } else {
+                    FAOfferSheet(
+                        player: fa.player,
+                        career: career,
+                        team: team,
+                        marketValue: fa.askingPrice,
+                        onSubmit: { salary, years in
                         // Check for instant signing (big overpay on Day 1)
                         let instantResult = FreeAgencyEngine.checkInstantSigning(
                             offeredSalary: salary,
@@ -207,6 +234,7 @@ struct FAWeeklyView: View {
                                 modelContext: modelContext
                             )
                             FASigningTracker.trackSigning(fa.player.id)
+                            generateStorylinesForSigning(player: fa.player, team: team)
                             let salaryStr = formatMillions(salary)
                             instantSigningMessage = "\(fa.player.fullName) signed immediately for \(salaryStr)/yr x \(years)yr! The offer was too good to refuse."
                             showInstantSigning = true
@@ -222,6 +250,7 @@ struct FAWeeklyView: View {
                         }
                     }
                 )
+                }
             }
         }
         .sheet(isPresented: $showRoundSummary) {
@@ -858,6 +887,7 @@ struct FAWeeklyView: View {
                     modelContext: modelContext
                 )
                 FASigningTracker.trackSigning(player.id)
+                generateStorylinesForSigning(player: player, team: team)
                 accepted.append((
                     playerName: player.fullName,
                     position: player.position.rawValue,
@@ -1066,6 +1096,30 @@ struct FAWeeklyView: View {
         allBids = (try? modelContext.fetch(FetchDescriptor<FABid>())) ?? []
         allVisits = (try? modelContext.fetch(FetchDescriptor<FAVisit>())) ?? []
         refreshOutbidEvents()
+    }
+
+    /// FA Drama: generate storyline events (revenge tour, hometown, coach reunion,
+    /// mentor pair, community impact, milestone) for a successful FA signing.
+    private func generateStorylinesForSigning(player: Player, team: Team) {
+        let teamID = team.id
+        let coachDesc = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        let teamCoaches = (try? modelContext.fetch(coachDesc)) ?? []
+
+        var teamAbbrevs: [UUID: String] = [:]
+        for t in allTeams { teamAbbrevs[t.id] = t.abbreviation }
+
+        // Free agents currently on the market — used for mentor-protégé matching.
+        let unsignedFAs = allPlayers.filter { $0.teamID == nil }
+
+        FreeAgencyEngine.generateStorylineEventsForSigning(
+            player: player,
+            signingTeam: team,
+            teamCoaches: teamCoaches,
+            teamRegion: nil, // Team region not yet tracked; hometown match disabled here.
+            teamAbbrevs: teamAbbrevs,
+            allFAs: unsignedFAs,
+            modelContext: modelContext
+        )
     }
 
     // MARK: - FA Drama Phase 2 — Live Ticker

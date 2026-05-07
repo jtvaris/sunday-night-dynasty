@@ -273,6 +273,7 @@ struct FinalPushView: View {
                 var state = PlayerDecisionState()
                 state.status = .letWalk
                 decisions[player.id] = state
+                applyLetWalkPenaltyIfNeeded(player: player)
             } label: {
                 Label("Let Walk", systemImage: "figure.walk.departure")
                     .font(.caption.weight(.semibold))
@@ -383,6 +384,7 @@ struct FinalPushView: View {
                                 modelContext: modelContext
                             )
                             FASigningTracker.trackSigning(player.id)
+                            generateStorylinesForSigning(player: player, team: team)
                             decisions[player.id]?.status = .reSignedAccepted
                         }
                     }
@@ -416,6 +418,7 @@ struct FinalPushView: View {
                                 modelContext: modelContext
                             )
                             FASigningTracker.trackSigning(player.id)
+                            generateStorylinesForSigning(player: player, team: team)
                             decisions[player.id]?.status = .reSignedAccepted
                         }
                     }
@@ -433,6 +436,7 @@ struct FinalPushView: View {
 
                     Button("Let Walk") {
                         decisions[player.id]?.status = .letWalk
+                        applyLetWalkPenaltyIfNeeded(player: player)
                     }
                     .buttonStyle(.bordered)
                     .font(.caption.weight(.semibold))
@@ -455,6 +459,7 @@ struct FinalPushView: View {
                 }
                 Button("Understood") {
                     decisions[player.id]?.status = .letWalk
+                    applyLetWalkPenaltyIfNeeded(player: player)
                 }
                 .buttonStyle(.bordered)
                 .font(.caption.weight(.semibold))
@@ -646,6 +651,51 @@ struct FinalPushView: View {
 
     private func advanceToLeagueYear() {
         career.freeAgencyStep = FreeAgencyStep.newLeagueYear.rawValue
+    }
+
+    // MARK: - FA Drama Storyline + Penalty Wire-up
+
+    /// Generates FA Drama storyline events (revenge / loyalty / coach reunion / hometown /
+    /// mentor pair / community / milestone) for a re-signed player.
+    private func generateStorylinesForSigning(player: Player, team: Team) {
+        let teamID = team.id
+        let coachDesc = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        let teamCoaches = (try? modelContext.fetch(coachDesc)) ?? []
+
+        var teamAbbrevs: [UUID: String] = [:]
+        for t in allTeams { teamAbbrevs[t.id] = t.abbreviation }
+
+        let unsignedFAs = allPlayers.filter { $0.teamID == nil }
+
+        FreeAgencyEngine.generateStorylineEventsForSigning(
+            player: player,
+            signingTeam: team,
+            teamCoaches: teamCoaches,
+            teamRegion: nil,
+            teamAbbrevs: teamAbbrevs,
+            allFAs: unsignedFAs,
+            modelContext: modelContext
+        )
+    }
+
+    /// FA Drama: applies the loyalty let-walk media penalty when a 4+ year vet
+    /// is allowed to hit the open market. Persists a "disrespected legend"
+    /// FAStorylineEvent and tweaks owner satisfaction + career reputation.
+    private func applyLetWalkPenaltyIfNeeded(player: Player) {
+        guard player.loyaltyYears >= LoyaltyEngine.loyaltyThresholdYears else { return }
+
+        let penalty = LoyaltyEngine.letWalkPenalty(player: player)
+
+        if let owner = team?.owner {
+            owner.satisfaction = max(0, min(100, owner.satisfaction + penalty.ownerTrust))
+        }
+        // Fan mood penalty leaks into the career reputation.
+        career.reputation = max(0, min(100, career.reputation + penalty.fanMood / 2))
+
+        if let evt = LoyaltyEngine.generateLetWalkEvent(player: player) {
+            modelContext.insert(evt)
+        }
+        try? modelContext.save()
     }
 
     // MARK: - Data Loading

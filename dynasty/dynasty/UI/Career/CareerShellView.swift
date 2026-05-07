@@ -33,6 +33,15 @@ struct CareerShellView: View {
     @State private var pendingPressQuestions: [PressQuestion]?
     @State private var showWeeklyPressConference = false
 
+    /// Camp Phase 1 wire-up: surface the VoluntaryWorkoutPrompt sheet when the
+    /// player advances into an OTAs / Training Camp week.
+    @State private var pendingVoluntaryWorkout: Bool = false
+
+    // FA Drama Phase 5 — Holdout dialog state.
+    @State private var pendingHoldout: Holdout?
+    @State private var pendingHoldoutPlayer: Player?
+    @State private var pendingHoldoutMarketValue: Int = 0
+
     var body: some View {
         VStack(spacing: 0) {
             // Persistent top navigation bar
@@ -130,6 +139,81 @@ struct CareerShellView: View {
                 )
             }
         }
+        .sheet(isPresented: $pendingVoluntaryWorkout) {
+            VoluntaryWorkoutPrompt(career: career)
+        }
+        .sheet(item: $pendingHoldout) { holdout in
+            if let player = pendingHoldoutPlayer {
+                HoldoutDialog(
+                    holdout: holdout,
+                    playerName: player.fullName,
+                    position: player.position.rawValue,
+                    currentSalary: player.annualSalary,
+                    marketValue: pendingHoldoutMarketValue,
+                    onResolve: { resolution in
+                        HoldoutEngine.resolveHoldout(
+                            holdout: holdout,
+                            resolution: resolution,
+                            modelContext: modelContext
+                        )
+                        // After resolution, persist a storyline event for the inbox.
+                        if let teamID = career.teamID {
+                            let evt = FAStorylineEvent(
+                                seasonYear: career.currentSeason,
+                                type: .holdout,
+                                playerID: player.id,
+                                teamID: teamID,
+                                headline: "\(player.fullName) holdout resolved",
+                                body: "Front office took the \(resolutionLabel(resolution)) path."
+                            )
+                            modelContext.insert(evt)
+                            try? modelContext.save()
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    // MARK: - Holdout Helpers
+
+    private func resolutionLabel(_ resolution: HoldoutEngine.Resolution) -> String {
+        switch resolution {
+        case .extend:        return "extension"
+        case .signingBonus:  return "signing-bonus"
+        case .forceTrade:    return "trade"
+        case .mediation:     return "mediation"
+        }
+    }
+
+    /// FA Drama Phase 5: scan the user's roster at training-camp entry for any
+    /// sub-market players and pop the HoldoutDialog for the first candidate.
+    /// Only triggers once per training-camp transition.
+    @MainActor
+    private func detectAndShowHoldout() {
+        guard let teamID = career.teamID else { return }
+        let roster = teamRoster
+        guard !roster.isEmpty else { return }
+
+        // Build per-player market value map.
+        var marketValues: [UUID: Int] = [:]
+        for p in roster {
+            marketValues[p.id] = ContractEngine.estimateMarketValue(player: p)
+        }
+        let candidates = HoldoutEngine.detectHoldoutCandidates(roster: roster, marketValues: marketValues)
+        guard let first = candidates.first else { return }
+        let market = marketValues[first.id] ?? first.annualSalary
+        let delta = max(0, market - first.annualSalary)
+        if let holdout = HoldoutEngine.startHoldout(
+            player: first,
+            teamID: teamID,
+            subMarketDelta: delta,
+            modelContext: modelContext
+        ) {
+            pendingHoldoutPlayer = first
+            pendingHoldoutMarketValue = market
+            pendingHoldout = holdout
+        }
     }
 
     // MARK: - Advance Week
@@ -145,6 +229,21 @@ struct CareerShellView: View {
             pendingPressQuestions = questions
             showWeeklyPressConference = true
             WeekAdvancer.pendingPressConference = nil
+        }
+
+        // Camp Phase 1 wire-up: surface the per-week voluntary workout prompt
+        // whenever the player has just stepped into an OTAs or Training Camp
+        // week. The prompt itself persists the chosen workout flavor; engine
+        // application is handled by VoluntaryWorkoutEngine on next tick.
+        if career.currentPhase == .otas || career.currentPhase == .trainingCamp {
+            pendingVoluntaryWorkout = true
+        }
+
+        // FA Drama Phase 5: at training-camp entry, scan for holdout candidates
+        // (players signed sub-market) and surface a HoldoutDialog if any are
+        // found. Limited to one candidate per camp opening to avoid stacking.
+        if career.currentPhase == .trainingCamp && pendingHoldout == nil {
+            detectAndShowHoldout()
         }
     }
 
