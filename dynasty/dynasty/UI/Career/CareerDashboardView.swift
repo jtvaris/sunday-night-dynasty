@@ -3205,12 +3205,30 @@ struct CareerDashboardView: View {
     }
 
     private var combineHeroCard: some View {
-        phaseCardBase(icon: "figure.run", accent: .accentGold) {
+        // Once scouts have been sent to the combine, the next action is interviews —
+        // not re-sending scouts. The CTA shifts to "Review Combine" or "Interviews".
+        let scoutsSent = tasks.contains { $0.title == "Send scouts to Combine" && $0.status == .done }
+        let resultsReviewed = tasks.contains { $0.title == "Review Combine results" && $0.status == .done }
+
+        let ctaTitle: String
+        let ctaDestination: ShellDestination
+        if !scoutsSent {
+            ctaTitle = "Send Scouts"
+            ctaDestination = .scouting
+        } else if !resultsReviewed {
+            ctaTitle = "Review Combine"
+            ctaDestination = .scouting
+        } else {
+            ctaTitle = "Conduct Interviews"
+            ctaDestination = .scouting
+        }
+
+        return phaseCardBase(icon: "figure.run", accent: .accentGold) {
             heroHeader("NFL Combine · 42% scouted")
             heroStatRow("Top prospect", value: "C. Williams (QB) · OVR 88")
             heroStatRow("Risers today", value: "5")
             heroStatRow("Scouts deployed", value: "\(scoutCount) / \(max(scoutCount, 6))")
-            heroActionLink(title: "Send Scouts", destination: .scouting)
+            heroActionLink(title: ctaTitle, destination: ctaDestination)
         }
     }
 
