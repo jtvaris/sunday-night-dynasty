@@ -212,6 +212,18 @@ enum DriveSimulator {
             )
         }
 
+        // Penalties never consume a down: the yardage is walked off and the
+        // SAME down is replayed. (Defensive flags whose yardage reaches the
+        // line to gain arrive here with isFirstDown already set and take the
+        // branch above instead.)
+        if playResult.outcome == .penalty {
+            return DownDistanceState(
+                down: currentDown,
+                distance: max(1, currentDistance - playResult.yardsGained),
+                yardLine: newYardLine
+            )
+        }
+
         let newDistance = max(1, currentDistance - playResult.yardsGained)
         return DownDistanceState(
             down: currentDown + 1,
@@ -346,6 +358,10 @@ enum DriveSimulator {
             return 40
         case .punt, .touchback:
             return Int.random(in: 5...10)
+        case .penalty:
+            // The clock stops while the flag is sorted out; only the aborted
+            // snap's few seconds elapse.
+            return Int.random(in: 4...8)
         case .fieldGoalGood, .fieldGoalMissed:
             return Int.random(in: 5...8)
         case .touchdown:

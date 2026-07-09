@@ -263,15 +263,15 @@ struct DefenseDiagramView: View {
             // Coverage shells
             switch coverage {
             case .cover2:
-                drawZone(context, center: CGPoint(x: 0.28 * w, y: 0.16 * h), rx: 0.24 * w, ry: 0.14 * h)
-                drawZone(context, center: CGPoint(x: 0.72 * w, y: 0.16 * h), rx: 0.24 * w, ry: 0.14 * h)
+                drawZone(context, center: CGPoint(x: 0.28 * w, y: 0.17 * h), rx: 0.20 * w, ry: 0.10 * h)
+                drawZone(context, center: CGPoint(x: 0.72 * w, y: 0.17 * h), rx: 0.20 * w, ry: 0.10 * h)
             case .cover3:
                 for x in [0.18, 0.5, 0.82] {
-                    drawZone(context, center: CGPoint(x: x * w, y: 0.15 * h), rx: 0.16 * w, ry: 0.13 * h)
+                    drawZone(context, center: CGPoint(x: x * w, y: 0.17 * h), rx: 0.13 * w, ry: 0.09 * h)
                 }
             case .cover4:
                 for x in [0.14, 0.38, 0.62, 0.86] {
-                    drawZone(context, center: CGPoint(x: x * w, y: 0.15 * h), rx: 0.12 * w, ry: 0.12 * h)
+                    drawZone(context, center: CGPoint(x: x * w, y: 0.17 * h), rx: 0.10 * w, ry: 0.09 * h)
                 }
             case .manToMan:
                 // Man: lock lines from CBs/safeties straight down at receivers.

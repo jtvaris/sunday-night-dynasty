@@ -43,6 +43,186 @@ final class LiveGameEngine: ObservableObject {
     @Published private(set) var homeQuarterScores: [Int] = [0, 0, 0, 0]
     @Published private(set) var awayQuarterScores: [Int] = [0, 0, 0, 0]
 
+    // MARK: - Kickoffs
+
+    /// Pre-drive kickoff descriptor for the live view: consumed by
+    /// `CoachedGameView` to run the kickoff choreography before the first snap
+    /// of a new drive. Purely presentational — the drive's start position has
+    /// already been decided by the shared kickoff distribution.
+    struct KickoffEvent: Equatable {
+        /// The side that boots the ball (the team that just scored / opens the half).
+        let kickingTeamIsHome: Bool
+        /// The receiving team's drive start (yards from its own goal line).
+        let startYardLine: Int
+        /// True when the draw was a touchback (returner kneels in the end zone).
+        let isTouchback: Bool
+        /// True when the kick was housed for a return touchdown.
+        let isReturnTouchdown: Bool
+    }
+
+    /// Set whenever a new drive begins with a kickoff (game start, after
+    /// scores, second-half kick, OT kick). The view consumes it via
+    /// ``clearPendingKickoff()`` before animating.
+    @Published private(set) var pendingKickoff: KickoffEvent?
+
+    func clearPendingKickoff() { pendingKickoff = nil }
+
+    // MARK: - Timeouts
+
+    /// Timeouts remaining per side: three per half, restocked at halftime.
+    @Published private(set) var homeTimeouts: Int = 3
+    @Published private(set) var awayTimeouts: Int = 3
+
+    /// Set by ``useTimeout(home:)`` and consumed by the next ``step``: the
+    /// timeout freezes the game clock, so that play's runoff is zeroed.
+    private var timeoutClockStopPending = false
+
+    /// Timeouts left for the side the user coaches (UI convenience).
+    var playerTimeoutsRemaining: Int { playerTeamIsHome ? homeTimeouts : awayTimeouts }
+
+    /// Burns one of the given side's timeouts to stop the clock: the next
+    /// play consumes no game time. AI teams never call timeouts, so a fully
+    /// nil-argument game remains identical to `GameSimulator.simulate`.
+    /// - Returns: true when a timeout was actually available and used.
+    @discardableResult
+    func useTimeout(home: Bool) -> Bool {
+        guard !isGameOver, !timeoutClockStopPending else { return false }
+        if home {
+            guard homeTimeouts > 0 else { return false }
+            homeTimeouts -= 1
+        } else {
+            guard awayTimeouts > 0 else { return false }
+            awayTimeouts -= 1
+        }
+        timeoutClockStopPending = true
+        return true
+    }
+
+    // MARK: - Matchup Grades (live only)
+
+    /// Individual matchup wins/losses per player, accumulated from
+    /// ``lastMatchups`` every play (see ``step``). Purely presentational —
+    /// never feeds back into the simulation, so auto-sim parity is intact.
+    @Published private(set) var matchupWins: [UUID: Int] = [:]
+    @Published private(set) var matchupLosses: [UUID: Int] = [:]
+
+    /// One row of the end-of-game "Top performers" list.
+    struct MatchupPerformer: Identifiable {
+        let id: UUID
+        let name: String
+        let isHomeTeam: Bool
+        let wins: Int
+        let losses: Int
+    }
+
+    /// Players with the most individual matchup wins this game (ties broken
+    /// by fewer losses). Empty until at least one battle has been resolved.
+    func topPerformers(limit: Int = 3) -> [MatchupPerformer] {
+        guard !matchupWins.isEmpty else { return [] }
+        var lookup: [UUID: (name: String, isHome: Bool)] = [:]
+        for unit in [homeOffenseUnit, homeDefenseUnit] {
+            for player in unit.players { lookup[player.id] = (player.shortName, true) }
+        }
+        for unit in [awayOffenseUnit, awayDefenseUnit] {
+            for player in unit.players { lookup[player.id] = (player.shortName, false) }
+        }
+        return matchupWins
+            .compactMap { id, wins -> MatchupPerformer? in
+                guard let info = lookup[id] else { return nil }
+                return MatchupPerformer(
+                    id: id, name: info.name, isHomeTeam: info.isHome,
+                    wins: wins, losses: matchupLosses[id] ?? 0
+                )
+            }
+            .sorted { ($0.wins, $1.losses) > ($1.wins, $0.losses) }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    // MARK: - Live Stat Leaders
+
+    /// One statistical leader line for the live box score panel.
+    struct StatLeader: Identifiable {
+        let id: UUID
+        let name: String
+        /// Compact stat line, e.g. "18/25 · 245 YDS · 2 TD".
+        let detail: String
+    }
+
+    /// Stats accumulate per completed drive (mirroring the quick sim), so
+    /// these leaders reflect everything up to the current drive.
+    func passingLeader(forHome: Bool) -> StatLeader? {
+        teamStats(forHome: forHome)
+            .filter { $0.attempts > 0 }
+            .max { $0.passingYards < $1.passingYards }
+            .map { s in
+                var detail = "\(s.completions)/\(s.attempts) · \(s.passingYards) YDS"
+                if s.passingTDs > 0 { detail += " · \(s.passingTDs) TD" }
+                if s.interceptions > 0 { detail += " · \(s.interceptions) INT" }
+                return StatLeader(id: s.playerID, name: shortName(s.playerName), detail: detail)
+            }
+    }
+
+    func rushingLeader(forHome: Bool) -> StatLeader? {
+        teamStats(forHome: forHome)
+            .filter { $0.carries > 0 }
+            .max { $0.rushingYards < $1.rushingYards }
+            .map { s in
+                var detail = "\(s.carries) CAR · \(s.rushingYards) YDS"
+                if s.rushingTDs > 0 { detail += " · \(s.rushingTDs) TD" }
+                return StatLeader(id: s.playerID, name: shortName(s.playerName), detail: detail)
+            }
+    }
+
+    func receivingLeader(forHome: Bool) -> StatLeader? {
+        teamStats(forHome: forHome)
+            .filter { $0.receptions > 0 }
+            .max { $0.receivingYards < $1.receivingYards }
+            .map { s in
+                var detail = "\(s.receptions) REC · \(s.receivingYards) YDS"
+                if s.receivingTDs > 0 { detail += " · \(s.receivingTDs) TD" }
+                return StatLeader(id: s.playerID, name: shortName(s.playerName), detail: detail)
+            }
+    }
+
+    func sackLeader(forHome: Bool) -> StatLeader? {
+        teamStats(forHome: forHome)
+            .filter { $0.sacks > 0 }
+            .max { $0.sacks < $1.sacks }
+            .map { s in
+                let count = s.sacks.truncatingRemainder(dividingBy: 1) == 0
+                    ? String(Int(s.sacks)) : String(format: "%.1f", s.sacks)
+                return StatLeader(id: s.playerID, name: shortName(s.playerName),
+                                  detail: "\(count) SACK\(s.sacks == 1 ? "" : "S") · \(s.tackles) TKL")
+            }
+    }
+
+    /// Total offensive yards from completed drives (same accounting as
+    /// `GameSimulator.buildTeamBoxScore` — scrimmage plays only, penalty
+    /// walk-offs and special-teams yardage excluded).
+    func totalYards(forHome: Bool) -> Int {
+        let teamID = forHome ? homeTeamID : awayTeamID
+        return allDrives
+            .filter { $0.teamID == teamID }
+            .reduce(0) { total, drive in
+                total + drive.plays
+                    .filter { ($0.playType == .pass || $0.playType == .run) && $0.outcome != .penalty }
+                    .reduce(0) { $0 + $1.yardsGained }
+            }
+    }
+
+    private func teamStats(forHome: Bool) -> [PlayerGameStats] {
+        let ids = forHome ? homePlayerIDs : awayPlayerIDs
+        return ids.compactMap { statsAccumulator[$0] }
+    }
+
+    /// "T. Hill" — mirrors `SimPlayer.shortName` for stat-line names.
+    private func shortName(_ fullName: String) -> String {
+        let parts = fullName.split(separator: " ")
+        guard parts.count >= 2, let first = parts.first?.first else { return fullName }
+        return "\(first). \(parts.dropFirst().joined(separator: " "))"
+    }
+
     /// True when the player's team currently has the ball.
     var playerIsOnOffense: Bool { playerTeamIsHome == homeHasPossession }
 
@@ -123,6 +303,9 @@ final class LiveGameEngine: ObservableObject {
     let awayOffenseUnit: FieldUnit
     let awayDefenseUnit: FieldUnit
     private let livePlayerByID: [UUID: Player]
+    /// Roster membership for splitting the shared stats accumulator per team.
+    private let homePlayerIDs: [UUID]
+    private let awayPlayerIDs: [UUID]
     private var momentum: Double = GameSimulator.homeFieldMomentum
     private var statsAccumulator: [UUID: PlayerGameStats] = [:]
     private var allDrives: [DriveResult] = []
@@ -175,6 +358,8 @@ final class LiveGameEngine: ObservableObject {
         for player in homeRoster { lookup[player.id] = player }
         for player in awayRoster { lookup[player.id] = player }
         livePlayerByID = lookup
+        homePlayerIDs = homePlayers.map(\.id)
+        awayPlayerIDs = awayPlayers.map(\.id)
 
         // Extract team schemes from the coaching staff, exactly like
         // GameSimulator.simulate.
@@ -187,7 +372,18 @@ final class LiveGameEngine: ObservableObject {
         GameSimulator.initializeStats(for: homePlayers, into: &statsAccumulator)
         GameSimulator.initializeStats(for: awayPlayers, into: &statsAccumulator)
 
-        // Opening kickoff: home receives at the 25 (mirrors GameSimulator).
+        // Opening kickoff: away kicks to home; the start position comes from
+        // the shared kickoff distribution (mirrors GameSimulator.simulate).
+        let openingKick = GameSimulator.rollKickoff(allowReturnTouchdown: false)
+        driveStartYardLine = openingKick.startingYardLine
+        yardLine = openingKick.startingYardLine
+        distance = min(10, 100 - openingKick.startingYardLine)
+        pendingKickoff = KickoffEvent(
+            kickingTeamIsHome: false,
+            startYardLine: openingKick.startingYardLine,
+            isTouchback: openingKick.isTouchback,
+            isReturnTouchdown: false
+        )
     }
 
     // MARK: - Step (one play)
@@ -263,19 +459,40 @@ final class LiveGameEngine: ObservableObject {
 
         // Attribute the play to individual matchup winners for the live view.
         if result.playType == .pass || result.playType == .run {
+            let offenseUnit = currentOffenseUnit
+            let defenseUnit = currentDefenseUnit
             lastMatchups = MatchupResolver.resolve(
                 play: recordedPlay,
-                offense: currentOffenseUnit,
-                defense: currentDefenseUnit,
+                offense: offenseUnit,
+                defense: defenseUnit,
                 offensiveScheme: homeHasPossession ? homeOffScheme : awayOffScheme,
                 offensiveCall: offensiveCall
             )
+            // Player grades: tally each named battle's winner and loser
+            // (presentation only — the play outcome is already decided).
+            if let events = lastMatchups?.events {
+                for event in events {
+                    let winnerID = event.offenseWon
+                        ? event.offRole.map { offenseUnit[$0].id }
+                        : event.defRole.map { defenseUnit[$0].id }
+                    let loserID = event.offenseWon
+                        ? event.defRole.map { defenseUnit[$0].id }
+                        : event.offRole.map { offenseUnit[$0].id }
+                    if let winnerID { matchupWins[winnerID, default: 0] += 1 }
+                    if let loserID { matchupLosses[loserID, default: 0] += 1 }
+                }
+            }
         } else {
             lastMatchups = nil
         }
 
         // --- Consume clock (mirrors DriveSimulator.simulateDrive) ---
-        let elapsed = DriveSimulator.clockConsumption(for: result)
+        // A pending timeout freezes the clock: this play's runoff is zeroed.
+        var elapsed = DriveSimulator.clockConsumption(for: result)
+        if timeoutClockStopPending {
+            elapsed = 0
+            timeoutClockStopPending = false
+        }
         timeRemaining -= elapsed
 
         if timeRemaining <= 0 {
@@ -540,6 +757,34 @@ final class LiveGameEngine: ObservableObject {
         )
         var nextHome = next.homeHasPossession
         var nextYardLine = next.startingYardLine
+        // The view animates this kickoff (when non-nil) before the next snap.
+        var kickoffEvent: KickoffEvent? = next.kickoff.map { kick in
+            KickoffEvent(
+                kickingTeamIsHome: homeHasPossession,
+                startYardLine: kick.startingYardLine,
+                isTouchback: kick.isTouchback,
+                isReturnTouchdown: false
+            )
+        }
+
+        // Kickoff return touchdown: the receiving team houses the ensuing
+        // kick (same distribution and bookkeeping as GameSimulator.simulate).
+        // Only while the half is still alive — no kick after the clock expires.
+        if let kick = next.kickoff, kick.isReturnTouchdown, timeRemaining > 0 {
+            let returnTeamIsHome = nextHome
+            scoreKickoffReturnTouchdown(returnTeamIsHome: returnTeamIsHome)
+            // The housed kick is the one worth showing; the ensuing kickoff
+            // hands the ball straight back to the team that originally scored.
+            kickoffEvent = KickoffEvent(
+                kickingTeamIsHome: !returnTeamIsHome,
+                startYardLine: 100,
+                isTouchback: false,
+                isReturnTouchdown: true
+            )
+            let ensuing = GameSimulator.rollKickoff(allowReturnTouchdown: false)
+            nextHome = !returnTeamIsHome
+            nextYardLine = ensuing.startingYardLine
+        }
 
         if timeRemaining <= 0 {
             if quarter >= 4 {
@@ -547,6 +792,7 @@ final class LiveGameEngine: ObservableObject {
                 if homeScore == awayScore {
                     startOvertime()
                 } else {
+                    pendingKickoff = nil
                     isGameOver = true
                 }
                 return
@@ -555,30 +801,81 @@ final class LiveGameEngine: ObservableObject {
             timeRemaining = GameSimulator.quarterDuration
             if quarter == 3 {
                 // Halftime: both teams recover; home receives the second-half
-                // kickoff at the 25.
+                // kickoff (position from the shared kickoff distribution).
+                // Timeouts restock — three per half.
                 GameSimulator.applyHalftimeRecovery(players: &homePlayers)
                 GameSimulator.applyHalftimeRecovery(players: &awayPlayers)
+                homeTimeouts = 3
+                awayTimeouts = 3
+                timeoutClockStopPending = false
                 nextHome = true
-                nextYardLine = GameSimulator.touchbackYardLine
+                let halfKick = GameSimulator.rollKickoff(allowReturnTouchdown: false)
+                nextYardLine = halfKick.startingYardLine
+                kickoffEvent = KickoffEvent(
+                    kickingTeamIsHome: false,
+                    startYardLine: halfKick.startingYardLine,
+                    isTouchback: halfKick.isTouchback,
+                    isReturnTouchdown: false
+                )
             }
         }
 
         homeHasPossession = nextHome
+        pendingKickoff = kickoffEvent
         beginDrive(at: nextYardLine)
+    }
+
+    /// Adds a synthetic one-play kickoff-return-touchdown drive to the books:
+    /// score, quarter scores, play log, highlights, and momentum — mirroring
+    /// the quick sim's bookkeeping for the same event.
+    private func scoreKickoffReturnTouchdown(returnTeamIsHome: Bool) {
+        driveNumber += 1
+        let play = GameSimulator.kickoffReturnTouchdownPlay(
+            quarter: quarter,
+            timeRemaining: timeRemaining
+        )
+        let returnDrive = DriveResult(
+            driveNumber: driveNumber,
+            teamID: returnTeamIsHome ? homeTeamID : awayTeamID,
+            startingYardLine: GameSimulator.kickoffTouchbackYardLine,
+            plays: [play],
+            result: .touchdown
+        )
+        allDrives.append(returnDrive)
+        allHighlights.append(play)
+        playLog.append(play)
+
+        let quarterIndex = min(quarter - 1, homeQuarterScores.count - 1)
+        if returnTeamIsHome {
+            homeScore += play.pointsScored
+            homeQuarterScores[quarterIndex] += play.pointsScored
+        } else {
+            awayScore += play.pointsScored
+            awayQuarterScores[quarterIndex] += play.pointsScored
+        }
+
+        momentum = GameSimulator.updateMomentum(
+            currentMomentum: momentum,
+            drive: returnDrive,
+            homeHasPossession: returnTeamIsHome
+        )
     }
 
     /// Simple sudden death: first score wins; if the 10-minute period expires
     /// with the game still tied, it ends in a tie.
     private func endOvertimeDrive(_ drive: DriveResult) {
         if homeScore != awayScore || timeRemaining <= 0 {
+            pendingKickoff = nil
             isGameOver = true
             return
         }
         let next = GameSimulator.determineNextPossession(
             afterDrive: drive,
-            homeHasPossession: homeHasPossession
+            homeHasPossession: homeHasPossession,
+            allowKickoffReturnTouchdown: false
         )
         homeHasPossession = next.homeHasPossession
+        pendingKickoff = nil // sudden-death transitions play on without a kick
         beginDrive(at: next.startingYardLine)
     }
 
@@ -588,7 +885,54 @@ final class LiveGameEngine: ObservableObject {
         homeQuarterScores.append(0)
         awayQuarterScores.append(0)
         homeHasPossession = Bool.random() // OT coin toss
-        beginDrive(at: GameSimulator.touchbackYardLine)
+        let otKick = GameSimulator.rollKickoff(allowReturnTouchdown: false)
+        pendingKickoff = KickoffEvent(
+            kickingTeamIsHome: !homeHasPossession,
+            startYardLine: otKick.startingYardLine,
+            isTouchback: otKick.isTouchback,
+            isReturnTouchdown: false
+        )
+        beginDrive(at: otKick.startingYardLine)
+    }
+
+    // MARK: - Onside Kick (player choice, live game only)
+
+    /// True right after the player's team scored while trailing in the 4th
+    /// quarter (or OT never applies — a score there ends the game): the window
+    /// where the view offers an onside kick instead of the pending deep kick.
+    var onsideKickAvailable: Bool {
+        guard !isGameOver, quarter >= 4, currentDrivePlays.isEmpty else { return false }
+        guard let kick = pendingKickoff, !kick.isReturnTouchdown else { return false }
+        // The player's team must be the kicking team and still trailing.
+        guard kick.kickingTeamIsHome == playerTeamIsHome else { return false }
+        let playerScore = playerTeamIsHome ? homeScore : awayScore
+        let opponentScore = playerTeamIsHome ? awayScore : homeScore
+        return playerScore < opponentScore
+    }
+
+    /// Replaces the pending deep kickoff with an onside attempt: a recovery
+    /// (~12%) keeps the ball with the player's team near midfield; a failure
+    /// hands the receiving team a short field. Live game only — the quick sim
+    /// never onsides. Because this replaces a player choice (never taken by
+    /// the AI), nil-parameter parity with `GameSimulator.simulate` is intact.
+    /// - Returns: true when the kicking team recovered.
+    @discardableResult
+    func attemptOnsideKick() -> Bool {
+        guard onsideKickAvailable else { return false }
+        pendingKickoff = nil
+        let recovered = Double.random(in: 0..<1) < GameSimulator.onsideKickRecoveryChance
+        if recovered {
+            homeHasPossession = playerTeamIsHome
+            driveStartYardLine = GameSimulator.onsideKickRecoveryYardLine
+        } else {
+            driveStartYardLine = GameSimulator.onsideKickFailStartYardLine
+        }
+        yardLine = driveStartYardLine
+        down = 1
+        distance = min(10, 100 - driveStartYardLine)
+        currentDrivePlays = []
+        moraleAppliedForCurrentDrive = false
+        return recovered
     }
 
     private func beginDrive(at startingYardLine: Int) {

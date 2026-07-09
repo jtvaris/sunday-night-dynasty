@@ -28,6 +28,19 @@ enum GameSimulator {
     private static let averagePuntDistance = 40
     private static let twoMinuteWarning = 120
 
+    // Kickoff constants (2024 dynamic-kickoff rule: touchbacks come out to the 30).
+    static let kickoffTouchbackYardLine = 30
+    private static let kickoffTouchbackChance = 0.55
+    private static let kickoffReturnTouchdownChance = 0.02
+    private static let kickoffReturnStartRange = 20...35
+
+    // Onside kick constants (live-game player choice only; quick sim never onsides).
+    static let onsideKickRecoveryChance = 0.12
+    /// Where the kicking team takes over after a recovered onside kick.
+    static let onsideKickRecoveryYardLine = 48
+    /// Where the receiving team starts after a failed onside attempt (short field).
+    static let onsideKickFailStartYardLine = 55
+
     // Momentum constants
     static let homeFieldMomentum: Double = 0.1
     private static let momentumDecayRate: Double = 0.10
@@ -125,7 +138,7 @@ enum GameSimulator {
 
         // Away team kicks off to start the game; home receives second-half kickoff.
         var homeHasPossession = true // home receives opening kickoff
-        var startingYardLine = touchbackYardLine
+        var startingYardLine = kickoffStartYardLine() // opening kickoff draw
 
         // Track total time of possession in seconds
         var homeTimeOfPossession = 0
@@ -255,7 +268,7 @@ enum GameSimulator {
                 applyHalftimeRecovery(players: &awayPlayers)
                 // Home team receives second-half kickoff
                 homeHasPossession = true
-                startingYardLine = touchbackYardLine
+                startingYardLine = kickoffStartYardLine()
                 continue
             }
 
@@ -268,6 +281,48 @@ enum GameSimulator {
             )
             homeHasPossession = nextPossessionInfo.homeHasPossession
             startingYardLine = nextPossessionInfo.startingYardLine
+
+            // -----------------------------------------------------------------
+            // Kickoff return touchdown (~2% of post-score kicks): the receiving
+            // team houses it. Only while the half is still alive — a kick can't
+            // happen after the clock has expired.
+            // -----------------------------------------------------------------
+            if let kick = nextPossessionInfo.kickoff, kick.isReturnTouchdown, timeRemaining > 0 {
+                driveNumber += 1
+                let returnTeamIsHome = homeHasPossession
+                let returnPlay = kickoffReturnTouchdownPlay(
+                    quarter: quarter,
+                    timeRemaining: timeRemaining
+                )
+                let returnDrive = DriveResult(
+                    driveNumber: driveNumber,
+                    teamID: returnTeamIsHome ? homeTeam.id : awayTeam.id,
+                    startingYardLine: kick.startingYardLine,
+                    plays: [returnPlay],
+                    result: .touchdown
+                )
+                allDrives.append(returnDrive)
+                allHighlights.append(returnPlay)
+
+                let qi = min(quarter - 1, 3)
+                if returnTeamIsHome {
+                    homeScore += returnPlay.pointsScored
+                    homeQuarterScores[qi] += returnPlay.pointsScored
+                } else {
+                    awayScore += returnPlay.pointsScored
+                    awayQuarterScores[qi] += returnPlay.pointsScored
+                }
+
+                momentum = updateMomentum(
+                    currentMomentum: momentum,
+                    drive: returnDrive,
+                    homeHasPossession: returnTeamIsHome
+                )
+
+                // Ensuing kickoff goes back to the team that originally scored.
+                homeHasPossession = !returnTeamIsHome
+                startingYardLine = kickoffStartYardLine()
+            }
 
             // -----------------------------------------------------------------
             // Quarter management & two-minute warning
@@ -359,6 +414,70 @@ enum GameSimulator {
             livePlayerByID: livePlayerByID
         )
     }
+
+    #if DEBUG
+    // MARK: - Debug Balance Harness
+
+    /// One-off balance measurement: runs `n` AI-vs-AI games between two
+    /// generic generated rosters and prints scoring/yardage distributions to
+    /// the console, plus a schedule-integrity check over several seasons.
+    /// Call temporarily from app launch, read the output via
+    /// `simctl launch --console-pty`, then REMOVE the call — never ship it.
+    static func debugSimulate(n: Int) {
+        let generated = LeagueGenerator.generate(startYear: 2025)
+        let teams = generated.teams
+        guard teams.count >= 2 else {
+            print("DEBUG-SIM: league generation failed")
+            return
+        }
+        // Two mid-table teams, no coaches (neutral schemes), no boosts.
+        let home = teams[10]
+        let away = teams[21]
+
+        var points: [Double] = []
+        var yards: [Double] = []
+        var penaltiesPerGame: [Double] = []
+        var margins: [Double] = []
+        for _ in 0..<n {
+            let result = simulate(homeTeam: home, awayTeam: away)
+            points.append(Double(result.homeScore))
+            points.append(Double(result.awayScore))
+            yards.append(Double(result.boxScore.home.totalYards))
+            yards.append(Double(result.boxScore.away.totalYards))
+            penaltiesPerGame.append(Double(result.boxScore.home.penalties + result.boxScore.away.penalties))
+            margins.append(Double(abs(result.homeScore - result.awayScore)))
+        }
+
+        func stats(_ values: [Double]) -> (mean: Double, std: Double, min: Double, max: Double) {
+            guard !values.isEmpty else { return (0, 0, 0, 0) }
+            let mean = values.reduce(0, +) / Double(values.count)
+            let variance = values.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(values.count)
+            return (mean, variance.squareRoot(), values.min() ?? 0, values.max() ?? 0)
+        }
+
+        let p = stats(points)
+        let y = stats(yards)
+        let pen = stats(penaltiesPerGame)
+        let m = stats(margins)
+        print(String(format: "DEBUG-SIM: games=%d", n))
+        print(String(format: "DEBUG-SIM: points/team mean=%.1f std=%.1f min=%.0f max=%.0f", p.mean, p.std, p.min, p.max))
+        print(String(format: "DEBUG-SIM: yards/team  mean=%.0f std=%.0f min=%.0f max=%.0f", y.mean, y.std, y.min, y.max))
+        print(String(format: "DEBUG-SIM: penalties/game mean=%.1f", pen.mean))
+        print(String(format: "DEBUG-SIM: score margin mean=%.1f", m.mean))
+
+        // Schedule integrity: several season years through the generator.
+        var scheduleOK = true
+        for year in 2025...2032 {
+            let games = ScheduleGenerator.generateSeason(teams: teams, seasonYear: year)
+            let issues = ScheduleGenerator.validate(games: games, teams: teams)
+            if games.count != 272 || !issues.isEmpty {
+                scheduleOK = false
+                print("DEBUG-SIM: schedule \(year) games=\(games.count) issues=\(issues.prefix(6))")
+            }
+        }
+        print("DEBUG-SIM: schedule integrity 2025-2032 \(scheduleOK ? "OK — every team exactly 1 bye" : "FAILED")")
+    }
+    #endif
 
     // MARK: - Result Finalization
 
@@ -462,7 +581,7 @@ enum GameSimulator {
         var homeHasPossession = Bool.random() // coin toss
         var firstPossessionComplete = false
         var secondPossessionComplete = false
-        var startingYardLine = touchbackYardLine
+        var startingYardLine = kickoffStartYardLine() // OT kickoff draw
 
         while otTimeRemaining > 0 {
             driveNumber += 1
@@ -535,13 +654,17 @@ enum GameSimulator {
 
             if !firstPossessionComplete {
                 firstPossessionComplete = true
-                // Switch possession for second team's guaranteed possession
+                // Switch possession for the second team's guaranteed possession.
+                // Scoring drives hand the ball over via a kickoff draw; punts
+                // and turnovers use the actual field position (housed returns
+                // are not modeled in OT).
                 let nextInfo = determineNextPossession(
                     afterDrive: drive,
-                    homeHasPossession: homeHasPossession
+                    homeHasPossession: homeHasPossession,
+                    allowKickoffReturnTouchdown: false
                 )
                 homeHasPossession = nextInfo.homeHasPossession
-                startingYardLine = touchbackYardLine // OT kickoff
+                startingYardLine = nextInfo.startingYardLine
                 continue
             }
 
@@ -554,7 +677,8 @@ enum GameSimulator {
                 // Still tied: next score wins
                 let nextInfo = determineNextPossession(
                     afterDrive: drive,
-                    homeHasPossession: homeHasPossession
+                    homeHasPossession: homeHasPossession,
+                    allowKickoffReturnTouchdown: false
                 )
                 homeHasPossession = nextInfo.homeHasPossession
                 startingYardLine = nextInfo.startingYardLine
@@ -568,7 +692,8 @@ enum GameSimulator {
 
             let nextInfo = determineNextPossession(
                 afterDrive: drive,
-                homeHasPossession: homeHasPossession
+                homeHasPossession: homeHasPossession,
+                allowKickoffReturnTouchdown: false
             )
             homeHasPossession = nextInfo.homeHasPossession
             startingYardLine = nextInfo.startingYardLine
@@ -577,29 +702,106 @@ enum GameSimulator {
         return OvertimeResult(homeOTPoints: homeOTPoints, awayOTPoints: awayOTPoints)
     }
 
+    // MARK: - Kickoffs
+
+    /// Outcome of one kickoff, drawn from the shared distribution so quick sim
+    /// and the live engine stay statistically identical.
+    struct KickoffResult {
+        /// Receiving team's drive start (yards from its own goal line).
+        let startingYardLine: Int
+        /// True when the kick sailed for a touchback (2024 rule: out to the 30).
+        let isTouchback: Bool
+        /// True when the return went all the way — the receiving team scores.
+        let isReturnTouchdown: Bool
+    }
+
+    /// Rolls one kickoff: ~2% housed return (when allowed), ~55% touchback to
+    /// the 30, otherwise a return out to the 20–35.
+    /// Internal (not private) because it is shared with `LiveGameEngine`.
+    static func rollKickoff(allowReturnTouchdown: Bool = true) -> KickoffResult {
+        if allowReturnTouchdown && Double.random(in: 0..<1) < kickoffReturnTouchdownChance {
+            return KickoffResult(
+                startingYardLine: kickoffTouchbackYardLine,
+                isTouchback: false,
+                isReturnTouchdown: true
+            )
+        }
+        if Double.random(in: 0..<1) < kickoffTouchbackChance {
+            return KickoffResult(
+                startingYardLine: kickoffTouchbackYardLine,
+                isTouchback: true,
+                isReturnTouchdown: false
+            )
+        }
+        return KickoffResult(
+            startingYardLine: Int.random(in: kickoffReturnStartRange),
+            isTouchback: false,
+            isReturnTouchdown: false
+        )
+    }
+
+    /// Convenience draw for kickoffs where a housed return isn't modeled
+    /// (opening kick, second-half kick, overtime kick): position only.
+    static func kickoffStartYardLine() -> Int {
+        rollKickoff(allowReturnTouchdown: false).startingYardLine
+    }
+
+    /// Synthetic play describing a kickoff returned for a touchdown. Return
+    /// yards are intentionally NOT counted as offensive yards (yardsGained 0)
+    /// so team total-yardage stays a scrimmage stat; TDs are worth 6 in this
+    /// sim (extra points are not modeled anywhere).
+    /// Internal (not private) because it is shared with `LiveGameEngine`.
+    static func kickoffReturnTouchdownPlay(quarter: Int, timeRemaining: Int) -> PlayResult {
+        PlayResult(
+            playNumber: 1,
+            quarter: quarter,
+            timeRemaining: max(timeRemaining, 0),
+            down: 0,
+            distance: 0,
+            yardLine: 0,
+            playType: .kickoff,
+            outcome: .touchdown,
+            yardsGained: 0,
+            description: "The kickoff is returned ALL THE WAY for a touchdown!",
+            isFirstDown: false,
+            isTurnover: false,
+            scoringPlay: true,
+            pointsScored: 6
+        )
+    }
+
     // MARK: - Possession Management
 
     /// Next-possession descriptor. Internal because it is shared with `LiveGameEngine`.
     struct NextPossession {
         let homeHasPossession: Bool
         let startingYardLine: Int
+        /// Kickoff detail when the possession change came via a kickoff
+        /// (touchdown/field-goal drives); nil for punts, turnovers, etc.
+        var kickoff: KickoffResult? = nil
     }
 
     /// Determines which team gets the ball next and where on the field they
     /// start based on how the previous drive ended.
     /// Internal (not private) because it is shared with `LiveGameEngine`.
+    /// - Parameter allowKickoffReturnTouchdown: pass false in contexts where a
+    ///   housed kickoff can't be represented (overtime possession rules).
     static func determineNextPossession(
         afterDrive drive: DriveResult,
-        homeHasPossession: Bool
+        homeHasPossession: Bool,
+        allowKickoffReturnTouchdown: Bool = true
     ) -> NextPossession {
         let switchPossession = !homeHasPossession
 
         switch drive.result {
         case .touchdown, .fieldGoal:
-            // Kickoff -> touchback
+            // Kickoff: the receiving team's start is drawn from the shared
+            // kickoff distribution (touchback / return / housed return).
+            let kick = rollKickoff(allowReturnTouchdown: allowKickoffReturnTouchdown)
             return NextPossession(
                 homeHasPossession: switchPossession,
-                startingYardLine: touchbackYardLine
+                startingYardLine: kick.startingYardLine,
+                kickoff: kick
             )
 
         case .punt:
@@ -794,6 +996,15 @@ enum GameSimulator {
         }
         let kicker = offensePlayers.first { $0.position == .K }
 
+        // The sim names the exact target/carrier on most plays
+        // (keyOffensePlayerID); crediting HIM keeps the box score aligned
+        // with the play-by-play text and the players shown on the 3D field.
+        // Plays without attribution fall back to the old weighted pick.
+        func credited(_ id: UUID?, roster: [SimPlayer], fallback group: [SimPlayer]) -> SimPlayer? {
+            if let id, let named = roster.first(where: { $0.id == id }) { return named }
+            return pickWeightedPlayer(from: group)
+        }
+
         for play in drive.plays {
             switch play.outcome {
             case .completion:
@@ -803,8 +1014,8 @@ enum GameSimulator {
                     accumulator[qb.id]?.attempts += 1
                     accumulator[qb.id]?.completions += 1
                 }
-                // Credit a receiver
-                if let receiver = pickWeightedPlayer(from: receivers) {
+                // Credit the targeted receiver
+                if let receiver = credited(play.keyOffensePlayerID, roster: offensePlayers, fallback: receivers) {
                     accumulator[receiver.id]?.receivingYards += play.yardsGained
                     accumulator[receiver.id]?.receptions += 1
                     accumulator[receiver.id]?.targets += 1
@@ -814,12 +1025,14 @@ enum GameSimulator {
                 if let qb = qb {
                     accumulator[qb.id]?.attempts += 1
                 }
-                if let receiver = pickWeightedPlayer(from: receivers) {
+                if let receiver = credited(play.keyOffensePlayerID, roster: offensePlayers, fallback: receivers) {
                     accumulator[receiver.id]?.targets += 1
                 }
 
             case .rush:
-                if let rusher = pickWeightedPlayer(from: rbs) {
+                // keyOffensePlayerID also covers QB scrambles, so the yards
+                // land on the scrambler instead of a random back.
+                if let rusher = credited(play.keyOffensePlayerID, roster: offensePlayers, fallback: rbs) {
                     accumulator[rusher.id]?.rushingYards += play.yardsGained
                     accumulator[rusher.id]?.carries += 1
                 }
@@ -829,6 +1042,9 @@ enum GameSimulator {
                 }
 
             case .touchdown:
+                // Kickoff-return TDs are synthetic special-teams plays — skip
+                // the QB/RB attribution meant for scrimmage touchdowns.
+                if play.playType == .kickoff { break }
                 // Determine if it was a passing or rushing TD based on play type
                 if play.playType == .pass {
                     if let qb = qb {
@@ -837,14 +1053,14 @@ enum GameSimulator {
                         accumulator[qb.id]?.attempts += 1
                         accumulator[qb.id]?.completions += 1
                     }
-                    if let receiver = pickWeightedPlayer(from: receivers) {
+                    if let receiver = credited(play.keyOffensePlayerID, roster: offensePlayers, fallback: receivers) {
                         accumulator[receiver.id]?.receivingTDs += 1
                         accumulator[receiver.id]?.receivingYards += play.yardsGained
                         accumulator[receiver.id]?.receptions += 1
                         accumulator[receiver.id]?.targets += 1
                     }
                 } else {
-                    if let rusher = pickWeightedPlayer(from: rbs) {
+                    if let rusher = credited(play.keyOffensePlayerID, roster: offensePlayers, fallback: rbs) {
                         accumulator[rusher.id]?.rushingTDs += 1
                         accumulator[rusher.id]?.rushingYards += play.yardsGained
                         accumulator[rusher.id]?.carries += 1
@@ -866,12 +1082,12 @@ enum GameSimulator {
                     accumulator[qb.id]?.interceptions += 1
                     accumulator[qb.id]?.attempts += 1
                 }
-                if let db = pickWeightedPlayer(from: dBacks + linebackers) {
+                if let db = credited(play.keyDefensePlayerID, roster: defensePlayers, fallback: dBacks + linebackers) {
                     accumulator[db.id]?.interceptionsCaught += 1
                 }
 
             case .fumble, .fumbleLost:
-                if let ballCarrier = pickWeightedPlayer(from: rbs) {
+                if let ballCarrier = credited(play.keyOffensePlayerID, roster: offensePlayers, fallback: rbs) {
                     accumulator[ballCarrier.id]?.carries += 1
                     accumulator[ballCarrier.id]?.rushingYards += play.yardsGained
                 }
@@ -945,23 +1161,30 @@ enum GameSimulator {
 
         for drive in drives {
             for play in drive.plays {
-                totalYards += play.yardsGained
-
-                switch play.playType {
-                case .pass:
-                    passingYards += play.yardsGained
-                case .run:
-                    rushingYards += play.yardsGained
-                default:
-                    break
+                // Team yardage is a SCRIMMAGE stat: pass and run plays only.
+                // (Punts used to leak their 35-55 net yards into totalYards,
+                // inflating team totals by ~200 per game.) Penalty walk-offs
+                // only count toward the penalties/penaltyYards tallies below.
+                if play.outcome != .penalty {
+                    switch play.playType {
+                    case .pass:
+                        totalYards += play.yardsGained
+                        passingYards += play.yardsGained
+                    case .run:
+                        totalYards += play.yardsGained
+                        rushingYards += play.yardsGained
+                    default:
+                        break
+                    }
                 }
 
                 if play.isFirstDown {
                     firstDowns += 1
                 }
 
-                // Track 3rd down efficiency
-                if play.down == 3 {
+                // Track 3rd down efficiency. Penalty no-plays replay the down,
+                // so they charge no attempt (NFL accounting).
+                if play.down == 3 && play.outcome != .penalty {
                     thirdDownAttempts += 1
                     if play.isFirstDown || play.scoringPlay {
                         thirdDownConversions += 1

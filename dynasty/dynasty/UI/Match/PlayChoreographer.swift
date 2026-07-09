@@ -497,6 +497,35 @@ struct PlayChoreographer {
         }
     }
 
+    /// The 1-2 chasing defenders closest to the tackle spot (primary tackler
+    /// excluded), ranked by pre-snap distance — pursuit has already pulled the
+    /// whole defense toward the ball, so the closest starters are the ones at
+    /// the pile when the carrier goes down.
+    private static func gangTacklers(_ c: Context, x: Float, z: Float,
+                                     excluding: Set<Int>) -> [Int] {
+        (0..<11)
+            .map { role -> (idx: Int, dist: Float) in
+                let start = c.defense[role]
+                let dx = start.x - x, dz = start.z - z
+                return (c.dBase + role, (dx * dx + dz * dz).squareRoot())
+            }
+            .filter { !excluding.contains($0.idx) }
+            .sorted { $0.dist < $1.dist }
+            .prefix(2)
+            .map(\.idx)
+    }
+
+    /// Short closing moves that bring the gang tacklers onto the pile just as
+    /// their (staggered) falls begin — they dive in rather than teleport.
+    private static func pileOnMoves(_ c: Context, gang: [Int],
+                                    x: Float, z: Float) -> [Move] {
+        gang.enumerated().map { offset, idx in
+            (nodeIndex: idx,
+             to: player(x + (offset == 0 ? 0.9 : -0.9), z - c.direction * 0.6),
+             duration: 0.45)
+        }
+    }
+
     // MARK: - Scripts: Runs
 
     /// Snap → handoff → run to `endZ` with converging defenders → tackle.
@@ -564,10 +593,14 @@ struct PlayChoreographer {
             duration: runDuration
         ))
 
-        // 4. Tackle: the hit — carrier and tackler go to the turf.
+        // 4. Tackle: the hit — carrier and tackler go to the turf, and the
+        //    nearest chasers dive onto the pile a beat later (falls stagger
+        //    by list order) for a gang-tackle read.
         if includeTackle {
-            steps.append(Step(moves: [], ballMove: .carry(nodeIndex: carrier), duration: 1.3,
-                              pulses: [tackler], falls: [carrier, tackler]))
+            let gang = gangTacklers(c, x: endX, z: endZ, excluding: [tackler])
+            steps.append(Step(moves: pileOnMoves(c, gang: gang, x: endX, z: endZ),
+                              ballMove: .carry(nodeIndex: carrier), duration: 1.3,
+                              pulses: [tackler], falls: [carrier, tackler] + gang))
         }
 
         return (steps, carrier, end, tackler)
@@ -690,10 +723,13 @@ struct PlayChoreographer {
             duration: yacDuration
         ))
 
-        // 5. Tackle: receiver is brought down by the DB.
+        // 5. Tackle: receiver is brought down by the DB, with the nearest
+        //    chasers piling on late (staggered falls) for the gang-tackle read.
         if includeTackle {
-            steps.append(Step(moves: [], ballMove: .carry(nodeIndex: receiver), duration: 1.3,
-                              pulses: [db], falls: [receiver, db]))
+            let gang = gangTacklers(c, x: endX, z: endZ, excluding: [db])
+            steps.append(Step(moves: pileOnMoves(c, gang: gang, x: endX, z: endZ),
+                              ballMove: .carry(nodeIndex: receiver), duration: 1.3,
+                              pulses: [db], falls: [receiver, db] + gang))
         }
 
         return (steps, receiver, end, db)
@@ -1054,6 +1090,165 @@ struct PlayChoreographer {
             ),
             Step(moves: [], ballMove: nil, duration: 0.45),
         ]
+    }
+
+    // MARK: - Scripts: Kickoffs
+
+    /// World Z of the kicking tee (the kicking team's own 35-yard line).
+    static func kickoffSpotZ(kickingTeamIsHome: Bool) -> Float {
+        kickingTeamIsHome ? -15 : 15
+    }
+
+    /// Kicking team layout in node-role order: 0 = kicker in his run-up,
+    /// 1-10 = the coverage line spread across the tee line.
+    private static func kickoffKickingPositions(kickDir: Float) -> [(x: Float, z: Float, number: Int)] {
+        let teeZ = -kickDir * 15
+        let lanes: [Float] = [-22, -17.5, -13, -8.5, -4, 4, 8.5, 13, 17.5, 22]
+        let numbers = [41, 45, 52, 38, 29, 31, 47, 55, 44, 26]
+        var out: [(x: Float, z: Float, number: Int)] = [(0, teeZ - kickDir * 6, 3)]
+        for (i, x) in lanes.enumerated() {
+            out.append((x, teeZ - kickDir * 1, numbers[i]))
+        }
+        return out.map { (clampX($0.x), clampZ($0.z), $0.number) }
+    }
+
+    /// Receiving team layout in node-role order: 0-4 = front line at their own
+    /// 35, 5-8 = wedge wave at the 20, 9 = upback, 10 = deep returner.
+    private static func kickoffReceivingPositions(kickDir: Float) -> [(x: Float, z: Float, number: Int)] {
+        // Receiving team's own yard Y -> world z.
+        func ownYard(_ y: Float) -> Float { kickDir * (50 - y) }
+        var out: [(x: Float, z: Float, number: Int)] = []
+        let frontX: [Float] = [-16, -8, 0, 8, 16]
+        let frontNumbers = [58, 63, 72, 68, 77]
+        for (i, x) in frontX.enumerated() { out.append((x, ownYard(35), frontNumbers[i])) }
+        let waveX: [Float] = [-12, -4, 4, 12]
+        let waveNumbers = [35, 27, 49, 42]
+        for (i, x) in waveX.enumerated() { out.append((x, ownYard(20), waveNumbers[i])) }
+        out.append((-3, ownYard(10), 22)) // upback
+        out.append((0, ownYard(2), 30))   // deep returner
+        return out.map { (clampX($0.x), clampZ($0.z), $0.number) }
+    }
+
+    /// Pre-kick lineup for both teams (kicking team on its own 35).
+    static func kickoffFormation(kickingTeamIsHome: Bool)
+        -> (home: [(x: Float, z: Float, number: Int)], away: [(x: Float, z: Float, number: Int)]) {
+        let kickDir: Float = kickingTeamIsHome ? 1 : -1
+        let kicking = kickoffKickingPositions(kickDir: kickDir)
+        let receiving = kickoffReceivingPositions(kickDir: kickDir)
+        return kickingTeamIsHome ? (home: kicking, away: receiving) : (home: receiving, away: kicking)
+    }
+
+    /// Kickoff timeline: ball to the tee → booming hang-time kick with the
+    /// coverage flying down in lanes and the return unit folding into a wedge →
+    /// catch → return out to `returnYardLine` (receiving team's own yard line),
+    /// a touchback kneel, or a housed return TD. The view moves both teams into
+    /// `kickoffFormation` first, then runs these steps.
+    static func kickoffSteps(kickingTeamIsHome: Bool, returnYardLine: Int,
+                             isTouchback: Bool, isReturnTouchdown: Bool)
+        -> [FootballFieldScene.PlayStep] {
+        let kickDir: Float = kickingTeamIsHome ? 1 : -1
+        let kBase = kickingTeamIsHome ? 0 : 11
+        let rBase = kickingTeamIsHome ? 11 : 0
+        let kicking = kickoffKickingPositions(kickDir: kickDir)
+        let receiving = kickoffReceivingPositions(kickDir: kickDir)
+        let teeZ = -kickDir * 15
+        let returner = rBase + 10
+        func ownYard(_ y: Float) -> Float { kickDir * (50 - y) }
+
+        // Touchbacks are fielded in the end zone; returns near the goal line.
+        let catchZ = clampZ(isTouchback ? ownYard(-3) : ownYard(2))
+
+        var steps: [Step] = []
+
+        // 1. Ball to the tee while the kicker walks into his run-up.
+        steps.append(Step(
+            moves: [(kBase, player(0, teeZ - kickDir * 1.2), 0.5)],
+            ballMove: .slide(to: ground(0, teeZ), duration: 0.4),
+            duration: 0.6
+        ))
+
+        // 2. Boot: high hanging kick. Ten coverage men fly downfield in their
+        //    lanes, the kicker trails as the safety, the front line folds back
+        //    into the wedge and the returner settles under the ball.
+        var bootMoves: [Move] = [(returner, player(0, catchZ), 2.0)]
+        for i in 1...10 {
+            bootMoves.append((kBase + i, player(kicking[i].x * 0.8, clampZ(ownYard(22))), 2.0))
+        }
+        bootMoves.append((kBase, player(0, teeZ + kickDir * 4), 2.0))
+        for i in 0..<5 {
+            bootMoves.append((rBase + i, player(receiving[i].x * 0.55, clampZ(ownYard(18))), 2.0))
+        }
+        for i in 5..<9 {
+            bootMoves.append((rBase + i, player(receiving[i].x * 0.7, clampZ(ownYard(10))), 2.0))
+        }
+        bootMoves.append((rBase + 9, player(-2, clampZ(ownYard(6))), 2.0))
+        steps.append(Step(
+            moves: bootMoves,
+            ballMove: .arc(to: air(0, catchZ), apex: 16, duration: 2.0),
+            duration: 2.0,
+            reaches: [returner]
+        ))
+
+        if isTouchback {
+            // 3. Kneel in the end zone; the coverage pulls up.
+            steps.append(Step(moves: [], ballMove: .carry(nodeIndex: returner), duration: 0.9))
+            steps.append(Step(moves: [], ballMove: .carry(nodeIndex: returner), duration: 0.5))
+            return steps
+        }
+
+        // 3. Return: out to the drive start (or all the way on a housed kick)
+        //    with the coverage converging and the wedge escorting.
+        let endYard: Float = isReturnTouchdown ? 102 : Float(returnYardLine)
+        let endZ = clampZ(ownYard(endYard))
+        let endX: Float = isReturnTouchdown ? 6 : 4
+        let runDistance = abs(endZ - catchZ)
+        let runDuration = TimeInterval(min(max(runDistance * 0.06, 1.0), 3.2))
+        // A housed return leaves the coverage trailing; a normal one rallies in.
+        let convergence: Float = isReturnTouchdown ? 0.35 : 0.75
+        var returnMoves: [Move] = [(returner, player(endX, endZ), runDuration)]
+        for i in 1...10 {
+            let laneX = kicking[i].x * 0.8
+            let fromZ = clampZ(ownYard(22))
+            returnMoves.append((kBase + i,
+                                player(lerp(laneX, endX, convergence),
+                                       lerp(fromZ, endZ, convergence)), runDuration))
+        }
+        for i in 0..<5 {
+            returnMoves.append((rBase + i,
+                                player(receiving[i].x * 0.5,
+                                       lerp(clampZ(ownYard(18)), endZ, 0.5)), runDuration))
+        }
+        steps.append(Step(
+            moves: returnMoves,
+            ballMove: .carry(nodeIndex: returner),
+            duration: runDuration,
+            pulses: isReturnTouchdown ? [returner] : []
+        ))
+
+        if isReturnTouchdown {
+            // Breakaway finish: pulse again in the end zone (the view runs the
+            // camera push and confetti).
+            steps.append(Step(moves: [], ballMove: .carry(nodeIndex: returner),
+                              duration: 0.6, pulses: [returner]))
+        } else {
+            // 4. The nearest lane defenders wrap the returner up.
+            let tacklers = [kBase + 5, kBase + 6]
+            var tackleMoves: [Move] = []
+            for (i, idx) in tacklers.enumerated() {
+                tackleMoves.append((idx,
+                                    player(endX + (i == 0 ? 0.9 : -0.9), endZ + kickDir * 0.6),
+                                    0.45))
+            }
+            steps.append(Step(
+                moves: tackleMoves,
+                ballMove: .carry(nodeIndex: returner),
+                duration: 1.2,
+                pulses: [tacklers[0]],
+                falls: [returner] + tacklers
+            ))
+        }
+
+        return steps
     }
 
     // MARK: - Scripts: Clock Plays

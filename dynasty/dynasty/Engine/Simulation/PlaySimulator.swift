@@ -67,6 +67,23 @@ enum PlaySimulator {
 
         let hint = offensiveCall?.simulatorHint
 
+        // --- Penalty check (scrimmage plays only, ~6% of snaps) ---
+        // Rolled BEFORE the play resolves: a flag wipes the down out entirely.
+        // Special teams (punt/FG) and clock plays are exempt to keep their
+        // flows simple.
+        if playCall == .pass || playCall == .run,
+           randomChance(penaltyChance) {
+            return rollPenalty(
+                playCall: playCall,
+                down: down,
+                distance: distance,
+                yardLine: yardLine,
+                quarter: quarter,
+                timeRemaining: timeRemaining,
+                playNumber: playNumber
+            )
+        }
+
         switch playCall {
         case .pass:
             return simulatePassPlay(
@@ -723,6 +740,94 @@ enum PlaySimulator {
         )
     }
 
+    // MARK: - Penalties
+
+    /// Chance any scrimmage snap draws a flag (~6%, close to NFL's rate of
+    /// accepted penalties per play).
+    private static let penaltyChance = 0.06
+
+    /// The flags the sim models, with relative frequency inside the 6%.
+    private enum PenaltyKind: CaseIterable {
+        case offensiveHolding    // -10, replay the down
+        case falseStart          // -5 pre-snap, replay the down
+        case defensiveOffside    // +5 pre-snap, replay the down (can convert by yardage)
+        case defensivePassInterference // spot foul (~15), automatic first down
+
+        var weight: Double {
+            switch self {
+            case .offensiveHolding:            return 0.35
+            case .falseStart:                  return 0.25
+            case .defensiveOffside:            return 0.25
+            case .defensivePassInterference:   return 0.15
+            }
+        }
+    }
+
+    /// Builds a penalty play: no down is consumed (the down is replayed with
+    /// adjusted distance), except defensive flags whose yardage reaches the
+    /// line to gain — those convert, and DPI is an automatic first down.
+    private static func rollPenalty(
+        playCall: PlayType,
+        down: Int,
+        distance: Int,
+        yardLine: Int,
+        quarter: Int,
+        timeRemaining: Int,
+        playNumber: Int
+    ) -> PlayResult {
+        // Weighted draw; DPI only exists on called pass plays.
+        var candidates = PenaltyKind.allCases
+        if playCall != .pass {
+            candidates.removeAll { $0 == .defensivePassInterference }
+        }
+        let totalWeight = candidates.reduce(0.0) { $0 + $1.weight }
+        var roll = Double.random(in: 0..<totalWeight)
+        var kind = candidates[0]
+        for candidate in candidates {
+            roll -= candidate.weight
+            if roll <= 0 { kind = candidate; break }
+        }
+
+        // Effective yardage is pre-clamped to the field so down-and-distance
+        // bookkeeping never needs to undo an over-long walk-off.
+        let yards: Int
+        let description: String
+        var isFirstDown = false
+        switch kind {
+        case .offensiveHolding:
+            yards = -min(10, yardLine - 1)
+            description = "FLAG — Holding on the offense, 10-yard penalty."
+        case .falseStart:
+            yards = -min(5, yardLine - 1)
+            description = "FLAG — False start, 5-yard penalty."
+        case .defensiveOffside:
+            yards = min(5, 99 - yardLine)
+            isFirstDown = yards >= distance
+            description = "FLAG — Defensive offside, 5-yard penalty."
+        case .defensivePassInterference:
+            yards = min(15, 99 - yardLine)
+            isFirstDown = true
+            description = "FLAG — Pass interference on the defense, \(yards) yards to the spot. Automatic first down."
+        }
+
+        return PlayResult(
+            playNumber: playNumber,
+            quarter: quarter,
+            timeRemaining: timeRemaining,
+            down: down,
+            distance: distance,
+            yardLine: yardLine,
+            playType: playCall,
+            outcome: .penalty,
+            yardsGained: yards,
+            description: description,
+            isFirstDown: isFirstDown,
+            isTurnover: false,
+            scoringPlay: false,
+            pointsScored: 0
+        )
+    }
+
     // MARK: - Special Teams
 
     private static func simulatePunt(
@@ -760,6 +865,9 @@ enum PlaySimulator {
         )
     }
 
+    /// Chance a field-goal try is blocked outright at the line (~2.5%).
+    private static let fieldGoalBlockChance = 0.025
+
     private static func simulateFieldGoal(
         offensePlayers: [SimPlayer],
         down: Int,
@@ -772,6 +880,26 @@ enum PlaySimulator {
         let kicker = offensePlayers.first(where: { $0.position == .K }) ?? offensePlayers.first!
         let fgDistance = 100 - yardLine + 17 // Snap + hold distance
         let kickerAccuracy = kickerAccuracyRating(for: kicker)
+
+        // A hand gets in the way before accuracy ever matters.
+        if randomChance(fieldGoalBlockChance) {
+            return PlayResult(
+                playNumber: playNumber,
+                quarter: quarter,
+                timeRemaining: timeRemaining,
+                down: down,
+                distance: distance,
+                yardLine: yardLine,
+                playType: .fieldGoal,
+                outcome: .fieldGoalMissed,
+                yardsGained: 0,
+                description: "The kick is BLOCKED! \(kicker.fullName)'s \(fgDistance)-yard attempt is swatted down at the line.",
+                isFirstDown: false,
+                isTurnover: true,
+                scoringPlay: false,
+                pointsScored: 0
+            )
+        }
 
         // Base accuracy drops with distance
         let baseMakeChance: Double
@@ -1229,8 +1357,55 @@ enum PlaySimulator {
         return max(0, Int(Double.random(in: -1.0...yacBase).rounded()))
     }
 
-    /// Selects a receiver weighted by route running + catching ability.
+    /// Share of pass targets funneled to the primary target group (the
+    /// "field 11": top-3 WRs + best TE + best RB). The live 3D view and the
+    /// play feed both feature these starters, so concentrating the sim's
+    /// targets on them keeps the names on the field, in the feed, and in the
+    /// box score pointing at the same players.
+    private static let primaryTargetShare = 0.85
+
+    /// The starters who soak up the vast majority of targets: the three best
+    /// WRs plus the best TE and the best RB (by overall).
+    private static func primaryTargets(among receivers: [SimPlayer]) -> Set<UUID> {
+        var ids: Set<UUID> = []
+        let topWRs = receivers
+            .filter { $0.position == .WR }
+            .sorted { $0.overall > $1.overall }
+            .prefix(3)
+        for wr in topWRs { ids.insert(wr.id) }
+        if let te = receivers.filter({ $0.position == .TE }).max(by: { $0.overall < $1.overall }) {
+            ids.insert(te.id)
+        }
+        if let rb = receivers.filter({ $0.position == .RB }).max(by: { $0.overall < $1.overall }) {
+            ids.insert(rb.id)
+        }
+        return ids
+    }
+
+    /// Selects a pass target: ~85% of throws go to the primary group (top-3
+    /// WR + best TE + best RB), the rest to depth receivers. Within each
+    /// group the pick is weighted by route running + catching ability.
     private static func weightedReceiverSelection(_ receivers: [SimPlayer]) -> SimPlayer? {
+        guard !receivers.isEmpty else { return nil }
+
+        let primaryIDs = primaryTargets(among: receivers)
+        let primary = receivers.filter { primaryIDs.contains($0.id) }
+        let depth = receivers.filter { !primaryIDs.contains($0.id) }
+
+        // Roll which group gets the target; fall back to whichever is
+        // non-empty so tiny rosters keep working.
+        let pool: [SimPlayer]
+        if depth.isEmpty || (!primary.isEmpty && Double.random(in: 0..<1) < primaryTargetShare) {
+            pool = primary.isEmpty ? receivers : primary
+        } else {
+            pool = depth
+        }
+
+        return weightedPick(from: pool) ?? receivers.randomElement()
+    }
+
+    /// Route-weight roulette pick within one group of receivers.
+    private static func weightedPick(from receivers: [SimPlayer]) -> SimPlayer? {
         guard !receivers.isEmpty else { return nil }
         let weights = receivers.map { receiverRouteWeight(for: $0) }
         let totalWeight = weights.reduce(0, +)

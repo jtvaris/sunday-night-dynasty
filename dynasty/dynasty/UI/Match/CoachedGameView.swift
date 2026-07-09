@@ -83,7 +83,9 @@ struct CoachedGameView: View {
     // Dialogs
     @State private var showSimToEndConfirm = false
     @State private var showExitConfirm = false
+    @State private var showOnsideDialog = false
     @State private var showFinal = false
+    @State private var showStatsSheet = false
 
     @Environment(\.dismiss) private var dismiss
 
@@ -140,6 +142,21 @@ struct CoachedGameView: View {
         } message: {
             Text("You can sim the remaining plays or abandon (nothing is saved).")
         }
+        .confirmationDialog(
+            "Onside kick?",
+            isPresented: $showOnsideDialog,
+            titleVisibility: .visible
+        ) {
+            Button("Onside Kick") { attemptOnside() }
+            // Cancel role: tapping outside the dialog also kicks deep, so the
+            // game never stalls waiting for a choice.
+            Button("Kick Deep", role: .cancel) { kickDeep() }
+        } message: {
+            Text("Trailing in the 4th — try to steal the ball back (~12%)? A failed onside hands them a short field.")
+        }
+        .sheet(isPresented: $showStatsSheet) {
+            LiveBoxScoreSheet(engine: engine, homeTeam: homeTeam, awayTeam: awayTeam)
+        }
     }
 
     // MARK: - Scoreboard
@@ -183,10 +200,26 @@ struct CoachedGameView: View {
                     .foregroundStyle(Color.textPrimary)
                     .contentTransition(.numericText())
                     .animation(.spring(duration: 0.4), value: score)
+                timeoutPips(
+                    remaining: team.id == homeTeam.id ? engine.homeTimeouts : engine.awayTimeouts
+                )
+                .padding(.top, 2)
             }
             if leading, hasBall { possessionDot }
         }
         .frame(minWidth: 84, alignment: leading ? .leading : .trailing)
+    }
+
+    /// Broadcast-style timeout indicator: three pips per side, dimmed as
+    /// timeouts are spent (they restock at halftime).
+    private func timeoutPips(remaining: Int) -> some View {
+        HStack(spacing: 3) {
+            ForEach(0..<3, id: \.self) { index in
+                Capsule()
+                    .fill(index < remaining ? Color.accentGold : Color.backgroundTertiary)
+                    .frame(width: 10, height: 3)
+            }
+        }
     }
 
     private var possessionDot: some View {
@@ -219,7 +252,35 @@ struct CoachedGameView: View {
             chip(downDistanceText, color: .accentGold)
             chip(fieldPositionText, color: .accentBlue)
             chip(possessionText, color: engine.playerIsOnOffense ? .success : .danger)
+            if !engine.currentDrivePlays.isEmpty {
+                chip(driveChipText, color: .textSecondary)
+            }
             Spacer()
+            if !engine.isGameOver && engine.playerTimeoutsRemaining > 0 {
+                Button {
+                    callTimeout()
+                } label: {
+                    Label("TO · \(engine.playerTimeoutsRemaining)", systemImage: "hand.raised.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.accentGold)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.accentGold.opacity(0.14), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isAnimating)
+            }
+            Button {
+                showStatsSheet = true
+            } label: {
+                Label("Stats", systemImage: "chart.bar.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.backgroundTertiary, in: Capsule())
+            }
+            .buttonStyle(.plain)
             if !engine.isGameOver {
                 Button {
                     showSimToEndConfirm = true
@@ -239,6 +300,16 @@ struct CoachedGameView: View {
         .padding(.vertical, 8)
         .background(Color.backgroundSecondary)
         .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.surfaceBorder), alignment: .bottom)
+    }
+
+    /// Compact current-drive summary, e.g. "Drive: 5 plays, 42 yds".
+    /// Penalty walk-offs don't count as offensive yards.
+    private var driveChipText: String {
+        let plays = engine.currentDrivePlays
+        let yards = plays
+            .filter { ($0.playType == .pass || $0.playType == .run) && $0.outcome != .penalty }
+            .reduce(0) { $0 + $1.yardsGained }
+        return "Drive: \(plays.count) \(plays.count == 1 ? "play" : "plays"), \(yards) yds"
     }
 
     private func chip(_ text: String, color: Color) -> some View {
@@ -310,7 +381,7 @@ struct CoachedGameView: View {
                     }
                     .background(Color.black.opacity(0.88))
                     .overlay(Rectangle().strokeBorder(Color(red: 0.75, green: 0.1, blue: 0.1), lineWidth: 2.5))
-                    .padding(.bottom, 14)
+                    .padding(.bottom, 8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
@@ -850,7 +921,7 @@ struct CoachedGameView: View {
                     .padding(.vertical, 11)
                     .background(Color.backgroundTertiary.opacity(0.96), in: Capsule())
                     .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 1))
-                    .padding(.bottom, 300)
+                    .padding(.bottom, 352)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -884,6 +955,8 @@ struct CoachedGameView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(playerWon ? Color.success : Color.textSecondary)
 
+                topPerformersRow
+
                 Button {
                     onFinish(engine)
                 } label: {
@@ -904,6 +977,41 @@ struct CoachedGameView: View {
             )
         }
         .transition(.opacity)
+    }
+
+    /// The three players who won the most individual matchups this game
+    /// (engine tallies winners/losers from every play's battle callouts).
+    @ViewBuilder
+    private var topPerformersRow: some View {
+        let performers = engine.topPerformers(limit: 3)
+        if !performers.isEmpty {
+            VStack(spacing: 8) {
+                Text("TOP PERFORMERS")
+                    .font(.system(size: 10, weight: .black))
+                    .foregroundStyle(Color.textTertiary)
+                    .tracking(1.6)
+                HStack(spacing: 14) {
+                    ForEach(performers) { performer in
+                        VStack(spacing: 2) {
+                            Text(performer.name)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(
+                                    performer.isHomeTeam == playerTeamIsHome
+                                        ? Color.accentGold : Color.textPrimary
+                                )
+                                .lineLimit(1)
+                            Text("\(performer.wins)-\(performer.losses) battles · \(performer.isHomeTeam ? homeTeam.abbreviation : awayTeam.abbreviation)")
+                                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 9))
+                    }
+                }
+            }
+            .padding(.top, 2)
+        }
     }
 
     private func finalTeamScore(team: Team, score: Int) -> some View {
@@ -929,6 +1037,10 @@ struct CoachedGameView: View {
         guard !gameStarted else { return }
         gameStarted = true
 
+        // The camera always shoots from behind the PLAYER's own unit —
+        // mirrored for away games (field text re-orients with it).
+        fieldScene.setViewFacing(playerTeamIsHome ? 1 : -1)
+
         // NFL convention: home wears team color, road team wears white with
         // team-color pants and helmet — always readable against the grass.
         let colors = MatchTeamColors.matchup(home: homeTeam.abbreviation, away: awayTeam.abbreviation)
@@ -943,17 +1055,27 @@ struct CoachedGameView: View {
         )
         fieldScene.setEndZoneColors(home: colors.home, away: colors.away)
 
-        // Opening formation at the kickoff spot
-        let losZ = PlayChoreographer.losZ(yardLine: engine.yardLine, offenseIsHome: engine.homeHasPossession)
-        let formation = PlayChoreographer.formation(
-            for: .run, losZ: losZ, direction: engine.homeHasPossession ? 1 : -1,
-            offenseNumbers: engine.currentOffenseUnit.numbers,
-            defenseNumbers: engine.currentDefenseUnit.numbers
-        )
-        let openingCrouch = PlayChoreographer.stanceCrouchIndices(offenseIsHome: engine.homeHasPossession)
-        fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.1,
-                                          crouchHome: openingCrouch.home, crouchAway: openingCrouch.away)
-        fieldScene.focusCamera(z: losZ, animated: false)
+        // Opening lineup: kickoff formation when the opening kick is pending,
+        // scrimmage formation otherwise.
+        if let kickoff = engine.pendingKickoff {
+            let kickFormation = PlayChoreographer.kickoffFormation(kickingTeamIsHome: kickoff.kickingTeamIsHome)
+            fieldScene.movePlayersToFormation(home: kickFormation.home, away: kickFormation.away, duration: 0.1)
+            fieldScene.focusCamera(
+                z: PlayChoreographer.kickoffSpotZ(kickingTeamIsHome: kickoff.kickingTeamIsHome),
+                animated: false
+            )
+        } else {
+            let losZ = PlayChoreographer.losZ(yardLine: engine.yardLine, offenseIsHome: engine.homeHasPossession)
+            let formation = PlayChoreographer.formation(
+                for: .run, losZ: losZ, direction: engine.homeHasPossession ? 1 : -1,
+                offenseNumbers: engine.currentOffenseUnit.numbers,
+                defenseNumbers: engine.currentDefenseUnit.numbers
+            )
+            let openingCrouch = PlayChoreographer.stanceCrouchIndices(offenseIsHome: engine.homeHasPossession)
+            fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.1,
+                                              crouchHome: openingCrouch.home, crouchAway: openingCrouch.away)
+            fieldScene.focusCamera(z: losZ, animated: false)
+        }
 
         showPossessionBanner()
         proceed(after: 1.0)
@@ -963,6 +1085,17 @@ struct CoachedGameView: View {
     private func proceed(after delay: TimeInterval = 0.8) {
         guard !engine.isGameOver else {
             withAnimation(.easeInOut(duration: 0.3)) { showFinal = true }
+            return
+        }
+        // A drive that begins with a kickoff plays the boot first. When the
+        // situation calls for it, the coach gets the onside choice instead.
+        if let kickoff = engine.pendingKickoff {
+            if engine.onsideKickAvailable {
+                showOnsideDialog = true
+                return
+            }
+            engine.clearPendingKickoff()
+            runKickoff(kickoff)
             return
         }
         if engine.playerIsOnOffense {
@@ -990,6 +1123,69 @@ struct CoachedGameView: View {
         runPlay(offCall: nil, forcedType: forcedType)
     }
 
+    // MARK: - Kickoffs
+
+    /// Animates a kickoff (opening kick, post-score, second half, OT) before
+    /// the new drive's first snap. The outcome is already decided — this is
+    /// pure presentation of the engine's kickoff draw.
+    private func runKickoff(_ event: LiveGameEngine.KickoffEvent) {
+        isAnimating = true
+        let formation = PlayChoreographer.kickoffFormation(kickingTeamIsHome: event.kickingTeamIsHome)
+        fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.7)
+        fieldScene.updateMarkers(losZ: nil, firstDownZ: nil)
+        fieldScene.focusCamera(z: PlayChoreographer.kickoffSpotZ(kickingTeamIsHome: event.kickingTeamIsHome))
+
+        let steps = PlayChoreographer.kickoffSteps(
+            kickingTeamIsHome: event.kickingTeamIsHome,
+            returnYardLine: event.startYardLine,
+            isTouchback: event.isTouchback,
+            isReturnTouchdown: event.isReturnTouchdown
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+            fieldScene.runPlay(steps: steps) {
+                isAnimating = false
+                if event.isReturnTouchdown {
+                    // Housed: camera to the end zone the returner reached.
+                    let endzoneZ: Float = event.kickingTeamIsHome ? -50 : 50
+                    fieldScene.focusCamera(z: endzoneZ, duration: 1.0)
+                    fieldScene.celebrate(atZ: endzoneZ)
+                    showBanner("The kickoff is returned ALL THE WAY for a touchdown!")
+                } else if event.isTouchback {
+                    showBanner("Touchback — the drive starts at the \(event.startYardLine).")
+                } else {
+                    showBanner("The kick is returned out to the \(event.startYardLine).")
+                }
+                showPossessionBanner()
+                proceed(after: event.isReturnTouchdown ? 1.8 : 0.8)
+            }
+        }
+    }
+
+    // MARK: - Onside kick
+
+    private var playerAbbr: String {
+        playerTeamIsHome ? homeTeam.abbreviation : awayTeam.abbreviation
+    }
+
+    private func attemptOnside() {
+        let recovered = engine.attemptOnsideKick()
+        syncFieldToSituation()
+        showBanner(recovered
+            ? "ONSIDE KICK — \(playerAbbr) recovers!"
+            : "The onside kick fails — \(opponentAbbr) takes over with a short field.")
+        showPossessionBanner()
+        proceed(after: 1.4)
+    }
+
+    private func kickDeep() {
+        guard let kickoff = engine.pendingKickoff else {
+            proceed()
+            return
+        }
+        engine.clearPendingKickoff()
+        runKickoff(kickoff)
+    }
+
     /// Steps the engine one play and choreographs the result on the field.
     private func runPlay(offCall: OffensivePlayCall?, forcedType: PlayType?) {
         guard !isAnimating, !engine.isGameOver else { return }
@@ -999,8 +1195,10 @@ struct CoachedGameView: View {
         let offenseIsHome = engine.homeHasPossession
         let possessionBefore = engine.homeHasPossession
 
-        // Retro broadcast plate for the snap ("1ST & 10").
-        let plateText = downDistanceText
+        // Retro broadcast plate for the snap — situation plus the called play
+        // when the coach dialed one ("2ND & 10 · DIG").
+        let plateText = offCall.map { "\(downDistanceText) · \($0.rawValue.uppercased())" }
+            ?? downDistanceText
         snapPlate = plateText
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
             if snapPlate == plateText { snapPlate = nil }
@@ -1034,11 +1232,18 @@ struct CoachedGameView: View {
         let presnapCrouch = PlayChoreographer.stanceCrouchIndices(offenseIsHome: offenseIsHome)
         fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.7,
                                           crouchHome: presnapCrouch.home, crouchAway: presnapCrouch.away)
-        fieldScene.focusCamera(z: PlayChoreographer.losZ(yardLine: losYard, offenseIsHome: offenseIsHome))
 
         // Markers stay on THIS play's line/1st-down through the animation.
         let playLosZ = PlayChoreographer.losZ(yardLine: losYard, offenseIsHome: offenseIsHome)
         let playDir: Float = offenseIsHome ? 1 : -1
+
+        // Kicks get the broadcast angle from low behind the posts; every
+        // other play keeps the normal scrimmage framing.
+        if play.playType == .fieldGoal || play.playType == .extraPoint {
+            fieldScene.kickCamera(towardZ: playDir)
+        } else {
+            fieldScene.focusCamera(z: playLosZ)
+        }
         let playGoalToGo = 100 - losYard <= distanceBefore
         fieldScene.updateMarkers(
             losZ: playLosZ,
@@ -1049,6 +1254,13 @@ struct CoachedGameView: View {
             let steps = PlayChoreographer.steps(for: play, losYardLine: losYard,
                                                 offenseIsHome: offenseIsHome, matchups: matchups,
                                                 call: offCall, defensivePackage: defPackage)
+            // A flagged play gets the yellow laundry: the flag flies in while
+            // the (wiped-out) snap plays out.
+            if play.outcome == .penalty {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    fieldScene.throwFlag(atZ: playLosZ)
+                }
+            }
             fieldScene.runPlay(steps: steps) {
                 finishPlay(play, possessionBefore: possessionBefore)
             }
@@ -1057,6 +1269,16 @@ struct CoachedGameView: View {
 
     private func finishPlay(_ play: PlayResult, possessionBefore: Bool) {
         isAnimating = false
+
+        // The kick camera hands the shot back to normal framing at the new
+        // scrimmage spot (a made kick refocuses again to the end zone below).
+        if play.playType == .fieldGoal || play.playType == .extraPoint {
+            fieldScene.focusCamera(
+                z: PlayChoreographer.losZ(yardLine: engine.yardLine,
+                                          offenseIsHome: engine.homeHasPossession),
+                duration: 1.0
+            )
+        }
 
         // Scoring plays get the full presentation: camera to the end zone
         // and a confetti burst for touchdowns.
@@ -1147,6 +1369,13 @@ struct CoachedGameView: View {
         syncFieldToSituation()
     }
 
+    /// Burns one of the player's timeouts: the game clock freezes for the
+    /// next snap (the engine zeroes that play's clock runoff).
+    private func callTimeout() {
+        guard engine.useTimeout(home: playerTeamIsHome) else { return }
+        showBanner("Timeout, \(playerAbbr) — the clock is stopped.")
+    }
+
     private func showBanner(_ text: String) {
         resultBanner = text
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
@@ -1185,6 +1414,207 @@ struct CoachedGameView: View {
         possessionBanner = text
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
             if possessionBanner == text { possessionBanner = nil }
+        }
+    }
+}
+
+// MARK: - Live Box Score Sheet
+
+/// Mid-game box score: quarter-by-quarter line score, total yards, and the
+/// statistical leaders for both teams. Stats accumulate per completed drive
+/// (mirroring the quick sim), so the current drive is not yet included.
+private struct LiveBoxScoreSheet: View {
+
+    @ObservedObject var engine: LiveGameEngine
+    let homeTeam: Team
+    let awayTeam: Team
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack {
+            Color.backgroundPrimary.ignoresSafeArea()
+
+            ScrollView {
+                VStack(spacing: 14) {
+                    lineScoreCard
+                    totalsCard
+                    leadersCard
+                }
+                .padding(16)
+                .frame(maxWidth: 640)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color.textSecondary)
+                    .frame(width: 30, height: 30)
+                    .background(Color.backgroundTertiary, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(14)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    // MARK: Line score
+
+    private var lineScoreCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("LINE SCORE", icon: "chart.bar.fill")
+
+            Grid(horizontalSpacing: 0, verticalSpacing: 8) {
+                GridRow {
+                    Text("")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ForEach(quarterLabels, id: \.self) { label in
+                        Text(label)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color.textTertiary)
+                            .frame(width: 36)
+                    }
+                    Text("T")
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(Color.textSecondary)
+                        .frame(width: 40)
+                }
+                lineScoreRow(
+                    abbr: awayTeam.abbreviation,
+                    quarters: engine.awayQuarterScores,
+                    total: engine.awayScore,
+                    isPlayer: !engine.playerTeamIsHome
+                )
+                lineScoreRow(
+                    abbr: homeTeam.abbreviation,
+                    quarters: engine.homeQuarterScores,
+                    total: engine.homeScore,
+                    isPlayer: engine.playerTeamIsHome
+                )
+            }
+        }
+        .padding(16)
+        .cardBackground()
+    }
+
+    /// Q1–Q4 plus OT once overtime has begun.
+    private var quarterLabels: [String] {
+        var labels = ["1", "2", "3", "4"]
+        if engine.homeQuarterScores.count > 4 { labels.append("OT") }
+        return labels
+    }
+
+    private func lineScoreRow(abbr: String, quarters: [Int], total: Int, isPlayer: Bool) -> some View {
+        GridRow {
+            Text(abbr)
+                .font(.system(size: 13, weight: .heavy))
+                .foregroundStyle(isPlayer ? Color.accentGold : Color.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(quarterLabels.indices, id: \.self) { index in
+                // Quarters not yet reached show a dash instead of a zero.
+                let reached = index < engine.quarter
+                Text(reached ? "\(quarters.indices.contains(index) ? quarters[index] : 0)" : "–")
+                    .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(reached ? Color.textPrimary : Color.textTertiary)
+                    .frame(width: 36)
+            }
+            Text("\(total)")
+                .font(.system(size: 14, weight: .black).monospacedDigit())
+                .foregroundStyle(isPlayer ? Color.accentGold : Color.textPrimary)
+                .frame(width: 40)
+        }
+    }
+
+    // MARK: Team totals
+
+    private var totalsCard: some View {
+        let awayYards = engine.totalYards(forHome: false)
+        let homeYards = engine.totalYards(forHome: true)
+        return VStack(alignment: .leading, spacing: 12) {
+            sectionTitle("TEAM STATS", icon: "scalemass.fill")
+            StatComparisonRow(
+                label: "Total Yards",
+                awayValue: "\(awayYards)",
+                homeValue: "\(homeYards)",
+                awayRaw: Double(awayYards),
+                homeRaw: Double(homeYards)
+            )
+        }
+        .padding(16)
+        .cardBackground()
+    }
+
+    // MARK: Leaders
+
+    private var leadersCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionTitle("LEADERS", icon: "star.fill")
+
+            leadersRow("Passing", away: engine.passingLeader(forHome: false),
+                       home: engine.passingLeader(forHome: true))
+            leadersRow("Rushing", away: engine.rushingLeader(forHome: false),
+                       home: engine.rushingLeader(forHome: true))
+            leadersRow("Receiving", away: engine.receivingLeader(forHome: false),
+                       home: engine.receivingLeader(forHome: true))
+            leadersRow("Sacks", away: engine.sackLeader(forHome: false),
+                       home: engine.sackLeader(forHome: true))
+        }
+        .padding(16)
+        .cardBackground()
+    }
+
+    private func leadersRow(
+        _ category: String,
+        away: LiveGameEngine.StatLeader?,
+        home: LiveGameEngine.StatLeader?
+    ) -> some View {
+        VStack(spacing: 6) {
+            Text(category.uppercased())
+                .font(.system(size: 10, weight: .black))
+                .foregroundStyle(Color.textTertiary)
+                .tracking(1.4)
+                .frame(maxWidth: .infinity, alignment: .center)
+            HStack(alignment: .top, spacing: 12) {
+                leaderCell(away, alignment: .leading)
+                leaderCell(home, alignment: .trailing)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func leaderCell(_ leader: LiveGameEngine.StatLeader?, alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 2) {
+            Text(leader?.name ?? "—")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(leader == nil ? Color.textTertiary : Color.textPrimary)
+                .lineLimit(1)
+            if let leader {
+                Text(leader.detail)
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
+    }
+
+    // MARK: Bits
+
+    private func sectionTitle(_ text: String, icon: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.accentGold)
+            Text(text)
+                .font(.system(size: 10, weight: .black))
+                .foregroundStyle(Color.textTertiary)
+                .tracking(1.5)
         }
     }
 }

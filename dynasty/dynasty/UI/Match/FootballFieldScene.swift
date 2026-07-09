@@ -83,16 +83,24 @@ class FootballFieldScene: SCNScene {
 
         /// Home teams wear their color; road teams wear white with team-color
         /// pants and helmet — instant NFL reading and guaranteed contrast.
+        /// Helmets run a shade darker than the jersey so heads read as gear.
         static func home(teamColor: UIColor) -> Uniform {
             Uniform(jersey: teamColor,
                     pants: UIColor(white: 0.88, alpha: 1),
-                    helmet: teamColor)
+                    helmet: shaded(teamColor))
         }
 
         static func away(teamColor: UIColor) -> Uniform {
             Uniform(jersey: UIColor(white: 0.93, alpha: 1),
                     pants: teamColor,
-                    helmet: teamColor)
+                    helmet: shaded(teamColor))
+        }
+
+        private static func shaded(_ color: UIColor) -> UIColor {
+            var (r, g, b, a): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+            color.getRed(&r, green: &g, blue: &b, alpha: &a)
+            return UIColor(red: max(r - 0.2, 0), green: max(g - 0.2, 0),
+                           blue: max(b - 0.2, 0), alpha: a)
         }
     }
 
@@ -115,6 +123,10 @@ class FootballFieldScene: SCNScene {
     private var carryingIndex: Int?
     /// Camera's current focus Z, so the follow-cam can decide when to pan.
     private var focusZ: Float = 0
+    /// While true the kick camera owns the shot: the follow-cam in `execute`
+    /// stays parked so the ball arcs toward the lens. Any `focusCamera` call
+    /// hands the shot back.
+    private var kickCameraActive = false
     /// Incremented on every runPlay/cancelPlay so stale scheduled steps become no-ops.
     private var playGeneration = 0
 
@@ -338,17 +350,44 @@ class FootballFieldScene: SCNScene {
         }
     }
 
+    /// Which end the camera shoots from: +1 = from -Z looking toward +Z
+    /// (correct for the HOME player — behind his offense when attacking and
+    /// behind his defense when defending), -1 = mirrored for AWAY games so
+    /// the camera always sits behind the player's own unit. Field text
+    /// re-orients so it stays readable from the active side.
+    private(set) var viewFacing: Float = 1
+
+    func setViewFacing(_ facing: Float) {
+        viewFacing = facing >= 0 ? 1 : -1
+        orientFieldText()
+        // The end wall on the camera's side would sit in front of the lens.
+        rootNode.childNode(withName: "endWallPos", recursively: false)?.isHidden = viewFacing < 0
+        rootNode.childNode(withName: "endWallNeg", recursively: false)?.isHidden = viewFacing > 0
+        focusCamera(z: focusZ, animated: false)
+    }
+
+    /// Rotates every flat text on the field (yard numbers, end zone
+    /// wordmarks, midfield logo lettering) to read correctly from the
+    /// current camera side.
+    private func orientFieldText() {
+        let yaw: Float = viewFacing >= 0 ? .pi : 0
+        for node in rootNode.childNodes
+        where (node.name == "yardNumber" || node.name == "fieldDressing") && node.geometry is SCNText {
+            node.eulerAngles = SCNVector3(-Float.pi / 2, yaw, 0)
+        }
+    }
+
     /// Pans the camera (and its look-at target) along the field so ~25 yards
     /// around the given Z stay readable at a broadcast angle.
     /// `z` is clamped to [-45, 45] so the framing never leaves the field.
     func focusCamera(z: Float, animated: Bool = true, duration: TimeInterval = 0.8) {
+        kickCameraActive = false
         let clampedZ = max(-45, min(45, z))
         focusZ = clampedZ
-        // Madden-98 framing: a LOW camera behind the offense looking
-        // downfield, players big in the foreground, far field falling into
-        // the dark — pulled back a touch from the PSX original.
-        let targetPosition = SCNVector3(0, 1.5, clampedZ + 16)
-        let cameraPosition = SCNVector3(0, 21, clampedZ - 24)
+        // Madden-98 framing: a LOW camera behind the player's own unit
+        // looking downfield — mirrored via `viewFacing` for away games.
+        let targetPosition = SCNVector3(0, 1.5, clampedZ + viewFacing * 16)
+        let cameraPosition = SCNVector3(0, 21, clampedZ - viewFacing * 24)
 
         if animated {
             let targetMove = SCNAction.move(to: targetPosition, duration: duration)
@@ -364,6 +403,25 @@ class FootballFieldScene: SCNScene {
             cameraTargetNode.position = targetPosition
             cameraNode.position = cameraPosition
         }
+    }
+
+    /// Swings the camera low behind the goalposts looking back up the field —
+    /// the broadcast angle for field goals and extra points. `towardZ` is the
+    /// direction the kick travels (positive = toward the +Z posts). The shot
+    /// stays parked (no follow-cam) until the next `focusCamera` call.
+    func kickCamera(towardZ: Float, duration: TimeInterval = 0.8) {
+        kickCameraActive = true
+        let sign: Float = towardZ >= 0 ? 1 : -1
+        let cameraPosition = SCNVector3(0, 8, sign * 72)
+        let targetPosition = SCNVector3(0, 4, sign * 40)
+
+        let targetMove = SCNAction.move(to: targetPosition, duration: duration)
+        targetMove.timingMode = .easeInEaseOut
+        cameraTargetNode.runAction(targetMove, forKey: "focus")
+
+        let cameraMove = SCNAction.move(to: cameraPosition, duration: duration)
+        cameraMove.timingMode = .easeInEaseOut
+        cameraNode.runAction(cameraMove, forKey: "focus")
     }
 
     /// Runs a sequential play timeline: each step starts after the previous one
@@ -401,6 +459,8 @@ class FootballFieldScene: SCNScene {
         }
         ballNode.removeAllActions()
         detachBallToRoot()
+        rootNode.childNodes.filter { $0.name == "ballShadow" }.forEach { $0.removeFromParentNode() }
+        rootNode.childNodes.filter { $0.name == "penaltyFlag" }.forEach { $0.removeFromParentNode() }
     }
 
     /// Shows or hides the football (e.g. between plays or during kick meters).
@@ -423,8 +483,8 @@ class FootballFieldScene: SCNScene {
     /// Tints the two end zones with slightly darkened team colors.
     /// End zones keep the default green until this is called.
     func setEndZoneColors(home: UIColor, away: UIColor) {
-        homeEndZoneNode?.geometry?.firstMaterial?.diffuse.contents = darkenColor(home, by: 0.15)
-        awayEndZoneNode?.geometry?.firstMaterial?.diffuse.contents = darkenColor(away, by: 0.15)
+        homeEndZoneNode?.geometry?.firstMaterial?.diffuse.contents = darkenColor(home, by: 0.45)
+        awayEndZoneNode?.geometry?.firstMaterial?.diffuse.contents = darkenColor(away, by: 0.45)
     }
 
     /// Paints team wordmarks into the end zones and a logo disc at midfield —
@@ -447,7 +507,7 @@ class FootballFieldScene: SCNScene {
             let (minB, maxB) = node.boundingBox
             node.pivot = SCNMatrix4MakeTranslation((maxB.x - minB.x) / 2 + minB.x,
                                                    (maxB.y - minB.y) / 2 + minB.y, 0)
-            node.eulerAngles = SCNVector3(-Float.pi / 2, Float.pi, 0)
+            node.eulerAngles = SCNVector3(-Float.pi / 2, viewFacing >= 0 ? Float.pi : 0, 0)
             node.position = SCNVector3(0, 0.03, zSign * (FieldConstants.fieldLength / 2 + FieldConstants.endZoneDepth / 2))
             rootNode.addChildNode(node)
         }
@@ -475,9 +535,50 @@ class FootballFieldScene: SCNScene {
         let (minL, maxL) = logoNode.boundingBox
         logoNode.pivot = SCNMatrix4MakeTranslation((maxL.x - minL.x) / 2 + minL.x,
                                                    (maxL.y - minL.y) / 2 + minL.y, 0)
-        logoNode.eulerAngles = SCNVector3(-Float.pi / 2, Float.pi, 0)
+        logoNode.eulerAngles = SCNVector3(-Float.pi / 2, viewFacing >= 0 ? Float.pi : 0, 0)
         logoNode.position = SCNVector3(0, 0.035, 0)
         rootNode.addChildNode(logoNode)
+    }
+
+    /// Penalty flag: a small yellow cloth arcs in from the near sideline,
+    /// tumbling end over end, lands on the turf around the given Z and fades
+    /// out after a beat. Purely presentational — call it when a play resolves
+    /// with a `.penalty` outcome.
+    func throwFlag(atZ z: Float) {
+        let clampedZ = max(-50, min(50, z))
+
+        let geometry = SCNBox(width: 0.5, height: 0.14, length: 0.5, chamferRadius: 0.04)
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor(red: 1.0, green: 0.84, blue: 0.1, alpha: 1)
+        material.emission.contents = UIColor(red: 0.45, green: 0.36, blue: 0.03, alpha: 1)
+        geometry.materials = [material]
+        let flag = SCNNode(geometry: geometry)
+        flag.name = "penaltyFlag"
+
+        // Thrown from the officials' side, chest height, a few yards behind
+        // the spot — like a back judge reaching for his pocket.
+        let start = SCNVector3(-FieldConstants.fieldWidth / 2 - 1.5, 1.4, clampedZ - 5)
+        let target = SCNVector3(Float.random(in: -5...3), 0.1, clampedZ + Float.random(in: -1.5...1.5))
+        flag.position = start
+        rootNode.addChildNode(flag)
+
+        let flight: TimeInterval = 0.8
+        let apex: Float = 5
+        let arc = SCNAction.customAction(duration: flight) { node, elapsed in
+            let t = max(0, min(Float(elapsed) / Float(flight), 1))
+            node.position = SCNVector3(
+                start.x + (target.x - start.x) * t,
+                start.y + (target.y - start.y) * t + apex * 4 * t * (1 - t),
+                start.z + (target.z - start.z) * t
+            )
+        }
+        let tumble = SCNAction.rotateBy(x: CGFloat.pi * 3, y: CGFloat.pi * 2, z: 0, duration: flight)
+        flag.runAction(SCNAction.group([arc, tumble]))
+        flag.runAction(SCNAction.sequence([
+            SCNAction.wait(duration: flight + 2.0),
+            SCNAction.fadeOut(duration: 0.4),
+            SCNAction.removeFromParentNode(),
+        ]))
     }
 
     /// Gold-and-white confetti burst over the end zone for touchdowns.
@@ -636,10 +737,17 @@ class FootballFieldScene: SCNScene {
         }
     }
 
-    /// Both arms shoot up for a beat — catch attempts and pick attempts.
+    /// Both arms shoot up for a beat — catch attempts and pick attempts —
+    /// with a small leap at the ball while the arms are up.
     private func reach(nodeIndex: Int) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        figure.removeAction(forKey: "hop")
+        let hopUp = SCNAction.moveBy(x: 0, y: 0.25, z: 0, duration: 0.22)
+        hopUp.timingMode = .easeOut
+        let hopDown = SCNAction.moveBy(x: 0, y: -0.25, z: 0, duration: 0.24)
+        hopDown.timingMode = .easeIn
+        figure.runAction(SCNAction.sequence([hopUp, hopDown]), forKey: "hop")
         for name in ["arm", "armR"] {
             guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
             arm.removeAction(forKey: "swing")
@@ -678,6 +786,7 @@ class FootballFieldScene: SCNScene {
         guard let figure = node.childNode(withName: "figure", recursively: false) else { return }
         figure.removeAction(forKey: "gait")
         figure.removeAction(forKey: "fall")
+        figure.removeAction(forKey: "hop")
         figure.position = SCNVector3Zero
         figure.eulerAngles = SCNVector3Zero
         for name in ["leg", "legR", "arm", "armR"] {
@@ -726,14 +835,15 @@ class FootballFieldScene: SCNScene {
             attachBall(toPlayerIndex: nodeIndex)
             // Follow-cam: when the carrier breaks well past the current frame,
             // pan downfield with him so long gains don't run out of shot.
-            if let move = step.moves.first(where: { $0.nodeIndex == nodeIndex }),
+            if !kickCameraActive,
+               let move = step.moves.first(where: { $0.nodeIndex == nodeIndex }),
                abs(move.to.z - focusZ) > 11 {
                 focusCamera(z: move.to.z, animated: true,
                             duration: max(move.duration, 0.8))
             }
         case .arc(let to, let apex, let duration):
             runBallArc(to: to, apex: apex, duration: duration)
-            if abs(to.z - focusZ) > 11 {
+            if !kickCameraActive, abs(to.z - focusZ) > 11 {
                 focusCamera(z: to.z, animated: true, duration: max(duration, 0.8))
             }
         case .slide(let to, let duration):
@@ -783,12 +893,16 @@ class FootballFieldScene: SCNScene {
 
     /// Flies the ball along a parabola from its current position to `target`.
     private func runBallArc(to target: SCNVector3, apex: Float, duration: TimeInterval) {
+        // Whoever carried the ball into this flight is the passer — capture
+        // him before the detach clears the carry, then whip his arm through.
+        let thrower = playerNode(at: carryingIndex ?? -1)
         detachBallToRoot()
         ballNode.removeAllActions()
         guard duration > 0 else {
             ballNode.position = target
             return
         }
+        if let thrower { throwMotion(of: thrower) }
 
         let start = ballNode.position
         let arc = SCNAction.customAction(duration: duration) { node, elapsed in
@@ -813,6 +927,45 @@ class FootballFieldScene: SCNScene {
             self?.ballNode.removeAction(forKey: "ballSpin")
             self?.ballNode.eulerAngles = SCNVector3Zero
         }
+
+        // Flight shadow: a small dark blob slides along the turf under the
+        // ball (same lerp, no y/apex term) and vanishes when the flight ends —
+        // the ground reference that sells the height of the arc.
+        let shadowGeometry = SCNCylinder(radius: 0.35, height: 0.01)
+        let shadowMaterial = SCNMaterial()
+        shadowMaterial.diffuse.contents = UIColor(white: 0, alpha: 0.3)
+        shadowMaterial.lightingModel = .constant
+        shadowGeometry.materials = [shadowMaterial]
+        let shadow = SCNNode(geometry: shadowGeometry)
+        shadow.name = "ballShadow"
+        shadow.castsShadow = false
+        shadow.position = SCNVector3(start.x, 0.025, start.z)
+        rootNode.addChildNode(shadow)
+        let track = SCNAction.customAction(duration: duration) { node, elapsed in
+            let t = max(0, min(Float(elapsed) / Float(duration), 1))
+            node.position = SCNVector3(
+                start.x + (target.x - start.x) * t,
+                0.025,
+                start.z + (target.z - start.z) * t
+            )
+        }
+        shadow.runAction(SCNAction.sequence([track, SCNAction.removeFromParentNode()]))
+    }
+
+    /// The passer's right arm cocks back and snaps forward overhead as the
+    /// ball releases into its arc, then settles back to neutral.
+    private func throwMotion(of node: SCNNode) {
+        guard let figure = node.childNode(withName: "figure", recursively: false),
+              let arm = figure.childNode(withName: "armR", recursively: false) else { return }
+        arm.removeAction(forKey: "swing")
+        let windup = SCNAction.rotateTo(x: 2.2, y: 0, z: -0.25, duration: 0.16)
+        windup.timingMode = .easeOut
+        let release = SCNAction.rotateTo(x: -2.6, y: 0, z: -0.25, duration: 0.18)
+        release.timingMode = .easeIn
+        let neutral = SCNAction.rotateTo(x: 0, y: 0, z: -0.25, duration: 0.3)
+        neutral.timingMode = .easeInEaseOut
+        arm.runAction(SCNAction.sequence([windup, release, SCNAction.wait(duration: 0.2), neutral]),
+                      forKey: "swing")
     }
 
     /// Slides the ball flat along the ground (snaps, rolling punts, dead balls).
@@ -1140,9 +1293,10 @@ class FootballFieldScene: SCNScene {
             0
         )
 
-        // Lay flat on the field, upright for the fixed end-zone camera that
-        // looks down the +Z axis. Both sideline columns read the same way.
-        textNode.eulerAngles = SCNVector3(-Float.pi / 2, Float.pi, 0)
+        // Lay flat on the field, upright for the current camera side
+        // (re-oriented by orientFieldText when the view flips for away games).
+        textNode.name = "yardNumber"
+        textNode.eulerAngles = SCNVector3(-Float.pi / 2, viewFacing >= 0 ? Float.pi : 0, 0)
         _ = facingLeft
 
         textNode.position = SCNVector3(x, 0.02, z)
@@ -1181,8 +1335,8 @@ class FootballFieldScene: SCNScene {
     /// Simple NFL-style gooseneck goalpost: support post, crossbar, two uprights.
     private func makeGoalpost(atZ z: Float) -> SCNNode {
         let goldMaterial = SCNMaterial()
-        goldMaterial.diffuse.contents = UIColor.systemYellow
-        goldMaterial.roughness.contents = 0.4
+        goldMaterial.diffuse.contents = UIColor(red: 0.82, green: 0.70, blue: 0.22, alpha: 1)
+        goldMaterial.roughness.contents = 0.55
 
         let crossbarHeight: Float = 3.3
         let crossbarWidth: Float = 6.2
@@ -1193,14 +1347,14 @@ class FootballFieldScene: SCNScene {
         post.position = SCNVector3(0, 0, z)
 
         // Gooseneck: single support post up to the crossbar
-        let neckGeometry = SCNCylinder(radius: 0.15, height: CGFloat(crossbarHeight))
+        let neckGeometry = SCNCylinder(radius: 0.22, height: CGFloat(crossbarHeight))
         neckGeometry.materials = [goldMaterial]
         let neckNode = SCNNode(geometry: neckGeometry)
         neckNode.position = SCNVector3(0, crossbarHeight / 2, 0)
         post.addChildNode(neckNode)
 
         // Crossbar spanning the two uprights
-        let crossbarGeometry = SCNCylinder(radius: 0.12, height: CGFloat(crossbarWidth))
+        let crossbarGeometry = SCNCylinder(radius: 0.17, height: CGFloat(crossbarWidth))
         crossbarGeometry.materials = [goldMaterial]
         let crossbarNode = SCNNode(geometry: crossbarGeometry)
         crossbarNode.eulerAngles = SCNVector3(0, 0, Float.pi / 2)
@@ -1210,7 +1364,7 @@ class FootballFieldScene: SCNScene {
         // Two uprights
         let uprightHeight = uprightTop - crossbarHeight
         for xSign: Float in [-1, 1] {
-            let uprightGeometry = SCNCylinder(radius: 0.1, height: CGFloat(uprightHeight))
+            let uprightGeometry = SCNCylinder(radius: 0.15, height: CGFloat(uprightHeight))
             uprightGeometry.materials = [goldMaterial]
             let uprightNode = SCNNode(geometry: uprightGeometry)
             uprightNode.position = SCNVector3(
@@ -1237,18 +1391,36 @@ class FootballFieldScene: SCNScene {
         let halfWidth = FieldConstants.fieldWidth / 2
         let halfLength = FieldConstants.totalLength / 2
 
-        func addWall(width: CGFloat, length: CGFloat, at position: SCNVector3) {
+        func addWall(width: CGFloat, length: CGFloat, at position: SCNVector3, name: String? = nil) {
+            let container = SCNNode()
+            container.name = name
+            container.position = position
+
             let wallGeometry = SCNBox(width: width, height: 1.3, length: length, chamferRadius: 0.05)
             wallGeometry.materials = [wallMaterial]
             let wall = SCNNode(geometry: wallGeometry)
-            wall.position = position
-            rootNode.addChildNode(wall)
+            container.addChildNode(wall)
 
             let lipGeometry = SCNBox(width: width + 0.1, height: 0.16, length: length + 0.1, chamferRadius: 0.05)
             lipGeometry.materials = [lipMaterial]
             let lip = SCNNode(geometry: lipGeometry)
-            lip.position = SCNVector3(position.x, position.y + 0.7, position.z)
-            rootNode.addChildNode(lip)
+            lip.position = SCNVector3(0, 0.7, 0)
+            container.addChildNode(lip)
+
+            rootNode.addChildNode(container)
+        }
+
+        // Dark apron strips ground the walls so the lips don't float in the void.
+        let apronMaterial = SCNMaterial()
+        apronMaterial.diffuse.contents = UIColor(red: 0.04, green: 0.10, blue: 0.05, alpha: 1)
+        apronMaterial.roughness.contents = 1.0
+        for xSign: Float in [-1, 1] {
+            let apronGeometry = SCNBox(width: 9, height: 0.05,
+                                       length: CGFloat(FieldConstants.totalLength + 14), chamferRadius: 0)
+            apronGeometry.materials = [apronMaterial]
+            let apron = SCNNode(geometry: apronGeometry)
+            apron.position = SCNVector3(xSign * (halfWidth + 5.5), 0.02, 0)
+            rootNode.addChildNode(apron)
         }
 
         for xSign: Float in [-1, 1] {
@@ -1256,7 +1428,11 @@ class FootballFieldScene: SCNScene {
                     at: SCNVector3(xSign * (halfWidth + 6), 0.65, 0))
         }
         addWall(width: CGFloat(FieldConstants.fieldWidth + 13), length: 0.8,
-                at: SCNVector3(0, 0.65, halfLength + 6))
+                at: SCNVector3(0, 0.65, halfLength + 6), name: "endWallPos")
+        addWall(width: CGFloat(FieldConstants.fieldWidth + 13), length: 0.8,
+                at: SCNVector3(0, 0.65, -(halfLength + 6)), name: "endWallNeg")
+        // The -Z wall would sit in front of the default (+facing) camera.
+        rootNode.childNode(withName: "endWallNeg", recursively: false)?.isHidden = true
     }
 
     private func buildPylons() {
@@ -1468,12 +1644,12 @@ class FootballFieldScene: SCNScene {
 
         // Jersey number text floating above
         let numberText = SCNText(string: "\(number)", extrusionDepth: 0.01)
-        numberText.font = UIFont.systemFont(ofSize: 0.75, weight: .bold)
+        numberText.font = UIFont.systemFont(ofSize: 0.62, weight: .bold)
         numberText.flatness = 0.4
 
         let numberMaterial = SCNMaterial()
         numberMaterial.diffuse.contents = UIColor.white
-        numberMaterial.emission.contents = UIColor(white: 0.5, alpha: 1.0)
+        numberMaterial.emission.contents = UIColor(white: 0.35, alpha: 1.0)
         numberText.materials = [numberMaterial]
 
         let numberNode = SCNNode(geometry: numberText)
