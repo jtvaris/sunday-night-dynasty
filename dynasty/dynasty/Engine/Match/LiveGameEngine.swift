@@ -42,6 +42,53 @@ enum HalftimeAdjustment: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Position Groups
+
+/// Coarse position groups for in-game player management: substitutions are
+/// only legal within a group, and the management sheet sections by them.
+enum LineupGroup: String, CaseIterable, Identifiable {
+    case quarterbacks = "QB"
+    case backfield = "RB"
+    case receivers = "WR"
+    case tightEnds = "TE"
+    case offensiveLine = "OL"
+    case defensiveLine = "DL"
+    case linebackers = "LB"
+    case secondary = "DB"
+    case specialists = "ST"
+
+    var id: String { rawValue }
+
+    init(of position: Position) {
+        switch position {
+        case .QB:                    self = .quarterbacks
+        case .RB, .FB:               self = .backfield
+        case .WR:                    self = .receivers
+        case .TE:                    self = .tightEnds
+        case .LT, .LG, .C, .RG, .RT: self = .offensiveLine
+        case .DE, .DT:               self = .defensiveLine
+        case .OLB, .MLB:             self = .linebackers
+        case .CB, .FS, .SS:          self = .secondary
+        case .K, .P:                 self = .specialists
+        }
+    }
+
+    /// Section header for the management sheet.
+    var sectionTitle: String {
+        switch self {
+        case .quarterbacks:  return "QUARTERBACKS"
+        case .backfield:     return "BACKFIELD"
+        case .receivers:     return "RECEIVERS"
+        case .tightEnds:     return "TIGHT ENDS"
+        case .offensiveLine: return "OFFENSIVE LINE"
+        case .defensiveLine: return "DEFENSIVE LINE"
+        case .linebackers:   return "LINEBACKERS"
+        case .secondary:     return "SECONDARY"
+        case .specialists:   return "SPECIALISTS"
+        }
+    }
+}
+
 // MARK: - Live Game Engine
 
 /// Play-by-play engine for live, coached games.
@@ -342,7 +389,181 @@ final class LiveGameEngine: ObservableObject {
 
     /// Everyone unavailable for the next snap.
     private var sidelinedIDs: Set<UUID> {
-        restingRBID.map { injuredPlayerIDs.union([$0]) } ?? injuredPlayerIDs
+        var ids = injuredPlayerIDs.union(manuallyBenchedIDs)
+        if let restingRBID { ids.insert(restingRBID) }
+        return ids
+    }
+
+    // MARK: - In-Game Management (live only)
+
+    /// A coach-ordered substitution waiting for the whistle. Queued by
+    /// ``substitute(benchPlayerID:forFieldPlayerID:)`` and realized at the
+    /// next dead ball (the end of the next completed play), through the same
+    /// field-unit replacement mechanism injuries and fatigue rotation use —
+    /// the formation's jersey numbers update automatically on the next lineup.
+    struct PendingSubstitution: Equatable, Identifiable {
+        let id = UUID()
+        let benchPlayerID: UUID
+        let fieldPlayerID: UUID
+        /// "J. Cook"
+        let benchName: String
+        let fieldName: String
+        /// Which of the player's units the swap targets.
+        let isOffenseUnit: Bool
+        /// Role slot (choreographer contract) at queue time — informational;
+        /// the slot is re-resolved when the swap is applied.
+        let role: Int
+    }
+
+    /// Substitutions queued by the coach, cleared as they land at the next
+    /// dead ball. PLAYER's team only — the AI opponent never substitutes, so
+    /// nil-argument auto-sim parity with `GameSimulator.simulate` is intact.
+    @Published private(set) var pendingSubstitutions: [PendingSubstitution] = []
+
+    /// Players the coach has pulled to the bench: excluded from the sim and
+    /// the field units until subbed back in (or freed by ``releaseManualBenchIfNeeded()``).
+    private var manuallyBenchedIDs: Set<UUID> = []
+    /// Coach-picked starters per offensive/defensive role slot, re-applied on
+    /// every field-unit rebuild so injuries and rotation don't erase them.
+    private var manualOffenseOverrides: [Int: UUID] = [:]
+    private var manualDefenseOverrides: [Int: UUID] = [:]
+    /// Bench players hidden from the play simulation because the coach has
+    /// hand-picked the starter in their position group: keeps the sim's
+    /// best-at-position picks (QB, RB, pass targets) aligned with the men
+    /// actually on the field. Empty unless a manual substitution is active,
+    /// so a game without subs is untouched.
+    private var overrideShadowedIDs: Set<UUID> = []
+
+    /// The player's own units (UI convenience).
+    var playerOffenseUnit: FieldUnit { playerTeamIsHome ? homeOffenseUnit : awayOffenseUnit }
+    var playerDefenseUnit: FieldUnit { playerTeamIsHome ? homeDefenseUnit : awayDefenseUnit }
+
+    /// Healthy roster players of a position group who are NOT currently in
+    /// either of the team's field units — the substitution candidates,
+    /// best first. A player brought on for an injured or rotated starter is
+    /// on the field (FieldUnit is the truth), so he is correctly absent here.
+    func benchPlayers(forHome: Bool, position group: LineupGroup) -> [SimPlayer] {
+        let roster = forHome ? homePlayers : awayPlayers
+        let offense = forHome ? homeOffenseUnit : awayOffenseUnit
+        let defense = forHome ? homeDefenseUnit : awayDefenseUnit
+        var onField = Set(offense.players.map(\.id))
+        onField.formUnion(defense.players.map(\.id))
+        return roster
+            .filter {
+                LineupGroup(of: $0.position) == group
+                    && !onField.contains($0.id)
+                    && !injuredPlayerIDs.contains($0.id)
+            }
+            .sorted { $0.overall > $1.overall }
+    }
+
+    /// Queues a substitution on the PLAYER's team: the bench player takes the
+    /// field player's slot at the next whistle. Validates that both men share
+    /// a position group and that the bench player is healthy and actually off
+    /// the field. A new order for the same slot (or the same entrant)
+    /// replaces the previously queued one.
+    /// - Returns: true when the substitution was accepted and queued.
+    @discardableResult
+    func substitute(benchPlayerID: UUID, forFieldPlayerID fieldPlayerID: UUID) -> Bool {
+        guard !isGameOver else { return false }
+        let roster = playerTeamIsHome ? homePlayers : awayPlayers
+        guard let benchPlayer = roster.first(where: { $0.id == benchPlayerID }),
+              !injuredPlayerIDs.contains(benchPlayerID) else { return false }
+
+        let offense = playerOffenseUnit
+        let defense = playerDefenseUnit
+        guard offense.role(of: benchPlayerID) == nil,
+              defense.role(of: benchPlayerID) == nil else { return false }
+
+        let isOffenseUnit: Bool
+        let role: Int
+        let fieldPlayer: SimPlayer
+        if let r = offense.role(of: fieldPlayerID) {
+            isOffenseUnit = true; role = r; fieldPlayer = offense[r]
+        } else if let r = defense.role(of: fieldPlayerID) {
+            isOffenseUnit = false; role = r; fieldPlayer = defense[r]
+        } else {
+            return false
+        }
+        guard LineupGroup(of: benchPlayer.position) == LineupGroup(of: fieldPlayer.position) else {
+            return false
+        }
+
+        pendingSubstitutions.removeAll {
+            $0.fieldPlayerID == fieldPlayerID || $0.benchPlayerID == benchPlayerID
+        }
+        pendingSubstitutions.append(PendingSubstitution(
+            benchPlayerID: benchPlayerID,
+            fieldPlayerID: fieldPlayerID,
+            benchName: benchPlayer.shortName,
+            fieldName: fieldPlayer.shortName,
+            isOffenseUnit: isOffenseUnit,
+            role: role
+        ))
+        return true
+    }
+
+    /// Withdraws a queued substitution before it lands.
+    func cancelSubstitution(_ id: UUID) {
+        pendingSubstitutions.removeAll { $0.id == id }
+    }
+
+    /// One player's live game line for the management sheet.
+    struct LivePlayerLine {
+        let playerID: UUID
+        let fatigue: Int
+        let morale: Int
+        let matchupWins: Int
+        let matchupLosses: Int
+        /// Accumulated box-score line ("4 CAR · 22 YDS"); empty until he has one.
+        let statLine: String
+    }
+
+    /// Live stats/condition for a player on the PLAYER's team (nil otherwise).
+    /// Stats accumulate per completed drive, mirroring the quick sim; fatigue
+    /// is always current. Purely presentational.
+    func liveLine(for playerID: UUID) -> LivePlayerLine? {
+        let roster = playerTeamIsHome ? homePlayers : awayPlayers
+        guard let player = roster.first(where: { $0.id == playerID }) else { return nil }
+        return LivePlayerLine(
+            playerID: playerID,
+            fatigue: player.fatigue,
+            morale: player.morale,
+            matchupWins: matchupWins[playerID] ?? 0,
+            matchupLosses: matchupLosses[playerID] ?? 0,
+            statLine: statsAccumulator[playerID].map(LiveGameEngine.compactStatLine) ?? ""
+        )
+    }
+
+    /// "12/18 · 145 YDS · 1 TD | 3 CAR · 12 YDS" — only the categories he has.
+    private static func compactStatLine(_ s: PlayerGameStats) -> String {
+        var parts: [String] = []
+        if s.attempts > 0 {
+            var line = "\(s.completions)/\(s.attempts) · \(s.passingYards) YDS"
+            if s.passingTDs > 0 { line += " · \(s.passingTDs) TD" }
+            if s.interceptions > 0 { line += " · \(s.interceptions) INT" }
+            parts.append(line)
+        }
+        if s.carries > 0 {
+            var line = "\(s.carries) CAR · \(s.rushingYards) YDS"
+            if s.rushingTDs > 0 { line += " · \(s.rushingTDs) TD" }
+            parts.append(line)
+        }
+        if s.receptions > 0 || s.targets > 0 {
+            var line = "\(s.receptions) REC · \(s.receivingYards) YDS"
+            if s.receivingTDs > 0 { line += " · \(s.receivingTDs) TD" }
+            parts.append(line)
+        }
+        if s.tackles > 0 || s.sacks > 0 {
+            var line = "\(s.tackles) TKL"
+            if s.sacks > 0 {
+                let count = s.sacks.truncatingRemainder(dividingBy: 1) == 0
+                    ? String(Int(s.sacks)) : String(format: "%.1f", s.sacks)
+                line += " · \(count) SACK\(s.sacks == 1 ? "" : "S")"
+            }
+            parts.append(line)
+        }
+        return parts.joined(separator: " | ")
     }
 
     // MARK: - Live Stat Leaders
@@ -638,6 +859,11 @@ final class LiveGameEngine: ObservableObject {
             return lastPlay ?? gameOverPlaceholderPlay()
         }
 
+        // Coach-ordered substitutions land at the whistle: applied after this
+        // play has fully resolved (dead ball), never mid-play. A no-op when
+        // nothing is queued, so auto-sim parity is intact.
+        defer { applyPendingSubstitutions() }
+
         lastPlayInjuries = []
 
         // GameSimulator applies morale/personality modifiers once per drive.
@@ -647,12 +873,12 @@ final class LiveGameEngine: ObservableObject {
             moraleAppliedForCurrentDrive = true
         }
 
-        // Injured (and fatigue-rested) players are off the board: the sim
-        // picks its QB/RB/targets from the remaining roster, so the
-        // replacement genuinely plays. With nobody sidelined these are the
-        // full rosters — identical to GameSimulator.simulate.
-        let offense = availablePlayers(isHome: homeHasPossession)
-        let defense = availablePlayers(isHome: !homeHasPossession)
+        // Injured (and fatigue-rested or manually benched) players are off
+        // the board: the sim picks its QB/RB/targets from the remaining
+        // roster, so the replacement genuinely plays. With nobody sidelined
+        // these are the full rosters — identical to GameSimulator.simulate.
+        let offense = simAvailablePlayers(isHome: homeHasPossession)
+        let defense = simAvailablePlayers(isHome: !homeHasPossession)
 
         // Momentum is offense-relative in PlaySimulator; positive favors home.
         // Opponent-prep boosts shade momentum slightly toward the player's
@@ -970,16 +1196,158 @@ final class LiveGameEngine: ObservableObject {
         return filtered.count >= 11 ? filtered : roster
     }
 
+    /// The roster slice handed to the play simulator: available players minus
+    /// any bench players shadowed by a manual substitution (player team only)
+    /// — keeps the sim's best-at-position picks aligned with the field units.
+    /// Identical to ``availablePlayers(isHome:)`` when no manual sub is active.
+    private func simAvailablePlayers(isHome: Bool) -> [SimPlayer] {
+        let base = availablePlayers(isHome: isHome)
+        guard isHome == playerTeamIsHome, !overrideShadowedIDs.isEmpty else { return base }
+        let filtered = base.filter { !overrideShadowedIDs.contains($0.id) }
+        return filtered.count >= 11 ? filtered : base
+    }
+
     /// Rebuilds all four field units from the current available rosters —
     /// the same best-at-position pick used at kickoff, so an injured or
-    /// resting starter is replaced by the next-best player at his spot.
+    /// resting starter is replaced by the next-best player at his spot —
+    /// then re-applies the coach's manual substitutions to the player's units.
     private func rebuildFieldUnits() {
         let home = availablePlayers(isHome: true)
         let away = availablePlayers(isHome: false)
-        homeOffenseUnit = FieldUnit.offense(from: home)
-        homeDefenseUnit = FieldUnit.defense(from: home)
-        awayOffenseUnit = FieldUnit.offense(from: away)
-        awayDefenseUnit = FieldUnit.defense(from: away)
+        var homeOff = FieldUnit.offense(from: home)
+        var homeDef = FieldUnit.defense(from: home)
+        var awayOff = FieldUnit.offense(from: away)
+        var awayDef = FieldUnit.defense(from: away)
+        if playerTeamIsHome {
+            homeOff = applyingManualOverrides(to: homeOff, overrides: &manualOffenseOverrides, roster: home)
+            homeDef = applyingManualOverrides(to: homeDef, overrides: &manualDefenseOverrides, roster: home)
+        } else {
+            awayOff = applyingManualOverrides(to: awayOff, overrides: &manualOffenseOverrides, roster: away)
+            awayDef = applyingManualOverrides(to: awayDef, overrides: &manualDefenseOverrides, roster: away)
+        }
+        homeOffenseUnit = homeOff
+        homeDefenseUnit = homeDef
+        awayOffenseUnit = awayOff
+        awayDefenseUnit = awayDef
+        refreshOverrideShadow()
+    }
+
+    // MARK: - In-Game Management (private)
+
+    /// Realizes queued substitutions at the dead ball after a completed play:
+    /// drops any overtaken by events (the man already left injured, or the
+    /// entrant got hurt), swaps the rest into the field units through the
+    /// standard rebuild, and posts a feed line per swap.
+    private func applyPendingSubstitutions() {
+        guard !pendingSubstitutions.isEmpty else { return }
+        guard !isGameOver else {
+            pendingSubstitutions = []
+            return
+        }
+        var applied = false
+        for sub in pendingSubstitutions {
+            guard !injuredPlayerIDs.contains(sub.benchPlayerID) else { continue }
+            let unit = sub.isOffenseUnit ? playerOffenseUnit : playerDefenseUnit
+            guard let role = unit.role(of: sub.fieldPlayerID) else { continue }
+            manuallyBenchedIDs.remove(sub.benchPlayerID)
+            manuallyBenchedIDs.insert(sub.fieldPlayerID)
+            if sub.isOffenseUnit {
+                manualOffenseOverrides[role] = sub.benchPlayerID
+            } else {
+                manualDefenseOverrides[role] = sub.benchPlayerID
+            }
+            appendSubstitutionFeedLine(inName: sub.benchName, outName: sub.fieldName)
+            applied = true
+        }
+        pendingSubstitutions = []
+        if applied { rebuildFieldUnits() }
+    }
+
+    /// Swaps the coach's hand-picked starters into their role slots after an
+    /// automatic rebuild. Overrides whose player is hurt (or gone) are
+    /// dropped — the rebuild's best-at-position pick already filled the hole,
+    /// so the FieldUnit stays the single source of truth for who is on field.
+    private func applyingManualOverrides(
+        to unit: FieldUnit,
+        overrides: inout [Int: UUID],
+        roster: [SimPlayer]
+    ) -> FieldUnit {
+        guard !overrides.isEmpty else { return unit }
+        var players = unit.players
+        for (role, playerID) in overrides {
+            guard players.indices.contains(role),
+                  !injuredPlayerIDs.contains(playerID),
+                  let player = roster.first(where: { $0.id == playerID }) else {
+                overrides[role] = nil
+                continue
+            }
+            if let existing = players.firstIndex(where: { $0.id == playerID }) {
+                // The auto-build already fielded him elsewhere: swap so he
+                // mans the coach's chosen slot instead of appearing twice.
+                if existing != role { players.swapAt(existing, role) }
+            } else {
+                players[role] = player
+            }
+        }
+        return FieldUnit(players: players)
+    }
+
+    /// Recomputes ``overrideShadowedIDs`` from the active manual overrides:
+    /// every player-team bench player in a manually-managed position group.
+    private func refreshOverrideShadow() {
+        overrideShadowedIDs = []
+        guard !manualOffenseOverrides.isEmpty || !manualDefenseOverrides.isEmpty else { return }
+        let roster = playerTeamIsHome ? homePlayers : awayPlayers
+        let overrideIDs = Set(manualOffenseOverrides.values).union(manualDefenseOverrides.values)
+        let managedGroups = Set(
+            roster.filter { overrideIDs.contains($0.id) }.map { LineupGroup(of: $0.position) }
+        )
+        guard !managedGroups.isEmpty else { return }
+        var onField = Set(playerOffenseUnit.players.map(\.id))
+        onField.formUnion(playerDefenseUnit.players.map(\.id))
+        overrideShadowedIDs = Set(
+            roster
+                .filter { managedGroups.contains(LineupGroup(of: $0.position)) && !onField.contains($0.id) }
+                .map(\.id)
+        )
+    }
+
+    /// Frees manually benched players when injuries leave nobody else healthy
+    /// at their position — a bench order can't strand a unit shorthanded
+    /// (same safety valve as the resting RB's forced re-entry).
+    private func releaseManualBenchIfNeeded() {
+        guard !manuallyBenchedIDs.isEmpty else { return }
+        let roster = playerTeamIsHome ? homePlayers : awayPlayers
+        for benchedID in Array(manuallyBenchedIDs) {
+            guard let benched = roster.first(where: { $0.id == benchedID }) else { continue }
+            let hasHealthyAlternative = roster.contains {
+                $0.id != benchedID
+                    && $0.position == benched.position
+                    && !injuredPlayerIDs.contains($0.id)
+            }
+            if !hasHealthyAlternative { manuallyBenchedIDs.remove(benchedID) }
+        }
+    }
+
+    /// Feed-only line ("Sub: X in for Y"): appended to the play log for the
+    /// mini feed, never to the drive — no effect on stats or the box score.
+    private func appendSubstitutionFeedLine(inName: String, outName: String) {
+        playLog.append(PlayResult(
+            playNumber: 0,
+            quarter: quarter,
+            timeRemaining: timeRemaining,
+            down: down,
+            distance: distance,
+            yardLine: yardLine,
+            playType: .kneel,
+            outcome: .kneel,
+            yardsGained: 0,
+            description: "Sub: \(inName) in for \(outName)",
+            isFirstDown: false,
+            isTurnover: false,
+            scoringPlay: false,
+            pointsScored: 0
+        ))
     }
 
     /// Rolls injury dice for the play's contact participants: the ball
@@ -1075,6 +1443,9 @@ final class LiveGameEngine: ObservableObject {
                 .filter { $0.position == .RB && !injuredPlayerIDs.contains($0.id) }
             if healthyRBs.count < 2 { restingRBID = nil }
         }
+        // Same safety for coach-ordered benchings: the last healthy man at a
+        // position cannot stay benched.
+        releaseManualBenchIfNeeded()
         rebuildFieldUnits()
     }
 
@@ -1084,9 +1455,18 @@ final class LiveGameEngine: ObservableObject {
     /// drive; the starter returns when he is the fresher option again
     /// (e.g. after halftime recovery).
     private func updateRBRotation() {
+        // Once the coach has manually subbed the RB slot he runs the
+        // backfield himself — the auto-rotation stands down.
+        guard manualOffenseOverrides[1] == nil else {
+            if restingRBID != nil { restingRBID = nil }
+            return
+        }
         let roster = playerTeamIsHome ? homePlayers : awayPlayers
         let healthyRBs = roster
-            .filter { $0.position == .RB && !injuredPlayerIDs.contains($0.id) }
+            .filter {
+                $0.position == .RB && !injuredPlayerIDs.contains($0.id)
+                    && !manuallyBenchedIDs.contains($0.id)
+            }
             .sorted { $0.overall > $1.overall }
         guard healthyRBs.count >= 2 else {
             if restingRBID != nil { restingRBID = nil; rebuildFieldUnits() }

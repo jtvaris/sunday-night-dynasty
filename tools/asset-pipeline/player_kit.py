@@ -404,6 +404,8 @@ if DO_EXPORT:
     bpy.ops.object.select_all(action="DESELECT")
     for obj in PARTS:
         obj.select_set(True)
+        for child in obj.children:      # parented details (FOOTBALL_LACES)
+            child.select_set(True)
     usd_path = os.path.join(OUT_DIR, "PlayerKit.usdc")
     bpy.ops.wm.usd_export(filepath=usd_path, selected_objects_only=True,
                           export_materials=True, convert_orientation=True,

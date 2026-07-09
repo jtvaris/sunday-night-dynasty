@@ -76,12 +76,20 @@ struct PlayChoreographer {
         return zip(positions, numbers).map { (x: $0.x, z: $0.z, number: $1) }
     }
 
-    /// Node indices (per team) that take a lineman's crouched stance at the
-    /// snap: the OL (roles 2-6) and the DL (roles 0-3).
-    static func stanceCrouchIndices(offenseIsHome: Bool) -> (home: Set<Int>, away: Set<Int>) {
-        let ol: Set<Int> = [2, 3, 4, 5, 6]
-        let dl: Set<Int> = [0, 1, 2, 3]
-        return offenseIsHome ? (home: ol, away: dl) : (home: dl, away: ol)
+    /// Position-appropriate pre-snap stances keyed by per-team node index:
+    /// OL/DL/TE dig into a deep 3-point with the hand down, RB/LB/S sit in a
+    /// 2-point crouch with hands near the knees, WR/CB stand in an upright
+    /// split stance. The QB stays tall (upright by omission).
+    static func stances(offenseIsHome: Bool)
+        -> (home: [Int: FootballFieldScene.Stance], away: [Int: FootballFieldScene.Stance]) {
+        var offense: [Int: FootballFieldScene.Stance] = [1: .twoPoint, 10: .threePoint]
+        for role in 2...6 { offense[role] = .threePoint }   // OL
+        for role in [7, 8, 9] { offense[role] = .split }    // WRs
+        var defense: [Int: FootballFieldScene.Stance] = [:]
+        for role in 0...3 { defense[role] = .threePoint }   // DL
+        for role in [4, 5, 6, 9, 10] { defense[role] = .twoPoint }  // LBs + safeties
+        for role in [7, 8] { defense[role] = .split }       // CBs
+        return offenseIsHome ? (home: offense, away: defense) : (home: defense, away: offense)
     }
 
     /// Formation arrays for the pre-snap lineup of `play`. The view passes
@@ -669,6 +677,7 @@ struct PlayChoreographer {
         ))
 
         // 2. Dropback + route stem; the rush gets washed around the pocket.
+        //    The QB backpedals his three steps — eyes stay downfield.
         steps.append(Step(
             moves: merge(
                 [
@@ -680,7 +689,8 @@ struct PlayChoreographer {
                     + coverageMoves(c, mode: .pass, p: 0.75, d: 0.75)
             ),
             ballMove: .carry(nodeIndex: c.qb),
-            duration: 0.8
+            duration: 0.8,
+            backpedals: [c.qb]
         ))
 
         // 3. Throw: receiver breaks while the ball arcs to the catch point;
@@ -766,7 +776,7 @@ struct PlayChoreographer {
                 ballMove: .carry(nodeIndex: c.qb),
                 duration: 0.6
             ),
-            // Dropback + route stem.
+            // Dropback (backpedal, eyes downfield) + route stem.
             Step(
                 moves: merge(
                     [
@@ -778,7 +788,8 @@ struct PlayChoreographer {
                         + coverageMoves(c, mode: .pass, p: 0.8, d: 0.85)
                 ),
                 ballMove: .carry(nodeIndex: c.qb),
-                duration: 0.9
+                duration: 0.9,
+                backpedals: [c.qb]
             ),
             // Overthrown ball; receiver lunges toward it.
             Step(
@@ -821,7 +832,8 @@ struct PlayChoreographer {
                 ballMove: .carry(nodeIndex: c.qb),
                 duration: 0.6
             ),
-            // Dropback while the rusher knifes through a collapsing pocket.
+            // Dropback (backpedal) while the rusher knifes through a
+            // collapsing pocket.
             Step(
                 moves: merge(
                     [
@@ -833,7 +845,8 @@ struct PlayChoreographer {
                         + coverageMoves(c, mode: .pass, p: 0.9, d: rushTime)
                 ),
                 ballMove: .carry(nodeIndex: c.qb),
-                duration: rushTime
+                duration: rushTime,
+                backpedals: [c.qb]
             ),
             // Rusher closes the last yard; receivers finish their routes with
             // nowhere to go.
@@ -887,7 +900,7 @@ struct PlayChoreographer {
                 ballMove: .carry(nodeIndex: c.qb),
                 duration: 0.6
             ),
-            // Dropback + stem; the DB is already breaking on the ball.
+            // Dropback (backpedal) + stem; the DB is already breaking on the ball.
             Step(
                 moves: merge(
                     [
@@ -900,7 +913,8 @@ struct PlayChoreographer {
                         + coverageMoves(c, mode: .pass, p: 0.8, exclude: [db], d: 0.85)
                 ),
                 ballMove: .carry(nodeIndex: c.qb),
-                duration: 0.9
+                duration: 0.9,
+                backpedals: [c.qb]
             ),
             // Throw sails right to the DB.
             Step(
@@ -978,7 +992,8 @@ struct PlayChoreographer {
 
         var steps = script.steps
 
-        // Celebration: teammates sprint in to mob the scorer, who pulses twice…
+        // Celebration: the scorer leaps with his arms up while teammates
+        // sprint in to mob him…
         let carrierRole = script.carrier - c.oBase
         let mates = [1, 9, 7, 8, 0].filter { $0 != carrierRole }.prefix(3)
         steps.append(Step(
@@ -986,11 +1001,12 @@ struct PlayChoreographer {
                               roles: Array(mates), fraction: 0.85, d: 1.3),
             ballMove: .carry(nodeIndex: script.carrier),
             duration: 0.45,
-            pulses: [script.carrier]
+            pulses: [script.carrier],
+            celebrates: [script.carrier]
         ))
         steps.append(Step(moves: [], ballMove: .carry(nodeIndex: script.carrier), duration: 0.45, pulses: [script.carrier]))
 
-        // …then spike the ball ~3yd straight up and back down.
+        // …then spikes the ball into the turf — up ~3yd and straight down.
         steps.append(Step(
             moves: [],
             ballMove: .arc(to: ground(script.end.x, script.end.z), apex: 3, duration: 0.6),
@@ -1226,10 +1242,10 @@ struct PlayChoreographer {
         ))
 
         if isReturnTouchdown {
-            // Breakaway finish: pulse again in the end zone (the view runs the
-            // camera push and confetti).
+            // Breakaway finish: leap + pulse in the end zone (the view runs
+            // the camera push and confetti).
             steps.append(Step(moves: [], ballMove: .carry(nodeIndex: returner),
-                              duration: 0.6, pulses: [returner]))
+                              duration: 0.6, pulses: [returner], celebrates: [returner]))
         } else {
             // 4. The nearest lane defenders wrap the returner up.
             let tacklers = [kBase + 5, kBase + 6]

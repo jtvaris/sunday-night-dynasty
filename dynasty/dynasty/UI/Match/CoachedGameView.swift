@@ -106,6 +106,8 @@ struct CoachedGameView: View {
     @State private var showOnsideDialog = false
     @State private var showFinal = false
     @State private var showStatsSheet = false
+    /// In-game squad management sheet (live stats, fatigue, substitutions).
+    @State private var showManageSheet = false
     /// Halftime report overlay (raised by the engine's `halftimePending`).
     @State private var showHalftime = false
 
@@ -213,6 +215,13 @@ struct CoachedGameView: View {
         }
         .sheet(isPresented: $showStatsSheet) {
             LiveBoxScoreSheet(engine: engine, homeTeam: homeTeam, awayTeam: awayTeam)
+        }
+        .sheet(isPresented: $showManageSheet) {
+            InGameManagementView(
+                engine: engine,
+                teamAbbr: playerAbbr,
+                subsDisabled: isAnimating || engine.isGameOver
+            )
         }
     }
 
@@ -377,6 +386,9 @@ struct CoachedGameView: View {
                 chip("2-MINUTE WARNING", color: .danger)
                     .transition(.scale.combined(with: .opacity))
             }
+            if !engine.pendingSubstitutions.isEmpty {
+                chip("Sub at next whistle", color: .warning)
+            }
             Spacer()
             if !engine.isGameOver && engine.playerTimeoutsRemaining > 0 {
                 Button {
@@ -392,6 +404,17 @@ struct CoachedGameView: View {
                 .buttonStyle(.plain)
                 .disabled(isAnimating)
             }
+            Button {
+                showManageSheet = true
+            } label: {
+                Label("Manage", systemImage: "person.2.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.backgroundTertiary, in: Capsule())
+            }
+            .buttonStyle(.plain)
             Button {
                 showStatsSheet = true
             } label: {
@@ -1275,9 +1298,9 @@ struct CoachedGameView: View {
                 offenseNumbers: engine.currentOffenseUnit.numbers,
                 defenseNumbers: engine.currentDefenseUnit.numbers
             )
-            let openingCrouch = PlayChoreographer.stanceCrouchIndices(offenseIsHome: engine.homeHasPossession)
+            let openingStances = PlayChoreographer.stances(offenseIsHome: engine.homeHasPossession)
             fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.1,
-                                              crouchHome: openingCrouch.home, crouchAway: openingCrouch.away)
+                                              stancesHome: openingStances.home, stancesAway: openingStances.away)
             fieldScene.setDefensiveFraming(engine.homeHasPossession != playerTeamIsHome)
             fieldScene.focusCamera(z: losZ, animated: false)
         }
@@ -1456,9 +1479,9 @@ struct CoachedGameView: View {
             call: offCall, defensivePackage: defPackage,
             offenseNumbers: offUnit.numbers, defenseNumbers: defUnit.numbers
         )
-        let presnapCrouch = PlayChoreographer.stanceCrouchIndices(offenseIsHome: offenseIsHome)
+        let presnapStances = PlayChoreographer.stances(offenseIsHome: offenseIsHome)
         fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.7,
-                                          crouchHome: presnapCrouch.home, crouchAway: presnapCrouch.away)
+                                          stancesHome: presnapStances.home, stancesAway: presnapStances.away)
 
         // Markers stay on THIS play's line/1st-down through the animation.
         let playLosZ = PlayChoreographer.losZ(yardLine: losYard, offenseIsHome: offenseIsHome)
@@ -1470,7 +1493,8 @@ struct CoachedGameView: View {
         if play.playType == .fieldGoal || play.playType == .extraPoint {
             fieldScene.kickCamera(towardZ: playDir)
         } else {
-            fieldScene.focusCamera(z: playLosZ)
+            // Pre-snap push-in toward the LOS; the snap cuts it off.
+            fieldScene.focusCamera(z: playLosZ, pushIn: true)
         }
         let playGoalToGo = 100 - losYard <= distanceBefore
         fieldScene.updateMarkers(
@@ -1599,11 +1623,13 @@ struct CoachedGameView: View {
             offenseNumbers: engine.currentOffenseUnit.numbers,
             defenseNumbers: engine.currentDefenseUnit.numbers
         )
-        let crouch = PlayChoreographer.stanceCrouchIndices(offenseIsHome: engine.homeHasPossession)
+        let stances = PlayChoreographer.stances(offenseIsHome: engine.homeHasPossession)
         fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.3,
-                                          crouchHome: crouch.home, crouchAway: crouch.away)
+                                          stancesHome: stances.home, stancesAway: stances.away)
         fieldScene.setDefensiveFraming(engine.homeHasPossession != playerTeamIsHome)
-        fieldScene.focusCamera(z: losZ)
+        // Broadcast push-in: a slow 2-yard dolly toward the line while the
+        // coach considers the call; the snap (runPlay) interrupts it.
+        fieldScene.focusCamera(z: losZ, pushIn: true)
         updateMarkers()
     }
 

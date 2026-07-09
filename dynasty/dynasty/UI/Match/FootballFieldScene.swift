@@ -61,6 +61,11 @@ class FootballFieldScene: SCNScene {
         var falls: [Int] = []
         /// Player nodes that throw their arms up when the step begins (catches).
         var reaches: [Int] = []
+        /// Player nodes whose moves this step are backpedals: they keep facing
+        /// downfield while moving backwards (QB dropbacks).
+        var backpedals: [Int] = []
+        /// Player nodes that leap into a touchdown celebration this step.
+        var celebrates: [Int] = []
     }
 
     /// How the ball behaves during a `PlayStep`.
@@ -198,17 +203,23 @@ class FootballFieldScene: SCNScene {
         awayPlayerNodes.forEach { applyUniform(away, to: $0) }
     }
 
-    /// Re-tints jersey (torso + arms share one material), pants (legs share
-    /// one material) and helmet.
+    /// Re-tints a figure by material slot name. Both the Blender kit parts
+    /// and the procedural fallback name their materials JERSEY/PANTS/HELMET,
+    /// and each figure owns per-figure copies of those materials (torso +
+    /// arms share one JERSEY instance, legs one PANTS instance), so setting
+    /// the diffuse here re-tints the whole figure without leaking into the
+    /// other team. SKIN/MASK/SHOE materials are left untouched.
     private func applyUniform(_ uniform: Uniform, to node: SCNNode) {
-        if let body = node.childNode(withName: "body", recursively: true) {
-            body.geometry?.firstMaterial?.diffuse.contents = uniform.jersey
-        }
-        if let leg = node.childNode(withName: "leg", recursively: true) {
-            leg.geometry?.firstMaterial?.diffuse.contents = uniform.pants
-        }
-        if let helmet = node.childNode(withName: "helmet", recursively: true) {
-            helmet.geometry?.firstMaterial?.diffuse.contents = uniform.helmet
+        node.enumerateHierarchy { child, _ in
+            guard let materials = child.geometry?.materials else { return }
+            for material in materials {
+                switch material.name {
+                case "JERSEY": material.diffuse.contents = uniform.jersey
+                case "PANTS": material.diffuse.contents = uniform.pants
+                case "HELMET": material.diffuse.contents = uniform.helmet
+                default: break
+                }
+            }
         }
     }
 
@@ -298,14 +309,32 @@ class FootballFieldScene: SCNScene {
         positionPlayers(home: homePositions, away: awayPositions)
     }
 
+    // MARK: - Pre-Snap Stances
+
+    /// Position-appropriate pre-snap poses. `movePlayersToFormation` eases a
+    /// player into his stance once he arrives at his spot; the stance breaks
+    /// automatically at the snap when `run` starts his first play move.
+    enum Stance {
+        /// Deep lineman crouch with the down hand on the turf (OL/DL).
+        case threePoint
+        /// Knees-bent crouch, hands resting near the knees (RB/LB/S).
+        case twoPoint
+        /// Upright receiver/corner split stance: staggered feet, slight lean.
+        case split
+        /// Standing tall (QB, special-teams units).
+        case upright
+    }
+
     /// Smoothly moves the existing player nodes into a new formation instead of
     /// destroying and recreating them. Falls back to a full rebuild when the
-    /// player counts differ. Jersey numbers on existing nodes are updated in place.
+    /// player counts differ. Jersey numbers on existing nodes are updated in
+    /// place, and each player settles into his position's pre-snap stance
+    /// (keyed by per-team node index; missing = upright).
     func movePlayersToFormation(home: [(x: Float, z: Float, number: Int)],
                                 away: [(x: Float, z: Float, number: Int)],
                                 duration: TimeInterval = 0.8,
-                                crouchHome: Set<Int> = [],
-                                crouchAway: Set<Int> = []) {
+                                stancesHome: [Int: Stance] = [:],
+                                stancesAway: [Int: Stance] = [:]) {
         guard homePlayerNodes.count == home.count,
               awayPlayerNodes.count == away.count,
               !home.isEmpty || !away.isEmpty else {
@@ -333,19 +362,88 @@ class FootballFieldScene: SCNScene {
             ])
             node.runAction(settle, forKey: "settleFacing")
 
-            // Linemen drop into their stance once they arrive at the line.
-            let crouch = isHomeNode
-                ? crouchHome.contains(offset)
-                : crouchAway.contains(offset - homePlayerNodes.count)
-            if let figure = node.childNode(withName: "figure", recursively: false) {
-                let pose = SCNAction.sequence([
-                    SCNAction.wait(duration: duration + 0.1),
-                    SCNAction.group([
-                        SCNAction.rotateTo(x: crouch ? 0.55 : 0, y: 0, z: 0, duration: 0.25),
-                        SCNAction.move(to: SCNVector3(0, crouch ? -0.13 : 0, 0), duration: 0.25),
-                    ]),
-                ])
-                figure.runAction(pose, forKey: "stance")
+            // Everyone drops into his stance once he arrives at the line
+            // (upright is applied too — it resets any previous stance).
+            let stance = isHomeNode
+                ? (stancesHome[offset] ?? .upright)
+                : (stancesAway[offset - homePlayerNodes.count] ?? .upright)
+            applyStance(stance, to: node, delay: duration + 0.2)
+        }
+    }
+
+    /// Eases a figure into `stance` after `delay` (the formation travel time).
+    /// Limb poses run under the same "swing"/"bend" keys the run cycle uses,
+    /// so the next `swingLimbs` at the snap replaces them seamlessly; the
+    /// figure pitch/sink runs under "stance", which `run` clears on takeoff.
+    private func applyStance(_ stance: Stance, to node: SCNNode, delay: TimeInterval) {
+        guard let figure = node.childNode(withName: "figure", recursively: false) else { return }
+
+        // figure pitch (forward lean) + sink toward the turf, and per-limb
+        // targets: (limb name, hinge x, hinge z, joint bend x).
+        let pitch: CGFloat
+        let sink: Float
+        let limbs: [(name: String, x: CGFloat, z: CGFloat, joint: CGFloat)]
+        switch stance {
+        case .threePoint:
+            // Deep crouch, right hand down on the turf, off arm on the knee,
+            // legs staggered and loaded.
+            pitch = 0.62; sink = -0.17
+            limbs = [
+                ("armR", 0.95, -0.12, 0.1),
+                ("arm", 0.5, 0.3, -0.85),
+                ("leg", 0.5, 0, -0.6),
+                ("legR", 0.8, 0, -0.85),
+            ]
+        case .twoPoint:
+            // Light crouch, both hands resting toward the knees.
+            pitch = 0.3; sink = -0.07
+            limbs = [
+                ("arm", 0.55, 0.25, -0.7),
+                ("armR", 0.55, -0.25, -0.7),
+                ("leg", 0.3, 0, -0.4),
+                ("legR", 0.3, 0, -0.4),
+            ]
+        case .split:
+            // Upright split: front foot forward, back foot trailing.
+            pitch = 0.12; sink = -0.02
+            limbs = [
+                ("arm", 0.15, 0.25, -0.35),
+                ("armR", 0.15, -0.25, -0.35),
+                ("leg", 0.3, 0, -0.25),
+                ("legR", -0.25, 0, 0),
+            ]
+        case .upright:
+            pitch = 0; sink = 0
+            limbs = [
+                ("arm", 0, 0.25, -0.15),
+                ("armR", 0, -0.25, -0.15),
+                ("leg", 0, 0, 0),
+                ("legR", 0, 0, 0),
+            ]
+        }
+
+        let pose = SCNAction.sequence([
+            SCNAction.wait(duration: delay),
+            SCNAction.group([
+                SCNAction.rotateTo(x: pitch, y: 0, z: 0, duration: 0.25),
+                SCNAction.move(to: SCNVector3(0, sink, 0), duration: 0.25),
+            ]),
+        ])
+        figure.runAction(pose, forKey: "stance")
+
+        for limb in limbs {
+            guard let limbNode = figure.childNode(withName: limb.name, recursively: false) else { continue }
+            limbNode.removeAction(forKey: "swing")
+            limbNode.runAction(SCNAction.sequence([
+                SCNAction.wait(duration: delay),
+                SCNAction.rotateTo(x: limb.x, y: 0, z: limb.z, duration: 0.25),
+            ]), forKey: "swing")
+            if let joint = limbNode.childNodes.first(where: { $0.name == "shin" || $0.name == "forearm" }) {
+                joint.removeAction(forKey: "bend")
+                joint.runAction(SCNAction.sequence([
+                    SCNAction.wait(duration: delay),
+                    SCNAction.rotateTo(x: limb.joint, y: 0, z: 0, duration: 0.25),
+                ]), forKey: "bend")
             }
         }
     }
@@ -392,8 +490,15 @@ class FootballFieldScene: SCNScene {
     /// Pans the camera (and its look-at target) along the field so ~25 yards
     /// around the given Z stay readable at a broadcast angle.
     /// `z` is clamped to [-45, 45] so the framing never leaves the field.
-    func focusCamera(z: Float, animated: Bool = true, duration: TimeInterval = 0.8) {
+    ///
+    /// `pushIn` adds the pre-snap broadcast dolly: once the framing settles,
+    /// the camera creeps ~2 yards toward the LOS over 2.5 s. Any new focus,
+    /// kick camera, or the snap itself (`runPlay`) interrupts the dolly, and
+    /// the next absolute focus move corrects the accumulated offset.
+    func focusCamera(z: Float, animated: Bool = true, duration: TimeInterval = 0.8,
+                     pushIn: Bool = false) {
         kickCameraActive = false
+        cameraNode.removeAction(forKey: "pushIn")
         let clampedZ = max(-45, min(45, z))
         focusZ = clampedZ
         // Madden-98 framing: a LOW camera behind the player's own unit
@@ -420,6 +525,21 @@ class FootballFieldScene: SCNScene {
             cameraTargetNode.position = targetPosition
             cameraNode.position = cameraPosition
         }
+
+        if pushIn && animated {
+            // Slow dolly along the (horizontal) view direction toward the LOS.
+            let dx = targetPosition.x - cameraPosition.x
+            let dz = targetPosition.z - cameraPosition.z
+            let length = sqrt(dx * dx + dz * dz)
+            guard length > 0.1 else { return }
+            let scale = 2.0 / length
+            let dolly = SCNAction.moveBy(x: CGFloat(dx * scale), y: -0.4,
+                                         z: CGFloat(dz * scale), duration: 2.5)
+            dolly.timingMode = .easeInEaseOut
+            cameraNode.runAction(SCNAction.sequence([
+                SCNAction.wait(duration: duration + 0.1), dolly,
+            ]), forKey: "pushIn")
+        }
     }
 
     /// Swings the camera low behind the goalposts looking back up the field —
@@ -428,6 +548,7 @@ class FootballFieldScene: SCNScene {
     /// stays parked (no follow-cam) until the next `focusCamera` call.
     func kickCamera(towardZ: Float, duration: TimeInterval = 0.8) {
         kickCameraActive = true
+        cameraNode.removeAction(forKey: "pushIn")
         let sign: Float = towardZ >= 0 ? 1 : -1
         let cameraPosition = SCNVector3(0, 8, sign * 72)
         let targetPosition = SCNVector3(0, 4, sign * 40)
@@ -446,6 +567,8 @@ class FootballFieldScene: SCNScene {
     /// `completion` fires on the main queue after the last step ends.
     func runPlay(steps: [PlayStep], completion: @escaping () -> Void) {
         cancelPlay()
+        // The snap kills the pre-snap push-in; the follow-cam owns the shot now.
+        cameraNode.removeAction(forKey: "pushIn")
         let generation = playGeneration
 
         var startTime: TimeInterval = 0
@@ -663,11 +786,22 @@ class FootballFieldScene: SCNScene {
         return allPlayers[index]
     }
 
+    /// One full leg cycle for a runner at `speed` yards/second — faster feet
+    /// as the player moves faster; backpedals chop at a fixed cadence.
+    private func strideTime(forSpeed speed: Float, backpedal: Bool) -> TimeInterval {
+        backpedal ? 0.3 : min(max(0.38 - TimeInterval(speed) * 0.022, 0.16), 0.34)
+    }
+
     /// Moves a player container to `target` with the full running presentation:
-    /// the figure turns toward its direction of travel, leans forward and bobs
-    /// while moving, then straightens up on arrival. Tiny shuffles (sub-0.4yd)
-    /// skip the gait so linemen don't sprint through half-yard adjustments.
-    private func run(node: SCNNode, to target: SCNVector3, duration: TimeInterval, key: String) {
+    /// the figure turns toward its direction of travel, leans forward (harder
+    /// the faster he runs) and bobs while moving, then straightens up on
+    /// arrival. Sharp direction changes bank the figure into the turn for a
+    /// beat. `backpedal` keeps the node facing where it faces (QB dropback):
+    /// no turn, a slight backward lean and a choppier, smaller gait.
+    /// Tiny shuffles (sub-0.4yd) skip the gait so linemen don't sprint
+    /// through half-yard adjustments.
+    private func run(node: SCNNode, to target: SCNVector3, duration: TimeInterval, key: String,
+                     backpedal: Bool = false) {
         let move = SCNAction.move(to: target, duration: duration)
         // Play steps chain into each other, so easing in and out of EVERY
         // step makes players pump-stop at each boundary. Linear keeps the
@@ -680,37 +814,80 @@ class FootballFieldScene: SCNScene {
         let distance = sqrt(dx * dx + dz * dz)
         guard distance > 0.4, duration > 0.15 else { return }
 
+        // Turn size BEFORE the facing action rewrites the yaw — successive
+        // move steps in different directions read as a cut, which banks the
+        // body into the turn below.
         let yaw = atan2(dx, dz)
-        let face = SCNAction.rotateTo(x: 0, y: CGFloat(yaw), z: 0, duration: 0.18, usesShortestUnitArc: true)
-        face.timingMode = .easeInEaseOut
-        node.runAction(face, forKey: "facing")
+        var turn = yaw - node.eulerAngles.y
+        while turn > .pi { turn -= 2 * .pi }
+        while turn < -.pi { turn += 2 * .pi }
+
+        if backpedal {
+            node.removeAction(forKey: "facing")  // hold the downfield facing
+        } else {
+            let face = SCNAction.rotateTo(x: 0, y: CGFloat(yaw), z: 0, duration: 0.18, usesShortestUnitArc: true)
+            face.timingMode = .easeInEaseOut
+            node.runAction(face, forKey: "facing")
+        }
 
         guard let figure = node.childNode(withName: "figure", recursively: false) else { return }
         figure.removeAction(forKey: "gait")
-        let bobUp = SCNAction.moveBy(x: 0, y: 0.06, z: 0, duration: 0.12)
+        figure.removeAction(forKey: "stance")  // the snap breaks the pre-snap pose
+
+        let speed = distance / Float(duration)
+        let stride = strideTime(forSpeed: speed, backpedal: backpedal)
+
+        // Bob synced to the leg cycle.
+        let bobUp = SCNAction.moveBy(x: 0, y: 0.06, z: 0, duration: stride / 2)
         bobUp.timingMode = .easeInEaseOut
-        let cycles = max(Int(duration / 0.24), 1)
+        let cycles = max(Int(duration / stride), 1)
         let bob = SCNAction.repeat(SCNAction.sequence([bobUp, bobUp.reversed()]), count: cycles)
-        let lean = SCNAction.rotateTo(x: 0.22, y: 0, z: 0, duration: 0.15)
+        // Rise out of any stance sink first so the bob oscillates around zero.
+        let rise = SCNAction.move(to: SCNVector3Zero, duration: 0.1)
+
+        // Forward lean scales with speed (~8-12°); backpedal sits slightly back.
+        let lean: CGFloat = backpedal ? -0.1 : CGFloat(0.14 + min(speed, 9) / 9 * 0.08)
+        // Momentary inward bank on a sharp cut, released mid-move.
+        let bank: CGFloat = (!backpedal && key == "playMove" && abs(turn) > 0.6)
+            ? CGFloat(max(-0.32, min(0.32, -turn * 0.35)))
+            : 0
+        let leanIn = SCNAction.rotateTo(x: lean, y: 0, z: bank, duration: 0.15)
+        leanIn.timingMode = .easeOut
+        let leanPhase: SCNAction
+        if bank == 0 {
+            leanPhase = leanIn
+        } else {
+            let release = SCNAction.rotateTo(x: lean, y: 0, z: 0, duration: 0.3)
+            release.timingMode = .easeInEaseOut
+            leanPhase = SCNAction.sequence([leanIn, release])
+        }
+
         let straighten = SCNAction.group([
             SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.2),
             SCNAction.move(to: SCNVector3Zero, duration: 0.2),
         ])
-        figure.runAction(SCNAction.sequence([SCNAction.group([bob, lean]), straighten]), forKey: "gait")
+        figure.runAction(SCNAction.sequence([
+            SCNAction.group([SCNAction.sequence([rise, bob]), leanPhase]),
+            straighten,
+        ]), forKey: "gait")
 
         // Run cycle: legs scissor around the hip, arms pump opposite — the
         // single biggest "he's actually running" cue at this camera distance.
         swingLimbs(of: figure, duration: duration,
-                   carrying: playerNode(at: carryingIndex ?? -1) === node)
+                   carrying: playerNode(at: carryingIndex ?? -1) === node,
+                   speed: speed, backpedal: backpedal)
     }
 
     /// Alternating limb swings for the duration of a move, ending neutral.
     /// Knees and elbows bend while running; the ball-carrier's left arm stays
-    /// tucked around the ball instead of pumping.
-    private func swingLimbs(of figure: SCNNode, duration: TimeInterval, carrying: Bool = false) {
-        let stride: TimeInterval = 0.24
+    /// tucked around the ball instead of pumping. Cadence and amplitude scale
+    /// with `speed` (yards/s), and the torso counter-rotates lightly against
+    /// the legs. Backpedals chop with short, small steps.
+    private func swingLimbs(of figure: SCNNode, duration: TimeInterval, carrying: Bool = false,
+                            speed: Float = 5, backpedal: Bool = false) {
+        let stride = strideTime(forSpeed: speed, backpedal: backpedal)
         let cycles = max(Int(duration / stride), 1)
-        let swing: Float = 0.65
+        let swing: Float = backpedal ? 0.4 : min(0.45 + speed * 0.035, 0.8)
 
         func swingAction(startForward: Bool, restZ: CGFloat) -> SCNAction {
             let fwd = SCNAction.rotateTo(x: CGFloat(-swing), y: 0, z: restZ, duration: stride / 2)
@@ -720,6 +897,21 @@ class FootballFieldScene: SCNScene {
             let cycle = startForward ? SCNAction.sequence([fwd, back]) : SCNAction.sequence([back, fwd])
             let neutral = SCNAction.rotateTo(x: 0, y: 0, z: restZ, duration: 0.15)
             return SCNAction.sequence([SCNAction.repeat(cycle, count: cycles), neutral])
+        }
+
+        // Light upper-body counter-rotation against the leg cycle — the
+        // shoulders working with the arm pump.
+        if let body = figure.childNode(withName: "body", recursively: false) {
+            body.removeAction(forKey: "twist")
+            let amplitude: CGFloat = backpedal ? 0.05 : 0.1
+            let left = SCNAction.rotateTo(x: 0, y: amplitude, z: 0, duration: stride / 2)
+            left.timingMode = .easeInEaseOut
+            let right = SCNAction.rotateTo(x: 0, y: -amplitude, z: 0, duration: stride / 2)
+            right.timingMode = .easeInEaseOut
+            let neutral = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.15)
+            body.runAction(SCNAction.sequence([
+                SCNAction.repeat(SCNAction.sequence([left, right]), count: cycles), neutral,
+            ]), forKey: "twist")
         }
 
         /// Bend a joint (knee/elbow) for the run, release to rest afterwards.
@@ -776,10 +968,13 @@ class FootballFieldScene: SCNScene {
     }
 
     /// The carrier and tackler hit the turf, lie there a beat, and get up.
-    /// With `stayDown` the figure collapses and stays on the turf (injury
-    /// presentation) — the next formation move stands him back up, by which
-    /// point the node already wears the replacement's number.
-    private func fall(nodeIndex: Int, delay: TimeInterval = 0, stayDown: Bool = false) {
+    /// `getUpDelay` staggers the rise for gang-tackle piles — the last man
+    /// on (top of the pile) climbs off first. With `stayDown` the figure
+    /// collapses and stays on the turf (injury presentation) — the next
+    /// formation move stands him back up, by which point the node already
+    /// wears the replacement's number.
+    private func fall(nodeIndex: Int, delay: TimeInterval = 0, stayDown: Bool = false,
+                      getUpDelay: TimeInterval = 0) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         figure.removeAction(forKey: "gait")
@@ -802,8 +997,32 @@ class FootballFieldScene: SCNScene {
         ])
         up.timingMode = .easeInEaseOut
         figure.runAction(SCNAction.sequence([
-            SCNAction.wait(duration: delay), down, SCNAction.wait(duration: 0.8), up,
+            SCNAction.wait(duration: delay), down,
+            SCNAction.wait(duration: 0.8 + getUpDelay), up,
         ]), forKey: "fall")
+    }
+
+    /// Touchdown celebration: the scorer leaps with both arms thrown up.
+    /// The choreography spikes the ball right after via a short ball arc.
+    private func celebrationJump(nodeIndex: Int) {
+        guard let node = playerNode(at: nodeIndex),
+              let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        figure.removeAction(forKey: "gait")
+        figure.removeAction(forKey: "hop")
+        let up = SCNAction.moveBy(x: 0, y: 0.85, z: 0, duration: 0.3)
+        up.timingMode = .easeOut
+        let down = SCNAction.moveBy(x: 0, y: -0.85, z: 0, duration: 0.32)
+        down.timingMode = .easeIn
+        let settle = SCNAction.move(to: SCNVector3Zero, duration: 0.1)
+        figure.runAction(SCNAction.sequence([up, down, settle]), forKey: "hop")
+        for name in ["arm", "armR"] {
+            guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
+            arm.removeAction(forKey: "swing")
+            let raise = SCNAction.rotateTo(x: 0, y: 0, z: name == "arm" ? 2.6 : -2.6, duration: 0.25)
+            raise.timingMode = .easeOut
+            let lower = SCNAction.rotateTo(x: 0, y: 0, z: name == "arm" ? 0.25 : -0.25, duration: 0.3)
+            arm.runAction(SCNAction.sequence([raise, SCNAction.wait(duration: 0.7), lower]), forKey: "swing")
+        }
     }
 
     /// Injury presentation: the player drops and stays on the turf until the
@@ -817,10 +1036,15 @@ class FootballFieldScene: SCNScene {
         node.removeAction(forKey: "facing")
         guard let figure = node.childNode(withName: "figure", recursively: false) else { return }
         figure.removeAction(forKey: "gait")
+        figure.removeAction(forKey: "stance")
         figure.removeAction(forKey: "fall")
         figure.removeAction(forKey: "hop")
         figure.position = SCNVector3Zero
         figure.eulerAngles = SCNVector3Zero
+        if let body = figure.childNode(withName: "body", recursively: false) {
+            body.removeAction(forKey: "twist")
+            body.eulerAngles = SCNVector3Zero
+        }
         for name in ["leg", "legR", "arm", "armR"] {
             guard let limb = figure.childNode(withName: name, recursively: false) else { continue }
             limb.removeAction(forKey: "swing")
@@ -849,17 +1073,22 @@ class FootballFieldScene: SCNScene {
     }
 
     /// Kicks off everything inside a single step: player moves, pulses, falls,
-    /// reaches, ball behavior — plus the follow-cam on long carries.
+    /// reaches, celebrations, ball behavior — plus the follow-cam on long carries.
     private func execute(step: PlayStep) {
         for move in step.moves {
             guard let node = playerNode(at: move.nodeIndex) else { continue }
-            run(node: node, to: move.to, duration: move.duration, key: "playMove")
+            run(node: node, to: move.to, duration: move.duration, key: "playMove",
+                backpedal: step.backpedals.contains(move.nodeIndex))
         }
 
         for index in step.pulses { pulse(nodeIndex: index) }
         for index in step.reaches { reach(nodeIndex: index) }
+        for index in step.celebrates { celebrationJump(nodeIndex: index) }
+        // Falls stagger DOWN in list order; the pile unstacks in reverse —
+        // the last man on (top of the pile) is the first back on his feet.
         for (offset, index) in step.falls.enumerated() {
-            fall(nodeIndex: index, delay: Double(offset) * 0.12)
+            fall(nodeIndex: index, delay: Double(offset) * 0.12,
+                 getUpDelay: Double(max(step.falls.count - 1 - offset, 0)) * 0.22)
         }
 
         switch step.ballMove {
@@ -870,19 +1099,27 @@ class FootballFieldScene: SCNScene {
             if !kickCameraActive,
                let move = step.moves.first(where: { $0.nodeIndex == nodeIndex }),
                abs(move.to.z - focusZ) > 11 {
-                focusCamera(z: move.to.z, animated: true,
-                            duration: max(move.duration, 0.8))
+                followCamera(toZ: move.to.z, stepDuration: move.duration)
             }
         case .arc(let to, let apex, let duration):
             runBallArc(to: to, apex: apex, duration: duration)
             if !kickCameraActive, abs(to.z - focusZ) > 11 {
-                focusCamera(z: to.z, animated: true, duration: max(duration, 0.8))
+                followCamera(toZ: to.z, stepDuration: duration)
             }
         case .slide(let to, let duration):
             runBallSlide(to: to, duration: duration)
         case nil:
             break
         }
+    }
+
+    /// Follow-cam pan with softened timing: short hops get proportionally
+    /// longer, eased moves so successive refocuses blend instead of jerking;
+    /// only genuinely long breaks pan at full speed.
+    private func followCamera(toZ z: Float, stepDuration: TimeInterval) {
+        let pan = abs(z - focusZ)
+        let duration = max(stepDuration, min(1.7, 0.7 + TimeInterval(pan) * 0.03))
+        focusCamera(z: z, animated: true, duration: duration)
     }
 
     /// Parents the ball to a player so it rides along with every move (carry).
@@ -1504,34 +1741,220 @@ class FootballFieldScene: SCNScene {
     // MARK: - Ball
 
     private func buildBall() {
-        let ballGeometry = SCNSphere(radius: CGFloat(FieldConstants.ballRadius))
-        ballGeometry.segmentCount = 16
+        if let kit = Self.playerKit {
+            // Blender football with the lace strip baked in. The kit ball is
+            // authored at true kit scale (half-length 0.17), so scale up
+            // uniformly to the oversized broadcast-readable ball the old
+            // ellipsoid was. Long axis = Z, matching the flight code: the
+            // pass spiral (rotateBy z) spins around the seam axis and kicks
+            // tumble end over end (rotateBy x) on the prolate shape.
+            ballNode = instantiate(kit.football, name: "ball")
+            ballNode.scale = SCNVector3(2.0, 2.0, 2.0)
+        } else {
+            let ballGeometry = SCNSphere(radius: CGFloat(FieldConstants.ballRadius))
+            ballGeometry.segmentCount = 16
 
-        // Stretch into an ellipsoid (football shape)
-        let ballMaterial = SCNMaterial()
-        ballMaterial.diffuse.contents = UIColor(red: 0.55, green: 0.27, blue: 0.07, alpha: 1.0)
-        ballMaterial.roughness.contents = 0.7
-        ballGeometry.materials = [ballMaterial]
+            // Stretch into an ellipsoid (football shape)
+            let ballMaterial = SCNMaterial()
+            ballMaterial.diffuse.contents = UIColor(red: 0.55, green: 0.27, blue: 0.07, alpha: 1.0)
+            ballMaterial.roughness.contents = 0.7
+            ballGeometry.materials = [ballMaterial]
 
-        ballNode = SCNNode(geometry: ballGeometry)
-        ballNode.scale = SCNVector3(0.85, 0.85, 1.6)  // Elongate along Z
-        ballNode.position = SCNVector3(0, 0.3, 0)
+            ballNode = SCNNode(geometry: ballGeometry)
+            ballNode.scale = SCNVector3(0.85, 0.85, 1.6)  // Elongate along Z
 
-        // White laces stripes near each tip — reads as a football in flight.
-        for zOffset: Float in [-0.16, 0.16] {
-            let stripeGeometry = SCNTube(innerRadius: CGFloat(FieldConstants.ballRadius) * 0.98,
-                                         outerRadius: CGFloat(FieldConstants.ballRadius) * 1.03,
-                                         height: 0.05)
-            let stripeMaterial = SCNMaterial()
-            stripeMaterial.diffuse.contents = UIColor(white: 0.95, alpha: 1)
-            stripeGeometry.materials = [stripeMaterial]
-            let stripe = SCNNode(geometry: stripeGeometry)
-            stripe.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
-            stripe.position = SCNVector3(0, 0, zOffset)
-            stripe.scale = SCNVector3(1, 1, 0.75)
-            ballNode.addChildNode(stripe)
+            // White laces stripes near each tip — reads as a football in flight.
+            for zOffset: Float in [-0.16, 0.16] {
+                let stripeGeometry = SCNTube(innerRadius: CGFloat(FieldConstants.ballRadius) * 0.98,
+                                             outerRadius: CGFloat(FieldConstants.ballRadius) * 1.03,
+                                             height: 0.05)
+                let stripeMaterial = SCNMaterial()
+                stripeMaterial.diffuse.contents = UIColor(white: 0.95, alpha: 1)
+                stripeGeometry.materials = [stripeMaterial]
+                let stripe = SCNNode(geometry: stripeGeometry)
+                stripe.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
+                stripe.position = SCNVector3(0, 0, zOffset)
+                stripe.scale = SCNVector3(1, 1, 0.75)
+                ballNode.addChildNode(stripe)
+            }
         }
+        ballNode.position = SCNVector3(0, 0.3, 0)
         rootNode.addChildNode(ballNode)
+    }
+
+    // MARK: - Player Kit (Blender-authored parts)
+
+    /// Prototype nodes for the Blender part kit (Resources/PlayerKit.usdc),
+    /// loaded once per process and cloned per figure/ball. Each prototype is
+    /// a named container whose inner "orient" node bakes the USD axis frame
+    /// (meshes arrive Z-up, +Y-forward under a -90° X root rotation) into
+    /// the scene's Y-up, +Z-facing figure frame — so the container itself
+    /// can be positioned and rotated exactly like the old procedural nodes.
+    /// Limb part origins sit at the segment TOP (the hinge), replacing the
+    /// old capsule pivots: the node position IS the joint.
+    private struct PlayerKitParts {
+        let helmetShell: SCNNode
+        let facemask: SCNNode
+        let torso: SCNNode
+        let thigh: SCNNode
+        let shin: SCNNode
+        let upperArm: SCNNode
+        let forearm: SCNNode
+        let cleat: SCNNode
+        let football: SCNNode
+    }
+
+    /// nil (→ procedural fallback figures) when the resource is missing or
+    /// SceneKit cannot parse it.
+    private static let playerKit: PlayerKitParts? = loadPlayerKit()
+
+    private static func loadPlayerKit() -> PlayerKitParts? {
+        guard let url = Bundle.main.url(forResource: "PlayerKit", withExtension: "usdc") else {
+            print("FootballFieldScene: PlayerKit.usdc not in bundle — procedural figures in use")
+            return nil
+        }
+        guard let kitScene = try? SCNScene(url: url, options: nil) else {
+            print("FootballFieldScene: PlayerKit.usdc failed to load — procedural figures in use")
+            return nil
+        }
+        func part(_ name: String) -> SCNNode? {
+            guard let found = kitScene.rootNode.childNode(withName: name, recursively: true) else {
+                print("FootballFieldScene: PlayerKit.usdc missing part \(name) — procedural figures in use")
+                return nil
+            }
+            let prototype = SCNNode()
+            prototype.name = name
+            let orient = SCNNode()
+            // ZYX euler = Ry(π)·Rx(-π/2): mesh (x, y, z) → (-x, z, y) —
+            // Blender up (+Z) becomes +Y, Blender front (+Y) becomes +Z.
+            orient.eulerAngles = SCNVector3(-Float.pi / 2, Float.pi, 0)
+            orient.addChildNode(found.clone())
+            prototype.addChildNode(orient)
+            return prototype
+        }
+        guard let helmetShell = part("HELMET_SHELL"),
+              let facemask = part("FACEMASK"),
+              let torso = part("TORSO"),
+              let thigh = part("THIGH"),
+              let shin = part("SHIN"),
+              let upperArm = part("UPPER_ARM"),
+              let forearm = part("FOREARM"),
+              let cleat = part("CLEAT"),
+              let football = part("FOOTBALL") else { return nil }
+        print("FootballFieldScene: PlayerKit.usdc loaded (9 parts)")
+        return PlayerKitParts(helmetShell: helmetShell, facemask: facemask, torso: torso,
+                              thigh: thigh, shin: shin, upperArm: upperArm,
+                              forearm: forearm, cleat: cleat, football: football)
+    }
+
+    /// Clones a kit prototype. All clones share the prototype's vertex data;
+    /// when `override` swaps a slot material, the geometry is copied (an
+    /// SCNGeometry copy still shares its sources) so the new materials apply
+    /// per figure without touching other clones.
+    private func instantiate(_ prototype: SCNNode,
+                             name: String? = nil,
+                             retint: ((SCNMaterial) -> SCNMaterial)? = nil) -> SCNNode {
+        let node = prototype.clone()
+        node.name = name
+        if let retint {
+            node.enumerateHierarchy { child, _ in
+                guard let geometry = child.geometry else { return }
+                let mapped = geometry.materials.map(retint)
+                guard !zip(mapped, geometry.materials).allSatisfy({ $0 === $1 }),
+                      let copy = geometry.copy() as? SCNGeometry else { return }
+                copy.materials = mapped
+                child.geometry = copy
+            }
+        }
+        return node
+    }
+
+    /// Assembles the Blender part kit under `figure` with the same node
+    /// names, joint positions and hinge origins as the procedural figure,
+    /// so every animation (swingLimbs / reach / fall / throwMotion /
+    /// resetGait / crouch stance) drives it unchanged.
+    private func buildKitFigure(kit: PlayerKitParts, in figure: SCNNode,
+                                uniform: Uniform, number: Int) {
+        // Per-figure copies of the tintable slot materials, shared inside
+        // the figure (torso + both upper arms share one JERSEY copy) so
+        // applyUniform re-tints per team without cross-talk. MASK and SHOE
+        // keep the shared prototype materials.
+        let tints: [String: UIColor] = [
+            "JERSEY": uniform.jersey,
+            "PANTS": uniform.pants,
+            "HELMET": uniform.helmet,
+            "SKIN": Self.skinTones[number % Self.skinTones.count],
+        ]
+        var figureMaterials: [String: SCNMaterial] = [:]
+        func retint(_ material: SCNMaterial) -> SCNMaterial {
+            guard let slot = material.name, let color = tints[slot] else { return material }
+            if let existing = figureMaterials[slot] { return existing }
+            guard let copy = material.copy() as? SCNMaterial else { return material }
+            copy.diffuse.contents = color
+            figureMaterials[slot] = copy
+            return copy
+        }
+
+        // Legs: thigh hinged at the hip, shin at the knee (kit origins sit
+        // at the top of each segment — the same world hinge points the old
+        // pivoted capsules used), cleat riding the ankle.
+        for (index, xSign) in [Float(-1), 1].enumerated() {
+            let leg = instantiate(kit.thigh, name: index == 0 ? "leg" : "legR", retint: retint)
+            leg.position = SCNVector3(xSign * 0.14, 0.12, 0)
+            figure.addChildNode(leg)
+
+            let shin = instantiate(kit.shin, name: "shin", retint: retint)
+            shin.position = SCNVector3(0, -0.51, 0)
+            leg.addChildNode(shin)
+
+            let cleat = instantiate(kit.cleat, name: "cleat")
+            cleat.position = SCNVector3(0, -0.32, 0.05)
+            shin.addChildNode(cleat)
+        }
+
+        // Torso: shoulder-pad silhouette, width/depth modeled into the mesh.
+        let body = instantiate(kit.torso, name: "body", retint: retint)
+        body.position = SCNVector3(0, 0.42, 0)
+        figure.addChildNode(body)
+
+        // Arms: hinged at the shoulder and elbow, resting slightly out.
+        for (index, xSign) in [Float(-1), 1].enumerated() {
+            let arm = instantiate(kit.upperArm, name: index == 0 ? "arm" : "armR", retint: retint)
+            arm.position = SCNVector3(xSign * 0.38, 0.76, 0)
+            arm.eulerAngles = SCNVector3(0, 0, xSign * -0.25)
+            figure.addChildNode(arm)
+
+            let forearm = instantiate(kit.forearm, name: "forearm", retint: retint)
+            forearm.position = SCNVector3(0, -0.42, 0)
+            forearm.eulerAngles = SCNVector3(-0.15, 0, 0)
+            arm.addChildNode(forearm)
+        }
+
+        // Head: a simple skin sphere peeking out of the helmet's face opening.
+        let headGeometry = SCNSphere(radius: 0.14)
+        headGeometry.segmentCount = 10
+        let headMaterial: SCNMaterial
+        if let skin = figureMaterials["SKIN"] {
+            headMaterial = skin
+        } else {
+            headMaterial = SCNMaterial()
+            headMaterial.name = "SKIN"
+            headMaterial.diffuse.contents = Self.skinTones[number % Self.skinTones.count]
+            headMaterial.roughness.contents = 0.8
+        }
+        headGeometry.materials = [headMaterial]
+        let head = SCNNode(geometry: headGeometry)
+        head.position = SCNVector3(0, 0.97, 0)
+        figure.addChildNode(head)
+
+        // Helmet: shell + facemask cage grouped under the "helmet" node so
+        // the whole assembly sits where the old helmet sphere was.
+        let helmet = SCNNode()
+        helmet.name = "helmet"
+        helmet.position = SCNVector3(0, 1.04, 0)
+        helmet.addChildNode(instantiate(kit.helmetShell, retint: retint))
+        helmet.addChildNode(instantiate(kit.facemask))
+        figure.addChildNode(helmet)
     }
 
     // MARK: - Players
@@ -1550,6 +1973,11 @@ class FootballFieldScene: SCNScene {
     /// the running gait (bob + lean) can animate it without fighting the
     /// container's position moves. Container origin sits at playerHeight/2
     /// above the turf, so the feet reach local -0.5.
+    ///
+    /// The body parts come from the Blender kit (PlayerKit.usdc) when it
+    /// loads; otherwise the original procedural geometry is built. Both
+    /// paths produce identical node names, joint positions and hinge
+    /// origins, so all animation code works on either figure.
     private func makePlayerNode(uniform: Uniform, number: Int) -> SCNNode {
         let container = SCNNode()
         container.name = "player_\(number)"
@@ -1573,16 +2001,64 @@ class FootballFieldScene: SCNScene {
         shadow.castsShadow = false
         container.addChildNode(shadow)
 
+        if let kit = Self.playerKit {
+            buildKitFigure(kit: kit, in: figure, uniform: uniform, number: number)
+        } else {
+            buildProceduralFigure(in: figure, uniform: uniform, number: number)
+        }
+
+        // Jersey number text floating above
+        let numberText = SCNText(string: "\(number)", extrusionDepth: 0.01)
+        numberText.font = UIFont.systemFont(ofSize: 0.62, weight: .bold)
+        numberText.flatness = 0.4
+
+        let numberMaterial = SCNMaterial()
+        numberMaterial.diffuse.contents = UIColor.white
+        numberMaterial.emission.contents = UIColor(white: 0.35, alpha: 1.0)
+        numberText.materials = [numberMaterial]
+
+        let numberNode = SCNNode(geometry: numberText)
+        numberNode.name = "number"
+
+        // Center the number text
+        let (minB, maxB) = numberNode.boundingBox
+        numberNode.pivot = SCNMatrix4MakeTranslation(
+            (maxB.x - minB.x) / 2 + minB.x,
+            0,
+            0
+        )
+
+        // Face the number toward the camera (angled up)
+        numberNode.eulerAngles = SCNVector3(-Float.pi / 4, 0, 0)
+        numberNode.position = SCNVector3(0, 1.35, 0)
+
+        // Use billboard constraint so numbers always face the camera
+        let billboardConstraint = SCNBillboardConstraint()
+        billboardConstraint.freeAxes = [.Y]
+        numberNode.constraints = [billboardConstraint]
+
+        container.addChildNode(numberNode)
+
+        return container
+    }
+
+    /// The original procedural figure — the fallback when PlayerKit.usdc is
+    /// unavailable. Materials carry the same slot names the kit uses so
+    /// applyUniform re-tints both figure kinds identically.
+    private func buildProceduralFigure(in figure: SCNNode, uniform: Uniform, number: Int) {
         // One shared jersey material so re-tinting the torso re-tints the arms.
         let jersey = SCNMaterial()
+        jersey.name = "JERSEY"
         jersey.diffuse.contents = uniform.jersey
         jersey.roughness.contents = 0.6
 
         let pants = SCNMaterial()
+        pants.name = "PANTS"
         pants.diffuse.contents = uniform.pants
         pants.roughness.contents = 0.7
 
         let skin = SCNMaterial()
+        skin.name = "SKIN"
         skin.diffuse.contents = Self.skinTones[number % Self.skinTones.count]
         skin.roughness.contents = 0.8
 
@@ -1653,6 +2129,7 @@ class FootballFieldScene: SCNScene {
         let helmetGeometry = SCNSphere(radius: 0.165)
         helmetGeometry.segmentCount = 12
         let helmetMaterial = SCNMaterial()
+        helmetMaterial.name = "HELMET"
         helmetMaterial.diffuse.contents = uniform.helmet
         helmetMaterial.roughness.contents = 0.3
         helmetGeometry.materials = [helmetMaterial]
@@ -1673,40 +2150,6 @@ class FootballFieldScene: SCNScene {
         let mask = SCNNode(geometry: maskGeometry)
         mask.position = SCNVector3(0, 0.99, 0.15)
         figure.addChildNode(mask)
-
-        // Jersey number text floating above
-        let numberText = SCNText(string: "\(number)", extrusionDepth: 0.01)
-        numberText.font = UIFont.systemFont(ofSize: 0.62, weight: .bold)
-        numberText.flatness = 0.4
-
-        let numberMaterial = SCNMaterial()
-        numberMaterial.diffuse.contents = UIColor.white
-        numberMaterial.emission.contents = UIColor(white: 0.35, alpha: 1.0)
-        numberText.materials = [numberMaterial]
-
-        let numberNode = SCNNode(geometry: numberText)
-        numberNode.name = "number"
-
-        // Center the number text
-        let (minB, maxB) = numberNode.boundingBox
-        numberNode.pivot = SCNMatrix4MakeTranslation(
-            (maxB.x - minB.x) / 2 + minB.x,
-            0,
-            0
-        )
-
-        // Face the number toward the camera (angled up)
-        numberNode.eulerAngles = SCNVector3(-Float.pi / 4, 0, 0)
-        numberNode.position = SCNVector3(0, 1.35, 0)
-
-        // Use billboard constraint so numbers always face the camera
-        let billboardConstraint = SCNBillboardConstraint()
-        billboardConstraint.freeAxes = [.Y]
-        numberNode.constraints = [billboardConstraint]
-
-        container.addChildNode(numberNode)
-
-        return container
     }
 
     private func darkenColor(_ color: UIColor, by amount: CGFloat) -> UIColor {
@@ -1873,11 +2316,11 @@ class FootballFieldScene: SCNScene {
         system.particleVelocity = 24
         system.particleVelocityVariation = 6
         system.particleImage = rainStreakImage()
-        system.particleSize = 0.55
-        system.particleSizeVariation = 0.2
-        system.particleColor = UIColor(red: 0.65, green: 0.72, blue: 0.85, alpha: 0.4)
+        system.particleSize = 0.32
+        system.particleSizeVariation = 0.12
+        system.particleColor = UIColor(red: 0.65, green: 0.72, blue: 0.85, alpha: 0.3)
         system.blendMode = .additive
-        system.stretchFactor = 0.12
+        system.stretchFactor = 0.06
         system.isLightingEnabled = false
         return system
     }
