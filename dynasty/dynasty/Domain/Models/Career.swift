@@ -111,6 +111,46 @@ final class Career {
     /// Optional new attribute → lightweight migration.
     var leagueNarrativeData: Data? = nil
 
+    // MARK: - Coaching Carousel (R30)
+    /// JSON-encoded `[CoachCarouselEngine.CarouselMove]` — this offseason's
+    /// coaching carousel feed (firings, HC hires, coordinator chain moves),
+    /// newest first, capped at 40. Reset each `.coachingChanges` phase.
+    /// Optional new attribute → lightweight migration.
+    var coachCarouselLogData: Data? = nil
+    /// JSON-encoded `CoachCarouselEngine.CoordinatorInterviewRequest` — an AI
+    /// team's pending request to interview one of the user's coordinators for
+    /// a head-coach vacancy. `nil` when nothing is pending; expires at the
+    /// Combine if ignored. Optional new attribute → lightweight migration.
+    var pendingInterviewRequestData: Data? = nil
+
+    // MARK: - Owner & Economy 2.0 (R31)
+    /// JSON-encoded `[SeasonGoal]` — the owner's tracked goals for the current
+    /// season. Generated at every season start (owner kickoff meeting) and
+    /// snapshotted with final progress at the end-of-season review.
+    /// Optional new attribute → lightweight migration.
+    var ownerSeasonGoalsData: Data? = nil
+    /// JSON-encoded `[OwnerPersonaEngine.OwnerWhim]` — meddling-owner
+    /// "suggestions" issued during the season and the user's responses.
+    /// Optional new attribute → lightweight migration.
+    var ownerWhimsData: Data? = nil
+    /// JSON-encoded `OwnerPersonaEngine.OwnerSeasonReview` — the most recent
+    /// end-of-season owner evaluation (verdict + consequences).
+    /// Optional new attribute → lightweight migration.
+    var ownerSeasonReviewData: Data? = nil
+    /// R31: set when the owner fires the coach — the career is over and the
+    /// shell shows the final summary screen. Default → lightweight migration.
+    var isGameOver: Bool = false
+
+    // MARK: - League History & Hall of Fame (R32)
+    /// JSON-encoded `[SeasonSummary]` — one entry per completed season,
+    /// newest first, capped at 20. Written during the `.superBowl` phase.
+    /// Optional new attribute → lightweight migration.
+    var leagueHistoryData: Data? = nil
+    /// JSON-encoded `[HallOfFameEntry]` — retired legends inducted into the
+    /// Hall of Fame, newest induction class first, capped at 80.
+    /// Optional new attribute → lightweight migration.
+    var hallOfFameData: Data? = nil
+
     // MARK: - Locker Room (R25)
     /// JSON-encoded `[LockerRoomEvent]` — resolved locker-room happenings,
     /// newest first, capped at 12. Optional new attribute → lightweight migration.
@@ -277,6 +317,120 @@ extension Career {
         }
         set {
             leagueNarrativeData = newValue.flatMap { try? JSONEncoder().encode($0) }
+        }
+    }
+}
+
+// MARK: - Coaching Carousel Codable Bridge (R30)
+
+extension Career {
+
+    /// This offseason's coaching carousel feed, newest first (max 40).
+    /// Writing encodes and stores the trimmed list (caller saves the context).
+    var coachCarouselLog: [CoachCarouselEngine.CarouselMove] {
+        get {
+            guard let data = coachCarouselLogData,
+                  let moves = try? JSONDecoder().decode([CoachCarouselEngine.CarouselMove].self, from: data) else {
+                return []
+            }
+            return moves
+        }
+        set {
+            coachCarouselLogData = try? JSONEncoder().encode(Array(newValue.prefix(40)))
+        }
+    }
+
+    /// The pending interview request for one of the user's coordinators.
+    /// Assigning `nil` clears it (caller saves the context).
+    var pendingInterviewRequest: CoachCarouselEngine.CoordinatorInterviewRequest? {
+        get {
+            guard let data = pendingInterviewRequestData else { return nil }
+            return try? JSONDecoder().decode(CoachCarouselEngine.CoordinatorInterviewRequest.self, from: data)
+        }
+        set {
+            pendingInterviewRequestData = newValue.flatMap { try? JSONEncoder().encode($0) }
+        }
+    }
+}
+
+// MARK: - Owner & Economy Codable Bridge (R31)
+
+extension Career {
+
+    /// The owner's tracked season goals. Writing encodes and stores the new
+    /// list (caller saves the context).
+    var ownerSeasonGoals: [SeasonGoal] {
+        get {
+            guard let data = ownerSeasonGoalsData,
+                  let goals = try? JSONDecoder().decode([SeasonGoal].self, from: data) else {
+                return []
+            }
+            return goals
+        }
+        set {
+            ownerSeasonGoalsData = try? JSONEncoder().encode(newValue)
+        }
+    }
+
+    /// Meddling-owner whims issued this season (and recent history).
+    /// Writing encodes and stores the trimmed list (caller saves the context).
+    var ownerWhims: [OwnerPersonaEngine.OwnerWhim] {
+        get {
+            guard let data = ownerWhimsData,
+                  let whims = try? JSONDecoder().decode([OwnerPersonaEngine.OwnerWhim].self, from: data) else {
+                return []
+            }
+            return whims
+        }
+        set {
+            ownerWhimsData = try? JSONEncoder().encode(Array(newValue.suffix(8)))
+        }
+    }
+
+    /// The most recent end-of-season owner review. Assigning `nil` clears it
+    /// (caller saves the context).
+    var ownerSeasonReview: OwnerPersonaEngine.OwnerSeasonReview? {
+        get {
+            guard let data = ownerSeasonReviewData else { return nil }
+            return try? JSONDecoder().decode(OwnerPersonaEngine.OwnerSeasonReview.self, from: data)
+        }
+        set {
+            ownerSeasonReviewData = newValue.flatMap { try? JSONEncoder().encode($0) }
+        }
+    }
+}
+
+// MARK: - League History & Hall of Fame Codable Bridge (R32)
+
+extension Career {
+
+    /// Per-season league history, newest first (max 20 seasons). Writing
+    /// encodes and stores the trimmed list (caller saves the context).
+    var seasonSummaries: [SeasonSummary] {
+        get {
+            guard let data = leagueHistoryData,
+                  let summaries = try? JSONDecoder().decode([SeasonSummary].self, from: data) else {
+                return []
+            }
+            return summaries
+        }
+        set {
+            leagueHistoryData = try? JSONEncoder().encode(Array(newValue.prefix(20)))
+        }
+    }
+
+    /// Hall of Fame inductees, newest class first (max 80). Writing encodes
+    /// and stores the trimmed list (caller saves the context).
+    var hallOfFame: [HallOfFameEntry] {
+        get {
+            guard let data = hallOfFameData,
+                  let entries = try? JSONDecoder().decode([HallOfFameEntry].self, from: data) else {
+                return []
+            }
+            return entries
+        }
+        set {
+            hallOfFameData = try? JSONEncoder().encode(Array(newValue.prefix(80)))
         }
     }
 }

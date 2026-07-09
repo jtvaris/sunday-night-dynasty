@@ -899,7 +899,7 @@ struct FreeAgencyView: View {
     private func loadData() {
         // Load free agents: contractYearsRemaining == 0 and no team
         var descriptor = FetchDescriptor<Player>(
-            predicate: #Predicate { $0.contractYearsRemaining == 0 && $0.teamID == nil }
+            predicate: #Predicate { $0.contractYearsRemaining == 0 && $0.teamID == nil && $0.isRetired == false }
         )
         descriptor.sortBy = [SortDescriptor(\.annualSalary, order: .reverse)]
         allFreeAgents = (try? modelContext.fetch(descriptor)) ?? []

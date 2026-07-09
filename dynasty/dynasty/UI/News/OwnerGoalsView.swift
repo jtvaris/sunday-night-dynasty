@@ -407,13 +407,18 @@ struct OwnerGoalsView: View {
         owner = fetchedTeam.owner
 
         guard let fetchedOwner = owner else { return }
-        let generated = OwnerGoalsEngine.generateSeasonGoals(
-            team: fetchedTeam,
-            owner: fetchedOwner,
-            career: career
-        )
+        // R31: prefer the persisted goals set at the season-opening owner
+        // meeting; fall back to on-the-fly generation for older saves.
+        let stored = career.ownerSeasonGoals
+        let base = stored.isEmpty
+            ? OwnerGoalsEngine.generateSeasonGoals(
+                team: fetchedTeam,
+                owner: fetchedOwner,
+                career: career
+            )
+            : stored
         goals = OwnerGoalsEngine.evaluateGoalProgress(
-            goals: generated,
+            goals: base,
             team: fetchedTeam,
             career: career
         )

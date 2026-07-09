@@ -249,6 +249,33 @@ enum CoachRelationshipEngine {
         }
     }
 
+    /// R30: Records a departure, backfilling the "hired" entry first when the
+    /// coach was never tracked (careers started before the tree went live).
+    ///
+    /// - Parameters:
+    ///   - tree: The player's coaching tree array (mutated in place).
+    ///   - coach: The departing coach.
+    ///   - event: `"departed_hc"`, `"departed_coord"`, `"departed_other"` or `"retired"`.
+    ///   - season: The current season year.
+    ///   - destination: Where the coach went (e.g. "HC at Dallas Cowboys").
+    static func recordDeparture(
+        tree: inout [CoachingTreeEntry],
+        coach: Coach,
+        event: String,
+        season: Int,
+        destination: String? = nil
+    ) {
+        if !tree.contains(where: { $0.coachName == coach.fullName && $0.yearLeft == nil }) {
+            let hiredYear = coach.hireSeasonYear > 0 ? coach.hireSeasonYear : season
+            tree.append(CoachingTreeEntry(
+                coachName: coach.fullName,
+                role: coach.role,
+                yearHired: min(hiredYear, season)
+            ))
+        }
+        updateCoachingTree(tree: &tree, coach: coach, event: event, season: season, destination: destination)
+    }
+
     /// Marks a departed coaching tree alumnus as successful (or not) at their next stop.
     ///
     /// Call this at end-of-season when poached coordinators/coaches show results.

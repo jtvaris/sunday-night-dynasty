@@ -940,7 +940,7 @@ struct FinalPushView: View {
         var teamAbbrevs: [UUID: String] = [:]
         for t in allTeams { teamAbbrevs[t.id] = t.abbreviation }
 
-        let unsignedFAs = allPlayers.filter { $0.teamID == nil }
+        let unsignedFAs = allPlayers.filter { $0.teamID == nil && !$0.isRetired }
 
         FreeAgencyEngine.generateStorylineEventsForSigning(
             player: player,

@@ -259,7 +259,9 @@ enum LeagueGenerator {
             prefersWinNow: Bool.random(),
             coachingBudget: coachingBudget,
             // R27: dedicated scouting pot scales with spending willingness
-            scoutingBudget: BudgetEngine.defaultScoutingBudget(spendingWillingness: spending)
+            scoutingBudget: BudgetEngine.defaultScoutingBudget(spendingWillingness: spending),
+            // R31: dedicated medical pot scales with spending willingness
+            medicalBudget: BudgetEngine.defaultMedicalBudget(spendingWillingness: spending)
         )
     }
 
@@ -310,7 +312,9 @@ enum LeagueGenerator {
         return players
     }
 
-    private static func generatePlayer(position: Position, teamID: UUID, depthIndex: Int) -> Player {
+    /// Internal (not private) since R32: `WeekAdvancer`'s roster-floor pass
+    /// reuses it to generate street free agents when the FA pool runs dry.
+    static func generatePlayer(position: Position, teamID: UUID, depthIndex: Int) -> Player {
         let name = RandomNameGenerator.randomName()
         let age = randomAge(for: position)
         let yearsPro = max(0, age - Int.random(in: 21...23))

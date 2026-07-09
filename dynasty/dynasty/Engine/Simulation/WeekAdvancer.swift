@@ -181,7 +181,45 @@ enum WeekAdvancer {
                     previousSeasonWins: team.wins,
                     madePlayoffs: madePlayoffs
                 )
+                // R31: recalculate the dedicated medical department budget too
+                owner.previousMedicalBudget = owner.medicalBudget
+                owner.medicalBudget = BudgetEngine.calculateMedicalBudget(
+                    owner: owner,
+                    team: team,
+                    previousSeasonWins: team.wins,
+                    madePlayoffs: madePlayoffs
+                )
             }
+        }
+
+        // 0a. R31: season-opening owner meeting for the user's team —
+        // apply last review's bonus to the fresh envelope, generate this
+        // season's tracked goals, and deliver the expectations message.
+        if let userTeam = teams.first(where: { $0.id == career.teamID }),
+           let owner = userTeam.owner {
+            if let review = career.ownerSeasonReview,
+               review.budgetBonusPct > 0,
+               review.seasonYear == career.currentSeason - 1 {
+                let bonus = 1.0 + review.budgetBonusPct
+                owner.coachingBudget = Int(Double(owner.coachingBudget) * bonus)
+                owner.scoutingBudget = Int(Double(owner.scoutingBudget) * bonus)
+                owner.medicalBudget = Int(Double(owner.medicalBudget) * bonus)
+            }
+
+            let goals = OwnerGoalsEngine.generateSeasonGoals(
+                team: userTeam,
+                owner: owner,
+                career: career
+            )
+            career.ownerSeasonGoals = goals
+            // Whims from finished seasons are history now.
+            career.ownerWhims = career.ownerWhims.filter { $0.seasonYear >= career.currentSeason }
+
+            lastInboxMessages.append(OwnerPersonaEngine.seasonKickoffMessage(
+                owner: owner,
+                career: career,
+                goals: goals
+            ))
         }
 
         // 0b. Reset franchise tags from previous season
@@ -235,6 +273,38 @@ enum WeekAdvancer {
         // 6b. R28: return decisions are week-scoped calls — never carry them
         // into a new season (offseason rehab resolves the injuries anyway).
         career.pendingReturnDecisions = []
+
+        // 6c. R32: scouting counters are per-draft-cycle allowances — they
+        // were never reset before, so the user permanently ran out of
+        // interviews/workouts/visits after season one.
+        career.interviewsUsed = 0
+        career.workoutsUsed = 0
+        career.top30VisitsUsed = 0
+
+        // 6c-2. R32: scouts' pro-day trip counters are per-cycle too (same
+        // leak — `canAttendProDay` went permanently false after season one).
+        for scout in fetchAllScouts(modelContext: modelContext) {
+            scout.proDaysAttended = 0
+            scout.proDayColleges = []
+        }
+
+        // 6d. R32: last season's owner demands were settled (the penalty was
+        // applied at the rosterCuts → regularSeason boundary) — clear them so
+        // stale demands don't linger in the UI. Fresh ones arrive at the next
+        // reviewRoster phase.
+        career.ownerDemands = []
+        career.ownerDemandsAddressed = []
+
+        // 7. R32: database hygiene — drop the concluded draft's prospect rows
+        // (~350/season; the restart-restore path reads ALL persisted
+        // prospects, so stale rows would pollute next season's board) and
+        // games older than the season that just ended.
+        purgeStaleSeasonData(career: career, modelContext: modelContext)
+
+        // 8. R32: AI roster floor — teams that shrank below playable size
+        // (retirements + expiries) re-sign veteran-minimum free agents by
+        // need, or street free agents when the pool is dry.
+        refillAIRosters(career: career, teams: teams, modelContext: modelContext)
     }
 
     // MARK: - Private: Regular Season
@@ -483,8 +553,12 @@ enum WeekAdvancer {
                     newsItems: lastNewsItems
                 )
 
-                // 4. Check if the owner fires the player
-                wasFired = OwnerSatisfactionEngine.checkFiring(owner: owner, career: career)
+                // 4. Check if the owner fires the player.
+                // R31: the shell now consumes this flag (career-over screen).
+                // Grace period — no mid-season firing during the first season.
+                if career.totalWins + career.totalLosses > 18 {
+                    wasFired = OwnerSatisfactionEngine.checkFiring(owner: owner, career: career)
+                }
             }
 
             // 4b. Generate weekly inbox messages
@@ -496,6 +570,16 @@ enum WeekAdvancer {
                 coaches: teamCoaches,
                 owner: playerTeam.owner
             )
+
+            // 4b-2. R31: Meddler owners fire off 1-2 "suggestions" a season.
+            // The whim lands in the inbox; the user responds in Owner Relations.
+            if let owner = playerTeam.owner,
+               let whim = OwnerPersonaEngine.rollWhim(owner: owner, career: career, week: week) {
+                career.ownerWhims = career.ownerWhims + [whim]
+                lastInboxMessages.append(
+                    OwnerPersonaEngine.whimInboxMessage(whim: whim, ownerName: owner.name)
+                )
+            }
 
             // 4c. R21: AI-initiated trade offer (~15 % chance per week until
             // the Week 8 deadline). Contenders buy, rebuilders sell — the
@@ -907,6 +991,43 @@ enum WeekAdvancer {
         if career.currentWeek > 18 {
             career.currentPhase = .playoffs
             career.currentWeek = 19   // Playoff week numbering starts at 19.
+
+            // R32: stage the real wild-card bracket (playoff games used to be
+            // phantom weeks with no Game rows — now the champion, the draft
+            // order, and career history all read actual results).
+            ensurePlayoffGames(forWeek: 19, career: career, modelContext: modelContext)
+
+            // Tell the user where their season stands.
+            if let userTeamID = career.teamID {
+                let allSeasonGames = fetchAllGamesForSeason(seasonYear: season, modelContext: modelContext)
+                let records = StandingsCalculator.calculate(
+                    games: allSeasonGames,
+                    teams: Array(teamsByID.values)
+                )
+                var userSeed: Int?
+                for conference in Conference.allCases {
+                    let seeds = StandingsCalculator.playoffTeams(
+                        records: records,
+                        teams: Array(teamsByID.values),
+                        conference: conference
+                    )
+                    if let index = seeds.firstIndex(where: { $0.teamID == userTeamID }) {
+                        userSeed = index + 1
+                    }
+                }
+                if let seed = userSeed {
+                    let byeText = seed == 1
+                        ? "As the #1 seed you have a first-round bye — your run starts in the Divisional Round."
+                        : "You enter the Wild Card round as the #\(seed) seed."
+                    lastInboxMessages.append(InboxMessage(
+                        sender: .leagueOffice,
+                        subject: "Playoff Berth Clinched",
+                        body: "Congratulations — your team is in the postseason. \(byeText)",
+                        date: "Week 18, Season \(season)",
+                        category: .leagueNotice
+                    ))
+                }
+            }
         }
     }
 
@@ -1140,6 +1261,10 @@ enum WeekAdvancer {
     private static func advancePlayoffWeek(career: Career, modelContext: ModelContext) {
         let week = career.currentWeek
 
+        // R32: self-heal — make sure this round's bracket exists (covers
+        // saves that entered the playoffs before real bracket games landed).
+        ensurePlayoffGames(forWeek: week, career: career, modelContext: modelContext)
+
         // Simulate any unplayed playoff games for this week.
         let unplayedGames = fetchUnplayedGames(
             week: week,
@@ -1161,10 +1286,33 @@ enum WeekAdvancer {
             game.homeScore = score.home
             game.awayScore = score.away
 
-            updateTeamRecords(game: game, teamsByID: teamsByID)
+            // Note: no record update — playoff games don't touch W/L/T (R32).
+        }
+
+        // R32: user's playoff exit is worth a note (win news comes via the
+        // round staging below and the Super Bowl phase).
+        if let userTeamID = career.teamID,
+           let userGame = unplayedGames.first(where: {
+               $0.homeTeamID == userTeamID || $0.awayTeamID == userTeamID
+           }),
+           let loser = userGame.loserID, loser == userTeamID,
+           let winnerID = userGame.winnerID,
+           let opponent = teamsByID[winnerID] {
+            let roundName = week == 19 ? "Wild Card round" : (week == 20 ? "Divisional Round" : "Conference Championship")
+            lastInboxMessages.append(InboxMessage(
+                sender: .leagueOffice,
+                subject: "Season Over: Eliminated in the \(roundName)",
+                body: "The \(opponent.fullName) ended your playoff run \(max(userGame.homeScore ?? 0, userGame.awayScore ?? 0))-\(min(userGame.homeScore ?? 0, userGame.awayScore ?? 0)). Time to regroup — the offseason starts soon.",
+                date: "Week \(week), Season \(career.currentSeason)",
+                category: .leagueNotice
+            ))
         }
 
         if week >= 21 {
+            // R32: conference title games are decided — stage the Super Bowl
+            // game so the `.superBowl` phase simulates a real matchup.
+            ensurePlayoffGames(forWeek: 22, career: career, modelContext: modelContext)
+
             // Conference Championships complete → Pro Bowl week next.
             let oldPhase = career.currentPhase
             career.currentPhase = .proBowl
@@ -1175,6 +1323,140 @@ enum WeekAdvancer {
             )
         } else {
             career.currentWeek += 1
+
+            // R32: stage the next round from this round's winners so the
+            // dashboard can show (and the user can coach) the upcoming game.
+            ensurePlayoffGames(forWeek: career.currentWeek, career: career, modelContext: modelContext)
+        }
+    }
+
+    // MARK: - Private: Playoff Bracket (R32)
+
+    /// Creates the playoff games for one round when they don't exist yet.
+    /// Idempotent per (season, week). Seeding uses the same
+    /// `StandingsCalculator` rules as the standings screen:
+    /// - Week 19 (Wild Card): per conference 2v7, 3v6, 4v5 — seed 1 has a bye.
+    /// - Week 20 (Divisional): seed 1 + wild-card winners; best surviving
+    ///   seed hosts the worst.
+    /// - Week 21 (Conference Championship): divisional winners, better seed hosts.
+    /// - Week 22 (Super Bowl): the two conference champions; the better
+    ///   regular-season record is the designated "home" side (neutral site).
+    ///
+    /// If a previous round is missing (legacy saves mid-playoffs), the round
+    /// falls back to the top seeds so the bracket always completes.
+    private static func ensurePlayoffGames(
+        forWeek week: Int,
+        career: Career,
+        modelContext: ModelContext
+    ) {
+        guard (19...22).contains(week) else { return }
+        let season = career.currentSeason
+
+        let existingDescriptor = FetchDescriptor<Game>(
+            predicate: #Predicate<Game> {
+                $0.seasonYear == season && $0.week == week && $0.isPlayoff == true
+            }
+        )
+        let existing = (try? modelContext.fetch(existingDescriptor)) ?? []
+        guard existing.isEmpty else { return }
+
+        let teams = fetchAllTeams(modelContext: modelContext)
+        let seasonGames = fetchAllGamesForSeason(seasonYear: season, modelContext: modelContext)
+        let records = StandingsCalculator.calculate(games: seasonGames, teams: teams)
+        let playoffGames = seasonGames.filter { $0.isPlayoff }
+
+        var newGames: [Game] = []
+        // Conference champion (winner of week 21) per conference, for the SB.
+        var conferenceChampions: [UUID] = []
+
+        for conference in Conference.allCases {
+            let seeds = StandingsCalculator.playoffTeams(
+                records: records,
+                teams: teams,
+                conference: conference
+            )
+            guard seeds.count >= 7 else { continue }
+            let seedRank: [UUID: Int] = Dictionary(
+                uniqueKeysWithValues: seeds.enumerated().map { ($0.element.teamID, $0.offset) }
+            )
+            let conferenceTeamIDs = Set(seeds.map(\.teamID))
+
+            /// Winners of the given playoff week belonging to this conference.
+            func roundWinners(week: Int) -> [UUID] {
+                playoffGames
+                    .filter { $0.week == week && conferenceTeamIDs.contains($0.homeTeamID) }
+                    .compactMap(\.winnerID)
+            }
+            /// Sorts surviving teams best seed first.
+            func bySeed(_ ids: [UUID]) -> [UUID] {
+                ids.sorted { (seedRank[$0] ?? 8) < (seedRank[$1] ?? 8) }
+            }
+
+            switch week {
+            case 19:
+                // 2v7, 3v6, 4v5 (0-based seed indices).
+                for (home, away) in [(1, 6), (2, 5), (3, 4)] {
+                    newGames.append(Game(
+                        seasonYear: season, week: 19,
+                        homeTeamID: seeds[home].teamID,
+                        awayTeamID: seeds[away].teamID,
+                        isPlayoff: true
+                    ))
+                }
+
+            case 20:
+                let wildCardWinners = roundWinners(week: 19)
+                let alive: [UUID] = wildCardWinners.count == 3
+                    ? bySeed([seeds[0].teamID] + wildCardWinners)
+                    : seeds.prefix(4).map(\.teamID)   // legacy-save fallback
+                guard alive.count >= 4 else { continue }
+                newGames.append(Game(
+                    seasonYear: season, week: 20,
+                    homeTeamID: alive[0], awayTeamID: alive[3], isPlayoff: true
+                ))
+                newGames.append(Game(
+                    seasonYear: season, week: 20,
+                    homeTeamID: alive[1], awayTeamID: alive[2], isPlayoff: true
+                ))
+
+            case 21:
+                let divisionalWinners = roundWinners(week: 20)
+                let alive: [UUID] = divisionalWinners.count == 2
+                    ? bySeed(divisionalWinners)
+                    : seeds.prefix(2).map(\.teamID)   // legacy-save fallback
+                guard alive.count >= 2 else { continue }
+                newGames.append(Game(
+                    seasonYear: season, week: 21,
+                    homeTeamID: alive[0], awayTeamID: alive[1], isPlayoff: true
+                ))
+
+            case 22:
+                let titleGameWinners = roundWinners(week: 21)
+                if let champion = titleGameWinners.first {
+                    conferenceChampions.append(champion)
+                } else if let topSeed = seeds.first {
+                    conferenceChampions.append(topSeed.teamID)   // fallback
+                }
+
+            default:
+                break
+            }
+        }
+
+        // Super Bowl: cross-conference — better regular-season record "hosts".
+        if week == 22, conferenceChampions.count == 2 {
+            let recordByID = Dictionary(uniqueKeysWithValues: records.map { ($0.teamID, $0) })
+            let sorted = conferenceChampions.sorted {
+                (recordByID[$0]?.winPercentage ?? 0) > (recordByID[$1]?.winPercentage ?? 0)
+            }
+            newGames.append(Game(
+                seasonYear: season, week: 22,
+                homeTeamID: sorted[0], awayTeamID: sorted[1], isPlayoff: true
+            ))
+        }
+
+        for game in newGames {
+            modelContext.insert(game)
         }
     }
 
@@ -1217,6 +1499,50 @@ enum WeekAdvancer {
                 phase: .superBowl,
                 career: career,
                 teams: teams
+            )
+
+            // R31: end-of-season owner review — goals vs results, verdict,
+            // and consequences (bonus budget next season / warning / firing).
+            // Runs here while the final records are still intact.
+            if let playerTeamID = career.teamID,
+               let playerTeam = teamsByID[playerTeamID],
+               let owner = playerTeam.owner {
+                // Old saves may predate persisted goals — fall back to the
+                // same deterministic generation the Goals screen shows.
+                let baseGoals = career.ownerSeasonGoals.isEmpty
+                    ? OwnerGoalsEngine.generateSeasonGoals(team: playerTeam, owner: owner, career: career)
+                    : career.ownerSeasonGoals
+                let evaluated = OwnerGoalsEngine.evaluateGoalProgress(
+                    goals: baseGoals,
+                    team: playerTeam,
+                    career: career
+                )
+                career.ownerSeasonGoals = evaluated
+
+                let review = OwnerPersonaEngine.evaluateSeason(
+                    owner: owner,
+                    team: playerTeam,
+                    career: career,
+                    goals: evaluated
+                )
+                career.ownerSeasonReview = review
+                lastInboxMessages.append(
+                    OwnerPersonaEngine.reviewInboxMessage(review: review, ownerName: owner.name)
+                )
+                if review.verdict == .fired {
+                    wasFired = true
+                }
+            }
+
+            // R32: close the book on the season — champion, user record, and
+            // MVP into career history; increment the career counters
+            // (totalWins/playoffAppearances/championships) that the dashboard
+            // and fired-summary screens read but nothing ever wrote before.
+            recordSeasonSummary(
+                career: career,
+                teams: teams,
+                teamsByID: teamsByID,
+                modelContext: modelContext
             )
 
         case .proBowl:
@@ -1293,6 +1619,18 @@ enum WeekAdvancer {
         case .coachingChanges:
             var newMessages: [InboxMessage] = []
 
+            // R32: the annual retirement wave — the offseason's first move,
+            // before free agency, so departures actually leave the league
+            // (rostered players, holdouts, AND unsigned free agents).
+            // Star ceremonies, user-team farewells, and the Hall of Fame
+            // induction class all come out of this pass.
+            processPlayerRetirements(
+                career: career,
+                teamsByID: teamsByID,
+                allPlayers: allPlayers,
+                modelContext: modelContext
+            )
+
             // Generate draft class early so prospects are visible during offseason
             if !draftClassGenerated {
                 currentDraftClass = ScoutingEngine.generateDraftClass()
@@ -1306,37 +1644,61 @@ enum WeekAdvancer {
                 persistDraftClass(currentDraftClass, to: modelContext)
             }
 
+            // R30: Evaluate coaching-tree alumni against last season's results.
+            // Alumni whose new teams won big flip to "successful" — the tree
+            // grows the user's reputation (small legacy bonus, capped at +2).
+            evaluateCoachingTreeAlumni(
+                career: career,
+                teams: teams,
+                allCoaches: allCoaches
+            )
+
+            // R30: fresh offseason, fresh carousel feed.
+            career.coachCarouselLog = []
+
             // Check coordinator poaching for all teams (legacy system)
+            let coordinatorRoles: Set<CoachRole> = [
+                .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator
+            ]
             for team in teams {
                 let teamCoaches = allCoaches.filter { $0.teamID == team.id }
-                let poached = CoachingEngine.checkCoordinatorPoaching(
+                var poached = CoachingEngine.checkCoordinatorPoaching(
                     coaches: teamCoaches,
                     teamWins: team.wins
                 )
+                // R30: the user's coordinators only leave with the user's
+                // consent (interview-request flow) — position coaches can
+                // still be hired away silently.
+                if team.id == career.teamID {
+                    poached.removeAll { coordinatorRoles.contains($0.role) }
+                }
                 // Poached coaches leave the team
                 for coach in poached {
+                    if team.id == career.teamID {
+                        var tree = career.coachingTree
+                        CoachRelationshipEngine.recordDeparture(
+                            tree: &tree.entries,
+                            coach: coach,
+                            event: "departed_other",
+                            season: career.currentSeason,
+                            destination: "Hired away by another organization"
+                        )
+                        career.coachingTree = tree
+                    }
                     coach.teamID = nil
                 }
             }
 
-            // HC promotion poaching (NFL-realistic coordinator-to-HC pipeline)
-            for team in teams {
+            // HC promotion poaching (NFL-realistic coordinator-to-HC pipeline).
+            // R30: AI teams only — the user's coordinators go through the
+            // interview-request flow instead of vanishing overnight.
+            for team in teams where team.id != career.teamID {
                 let teamCoaches = allCoaches.filter { $0.teamID == team.id }
                 let poached = CoachingEngine.checkHCPromotionPoaching(
                     coaches: teamCoaches,
                     teamWins: team.wins
                 )
                 for coach in poached {
-                    if coach.teamID == career.teamID {
-                        let message = InboxMessage(
-                            sender: .leagueOffice,
-                            subject: "\(coach.fullName) Hired as Head Coach",
-                            body: "\(coach.fullName) has accepted a Head Coach position with another team. You will receive a compensatory 3rd round draft pick.",
-                            date: "Offseason - Coaching Changes, Season \(career.currentSeason)",
-                            category: .staffUpdate
-                        )
-                        newMessages.append(message)
-                    }
                     coach.teamID = nil
                 }
             }
@@ -1368,10 +1730,64 @@ enum WeekAdvancer {
                             category: .staffUpdate
                         )
                         newMessages.append(message)
+
+                        // R30: retirements close out the coaching-tree entry.
+                        var tree = career.coachingTree
+                        CoachRelationshipEngine.recordDeparture(
+                            tree: &tree.entries,
+                            coach: coach,
+                            event: "retired",
+                            season: career.currentSeason
+                        )
+                        career.coachingTree = tree
                     }
                     coach.teamID = nil  // Remove from team
                 }
             }
+
+            // MARK: R30 — Black Monday: the league-wide coaching carousel.
+            // Struggling AI teams fire their HCs (record + R29 hot-seat data),
+            // vacancies fill from rising coordinators and recycled HCs, and
+            // the coordinator seats those promotions empty fill in a chain.
+            let userTeamWins = teams.first { $0.id == career.teamID }?.wins ?? 0
+            let carousel = CoachCarouselEngine.runBlackMonday(
+                teams: teams,
+                allCoaches: allCoaches,
+                userTeamID: career.teamID,
+                userTeamWins: userTeamWins,
+                hotSeatTeamIDs: career.leagueNarrative?.hotSeatReported ?? [],
+                season: career.currentSeason
+            )
+            for coach in carousel.newCoaches {
+                modelContext.insert(coach)
+            }
+            lastNewsItems.append(contentsOf: carousel.news)
+            career.coachCarouselLog = Array(carousel.moves.reversed()) + career.coachCarouselLog
+
+            // R30: an AI team wants to interview one of the user's
+            // coordinators for its HC vacancy — the user decides in the
+            // Staff view (allow / block). Expires at the Combine if ignored.
+            if let request = carousel.interviewRequest {
+                career.pendingInterviewRequest = request
+                newMessages.append(InboxMessage(
+                    sender: .leagueOffice,
+                    subject: "Interview Request: \(request.coachName)",
+                    body: "The \(request.requestingTeamName) have requested permission to interview your \(request.coachRole.displayName.lowercased()) \(request.coachName) for their head coach vacancy. Your team's success has made your staff hot names around the league.\n\nGo to your Coaching Staff screen to allow or block the interview. If you allow it and \(request.coachName) is hired, they join your coaching tree — and you will receive a compensatory 3rd round draft pick.",
+                    date: "Offseason - Coaching Changes, Season \(career.currentSeason)",
+                    category: .staffUpdate,
+                    actionRequired: true,
+                    actionDestination: .coachingStaff
+                ))
+            }
+
+            // R32: after the carousel has settled, AI teams fill every
+            // remaining staff vacancy so league coaching quality holds up
+            // across a 10-season career.
+            refillAIStaffVacancies(
+                career: career,
+                teams: teams,
+                modelContext: modelContext
+            )
 
             // Increment scout seasonsInRole for familiarity bonus
             let allScouts = fetchAllScouts(modelContext: modelContext)
@@ -1441,11 +1857,41 @@ enum WeekAdvancer {
             )
             mockDraftHistory["Combine"] = currentMockDraft
 
-            lastNewsItems = NewsGenerator.generateOffseasonNews(
+            // R30: an unanswered interview request expires here — the club
+            // moved on, the coordinator stays (no hard feelings).
+            if let request = career.pendingInterviewRequest {
+                if let reqTeam = teams.first(where: { $0.id == request.requestingTeamID }),
+                   !allCoaches.contains(where: { $0.teamID == reqTeam.id && $0.role == .headCoach }),
+                   let newHC = CoachingEngine.generateCoachCandidates(role: .headCoach, count: 1).first {
+                    newHC.teamID = reqTeam.id
+                    newHC.hireSeasonYear = career.currentSeason
+                    newHC.contractYearsRemaining = 4
+                    modelContext.insert(newHC)
+                    lastNewsItems.append(NewsItem(
+                        headline: "\(reqTeam.fullName) name \(newHC.fullName) head coach",
+                        body: "With their interview request for \(request.coachName) left unanswered, the \(reqTeam.fullName) have moved on and hired \(newHC.fullName) as their next head coach.",
+                        category: .coachingChange,
+                        week: 0,
+                        season: career.currentSeason,
+                        relatedTeamID: reqTeam.id,
+                        sentiment: .neutral
+                    ))
+                }
+                lastInboxMessages.append(InboxMessage(
+                    sender: .leagueOffice,
+                    subject: "Interview Window Closed: \(request.coachName)",
+                    body: "The \(request.requestingTeamName) have withdrawn their interview request for \(request.coachName) and filled their head coach vacancy elsewhere. \(request.coachName) remains on your staff.",
+                    date: "Offseason - Combine, Season \(career.currentSeason)",
+                    category: .staffUpdate
+                ))
+                career.pendingInterviewRequest = nil
+            }
+
+            lastNewsItems.append(contentsOf: NewsGenerator.generateOffseasonNews(
                 phase: .combine,
                 career: career,
                 teams: teams
-            )
+            ))
 
         case .freeAgency:
             // FA engine logic (contract decrements, AI signings, cap growth)
@@ -1536,59 +1982,9 @@ enum WeekAdvancer {
             )
 
         case .draft:
-            // Generate draft order based on standings
-            let allGames = fetchAllGamesForSeason(
-                seasonYear: career.currentSeason,
-                modelContext: modelContext
-            )
-            var draftPicks = DraftEngine.generateDraftOrder(
-                teams: teams,
-                games: allGames,
-                seasonYear: career.currentSeason
-            )
-
-            // R23 — attach compensatory picks awarded at the close of free
-            // agency (if they weren't already slotted into a persisted pool).
-            let pendingComp = CompensatoryPickEngine.pendingAwards()
-            if !pendingComp.isEmpty {
-                var teamAbbrs: [UUID: String] = [:]
-                for team in teams { teamAbbrs[team.id] = team.abbreviation }
-                let compPicks = CompensatoryPickEngine.applyAwards(
-                    pendingComp,
-                    toPickPool: draftPicks,
-                    seasonYear: career.currentSeason,
-                    teamAbbrs: teamAbbrs
-                )
-                draftPicks.append(contentsOf: compPicks)
-                draftPicks.sort { $0.pickNumber < $1.pickNumber }
-                CompensatoryPickEngine.clearPendingAwards()
-            }
-
-            currentDraftPicks = draftPicks
-
-            // Persist draft picks
-            for pick in draftPicks {
-                modelContext.insert(pick)
-            }
-
-            // Pre-draft mock draft (final projection with actual draft order)
-            currentMockDraft = ScoutingEngine.generateMockDraft(
-                prospects: currentDraftClass,
-                draftPicks: draftPicks,
-                teams: teams,
-                players: allPlayers
-            )
-            ScoutingEngine.updateTeamInterest(
-                prospects: &currentDraftClass,
-                teams: teams,
-                players: allPlayers
-            )
-            ScoutingEngine.applyMockDraftToProspects(
-                prospects: &currentDraftClass,
-                mockDraft: currentMockDraft
-            )
-            mockDraftHistory["Pre-Draft"] = currentMockDraft
-
+            // The draft order was prepared when this phase was ENTERED (see
+            // `prepareDraftOrder` below) so the war room had real picks to
+            // run on — here the concluded draft only emits its news.
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .draft,
                 career: career,
@@ -1679,6 +2075,18 @@ enum WeekAdvancer {
             // Note: processOffseason already calls applyAgeRegression which increments
             // player.age and player.yearsPro, so no separate age increment needed.
 
+            // R32: holdouts skip camp DEVELOPMENT but still get a year older,
+            // and unsigned free agents age too. Before this fix both groups
+            // were frozen in time — they never regressed and never retired,
+            // which slowly corrupted multi-season careers.
+            for player in allPlayers where !player.isRetired {
+                let agedByCamp = player.teamID != nil && !player.isHoldingOut
+                if !agedByCamp {
+                    PlayerDevelopmentEngine.applyAgeRegression(player)
+                    player.fatigue = 0
+                }
+            }
+
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .trainingCamp,
                 career: career,
@@ -1707,6 +2115,12 @@ enum WeekAdvancer {
             if !openBattles.isEmpty {
                 PositionBattleTracker.resolveBattles(battles: openBattles, modelContext: modelContext)
             }
+
+            // R32: league-wide final cutdown — AI teams trim to the roster
+            // ceiling when the user does theirs. Draft classes + UDFA waves
+            // + FA signings add ~15-20 players/season and nothing ever cut
+            // AI rosters before, so multi-season leagues ballooned past 90.
+            trimAIRosters(career: career, teams: teams, allPlayers: allPlayers)
 
             // Player handles manually — just generate phase news
             lastNewsItems = NewsGenerator.generateOffseasonNews(
@@ -1775,6 +2189,21 @@ enum WeekAdvancer {
             )
         }
 
+        // R32: the draft order must exist BEFORE the draft phase begins —
+        // the war room reads persisted picks for the current season the
+        // moment it opens. Previously the order was generated when LEAVING
+        // the draft phase (and stamped with the season-cycle year), so from
+        // season 2 onward the draft room found no picks, comp picks attached
+        // after the fact, and the league never restocked through the draft.
+        if nextPhase == .draft {
+            prepareDraftOrder(
+                career: career,
+                teams: teams,
+                allPlayers: allPlayers,
+                modelContext: modelContext
+            )
+        }
+
         // Reset FA state when entering the free agency phase
         if nextPhase == .freeAgency {
             career.freeAgencyRound = 0
@@ -1812,6 +2241,91 @@ enum WeekAdvancer {
                 owner: playerTeam.owner
             ))
         }
+    }
+
+    // MARK: - Private: Draft Order Preparation (R32)
+
+    /// Ensures the current season's draft has a full, persisted pick order the
+    /// moment the `.draft` phase begins. Runs at the proDays → draft boundary.
+    ///
+    /// - Season 1 reuses the league-generation pool (the real first-round
+    ///   order) — including any comp picks already slotted into it at the
+    ///   close of free agency.
+    /// - Season 2+ generates a fresh 224-pick order from the just-finished
+    ///   season's standings and attaches comp picks stashed at FA close.
+    ///
+    /// The pool is exposed via `currentDraftPicks` and the final pre-draft
+    /// mock projection is computed here so the war room, dashboards, and
+    /// prospect boards all see the actual order before the first selection.
+    private static func prepareDraftOrder(
+        career: Career,
+        teams: [Team],
+        allPlayers: [Player],
+        modelContext: ModelContext
+    ) {
+        let season = career.currentSeason
+        let existingDescriptor = FetchDescriptor<DraftPick>(
+            predicate: #Predicate<DraftPick> {
+                $0.seasonYear == season && $0.isComplete == false
+            }
+        )
+        var draftPicks = (try? modelContext.fetch(existingDescriptor)) ?? []
+
+        if draftPicks.isEmpty {
+            // Season 2+: build the order from the season that just ended.
+            let allGames = fetchAllGamesForSeason(
+                seasonYear: season,
+                modelContext: modelContext
+            )
+            draftPicks = DraftEngine.generateDraftOrder(
+                teams: teams,
+                games: allGames,
+                seasonYear: season
+            )
+            for pick in draftPicks {
+                modelContext.insert(pick)
+            }
+        }
+
+        // R23 — attach compensatory picks awarded at the close of free
+        // agency (if they weren't already slotted into a persisted pool).
+        let pendingComp = CompensatoryPickEngine.pendingAwards()
+        if !pendingComp.isEmpty {
+            var teamAbbrs: [UUID: String] = [:]
+            for team in teams { teamAbbrs[team.id] = team.abbreviation }
+            let compPicks = CompensatoryPickEngine.applyAwards(
+                pendingComp,
+                toPickPool: draftPicks,
+                seasonYear: season,
+                teamAbbrs: teamAbbrs
+            )
+            for pick in compPicks {
+                modelContext.insert(pick)
+            }
+            draftPicks.append(contentsOf: compPicks)
+            CompensatoryPickEngine.clearPendingAwards()
+        }
+
+        draftPicks.sort { $0.pickNumber < $1.pickNumber }
+        currentDraftPicks = draftPicks
+
+        // Pre-draft mock draft (final projection with the actual order).
+        currentMockDraft = ScoutingEngine.generateMockDraft(
+            prospects: currentDraftClass,
+            draftPicks: draftPicks,
+            teams: teams,
+            players: allPlayers
+        )
+        ScoutingEngine.updateTeamInterest(
+            prospects: &currentDraftClass,
+            teams: teams,
+            players: allPlayers
+        )
+        ScoutingEngine.applyMockDraftToProspects(
+            prospects: &currentDraftClass,
+            mockDraft: currentMockDraft
+        )
+        mockDraftHistory["Pre-Draft"] = currentMockDraft
     }
 
     // MARK: - Private: Compensatory Picks (R23)
@@ -1987,7 +2501,14 @@ enum WeekAdvancer {
 
     /// Updates `Team.wins`/`losses`/`ties` from a played game's final score.
     /// Internal (not private) because it is shared with `LiveGameEngine.persist`.
+    ///
+    /// R32: playoff games never touch these fields — `Team.wins/losses/ties`
+    /// are the REGULAR-SEASON record that standings, budgets, and owner goals
+    /// all read. Playoff outcomes live in the bracket games themselves.
+    /// (Before R32 the postseason had no real Game rows, so this guard
+    /// changes nothing for existing behavior.)
     static func updateTeamRecords(game: Game, teamsByID: [UUID: Team]) {
+        guard !game.isPlayoff else { return }
         guard let homeScore = game.homeScore,
               let awayScore = game.awayScore else { return }
 
@@ -2138,6 +2659,65 @@ enum WeekAdvancer {
         return (try? modelContext.fetch(descriptor)) ?? []
     }
 
+    // MARK: - R30: Coaching Tree Alumni Evaluation
+
+    /// Once per offseason: checks how the user's coaching-tree alumni fared at
+    /// their new stops. An alumnus on a team that won 10+ games flips to
+    /// "successful", which grows the tree's legacy score — and the user's own
+    /// reputation gets a small bump (+1 per newly successful alumnus, max +2
+    /// per season) with a news nod for the first one.
+    private static func evaluateCoachingTreeAlumni(
+        career: Career,
+        teams: [Team],
+        allCoaches: [Coach]
+    ) {
+        var tree = career.coachingTree
+        guard !tree.alumni.isEmpty else { return }
+
+        let teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
+        var reputationGain = 0
+        var firstSuccess: (coachName: String, teamName: String, role: CoachRole)?
+
+        for entry in tree.alumni where !entry.wasSuccessful {
+            // Alumni are tracked by name snapshot — find them in the league.
+            guard let coach = allCoaches.first(where: {
+                      $0.fullName == entry.coachName && $0.teamID != nil && $0.teamID != career.teamID
+                  }),
+                  let team = coach.teamID.flatMap({ teamsByID[$0] })
+            else { continue }
+
+            // Success at the next stop: a clearly winning season.
+            guard team.wins >= 10 else { continue }
+
+            CoachRelationshipEngine.markCoachingTreeSuccess(
+                tree: &tree.entries,
+                coachName: entry.coachName,
+                wasSuccessful: true
+            )
+            if reputationGain < 2 { reputationGain += 1 }
+            if firstSuccess == nil {
+                firstSuccess = (entry.coachName, team.fullName, coach.role)
+            }
+        }
+
+        guard reputationGain > 0, let success = firstSuccess else {
+            career.coachingTree = tree
+            return
+        }
+
+        career.coachingTree = tree
+        career.reputation = min(99, career.reputation + reputationGain)
+
+        lastNewsItems.append(NewsItem(
+            headline: "Coaching tree watch: \(success.coachName) thriving",
+            body: "\(success.coachName), who cut their teeth on \(career.playerName)'s staff, just led the \(success.teamName) to a double-digit win season as \(success.role.displayName.lowercased()). Around the league, \(career.playerName)'s coaching tree keeps gaining respect.",
+            category: .coachingChange,
+            week: 0,
+            season: career.currentSeason,
+            sentiment: .positive
+        ))
+    }
+
     private static func fetchAllScouts(modelContext: ModelContext) -> [Scout] {
         let descriptor = FetchDescriptor<Scout>()
         return (try? modelContext.fetch(descriptor)) ?? []
@@ -2149,6 +2729,349 @@ enum WeekAdvancer {
             predicate: #Predicate { !$0.isComplete }
         )
         return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    // MARK: - Private: Season Summary & Career Counters (R32)
+
+    /// Writes the finished season into `career.seasonSummaries` (champion,
+    /// user record, MVP) and increments the career-long counters. Runs during
+    /// the `.superBowl` phase, right after the title game has been simulated
+    /// and while the final records are still intact. Idempotent per season.
+    private static func recordSeasonSummary(
+        career: Career,
+        teams: [Team],
+        teamsByID: [UUID: Team],
+        modelContext: ModelContext
+    ) {
+        let season = career.currentSeason
+        guard !career.seasonSummaries.contains(where: { $0.season == season }) else { return }
+
+        let seasonGames = fetchAllGamesForSeason(seasonYear: season, modelContext: modelContext)
+        let playoffGames = seasonGames.filter { $0.isPlayoff }
+        let superBowlGame = playoffGames.first { $0.week == 22 && $0.isPlayed }
+
+        // Champion = Super Bowl winner; fallback (legacy edge) = best record.
+        let championID: UUID? = superBowlGame?.winnerID
+            ?? teams.max {
+                ($0.wins, $1.losses) < ($1.wins, $0.losses)
+            }?.id
+        let championName = championID.flatMap { teamsByID[$0]?.fullName } ?? "Unknown"
+
+        var userWins = 0, userLosses = 0, userTies = 0
+        var madePlayoffs = false
+        var wonChampionship = false
+        if let userTeamID = career.teamID, let userTeam = teamsByID[userTeamID] {
+            userWins = userTeam.wins
+            userLosses = userTeam.losses
+            userTies = userTeam.ties
+            // Every bracket team plays at least one playoff game (the #1 seed
+            // appears in the Divisional Round), so participation covers it.
+            madePlayoffs = playoffGames.contains {
+                $0.homeTeamID == userTeamID || $0.awayTeamID == userTeamID
+            }
+            wonChampionship = (championID == userTeamID)
+        }
+
+        let mvp = career.leagueNarrative?.mvpRace.first
+
+        let summary = SeasonSummary(
+            season: season,
+            championTeamID: championID,
+            championTeamName: championName,
+            userWins: userWins,
+            userLosses: userLosses,
+            userTies: userTies,
+            userMadePlayoffs: madePlayoffs,
+            userWonChampionship: wonChampionship,
+            mvpName: mvp?.playerName,
+            mvpTeamAbbr: mvp?.teamAbbr
+        )
+        career.seasonSummaries = [summary] + career.seasonSummaries
+
+        // Career-long counters (regular-season record only; the playoff
+        // guard in `updateTeamRecords` keeps team W/L regular-season-pure).
+        career.totalWins += userWins
+        career.totalLosses += userLosses
+        if madePlayoffs { career.playoffAppearances += 1 }
+        if wonChampionship {
+            career.championships += 1
+            career.legacy.recordAchievement(LegacyTracker.LegacyAchievement(
+                title: "Super Bowl Champion",
+                description: "Won the Season \(season) championship.",
+                points: 100,
+                season: season
+            ))
+            lastInboxMessages.append(InboxMessage(
+                sender: .leagueOffice,
+                subject: "WORLD CHAMPIONS",
+                body: "Your team has won the Super Bowl. The city is planning the parade — enjoy this one, coach. It goes on your legacy forever.",
+                date: "Super Bowl, Season \(season)",
+                category: .leagueNotice
+            ))
+        }
+
+        // Championship headline for the league feed.
+        if let championID, let champion = teamsByID[championID] {
+            let scoreLine: String
+            if let game = superBowlGame,
+               let home = game.homeScore, let away = game.awayScore,
+               let loserID = game.loserID,
+               let loser = teamsByID[loserID] {
+                scoreLine = "They defeated the \(loser.fullName) \(max(home, away))-\(min(home, away)) in the title game."
+            } else {
+                scoreLine = "They finished the year as the league's best team."
+            }
+            let mvpLine = mvp.map { " Season MVP honors went to \($0.playerName) (\($0.teamAbbr))." } ?? ""
+            lastNewsItems.append(NewsItem(
+                headline: "\(champion.fullName) win the Super Bowl",
+                body: "The \(champion.fullName) are the Season \(season) champions. \(scoreLine)\(mvpLine)",
+                category: .award,
+                week: 22,
+                season: season,
+                relatedTeamID: championID,
+                sentiment: wonChampionship ? .positive : .neutral
+            ))
+        }
+    }
+
+    // MARK: - Private: Player Retirements (R32)
+
+    /// Once per offseason (`.coachingChanges`): rolls retirement for every
+    /// non-retired player in the league, applies the departures, and produces
+    /// the news/inbox/Hall of Fame output:
+    /// - stars (career peak OVR ≥ 88) get a ceremony headline,
+    /// - the user's own legends say farewell via the inbox (+ legacy credit),
+    /// - HOF qualifiers form the annual induction class.
+    private static func processPlayerRetirements(
+        career: Career,
+        teamsByID: [UUID: Team],
+        allPlayers: [Player],
+        modelContext: ModelContext
+    ) {
+        // Career-peak OVR per player from season-history snapshots.
+        let historyRows = (try? modelContext.fetch(FetchDescriptor<PlayerSeasonHistory>())) ?? []
+        var peakByID: [UUID: Int] = [:]
+        for row in historyRows {
+            peakByID[row.playerID] = max(peakByID[row.playerID] ?? 0, row.overallAtEndOfSeason)
+        }
+
+        let retirements = PlayerRetirementEngine.evaluateRetirements(
+            allPlayers: allPlayers,
+            peakOverallByPlayerID: peakByID
+        )
+        guard !retirements.isEmpty else { return }
+
+        let season = career.currentSeason
+        var inductees: [HallOfFameEntry] = []
+        var starHeadlines = 0
+
+        for retirement in retirements {
+            let player = retirement.player
+            let teamName = retirement.teamIDAtRetirement
+                .flatMap { teamsByID[$0]?.fullName } ?? "Free Agent"
+            let wasUserPlayer = career.teamID != nil
+                && retirement.teamIDAtRetirement == career.teamID
+
+            PlayerRetirementEngine.retire(retirement, teamsByID: teamsByID)
+
+            // Ceremony headline for league-wide stars (cap 4 per offseason).
+            if retirement.isStar && starHeadlines < 4 {
+                starHeadlines += 1
+                lastNewsItems.append(NewsItem(
+                    headline: "\(player.fullName) retires after \(max(1, player.yearsPro)) seasons",
+                    body: "One of the league's greats is calling it a career. \(player.fullName), the \(teamName == "Free Agent" ? "veteran" : teamName) \(player.position.rawValue) whose play peaked at a \(retirement.peakOverall) overall, announced his retirement today at age \(player.age). Teams around the league honored him with tributes\(retirement.isHallOfFamer ? " — a Hall of Fame induction awaits" : "").",
+                    category: .retirement,
+                    week: 0,
+                    season: season,
+                    relatedTeamID: retirement.teamIDAtRetirement,
+                    relatedPlayerID: player.id,
+                    sentiment: .neutral
+                ))
+            }
+
+            // The user's own legend gets a personal farewell.
+            if wasUserPlayer && (retirement.isStar || player.yearsPro >= 10) {
+                lastInboxMessages.append(InboxMessage(
+                    sender: .leagueOffice,
+                    subject: "\(player.fullName) Announces Retirement",
+                    body: "\(player.fullName) (\(player.position.rawValue), age \(player.age)) is hanging up his cleats after \(max(1, player.yearsPro)) pro seasons. He asked that the organization — and you personally — be thanked for the way his final chapter was handled. The locker room will feel his absence.\(retirement.isHallOfFamer ? "\n\nExpect the call from Canton: he retires as a Hall of Famer." : "")",
+                    date: "Offseason - Coaching Changes, Season \(season)",
+                    category: .leagueNotice
+                ))
+                career.legacy.recordAchievement(LegacyTracker.LegacyAchievement(
+                    title: "A Legend Retires",
+                    description: "\(player.fullName) played his final season on your roster.",
+                    points: 5,
+                    season: season
+                ))
+            }
+
+            if retirement.isHallOfFamer {
+                inductees.append(HallOfFameEntry(
+                    playerName: player.fullName,
+                    positionRaw: player.position.rawValue,
+                    peakOverall: retirement.peakOverall,
+                    finalAge: player.age,
+                    seasonsPlayed: max(1, player.yearsPro),
+                    inductionSeason: season,
+                    retiredFromTeamName: teamName,
+                    wasUserTeamPlayer: wasUserPlayer
+                ))
+            }
+        }
+
+        // Annual Hall of Fame induction class.
+        if !inductees.isEmpty {
+            career.hallOfFame = inductees + career.hallOfFame
+            let names = inductees
+                .map { "\($0.playerName) (\($0.positionRaw))" }
+                .joined(separator: ", ")
+            lastNewsItems.append(NewsItem(
+                headline: "Hall of Fame Class of \(season) announced",
+                body: "The league has announced this year's Hall of Fame induction class: \(names). The enshrinement ceremony will be held before the season opener.",
+                category: .award,
+                week: 0,
+                season: season,
+                sentiment: .positive
+            ))
+        }
+
+        // Roundup so the wave of departures is visible in the feed.
+        lastNewsItems.append(NewsItem(
+            headline: "\(retirements.count) player\(retirements.count == 1 ? "" : "s") announce\(retirements.count == 1 ? "s" : "") retirement",
+            body: "The annual wave of retirements has reshaped rosters across the league. Teams will look to free agency and the draft to fill the holes left behind.",
+            category: .retirement,
+            week: 0,
+            season: season,
+            sentiment: .neutral
+        ))
+    }
+
+    // MARK: - Private: League Health (R32)
+
+    /// Deletes stale rows a finished season leaves behind:
+    /// - ALL `CollegeProspect` rows (the draft is over; next season's class
+    ///   regenerates fresh — and the restart-restore path in ScoutingHubView
+    ///   reads every persisted prospect, so stale rows would pollute it),
+    /// - `Game` rows older than the just-finished season (~272/season).
+    private static func purgeStaleSeasonData(career: Career, modelContext: ModelContext) {
+        let prospects = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>())) ?? []
+        for prospect in prospects {
+            modelContext.delete(prospect)
+        }
+
+        let cutoff = career.currentSeason - 1   // keep last season + the new one
+        let oldGamesDescriptor = FetchDescriptor<Game>(
+            predicate: #Predicate<Game> { $0.seasonYear < cutoff }
+        )
+        let oldGames = (try? modelContext.fetch(oldGamesDescriptor)) ?? []
+        for game in oldGames {
+            modelContext.delete(game)
+        }
+    }
+
+    /// Roster floor for AI teams at season start: retirements + expiring
+    /// contracts can shrink an AI roster below playable size over several
+    /// seasons. Teams below 46 players sign veteran-minimum free agents at
+    /// their top need positions; when the pool runs dry they sign generated
+    /// street free agents so every team always fields a full lineup.
+    private static func refillAIRosters(
+        career: Career,
+        teams: [Team],
+        modelContext: ModelContext
+    ) {
+        let minimumRosterSize = 46
+        let allPlayers = fetchAllPlayers(modelContext: modelContext)
+        var freeAgentPool = allPlayers
+            .filter { $0.teamID == nil && !$0.isRetired && !$0.isInjured }
+            .sorted { $0.overall > $1.overall }
+
+        for team in teams where team.id != career.teamID {
+            var roster = allPlayers.filter { $0.teamID == team.id }
+            guard roster.count < minimumRosterSize else { continue }
+
+            while roster.count < minimumRosterSize {
+                let needs = DraftEngine.topTeamNeeds(roster: roster, limit: 3)
+
+                let signing: Player
+                if let index = freeAgentPool.firstIndex(where: { needs.contains($0.position) }) {
+                    signing = freeAgentPool.remove(at: index)
+                } else if !freeAgentPool.isEmpty {
+                    signing = freeAgentPool.removeFirst()
+                } else {
+                    // Pool dry — a street free agent reports for a tryout.
+                    let position = needs.first ?? .WR
+                    let generated = LeagueGenerator.generatePlayer(
+                        position: position,
+                        teamID: team.id,
+                        depthIndex: 2
+                    )
+                    modelContext.insert(generated)
+                    signing = generated
+                }
+
+                signing.teamID = team.id
+                signing.contractYearsRemaining = Int.random(in: 1...2)
+                signing.annualSalary = max(750, min(signing.annualSalary, 1_500))
+                team.currentCapUsage += signing.annualSalary
+                roster.append(signing)
+            }
+        }
+    }
+
+    /// R32: the AI side of final cutdown day. Every AI roster above the
+    /// 53-man ceiling releases its lowest-rated players into the free-agent
+    /// pool (mirroring the contract-expiry bookkeeping: cap freed, salary
+    /// zeroed, no comp-pick credit — cuts never earn comp picks).
+    private static func trimAIRosters(
+        career: Career,
+        teams: [Team],
+        allPlayers: [Player]
+    ) {
+        let rosterCeiling = 53
+        for team in teams where team.id != career.teamID {
+            let roster = allPlayers
+                .filter { $0.teamID == team.id && !$0.isRetired }
+                .sorted { $0.overall > $1.overall }
+            guard roster.count > rosterCeiling else { continue }
+
+            for player in roster.suffix(roster.count - rosterCeiling) {
+                team.currentCapUsage -= player.annualSalary
+                player.teamID = nil
+                player.annualSalary = 0
+                player.contractYearsRemaining = 0
+                player.isHoldingOut = false
+                player.trainingFocusArea = nil
+                player.trainingPosition = nil
+            }
+        }
+    }
+
+    /// AI teams refill EVERY vacant coaching role each offseason so league
+    /// staffing doesn't erode across seasons (poaching/retirements/carousel
+    /// moves used to leave permanent holes — only the user could hire, so by
+    /// season 5+ AI player development quietly collapsed).
+    private static func refillAIStaffVacancies(
+        career: Career,
+        teams: [Team],
+        modelContext: ModelContext
+    ) {
+        // Re-fetch: the carousel above this call moved coaches around and
+        // inserted brand-new ones.
+        let coaches = fetchAllCoaches(modelContext: modelContext)
+
+        for team in teams where team.id != career.teamID {
+            let filledRoles = Set(coaches.filter { $0.teamID == team.id }.map(\.role))
+            for role in CoachRole.allCases where !filledRoles.contains(role) {
+                guard let hire = CoachingEngine.generateCoachCandidates(role: role, count: 1).first else {
+                    continue
+                }
+                hire.teamID = team.id
+                hire.hireSeasonYear = career.currentSeason
+                hire.contractYearsRemaining = Int.random(in: 2...4)
+                modelContext.insert(hire)
+            }
+        }
     }
 
     // MARK: - Private: Season History Recording
@@ -2173,7 +3096,7 @@ enum WeekAdvancer {
         let existing = (try? modelContext.fetch(existingDescriptor)) ?? []
         let existingPlayerIDs = Set(existing.map(\.playerID))
 
-        for player in players where !existingPlayerIDs.contains(player.id) {
+        for player in players where !existingPlayerIDs.contains(player.id) && !player.isRetired {
             let entry = PlayerSeasonHistory(
                 playerID: player.id,
                 season: season,

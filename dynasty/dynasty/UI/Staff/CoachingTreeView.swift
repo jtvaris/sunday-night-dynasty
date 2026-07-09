@@ -9,7 +9,22 @@ struct CoachingTreeView: View {
 
     @Bindable var career: Career
 
+    /// R30: when embedded as a tab inside CoachingStaffView, skip the
+    /// navigation chrome (the parent owns the title).
+    var embedded: Bool = false
+
     var body: some View {
+        if embedded {
+            treeContent
+        } else {
+            treeContent
+                .navigationTitle("Coaching Tree")
+                .navigationBarTitleDisplayMode(.large)
+                .toolbarColorScheme(.dark, for: .navigationBar)
+        }
+    }
+
+    private var treeContent: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
@@ -21,9 +36,6 @@ struct CoachingTreeView: View {
             .scrollContentBackground(.hidden)
             .listStyle(.insetGrouped)
         }
-        .navigationTitle("Coaching Tree")
-        .navigationBarTitleDisplayMode(.large)
-        .toolbarColorScheme(.dark, for: .navigationBar)
     }
 
     // MARK: - Coaching Tree Data

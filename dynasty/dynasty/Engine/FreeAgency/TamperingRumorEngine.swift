@@ -35,7 +35,7 @@ enum TamperingRumorEngine {
     /// new league year. Franchise-tagged players are off the market.
     static func upcomingFreeAgents(allPlayers: [Player]) -> [Player] {
         allPlayers.filter { player in
-            guard !player.isFranchiseTagged else { return false }
+            guard !player.isFranchiseTagged, !player.isRetired else { return false }
             if player.teamID == nil && player.contractYearsRemaining == 0 { return true }
             return player.teamID != nil && player.contractYearsRemaining == 1
         }

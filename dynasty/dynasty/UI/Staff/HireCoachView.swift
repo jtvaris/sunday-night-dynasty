@@ -287,6 +287,7 @@ struct HireCoachView: View {
                 // Pass user's coaching style so chemistry can be evaluated against the user.
                 userIsHeadCoach: allCareers.first?.role == .gmAndHeadCoach,
                 userCoachingStyle: allCareers.first?.coachingStyle,
+                marketRivals: CoachCarouselEngine.demand(for: candidate).rivalTeams,
                 onHire: { hire(candidate) },
                 onRejected: { rejectedCandidates.insert(candidate.id) }
             )
@@ -667,6 +668,23 @@ struct HireCoachView: View {
                                 .padding(.vertical, 1)
                                 .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 3))
                         }
+                        // R30 Market 2.0: rival-demand badge — flame + how many
+                        // other teams are pursuing this candidate.
+                        let demand = CoachCarouselEngine.demand(for: candidate)
+                        if demand.rivalTeams > 0 {
+                            let demandColor: Color = demand.level == .high ? .danger : .warning
+                            HStack(spacing: 2) {
+                                Image(systemName: "flame.fill")
+                                    .font(.system(size: 7))
+                                Text("\(demand.rivalTeams)")
+                                    .font(.system(size: 7, weight: .black).monospacedDigit())
+                            }
+                            .foregroundStyle(demandColor)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(demandColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+                            .accessibilityLabel("\(demand.rivalTeams) rival teams pursuing")
+                        }
                     }
                     HStack(spacing: 4) {
                         // Fix #59 + #148: Coaching personality — shorter labels to avoid truncation.
@@ -958,6 +976,18 @@ struct HireCoachView: View {
         modelContext.insert(candidate)
         hiredCoachID = candidate.id
 
+        // R30: every hire joins the user's coaching tree.
+        if let career = allCareers.first {
+            var tree = career.coachingTree
+            CoachRelationshipEngine.updateCoachingTree(
+                tree: &tree.entries,
+                coach: candidate,
+                event: "hired",
+                season: career.currentSeason
+            )
+            career.coachingTree = tree
+        }
+
         // Fix #88: Save context before dismissing so CoachingStaffView's @Query refreshes
         try? modelContext.save()
 
@@ -991,6 +1021,9 @@ private struct CandidateDetailSheet: View {
     let userIsHeadCoach: Bool
     /// BUG FIX: User's coaching style — used as the HC reference for chemistry when userIsHeadCoach.
     let userCoachingStyle: CoachingStyle?
+    /// R30 Market 2.0: how many rival teams are pursuing this candidate.
+    /// Competition raises rejection risk unless the user overbids.
+    let marketRivals: Int
     let onHire: () -> Void
     /// #271: Callback when candidate rejects offer
     var onRejected: (() -> Void)?
@@ -1001,7 +1034,7 @@ private struct CandidateDetailSheet: View {
     @State private var proposedYears: Int = 3
     @State private var negotiationResult: NegotiationResult?
 
-    init(candidate: Coach, remainingBudget: Int, isHired: Bool, headCoach: Coach?, currentCoach: Coach?, candidateRank: Int, totalCandidates: Int, schemeFitResult: (color: Color, label: String)?, userIsHeadCoach: Bool = false, userCoachingStyle: CoachingStyle? = nil, onHire: @escaping () -> Void, onRejected: (() -> Void)? = nil) {
+    init(candidate: Coach, remainingBudget: Int, isHired: Bool, headCoach: Coach?, currentCoach: Coach?, candidateRank: Int, totalCandidates: Int, schemeFitResult: (color: Color, label: String)?, userIsHeadCoach: Bool = false, userCoachingStyle: CoachingStyle? = nil, marketRivals: Int = 0, onHire: @escaping () -> Void, onRejected: (() -> Void)? = nil) {
         self.candidate = candidate
         self.remainingBudget = remainingBudget
         self.isHired = isHired
@@ -1012,6 +1045,7 @@ private struct CandidateDetailSheet: View {
         self.schemeFitResult = schemeFitResult
         self.userIsHeadCoach = userIsHeadCoach
         self.userCoachingStyle = userCoachingStyle
+        self.marketRivals = marketRivals
         self.onHire = onHire
         self.onRejected = onRejected
         self._proposedSalary = State(initialValue: Double(candidate.salary))
@@ -1019,12 +1053,28 @@ private struct CandidateDetailSheet: View {
 
     private var askingSalary: Double { Double(candidate.salary) }
 
-    /// Chance the candidate rejects a below-asking offer (0.0 - 1.0).
+    /// R30 Market 2.0: extra rejection risk from rival teams pursuing the same
+    /// candidate. Each rival adds 6%; overbidding melts it away — +10% over
+    /// asking locks rivals out entirely.
+    private var competitionRisk: Double {
+        guard marketRivals > 0 else { return 0.0 }
+        let overbid = max(0.0, proposedSalary / askingSalary - 1.0)
+        let mitigation = max(0.0, 1.0 - overbid * 10.0)
+        return Double(marketRivals) * 0.06 * mitigation
+    }
+
+    /// Chance the candidate rejects the offer (0.0 - 1.0): below-asking
+    /// discount risk plus rival-market competition (R30).
     private var rejectionChance: Double {
-        guard proposedSalary < askingSalary else { return 0.0 }
-        let discount = (askingSalary - proposedSalary) / askingSalary
-        // Up to 90% rejection at 50%+ discount
-        return min(0.9, discount * 1.8)
+        let discountRisk: Double
+        if proposedSalary < askingSalary {
+            let discount = (askingSalary - proposedSalary) / askingSalary
+            // Up to 90% rejection at 50%+ discount
+            discountRisk = min(0.9, discount * 1.8)
+        } else {
+            discountRisk = 0.0
+        }
+        return min(0.95, discountRisk + competitionRisk)
     }
 
     /// Fix #69: Acceptance likelihood label that updates with salary slider.
@@ -1291,13 +1341,14 @@ private struct CandidateDetailSheet: View {
     // MARK: - #91: Other Teams' Interest
 
     private var demandBadge: some View {
-        let ovr = coachOverall(candidate)
+        // R30 Market 2.0: badge reflects the actual rival count used in
+        // negotiation math (was a rough OVR estimate before).
         let (label, icon): (String, String) = {
-            if ovr >= 80 { return ("High demand (4-5 teams)", "flame.fill") }
-            if ovr >= 70 { return ("Moderate (2-3 teams)", "person.2.fill") }
+            if marketRivals >= 2 { return ("High demand (\(marketRivals) rival teams)", "flame.fill") }
+            if marketRivals == 1 { return ("Moderate (1 rival team)", "person.2.fill") }
             return ("Limited interest", "person.fill")
         }()
-        let color: Color = ovr >= 80 ? .danger : ovr >= 70 ? .warning : .textTertiary
+        let color: Color = marketRivals >= 2 ? .danger : marketRivals == 1 ? .warning : .textTertiary
         return HStack(spacing: 4) {
             Image(systemName: icon)
                 .font(.system(size: 8, weight: .bold))
@@ -2158,6 +2209,25 @@ private struct CandidateDetailSheet: View {
                 }
             }
 
+            // R30 Market 2.0: rival-competition note — overbidding locks rivals out.
+            if marketRivals > 0 {
+                HStack(spacing: 8) {
+                    Image(systemName: "flame.fill")
+                        .foregroundStyle(competitionRisk > 0 ? Color.danger : Color.success)
+                    Text(competitionRisk > 0
+                         ? "\(marketRivals) rival team\(marketRivals == 1 ? "" : "s") pursuing — you could lose this candidate. Overbid (+10%) to lock rivals out."
+                         : "\(marketRivals) rival team\(marketRivals == 1 ? "" : "s") pursuing — your overbid locks them out.")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.textSecondary)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill((competitionRisk > 0 ? Color.danger : Color.success).opacity(0.08))
+                )
+            }
+
             // Rejection warning
             if rejectionChance > 0 {
                 HStack(spacing: 8) {
@@ -2309,7 +2379,13 @@ private struct CandidateDetailSheet: View {
             // #92: Counter-offer instead of instant rejection
             let minAcceptable = Int(counterOfferMinimum)
             let ratio = proposedSalary / askingSalary
-            if ratio >= 0.65 {
+            // R30 Market 2.0: with multiple rivals in pursuit, a rejection
+            // often means the candidate takes a competing offer instead of
+            // giving you a second chance.
+            let lostToRival = marketRivals >= 2
+                && competitionRisk > 0
+                && Double.random(in: 0...1) < 0.5
+            if ratio >= 0.65 && !lostToRival {
                 // Coach counters instead of walking away
                 negotiationResult = NegotiationResult(
                     accepted: false,
@@ -2317,11 +2393,13 @@ private struct CandidateDetailSheet: View {
                     message: "\(candidate.firstName) rejected your offer but is willing to negotiate. Coach wants at least \(salaryFormatted(minAcceptable))."
                 )
             } else {
-                // Offer too low — walks away
+                // Offer too low or a rival club swooped in — walks away
                 negotiationResult = NegotiationResult(
                     accepted: false,
                     counterOffer: nil,
-                    message: "\(candidate.firstName) has signed elsewhere. They are no longer available."
+                    message: lostToRival
+                        ? "\(candidate.firstName) has accepted an offer from a rival organization. They are no longer available."
+                        : "\(candidate.firstName) has signed elsewhere. They are no longer available."
                 )
                 // #271: Notify parent to gray out this candidate
                 onRejected?()

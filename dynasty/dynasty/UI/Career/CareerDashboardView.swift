@@ -966,13 +966,14 @@ struct CareerDashboardView: View {
             return [
                 QuickAction(icon: "trophy.fill", label: "Awards", destination: .roster),
                 QuickAction(icon: "person.fill", label: "Coach Renewals", destination: .coachingStaff),
-                QuickAction(icon: "doc.text", label: "Season Report", destination: .roster)
+                QuickAction(icon: "building.columns.fill", label: "History", destination: .history)
             ]
         case .offseason:
             return [
                 QuickAction(icon: "person.fill", label: "Coaching", destination: .coachingStaff),
                 QuickAction(icon: "list.dash", label: "Roster Review", destination: .rosterEvaluation),
-                QuickAction(icon: "chart.line.uptrend.xyaxis", label: "Cap", destination: .capOverview)
+                QuickAction(icon: "chart.line.uptrend.xyaxis", label: "Cap", destination: .capOverview),
+                QuickAction(icon: "building.columns.fill", label: "History", destination: .history)
             ]
         case .preDraft:
             return [
@@ -1126,14 +1127,24 @@ struct CareerDashboardView: View {
         Button {
             onTaskSelected(.ownerMeeting)
         } label: {
-            DashboardTile(icon: "target", title: "Offseason Goals") {
+            DashboardTile(icon: "target", title: "Season Review") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("3 of 5 met")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Color.success)
-                    Text("Owner mandates")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.textSecondary)
+                    // R31: real numbers from the last owner review / goal log
+                    if let review = career.ownerSeasonReview {
+                        Text("\(review.goalsAchieved) of \(max(review.goalsTotal, 1)) met")
+                            .font(.system(size: 12, weight: .bold).monospacedDigit())
+                            .foregroundStyle(review.goalsAchieved * 2 >= review.goalsTotal ? Color.success : Color.warning)
+                        Text("Owner verdict: \(review.verdict.label)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.textSecondary)
+                    } else {
+                        Text("Owner mandates")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Color.textPrimary)
+                        Text("Meet the owner")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.textSecondary)
+                    }
                 }
             }
         }
@@ -2291,7 +2302,7 @@ struct CareerDashboardView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Owner Expectations Tile (#20)
+    // MARK: - Owner Expectations Tile (#20, R31: job security + goals)
 
     private var ownerExpectationsTile: some View {
         NavigationLink {
@@ -2300,44 +2311,83 @@ struct CareerDashboardView: View {
             DashboardTile(icon: "building.2.fill", title: "Owner") {
                 VStack(alignment: .leading, spacing: 6) {
                     if let owner = team?.owner {
-                        Text(owner.name)
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Color.textPrimary)
-                            .lineLimit(1)
+                        let archetype = OwnerPersonaEngine.OwnerArchetype.from(owner)
+                        let security = OwnerPersonaEngine.jobSecurity(owner: owner, career: career)
 
-                        HStack {
-                            Text("Patience")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Color.textSecondary)
+                        HStack(spacing: 6) {
+                            Text(owner.name)
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
                             Spacer()
-                            // Patience shown as visual pips (1-10)
-                            HStack(spacing: 2) {
-                                ForEach(0..<10, id: \.self) { i in
-                                    Circle()
-                                        .fill(i < owner.patience ? Color.accentGold : Color.backgroundTertiary)
-                                        .frame(width: 6, height: 6)
-                                }
+                            if hasPendingOwnerWhim {
+                                Image(systemName: "envelope.badge.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Color.warning)
                             }
                         }
 
-                        HStack {
-                            Text("Satisfaction")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Color.textSecondary)
-                            Spacer()
-                            Text("\(owner.satisfaction)%")
-                                .font(.system(size: 12, weight: .bold).monospacedDigit())
-                                .foregroundStyle(satisfactionColor(owner.satisfaction))
+                        HStack(spacing: 4) {
+                            Image(systemName: archetype.icon)
+                                .font(.system(size: 8))
+                            Text(archetype.displayName)
+                                .font(.system(size: 9, weight: .bold))
                         }
+                        .foregroundStyle(Color.accentGold)
 
+                        // Job security meter
                         HStack {
-                            Text("Style")
+                            Text("Job Security")
                                 .font(.system(size: 10))
                                 .foregroundStyle(Color.textSecondary)
                             Spacer()
-                            Text(owner.prefersWinNow ? "Win Now" : "Rebuild OK")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(owner.prefersWinNow ? Color.warning : Color.success)
+                            Text(security.level.label)
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(jobSecurityColor(security.level))
+                        }
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Color.backgroundTertiary)
+                                    .frame(height: 5)
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(jobSecurityColor(security.level))
+                                    .frame(width: geo.size.width * Double(security.score) / 100.0, height: 5)
+                            }
+                        }
+                        .frame(height: 5)
+
+                        // Primary goal progress (goals vs reality)
+                        if let primary = evaluatedOwnerGoals.first(where: { $0.priority == .primary }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: primary.isAchieved ? "star.fill" : "target")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(primary.isAchieved ? Color.accentGold : Color.textSecondary)
+                                Text(primary.title)
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(Color.textSecondary)
+                                    .lineLimit(1)
+                                Spacer()
+                                if let target = primary.target {
+                                    Text("\(primary.progress)/\(target)")
+                                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                                        .foregroundStyle(primary.isAchieved ? Color.accentGold : Color.textSecondary)
+                                } else if primary.isAchieved {
+                                    Text("Met")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundStyle(Color.accentGold)
+                                }
+                            }
+                        } else {
+                            HStack {
+                                Text("Satisfaction")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Color.textSecondary)
+                                Spacer()
+                                Text("\(owner.satisfaction)%")
+                                    .font(.system(size: 12, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(satisfactionColor(owner.satisfaction))
+                            }
                         }
                     } else {
                         Text("No owner data")
@@ -2348,6 +2398,30 @@ struct CareerDashboardView: View {
             }
         }
         .buttonStyle(.plain)
+    }
+
+    /// R31: whether an owner whim awaits a response in Owner Relations.
+    private var hasPendingOwnerWhim: Bool {
+        career.ownerWhims.contains {
+            $0.seasonYear == career.currentSeason && $0.status == .pending
+        }
+    }
+
+    /// R31: the persisted season goals, re-evaluated against live team state.
+    private var evaluatedOwnerGoals: [SeasonGoal] {
+        guard let team else { return [] }
+        let stored = career.ownerSeasonGoals
+        guard !stored.isEmpty else { return [] }
+        return OwnerGoalsEngine.evaluateGoalProgress(goals: stored, team: team, career: career)
+    }
+
+    private func jobSecurityColor(_ level: OwnerPersonaEngine.JobSecurityLevel) -> Color {
+        switch level {
+        case .secure:   return Color.success
+        case .stable:   return Color.accentBlue
+        case .pressure, .hotSeat: return Color.warning
+        case .critical: return Color.danger
+        }
     }
 
     // MARK: - Previous Season Summary Tile (#73)

@@ -1309,7 +1309,7 @@ struct FAWeeklyView: View {
         for t in allTeams { teamAbbrevs[t.id] = t.abbreviation }
 
         // Free agents currently on the market — used for mentor-protégé matching.
-        let unsignedFAs = allPlayers.filter { $0.teamID == nil }
+        let unsignedFAs = allPlayers.filter { $0.teamID == nil && !$0.isRetired }
 
         FreeAgencyEngine.generateStorylineEventsForSigning(
             player: player,

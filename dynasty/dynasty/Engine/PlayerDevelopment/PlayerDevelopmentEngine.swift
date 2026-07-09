@@ -501,12 +501,16 @@ enum PlayerDevelopmentEngine {
     // MARK: - 8. Full Offseason Processing
 
     /// Runs the complete offseason pipeline for a roster of players: aging, development,
-    /// injury processing, mentoring, and retirement evaluation.
+    /// injury processing, and mentoring.
+    ///
+    /// Retirement is NOT decided here — `PlayerRetirementEngine` handles it
+    /// once per offseason in the `.coachingChanges` phase (R32), before free
+    /// agency, so departures actually leave the league.
     ///
     /// - Parameters:
     ///   - players: All players on the team.
     ///   - coaches: The full coaching staff.
-    /// - Returns: Array of descriptions for notable events (retirements, injury updates, etc.).
+    /// - Returns: Array of descriptions for notable events (injury updates, etc.).
     @discardableResult
     static func processOffseason(players: [Player], coaches: [Coach]) -> [String] {
         var events: [String] = []
@@ -535,13 +539,6 @@ enum PlayerDevelopmentEngine {
         let veterans = players.filter { $0.yearsPro >= 4 }
         let rookies = players.filter { $0.yearsPro <= 1 }
         applyMentoring(veterans: veterans, rookies: rookies)
-
-        // --- Retirement evaluation ---
-        for player in players {
-            if shouldRetire(player: player) {
-                events.append("\(player.fullName) (\(player.position.rawValue), age \(player.age)) has announced retirement.")
-            }
-        }
 
         return events
     }
@@ -695,42 +692,6 @@ private extension PlayerDevelopmentEngine {
             "Spinal contusion", "Torn ACL and meniscus", "Dislocated hip"
         ]
         return injuries.randomElement()!
-    }
-
-    // MARK: Retirement
-
-    /// Determines whether a player should retire this offseason.
-    /// Players 35+ with declining stats have increasing retirement chance.
-    static func shouldRetire(player: Player) -> Bool {
-        guard player.age >= 35 else { return false }
-
-        // Base retirement chance increases with age beyond 35.
-        let yearsOver35 = player.age - 35
-        var retirementChance = Double(yearsOver35) * 0.12  // 12% per year over 35
-
-        // Low overall rating increases retirement chance.
-        if player.overall < 60 {
-            retirementChance += 0.15
-        } else if player.overall < 70 {
-            retirementChance += 0.05
-        }
-
-        // Injuries make retirement more likely.
-        if player.isInjured {
-            retirementChance += 0.10
-        }
-
-        // Low durability suggests a body breaking down.
-        if player.physical.durability < 50 {
-            retirementChance += 0.10
-        }
-
-        // Kickers and punters can play longer.
-        if player.position == .K || player.position == .P {
-            retirementChance *= 0.5
-        }
-
-        return Double.random(in: 0.0..<1.0) < min(0.95, retirementChance)
     }
 
     // MARK: Playing Time Estimation

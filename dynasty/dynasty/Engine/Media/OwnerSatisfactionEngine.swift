@@ -67,6 +67,13 @@ enum OwnerSatisfactionEngine {
             delta = Int((Double(delta) * patienceMultiplier).rounded())
         }
 
+        // --- Archetype Modifier (R31) ---
+        // A Win-Now Tycoon's seat heats up faster; a Patient Builder's slower.
+        if delta < 0 {
+            let archetype = OwnerPersonaEngine.OwnerArchetype.from(owner)
+            delta = Int((Double(delta) * archetype.negativeSwingMultiplier).rounded())
+        }
+
         // --- Media Market Amplification ---
         // Large-market teams get more scrutiny; negative events hit harder
         let mediaPressure = team.mediaMarket.mediaPressureMultiplier

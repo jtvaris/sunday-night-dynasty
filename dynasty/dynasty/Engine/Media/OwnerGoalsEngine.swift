@@ -174,6 +174,27 @@ enum OwnerGoalsEngine {
             )
         }
 
+        // R31: the owner's archetype hardens or softens numeric win targets —
+        // a Win-Now Tycoon demands an extra win, a Patient Builder accepts one less.
+        let adjustment = OwnerPersonaEngine.OwnerArchetype.from(owner).winTargetAdjustment
+        if adjustment != 0 {
+            goals = goals.map { goal in
+                guard goal.type == .wins, let target = goal.target else { return goal }
+                let newTarget = min(13, max(5, target + adjustment))
+                guard newTarget != target else { return goal }
+                return SeasonGoal(
+                    id: goal.id,
+                    title: "Win \(newTarget)+ Games",
+                    description: "\(owner.name) expects at least \(newTarget) wins this season.",
+                    type: .wins,
+                    target: newTarget,
+                    progress: goal.progress,
+                    isAchieved: goal.isAchieved,
+                    priority: goal.priority
+                )
+            }
+        }
+
         return Array(goals.prefix(4))
     }
 

@@ -37,6 +37,14 @@ final class Owner {
     /// R27: Previous season's scouting budget, for showing change in UI.
     var previousScoutingBudget: Int = 0
 
+    /// R31: Dedicated medical department budget in thousands (e.g. 2500 = $2.5M).
+    /// Team doctor, physio, and head trainer salaries draw from this pot.
+    /// Default keeps old saves valid (lightweight migration).
+    var medicalBudget: Int = 2_500
+
+    /// R31: Previous season's medical budget, for showing change in UI.
+    var previousMedicalBudget: Int = 0
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -49,7 +57,9 @@ final class Owner {
         coachingBudget: Int = 20_000,
         previousCoachingBudget: Int = 0,
         scoutingBudget: Int = 4_000,
-        previousScoutingBudget: Int = 0
+        previousScoutingBudget: Int = 0,
+        medicalBudget: Int = 2_500,
+        previousMedicalBudget: Int = 0
     ) {
         self.id = id
         self.name = name
@@ -63,5 +73,7 @@ final class Owner {
         self.previousCoachingBudget = previousCoachingBudget
         self.scoutingBudget = scoutingBudget
         self.previousScoutingBudget = previousScoutingBudget
+        self.medicalBudget = medicalBudget
+        self.previousMedicalBudget = previousMedicalBudget
     }
 }

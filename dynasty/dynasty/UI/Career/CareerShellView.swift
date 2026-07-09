@@ -42,6 +42,10 @@ struct CareerShellView: View {
     @State private var pendingHoldoutPlayer: Player?
     @State private var pendingHoldoutMarketValue: Int = 0
 
+    // R31 — Owner review sheet + firing screen state.
+    @State private var pendingOwnerReview: OwnerPersonaEngine.OwnerSeasonReview?
+    @State private var showFiredScreen = false
+
     var body: some View {
         VStack(spacing: 0) {
             // Persistent top navigation bar
@@ -97,7 +101,13 @@ struct CareerShellView: View {
         } message: {
             Text("Your progress is saved automatically.")
         }
-        .task { loadShellData() }
+        .task {
+            loadShellData()
+            // R31: a fired career only shows the final summary screen.
+            if career.isGameOver {
+                showFiredScreen = true
+            }
+        }
         .onChange(of: navigationPath) { _, _ in
             refreshTaskCompletionStatus()
         }
@@ -141,6 +151,32 @@ struct CareerShellView: View {
         }
         .sheet(isPresented: $pendingVoluntaryWorkout) {
             VoluntaryWorkoutPrompt(career: career)
+        }
+        // R31: end-of-season owner review (bonus / warning verdicts).
+        .sheet(item: $pendingOwnerReview, onDismiss: {
+            // Mark the review acknowledged so it only pops once.
+            if var review = career.ownerSeasonReview, !review.acknowledged {
+                review.acknowledged = true
+                career.ownerSeasonReview = review
+                try? modelContext.save()
+            }
+        }) { review in
+            OwnerSeasonReviewSheet(
+                review: review,
+                ownerName: team?.owner?.name ?? "The Owner",
+                teamName: team?.fullName ?? "your team"
+            )
+        }
+        // R31: the owner pulled the trigger — career-over summary screen.
+        .fullScreenCover(isPresented: $showFiredScreen) {
+            FiredSummaryView(
+                career: career,
+                teamName: team?.fullName ?? "your team",
+                ownerName: team?.owner?.name ?? "The owner",
+                reviewSummary: career.ownerSeasonReview?.verdict == .fired
+                    ? career.ownerSeasonReview?.summary
+                    : nil
+            )
         }
         .sheet(item: $pendingHoldout) { holdout in
             if let player = pendingHoldoutPlayer {
@@ -293,6 +329,25 @@ struct CareerShellView: View {
         // Reload data so the dashboard picks up the new state
         loadShellData()
 
+        // R31: the owner fired the coach (weekly collapse or end-of-season
+        // review) — the career is over. Show the summary and stop here.
+        if WeekAdvancer.wasFired {
+            WeekAdvancer.wasFired = false
+            career.isGameOver = true
+            career.yearsFired += 1
+            try? modelContext.save()
+            showFiredScreen = true
+            return
+        }
+
+        // R31: fresh end-of-season owner review (non-firing verdicts) —
+        // present the meeting sheet once.
+        if let review = career.ownerSeasonReview,
+           !review.acknowledged,
+           review.verdict != .fired {
+            pendingOwnerReview = review
+        }
+
         // Check for pending press conference
         if let questions = WeekAdvancer.pendingPressConference {
             pendingPressQuestions = questions
@@ -345,6 +400,8 @@ struct CareerShellView: View {
         case ownerMeeting, lockerRoom, inbox, rosterEvaluation
         case franchiseTag
         case developmentReport
+        // R32: League History & Hall of Fame
+        case history
         // Camp destinations
         case trainingPlan, workloadDashboard, rosterCuts, gameWeekPrep
     }
@@ -522,6 +579,8 @@ struct CareerShellView: View {
                     markTaskVisited(for: .developmentReport)
                     refreshTaskCompletionStatus()
                 }
+        case .history:
+            LeagueHistoryView(career: career)
         case .trainingPlan:
             TrainingPlanView(career: career, roster: teamRoster)
                 .onAppear {
@@ -654,7 +713,11 @@ struct CareerShellView: View {
                 let budget = team?.owner?.coachingBudget ?? 0
                 let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
                 let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
-                let usedBudget = coaches.reduce(0) { $0 + $1.salary }
+                // R31: medical staff draw from their own pot, not the coaching budget.
+                let medicalRoles: Set<CoachRole> = [.teamDoctor, .physio, .headTrainer]
+                let usedBudget = coaches
+                    .filter { !medicalRoles.contains($0.role) }
+                    .reduce(0) { $0 + $1.salary }
                 HireCoachView(
                     role: role,
                     teamID: teamID,
@@ -714,6 +777,7 @@ struct CareerShellView: View {
             shellDest = .scouting
         case .personalWorkouts:   shellDest = .scouting
         case .developmentReport:  shellDest = .developmentReport
+        case .history:            shellDest = .history
         case .trainingPlan:        shellDest = .trainingPlan
         case .workloadDashboard:   shellDest = .workloadDashboard
         case .rosterCuts:          shellDest = .rosterCuts

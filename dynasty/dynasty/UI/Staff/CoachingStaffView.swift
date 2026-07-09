@@ -7,6 +7,7 @@ enum StaffTab: String, CaseIterable {
     case staff = "Staff"
     case schemes = "Schemes"
     case review = "Review"
+    case tree = "Tree"      // R30: coaching tree + legacy
 }
 
 // StaffNavDestination removed — replaced with separate state bindings to avoid
@@ -109,9 +110,14 @@ struct CoachingStaffView: View {
 
     // MARK: - Budget Calculations
 
+    /// R31: Roles paid from the medical pot rather than the coaching pot.
+    private static let medicalRoles: Set<CoachRole> = [.teamDoctor, .physio, .headTrainer]
+
     /// Total coaching salary currently committed (in thousands).
+    /// R31: medical staff no longer draw from this pot — they have their own budget.
     private var totalCoachSalaryUsed: Int {
-        coaches.reduce(0) { $0 + $1.salary }
+        coaches.filter { !Self.medicalRoles.contains($0.role) }
+            .reduce(0) { $0 + $1.salary }
     }
 
     /// Total scouting salary currently committed (in thousands).
@@ -119,9 +125,15 @@ struct CoachingStaffView: View {
         scouts.reduce(0) { $0 + $1.salary }
     }
 
-    /// Total staff salary used (coaches + scouts).
+    /// R31: Total medical staff salary currently committed (in thousands).
+    private var totalMedicalSalaryUsed: Int {
+        coaches.filter { Self.medicalRoles.contains($0.role) }
+            .reduce(0) { $0 + $1.salary }
+    }
+
+    /// Total staff salary used (coaches + medical + scouts).
     private var totalStaffSalaryUsed: Int {
-        totalCoachSalaryUsed + totalScoutSalaryUsed
+        totalCoachSalaryUsed + totalMedicalSalaryUsed + totalScoutSalaryUsed
     }
 
     /// Coaching budget from the owner (in thousands).
@@ -134,6 +146,11 @@ struct CoachingStaffView: View {
         owner?.scoutingBudget ?? 4_000
     }
 
+    /// R31: Dedicated medical budget from the owner (in thousands).
+    private var medicalBudget: Int {
+        owner?.medicalBudget ?? 2_500
+    }
+
     /// Remaining coaching budget available for new coach hires.
     /// R27: scouts no longer draw from this pot — they have their own budget.
     private var remainingBudget: Int {
@@ -143,6 +160,11 @@ struct CoachingStaffView: View {
     /// R27: Remaining scouting budget available for new scout hires.
     private var remainingScoutBudget: Int {
         scoutingBudget - totalScoutSalaryUsed
+    }
+
+    /// R31: Remaining medical budget available for new medical hires.
+    private var remainingMedicalBudget: Int {
+        medicalBudget - totalMedicalSalaryUsed
     }
 
     // MARK: - Grouped coaches
@@ -202,9 +224,9 @@ struct CoachingStaffView: View {
 
     // MARK: - Hiring priority & budget helpers
 
-    /// Whether either staff budget is over (negative remaining). (R27: split pots)
+    /// Whether any staff budget is over (negative remaining). (R27/R31: split pots)
     private var isBudgetOverspent: Bool {
-        remainingBudget < 0 || remainingScoutBudget < 0
+        remainingBudget < 0 || remainingScoutBudget < 0 || remainingMedicalBudget < 0
     }
 
     /// Required roles that must be filled before locking in staff.
@@ -534,6 +556,9 @@ struct CoachingStaffView: View {
                     schemesTabContent
                 case .review:
                     reviewTabContent
+                case .tree:
+                    // R30: coaching tree + legacy score
+                    CoachingTreeView(career: career, embedded: true)
                 }
             }
 
@@ -574,6 +599,9 @@ struct CoachingStaffView: View {
         .navigationTitle("Coaching Staff")
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        // R30: keep the coaching tree in sync with the actual staff
+        // (backfills open entries for careers that predate the tree).
+        .task { syncCoachingTree() }
         // Coach detail stays as navigation push (works correctly)
         .navigationDestination(item: $detailCoachID) { coachID in
             if let coach = allCoaches.first(where: { $0.id == coachID }) {
@@ -624,7 +652,7 @@ struct CoachingStaffView: View {
                             SimpleMedicalHireSheet(
                                 role: role,
                                 candidates: candidates,
-                                remainingBudget: remainingBudget,
+                                remainingBudget: remainingMedicalBudget,
                                 teamID: teamID,
                                 onHired: { name, roleName in
                                     activeHireSheet = nil
@@ -749,6 +777,28 @@ struct CoachingStaffView: View {
                     Text("Staff Budget")
                 }
                 .listRowBackground(Color.backgroundSecondary)
+
+                // MARK: - R30: Pending HC interview request for a user coordinator
+                if let request = pendingInterview {
+                    Section {
+                        interviewRequestCard(request)
+                    } header: {
+                        Text("Interview Request")
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+                }
+
+                // MARK: - R30: Offseason coaching carousel feed
+                if showCarouselFeed {
+                    Section {
+                        ForEach(visibleCarouselMoves) { move in
+                            carouselMoveRow(move)
+                        }
+                    } header: {
+                        Text("Coaching Carousel")
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+                }
 
                 // Head Coach -- prominent card
                 Section {
@@ -1731,6 +1781,16 @@ struct CoachingStaffView: View {
                             .foregroundStyle(Color.textPrimary)
                     }
 
+                    HStack {
+                        Text("Medical Salaries")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.textSecondary)
+                        Spacer()
+                        Text("$\(formatBudget(totalMedicalSalaryUsed))M")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(Color.textPrimary)
+                    }
+
                     Divider().overlay(Color.surfaceBorder)
 
                     HStack {
@@ -1877,6 +1937,268 @@ struct CoachingStaffView: View {
         }
     }
 
+    // MARK: - R30: Interview Request (coordinator in demand)
+
+    /// The pending interview request, if it belongs to the current season.
+    private var pendingInterview: CoachCarouselEngine.CoordinatorInterviewRequest? {
+        guard let request = career.pendingInterviewRequest,
+              request.season == career.currentSeason else { return nil }
+        return request
+    }
+
+    /// Whether the offseason carousel feed should be shown: offseason /
+    /// pre-draft phases only, and only when there is something to report.
+    private var showCarouselFeed: Bool {
+        let group = career.currentPhase.group
+        return (group == .offseason || group == .preDraft) && !career.coachCarouselLog.isEmpty
+    }
+
+    /// Feed rows, capped so the Staff tab stays scannable.
+    private var visibleCarouselMoves: [CoachCarouselEngine.CarouselMove] {
+        Array(career.coachCarouselLog.prefix(12))
+    }
+
+    private func interviewRequestCard(_ request: CoachCarouselEngine.CoordinatorInterviewRequest) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "envelope.badge.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Color.accentGold)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(request.requestingTeamName) want your \(request.coachRole.abbreviation)")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text("Head coach interview request for \(request.coachName)")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                }
+            }
+
+            Text("Allow the interview and \(request.coachName) takes the job: they join your coaching tree, your reputation grows, and you receive a compensatory 3rd-round pick — but you'll need a new \(request.coachRole.displayName.lowercased()). Block it and they stay, at the cost of some motivation.")
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                Button {
+                    resolveInterviewRequest(request, allow: true)
+                } label: {
+                    Text("Allow Interview")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 40)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentGold))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    resolveInterviewRequest(request, allow: false)
+                } label: {
+                    Text("Block Request")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(request.canBlock ? Color.textPrimary : Color.textTertiary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 40)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.backgroundTertiary)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(!request.canBlock)
+            }
+
+            if !request.canBlock {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 10))
+                    Text("\(request.coachName) is in the final year of their contract — the interview cannot be blocked.")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .foregroundStyle(Color.warning)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    /// Resolves the pending interview request (allow → the coordinator
+    /// departs to the HC job and joins the coaching tree; block → they stay
+    /// with a small motivation hit).
+    private func resolveInterviewRequest(
+        _ request: CoachCarouselEngine.CoordinatorInterviewRequest,
+        allow: Bool
+    ) {
+        defer {
+            career.pendingInterviewRequest = nil
+            try? modelContext.save()
+        }
+        guard let coach = allCoaches.first(where: { $0.id == request.coachID }),
+              coach.teamID == career.teamID else { return }
+
+        if allow {
+            // Close out the coaching-tree entry BEFORE mutating the coach's
+            // role so a backfilled entry keeps the role they held under you.
+            var tree = career.coachingTree
+            CoachRelationshipEngine.recordDeparture(
+                tree: &tree.entries,
+                coach: coach,
+                event: "departed_hc",
+                season: career.currentSeason,
+                destination: "HC at \(request.requestingTeamName)"
+            )
+            career.coachingTree = tree
+            career.reputation = min(99, career.reputation + 1)
+
+            // The interview goes well — the coach takes the job.
+            if let oldHC = allCoaches.first(where: {
+                $0.teamID == request.requestingTeamID && $0.role == .headCoach
+            }) {
+                oldHC.teamID = nil
+            }
+            coach.teamID = request.requestingTeamID
+            coach.role = .headCoach
+            coach.promotedInSeason = career.currentSeason
+            coach.hireSeasonYear = career.currentSeason
+            coach.contractYearsRemaining = 4
+            coach.salary = max(coach.salary, CoachRole.headCoach.salaryRange.min)
+
+            career.coachCarouselLog = [CoachCarouselEngine.CarouselMove(
+                season: career.currentSeason,
+                kind: .departure,
+                teamName: request.requestingTeamName,
+                coachName: request.coachName,
+                detail: "Left your staff to become head coach"
+            )] + career.coachCarouselLog
+
+            career.newsLog = [NewsItem(
+                headline: "\(request.requestingTeamName) hire \(request.coachName) as head coach",
+                body: "\(request.coachName) is leaving \(career.playerName)'s staff to take over as head coach of the \(request.requestingTeamName). Another branch grows on a coaching tree the league is starting to talk about.",
+                category: .coachingChange,
+                week: 0,
+                season: career.currentSeason,
+                relatedTeamID: request.requestingTeamID,
+                sentiment: .neutral
+            )] + career.newsLog
+
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                recentHireMessage = "\(request.coachName) left to coach the \(request.requestingTeamName) — coaching tree updated"
+            }
+        } else {
+            // Blocked: the coach stays, slightly deflated.
+            coach.motivation = max(1, coach.motivation - 5)
+
+            career.coachCarouselLog = [CoachCarouselEngine.CarouselMove(
+                season: career.currentSeason,
+                kind: .blocked,
+                teamName: request.requestingTeamName,
+                coachName: request.coachName,
+                detail: "Interview blocked — staying on your staff (motivation -5)"
+            )] + career.coachCarouselLog
+
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                recentHireMessage = "Blocked the \(request.requestingTeamName)'s interview request for \(request.coachName)"
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            withAnimation(.easeOut(duration: 0.4)) {
+                recentHireMessage = nil
+            }
+        }
+    }
+
+    // MARK: - R30: Carousel Feed Row
+
+    private func carouselMoveRow(_ move: CoachCarouselEngine.CarouselMove) -> some View {
+        let (icon, color): (String, Color) = {
+            switch move.kind {
+            case .firing:           return ("person.fill.xmark", .danger)
+            case .hcHire:           return ("person.fill.checkmark", .success)
+            case .coordinatorHire:  return ("person.fill.badge.plus", .accentBlue)
+            case .interviewRequest: return ("envelope.badge.fill", .accentGold)
+            case .departure:        return ("arrow.up.right.circle.fill", .accentGold)
+            case .blocked:          return ("hand.raised.fill", .warning)
+            }
+        }()
+
+        return HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14))
+                .foregroundStyle(color)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(move.coachName) · \(move.teamName)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                Text(move.detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textSecondary)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(move.coachName), \(move.teamName): \(move.detail)")
+    }
+
+    // MARK: - R30: Coaching Tree Sync
+
+    /// Backfills open coaching-tree entries for the current staff (careers
+    /// started before R30 have an empty tree) and closes entries whose
+    /// coaches are no longer on staff.
+    private func syncCoachingTree() {
+        guard career.teamID != nil else { return }
+        // Never run against an unloaded/empty staff — closing every open
+        // entry because the query hasn't populated yet would corrupt the tree.
+        guard !coaches.isEmpty else { return }
+        let medicalRoles: Set<CoachRole> = [.teamDoctor, .physio, .headTrainer]
+        var tree = career.coachingTree
+        var changed = false
+
+        // 1. Every current coach has an open entry.
+        for coach in coaches where !medicalRoles.contains(coach.role) {
+            let tracked = tree.entries.contains {
+                $0.coachName == coach.fullName && $0.yearLeft == nil
+            }
+            if !tracked {
+                let hiredYear = coach.hireSeasonYear > 0
+                    ? min(coach.hireSeasonYear, career.currentSeason)
+                    : career.currentSeason
+                tree.entries.append(CoachRelationshipEngine.CoachingTreeEntry(
+                    coachName: coach.fullName,
+                    role: coach.role,
+                    yearHired: hiredYear
+                ))
+                changed = true
+            }
+        }
+
+        // 2. Open entries whose coach left (replaced, poached before R30)
+        //    get closed out as alumni.
+        let currentNames = Set(coaches.map(\.fullName))
+        for index in tree.entries.indices where tree.entries[index].yearLeft == nil {
+            if !currentNames.contains(tree.entries[index].coachName) {
+                tree.entries[index].yearLeft = career.currentSeason
+                if tree.entries[index].destination == nil {
+                    tree.entries[index].destination = "Moved on"
+                }
+                changed = true
+            }
+        }
+
+        if changed {
+            career.coachingTree = tree
+            try? modelContext.save()
+        }
+    }
+
     // MARK: - Hiring Toast Trigger (#49)
 
     /// Call this when returning from a hiring screen to show confirmation toast.
@@ -1925,15 +2247,20 @@ struct CoachingStaffView: View {
     }
 
     @ViewBuilder
-    /// R27: names the pot(s) that are overspent now that coaching and scouting are split.
+    /// R27/R31: names the pot(s) that are overspent now that the budgets are split.
     private var overBudgetMessage: String {
-        if remainingBudget < 0 && remainingScoutBudget < 0 {
-            return "You are $\(formatBudget(abs(remainingBudget)))M over the coaching budget and $\(formatBudget(abs(remainingScoutBudget)))M over the scouting budget. Release staff or reduce salaries to proceed."
+        var overs: [String] = []
+        if remainingBudget < 0 {
+            overs.append("$\(formatBudget(abs(remainingBudget)))M over the coaching budget")
         }
         if remainingScoutBudget < 0 {
-            return "You are $\(formatBudget(abs(remainingScoutBudget)))M over the scouting budget. Release scouts or reduce salaries to proceed."
+            overs.append("$\(formatBudget(abs(remainingScoutBudget)))M over the scouting budget")
         }
-        return "You are $\(formatBudget(abs(remainingBudget)))M over the coaching budget. Release staff or reduce salaries to proceed."
+        if remainingMedicalBudget < 0 {
+            overs.append("$\(formatBudget(abs(remainingMedicalBudget)))M over the medical budget")
+        }
+        let list = overs.isEmpty ? "over budget" : overs.joined(separator: " and ")
+        return "You are \(list). Release staff, reduce salaries, or reallocate the budget in Owner Relations to proceed."
     }
 
     private var budgetHeaderView: some View {
@@ -2013,6 +2340,35 @@ struct CoachingStaffView: View {
                     RoundedRectangle(cornerRadius: 4)
                         .fill(remainingScoutBudget >= 0 ? Color.accentBlue : Color.danger)
                         .frame(width: geo.size.width * min(1.0, Double(totalScoutSalaryUsed) / max(1.0, Double(scoutingBudget))))
+                }
+            }
+            .frame(height: 6)
+
+            // R31: separate medical budget line + bar
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "cross.case")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.success)
+                    Text("Medical Budget")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text("$\(formatBudget(totalMedicalSalaryUsed))M / $\(formatBudget(medicalBudget))M used")
+                        .font(.caption)
+                        .foregroundStyle(remainingMedicalBudget >= 0 ? Color.textSecondary : Color.danger)
+                }
+                Spacer()
+                Text("$\(formatBudget(remainingMedicalBudget))M left")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(remainingMedicalBudget >= 0 ? Color.success : Color.danger)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.backgroundTertiary)
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(remainingMedicalBudget >= 0 ? Color.success : Color.danger)
+                        .frame(width: geo.size.width * min(1.0, Double(totalMedicalSalaryUsed) / max(1.0, Double(medicalBudget))))
                 }
             }
             .frame(height: 6)

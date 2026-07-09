@@ -56,6 +56,12 @@ final class Player {
     /// Default-value stored property → safe lightweight migration.
     var isHoldingOut: Bool = false
 
+    /// R32: whether this player has retired from professional football.
+    /// Retired players keep their row (career history / Hall of Fame reads it)
+    /// but are excluded from the free-agent market, development, aging, and
+    /// season-history recording. Default value → safe lightweight migration.
+    var isRetired: Bool = false
+
     /// The overall draft pick number (1-224) if this player was drafted, nil for UDFAs/veterans.
     var draftPickNumber: Int?
 

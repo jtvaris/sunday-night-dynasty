@@ -12,6 +12,10 @@ struct OwnerMeetingView: View {
     @State private var owner: Owner?
     @State private var team: Team?
 
+    // R31: pending whim + evaluated season goals for the current season.
+    @State private var pendingWhim: OwnerPersonaEngine.OwnerWhim?
+    @State private var seasonGoals: [SeasonGoal] = []
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -21,9 +25,19 @@ struct OwnerMeetingView: View {
                     ScrollView {
                         VStack(spacing: 20) {
                             ownerProfileCard(owner)
+                            if let whim = pendingWhim {
+                                whimCard(whim, owner: owner)
+                            }
+                            if !seasonGoals.isEmpty {
+                                seasonGoalsCard(owner)
+                            }
+                            budgetCard(owner)
                             satisfactionCard(owner)
                             patienceCard(owner)
                             preferencesCard(owner)
+                            if let review = career.ownerSeasonReview {
+                                lastReviewCard(review)
+                            }
                             if owner.satisfaction < 60 {
                                 warningCard(owner)
                             }
@@ -57,9 +71,20 @@ struct OwnerMeetingView: View {
                 Text(team?.fullName ?? "Owner")
                     .font(.subheadline)
                     .foregroundStyle(Color.textSecondary)
-                Text("Season \(String(career.currentSeason))")
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
+
+                // R31: personality archetype badge
+                let archetype = OwnerPersonaEngine.OwnerArchetype.from(owner)
+                HStack(spacing: 5) {
+                    Image(systemName: archetype.icon)
+                        .font(.system(size: 9))
+                    Text(archetype.displayName)
+                        .font(.system(size: 10, weight: .bold))
+                }
+                .foregroundStyle(Color.accentGold)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.accentGold.opacity(0.15), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.accentGold.opacity(0.4), lineWidth: 1))
             }
 
             Spacer()
@@ -69,6 +94,251 @@ struct OwnerMeetingView: View {
         }
         .padding(20)
         .cardBackground()
+    }
+
+    // MARK: - Whim Card (R31)
+
+    private func whimCard(_ whim: OwnerPersonaEngine.OwnerWhim, owner: Owner) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "envelope.open.badge.clock")
+                    .foregroundStyle(Color.warning)
+                Text("The Owner Has a Suggestion")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(Color.warning)
+                Spacer()
+                Text("Week \(whim.week)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+
+            Divider().overlay(Color.surfaceBorder)
+
+            Text(whim.title)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(Color.textPrimary)
+
+            Text("\u{201C}\(whim.request)\u{201D}")
+                .font(.subheadline)
+                .italic()
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 12) {
+                Button {
+                    respondToWhim(whim, comply: true, owner: owner)
+                } label: {
+                    Label("You Got It", systemImage: "hand.thumbsup.fill")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.success, in: RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    respondToWhim(whim, comply: false, owner: owner)
+                } label: {
+                    Label("Push Back", systemImage: "hand.raised.fill")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.warning.opacity(0.5), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text("Complying keeps the owner happy. Pushing back stings now — but stand your ground AND deliver a strong season, and your reputation grows.")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .strokeBorder(Color.warning.opacity(0.5), lineWidth: 1.5)
+                )
+        )
+    }
+
+    // MARK: - Season Goals Card (R31)
+
+    private func seasonGoalsCard(_ owner: Owner) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "target")
+                    .foregroundStyle(Color.accentGold)
+                Text("Season Goals")
+                    .font(.headline)
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+                Text("\(seasonGoals.filter(\.isAchieved).count)/\(seasonGoals.count) met")
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+            }
+
+            Divider().overlay(Color.surfaceBorder)
+
+            ForEach(seasonGoals.prefix(4)) { goal in
+                HStack(spacing: 10) {
+                    Image(systemName: goal.isAchieved ? "star.fill" : "circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(goal.isAchieved ? Color.accentGold : Color.textTertiary)
+                    Text(goal.title)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                    Spacer()
+                    if let target = goal.target {
+                        Text("\(goal.progress)/\(target)")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(goal.isAchieved ? Color.accentGold : Color.textSecondary)
+                    }
+                    Text(goal.priority == .primary ? "PRIMARY" : (goal.priority == .secondary ? "SECONDARY" : "BONUS"))
+                        .font(.system(size: 8, weight: .black))
+                        .foregroundStyle(goal.priority == .primary ? Color.accentGold : Color.textTertiary)
+                }
+            }
+
+            NavigationLink {
+                OwnerGoalsView(career: career)
+            } label: {
+                HStack {
+                    Text("View Full Goal Tracker")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                }
+                .foregroundStyle(Color.accentGold)
+                .padding(.top, 4)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(20)
+        .cardBackground()
+    }
+
+    // MARK: - Budget Card (R31)
+
+    private func budgetCard(_ owner: Owner) -> some View {
+        let total = owner.coachingBudget + owner.scoutingBudget + owner.medicalBudget
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "dollarsign.circle.fill")
+                    .foregroundStyle(Color.accentGold)
+                Text("Staff Budget Envelope")
+                    .font(.headline)
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+                Text(formatMoney(total))
+                    .font(.headline.weight(.bold).monospacedDigit())
+                    .foregroundStyle(Color.accentGold)
+            }
+
+            Divider().overlay(Color.surfaceBorder)
+
+            HStack(spacing: 0) {
+                budgetPotColumn(label: "Coaching", value: owner.coachingBudget, color: .accentGold)
+                budgetPotColumn(label: "Scouting", value: owner.scoutingBudget, color: .accentBlue)
+                budgetPotColumn(label: "Medical", value: owner.medicalBudget, color: .success)
+            }
+
+            NavigationLink {
+                OwnerBudgetView(career: career)
+            } label: {
+                HStack {
+                    Text("Reallocate Budget")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                }
+                .foregroundStyle(Color.accentGold)
+                .padding(.top, 4)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(20)
+        .cardBackground()
+    }
+
+    private func budgetPotColumn(label: String, value: Int, color: Color) -> some View {
+        VStack(spacing: 4) {
+            Text(formatMoney(value))
+                .font(.subheadline.weight(.bold).monospacedDigit())
+                .foregroundStyle(color)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Last Review Card (R31)
+
+    private func lastReviewCard(_ review: OwnerPersonaEngine.OwnerSeasonReview) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .foregroundStyle(Color.accentGold)
+                Text("Last Season Review (\(String(review.seasonYear)))")
+                    .font(.headline)
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+                Text(review.verdict.label)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(reviewVerdictColor(review.verdict))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(reviewVerdictColor(review.verdict).opacity(0.15), in: Capsule())
+            }
+
+            Divider().overlay(Color.surfaceBorder)
+
+            Text("\(review.finalRecord) \u{2022} \(review.goalsAchieved)/\(max(review.goalsTotal, 1)) goals met")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.textSecondary)
+
+            Text("\u{201C}\(review.summary)\u{201D}")
+                .font(.caption)
+                .italic()
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(20)
+        .cardBackground()
+    }
+
+    private func reviewVerdictColor(_ verdict: OwnerPersonaEngine.OwnerSeasonReview.Verdict) -> Color {
+        switch verdict {
+        case .bonus:   return .accentGold
+        case .praise:  return .success
+        case .neutral: return .textSecondary
+        case .warning: return .warning
+        case .fired:   return .danger
+        }
+    }
+
+    // MARK: - Whim Response (R31)
+
+    private func respondToWhim(_ whim: OwnerPersonaEngine.OwnerWhim, comply: Bool, owner: Owner) {
+        let updated = OwnerPersonaEngine.respond(to: whim, comply: comply, owner: owner)
+        var whims = career.ownerWhims
+        if let index = whims.firstIndex(where: { $0.id == whim.id }) {
+            whims[index] = updated
+        }
+        career.ownerWhims = whims
+        try? modelContext.save()
+        withAnimation(.easeInOut(duration: 0.25)) {
+            pendingWhim = nil
+        }
     }
 
     private func satisfactionBadge(_ value: Int) -> some View {
@@ -141,9 +411,44 @@ struct OwnerMeetingView: View {
                     .foregroundStyle(Color.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            Divider().overlay(Color.surfaceBorder)
+
+            // R31: job security readout
+            let security = OwnerPersonaEngine.jobSecurity(owner: owner, career: career)
+            HStack {
+                Label("Job Security", systemImage: "shield.lefthalf.filled")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+                Text(security.level.label)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(jobSecurityColor(security.level))
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.backgroundTertiary)
+                        .frame(height: 8)
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(jobSecurityColor(security.level))
+                        .frame(width: geo.size.width * Double(security.score) / 100.0, height: 8)
+                }
+            }
+            .frame(height: 8)
         }
         .padding(20)
         .cardBackground()
+    }
+
+    private func jobSecurityColor(_ level: OwnerPersonaEngine.JobSecurityLevel) -> Color {
+        switch level {
+        case .secure:   return .success
+        case .stable:   return .accentBlue
+        case .pressure: return .warning
+        case .hotSeat:  return .warning
+        case .critical: return .danger
+        }
     }
 
     // MARK: - Patience Card
@@ -429,6 +734,27 @@ struct OwnerMeetingView: View {
         let teamDesc = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
         team = try? modelContext.fetch(teamDesc).first
         owner = team?.owner
+
+        // R31: pending whim + live-evaluated season goals
+        pendingWhim = career.ownerWhims.first {
+            $0.seasonYear == career.currentSeason && $0.status == .pending
+        }
+        if let fetchedTeam = team {
+            let stored = career.ownerSeasonGoals
+            if !stored.isEmpty {
+                seasonGoals = OwnerGoalsEngine.evaluateGoalProgress(
+                    goals: stored,
+                    team: fetchedTeam,
+                    career: career
+                )
+            }
+        }
+    }
+
+    // MARK: - Formatting
+
+    private func formatMoney(_ thousands: Int) -> String {
+        String(format: "$%.1fM", Double(thousands) / 1_000.0)
     }
 }
 
