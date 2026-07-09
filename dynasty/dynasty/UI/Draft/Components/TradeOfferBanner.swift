@@ -1,16 +1,14 @@
 import SwiftUI
 
-/// Vaihe 3 placeholder. The trade offer engine work is partially complete on
-/// the engine side, but the coordinator does not yet expose `pendingTradeOffer`.
-/// This standalone banner renders an offer once the wiring lands; it is *not*
-/// hooked into the live `DraftDayView` yet.
+/// Draft-day pick-swap offer banner (wired to `pendingPickOffer` since R24).
 ///
 /// Visual contract: gold-bordered card, slides in from the top edge, presents
 /// motive + outgoing/incoming asset summaries with Accept / Decline actions.
 struct TradeOfferBanner: View {
     let motive: String
-    let outgoing: String        // e.g. "#5 OVERALL"
-    let incoming: String        // e.g. "#11 + 2027 2nd"
+    let outgoing: String        // e.g. "#5 (R1)"
+    let incoming: String        // e.g. "#11 (R1) + #43 (R2)"
+    var valueSummary: String? = nil   // e.g. "you send 1100 pts · receive 1180 pts"
     let onAccept: () -> Void
     let onDecline: () -> Void
 
@@ -37,6 +35,11 @@ struct TradeOfferBanner: View {
                 Image(systemName: "arrow.right")
                     .foregroundStyle(Color.textTertiary)
                 tradeColumn(title: "You Receive", value: incoming)
+            }
+            if let valueSummary {
+                Text(valueSummary)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(Color.textSecondary)
             }
             HStack(spacing: DSSpacing.sm) {
                 Button(role: .cancel) {

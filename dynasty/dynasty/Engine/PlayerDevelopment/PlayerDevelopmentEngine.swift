@@ -199,17 +199,25 @@ enum PlayerDevelopmentEngine {
     ///   - player: The player gaining experience.
     ///   - gamesPlayed: Number of games the player appeared in (0-17).
     ///   - gamesStarted: Number of games the player started (0-17).
-    static func applyGameExperience(_ player: Player, gamesPlayed: Int, gamesStarted: Int) {
+    ///   - experienceBoost: R25 locker-room modifier — an active mentorship
+    ///     speeds a young player's growth. Clamped to 0.9...1.1 (max ±10 %).
+    static func applyGameExperience(
+        _ player: Player,
+        gamesPlayed: Int,
+        gamesStarted: Int,
+        experienceBoost: Double = 1.0
+    ) {
         guard gamesPlayed > 0 else { return }
 
         // Rookies gain more from experience than veterans.
-        let experienceMultiplier: Double
+        let baseMultiplier: Double
         switch player.yearsPro {
-        case 0:     experienceMultiplier = 1.0
-        case 1:     experienceMultiplier = 0.7
-        case 2...3: experienceMultiplier = 0.4
-        default:    experienceMultiplier = 0.2
+        case 0:     baseMultiplier = 1.0
+        case 1:     baseMultiplier = 0.7
+        case 2...3: baseMultiplier = 0.4
+        default:    baseMultiplier = 0.2
         }
+        let experienceMultiplier = baseMultiplier * min(max(experienceBoost, 0.9), 1.1)
 
         // Base gain from games played and started (0.0-1.0 range).
         let gamesFactor = (Double(gamesPlayed) / 17.0) * 0.5 + (Double(gamesStarted) / 17.0) * 0.5

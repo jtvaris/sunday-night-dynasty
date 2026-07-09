@@ -42,18 +42,23 @@ struct DraftDayView: View {
     @ViewBuilder
     private func contentView(coord: DraftDayCoordinator) -> some View {
         ZStack {
-            VStack(spacing: 0) {
-                DraftStickyHeader(coordinator: coord)
-                HStack(spacing: 0) {
-                    LiveBigBoardPanel(coordinator: coord)
-                        .frame(maxWidth: 320)
-                    Divider().overlay(Color.surfaceBorder)
-                    DraftTickerPanel(coordinator: coord)
-                    Divider().overlay(Color.surfaceBorder)
-                    WarRoomPanel(coordinator: coord)
-                        .frame(maxWidth: 280)
+            if coord.mode == .complete {
+                // R24 — draft summary + undrafted free agency stage.
+                DraftUDFAPanel(coordinator: coord)
+            } else {
+                VStack(spacing: 0) {
+                    DraftStickyHeader(coordinator: coord)
+                    HStack(spacing: 0) {
+                        LiveBigBoardPanel(coordinator: coord)
+                            .frame(maxWidth: 320)
+                        Divider().overlay(Color.surfaceBorder)
+                        DraftTickerPanel(coordinator: coord)
+                        Divider().overlay(Color.surfaceBorder)
+                        WarRoomPanel(coordinator: coord)
+                            .frame(maxWidth: 280)
+                    }
+                    DraftControlBar(coordinator: coord)
                 }
-                DraftControlBar(coordinator: coord)
             }
 
             // Drama overlays at the top of the Z stack — banners, curtains,
@@ -69,15 +74,16 @@ struct DraftDayView: View {
             }
 
             // Trade offer banner pinned to the top edge when an AI partner
-            // proposes a deal.
-            if let offer = coord.pendingTradeOffer {
+            // proposes a pick swap (R24 — real picks on both sides).
+            if let offer = coord.pendingPickOffer, coord.mode != .userPick {
                 VStack {
                     TradeOfferBanner(
                         motive: offer.motive,
-                        outgoing: offer.partnerReceives.map { "#\($0.pickNumber)" }.joined(separator: " + "),
-                        incoming: offer.partnerGives.map { "#\($0.pickNumber)" }.joined(separator: " + "),
-                        onAccept: { coord.acceptTradeOffer() },
-                        onDecline: { coord.declineTradeOffer() }
+                        outgoing: offer.userGives.map { "#\($0.pickNumber) (R\($0.round))" }.joined(separator: " + "),
+                        incoming: offer.userGets.map { "#\($0.pickNumber) (R\($0.round))" }.joined(separator: " + "),
+                        valueSummary: "Chart value: you send \(offer.userGivesValue) pts · receive \(offer.userGetsValue) pts",
+                        onAccept: { coord.acceptPickOffer() },
+                        onDecline: { coord.declinePickOffer() }
                     )
                     .padding(.top, DSSpacing.md)
                     .padding(.horizontal, DSSpacing.md)

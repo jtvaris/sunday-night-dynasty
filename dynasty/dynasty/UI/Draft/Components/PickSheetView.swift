@@ -38,6 +38,20 @@ struct PickSheetView: View {
                 }
                 Divider().overlay(Color.surfaceBorder)
 
+                // R24 — pending pick-swap offer surfaces inside the sheet
+                // (the main-view banner is hidden behind this modal).
+                if let offer = coordinator.pendingPickOffer {
+                    TradeOfferBanner(
+                        motive: offer.motive,
+                        outgoing: offer.userGives.map { "#\($0.pickNumber) (R\($0.round))" }.joined(separator: " + "),
+                        incoming: offer.userGets.map { "#\($0.pickNumber) (R\($0.round))" }.joined(separator: " + "),
+                        valueSummary: "Chart value: you send \(offer.userGivesValue) pts · receive \(offer.userGetsValue) pts",
+                        onAccept: { coordinator.acceptPickOffer() },
+                        onDecline: { coordinator.declinePickOffer() }
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+
                 bestByPositionStrip
                     .padding(.bottom, DSSpacing.xs)
 
@@ -264,25 +278,25 @@ struct PickSheetView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: DSSpacing.sm) {
                 Button {
-                    // Placeholder: AI must propose first
-                } label: {
-                    Label("Trade Up", systemImage: "arrow.up.right.circle.fill")
-                        .font(.callout.weight(.semibold))
-                }
-                .disabled(true)
-
-                Button {
-                    // Placeholder: AI must propose first
+                    coordinator.requestTradeDown()
                 } label: {
                     Label("Trade Down", systemImage: "arrow.down.right.circle.fill")
                         .font(.callout.weight(.semibold))
                 }
-                .disabled(true)
+                .buttonStyle(.bordered)
+                .tint(Color.accentGold)
+                .disabled(coordinator.pendingPickOffer != nil)
                 Spacer()
             }
-            Text("Trade offers come from rival GMs — watch the Trade Radar in the War Room.")
-                .font(.caption2)
-                .foregroundStyle(Color.textSecondary)
+            if let feedback = coordinator.tradeDownMessage {
+                Text(feedback)
+                    .font(.caption2)
+                    .foregroundStyle(Color.warning)
+            } else if coordinator.pendingPickOffer == nil {
+                Text("Shop this pick to teams behind you — interest rises when top prospects are still on the board. Trade-up offers come from rival GMs.")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textSecondary)
+            }
         }
         .padding(.horizontal, DSSpacing.lg)
         .padding(.vertical, DSSpacing.sm)

@@ -9,6 +9,11 @@ struct LockerRoomView: View {
     @State private var players: [Player] = []
     @State private var lockerRoomState: LockerRoomState?
 
+    // R25: position-room chemistry, pending choice event & persisted log
+    @State private var groupChemistry: [LockerRoomEngine.PositionGroupChemistry] = []
+    @State private var pendingEvent: LockerRoomEvent?
+    @State private var eventLog: [LockerRoomEvent] = []
+
     // MARK: - Computed
 
     private var chemistry: Int {
@@ -153,6 +158,9 @@ struct LockerRoomView: View {
 
             ScrollView {
                 VStack(spacing: 20) {
+                    if pendingEvent != nil {
+                        pendingEventCard
+                    }
                     squadDynamicsLink
                     chemistryCard
                     if chemistry < 60 {
@@ -160,6 +168,7 @@ struct LockerRoomView: View {
                     }
                     moraleDistributionCard
                     positionGroupCard
+                    dynamicsCard
                     leadersCard
                     risksCard
                     eventsCard
@@ -203,6 +212,189 @@ struct LockerRoomView: View {
             .cardBackground()
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Pending Event Card (R25)
+
+    /// An open locker-room situation waiting for the coach's call.
+    /// Ignoring it for a week auto-applies the passive option.
+    private var pendingEventCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.bubble.fill")
+                    .foregroundStyle(Color.warning)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pendingEvent?.title ?? "")
+                        .font(.headline)
+                        .foregroundStyle(Color.textPrimary)
+                    Text("Week \(pendingEvent?.week ?? 0) - needs your response")
+                        .font(.caption)
+                        .foregroundStyle(Color.warning)
+                }
+                Spacer()
+            }
+
+            Text(pendingEvent?.detail ?? "")
+                .font(.subheadline)
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(Color.surfaceBorder)
+
+            ForEach(pendingEvent?.options ?? []) { option in
+                Button {
+                    resolvePendingEvent(with: option)
+                } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(option.label)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                            Spacer()
+                            moraleDeltaPill(label: "Them", value: option.targetMoraleDelta)
+                            moraleDeltaPill(label: "Team", value: option.teamMoraleDelta)
+                        }
+                        Text(option.detail)
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.backgroundTertiary)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .strokeBorder(Color.warning.opacity(0.35), lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text("If you don't respond this week, the situation resolves itself.")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(Color.warning.opacity(0.4), lineWidth: 1)
+                )
+        )
+    }
+
+    private func moraleDeltaPill(label: String, value: Int) -> some View {
+        HStack(spacing: 3) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+            Text(value > 0 ? "+\(value)" : "\(value)")
+                .font(.caption2.weight(.bold).monospacedDigit())
+                .foregroundStyle(value > 0 ? Color.success : (value < 0 ? Color.danger : Color.textTertiary))
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(Color.backgroundPrimary.opacity(0.6)))
+    }
+
+    private func resolvePendingEvent(with option: LockerRoomEventOption) {
+        guard let event = pendingEvent else { return }
+        let resolved = LockerRoomEngine.resolve(event: event, option: option, players: players)
+        WeekAdvancer.appendLockerRoomLog(resolved, career: career)
+        career.pendingLockerRoomEvent = nil
+        try? modelContext.save()
+        withAnimation(.easeInOut(duration: 0.3)) {
+            loadData()
+        }
+    }
+
+    // MARK: - Mentorships & Conflicts Card (R25)
+
+    private var activeMentorships: [LockerRoomEngine.Mentorship] {
+        groupChemistry.flatMap { $0.mentorships }
+    }
+
+    private var activeConflicts: [LockerRoomEngine.GroupConflict] {
+        groupChemistry.flatMap { $0.conflicts }
+    }
+
+    private var dynamicsCard: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Image(systemName: "person.line.dotted.person.fill")
+                    .foregroundStyle(Color.accentBlue)
+                Text("Mentorships & Conflicts")
+                    .font(.headline)
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+            }
+
+            Divider().overlay(Color.surfaceBorder)
+
+            if activeMentorships.isEmpty && activeConflicts.isEmpty {
+                Text("No active mentorships or conflicts in the position rooms.")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
+            } else {
+                ForEach(activeMentorships) { pairing in
+                    HStack(spacing: 10) {
+                        Image(systemName: "graduationcap.fill")
+                            .font(.caption)
+                            .foregroundStyle(Color.success)
+                            .frame(width: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(pairing.mentor.fullName) → \(pairing.protege.fullName)")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Color.textPrimary)
+                            Text("\(pairing.mentor.position.rawValue) room - protege develops faster (+10% XP)")
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                        Spacer()
+                        Text("Mentorship")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.success)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color.success.opacity(0.15)))
+                    }
+                    .padding(.vertical, 4)
+                }
+                ForEach(activeConflicts) { conflict in
+                    HStack(spacing: 10) {
+                        Image(systemName: "bolt.fill")
+                            .font(.caption)
+                            .foregroundStyle(Color.danger)
+                            .frame(width: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(conflict.playerA.fullName) × \(conflict.playerB.fullName)")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(Color.textPrimary)
+                            Text(conflict.reason.rawValue)
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                        Spacer()
+                        Text("Conflict Risk")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.danger)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color.danger.opacity(0.15)))
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .padding(20)
+        .cardBackground()
     }
 
     // MARK: - Chemistry Card
@@ -462,6 +654,19 @@ struct LockerRoomView: View {
         .cardBackground()
     }
 
+    /// R25: good/neutral/tense verdict for a position room, from the engine.
+    private func chemistryState(forGroupID id: String) -> LockerRoomEngine.GroupChemistryState? {
+        groupChemistry.first { $0.id == id }?.state
+    }
+
+    private func chemistryStateColor(_ state: LockerRoomEngine.GroupChemistryState) -> Color {
+        switch state {
+        case .good:    return Color.success
+        case .neutral: return Color.textSecondary
+        case .tense:   return Color.danger
+        }
+    }
+
     private func positionGroupRow(group: PositionGroupSummary) -> some View {
         HStack(spacing: 12) {
             Image(systemName: group.icon)
@@ -476,6 +681,16 @@ struct LockerRoomView: View {
                 Text("\(group.count) player\(group.count == 1 ? "" : "s")\(group.lowCount > 0 ? " - \(group.lowCount) low morale" : "")")
                     .font(.caption)
                     .foregroundStyle(group.lowCount > 0 ? Color.danger : Color.textTertiary)
+            }
+
+            // R25: chemistry verdict badge (good / neutral / tense)
+            if let state = chemistryState(forGroupID: group.id) {
+                Text(state.rawValue)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(chemistryStateColor(state))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(chemistryStateColor(state).opacity(0.15)))
             }
 
             Spacer()
@@ -630,33 +845,67 @@ struct LockerRoomView: View {
 
             Divider().overlay(Color.surfaceBorder)
 
-            let events = lockerRoomState?.recentEvents ?? []
-            if events.isEmpty {
-                Text("Nothing notable happening in the locker room.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
-            } else {
-                ForEach(events.indices, id: \.self) { index in
-                    HStack(alignment: .top, spacing: 10) {
-                        Circle()
-                            .fill(Color.accentBlue.opacity(0.6))
-                            .frame(width: 6, height: 6)
-                            .padding(.top, 6)
-                        Text(events[index])
-                            .font(.subheadline)
-                            .foregroundStyle(Color.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if index < events.count - 1 {
+            // R25: persisted locker-room happenings first (with week stamps),
+            // falling back to the live chemistry notes when the log is empty.
+            if !eventLog.isEmpty {
+                ForEach(Array(eventLog.enumerated()), id: \.element.id) { index, event in
+                    logEntryRow(event)
+                    if index < eventLog.count - 1 {
                         Divider().overlay(Color.surfaceBorder.opacity(0.5))
+                    }
+                }
+            } else {
+                let events = lockerRoomState?.recentEvents ?? []
+                if events.isEmpty {
+                    Text("Nothing notable happening in the locker room.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                } else {
+                    ForEach(events.indices, id: \.self) { index in
+                        HStack(alignment: .top, spacing: 10) {
+                            Circle()
+                                .fill(Color.accentBlue.opacity(0.6))
+                                .frame(width: 6, height: 6)
+                                .padding(.top, 6)
+                            Text(events[index])
+                                .font(.subheadline)
+                                .foregroundStyle(Color.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if index < events.count - 1 {
+                            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+                        }
                     }
                 }
             }
         }
         .padding(20)
         .cardBackground()
+    }
+
+    private func logEntryRow(_ event: LockerRoomEvent) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("W\(event.week)")
+                .font(.caption2.weight(.bold).monospacedDigit())
+                .foregroundStyle(Color.accentBlue)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.accentBlue.opacity(0.12)))
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(event.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                Text(event.resolutionSummary ?? event.detail)
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
     }
 
     // MARK: - Helpers
@@ -684,6 +933,12 @@ struct LockerRoomView: View {
         let descriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
         players = (try? modelContext.fetch(descriptor)) ?? []
         lockerRoomState = LockerRoomEngine.calculateChemistry(players: players)
+
+        // R25: position-room chemistry, pending choice event & persisted log
+        groupChemistry = LockerRoomEngine.positionGroupChemistry(players: players)
+        let pending = career.pendingLockerRoomEvent
+        pendingEvent = (pending?.requiresResponse == true) ? pending : nil
+        eventLog = career.lockerRoomLog
     }
 }
 

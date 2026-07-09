@@ -60,6 +60,10 @@ struct PlayerRowView: View {
                             .font(.system(size: 7, weight: .bold))
                             .foregroundStyle(Color.danger)
                     }
+                    // R25: personality trait badge (tier-colored)
+                    Text(player.personality.archetype.shortLabel)
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(personalityTierColor)
                 }
             }
             .frame(minWidth: 80, alignment: .leading)
@@ -528,6 +532,15 @@ struct PlayerRowView: View {
 
     private var isExpiringContract: Bool {
         player.contractYearsRemaining <= 1
+    }
+
+    /// R25: badge color for the personality trait (positive/risky/neutral tier).
+    private var personalityTierColor: Color {
+        switch player.personality.archetype.tier {
+        case .positive: return Color.success
+        case .risky:    return Color.warning
+        case .neutral:  return Color.textTertiary
+        }
     }
 
     /// True when the player has a high cap commitment ($15M+ annual salary).

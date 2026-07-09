@@ -43,7 +43,23 @@ final class DraftDayCoordinator: ObservableObject {
     @Published private(set) var pendingRoundRecap: RoundRecapData?
     @Published private(set) var allPickResults: [PickResult] = []
     @Published private(set) var lastRoundShown: Int = 0
-    @Published private(set) var pendingTradeOffer: TradeEvaluator.ProposedOffer?
+
+    // R24 — pick-swap trades (real DraftPick rows on both sides)
+    @Published private(set) var pendingPickOffer: DraftDayTradeEngine.PickSwapOffer?
+    @Published private(set) var tradeDownMessage: String?
+
+    // R24 — UDFA stage after the final pick
+    @Published private(set) var udfaPool: [CollegeProspect] = []
+    @Published private(set) var signedUDFAProspectIDs: [UUID] = []
+    @Published private(set) var udfaStageFinished = false
+    @Published private(set) var udfaAISummary: String?
+    let maxUDFASignings = 5
+
+    /// One trade-down search per pick — prevents re-rolling the dice.
+    private var tradeDownSearchedPickNumber: Int?
+
+    /// User picks whose AI trade-up offer was declined — no nagging re-offers.
+    private var declinedTradeUpPickNumbers: Set<Int> = []
 
     // MARK: - Reputation snapshot (used to compute round-recap deltas)
 
@@ -199,11 +215,16 @@ final class DraftDayCoordinator: ObservableObject {
         // Skip ahead through picks already completed in a partially-played draft.
         if let firstUnfinished = picks.firstIndex(where: { !$0.isComplete }) {
             currentPickIndex = firstUnfinished
+            mode = .preDraft
         } else {
-            currentPickIndex = 0
+            // No unfinished picks: either no draft data at all, or the draft
+            // was already fully played — go straight to the UDFA stage
+            // instead of replaying completed picks.
+            currentPickIndex = picks.count
+            udfaStageFinished = WeekAdvancer.udfaStageCompletedSeasons.contains(season)
+            mode = .complete
+            prepareUDFAStage()
         }
-
-        mode = picks.isEmpty ? .complete : .preDraft
         clockSeconds = 120
     }
 
@@ -275,85 +296,150 @@ final class DraftDayCoordinator: ObservableObject {
         advance()
     }
 
-    // MARK: - Trade offers
+    // MARK: - Trade offers (R24 — pick swaps on real DraftPick rows)
 
-    /// Called by UI when the user accepts the pending offer.
-    func acceptTradeOffer() {
-        guard let offer = pendingTradeOffer else { return }
-        // Move user's outgoing pick to partner's currentTeamID and incoming
-        // picks to user. Simplification: only swap pick.currentTeamID; future
-        // picks not yet implemented.
-        if let outgoing = offer.partnerReceives.first {
-            if let idx = picks.firstIndex(where: { $0.pickNumber == outgoing.pickNumber }) {
-                picks[idx].currentTeamID = offer.partnerTeamID
-            }
+    /// Called by UI when the user accepts the pending pick-swap offer.
+    /// Ownership flips on the real picks, so the draft continues in the
+    /// correct order with the new owners on the clock.
+    func acceptPickOffer() {
+        guard let offer = pendingPickOffer, let teamID = userTeamID else { return }
+        guard isOfferStillValid(offer) else {
+            pendingPickOffer = nil
+            return
         }
-        if let incoming = offer.partnerGives.first, let userTeamID = userTeamID {
-            if let idx = picks.firstIndex(where: { $0.pickNumber == incoming.pickNumber }) {
-                picks[idx].currentTeamID = userTeamID
-            }
+        for pick in offer.userGives {
+            pick.currentTeamID = offer.partnerTeamID
+            pick.teamAbbreviation = teamsByID[offer.partnerTeamID]?.abbreviation
+        }
+        for pick in offer.userGets {
+            pick.currentTeamID = teamID
+            pick.teamAbbreviation = teamsByID[teamID]?.abbreviation
         }
         recordEvent(
             type: .tradeAccepted,
             teamID: offer.partnerTeamID,
-            pickNumber: offer.partnerReceives.first?.pickNumber,
-            round: nil
+            pickNumber: offer.userGives.first?.pickNumber,
+            round: offer.userGives.first?.round
         )
         try? modelContext.save()
-        pendingTradeOffer = nil
+        pendingPickOffer = nil
+        tradeDownMessage = nil
+
+        // If the pick on the clock just changed hands (trade down), restart
+        // the pick flow so the AI partner goes on the clock immediately.
+        if let current = currentPick, current.currentTeamID != teamID, mode == .userPick {
+            beginCurrentPick()
+        }
     }
 
-    /// Called by UI when the user rejects the pending offer.
-    func declineTradeOffer() {
-        if let offer = pendingTradeOffer {
+    /// Called by UI when the user rejects the pending pick-swap offer.
+    func declinePickOffer() {
+        if let offer = pendingPickOffer {
+            if let pickNumber = offer.userGives.first?.pickNumber {
+                declinedTradeUpPickNumbers.insert(pickNumber)
+            }
             recordEvent(
                 type: .tradeDeclined,
                 teamID: offer.partnerTeamID,
-                pickNumber: nil,
+                pickNumber: offer.userGives.first?.pickNumber,
                 round: nil
             )
         }
-        pendingTradeOffer = nil
+        pendingPickOffer = nil
     }
 
-    /// Called from beginCurrentPick to optionally generate an AI offer.
-    private func considerTradeOffer() {
-        guard !isUserOnClock,
-              pendingTradeOffer == nil,
-              let teamID = userTeamID,
-              let userPick = picks.dropFirst(currentPickIndex).first(where: { $0.currentTeamID == teamID }),
-              let pick = currentPick else { return }
-        // Only consider when the AI is meaningfully ahead of the user.
-        if pick.pickNumber > userPick.pickNumber - 5 { return }
-        // 5% per-pick gate so offers stay rare.
-        if Int.random(in: 1...100) > 5 { return }
-        let topProspects = availableProspects.prefix(5).enumerated().map { (idx, prospect) in
-            (prospectID: prospect.id, position: prospect.position, rank: idx + 1)
+    /// User taps "Trade Down" while on the clock: search for a willing AI
+    /// partner. One search per pick — if the league passes, that's the answer.
+    func requestTradeDown() {
+        guard isUserOnClock, let pick = currentPick, let teamID = userTeamID else { return }
+        guard pendingPickOffer == nil else { return }
+        if tradeDownSearchedPickNumber == pick.pickNumber {
+            if tradeDownMessage == nil {
+                tradeDownMessage = "You already shopped this pick — no new callers."
+            }
+            return
         }
-        if let offer = TradeEvaluator.aiInitiatedOfferConsidered(
-            partnerTeamID: pick.currentTeamID,
-            partnerNeeds: DraftIntel.teamNeedScores(roster: rosters[pick.currentTeamID] ?? []),
-            partnerPersonality: .balanced,
-            currentPick: pick.pickNumber,
-            userPick: userPick.pickNumber,
-            boardTopProspects: Array(topProspects)
+        tradeDownSearchedPickNumber = pick.pickNumber
+
+        if let offer = DraftDayTradeEngine.userTradeDownOffer(
+            currentPick: pick,
+            picks: picks,
+            currentPickIndex: currentPickIndex,
+            userTeamID: teamID,
+            teamsByID: teamsByID,
+            rosters: rosters,
+            availableProspects: availableProspects,
+            publicBoardRanks: publicBoardRanks,
+            currentSeason: career.currentSeason
         ) {
-            pendingTradeOffer = offer
+            pendingPickOffer = offer
+            tradeDownMessage = nil
             recordEvent(
                 type: .tradeOffered,
                 teamID: offer.partnerTeamID,
                 pickNumber: pick.pickNumber,
                 round: pick.round
             )
+        } else {
+            tradeDownMessage = "No teams are willing to move up to #\(pick.pickNumber) right now."
         }
+    }
+
+    /// Called from beginCurrentPick: when the user is 1-3 picks from the
+    /// clock, an AI team may offer to trade up into the user's pick.
+    private func considerAITradeUpOffer() {
+        guard !isUserOnClock,
+              pendingPickOffer == nil,
+              let teamID = userTeamID else { return }
+        let until = picksUntilUserPick
+        guard until >= 1, until <= 3 else { return }
+        // ~20 % gate per pick inside the window so offers stay meaningful.
+        guard Int.random(in: 1...100) <= 20 else { return }
+        guard let userPick = picks.dropFirst(currentPickIndex).first(where: { $0.currentTeamID == teamID }),
+              !declinedTradeUpPickNumbers.contains(userPick.pickNumber) else { return }
+
+        if let offer = DraftDayTradeEngine.aiTradeUpOffer(
+            userPick: userPick,
+            picks: picks,
+            currentPickIndex: currentPickIndex,
+            userTeamID: teamID,
+            teamsByID: teamsByID,
+            rosters: rosters,
+            availableProspects: availableProspects,
+            publicBoardRanks: publicBoardRanks,
+            currentSeason: career.currentSeason
+        ) {
+            pendingPickOffer = offer
+            recordEvent(
+                type: .tradeOffered,
+                teamID: offer.partnerTeamID,
+                pickNumber: userPick.pickNumber,
+                round: userPick.round
+            )
+        }
+    }
+
+    /// A pending offer survives only while every pick on both sides is still
+    /// owned by the expected team and hasn't been used yet.
+    private func isOfferStillValid(_ offer: DraftDayTradeEngine.PickSwapOffer) -> Bool {
+        guard let teamID = userTeamID else { return false }
+        let currentNumber = currentPick?.pickNumber ?? Int.max
+        for pick in offer.userGives {
+            guard pick.currentTeamID == teamID, !pick.isComplete,
+                  pick.pickNumber >= currentNumber else { return false }
+        }
+        for pick in offer.userGets {
+            guard pick.currentTeamID == offer.partnerTeamID, !pick.isComplete,
+                  pick.pickNumber >= currentNumber else { return false }
+        }
+        return true
     }
 
     // MARK: - Internal pick flow
 
     private func beginCurrentPick() {
         guard let pick = currentPick else {
-            mode = .complete
-            recordEvent(type: .draftCompleted)
+            completeDraft()
             return
         }
 
@@ -364,7 +450,13 @@ final class DraftDayCoordinator: ObservableObject {
             round: pick.round
         )
 
-        considerTradeOffer()
+        // Expire stale pick-swap offers (assets drafted or ownership moved).
+        if let offer = pendingPickOffer, !isOfferStillValid(offer) {
+            pendingPickOffer = nil
+        }
+        tradeDownMessage = nil
+
+        considerAITradeUpOffer()
 
         if pick.currentTeamID == userTeamID {
             mode = .userPick
@@ -563,8 +655,7 @@ final class DraftDayCoordinator: ObservableObject {
         let previousRound = currentPick?.round ?? 1
         currentPickIndex += 1
         if currentPickIndex >= picks.count {
-            mode = .complete
-            recordEvent(type: .draftCompleted)
+            completeDraft()
             return
         }
         let nextRound = currentPick?.round ?? 1
@@ -573,6 +664,94 @@ final class DraftDayCoordinator: ObservableObject {
         }
         announceCurrentRoundIfNeeded()
         beginCurrentPick()
+    }
+
+    // MARK: - Draft completion + UDFA stage (R24)
+
+    private func completeDraft() {
+        clockTask?.cancel()
+        pendingPickOffer = nil
+        mode = .complete
+        recordEvent(type: .draftCompleted)
+        prepareUDFAStage()
+    }
+
+    /// Builds the undrafted pool from what's actually left on the board,
+    /// sorted by the USER'S scouted grade (never the hidden OVR).
+    private func prepareUDFAStage() {
+        guard udfaPool.isEmpty else { return }
+        udfaPool = availableProspects.sorted { a, b in
+            let gradeA = a.effectiveOverallGrade?.midGrade.rank ?? 0
+            let gradeB = b.effectiveOverallGrade?.midGrade.rank ?? 0
+            if gradeA != gradeB { return gradeA > gradeB }
+            return (publicBoardRanks[a.id] ?? 999) < (publicBoardRanks[b.id] ?? 999)
+        }
+    }
+
+    /// Signs one UDFA to the user's team on a cheap 1-2 year deal (max 5).
+    func signUDFA(_ prospect: CollegeProspect) {
+        guard mode == .complete, !udfaStageFinished,
+              let teamID = userTeamID,
+              signedUDFAProspectIDs.count < maxUDFASignings,
+              !signedUDFAProspectIDs.contains(prospect.id),
+              udfaPool.contains(where: { $0.id == prospect.id }) else { return }
+
+        let player = DraftEngine.convertUDFAToPlayer(prospect: prospect, teamID: teamID)
+        modelContext.insert(player)
+        rosters[teamID, default: []].append(player)
+        signedUDFAProspectIDs.append(prospect.id)
+        prospect.isDeclaringForDraft = false   // consumed from future UDFA pools
+        if let team = teamsByID[teamID] {
+            team.currentCapUsage += player.annualSalary
+        }
+        teamNeedScores = DraftIntel.teamNeedScores(roster: rosters[teamID] ?? [])
+        try? modelContext.save()
+    }
+
+    /// Closes the UDFA window: AI teams round-robin the best remaining
+    /// prospects (~10 each, mirroring the old OTAs bulk signing), everything
+    /// processed here is marked so the OTAs fallback can't double-sign.
+    func finishUDFASigning() {
+        guard mode == .complete, !udfaStageFinished else { return }
+        udfaStageFinished = true
+
+        let remaining = udfaPool.filter { !signedUDFAProspectIDs.contains($0.id) }
+        let aiTeams = teamsByID.values.filter { $0.id != userTeamID }.shuffled()
+        var aiSignedCount = 0
+
+        if !aiTeams.isEmpty {
+            let perTeamCap = 10
+            var signedPerTeam: [UUID: Int] = [:]
+            var teamIndex = 0
+            for prospect in remaining {
+                // Find the next team that still has room.
+                var assigned: Team?
+                for _ in 0..<aiTeams.count {
+                    let team = aiTeams[teamIndex % aiTeams.count]
+                    teamIndex += 1
+                    if signedPerTeam[team.id, default: 0] < perTeamCap {
+                        assigned = team
+                        break
+                    }
+                }
+                guard let team = assigned else { break }   // every team is full
+                let player = DraftEngine.convertUDFAToPlayer(prospect: prospect, teamID: team.id)
+                modelContext.insert(player)
+                rosters[team.id, default: []].append(player)
+                team.currentCapUsage += player.annualSalary
+                signedPerTeam[team.id, default: 0] += 1
+                aiSignedCount += 1
+                prospect.isDeclaringForDraft = false
+            }
+        }
+
+        // Close the window for everyone left unsigned as well.
+        for prospect in remaining where prospect.isDeclaringForDraft {
+            prospect.isDeclaringForDraft = false
+        }
+        WeekAdvancer.udfaStageCompletedSeasons.insert(career.currentSeason)
+        udfaAISummary = "League closed the UDFA market: \(aiSignedCount) undrafted players signed across \(aiTeams.count) teams."
+        try? modelContext.save()
     }
 
     // MARK: - Reactions / Drama / Recap consumption
@@ -655,8 +834,7 @@ final class DraftDayCoordinator: ObservableObject {
             }
         }
         if currentPickIndex >= picks.count {
-            mode = .complete
-            recordEvent(type: .draftCompleted)
+            completeDraft()
             return
         }
         // Resume normal flow at the stop point

@@ -377,6 +377,18 @@ class FootballFieldScene: SCNScene {
         }
     }
 
+    /// On defense the offense advances TOWARD the camera, so the offensive
+    /// framing (aim point 16 yards downfield) would show mostly empty turf
+    /// and pin the formation to the bottom edge. The defensive framing sits
+    /// higher and steeper with the aim point on the player's own side of the
+    /// ball: the snap reads in the upper third and the defensive backfield —
+    /// where the play actually develops — fills the frame.
+    private var defensiveFraming = false
+
+    func setDefensiveFraming(_ defending: Bool) {
+        defensiveFraming = defending
+    }
+
     /// Pans the camera (and its look-at target) along the field so ~25 yards
     /// around the given Z stay readable at a broadcast angle.
     /// `z` is clamped to [-45, 45] so the framing never leaves the field.
@@ -386,8 +398,13 @@ class FootballFieldScene: SCNScene {
         focusZ = clampedZ
         // Madden-98 framing: a LOW camera behind the player's own unit
         // looking downfield — mirrored via `viewFacing` for away games.
-        let targetPosition = SCNVector3(0, 1.5, clampedZ + viewFacing * 16)
-        let cameraPosition = SCNVector3(0, 21, clampedZ - viewFacing * 24)
+        // Defense swaps to the high steep variant (see defensiveFraming).
+        let targetPosition = defensiveFraming
+            ? SCNVector3(0, 0.5, clampedZ - viewFacing * 6)
+            : SCNVector3(0, 1.5, clampedZ + viewFacing * 16)
+        let cameraPosition = defensiveFraming
+            ? SCNVector3(0, 30, clampedZ - viewFacing * 34)
+            : SCNVector3(0, 21, clampedZ - viewFacing * 24)
 
         if animated {
             let targetMove = SCNAction.move(to: targetPosition, duration: duration)

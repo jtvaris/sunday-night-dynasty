@@ -1278,6 +1278,7 @@ struct CoachedGameView: View {
             let openingCrouch = PlayChoreographer.stanceCrouchIndices(offenseIsHome: engine.homeHasPossession)
             fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.1,
                                               crouchHome: openingCrouch.home, crouchAway: openingCrouch.away)
+            fieldScene.setDefensiveFraming(engine.homeHasPossession != playerTeamIsHome)
             fieldScene.focusCamera(z: losZ, animated: false)
         }
 
@@ -1353,6 +1354,7 @@ struct CoachedGameView: View {
         let formation = PlayChoreographer.kickoffFormation(kickingTeamIsHome: event.kickingTeamIsHome)
         fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.7)
         fieldScene.updateMarkers(losZ: nil, firstDownZ: nil)
+        fieldScene.setDefensiveFraming(false)
         fieldScene.focusCamera(z: PlayChoreographer.kickoffSpotZ(kickingTeamIsHome: event.kickingTeamIsHome))
 
         let steps = PlayChoreographer.kickoffSteps(
@@ -1464,6 +1466,7 @@ struct CoachedGameView: View {
 
         // Kicks get the broadcast angle from low behind the posts; every
         // other play keeps the normal scrimmage framing.
+        fieldScene.setDefensiveFraming(offenseIsHome != playerTeamIsHome)
         if play.playType == .fieldGoal || play.playType == .extraPoint {
             fieldScene.kickCamera(towardZ: playDir)
         } else {
@@ -1599,6 +1602,7 @@ struct CoachedGameView: View {
         let crouch = PlayChoreographer.stanceCrouchIndices(offenseIsHome: engine.homeHasPossession)
         fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.3,
                                           crouchHome: crouch.home, crouchAway: crouch.away)
+        fieldScene.setDefensiveFraming(engine.homeHasPossession != playerTeamIsHome)
         fieldScene.focusCamera(z: losZ)
         updateMarkers()
     }

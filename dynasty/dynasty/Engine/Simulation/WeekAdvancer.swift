@@ -44,6 +44,10 @@ enum WeekAdvancer {
     /// Latest mock draft projection (generated at midseason, combine, and pre-draft).
     static var currentMockDraft: [ScoutingEngine.MockDraftPick] = []
 
+    /// R24: seasons whose UDFA signing was already handled interactively at
+    /// the end of Draft Day — the OTAs bulk-signing fallback must skip these.
+    static var udfaStageCompletedSeasons: Set<Int> = []
+
     /// Historical mock draft snapshots, keyed by phase tag (e.g. "Mid-Season",
     /// "Combine", "Post-FA", "Pre-Draft"). Each value is a copy of
     /// `currentMockDraft` taken right after that phase's mock was generated.
@@ -340,6 +344,20 @@ enum WeekAdvancer {
             lastPlayerGameResult = nil
         }
 
+        // R25: win/loss of the user's game this week — shared by the press
+        // conference context and the locker-room pulse below.
+        let userWonLastGame: Bool? = {
+            if let coachedGameWon { return coachedGameWon }
+            guard let result = playerGameResult, let playerTeamID = career.teamID else { return nil }
+            if let game = unplayedGames.first(where: {
+                $0.homeTeamID == playerTeamID || $0.awayTeamID == playerTeamID
+            }) {
+                let isHome = game.homeTeamID == playerTeamID
+                return isHome ? result.homeScore > result.awayScore : result.awayScore > result.homeScore
+            }
+            return nil
+        }()
+
         // Coach weekly XP
         if let playerTeamID = career.teamID {
             let teamCoaches = allCoaches.filter { $0.teamID == playerTeamID }
@@ -371,17 +389,7 @@ enum WeekAdvancer {
         // 0. Generate weekly press conference questions
         if let playerTeamID = career.teamID,
            let playerTeam = teamsByID[playerTeamID] {
-            let lastGameWon: Bool? = {
-                if let coachedGameWon { return coachedGameWon }
-                guard let result = playerGameResult else { return nil }
-                if let game = unplayedGames.first(where: {
-                    $0.homeTeamID == playerTeamID || $0.awayTeamID == playerTeamID
-                }) {
-                    let isHome = game.homeTeamID == playerTeamID
-                    return isHome ? result.homeScore > result.awayScore : result.awayScore > result.homeScore
-                }
-                return nil
-            }()
+            let lastGameWon = userWonLastGame
 
             // Distill concrete facts from the played game (quick-simmed or
             // live-coached — both leave their result in lastPlayerGameResult)
@@ -486,6 +494,22 @@ enum WeekAdvancer {
             )
         }
 
+        // 4e. R25: locker room pulse — auto-resolve stale pending drama, then
+        // roll a new personality-driven event (~25 % of weeks) for the user's
+        // team. Choice events wait on the career; info events apply instantly.
+        if let playerTeamID = career.teamID,
+           let playerTeam = teamsByID[playerTeamID] {
+            processLockerRoomWeek(
+                career: career,
+                team: playerTeam,
+                allPlayers: allPlayers,
+                allCoaches: allCoaches,
+                wonLastGame: userWonLastGame,
+                week: week,
+                season: season
+            )
+        }
+
         // 5. Apply fatigue changes for players who played this week
         // (R22: holdout players are away from the facility — no game fatigue).
         for player in allPlayers where player.teamID != nil && !player.isInjured && !player.isHoldingOut {
@@ -528,12 +552,20 @@ enum WeekAdvancer {
 
         // 7. Apply game experience for starters (approximated: high-overall rostered players)
         // (R22: holdout players don't play, so they earn no experience.)
+        // R25: a young player with an active mentor in his position room
+        // develops slightly faster (+10 % XP, league-wide and symmetric).
+        let mentoredIDs = LockerRoomEngine.mentoredProtegeIDs(allPlayers: allPlayers)
         for player in allPlayers where player.teamID != nil && !player.isInjured && !player.isHoldingOut {
+            let mentorBoost = mentoredIDs.contains(player.id) ? 1.1 : 1.0
             // Approximate starters as those with overall >= 65 or on small rosters
             if player.overall >= 65 {
-                PlayerDevelopmentEngine.applyGameExperience(player, gamesPlayed: 1, gamesStarted: 1)
+                PlayerDevelopmentEngine.applyGameExperience(
+                    player, gamesPlayed: 1, gamesStarted: 1, experienceBoost: mentorBoost
+                )
             } else {
-                PlayerDevelopmentEngine.applyGameExperience(player, gamesPlayed: 1, gamesStarted: 0)
+                PlayerDevelopmentEngine.applyGameExperience(
+                    player, gamesPlayed: 1, gamesStarted: 0, experienceBoost: mentorBoost
+                )
             }
         }
 
@@ -699,6 +731,89 @@ enum WeekAdvancer {
             career.currentPhase = .playoffs
             career.currentWeek = 19   // Playoff week numbering starts at 19.
         }
+    }
+
+    // MARK: - Private: Locker Room Pulse (R25)
+
+    /// Weekly locker-room tick for the user's team.
+    ///
+    /// Explainable rules:
+    /// - A pending choice event ignored for a full week resolves itself with
+    ///   the passive option — not reacting IS a decision the room notices.
+    /// - Only one open situation at a time; ~25 % of weeks roll a new event
+    ///   from personalities, morale, and the latest result.
+    /// - Every event lands in the inbox; choice events flag "action required"
+    ///   and deep-link to the Locker Room screen.
+    private static func processLockerRoomWeek(
+        career: Career,
+        team: Team,
+        allPlayers: [Player],
+        allCoaches: [Coach],
+        wonLastGame: Bool?,
+        week: Int,
+        season: Int
+    ) {
+        let teamPlayers = allPlayers.filter { $0.teamID == team.id }
+        guard !teamPlayers.isEmpty else { return }
+
+        // 1. Stale pending event → passive option auto-applies.
+        if let pending = career.pendingLockerRoomEvent,
+           pending.season != season || pending.week < week {
+            if let passive = pending.options.last {
+                let resolved = LockerRoomEngine.resolve(
+                    event: pending, option: passive, players: teamPlayers
+                )
+                appendLockerRoomLog(resolved, career: career)
+            }
+            career.pendingLockerRoomEvent = nil
+        }
+
+        // 2. Never stack two open situations.
+        guard career.pendingLockerRoomEvent == nil else { return }
+
+        // 3. Roll a new event (~25 % chance, inside the engine).
+        guard let event = LockerRoomEngine.rollWeeklyEvent(
+            players: teamPlayers,
+            wonLastGame: wonLastGame,
+            teamWins: team.wins,
+            teamLosses: team.losses,
+            week: week,
+            season: season
+        ) else { return }
+
+        if event.requiresResponse {
+            career.pendingLockerRoomEvent = event
+        } else {
+            appendLockerRoomLog(event, career: career)
+        }
+
+        // 4. Surface it in the inbox.
+        let oc = allCoaches.first { $0.teamID == team.id && $0.role == .offensiveCoordinator }
+        let dc = allCoaches.first { $0.teamID == team.id && $0.role == .defensiveCoordinator }
+        let sender: MessageSender =
+            oc.map { .offensiveCoordinator(name: $0.fullName) }
+            ?? dc.map { .defensiveCoordinator(name: $0.fullName) }
+            ?? .media(outlet: "Team Insider")
+        let bodySuffix: String = event.requiresResponse
+            ? "\n\nThe room is waiting to see how you handle this. Head to the Locker Room to respond."
+            : (event.resolutionSummary.map { "\n\n\($0)" } ?? "")
+        lastInboxMessages.append(InboxMessage(
+            sender: sender,
+            subject: event.title,
+            body: event.detail + bodySuffix,
+            date: "Week \(week), Season \(season)",
+            category: .playerIssue,
+            actionRequired: event.requiresResponse,
+            actionDestination: .lockerRoom
+        ))
+    }
+
+    /// Prepends a resolved event to the career's locker-room log (cap 12).
+    static func appendLockerRoomLog(_ event: LockerRoomEvent, career: Career) {
+        var log = career.lockerRoomLog
+        log.removeAll { $0.id == event.id }
+        log.insert(event, at: 0)
+        career.lockerRoomLog = Array(log.prefix(12))
     }
 
     // MARK: - Private: Holdout Drama (R22)
@@ -1310,8 +1425,11 @@ enum WeekAdvancer {
             // at the .trainingCamp boundary via PlayerDevelopmentEngine.
             applyCampWeeklyTick(career: career, phase: .otas, modelContext: modelContext, allPlayers: allPlayers)
 
-            // UDFA signing: AI teams auto-sign ~12 UDFAs each, present pool to player
-            if !currentDraftClass.isEmpty {
+            // UDFA signing: AI teams auto-sign ~12 UDFAs each, present pool to player.
+            // R24: skipped entirely when the interactive Draft Day UDFA stage
+            // already handled this season's undrafted market.
+            if !currentDraftClass.isEmpty,
+               !udfaStageCompletedSeasons.contains(career.currentSeason) {
                 let udfaPool = ScoutingEngine.getUDFAPool(prospects: currentDraftClass)
                 let aiTeams = teams.filter { $0.id != career.teamID }
 

@@ -89,6 +89,15 @@ final class Career {
     /// start of every new season. Optional new attribute → lightweight migration.
     var pendingTradeOffersData: Data? = nil
 
+    // MARK: - Locker Room (R25)
+    /// JSON-encoded `[LockerRoomEvent]` — resolved locker-room happenings,
+    /// newest first, capped at 12. Optional new attribute → lightweight migration.
+    var lockerRoomLogData: Data? = nil
+    /// JSON-encoded `LockerRoomEvent` awaiting the coach's response
+    /// (intervene / let it play out). `nil` when nothing is pending.
+    /// Optional new attribute → lightweight migration.
+    var pendingLockerRoomEventData: Data? = nil
+
     var winPercentage: Double {
         let totalGames = totalWins + totalLosses
         guard totalGames > 0 else { return 0.0 }
@@ -173,6 +182,38 @@ extension Career {
         }
         set {
             pendingTradeOffersData = try? JSONEncoder().encode(newValue)
+        }
+    }
+}
+
+// MARK: - Locker Room Codable Bridge (R25)
+
+extension Career {
+
+    /// Rolling log of resolved locker-room events, newest first (max 12).
+    /// Writing encodes and stores the new list (caller saves the context).
+    var lockerRoomLog: [LockerRoomEvent] {
+        get {
+            guard let data = lockerRoomLogData,
+                  let log = try? JSONDecoder().decode([LockerRoomEvent].self, from: data) else {
+                return []
+            }
+            return log
+        }
+        set {
+            lockerRoomLogData = try? JSONEncoder().encode(Array(newValue.prefix(12)))
+        }
+    }
+
+    /// The one open locker-room situation waiting for the coach's decision.
+    /// Assigning `nil` clears it (caller saves the context).
+    var pendingLockerRoomEvent: LockerRoomEvent? {
+        get {
+            guard let data = pendingLockerRoomEventData else { return nil }
+            return try? JSONDecoder().decode(LockerRoomEvent.self, from: data)
+        }
+        set {
+            pendingLockerRoomEventData = newValue.flatMap { try? JSONEncoder().encode($0) }
         }
     }
 }

@@ -138,9 +138,19 @@ enum DraftEngine {
             return (prospect, score)
         }
 
-        // Return the highest-scored prospect.
-        let best = scored.max(by: { $0.1 < $1.1 })!
-        return best.0
+        // R24: weighted-random selection among the top of the need-adjusted
+        // board instead of a pure argmax. The board-topper still goes ~65 %
+        // of the time, but occasional small reaches/slides keep drafts
+        // surprising while the need+value scoring stays fully explainable.
+        let ranked = scored.sorted { $0.1 > $1.1 }
+        let candidates = Array(ranked.prefix(4))
+        let weights: [Double] = [0.65, 0.20, 0.10, 0.05]
+        var roll = Double.random(in: 0..<1)
+        for (index, candidate) in candidates.enumerated() {
+            roll -= weights[min(index, weights.count - 1)]
+            if roll < 0 { return candidate.0 }
+        }
+        return candidates[0].0
     }
 
     // MARK: - Convert Prospect to Player
@@ -187,6 +197,33 @@ enum DraftEngine {
             contractYearsRemaining: contract.years,
             annualSalary: contract.salary,
             draftPickNumber: pickNumber
+        )
+    }
+
+    /// R24: Creates a `Player` from an UNDRAFTED prospect on a cheap 1-2 year
+    /// deal. UDFAs use the bottom of the rookie readiness curve (they need
+    /// development time), mirroring `convertToPlayer` but without a draft
+    /// pick number.
+    static func convertUDFAToPlayer(
+        prospect: CollegeProspect,
+        teamID: UUID
+    ) -> Player {
+        let factor = Double.random(in: 0.58...0.68)
+        let physicalFactor = min(factor + 0.05, 1.0)
+        return Player(
+            firstName: prospect.firstName,
+            lastName: prospect.lastName,
+            position: prospect.position,
+            age: prospect.age,
+            yearsPro: 0,
+            physical: scalePhysical(prospect.truePhysical, factor: physicalFactor),
+            mental: scaleMental(prospect.trueMental, factor: factor),
+            positionAttributes: scalePositionAttributes(prospect.truePositionAttributes, factor: factor),
+            personality: prospect.truePersonality,
+            truePotential: prospect.truePotential,
+            teamID: teamID,
+            contractYearsRemaining: Int.random(in: 1...2),
+            annualSalary: Int.random(in: 450...750)
         )
     }
 
