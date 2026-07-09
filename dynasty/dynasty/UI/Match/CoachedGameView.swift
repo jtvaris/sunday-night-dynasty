@@ -66,7 +66,18 @@ struct CoachedGameView: View {
     // MARK: Scene & Flow State
 
     @State private var fieldScene = FootballFieldScene()
+    /// Persisted Coach/Broadcast camera choice (HUD toggle over the field).
+    /// Coach — the Madden-scale low shot — is the default.
+    @AppStorage("coachCameraStyle") private var cameraStyleRaw: String =
+        FootballFieldScene.CameraStyle.coach.rawValue
+    private var cameraStyle: FootballFieldScene.CameraStyle {
+        FootballFieldScene.CameraStyle(rawValue: cameraStyleRaw) ?? .coach
+    }
     @State private var isAnimating = false
+    /// While set (and in the future), the offense is in its between-plays
+    /// huddle ring: formation previews hold off until the break time so a
+    /// call-sheet browse doesn't snap the ring apart mid-gather.
+    @State private var huddleBreakTime: Date? = nil
     /// The field grows while a play is live and shrinks back when the call
     /// sheet needs the room.
     private var fieldExpanded: Bool { isAnimating }
@@ -560,7 +571,11 @@ struct CoachedGameView: View {
     // MARK: - Field
 
     private func fieldSection(height: CGFloat) -> some View {
-        SceneKitFieldView(scene: fieldScene)
+        // Camera control stays OFF in the live game: the Coach/Broadcast
+        // framing owns the shot, and a stray touch on the field must not
+        // hand the camera to SceneKit's free-orbit gestures (which would
+        // freeze every scripted focus/follow move off-screen for good).
+        SceneKitFieldView(scene: fieldScene, allowsCameraControl: false)
             .frame(height: height)
             .overlay(alignment: .topLeading) {
                 if let text = possessionBanner {
@@ -636,6 +651,7 @@ struct CoachedGameView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
+            .overlay(alignment: .bottomTrailing) { cameraToggleButton.padding(10) }
             .overlay(alignment: .bottom) {
                 if let plate = snapPlate {
                     HStack(spacing: 0) {
@@ -657,6 +673,26 @@ struct CoachedGameView: View {
             .animation(.spring(duration: 0.25), value: snapPlate)
             .animation(.spring(duration: 0.3), value: sidelineNote)
             .animation(.spring(duration: 0.3), value: adaptationNote)
+    }
+
+    /// Coach/Broadcast camera toggle over the field: video = the Madden-scale
+    /// coach shot (default), tv = the pulled-back broadcast frame. The choice
+    /// persists across games (UserDefaults) and reframes the live shot.
+    private var cameraToggleButton: some View {
+        Button {
+            let next: FootballFieldScene.CameraStyle = cameraStyle == .coach ? .broadcast : .coach
+            cameraStyleRaw = next.rawValue
+            fieldScene.setCameraStyle(next)
+        } label: {
+            Image(systemName: cameraStyle == .coach ? "video.fill" : "tv")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(Color.black.opacity(0.45), in: Circle())
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.25), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(cameraStyle == .coach ? "Coach camera" : "Broadcast camera")
     }
 
     /// One "who won the rep" line over the field: gold sword for a battle
@@ -1928,6 +1964,11 @@ struct CoachedGameView: View {
         guard !gameStarted else { return }
         gameStarted = true
 
+        // Scrimmage framing: the persisted Coach/Broadcast choice (billboard
+        // numbers hide in the coach shot). No refocus yet — the opening
+        // focusCamera below places the shot without animation.
+        fieldScene.setCameraStyle(cameraStyle, refocus: false)
+
         // The camera always shoots from behind the PLAYER's own unit —
         // mirrored for away games (field text re-orients with it).
         fieldScene.setViewFacing(playerTeamIsHome ? 1 : -1)
@@ -1940,8 +1981,8 @@ struct CoachedGameView: View {
         // team-color pants and helmet — always readable against the grass.
         let colors = MatchTeamColors.matchup(home: homeTeam.abbreviation, away: awayTeam.abbreviation)
         fieldScene.setUniforms(
-            home: .home(teamColor: colors.home),
-            away: .away(teamColor: colors.away)
+            home: .home(teamColor: colors.home, abbreviation: homeTeam.abbreviation),
+            away: .away(teamColor: colors.away, abbreviation: awayTeam.abbreviation)
         )
         fieldScene.setFieldDressing(
             homeAbbr: homeTeam.abbreviation,
@@ -1955,9 +1996,12 @@ struct CoachedGameView: View {
         if let kickoff = engine.pendingKickoff {
             let kickFormation = PlayChoreographer.kickoffFormation(kickingTeamIsHome: kickoff.kickingTeamIsHome)
             fieldScene.movePlayersToFormation(home: kickFormation.home, away: kickFormation.away, duration: 0.1)
+            // Kickoffs always use the wide broadcast frame — the units are
+            // spread across 60 yards and the coach shot can't hold them.
             fieldScene.focusCamera(
                 z: PlayChoreographer.kickoffSpotZ(kickingTeamIsHome: kickoff.kickingTeamIsHome),
-                animated: false
+                animated: false,
+                style: .broadcast
             )
         } else {
             let losZ = PlayChoreographer.losZ(yardLine: engine.yardLine, offenseIsHome: engine.homeHasPossession)
@@ -1967,8 +2011,10 @@ struct CoachedGameView: View {
                 defenseNumbers: engine.currentDefenseUnit.numbers
             )
             let openingStances = PlayChoreographer.stances(offenseIsHome: engine.homeHasPossession)
+            let openingBuilds = PlayChoreographer.bodyTypes(offenseIsHome: engine.homeHasPossession)
             fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.1,
-                                              stancesHome: openingStances.home, stancesAway: openingStances.away)
+                                              stancesHome: openingStances.home, stancesAway: openingStances.away,
+                                              bodyTypesHome: openingBuilds.home, bodyTypesAway: openingBuilds.away)
             fieldScene.setDefensiveFraming(engine.homeHasPossession != playerTeamIsHome)
             fieldScene.focusCamera(z: losZ, animated: false)
         }
@@ -2034,9 +2080,9 @@ struct CoachedGameView: View {
             return
         }
         if engine.playerIsOnOffense {
-            // Line the teams up at the new scrimmage spot while the user
-            // considers the call, and pre-select the AI pick.
-            syncFieldToSituation()
+            // Huddle up, then line the teams up at the new scrimmage spot
+            // while the user considers the call, and pre-select the AI pick.
+            lineUpWithHuddle()
             cachedSuggestion = aiSuggestion
             selectedCall = cachedSuggestion
             if let suggestion = selectedCall { selectedCategory = suggestion.category }
@@ -2046,10 +2092,36 @@ struct CoachedGameView: View {
                 : nil
             armPlayClock()
         } else {
-            // Opponent possession: line them up and wait — their offense
-            // snaps from the READY button or the decision clock.
-            syncFieldToSituation()
+            // Opponent possession: their offense huddles and lines up —
+            // the snap comes from the READY button or the decision clock.
+            lineUpWithHuddle()
             armPlayClock()
+        }
+    }
+
+    /// Between-plays lineup: the offense gathers into a quick huddle ring
+    /// ~7 yd behind the new spot for ~1.2 s, then breaks to the line.
+    /// Hurry-up football (final two minutes of a half), skips and the very
+    /// first snap go straight to the formation.
+    private func lineUpWithHuddle() {
+        let hurryUp = (engine.quarter == 2 || engine.quarter >= 4) && engine.timeRemaining <= 120
+        guard gameStarted, !hurryUp, !engine.isGameOver else {
+            syncFieldToSituation()
+            return
+        }
+        let offenseIsHome = engine.homeHasPossession
+        let losZ = PlayChoreographer.losZ(yardLine: engine.yardLine, offenseIsHome: offenseIsHome)
+        fieldScene.huddle(
+            teamIsHome: offenseIsHome,
+            positions: PlayChoreographer.huddlePositions(losZ: losZ,
+                                                         direction: offenseIsHome ? 1 : -1)
+        )
+        huddleBreakTime = Date().addingTimeInterval(1.2)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            huddleBreakTime = nil
+            // The snap (or a skip) may already own the field again.
+            guard !isAnimating, !engine.isGameOver else { return }
+            syncFieldToSituation()
         }
     }
 
@@ -2073,7 +2145,11 @@ struct CoachedGameView: View {
         fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.7)
         fieldScene.updateMarkers(losZ: nil, firstDownZ: nil)
         fieldScene.setDefensiveFraming(false)
-        fieldScene.focusCamera(z: PlayChoreographer.kickoffSpotZ(kickingTeamIsHome: event.kickingTeamIsHome))
+        // Broadcast frame for the whole kickoff presentation (the follow-cam
+        // keeps the same style through the return; the next scrimmage
+        // pre-snap hands the shot back to the Coach/Broadcast choice).
+        fieldScene.focusCamera(z: PlayChoreographer.kickoffSpotZ(kickingTeamIsHome: event.kickingTeamIsHome),
+                               style: .broadcast)
 
         let steps = PlayChoreographer.kickoffSteps(
             kickingTeamIsHome: event.kickingTeamIsHome,
@@ -2087,7 +2163,7 @@ struct CoachedGameView: View {
                 if event.isReturnTouchdown {
                     // Housed: camera to the end zone the returner reached.
                     let endzoneZ: Float = event.kickingTeamIsHome ? -50 : 50
-                    fieldScene.focusCamera(z: endzoneZ, duration: 1.0)
+                    fieldScene.focusCamera(z: endzoneZ, duration: 1.0, style: .broadcast)
                     fieldScene.celebrate(atZ: endzoneZ)
                     showBanner("The kickoff is returned ALL THE WAY for a touchdown!")
                 } else if event.isTouchback {
@@ -2210,13 +2286,19 @@ struct CoachedGameView: View {
             call: animatedCall, defensivePackage: defPackage,
             offenseNumbers: offUnit.numbers, defenseNumbers: defUnit.numbers
         )
-        let presnapStances = PlayChoreographer.stances(offenseIsHome: offenseIsHome)
+        let presnapStances = PlayChoreographer.stances(offenseIsHome: offenseIsHome,
+                                                       call: animatedCall)
+        let presnapBuilds = PlayChoreographer.bodyTypes(offenseIsHome: offenseIsHome)
         fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.7,
-                                          stancesHome: presnapStances.home, stancesAway: presnapStances.away)
+                                          stancesHome: presnapStances.home, stancesAway: presnapStances.away,
+                                          bodyTypesHome: presnapBuilds.home, bodyTypesAway: presnapBuilds.away)
 
         // Markers stay on THIS play's line/1st-down through the animation.
         let playLosZ = PlayChoreographer.losZ(yardLine: losYard, offenseIsHome: offenseIsHome)
         let playDir: Float = offenseIsHome ? 1 : -1
+
+        // Ball at the center's feet for the snap exchange.
+        fieldScene.moveBall(to: SCNVector3(0, 0.26, playLosZ))
 
         // Kicks get the broadcast angle from low behind the posts; every
         // other play keeps the normal scrimmage framing.
@@ -2246,13 +2328,26 @@ struct CoachedGameView: View {
                 }
             }
             fieldScene.runPlay(steps: steps) {
-                finishPlay(play, possessionBefore: possessionBefore)
+                finishPlay(play, possessionBefore: possessionBefore,
+                           distanceBefore: distanceBefore)
             }
         }
     }
 
-    private func finishPlay(_ play: PlayResult, possessionBefore: Bool) {
+    private func finishPlay(_ play: PlayResult, possessionBefore: Bool,
+                            distanceBefore: Int = 99) {
         isAnimating = false
+
+        // The back judge sells the result: touchdown arms for scores, the
+        // downfield point when the play moved the chains.
+        let movedChains = play.playType != .twoPointConversion
+            && (play.outcome == .rush || play.outcome == .completion)
+            && play.yardsGained >= distanceBefore
+        if play.pointsScored >= 6 {
+            fieldScene.refereeSignalTouchdown()
+        } else if movedChains {
+            fieldScene.refereeSignalFirstDown()
+        }
 
         // The kick camera hands the shot back to normal framing at the new
         // scrimmage spot (a made kick refocuses again to the end zone below).
@@ -2304,6 +2399,15 @@ struct CoachedGameView: View {
             showPossessionBanner()
         }
 
+        // Post-tackle beat (coach shot only — a no-op in broadcast framing):
+        // the camera eases ~30 % out for a second so the pile reads, then
+        // the next pre-snap sync restores the tight frame. Kicks and scores
+        // were refocused above and skip it.
+        let wasKick = play.playType == .fieldGoal || play.playType == .extraPoint
+        if !play.scoringPlay && !wasKick {
+            fieldScene.pullBackAfterPlay()
+        }
+
         if hadInjury {
             // Hold the shot on the downed player for a beat — the next
             // formation move (inside proceed) brings the replacement on.
@@ -2311,8 +2415,14 @@ struct CoachedGameView: View {
                 guard !isAnimating else { return }
                 proceed(after: 0.9)
             }
-        } else {
+        } else if play.scoringPlay || wasKick {
             proceed(after: play.scoringPlay ? 1.6 : 0.9)
+        } else {
+            // Let the pull-back breathe before the next formation forms up.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.05) {
+                guard !isAnimating else { return }
+                proceed(after: 0.9)
+            }
         }
     }
 
@@ -2368,10 +2478,17 @@ struct CoachedGameView: View {
             offenseNumbers: engine.currentOffenseUnit.numbers,
             defenseNumbers: engine.currentDefenseUnit.numbers
         )
-        let stances = PlayChoreographer.stances(offenseIsHome: engine.homeHasPossession)
+        let stances = PlayChoreographer.stances(
+            offenseIsHome: engine.homeHasPossession,
+            call: engine.playerIsOnOffense ? (selectedCall ?? cachedSuggestion) : nil)
+        let builds = PlayChoreographer.bodyTypes(offenseIsHome: engine.homeHasPossession)
         fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.3,
-                                          stancesHome: stances.home, stancesAway: stances.away)
+                                          stancesHome: stances.home, stancesAway: stances.away,
+                                          bodyTypesHome: builds.home, bodyTypesAway: builds.away)
         fieldScene.setDefensiveFraming(engine.homeHasPossession != playerTeamIsHome)
+        // Stage the ball at the new spot so the snap exchange starts at the
+        // center's feet, not wherever the last play left it.
+        fieldScene.moveBall(to: SCNVector3(0, 0.26, losZ))
         // Broadcast push-in: a slow 2-yard dolly toward the line while the
         // coach considers the call; the snap (runPlay) interrupts it.
         fieldScene.focusCamera(z: losZ, pushIn: true)
@@ -2393,9 +2510,12 @@ struct CoachedGameView: View {
 
     /// Live pre-snap preview: browsing the call sheet realigns the offense on
     /// the field (I-form for inside runs, spread for deep shots), and changing
-    /// the defensive call re-shows the shell/blitz look.
+    /// the defensive call re-shows the shell/blitz look. While the offense is
+    /// mid-huddle the preview waits — the scheduled break applies the newest
+    /// call anyway.
     private func previewFormation() {
         guard gameStarted, !isAnimating, !engine.isGameOver else { return }
+        if let breakTime = huddleBreakTime, breakTime > Date() { return }
         syncFieldToSituation()
     }
 

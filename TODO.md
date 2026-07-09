@@ -1,6 +1,129 @@
 # Dynasty - TODO
 
-## Round 29: Liigan narratiivi — uutiskierre, power rankings, storylinet (2026-07-09)
+## Round 31: Omistaja & talous 2.0 (2026-07-10)
+
+### Shipped (BUILD SUCCEEDED)
+- [x] OMISTAJAPERSOONA (uusi `Engine/Media/OwnerPersonaEngine.swift`): `OwnerArchetype` johdetaan DETERMINISTISESTI olemassa olevista Owner-kentistä (ei skeemamuutosta): meddling ≥ 65 → Meddler; spendingWillingness ≤ 35 → Penny Pincher; prefersWinNow & spending ≥ 55 → Win-Now Tycoon; muuten Patient Builder. Vaikutukset: (a) budjettikerroin BudgetEngineen (Tycoon ×1.10, Pincher ×0.85) kaikkiin kolmeen pottiin, (b) job security -laskunopeus OwnerSatisfactionEngineen (negatiiviset swingit: Tycoon ×1.2, Meddler ×1.1, Builder ×0.85), (c) tavoitteiden kovuus OwnerGoalsEngineen (numeeriset voittotavoitteet: Tycoon +1, Builder −1, clamp 5-13). Archetype-badge profiilikortissa (OwnerMeetingView) + dashboard-tiilessä.
+- [x] KAUSITAVOITTEET PERSISTOITUINA + KICKOFF-TAPAAMINEN: `Career.ownerSeasonGoalsData: Data?` (+ bridge `[SeasonGoal]`) — WeekAdvancer.startNewSeason generoi OwnerGoalsEnginellä ja persistoi kauden tavoitteet + lähettää omistajan "Season N: My Expectations" -inbox-viestin (tavoitteet prioriteeteilla + archetype-perustelu + budjettikuoren erittely; actionRequired → Owner Relations). OwnerGoalsView ja dashboard lukevat nyt persistoituja tavoitteita (live-progress `evaluateGoalProgress`illa; vanhat savet fallback-generoivat). OwnerGoalsView vihdoin linkitetty UI:hin (OwnerMeetingView → "View Full Goal Tracker").
+- [x] JOB SECURITY -MITTARI: `OwnerPersonaEngine.jobSecurity(owner:career:)` → score 0-100 (satisfaction + patience-siirtymä + archetype) ja taso Secure/Stable/Pressure/Hot Seat/Critical. Dashboardin Owner-tiili uusittu: archetype, job security -palkki + taso, primääritavoitteen progress, kirjekuori-badge kun whim odottaa vastausta. OwnerMeetingView'n satisfaction-korttiin job security -rivi + palkki.
+- [x] KAUDEN LOPPUARVIO + SEURAUKSET: `.superBowl`-vaiheen käsittelyssä (finaalirekordit tallella) `evaluateSeason` → `OwnerSeasonReview` (`Career.ownerSeasonReviewData`): verdikti bonus/praise/neutral/warning/FIRED. Bonus/praise → +10 %/+5 % budjettikuori SEURAAVAN kauden laskennan päälle (persistoitu pct, apply startNewSeasonissa; Penny Pincher antaa vähemmän) + satisfaction-nousu; warning → satisfaction −5 + virallinen varoitusviesti; fired → wasFired. Review myös inbox-viestinä ja advancen jälkeen sheet-dialogina (uusi `UI/News/OwnerSeasonReviewSheet.swift`; acknowledged-lippu estää toiston). Uhmatut whimit + onnistunut kausi → reputation +2/whim (max +4) ja maininta arviossa.
+- [x] EROTTAMISFLOW (aiemmin `WeekAdvancer.wasFired` jäi kuluttamatta — nyt oikea game over): CareerShellView.performShellAdvance kuluttaa lipun → `Career.isGameOver = true` + `yearsFired += 1` → fullScreenCover `UI/Career/FiredSummaryView.swift` (omistajan lausunto reviewistä, urarekordi/win-%/playoffit/mestaruudet/reputation/legacy + paluu päävalikkoon); isGameOver-ura avautuu suoraan summary-ruutuun. Viikoittainen checkFiring kytketty samaan flow'hun; armonaika: ei erottamista ensimmäisen kauden aikana (totalW+L ≤ 18) kummassakaan polussa.
+- [x] BUDJETTIKOKONAISUUS — kolmas potti + jakonäkymä: `Owner.medicalBudget: Int = 2_500` + `previousMedicalBudget` (default → kevyt migraatio); `BudgetEngine.calculateMedicalBudget`/`defaultMedicalBudget` ($1.5-4M base, samat market/menestys/persoona-kertoimet, floor $1.2M); startNewSeason laskee sen muiden mukana; LeagueGenerator antaa uusille omistajille willingness-skaalatun potin. Lääkintätiimi (teamDoctor/physio/headTrainer) siirretty coaching-potista omaan pottiinsa: CoachingStaffView (salaryUsed-jaot, medical-budjettipalkki headeriin, SimpleMedicalHireSheet käyttää medical-remainingia, over-budget-viesti nimeää potit, Review-tabin erittely) + CareerShellView.hireCoachDestination. UUSI `UI/News/OwnerBudgetView.swift`: omistajan kokonaiskuori ylhäällä (archetype-flavor), kolme pottikorttia ±$250K-steppereillä (floor = sidotut palkat, siirto vain unallocated-poolin kautta, Save vaatii täyden allokaation) → kirjoittaa Owner-kenttiin; linkki OwnerMeetingView'n budjettikortista.
+- [x] OMISTAJAN OIKUT (Meddler): `Career.ownerWhimsData` (+ bridge, cap 8). WeekAdvancer viikoilla 2-13 rollaa whimin (15 %/vko, viikon 10 backstop 60 % jos 0; max 2/kausi, 1 pending kerrallaan) 5 templaatista ("draftaa QB ykkösellä", "peluuta paikallista suosikkia", "tee splash-treidi", "peluuta rookieta", "penkitä veteraani") → omistajan inbox-viesti (actionRequired → Owner Relations). OwnerMeetingView'ssa vastauskortti: "You Got It" (satisfaction +3) / "Push Back" (satisfaction −4, kärsimättömällä −5) — uhmaus + menestyskausi maksaa reputaationa loppuarviossa. Whimit nollautuvat kausivaihdossa.
+- [x] UI-KOKONAISUUS: OwnerMeetingView laajennettu (archetype-badge, whim-vastauskortti, tavoitekortti + linkki, budjettikortti + linkki, job security, edellisen kauden review-kortti verdiktillä); dashboardin "Offseason Goals" -tiilen kovakoodattu "3 of 5 met" korvattu oikealla review-datalla ("Season Review" + verdikti). EI UI/Match-muutoksia.
+- [x] PARITEETTI: GameSimulator/PlaySimulator koskemattomia; kaikki hookit WeekAdvancerissa (startNewSeason/viikkoblokki/superBowl-vaihe) ja UI:ssa.
+- [x] BUILD: xcodebuild BUILD SUCCEEDED (iPad-simulaattori 049C7295).
+
+### Rajaukset
+- [ ] Whimien noudattamista ei verifioida pelitilasta (esim. draftattiinko QB oikeasti) — vastaus on sitoumusvalinta, efektit satisfaction/reputation-tasolla.
+- [ ] Erotettu ura päättyy yhteenvetoruutuun (ei "hae uutta työtä" -flow'ta) — `OwnerSatisfactionEngine.generateJobOffers` on olemassa valmiina saumana jatkoon.
+- [ ] Vanhoissa saveissa medical-potti (default $2.5M) voi alittaa jo palkatun lääkintätiimin palkat → potti näkyy punaisella kunnes pelaaja reallokoi OwnerBudgetView'ssa (coaching-potti sai vastaavan slackin takaisin).
+- [ ] AI-joukkueiden omistajat saavat samat budjettikertoimet mutta whimit/arviot koskevat vain käyttäjän uraa.
+- [ ] Career.seasonGoals (intron vanha struct) jätetty ennalleen — uusi järjestelmä ohittaa sen kausivaihdoissa.
+
+## Madden fidelity — visuaalinen verifiointi (2026-07-09)
+
+Kolmen committoimattoman vaiheen (Madden-mittakaavan kamera, kit v2 -detaljit, animaatiosanasto) loppuverifiointi live-coached-pelissä (GB vs ATL, lumi, iPad-sim). BUILD SUCCEEDED, asennus + 2 pelisessiota (SimRenderServer-infra kaatui kerran kesken session — simulaattorin renderöintiprosessin EXC_BREAKPOINT, ei appin vika; reboot + uusi sessio ajettiin läpi ongelmitta). Screenshotit: `/tmp/snd-screenshots/madden-fidelity/` (mf_*.png, crops/, vid/, vid2/, snapseq/, qb_snap_seq.png, tackle_seq.png, fg_seq.png, play_capture.mov, tackle_capture.mov).
+
+### Mitatut mittakaavat (pikselikorkeus, osuus 3D-viewportista ~1450–1490 px / koko ruudusta 2752 px)
+- Hyökkäys-presnap (mf_03_ko_6, kamera hyökkäyksen takana):
+  - QB #19: ~225 px → **15,1 % viewportista** (8,2 % ruudusta) — tavoite QB/backit 12–16 % ✓
+  - RB #34 (lähin pelaaja): ~267 px → **18,0 %** (9,7 %) — hieman yli 16 %:n tavoitekaton, lukee silti hyvänä
+  - OL-rivi (#75): ~159 px → **10,7 %** (5,8 %) — tavoite 10–14 % ✓ (alalaita)
+  - WR #89 (kyykyssä): ~205 px → **13,8 %** ✓
+- Puolustus-presnap (mf_05_def_8, kamera puolustuksen takana):
+  - LB-rivi (#54): ~217 px → **15,0 %** (7,9 %) ✓
+  - DL-rivi (#92, stancessa): ~193 px → **13,4 %** (7,0 %) — tavoite 10–14 % ✓
+- KOKO ydinboxi näkyvissä molemmissa kehyksissä ilman reunaleikkautumia (OL+QB+RB+TE / DL+LB+ball). Ainoa rajatapaus: tiukimmassa puolustuskehyksessä (mf_19) syvien pelaajien kypärät kurkistavat alareunan kulmista puoliksi leikattuina — ydinboxia ei koske.
+- Broadcast-kamera (mf_17): korkea laaja kehys, koko kenttä + maalitolpat, pelaajat ~2 % ruudusta — selkeä kontrasti coach-kuvaan.
+
+### Laatikkotesti (a2) — PASS
+Lähikropit (crops/off_qb19, off_rb34, def_lb54, off_ol75, off_wr): siluetti selvästi pyöreä — pallomainen kypärä spekulaarikiillolla, kapeneva torso, levenevä paitahelma, erilliset kädet/kyynärvarret/sormet-blobit, jalat+kengät. Ei laatikkoa, smooth shading toimii.
+
+### Detaljichecklist (b)
+- ✓ Paitanumerot selässä: luettavat lähikuvassa (19, 34, 54, 75, 89, 92, 93, 94, 98)
+- ✓ Rintanumerot (ATL): näkyvät mutta valko-valkoisella heikko kontrasti (63, 71, 54)
+- ✓ Kypärälogo: "GB"-teksti kultakypärän etu/sivupinnassa, "ATL" vieraskypärissä — luettavissa lähikuvassa
+- ✓ Facemask: harmaa grilli näkyy edestäpäin kuvatuilla (ATL OL -rivi, GB etualan pelaajat)
+- ✓ Kädet: erilliset käsiblobit, 4 ihonsävyä deterministisesti numerosta — diversiteetti näkyy
+- ✓ OL vs WR body-ero: heavy/medium/lean toimii — OL leveä+matala flare-olkapäillä, WR kapea+pitkä, QB/RB baseline
+- ✓ Pallo: nahanruskea + valkoiset nauhat, näkyy maassa spotissa, C→QB-vaihdossa ja kantajalla
+- ~ QB #19:n lahkeet renderöityvät harmaampina kuin muiden valkoiset housut (sävy/varjostusero, syy epäselvä — PANTS-materiaali on sama; ei räikeä)
+- ~ Billboard-numerot (0.35 opacity coach-kamerassa) lukevat matalasta kulmasta "haamunumeroina" nurmella muodostelman etupuolella (esim. QB:n "19" OL-rivin takana) — feature, mutta voisi himmentää/piilottaa lähimmiltä pelaajilta coach-kuvassa
+
+### Animaatioarviot (c) — video-frame-analyysi (2 fps kontaktiarkit + 5–10 fps lähisekvenssit)
+- ✓ SNAP-VAIHTO (qb_snap_seq.png): pallo näkyy ilmassa C:n ja QB:n välissä kesken siirron, OL painuu stanceen samassa beatissa, kamera dollaa sisään — liikettä, ei teleporttia
+- ✓ DROPBACK: QB liukuu taskuun rintaotteella; 0,1 s askelvälillä jatkuva liike
+- ✓ BLOKKIPARIT (snapsheet_0, tkl-sekvenssi): kulta+valko-parit lukossa LOS:lla, työntösykli näkyy; mesh-interpenetraatio kontaktissa (kypärä uppoaa selkään) — Madden 99 -tasoa, hyväksyttävä
+- ✓ TAKLAUS (tackle_seq.png, 8 fps): valko-#99 wrappaa kultakantajan → pari kallistuu progressiivisesti → kantaja horisontaaliin → kasa maahan ~0,6 s:ssa — aito kaatumisliike; lisäksi säkkikasa prone-poseineen stillissä (mf_15)
+- ✓ HUDDLE: tiivis rinki muodostuu ja purkautuu muodostelmakävelyllä (contact_0/1, mf_18) — näkyy molemmissa kameroissa
+- ✓ MUODOSTELMAKÄVELYT: pelaajat kävelevät spoteille (ei teleportteja yhdessäkään katsotussa framessa)
+- ✓ FG-presentaatio: kameraleikkaus maalitolppien taakse, pallo lentää (fg_seq.png; 59 yd ohi -yritys)
+- ~ Erotuomari: paikallaan + siirtyy LOS:n mukana; TD/FD-käsimerkkikoodi on wired (refereeSignalTouchdown/FirstDown) mutta merkkihetkeä ei osunut kuviin — ohut näyttö
+- ~ HUD spoilaa tuloksen: chipit + loki päivittyvät ennen kuin animaatio ehtii ajaa (design-valinta, kirjattu aiemmin)
+
+### Kamera-toggle (d) — PASS
+- Camcorder/tv-ikoni kentän oikeassa alakulmassa vaihtaa Coach ↔ Broadcast liukuen (mf_15 → mf_17); ikoni vaihtuu video↔tv
+- Valinta persistoituu `@AppStorage("coachCameraStyle")` — relaunchin jälkeen peli avautui Broadcast-kehykseen (mf_18) ✓, vaihto takaisin Coachiin toimi (mf_19)
+- Kickoff/FG pakottavat broadcast-kehyksen designin mukaisesti
+
+### Kello/HUD/Board (e) — PASS
+- Pistetaulu, kello, chipit (down/distance/spot/drive), TO-pipit, Manage/Stats/Sim to End -napit ehjät kaikissa kamera-asennoissa
+- Coach's Board (Manage) avautuu ja renderöityy täydellisenä lähikamerasta (mf_20): muodostelma, day gradet, battles, bench + SUB IN
+- Play-callout-plate ("1ST & 10 · SCREEN") ja minicalloutit renderöityvät kentän päälle oikein
+
+### Korjaukset
+- Ei räikeitä vikoja löytynyt → ei koodimuutoksia. Suunnat oikein (FD-viiva oikealla puolella molemmissa ajosuunnissa, kick-kamera oikein, muodostelmat oikein päin), ei z-fightingia (kaksoiskeltainen viiva = FD-raita + valkoinen jaardiviiva sen keskellä; violetti kaista = sinisen LOS-raidan alpha oranssin GB-logon päällä — molemmat odotettuja), ei decal-virheitä.
+
+### Auki / polish-jono
+- [ ] Lumihiutaleiden jättiblobit linssin vieressä coach-kamerassa (backlog #16, entuudestaan tiedossa) — näkyvin yksittäinen fidelity-häiritsijä lumipeleissä
+- [ ] Billboard-numeroiden himmennys/piilotus lähimmiltä pelaajilta coach-kuvassa (haamunumero-efekti)
+- [ ] QB:n lahjesävyn tarkistus (harmaa vs valkoinen)
+- [ ] Ref-käsimerkkien visuaalinen varmistus TD/FD-hetkestä (koodipolku wired)
+- [ ] Away-pelin kamerasuunta varmistamatta (testipeli oli kotipeli)
+
+## Round 30: Coaching carousel + oma coaching tree (2026-07-10)
+
+### Shipped (BUILD SUCCEEDED)
+- [x] BLACK MONDAY -KARUSELLI (uusi `Engine/Simulation/CoachCarouselEngine.swift`, stateless): offseasonin `.coachingChanges`-vaiheessa AI-joukkueet erottavat heikot HC:t — pisteytys tappiomarginaali (≥3 alle .500) + R29-hot-seat-bonus (`career.leagueNarrative.hotSeatReported`) + pitkä pesti − HC:n taso + kohina; 3–6 potkua/kausi. HC-vakanssit (potkut + eläköityneet/aiemmin tyhjät AI-penkit) täytetään poolista: kierrätetyt irtonaiset HC:t + irtonaiset koordinaattorit (OVR ≥ 66) + NOUSEVAT AI-koordinaattorit (OVR ≥ 70, käyttäjän koordinaattorit rajattu pois — ne kulkevat haastattelumekanismin kautta); paras-3 painotettu arvonta, promotoidulle role=HC + promotedInSeason + HC-palkka. Koordinaattoripaikat täyttyvät KETJUNA: promootion jättämä + kaikki ennestään tyhjät AI OC/DC/STC-penkit (R30 korjaa vanhan aukon: AI ei koskaan täyttänyt vakansseja) → 1) paras irtonainen samaan rooliin, 2) sisäinen promootio positiovalmentajasta (promotionTargets), 3) tuore generoitu. NewsItem jokaisesta potkusta ja HC-palkkauksesta + max 4 koordinaattoriuutista/kausi (feed pysyy luettavana); kaikki liikkeet karusellifeediin.
+- [x] OMAT ASSARIT KYSYTTYJÄ: menestys (≥9 voittoa, OVR ≥ 68, motivaatio) → yksi AI-vakanssijoukkue voi pyytää haastattelua koordinaattorillesi (OC/DC/STC/AHC). `Career.pendingInterviewRequestData: Data?` (+ bridge; optionaalinen → kevyt migraatio) + inbox-viesti (actionRequired → Coaching Staff). Staff-välilehdellä päätöskortti: SALLI → koordinaattori lähtee HC:ksi pyytäjäjoukkueeseen (vanha HC ulos, role/palkka/sopimus päivittyvät), kirjautuu coaching treehen ("HC at …"), maine +1, komp. 3. kierroksen pick -viesti, uutinen + feed-merkintä; ESTÄ (vain jos sopimusta ≥ 2 v jäljellä — viimeisen vuoden miestä ei voi estää) → jää, motivation −5. Vastaamatta jätetty pyyntö raukeaa `.combine`-vaiheessa: pyytäjä palkkaa tuoreen HC:n (uutinen) + inbox-ilmoitus, koordinaattori jää ilman sanktiota. Pyytäjän HC-penkki pidetään karusellissa varattuna päätökseen asti.
+- [x] COACHING TREE KÄYTTÖÖN (`Career.coachingTree` oli olemassa muttei koskaan populoitunut): HireCoachView.hire() kirjaa jokaisen palkkauksen ("hired"); user-tiimin lähdöt kirjautuvat — positiovalmentajan poaching ("departed_other"), eläköityminen ("retired"), haastattelulähtö ("departed_hc" + kohde). Uusi `CoachRelationshipEngine.recordDeparture` backfillaa puuttuvan hired-merkinnän (R30:aa vanhemmat urat). CoachingStaffView.syncCoachingTree() (`.task`): avaa merkinnät nykystaffille (hireSeasonYear) ja sulkee merkinnät joiden valmentaja ei enää ole staffissa ("Moved on") — guard tyhjää staffia vastaan. ALUMNIEN MENESTYS: kerran/offseason (ennen kauden liikkeitä) alumni uudessa osoitteessaan 10+ voiton kaudella → wasSuccessful=true (legacyScore kasvaa) + käyttäjän reputation +1/alumnus (max +2/kausi) + "Coaching tree watch" -uutinen ensimmäisestä. LegacyTracker jätettiin koskematta (R32-sauma) — legacy kirjautuu treehen + maineeseen.
+- [x] PALKKAUSMARKKINA 2.0 (HireCoachView): deterministinen kysyntä per kandidaatti (`CoachCarouselEngine.demand`: OVR ≥ 76 tai OVR ≥ 70 & potential ≥ 80 → high 2–4 kilpailijaa; OVR ≥ 68 → moderate 1–2; FNV-seed UUID:sta → stabiili). Listariville liekkibadge + kilpailijamäärä; detaljisivun #91-kysyntäbadge käyttää nyt samaa oikeaa lukua. Neuvottelussa `competitionRisk` = kilpailijat × 6 % joka SULAA ylitarjouksella (+10 % yli pyynnön → 0) → näkyy hylkäysriskissä + oma info-rivi ("Overbid to lock rivals out"); hylkäyksessä ≥ 2 kilpailijan kandidaatti 50 % todennäköisyydellä LÄHTEE kilpailijalle (ei vastatarjousta, "Signed elsewhere" -harmaannus). Scheme-fit oli jo näkyvissä (Fit-sarake + detaljit).
+- [x] UI: Staff-välilehdelle offseasonissa (offseason/preDraft-ryhmät) "Coaching Carousel" -feed (max 12 riviä; potku/HC-palkkaus/koordinaattoriketju/haastattelu/lähtö/estetty omilla ikoneilla) — `Career.coachCarouselLogData: Data?` (+ bridge, cap 40, resetoituu joka `.coachingChanges`). Uusi "Tree"-välilehti StaffTabiin → CoachingTreeView upotettuna (uusi `embedded`-parametri ohittaa nav-otsikon; näkymä oli olemassa muttei linkitettynä mistään).
+- [x] PARITEETTI: GameSimulator/PlaySimulator koskemattomia; kaikki liikkeet WeekAdvancerin offseason-vaiheissa (sallittu). Vanha poaching-logiikka säilyy AI-joukkueilla; user-tiimillä koordinaattorien hiljainen katoaminen POISTUI (korvattu haastattelusuostumuksella), positiovalmentajat voivat yhä lähteä.
+- [x] BUILD: xcodebuild BUILD SUCCEEDED (iPad-simulaattori 049C7295).
+
+### Rajaukset
+- [ ] Komp. 3. kierroksen pick haastattelulähdöstä on viesti (kuten ennenkin HC-poachingissa) — oikeaa DraftPick-oliota ei luoda.
+- [ ] AI-tiimien positiovalmentaja-vakansseja ei täytetä (vain HC + OC/DC/STC-ketju); sisäinen promootio voi jättää positiopenkin tyhjäksi.
+- [ ] Alumnit trackataan nimisnapshotilla (CoachingTreeEntry:ssä ei UUID:ta) — nimikolari voisi teoriassa merkitä väärän alumnin menestyneeksi.
+- [ ] Estetyn haastattelun morale-hitti kohdistuu coach.motivation-attribuuttiin (coacheilla ei ole erillistä morale-kenttää).
+- [ ] Interview-pyyntöjä max 1/kausi; pyyntö voi tulla vain HC-vakanssijoukkueelta (ei "parempi OC-pesti muualla" -pyyntöjä).
+
+## Animaatiosanasto: Maddenin liikekirjasto node-rigiin (SCNAction, 2026-07-09)
+
+Prioriteettilistan (1-9) kaikki yhdeksän kohtaa toteutettu SCNAction-pohjaisesti nykyiseen node-rigiin — ei per-frame-koodia, kaikki kytkeytyy playGeneration-vahtiin (cancelPlay/resetGait siivoaa uudet action-keyt "shove"/"spinMove" ja loput ajavat vanhoilla keyillä).
+
+### Shipped (BUILD SUCCEEDED, verifioitu simulaattorissa video-frame-analyysillä)
+- [x] 1. SNAP-VAIHTO (`BallMove.snap(toNodeIndex:shotgun:)` + `runSnapExchange`): pallo lähtee C:n jaloista (staging: CoachedGameView siirtää pallon LOS:lle pre-snapissa `moveBall`) ja HAKEUTUU liikkuvaan QB-nodeen — under center suora käsienvälinen siirto (0.2 s), shotgun matala heitto taakse (0.42 s, apex 0.8, end-over-end-wobble) → kiinnittyy rintaotteeseen. Under center -QB saa uuden `.underCenter`-stancen (kumara, kädet ojossa C:n alle) kun kutsu on under center -perhettä (insideRun/qbSneak/dive/kneel; `stances(offenseIsHome:call:)`). Kaikki snap-skriptit vaihdettu (dropback/juoksu/screen/kneel/spike/default); punt/FG pitävät pitkän slide-snapin. Konteksti päättelee gun vs under center QB:n pre-snap-syvyydestä (`Context.qbUnderCenter`).
+- [x] 2. BLOKKAUSPARIT (`PlayStep.blocks` + `blockEngage`): pass-proissa jokainen rusheri työskentelee OMAN blokkaajansa set-pointtiin (pocketMoves kirjoitettu pareiksi; spatiaalinen pari `blockerFacing` KORJATTU — DE x=-4.5 vs LT, ei RT kuten ennen → myös säkin romahduspuoli on nyt oikea), kädet punchaavat rintakorkeuteen ja figuuri ajaa lyhyttä edestakaista työntösykliä ("shove", moveBy-komposiitti gait-bobin kanssa). Matchup-voittaja painaa PARINSA set-pointin LÄPI (beatenBlocker press -1.0 vs 0.8). Juoksuissa samat parit lineSurge-steppien päällä (dlShift avaa aukon suuntaan kuten ennen).
+- [x] 3. QB-JALKATYÖ: dropback-syvyys kutsusta — under center 3-askel (~3.2 yd) / 5-askel (~4.8 yd), gunista 1.5/2.5 (`dropDepth`); pallo rinnassa KAHDELLA kädellä koko dropin (`BallMove.carryChest` + `attachBall(chest:)` + swingLimbs CarryStyle .chest — molemmat kädet pallolla, ei pumppausta; tuck-carry ennallaan kantajilla); pump fake ~30 % syvistä ennen heittoa (`PlayStep.pumpFakes` + `pumpFake` — windup→puolilaukaus→rechamber dropin lopussa, completionit JA incompletionit); heiton saatto throwMotioniin (figuuri nojaa etujalalle + etujalan askel releasessa).
+- [x] 4. KIINNIOTTOVARIANTIT (`PlayStep.catchStyles` + `CatchStyle`): perus-reach (ennallaan), olan yli syvillä (catchDepth ≥ 16: kädet ylös JA eteen juoksusuuntaan, x -2.75), sukelluskoppi (blanket-peitto separation < 0.7 + yac < 2.5: täysi layout maahan, pallo pysyy, puolustus saapuu kuolleeseen kasaan — YAC/taklaus skipataan, oma pile-step), toe-tap sivurajalla (|catch-x| ≥ 23: reach + nopeat vuorottaiset varvastäpyt). Tiukka peitto kiristää myös yacSharen (≤1.5 yd) jotta koppipiste ≈ simin loppupiste.
+- [x] 5. TAKLAUSVARIANTIT (tackleSteps-kirjasto): ISO OSUMA (puolustusvoitto + gain < 3, 35 %: kantaja lentää ~1.1 yd TAAKSE selälleen — uusi FallStyle.backward — kamerapumppu `cameraBump` moveBy-dippinä), ALASVETO TAKAA (breakaway gain ≥ 12, 60 %: wrap + molemmat liukuvat eteenpäin kaatuessa), SUKELLUSTAKLAUS (taklaaja > 12 yd päästä, 70 %: FallStyle.dive — nopea flätti horisontaalilaukaus jalkoihin, `PlayStep.diveFalls`), oletuksena entinen wrap + 30 % drive-back + gang-pile.
+- [x] 6. AVOKENTTÄ (`PlayStep.openField` + `OpenFieldMove` juke/spin/stiffArm): breakaway-juoksuissa (gain ≥ 12) 1-2 liikettä — matchup-voittajat useammin (2 kun gain ≥ 22 tai voittaja+coin); juke splicee AIDON sivujigin polkuun (`jig()`-waypoint + figuuribankki-feintti), spin = figuurin 360° y-rotaatio liikkeessä (gait irti spinin ajaksi), stiff-arm = vapaan (oikean) käden ojennus sivutakaviistoon. Sama YAC-juoksuissa (yac ≥ 12, 1 liike). Ajastus arc-length-fraktioista step-deadlineiksi, generation-vahdittu.
+- [x] 7. HUDDLE (`PlayChoreographer.huddlePositions` + `FootballFieldScene.huddle` + CoachedGameView.lineUpWithHuddle): pelien välissä hyökkäys kerääntyy tiiviiseen rinkiin ~7 yd uuden LOS:n taakse (~1.2 s, jokainen kääntyy ringin keskustaan) ja purkautuu muodostelmaan; skippaa hurry-upissa (Q2/Q4 kello ≤ 2:00), Skip Drivessa (menee suoraan syncFieldToSituationiin) ja avausryhmityksessä. Call-sheet-selailun formaatiopreview odottaa ringin purkuun asti (`huddleBreakTime`-vahti) — uusin kutsu näkyy silti purussa.
+- [x] 8. EROTUOMARIN MERKIT: TD → molemmat kädet suoraan ylös (1.6 s hold); first down → oikea käsi osoittaa kenttään päin (ref on jo käännetty hyökkäyssuuntaan moveReferee'ssä). Refin käsivarret nimettiin ja saivat olkapää-pivotit (refArmL/refArmR). Kutsut finishPlaysta: pisteet ≥ 6 → TD-merkki; ketjut liikkuivat (rush/completion ≥ distanceBefore, ei 2 pt) → first down -osoitus.
+- [x] 9. QB SCRAMBLE: kun sim antaa QB:lle juoksun PASSIKUTSULLA (spec ilman QB-trackia → myös AI-generic), rushSteps ajaa panic-radan: droppi taskuun, terävä sivuttaispako (satunnainen puoli), käännös ylös kentälle — ja koko pelin ajan pass-look (pocket + reitit juoksevat täysinä, `sellsPass` yleistetty drawsta). Tuck under-arm mesh-fraktiossa 0.42 kuten ennen.
+- [x] PARITEETTI: kaikki presentaatiota — PlaySimulator/LiveGameEngine/GameSimulator koskemattomia; RouteSpec-polut, matchup-eventit ja 10 s päätöskello ennallaan (päätöskellon havaittiin ajavan snapit normaalisti läpi koko verifioinnin).
+- [x] VERIFIOINTI (asennus + coached-peli ~2 neljännestä / 20+ snappia molemmin puolin pallosta, simctl-video → AVFoundation-frame-ekstraktio + kontaktiarkit, kymmeniä katsottuja framia): snap-heitto ilmassa C→QB kesken lennon (hires f0002), dropback rintaotteella + molemmat kädet pallolla + parit lukossa (hires f0008), blokkiparit run- ja pass-pleissä (useita framia), huddle-rinki molemmilla joukkueilla (burst_c_10, punt_14, sheets2_12), säkki-wrap QB:n ympärillä (s06), ei vääränsuuntaisia raajoja / jumiin jääneitä poseja / kaatumatta jääneitä missään katsotussa framessa. Kuvat: scratchpad (snapshotit + video-framet).
+
+### Rajaukset
+- [ ] Sukellustaklaus/iso osuma/juke-spin ovat todennäköisyysvahdittuja + tilanne-ehtoisia — niitä ei saatu deterministisesti kameran eteen verifiointisessiossa (lumimyrskypeli oli passi-/säkkivoittoinen); koodipolut ajettiin (taklauksia kymmeniä, ei visuaalisia rikkoja yhdessäkään). Seuraava pelisessio lähikameralla varmistaa loput variantit silmämääräisesti.
+- [ ] Blokkiparien punch-käsipose jää pariin post-whistle-sekuntiin kunnes seuraava ryhmitysliike resetoi stancen — lukee "nojailuna pilliin", jätetty featureksi.
+- [ ] Toe-tap ei tee erillistä inbounds-nojaa (vain täpyt + reach) — sivurajan suunta vaatisi kentän x-tiedon välityksen scene-metodiin asti.
+- [ ] Huddle vain scrimmage-pelien välissä (kickoff/FG/punt-yksiköt ryhmittyvät suoraan kuten ennenkin).
+
+
 
 ### Shipped (BUILD SUCCEEDED)
 - [x] UUTISLOKI PYSYVÄKSI (`Career.newsLogData: Data?` + `newsLog: [NewsItem]`-bridge, cap 150 — optionaalinen kenttä → kevyt migraatio): WeekAdvancer.advanceWeek persistoi jokaisen advancen `lastNewsItems`-otsikot careerille (newest first) → NewsView.loadNews() lataa nyt oikean feedin (aiemmin palautti AINA tyhjän, uutisia ei näytetty koskaan). Kattaa myös offseason-/deadline-uutiset, koska hook on advanceWeekin lopussa kaikille poluille.

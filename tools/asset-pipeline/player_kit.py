@@ -68,8 +68,13 @@ def new_object(name, mesh_name=None):
     scene.collection.objects.link(obj)
     return obj
 
-def finish(obj, materials, shade_flat=True):
-    """Assign material slots and flat shading."""
+def finish(obj, materials, shade_flat=False):
+    """Assign material slots and shading.
+
+    Curved surfaces (helmet, torso, limbs, ball) default to SMOOTH shading —
+    flat-shaded low-seg cylinders read as boxes from the coach camera. Only
+    the hard-edged gear (facemask bars, cleats) passes shade_flat=True.
+    """
     for m in materials:
         obj.data.materials.append(MAT[m])
     for poly in obj.data.polygons:
@@ -83,7 +88,7 @@ def finish(obj, materials, shade_flat=True):
 def build_helmet():
     obj = new_object("HELMET_SHELL")
     bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=12, v_segments=8, radius=0.175)
+    bmesh.ops.create_uvsphere(bm, u_segments=16, v_segments=10, radius=0.175)
     # Carve the face opening: delete faces in front-lower area (+Y forward in
     # Blender here; we rotate to SceneKit's +Z forward at export assembly).
     doomed = []
@@ -138,42 +143,58 @@ def build_facemask():
         bar(r, (x, 0.152, 0.03), (x, 0.163, -0.07))
     bm.to_mesh(obj.data)
     bm.free()
-    return finish(obj, ["MASK"])
+    return finish(obj, ["MASK"], shade_flat=True)   # thin bars stay crisp
 
 # ----------------------------------------------------------------------------
 # TORSO — shoulder-pad silhouette. Existing capsule: r=0.26 h=0.85 scaled
 # (1.25, 1.0, 0.85). Origin = torso center (SceneKit node "body").
 # ----------------------------------------------------------------------------
+def smooth_profile(t, keys):
+    """Piecewise-smoothstep interpolation through (t, value) keys — the
+    slope flattens at every key, so the silhouette has no hard corners."""
+    if t <= keys[0][0]:
+        return keys[0][1]
+    for (t0, v0), (t1, v1) in zip(keys, keys[1:]):
+        if t <= t1:
+            s = (t - t0) / (t1 - t0)
+            s = s * s * (3 - 2 * s)          # smoothstep
+            return v0 + (v1 - v0) * s
+    return keys[-1][1]
+
 def build_torso():
     obj = new_object("TORSO")
     bm = bmesh.new()
     # Base: cylinder we sculpt into a V-taper trunk (wide padded shoulders,
     # narrow waist, slight hip flare). Extra rings via subdivision.
-    bmesh.ops.create_cone(bm, cap_ends=True, segments=12,
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=16,
                           radius1=0.26, radius2=0.26, depth=0.78)
     bmesh.ops.subdivide_edges(
         bm,
         edges=[e for e in bm.edges
                if abs(e.verts[0].co.z - e.verts[1].co.z) > 0.1],
-        cuts=4)
+        cuts=6)
+    # Hips -> waist pinch -> chest -> pad flare, blended smoothly so the
+    # silhouette curves instead of kinking at the control rings.
+    profile_keys = [(0.0, 1.0), (0.35, 0.86), (0.7, 1.06), (1.0, 1.22)]
     for v in bm.verts:
         t = (v.co.z + 0.39) / 0.78          # 0 hips .. 1 shoulders
-        if t < 0.35:
-            profile = 1.0 - 0.14 * (t / 0.35)             # hips -> waist pinch
-        elif t < 0.7:
-            profile = 0.86 + 0.20 * ((t - 0.35) / 0.35)   # waist -> chest
-        else:
-            profile = 1.06 + 0.16 * ((t - 0.7) / 0.3)     # chest -> pad flare
+        profile = smooth_profile(t, profile_keys)
         v.co.x *= profile * 1.18            # wider side-to-side
         v.co.y *= profile * 0.78            # slimmer front-to-back
-    # Pad shelf: flatten the very top outward so pads read as a ledge
+    # Pad shelf: round the very top outward so pads read as a ledge but the
+    # crown edge stays soft (was a hard flatten).
     for v in bm.verts:
         if v.co.z > 0.37:
-            v.co.x *= 1.06
+            v.co.x *= 1.05
             v.co.y *= 1.02
-            v.co.z = 0.39 + (v.co.z - 0.37) * 0.4
+            v.co.z = 0.39 + (v.co.z - 0.37) * 0.5
+    # Tuck the open hip rim in a touch so the bottom edge reads rounded.
+    for v in bm.verts:
+        if v.co.z < -0.36:
+            v.co.x *= 0.95
+            v.co.y *= 0.95
     # Neck roll: small cylinder on top (short — the helmet covers the rest)
-    neck = bmesh.ops.create_cone(bm, cap_ends=True, segments=10,
+    neck = bmesh.ops.create_cone(bm, cap_ends=True, segments=12,
                                  radius1=0.09, radius2=0.10, depth=0.07)
     for v in neck["verts"]:
         v.co.z += 0.41
@@ -188,8 +209,15 @@ def build_torso():
 def tapered_limb(name, top_r, bottom_r, length, material, bulge=0.0, bulge_at=0.5):
     obj = new_object(name)
     bm = bmesh.new()
-    bmesh.ops.create_cone(bm, cap_ends=True, segments=8,
+    # 12 radial segments + a mid ring so the bulge curves along the length —
+    # smooth-shaded, the limb reads as a rounded muscle, not a box.
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=12,
                           radius1=bottom_r, radius2=top_r, depth=length)
+    bmesh.ops.subdivide_edges(
+        bm,
+        edges=[e for e in bm.edges
+               if abs(e.verts[0].co.z - e.verts[1].co.z) > length * 0.5],
+        cuts=3)
     for v in bm.verts:
         t = (v.co.z + length / 2) / length   # 0 bottom .. 1 top
         if bulge:
@@ -223,7 +251,7 @@ def build_cleat():
                     offset=0.012, segments=1, affect="EDGES")
     bm.to_mesh(obj.data)
     bm.free()
-    return finish(obj, ["SHOE"])
+    return finish(obj, ["SHOE"], shade_flat=True)   # hard gear reads crisp flat
 
 # ----------------------------------------------------------------------------
 # FOOTBALL — prolate spheroid + lace strip + white stripes.
@@ -233,7 +261,7 @@ def build_cleat():
 def build_football():
     obj = new_object("FOOTBALL")
     bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=12, v_segments=8, radius=0.10)
+    bmesh.ops.create_uvsphere(bm, u_segments=16, v_segments=10, radius=0.10)
     for v in bm.verts:
         v.co.y *= 1.7                         # prolate
         v.co.x *= 0.94
@@ -268,7 +296,7 @@ def build_football():
         v.co.z += 0.097
     bm.to_mesh(laces.data)
     bm.free()
-    finish(laces, ["LACES"])
+    finish(laces, ["LACES"], shade_flat=True)   # tiny boxes, keep hard edges
     laces.parent = obj
     return obj
 

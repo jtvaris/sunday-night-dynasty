@@ -74,39 +74,115 @@ class FootballFieldScene: SCNScene {
         var backpedals: [Int] = []
         /// Player nodes that leap into a touchdown celebration this step.
         var celebrates: [Int] = []
+        /// Player nodes locked into a blocking engagement this step: the arms
+        /// punch out at chest height and the figure works a short fore-aft
+        /// shove cycle — OL/DL pairs read as locked up, not jogging to spots.
+        var blocks: [Int] = []
+        /// QB nodes selling a pump fake late in this step (deep shots).
+        var pumpFakes: [Int] = []
+        /// Catch presentation per reaching node (missing = the basic reach).
+        var catchStyles: [Int: CatchStyle] = [:]
+        /// Carriers blown off their feet by a big hit this step: they fly
+        /// backward onto their back (pair with a backward move) + camera bump.
+        var bigHits: [Int] = []
+        /// Tacklers finishing with a flat horizontal dive at the carrier's legs.
+        var diveFalls: [Int] = []
+        /// Scheduled jukes/spins/stiff-arms for ball carriers inside this step.
+        var openField: [OpenFieldMove] = []
+    }
+
+    /// How a receiver plays the ball at the catch point.
+    enum CatchStyle {
+        /// The basic hands-up catch (default).
+        case reach
+        /// Deep ball tracked over the shoulder on the run: arms up and
+        /// forward along the route instead of straight overhead.
+        case overShoulder
+        /// Full-extension diving grab — tight coverage, ball barely arrives.
+        case dive
+        /// Sideline grab with quick toe taps to get the feet down in bounds.
+        case toeTap
+    }
+
+    /// A scheduled open-field move for a ball carrier mid-step.
+    /// `delay` is seconds from the step start.
+    struct OpenFieldMove {
+        enum Kind {
+            /// Sharp side-step feint (pairs with a lateral jig in the path).
+            case juke
+            /// Full 360° spin without breaking stride.
+            case spin
+            /// Off arm extended into the nearest chaser.
+            case stiffArm
+        }
+        var nodeIndex: Int
+        var kind: Kind
+        var delay: TimeInterval
     }
 
     /// How the ball behaves during a `PlayStep`.
     enum BallMove {
-        /// Ball rides with the given player node (0-10 home, 11-21 away).
+        /// Ball rides with the given player node (0-10 home, 11-21 away),
+        /// tucked under the carrier's arm.
         case carry(nodeIndex: Int)
+        /// Ball rides with the given player held at the chest in both hands —
+        /// the QB's dropback carry before the throw.
+        case carryChest(nodeIndex: Int)
+        /// The C→QB exchange at the snap: under center the ball transfers
+        /// hand to hand; shotgun lofts a low toss back to the QB. The ball
+        /// homes on the QB node (he may already be moving) and attaches into
+        /// the chest carry on arrival.
+        case snap(toNodeIndex: Int, shotgun: Bool)
         /// Ball flies a parabolic arc to the target with the given apex height.
         case arc(to: SCNVector3, apex: Float, duration: TimeInterval)
         /// Ball moves flat along the ground (snaps, rolls, dead balls).
         case slide(to: SCNVector3, duration: TimeInterval)
     }
 
+    /// Flight time of the C→QB exchange.
+    static func snapDuration(shotgun: Bool) -> TimeInterval {
+        shotgun ? 0.42 : 0.2
+    }
+
     // MARK: - Uniforms
 
-    /// A full NFL-convention uniform: jersey, pants, and helmet colors.
+    /// A full NFL-convention uniform: jersey, pants, and helmet colors, plus
+    /// the trim details the close coach camera reads — the raw team color
+    /// (`accent`, drives sleeve stripes and socks), the team abbreviation
+    /// (helmet side decals) and an optional team-colored facemask.
     struct Uniform {
         var jersey: UIColor
         var pants: UIColor
         var helmet: UIColor
+        /// The raw team color regardless of which garment carries it —
+        /// sleeve stripes and socks contrast against jersey/pants with it.
+        var accent: UIColor = UIColor(white: 0.9, alpha: 1)
+        /// Team abbreviation for the helmet side decals ("" = no decal,
+        /// which keeps the legacy far-camera MatchView untouched).
+        var abbreviation: String = ""
+        /// Team-colored facemask (~40 % of teams, deterministic from the
+        /// abbreviation); nil keeps the kit's gray cage.
+        var facemask: UIColor? = nil
 
         /// Home teams wear their color; road teams wear white with team-color
         /// pants and helmet — instant NFL reading and guaranteed contrast.
         /// Helmets run a shade darker than the jersey so heads read as gear.
-        static func home(teamColor: UIColor) -> Uniform {
+        static func home(teamColor: UIColor, abbreviation: String = "") -> Uniform {
             Uniform(jersey: teamColor,
                     pants: UIColor(white: 0.88, alpha: 1),
-                    helmet: shaded(teamColor))
+                    helmet: shaded(teamColor),
+                    accent: teamColor,
+                    abbreviation: abbreviation,
+                    facemask: facemaskColor(teamColor: teamColor, abbreviation: abbreviation))
         }
 
-        static func away(teamColor: UIColor) -> Uniform {
+        static func away(teamColor: UIColor, abbreviation: String = "") -> Uniform {
             Uniform(jersey: UIColor(white: 0.93, alpha: 1),
                     pants: teamColor,
-                    helmet: shaded(teamColor))
+                    helmet: shaded(teamColor),
+                    accent: teamColor,
+                    abbreviation: abbreviation,
+                    facemask: facemaskColor(teamColor: teamColor, abbreviation: abbreviation))
         }
 
         private static func shaded(_ color: UIColor) -> UIColor {
@@ -114,6 +190,15 @@ class FootballFieldScene: SCNScene {
             color.getRed(&r, green: &g, blue: &b, alpha: &a)
             return UIColor(red: max(r - 0.2, 0), green: max(g - 0.2, 0),
                            blue: max(b - 0.2, 0), alpha: a)
+        }
+
+        /// ~40 % of teams run a team-colored cage instead of gray —
+        /// deterministic from the abbreviation so a team's look never flips
+        /// between games.
+        private static func facemaskColor(teamColor: UIColor, abbreviation: String) -> UIColor? {
+            guard !abbreviation.isEmpty else { return nil }
+            let hash = abbreviation.unicodeScalars.reduce(0) { $0 &* 31 &+ Int($1.value) }
+            return abs(hash) % 10 < 4 ? teamColor : nil
         }
     }
 
@@ -139,12 +224,77 @@ class FootballFieldScene: SCNScene {
     private var refereeDirection: Float = 1
     /// Node index currently carrying the ball (for the arm-tuck pose).
     private var carryingIndex: Int?
+    /// True while the current carrier holds the ball at his chest in both
+    /// hands (QB dropback) instead of the under-arm tuck.
+    private var carryingChest = false
+
+    /// How a moving player's arms handle the ball, for the gait cycle.
+    private enum CarryStyle {
+        case none, tucked, chest
+    }
+
+    /// The carry style `node` runs with right now.
+    private func carryStyle(of node: SCNNode) -> CarryStyle {
+        guard playerNode(at: carryingIndex ?? -1) === node else { return .none }
+        return carryingChest ? .chest : .tucked
+    }
     /// Camera's current focus Z, so the follow-cam can decide when to pan.
     private var focusZ: Float = 0
     /// While true the kick camera owns the shot: the follow-cam in `execute`
     /// stays parked so the ball arcs toward the lens. Any `focusCamera` call
     /// hands the shot back.
     private var kickCameraActive = false
+
+    // MARK: Camera style
+
+    /// How close the scrimmage shot sits.
+    enum CameraStyle: String {
+        /// Madden-scale coach shot: low behind the offense (or the defensive
+        /// box), long lens — the foreground back fills ~a third of the frame.
+        case coach
+        /// The pulled-back high broadcast framing (the pre-R15 default).
+        case broadcast
+    }
+
+    /// The user's chosen scrimmage framing. Defaults to `.broadcast` so the
+    /// legacy MatchView (which never focuses the camera) keeps its far shot;
+    /// CoachedGameView switches it to the persisted Coach/Broadcast choice.
+    private(set) var cameraStyle: CameraStyle = .broadcast
+
+    /// The style of the shot currently on screen. Kickoffs force a broadcast
+    /// shot even in coach mode (`focusCamera(style:)` override) and the
+    /// follow-cam must keep panning in that same framing mid-play.
+    private var currentShotStyle: CameraStyle = .broadcast
+
+    /// How far the ball may outrun the focus before the follow-cam pans:
+    /// the tighter coach shot chases sooner than the wide broadcast frame.
+    private var followTriggerDistance: Float {
+        currentShotStyle == .coach ? 8 : 11
+    }
+
+    /// Switches the scrimmage framing and (unless a kick shot owns the
+    /// camera) glides the current shot into the new style. The floating
+    /// billboard numbers dim with the framing — see billboardNumberOpacity.
+    func setCameraStyle(_ style: CameraStyle, refocus: Bool = true) {
+        guard style != cameraStyle else { return }
+        cameraStyle = style
+        applyBillboardNumberVisibility()
+        guard refocus, !kickCameraActive else { return }
+        focusCamera(z: focusZ, animated: true, duration: 0.7)
+    }
+
+    /// Billboard numbers: 0.6 opacity long-range aid in broadcast, dimmer in
+    /// the elevated coach shot — the foreground jersey decals read on their
+    /// own there, but the far side of the formation still needs the assist.
+    private var billboardNumberOpacity: CGFloat {
+        cameraStyle == .coach ? 0.35 : 0.6
+    }
+
+    private func applyBillboardNumberVisibility() {
+        for node in homePlayerNodes + awayPlayerNodes {
+            node.childNode(withName: "number", recursively: false)?.opacity = billboardNumberOpacity
+        }
+    }
     /// Incremented on every runPlay/cancelPlay so stale scheduled steps become no-ops.
     private var playGeneration = 0
 
@@ -222,12 +372,28 @@ class FootballFieldScene: SCNScene {
     /// other team. SKIN/MASK/SHOE materials are left untouched.
     private func applyUniform(_ uniform: Uniform, to node: SCNNode) {
         node.enumerateHierarchy { child, _ in
+            // The helmet side decals only show when the uniform carries an
+            // abbreviation (the legacy quick-match path passes none).
+            if child.name == "helmetDecal" {
+                child.isHidden = uniform.abbreviation.isEmpty
+            }
             guard let materials = child.geometry?.materials else { return }
             for material in materials {
                 switch material.name {
                 case "JERSEY": material.diffuse.contents = uniform.jersey
                 case "PANTS": material.diffuse.contents = uniform.pants
                 case "HELMET": material.diffuse.contents = uniform.helmet
+                case "STRIPE": material.diffuse.contents = Self.stripeColor(for: uniform)
+                case "SOCK": material.diffuse.contents = Self.sockColor(for: uniform)
+                case "MASK":
+                    // Kit figures carry per-figure MASK copies (see
+                    // buildKitFigure), so team cages retint safely here.
+                    material.diffuse.contents = uniform.facemask ?? Self.facemaskGray
+                case "HELMETDECAL":
+                    if !uniform.abbreviation.isEmpty {
+                        material.diffuse.contents = Self.abbreviationTexture(
+                            uniform.abbreviation, darkText: Self.isLightColor(uniform.helmet))
+                    }
                 default: break
                 }
             }
@@ -240,10 +406,28 @@ class FootballFieldScene: SCNScene {
         }
     }
 
+    /// Sleeve stripe reads against the jersey: white on a colored home
+    /// jersey, team color on the white road jersey.
+    private static func stripeColor(for uniform: Uniform) -> UIColor {
+        isLightColor(uniform.jersey) ? uniform.accent : UIColor(white: 0.95, alpha: 1)
+    }
+
+    /// Socks read against the pants: team color over white home pants,
+    /// white over team-colored road pants.
+    private static func sockColor(for uniform: Uniform) -> UIColor {
+        isLightColor(uniform.pants) ? uniform.accent : UIColor(white: 0.92, alpha: 1)
+    }
+
+    /// The default gray cage (kit MASK material color).
+    private static let facemaskGray = UIColor(red: 0.62, green: 0.62, blue: 0.64, alpha: 1)
+
     /// Places 11 home and 11 away players at specified positions with jersey numbers.
-    /// Coordinates are in yards from center of field.
+    /// Coordinates are in yards from center of field. `bodyTypesHome/Away`
+    /// carry the per-team-index position builds (missing index = medium).
     func positionPlayers(home: [(x: Float, z: Float, number: Int)],
-                         away: [(x: Float, z: Float, number: Int)]) {
+                         away: [(x: Float, z: Float, number: Int)],
+                         bodyTypesHome: [Int: BodyType] = [:],
+                         bodyTypesAway: [Int: BodyType] = [:]) {
         // Remove old players
         homePlayerNodes.forEach { $0.removeFromParentNode() }
         awayPlayerNodes.forEach { $0.removeFromParentNode() }
@@ -256,16 +440,18 @@ class FootballFieldScene: SCNScene {
         let homeYaw: Float = awayAvgZ >= homeAvgZ ? 0 : .pi
         let awayYaw: Float = homeYaw == 0 ? .pi : 0
 
-        for info in home {
-            let node = makePlayerNode(uniform: homeUniform, number: info.number)
+        for (index, info) in home.enumerated() {
+            let node = makePlayerNode(uniform: homeUniform, number: info.number,
+                                      bodyType: bodyTypesHome[index] ?? .medium)
             node.position = SCNVector3(info.x, FieldConstants.playerHeight / 2, info.z)
             node.eulerAngles = SCNVector3(0, homeYaw, 0)
             rootNode.addChildNode(node)
             homePlayerNodes.append(node)
         }
 
-        for info in away {
-            let node = makePlayerNode(uniform: awayUniform, number: info.number)
+        for (index, info) in away.enumerated() {
+            let node = makePlayerNode(uniform: awayUniform, number: info.number,
+                                      bodyType: bodyTypesAway[index] ?? .medium)
             node.position = SCNVector3(info.x, FieldConstants.playerHeight / 2, info.z)
             node.eulerAngles = SCNVector3(0, awayYaw, 0)
             rootNode.addChildNode(node)
@@ -338,6 +524,9 @@ class FootballFieldScene: SCNScene {
         case twoPoint
         /// Upright receiver/corner split stance: staggered feet, slight lean.
         case split
+        /// QB under center: bent at the waist, both hands extended down under
+        /// the C's rear waiting on the exchange.
+        case underCenter
         /// Standing tall (QB, special-teams units).
         case upright
     }
@@ -351,11 +540,14 @@ class FootballFieldScene: SCNScene {
                                 away: [(x: Float, z: Float, number: Int)],
                                 duration: TimeInterval = 0.8,
                                 stancesHome: [Int: Stance] = [:],
-                                stancesAway: [Int: Stance] = [:]) {
+                                stancesAway: [Int: Stance] = [:],
+                                bodyTypesHome: [Int: BodyType] = [:],
+                                bodyTypesAway: [Int: BodyType] = [:]) {
         guard homePlayerNodes.count == home.count,
               awayPlayerNodes.count == away.count,
               !home.isEmpty || !away.isEmpty else {
-            positionPlayers(home: home, away: away)
+            positionPlayers(home: home, away: away,
+                            bodyTypesHome: bodyTypesHome, bodyTypesAway: bodyTypesAway)
             return
         }
 
@@ -385,6 +577,37 @@ class FootballFieldScene: SCNScene {
                 ? (stancesHome[offset] ?? .upright)
                 : (stancesAway[offset - homePlayerNodes.count] ?? .upright)
             applyStance(stance, to: node, delay: duration + 0.2)
+
+            // Restamp the position build: the same node flips between
+            // offense and defense roles on possession changes. An empty
+            // dict (kick formations) leaves the previous builds alone.
+            let bodyTypes = isHomeNode ? bodyTypesHome : bodyTypesAway
+            if !bodyTypes.isEmpty {
+                let teamIndex = isHomeNode ? offset : offset - homePlayerNodes.count
+                applyBodyType(bodyTypes[teamIndex] ?? .medium, to: node)
+            }
+        }
+    }
+
+    /// Gathers one side's 11 players into a huddle ring at the given spots
+    /// (ring-shaped, from `PlayChoreographer.huddlePositions`); each man
+    /// turns in toward the ring's center once he arrives. The next
+    /// `movePlayersToFormation` breaks the huddle to the line.
+    func huddle(teamIsHome: Bool, positions: [(x: Float, z: Float)],
+                duration: TimeInterval = 0.55) {
+        let nodes = teamIsHome ? homePlayerNodes : awayPlayerNodes
+        guard nodes.count == positions.count, !positions.isEmpty else { return }
+        let centerX = positions.map(\.x).reduce(0, +) / Float(positions.count)
+        let centerZ = positions.map(\.z).reduce(0, +) / Float(positions.count)
+        for (node, spot) in zip(nodes, positions) {
+            run(node: node, to: SCNVector3(spot.x, FieldConstants.playerHeight / 2, spot.z),
+                duration: duration, key: "formationMove")
+            let yaw = atan2(centerX - spot.x, centerZ - spot.z)
+            node.runAction(SCNAction.sequence([
+                SCNAction.wait(duration: duration),
+                SCNAction.rotateTo(x: 0, y: CGFloat(yaw), z: 0, duration: 0.22,
+                                   usesShortestUnitArc: true),
+            ]), forKey: "settleFacing")
         }
     }
 
@@ -428,6 +651,16 @@ class FootballFieldScene: SCNScene {
                 ("armR", 0.15, -0.25, -0.35),
                 ("leg", 0.3, 0, -0.25),
                 ("legR", -0.25, 0, 0),
+            ]
+        case .underCenter:
+            // Bent forward, knees soft, both hands reaching down-forward
+            // under the center for the exchange.
+            pitch = 0.42; sink = -0.09
+            limbs = [
+                ("arm", -0.8, 0.15, -0.25),
+                ("armR", -0.8, -0.15, -0.25),
+                ("leg", 0.25, 0, -0.35),
+                ("legR", 0.25, 0, -0.35),
             ]
         case .upright:
             pitch = 0; sink = 0
@@ -509,25 +742,63 @@ class FootballFieldScene: SCNScene {
     /// `z` is clamped to [-45, 45] so the framing never leaves the field.
     ///
     /// `pushIn` adds the pre-snap broadcast dolly: once the framing settles,
-    /// the camera creeps ~2 yards toward the LOS over 2.5 s. Any new focus,
-    /// kick camera, or the snap itself (`runPlay`) interrupts the dolly, and
-    /// the next absolute focus move corrects the accumulated offset.
+    /// the camera creeps toward the LOS over 2.5 s (~2 yards in broadcast,
+    /// a barely-there half yard in the already-tight coach shot). Any new
+    /// focus, kick camera, or the snap itself (`runPlay`) interrupts the
+    /// dolly, and the next absolute focus move corrects the offset.
+    ///
+    /// `style` overrides the user's `cameraStyle` for this shot (kickoffs
+    /// keep the wide broadcast frame even in coach mode); follow-cam pans
+    /// during the play inherit the override via `currentShotStyle`.
     func focusCamera(z: Float, animated: Bool = true, duration: TimeInterval = 0.8,
-                     pushIn: Bool = false) {
+                     pushIn: Bool = false, style styleOverride: CameraStyle? = nil) {
         kickCameraActive = false
         cameraNode.removeAction(forKey: "pushIn")
         let clampedZ = max(-45, min(45, z))
         focusZ = clampedZ
-        // Madden-2000 coach framing: a camera behind the player's own unit
-        // looking downfield — mirrored via `viewFacing` for away games —
-        // pulled back and up so the coach reads the whole formation.
-        // Defense swaps to the high steep variant (see defensiveFraming).
-        let targetPosition = defensiveFraming
-            ? SCNVector3(0, 0.5, clampedZ - viewFacing * 7)
-            : SCNVector3(0, 1.5, clampedZ + viewFacing * 19)
-        let cameraPosition = defensiveFraming
-            ? SCNVector3(0, 33, clampedZ - viewFacing * 39)
-            : SCNVector3(0, 24, clampedZ - viewFacing * 29)
+        let style = styleOverride ?? cameraStyle
+        currentShotStyle = style
+
+        // The camera always sits behind the player's own unit, mirrored via
+        // `viewFacing` for away games; defense swaps to its own variant so
+        // the play develops INTO the frame instead of behind it.
+        let targetPosition: SCNVector3
+        let cameraPosition: SCNVector3
+        let fieldOfView: CGFloat
+        switch style {
+        case .coach:
+            // Elevated coach view: raised behind the offense (~16.5 yd behind
+            // the LOS at 7.5 up), normal 52-degree lens. Measured on-device:
+            // the backfield reads ~13-15 % of the viewport height, the whole
+            // core formation (OL box + backfield + LB level) fits, and the
+            // LOS spans the frame — split-wide receivers may clip at the
+            // edges. Defense raises the same shot (8.5 vs 7.5) so the routes
+            // read over the OL instead of being walled off by it.
+            if defensiveFraming {
+                targetPosition = SCNVector3(0, 1.0, clampedZ + viewFacing * 3)
+                cameraPosition = SCNVector3(0, 8.5, clampedZ - viewFacing * 16.5)
+            } else {
+                targetPosition = SCNVector3(0, 1.0, clampedZ + viewFacing * 4)
+                cameraPosition = SCNVector3(0, 7.5, clampedZ - viewFacing * 16.5)
+            }
+            fieldOfView = 52
+        case .broadcast:
+            targetPosition = defensiveFraming
+                ? SCNVector3(0, 0.5, clampedZ - viewFacing * 7)
+                : SCNVector3(0, 1.5, clampedZ + viewFacing * 19)
+            cameraPosition = defensiveFraming
+                ? SCNVector3(0, 33, clampedZ - viewFacing * 39)
+                : SCNVector3(0, 24, clampedZ - viewFacing * 29)
+            fieldOfView = 52
+        }
+
+        // Lens change rides the same ease as the move (zNear stays at 1;
+        // the closest coach-shot player is still ~10 yd from the camera).
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = animated ? duration : 0
+        SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        cameraNode.camera?.fieldOfView = fieldOfView
+        SCNTransaction.commit()
 
         if animated {
             let targetMove = SCNAction.move(to: targetPosition, duration: duration)
@@ -547,12 +818,15 @@ class FootballFieldScene: SCNScene {
 
         if pushIn && animated {
             // Slow dolly along the (horizontal) view direction toward the LOS.
+            // The coach shot is calibrated so the whole box fits, so its dolly
+            // is a whisper (0.5 yd, no drop) — just enough life in the frame.
             let dx = targetPosition.x - cameraPosition.x
             let dz = targetPosition.z - cameraPosition.z
             let length = sqrt(dx * dx + dz * dz)
             guard length > 0.1 else { return }
-            let scale = 2.0 / length
-            let dolly = SCNAction.moveBy(x: CGFloat(dx * scale), y: -0.4,
+            let scale = (style == .coach ? 0.5 : 2.0) / length
+            let dolly = SCNAction.moveBy(x: CGFloat(dx * scale),
+                                         y: style == .coach ? 0 : -0.4,
                                          z: CGFloat(dz * scale), duration: 2.5)
             dolly.timingMode = .easeInEaseOut
             cameraNode.runAction(SCNAction.sequence([
@@ -568,6 +842,13 @@ class FootballFieldScene: SCNScene {
     func kickCamera(towardZ: Float, duration: TimeInterval = 0.8) {
         kickCameraActive = true
         cameraNode.removeAction(forKey: "pushIn")
+        // The behind-the-posts shot is framed for the broadcast lens — undo
+        // the coach shot's long lens for the duration of the kick.
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = duration
+        SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        cameraNode.camera?.fieldOfView = 52
+        SCNTransaction.commit()
         let sign: Float = towardZ >= 0 ? 1 : -1
         let cameraPosition = SCNVector3(0, 8, sign * 72)
         let targetPosition = SCNVector3(0, 4, sign * 40)
@@ -583,6 +864,26 @@ class FootballFieldScene: SCNScene {
         // Keep the precipitation slab a step downfield of the low kick
         // camera so streaks/flakes never cross right in front of the lens.
         moveWeatherEmitter(toZ: sign * 30, animated: true, duration: duration)
+    }
+
+    /// Post-tackle beat for the tight coach shot: eases the camera ~30 %
+    /// further out along its aim ray (which also lifts it ~30 %) so the pile
+    /// reads before the next formation forms up. The next `focusCamera`
+    /// (pre-snap sync) moves to absolute coordinates and undoes the offset.
+    /// No-op in broadcast framing (already wide) and while a kick shot or a
+    /// scoring refocus owns the camera.
+    func pullBackAfterPlay(duration: TimeInterval = 1.0) {
+        guard currentShotStyle == .coach, !kickCameraActive else { return }
+        cameraNode.removeAction(forKey: "pushIn")
+        let cam = cameraNode.position
+        let aim = cameraTargetNode.position
+        let pulled = SCNVector3(aim.x + (cam.x - aim.x) * 1.3,
+                                aim.y + (cam.y - aim.y) * 1.3,
+                                aim.z + (cam.z - aim.z) * 1.3)
+        let move = SCNAction.move(to: pulled, duration: duration)
+        move.timingMode = .easeInEaseOut
+        // Same action key as the focus move so the next focus replaces it.
+        cameraNode.runAction(move, forKey: "focus")
     }
 
     /// Runs a sequential play timeline: each step starts after the previous one
@@ -908,16 +1209,18 @@ class FootballFieldScene: SCNScene {
         // Run cycle: legs scissor around the hip, arms pump opposite — the
         // single biggest "he's actually running" cue at this camera distance.
         swingLimbs(of: figure, duration: duration,
-                   carrying: playerNode(at: carryingIndex ?? -1) === node,
+                   carry: carryStyle(of: node),
                    speed: speed, backpedal: backpedal)
     }
 
     /// Alternating limb swings for the duration of a move, ending neutral.
     /// Knees and elbows bend while running; the ball-carrier's left arm stays
-    /// tucked around the ball instead of pumping. Cadence and amplitude scale
-    /// with `speed` (yards/s), and the torso counter-rotates lightly against
-    /// the legs. Backpedals chop with short, small steps.
-    private func swingLimbs(of figure: SCNNode, duration: TimeInterval, carrying: Bool = false,
+    /// tucked around the ball instead of pumping (a chest carry holds BOTH
+    /// arms on the ball). Cadence and amplitude scale with `speed` (yards/s),
+    /// and the torso counter-rotates lightly against the legs. Backpedals
+    /// chop with short, small steps.
+    private func swingLimbs(of figure: SCNNode, duration: TimeInterval,
+                            carry: CarryStyle = .none,
                             speed: Float = 5, backpedal: Bool = false) {
         let stride = strideTime(forSpeed: speed, backpedal: backpedal)
         let cycles = max(Int(duration / stride), 1)
@@ -969,10 +1272,18 @@ class FootballFieldScene: SCNScene {
             let joint = node.childNode(withName: limb.joint, recursively: false)
             joint?.removeAction(forKey: "bend")
 
-            if carrying && limb.name == "arm" {
+            if carry == .tucked && limb.name == "arm" {
                 // Ball arm: tucked tight, no pumping.
                 node.runAction(SCNAction.rotateTo(x: -0.55, y: 0, z: 0.35, duration: 0.2), forKey: "swing")
                 joint?.runAction(SCNAction.rotateTo(x: -1.35, y: 0, z: 0, duration: 0.2), forKey: "bend")
+                continue
+            }
+            if carry == .chest && (limb.name == "arm" || limb.name == "armR") {
+                // Two-hand chest hold (QB in his drop): both arms curl on
+                // the ball instead of pumping.
+                let inward: CGFloat = limb.name == "arm" ? 0.28 : -0.28
+                node.runAction(SCNAction.rotateTo(x: -1.0, y: 0, z: inward, duration: 0.2), forKey: "swing")
+                joint?.runAction(SCNAction.rotateTo(x: -1.1, y: 0, z: 0, duration: 0.2), forKey: "bend")
                 continue
             }
             node.runAction(swingAction(startForward: limb.forward, restZ: limb.restZ), forKey: "swing")
@@ -1042,6 +1353,179 @@ class FootballFieldScene: SCNScene {
         }
     }
 
+    /// How a figure goes to the turf.
+    private enum FallStyle {
+        /// The standard forward tackle collapse.
+        case forward
+        /// Blown backward off his feet onto his back (big hits).
+        case backward
+        /// A fast, flat horizontal launch forward (diving tackles/catches).
+        case dive
+    }
+
+    /// Deep-ball catch: both arms extend up and FORWARD along the run — the
+    /// over-the-shoulder basket look — while the stride keeps going.
+    private func overShoulderReach(nodeIndex: Int) {
+        guard let node = playerNode(at: nodeIndex),
+              let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        for name in ["arm", "armR"] {
+            guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
+            arm.removeAction(forKey: "swing")
+            let up = SCNAction.rotateTo(x: -2.75, y: 0,
+                                        z: name == "arm" ? 0.3 : -0.3, duration: 0.28)
+            up.timingMode = .easeOut
+            let down = SCNAction.rotateTo(x: 0, y: 0,
+                                          z: name == "arm" ? 0.25 : -0.25, duration: 0.3)
+            arm.runAction(SCNAction.sequence([up, SCNAction.wait(duration: 0.6), down]),
+                          forKey: "swing")
+            if let forearm = arm.childNode(withName: "forearm", recursively: false) {
+                forearm.removeAction(forKey: "bend")
+                forearm.runAction(SCNAction.rotateTo(x: -0.2, y: 0, z: 0, duration: 0.28),
+                                  forKey: "bend")
+            }
+        }
+    }
+
+    /// Full-extension diving catch: the figure launches flat with the arms
+    /// out, hits the turf with the ball, and stays stretched out until the
+    /// pile forms before climbing up.
+    private func divingCatch(nodeIndex: Int) {
+        guard let node = playerNode(at: nodeIndex),
+              let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        figure.removeAction(forKey: "gait")
+        figure.removeAction(forKey: "hop")
+        figure.removeAction(forKey: "stance")
+        for name in ["arm", "armR"] {
+            guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
+            arm.removeAction(forKey: "swing")
+            arm.runAction(SCNAction.rotateTo(x: -1.7, y: 0,
+                                             z: name == "arm" ? 0.12 : -0.12, duration: 0.16),
+                          forKey: "swing")
+            arm.childNode(withName: "forearm", recursively: false)?
+                .runAction(SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.16), forKey: "bend")
+        }
+        let launch = SCNAction.group([
+            SCNAction.rotateTo(x: -1.5, y: 0, z: 0, duration: 0.2),
+            SCNAction.move(to: SCNVector3(0, 0.12, 0.5), duration: 0.2),
+        ])
+        launch.timingMode = .easeOut
+        let land = SCNAction.move(to: SCNVector3(0, -0.34, 0.8), duration: 0.15)
+        land.timingMode = .easeIn
+        let up = SCNAction.group([
+            SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.5),
+            SCNAction.move(to: SCNVector3Zero, duration: 0.5),
+        ])
+        up.timingMode = .easeInEaseOut
+        figure.runAction(SCNAction.sequence([
+            launch, land, SCNAction.wait(duration: 1.5), up,
+        ]), forKey: "fall")
+    }
+
+    /// Sideline grab: the basic reach plus quick alternating toe taps —
+    /// both feet down in bounds at the boundary.
+    private func toeTapReach(nodeIndex: Int) {
+        reach(nodeIndex: nodeIndex)
+        guard let node = playerNode(at: nodeIndex),
+              let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        for (offset, name) in ["leg", "legR"].enumerated() {
+            guard let leg = figure.childNode(withName: name, recursively: false) else { continue }
+            leg.removeAction(forKey: "swing")
+            leg.runAction(SCNAction.sequence([
+                SCNAction.wait(duration: 0.24 + Double(offset) * 0.13),
+                SCNAction.rotateTo(x: -0.55, y: 0, z: 0, duration: 0.09),
+                SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.09),
+            ]), forKey: "swing")
+        }
+    }
+
+    /// Blocking engagement: both arms punch out locked at chest height and
+    /// the figure works a short fore-aft shove cycle for the step — OL/DL
+    /// pairs read as locked up chest to chest instead of jogging to spots.
+    private func blockEngage(nodeIndex: Int, duration: TimeInterval) {
+        guard let node = playerNode(at: nodeIndex),
+              let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        for (name, inward) in [("arm", CGFloat(0.18)), ("armR", CGFloat(-0.18))] {
+            guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
+            arm.removeAction(forKey: "swing")
+            let punch = SCNAction.rotateTo(x: -1.15, y: 0, z: inward, duration: 0.16)
+            punch.timingMode = .easeOut
+            arm.runAction(punch, forKey: "swing")
+            if let forearm = arm.childNode(withName: "forearm", recursively: false) {
+                forearm.removeAction(forKey: "bend")
+                forearm.runAction(SCNAction.rotateTo(x: -0.4, y: 0, z: 0, duration: 0.16),
+                                  forKey: "bend")
+            }
+        }
+        // The push-pull battle: a small local fore-aft oscillation, back to
+        // neutral at the end (moveBy composes with the gait bob's y moves).
+        figure.removeAction(forKey: "shove")
+        let push = SCNAction.moveBy(x: 0, y: 0, z: 0.13, duration: 0.24)
+        push.timingMode = .easeInEaseOut
+        let cycles = max(Int(duration / 0.48), 1)
+        figure.runAction(SCNAction.sequence([
+            SCNAction.repeat(SCNAction.sequence([push, push.reversed()]), count: cycles),
+            SCNAction.move(to: SCNVector3Zero, duration: 0.12),
+        ]), forKey: "shove")
+    }
+
+    /// Pump fake: the throwing arm cocks and half-fires without the ball,
+    /// then recovers to the two-hand chest hold. `delay` places it late in
+    /// the drop, just before the real throw.
+    private func pumpFake(nodeIndex: Int, delay: TimeInterval) {
+        guard let node = playerNode(at: nodeIndex),
+              let figure = node.childNode(withName: "figure", recursively: false),
+              let arm = figure.childNode(withName: "armR", recursively: false) else { return }
+        let windup = SCNAction.rotateTo(x: 1.7, y: 0, z: -0.25, duration: 0.13)
+        windup.timingMode = .easeOut
+        let halfThrow = SCNAction.rotateTo(x: -1.2, y: 0, z: -0.25, duration: 0.12)
+        halfThrow.timingMode = .easeIn
+        let rechamber = SCNAction.rotateTo(x: -1.0, y: 0, z: -0.28, duration: 0.2)
+        arm.runAction(SCNAction.sequence([
+            SCNAction.wait(duration: delay), windup, halfThrow, rechamber,
+        ]), forKey: "swing")
+    }
+
+    /// One-shot open-field move on a ball carrier: a juke feint (hard
+    /// opposite-side bank, sold by the lateral jig in his path), a full
+    /// 360° spin, or a stiff-arm out of the free (right) hand.
+    private func performOpenFieldMove(nodeIndex: Int, kind: OpenFieldMove.Kind) {
+        guard let node = playerNode(at: nodeIndex),
+              let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        switch kind {
+        case .spin:
+            figure.removeAction(forKey: "gait")
+            let spin = SCNAction.rotateBy(x: 0, y: CGFloat.pi * 2, z: 0, duration: 0.45)
+            spin.timingMode = .easeInEaseOut
+            figure.runAction(spin, forKey: "spinMove")
+        case .juke:
+            figure.removeAction(forKey: "gait")
+            let feintOne = SCNAction.rotateTo(x: 0.15, y: 0, z: 0.38, duration: 0.12)
+            feintOne.timingMode = .easeOut
+            let feintTwo = SCNAction.rotateTo(x: 0.15, y: 0, z: -0.3, duration: 0.14)
+            let recover = SCNAction.rotateTo(x: 0.15, y: 0, z: 0, duration: 0.15)
+            figure.runAction(SCNAction.sequence([feintOne, feintTwo, recover]), forKey: "spinMove")
+        case .stiffArm:
+            guard let arm = figure.childNode(withName: "armR", recursively: false) else { return }
+            arm.removeAction(forKey: "swing")
+            let extend = SCNAction.rotateTo(x: 0.5, y: 0, z: -1.25, duration: 0.15)
+            extend.timingMode = .easeOut
+            let release = SCNAction.rotateTo(x: 0, y: 0, z: -0.25, duration: 0.25)
+            arm.runAction(SCNAction.sequence([extend, SCNAction.wait(duration: 0.55), release]),
+                          forKey: "swing")
+            arm.childNode(withName: "forearm", recursively: false)?
+                .runAction(SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.15), forKey: "bend")
+        }
+    }
+
+    /// A quick vertical dip-and-recover on the camera — the impact pump
+    /// behind a big hit. moveBy, so it composes with any running pan.
+    private func cameraBump() {
+        guard !kickCameraActive else { return }
+        let dip = SCNAction.moveBy(x: 0, y: -0.4, z: 0, duration: 0.08)
+        dip.timingMode = .easeOut
+        cameraNode.runAction(SCNAction.sequence([dip, dip.reversed()]), forKey: "bump")
+    }
+
     /// The carrier and tackler hit the turf, lie there a beat, and get up.
     /// `getUpDelay` staggers the rise for gang-tackle piles — the last man
     /// on (top of the pile) climbs off first. With `stayDown` the figure
@@ -1049,17 +1533,37 @@ class FootballFieldScene: SCNScene {
     /// formation move stands him back up, by which point the node already
     /// wears the replacement's number.
     private func fall(nodeIndex: Int, delay: TimeInterval = 0, stayDown: Bool = false,
-                      getUpDelay: TimeInterval = 0) {
+                      getUpDelay: TimeInterval = 0, style: FallStyle = .forward) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         figure.removeAction(forKey: "gait")
         figure.removeAction(forKey: "stance")
+        figure.removeAction(forKey: "shove")
         // Every man hits the turf at his own angle — a gang pile reads as a
         // heap of bodies, not a row of synchronized dominoes.
         let yaw = Float.random(in: -0.6...0.6)
+        let pitch: CGFloat
+        let landing: SCNVector3
+        let dropTime: TimeInterval
+        switch style {
+        case .forward:
+            pitch = CGFloat(-1.45 + yaw * 0.1)
+            landing = SCNVector3(0, -0.32, 0.15)
+            dropTime = 0.3
+        case .backward:
+            // Feet fly out, shoulders hit last — flat on his back.
+            pitch = CGFloat(1.35 + yaw * 0.1)
+            landing = SCNVector3(0, -0.3, -0.35)
+            dropTime = 0.26
+        case .dive:
+            // Horizontal launch at the legs: fast, flat and long.
+            pitch = -1.52
+            landing = SCNVector3(0, -0.36, 0.55)
+            dropTime = 0.17
+        }
         let down = SCNAction.group([
-            SCNAction.rotateTo(x: CGFloat(-1.45 + yaw * 0.1), y: CGFloat(yaw), z: 0, duration: 0.3),
-            SCNAction.move(to: SCNVector3(0, -0.32, 0.15), duration: 0.3),
+            SCNAction.rotateTo(x: pitch, y: CGFloat(yaw), z: 0, duration: dropTime),
+            SCNAction.move(to: landing, duration: dropTime),
         ])
         down.timingMode = .easeIn
         if stayDown {
@@ -1142,6 +1646,8 @@ class FootballFieldScene: SCNScene {
         figure.removeAction(forKey: "stance")
         figure.removeAction(forKey: "fall")
         figure.removeAction(forKey: "hop")
+        figure.removeAction(forKey: "shove")
+        figure.removeAction(forKey: "spinMove")
         figure.position = SCNVector3Zero
         figure.eulerAngles = SCNVector3Zero
         if let body = figure.childNode(withName: "body", recursively: false) {
@@ -1172,6 +1678,8 @@ class FootballFieldScene: SCNScene {
         switch step.ballMove {
         case .arc(_, _, let ballDuration), .slide(_, let ballDuration):
             duration = max(duration, ballDuration)
+        case .snap(_, let shotgun):
+            duration = max(duration, Self.snapDuration(shotgun: shotgun))
         default:
             break
         }
@@ -1191,9 +1699,21 @@ class FootballFieldScene: SCNScene {
                     backpedal: step.backpedals.contains(path.nodeIndex))
         }
 
+        let stepDuration = effectiveDuration(of: step)
         for index in step.pulses { pulse(nodeIndex: index) }
         for index in step.wraps { wrapArms(nodeIndex: index) }
-        for index in step.reaches { reach(nodeIndex: index) }
+        for index in step.blocks { blockEngage(nodeIndex: index, duration: stepDuration) }
+        for index in step.pumpFakes {
+            pumpFake(nodeIndex: index, delay: max(stepDuration - 0.65, 0.15))
+        }
+        for index in step.reaches {
+            switch step.catchStyles[index] ?? .reach {
+            case .reach: reach(nodeIndex: index)
+            case .overShoulder: overShoulderReach(nodeIndex: index)
+            case .dive: divingCatch(nodeIndex: index)
+            case .toeTap: toeTapReach(nodeIndex: index)
+            }
+        }
         for index in step.celebrates { celebrationJump(nodeIndex: index) }
         // Falls stagger DOWN in list order; the pile unstacks in reverse at
         // ragged 0.3-0.7s beats — the last man on (top of the pile) is the
@@ -1208,20 +1728,41 @@ class FootballFieldScene: SCNScene {
             fall(nodeIndex: index, delay: Double(offset) * 0.12,
                  getUpDelay: riseDelays[offset])
         }
+        // Big hits: the carrier flies onto his back and the camera pumps.
+        for index in step.bigHits { fall(nodeIndex: index, style: .backward) }
+        if !step.bigHits.isEmpty { cameraBump() }
+        for index in step.diveFalls { fall(nodeIndex: index, style: .dive) }
+        // Open-field moves fire mid-step at their scheduled beats; they die
+        // with the play generation like every queued step.
+        if !step.openField.isEmpty {
+            let generation = playGeneration
+            for move in step.openField {
+                DispatchQueue.main.asyncAfter(deadline: .now() + move.delay) { [weak self] in
+                    guard let self, self.playGeneration == generation else { return }
+                    self.performOpenFieldMove(nodeIndex: move.nodeIndex, kind: move.kind)
+                }
+            }
+        }
 
         switch step.ballMove {
-        case .carry(let nodeIndex):
-            attachBall(toPlayerIndex: nodeIndex)
+        case .carry(let nodeIndex), .carryChest(let nodeIndex):
+            if case .carryChest = step.ballMove {
+                attachBall(toPlayerIndex: nodeIndex, chest: true)
+            } else {
+                attachBall(toPlayerIndex: nodeIndex)
+            }
             // Follow-cam: when the carrier breaks well past the current frame,
             // pan downfield with him so long gains don't run out of shot.
             if !kickCameraActive,
                let move = step.moves.first(where: { $0.nodeIndex == nodeIndex }),
-               abs(move.to.z - focusZ) > 11 {
+               abs(move.to.z - focusZ) > followTriggerDistance {
                 followCamera(toZ: move.to.z, stepDuration: move.duration)
             }
+        case .snap(let toNodeIndex, let shotgun):
+            runSnapExchange(to: toNodeIndex, shotgun: shotgun)
         case .arc(let to, let apex, let duration):
             runBallArc(to: to, apex: apex, duration: duration)
-            if !kickCameraActive, abs(to.z - focusZ) > 11 {
+            if !kickCameraActive, abs(to.z - focusZ) > followTriggerDistance {
                 followCamera(toZ: to.z, stepDuration: duration)
             }
         case .slide(let to, let duration):
@@ -1233,49 +1774,116 @@ class FootballFieldScene: SCNScene {
 
     /// Follow-cam pan with softened timing: short hops get proportionally
     /// longer, eased moves so successive refocuses blend instead of jerking;
-    /// only genuinely long breaks pan at full speed.
+    /// only genuinely long breaks pan at full speed. The pan re-uses the
+    /// framing already on screen (`currentShotStyle`) so the tight coach
+    /// shot slides with the ball and a kickoff-return shot stays broadcast.
     private func followCamera(toZ z: Float, stepDuration: TimeInterval) {
         let pan = abs(z - focusZ)
         let duration = max(stepDuration, min(1.7, 0.7 + TimeInterval(pan) * 0.03))
-        focusCamera(z: z, animated: true, duration: duration)
+        focusCamera(z: z, animated: true, duration: duration, style: currentShotStyle)
     }
 
-    /// Parents the ball to a player so it rides along with every move (carry).
-    private func attachBall(toPlayerIndex index: Int) {
-        guard let node = playerNode(at: index), ballNode.parent !== node else { return }
+    /// Parents the ball to a player so it rides along with every move.
+    /// `chest` holds it in both hands at the chest (QB dropback) instead of
+    /// the under-arm tuck.
+    private func attachBall(toPlayerIndex index: Int, chest: Bool = false) {
+        guard let node = playerNode(at: index) else { return }
+        guard ballNode.parent !== node || carryingChest != chest else { return }
         carryingIndex = index
+        carryingChest = chest
         ballNode.removeAllActions()
         ballNode.eulerAngles = SCNVector3Zero
         ballNode.removeFromParentNode()
         node.addChildNode(ballNode)
-        // Tucked under the left arm rather than floating at the chest.
-        ballNode.position = SCNVector3(-0.32, 0.28, 0.18)
+        // Chest: squarely in front in both hands; tuck: under the left arm.
+        ballNode.position = chest
+            ? SCNVector3(0, 0.34, 0.33)
+            : SCNVector3(-0.32, 0.28, 0.18)
 
         // Carry pose right away (swingLimbs keeps it during moves).
-        if let figure = node.childNode(withName: "figure", recursively: false),
-           let arm = figure.childNode(withName: "arm", recursively: false) {
+        guard let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        if chest {
+            for (name, inward) in [("arm", CGFloat(0.28)), ("armR", CGFloat(-0.28))] {
+                guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
+                arm.removeAction(forKey: "swing")
+                arm.runAction(SCNAction.rotateTo(x: -1.0, y: 0, z: inward, duration: 0.18), forKey: "swing")
+                arm.childNode(withName: "forearm", recursively: false)?
+                    .runAction(SCNAction.rotateTo(x: -1.1, y: 0, z: 0, duration: 0.18), forKey: "bend")
+            }
+        } else if let arm = figure.childNode(withName: "arm", recursively: false) {
             arm.removeAction(forKey: "swing")
             arm.runAction(SCNAction.rotateTo(x: -0.55, y: 0, z: 0.35, duration: 0.2), forKey: "swing")
             arm.childNode(withName: "forearm", recursively: false)?
                 .runAction(SCNAction.rotateTo(x: -1.35, y: 0, z: 0, duration: 0.2), forKey: "bend")
+            // The right arm may still hold a stale chest pose from a drop.
+            if let armR = figure.childNode(withName: "armR", recursively: false),
+               armR.action(forKey: "swing") == nil {
+                armR.runAction(SCNAction.rotateTo(x: 0, y: 0, z: -0.25, duration: 0.2), forKey: "swing")
+            }
         }
     }
 
     /// Re-parents the ball to the root node, preserving its world position.
     private func detachBallToRoot() {
         if let previous = playerNode(at: carryingIndex ?? -1),
-           let figure = previous.childNode(withName: "figure", recursively: false),
-           let arm = figure.childNode(withName: "arm", recursively: false) {
-            arm.runAction(SCNAction.rotateTo(x: 0, y: 0, z: 0.25, duration: 0.2), forKey: "swing")
-            arm.childNode(withName: "forearm", recursively: false)?
-                .runAction(SCNAction.rotateTo(x: -0.15, y: 0, z: 0, duration: 0.2), forKey: "bend")
+           let figure = previous.childNode(withName: "figure", recursively: false) {
+            let arms = carryingChest ? ["arm", "armR"] : ["arm"]
+            for name in arms {
+                guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
+                let rest: CGFloat = name == "arm" ? 0.25 : -0.25
+                arm.runAction(SCNAction.rotateTo(x: 0, y: 0, z: rest, duration: 0.2), forKey: "swing")
+                arm.childNode(withName: "forearm", recursively: false)?
+                    .runAction(SCNAction.rotateTo(x: -0.15, y: 0, z: 0, duration: 0.2), forKey: "bend")
+            }
         }
         carryingIndex = nil
+        carryingChest = false
         guard ballNode.parent !== rootNode else { return }
         let worldPosition = ballNode.worldPosition
         ballNode.removeFromParentNode()
         rootNode.addChildNode(ballNode)
         ballNode.position = worldPosition
+    }
+
+    /// The C→QB exchange: the ball homes on the QB node (he may already be
+    /// stepping into his drop) and attaches into the chest carry on arrival.
+    /// Under center it is a fast hand-to-hand transfer; shotgun a low toss
+    /// with a lazy end-over-end wobble. A ball left absurdly far from the
+    /// QB (stale spot) just attaches without the visual.
+    private func runSnapExchange(to index: Int, shotgun: Bool) {
+        guard let node = playerNode(at: index) else { return }
+        detachBallToRoot()
+        ballNode.removeAllActions()
+        let start = ballNode.position
+        let dx = node.position.x - start.x
+        let dz = node.position.z - start.z
+        guard dx * dx + dz * dz < 144 else {
+            attachBall(toPlayerIndex: index, chest: true)
+            return
+        }
+        let duration = Self.snapDuration(shotgun: shotgun)
+        let apex: Float = shotgun ? 0.8 : 0
+        let arc = SCNAction.customAction(duration: duration) { [weak node] ball, elapsed in
+            guard let node else { return }
+            let t = max(0, min(Float(elapsed) / Float(duration), 1))
+            let target = node.position  // homes on the moving QB
+            ball.position = SCNVector3(
+                start.x + (target.x - start.x) * t,
+                start.y + (0.85 - start.y) * t + apex * 4 * t * (1 - t),
+                start.z + (target.z - start.z) * t
+            )
+        }
+        ballNode.runAction(arc, forKey: "ballMove")
+        if shotgun {
+            ballNode.runAction(SCNAction.rotateBy(x: -.pi, y: 0, z: 0, duration: duration),
+                               forKey: "ballSpin")
+        }
+        let generation = playGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            guard let self, self.playGeneration == generation else { return }
+            self.ballNode.eulerAngles = SCNVector3Zero
+            self.attachBall(toPlayerIndex: index, chest: true)
+        }
     }
 
     /// Flies the ball along a parabola from its current position to `target`.
@@ -1340,7 +1948,9 @@ class FootballFieldScene: SCNScene {
     }
 
     /// The passer's right arm cocks back and snaps forward overhead as the
-    /// ball releases into its arc, then settles back to neutral.
+    /// ball releases into its arc, then settles back to neutral. The trunk
+    /// follows through onto the front foot — a small forward pitch and a
+    /// front-leg plant timed with the release.
     private func throwMotion(of node: SCNNode) {
         guard let figure = node.childNode(withName: "figure", recursively: false),
               let arm = figure.childNode(withName: "armR", recursively: false) else { return }
@@ -1353,6 +1963,24 @@ class FootballFieldScene: SCNScene {
         neutral.timingMode = .easeInEaseOut
         arm.runAction(SCNAction.sequence([windup, release, SCNAction.wait(duration: 0.2), neutral]),
                       forKey: "swing")
+
+        // Follow-through: weight transfers onto the front foot through the
+        // release (figure pitch + a front-leg step), then straightens.
+        figure.removeAction(forKey: "gait")
+        let lean = SCNAction.sequence([
+            SCNAction.wait(duration: 0.16),
+            SCNAction.rotateTo(x: 0.24, y: 0, z: 0, duration: 0.18),
+            SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.3),
+        ])
+        figure.runAction(lean, forKey: "gait")
+        if let leg = figure.childNode(withName: "leg", recursively: false) {
+            leg.removeAction(forKey: "swing")
+            leg.runAction(SCNAction.sequence([
+                SCNAction.wait(duration: 0.14),
+                SCNAction.rotateTo(x: -0.5, y: 0, z: 0, duration: 0.16),
+                SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.3),
+            ]), forKey: "swing")
+        }
     }
 
     /// Slides the ball flat along the ground (snaps, rolling punts, dead balls).
@@ -1386,15 +2014,16 @@ class FootballFieldScene: SCNScene {
     private static var numberTextureCache: [String: UIImage] = [:]
 
     /// A transparent square with the jersey number drawn in a heavy athletic
-    /// weight: white on dark jerseys, near-black on white ones.
+    /// weight: white on dark jerseys, near-black on white ones. 256 px so
+    /// the digits stay crisp in the tight coach shot.
     private static func numberTexture(_ number: Int, darkText: Bool) -> UIImage {
         let key = "\(number)-\(darkText ? "d" : "l")"
         if let cached = numberTextureCache[key] { return cached }
-        let size = CGSize(width: 128, height: 128)
+        let size = CGSize(width: 256, height: 256)
         let image = UIGraphicsImageRenderer(size: size).image { _ in
             let text = "\(number)" as NSString
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.monospacedDigitSystemFont(ofSize: 78, weight: .heavy),
+                .font: UIFont.monospacedDigitSystemFont(ofSize: 156, weight: .heavy),
                 .foregroundColor: darkText ? UIColor(white: 0.12, alpha: 1) : UIColor.white,
             ]
             let bounds = text.size(withAttributes: attributes)
@@ -1403,6 +2032,34 @@ class FootballFieldScene: SCNScene {
                       withAttributes: attributes)
         }
         numberTextureCache[key] = image
+        return image
+    }
+
+    /// Rendered team-abbreviation textures for the helmet side decals,
+    /// cached per abbreviation + text shade (same economy as numberTexture).
+    private static var abbreviationTextureCache: [String: UIImage] = [:]
+
+    /// A transparent square with the team abbreviation ("GB", "KC") in the
+    /// same heavy athletic weight as the jersey numbers: white on dark
+    /// helmet shells, near-black on light ones. 256 px for the close shot.
+    private static func abbreviationTexture(_ abbreviation: String, darkText: Bool) -> UIImage {
+        let key = "\(abbreviation)-\(darkText ? "d" : "l")"
+        if let cached = abbreviationTextureCache[key] { return cached }
+        let size = CGSize(width: 256, height: 256)
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            let text = abbreviation as NSString
+            // Three-letter marks ("JAX") shrink to stay inside the shell.
+            let fontSize: CGFloat = abbreviation.count > 2 ? 92 : 120
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .heavy),
+                .foregroundColor: darkText ? UIColor(white: 0.12, alpha: 1) : UIColor.white,
+            ]
+            let bounds = text.size(withAttributes: attributes)
+            text.draw(at: CGPoint(x: (size.width - bounds.width) / 2,
+                                  y: (size.height - bounds.height) / 2),
+                      withAttributes: attributes)
+        }
+        abbreviationTextureCache[key] = image
         return image
     }
 
@@ -1990,13 +2647,16 @@ class FootballFieldScene: SCNScene {
         torso.scale = SCNVector3(1.05, 1.0, 0.8)
         figure.addChildNode(torso)
 
-        // Arms resting at his sides.
+        // Arms resting at his sides, hinged at the shoulder (pivot at the
+        // top of the capsule) so the TD/first-down signals swing correctly.
         for xSign: Float in [-1, 1] {
             let armGeometry = SCNCapsule(capRadius: 0.06, height: 0.52)
             armGeometry.radialSegmentCount = 8
             armGeometry.materials = [stripes]
             let arm = SCNNode(geometry: armGeometry)
-            arm.position = SCNVector3(xSign * 0.31, 0.5, 0)
+            arm.name = xSign < 0 ? "refArmL" : "refArmR"
+            arm.pivot = SCNMatrix4MakeTranslation(0, 0.26, 0)
+            arm.position = SCNVector3(xSign * 0.31, 0.76, 0)
             arm.eulerAngles = SCNVector3(0, 0, xSign * -0.14)
             figure.addChildNode(arm)
         }
@@ -2037,6 +2697,36 @@ class FootballFieldScene: SCNScene {
                 ctx.fill(CGRect(x: CGFloat(x), y: 0, width: 8, height: 64))
             }
         }
+    }
+
+    /// Touchdown signal: both of the referee's arms shoot straight up, hold
+    /// a beat, and drop back to his sides.
+    func refereeSignalTouchdown() {
+        guard let ref = refereeNode else { return }
+        for (name, sign) in [("refArmL", CGFloat(-1)), ("refArmR", CGFloat(1))] {
+            guard let arm = ref.childNode(withName: name, recursively: true) else { continue }
+            arm.removeAction(forKey: "signal")
+            let raise = SCNAction.rotateTo(x: 0, y: 0, z: sign * 2.95, duration: 0.28)
+            raise.timingMode = .easeOut
+            let rest = SCNAction.rotateTo(x: 0, y: 0, z: -sign * 0.14, duration: 0.35)
+            rest.timingMode = .easeInEaseOut
+            arm.runAction(SCNAction.sequence([raise, SCNAction.wait(duration: 1.6), rest]),
+                          forKey: "signal")
+        }
+    }
+
+    /// First-down signal: the referee points downfield (his facing follows
+    /// the offense direction via `moveReferee`) with his right arm.
+    func refereeSignalFirstDown() {
+        guard let ref = refereeNode,
+              let arm = ref.childNode(withName: "refArmR", recursively: true) else { return }
+        arm.removeAction(forKey: "signal")
+        let point = SCNAction.rotateTo(x: -1.45, y: 0, z: -0.08, duration: 0.25)
+        point.timingMode = .easeOut
+        let rest = SCNAction.rotateTo(x: 0, y: 0, z: -0.14, duration: 0.3)
+        rest.timingMode = .easeInEaseOut
+        arm.runAction(SCNAction.sequence([point, SCNAction.wait(duration: 1.1), rest]),
+                      forKey: "signal")
     }
 
     /// Walks the referee to his spot ~7 yards behind the offense, facing the
@@ -2192,13 +2882,15 @@ class FootballFieldScene: SCNScene {
                                 uniform: Uniform, number: Int) {
         // Per-figure copies of the tintable slot materials, shared inside
         // the figure (torso + both upper arms share one JERSEY copy) so
-        // applyUniform re-tints per team without cross-talk. MASK and SHOE
-        // keep the shared prototype materials.
+        // applyUniform re-tints per team without cross-talk. Only SHOE
+        // keeps the shared prototype material. MASK is per-figure too —
+        // ~40 % of teams run a team-colored cage (uniform.facemask).
         let tints: [String: UIColor] = [
             "JERSEY": uniform.jersey,
             "PANTS": uniform.pants,
             "HELMET": uniform.helmet,
             "SKIN": Self.skinTones[number % Self.skinTones.count],
+            "MASK": uniform.facemask ?? Self.facemaskGray,
         ]
         var figureMaterials: [String: SCNMaterial] = [:]
         func retint(_ material: SCNMaterial) -> SCNMaterial {
@@ -2209,6 +2901,17 @@ class FootballFieldScene: SCNScene {
             figureMaterials[slot] = copy
             return copy
         }
+
+        // Trim details share one material per slot inside the figure so
+        // applyUniform re-tints stripes/socks per team in one place.
+        let stripeMaterial = SCNMaterial()
+        stripeMaterial.name = "STRIPE"
+        stripeMaterial.diffuse.contents = Self.stripeColor(for: uniform)
+        stripeMaterial.roughness.contents = 0.6
+        let sockMaterial = SCNMaterial()
+        sockMaterial.name = "SOCK"
+        sockMaterial.diffuse.contents = Self.sockColor(for: uniform)
+        sockMaterial.roughness.contents = 0.7
 
         // Legs: thigh hinged at the hip, shin at the knee (kit origins sit
         // at the top of each segment — the same world hinge points the old
@@ -2221,6 +2924,17 @@ class FootballFieldScene: SCNScene {
             let shin = instantiate(kit.shin, name: "shin", retint: retint)
             shin.position = SCNVector3(0, -0.51, 0)
             leg.addChildNode(shin)
+
+            // Sock: a team-color band above the ankle, proud of the shin so
+            // it reads from the coach distance.
+            let sockGeometry = SCNCylinder(radius: 0.068, height: 0.13)
+            sockGeometry.radialSegmentCount = 12
+            sockGeometry.materials = [sockMaterial]
+            let sock = SCNNode(geometry: sockGeometry)
+            sock.name = "sock"
+            sock.castsShadow = false
+            sock.position = SCNVector3(0, -0.25, 0)
+            shin.addChildNode(sock)
 
             let cleat = instantiate(kit.cleat, name: "cleat")
             cleat.position = SCNVector3(0, -0.32, 0.05)
@@ -2239,10 +2953,39 @@ class FootballFieldScene: SCNScene {
             arm.eulerAngles = SCNVector3(0, 0, xSign * -0.25)
             figure.addChildNode(arm)
 
+            // Sleeve stripe: a counter-color ring around the mid upper arm —
+            // low enough to clear the shoulder-pad flare in every stance.
+            let stripeGeometry = SCNCylinder(radius: 0.1, height: 0.055)
+            stripeGeometry.radialSegmentCount = 12
+            stripeGeometry.materials = [stripeMaterial]
+            let stripe = SCNNode(geometry: stripeGeometry)
+            stripe.name = "sleeveStripe"
+            stripe.castsShadow = false
+            stripe.position = SCNVector3(0, -0.14, 0)
+            arm.addChildNode(stripe)
+
             let forearm = instantiate(kit.forearm, name: "forearm", retint: retint)
             forearm.position = SCNVector3(0, -0.42, 0)
             forearm.eulerAngles = SCNVector3(-0.15, 0, 0)
             arm.addChildNode(forearm)
+
+            // Hand: a skin ball capping the bare forearm.
+            let handGeometry = SCNSphere(radius: 0.055)
+            handGeometry.segmentCount = 10
+            if let skinCopy = figureMaterials["SKIN"] {
+                handGeometry.materials = [skinCopy]
+            } else {
+                let skinMaterial = SCNMaterial()
+                skinMaterial.name = "SKIN"
+                skinMaterial.diffuse.contents = Self.skinTones[number % Self.skinTones.count]
+                skinMaterial.roughness.contents = 0.8
+                handGeometry.materials = [skinMaterial]
+            }
+            let hand = SCNNode(geometry: handGeometry)
+            hand.name = "hand"
+            hand.castsShadow = false
+            hand.position = SCNVector3(0, -0.28, 0)
+            forearm.addChildNode(hand)
         }
 
         // Head: a simple skin sphere peeking out of the helmet's face opening.
@@ -2264,17 +3007,90 @@ class FootballFieldScene: SCNScene {
 
         // Helmet: shell + facemask cage grouped under the "helmet" node so
         // the whole assembly sits where the old helmet sphere was. ~8%
-        // oversized — the bobblehead Madden-2000 proportion.
+        // oversized — the bobblehead Madden-2000 proportion. The cage goes
+        // through retint too: its per-figure MASK copy carries the optional
+        // team color (uniform.facemask).
         let helmet = SCNNode()
         helmet.name = "helmet"
         helmet.position = SCNVector3(0, 1.04, 0)
         helmet.scale = SCNVector3(1.08, 1.08, 1.08)
         helmet.addChildNode(instantiate(kit.helmetShell, retint: retint))
-        helmet.addChildNode(instantiate(kit.facemask))
+        helmet.addChildNode(instantiate(kit.facemask, retint: retint))
+
+        // Team-abbreviation decals on both shell sides — the classic logo
+        // read. One per-figure HELMETDECAL material (applyUniform swaps the
+        // texture per team); hidden while the uniform has no abbreviation
+        // (the legacy quick-match path).
+        let decalMaterial = SCNMaterial()
+        decalMaterial.name = "HELMETDECAL"
+        decalMaterial.lightingModel = .constant
+        if !uniform.abbreviation.isEmpty {
+            decalMaterial.diffuse.contents = Self.abbreviationTexture(
+                uniform.abbreviation, darkText: Self.isLightColor(uniform.helmet))
+        }
+        for xSign in [Float(-1), 1] {
+            let plane = SCNPlane(width: 0.19, height: 0.19)
+            plane.materials = [decalMaterial]
+            let decal = SCNNode(geometry: plane)
+            decal.name = "helmetDecal"
+            decal.castsShadow = false
+            decal.position = SCNVector3(xSign * 0.19, 0.02, -0.01)
+            decal.eulerAngles = SCNVector3(0, xSign * Float.pi / 2, 0)
+            decal.isHidden = uniform.abbreviation.isEmpty
+            helmet.addChildNode(decal)
+        }
         figure.addChildNode(helmet)
     }
 
     // MARK: - Players
+
+    /// Position-silhouette body builds — the coach camera reads OL vs WR
+    /// instantly by trunk width. Implemented as figure/part scaling on top
+    /// of the shared mesh (works identically for the kit and the procedural
+    /// fallback); role slots map to types via PlayChoreographer.bodyTypes.
+    enum BodyType {
+        /// OL/DL: wide trunk, thick limbs, a touch shorter.
+        case heavy
+        /// QB/RB/LB/TE: the baseline build.
+        case medium
+        /// WR/DB: narrow trunk, slimmer limbs, slightly taller.
+        case lean
+
+        /// (figure height, torso width, torso depth, limb thickness)
+        /// multipliers over the baseline figure.
+        fileprivate var multipliers: (height: Float, torsoX: Float, torsoZ: Float, limb: Float) {
+            switch self {
+            case .heavy: return (0.96, 1.25, 1.20, 1.15)
+            case .medium: return (1.00, 1.00, 1.00, 1.00)
+            case .lean: return (1.03, 0.88, 0.92, 0.90)
+            }
+        }
+    }
+
+    /// Re-applies a body build to an existing player node. Absolute values
+    /// (base × multiplier), so formation moves can restamp types when the
+    /// same 22 nodes swap between offense and defense roles on a possession
+    /// change. Only scales are touched — every hinge position, animation key
+    /// and decal survives.
+    private func applyBodyType(_ type: BodyType, to node: SCNNode) {
+        guard let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        let m = type.multipliers
+        // Baseline stocky Madden figure scale (see makePlayerNode).
+        figure.scale = SCNVector3(1.28, 1.18 * m.height, 1.18)
+        // The kit torso models its width in the mesh (base 1); the
+        // procedural fallback torso carries its squash in the node scale.
+        let torsoBase: SCNVector3 = Self.playerKit != nil
+            ? SCNVector3(1, 1, 1)
+            : SCNVector3(1.25, 1.0, 0.85)
+        if let body = figure.childNode(withName: "body", recursively: false) {
+            body.scale = SCNVector3(torsoBase.x * m.torsoX, torsoBase.y, torsoBase.z * m.torsoZ)
+        }
+        // Limb thickness: scale the top joints in x/z only — lengths and
+        // child hinge offsets (y) stay exact, so the gait math is untouched.
+        for name in ["leg", "legR", "arm", "armR"] {
+            figure.childNode(withName: name, recursively: false)?.scale = SCNVector3(m.limb, 1, m.limb)
+        }
+    }
 
     /// Realistic-ish skin tones, picked deterministically per jersey number.
     private static let skinTones: [UIColor] = [
@@ -2295,7 +3111,8 @@ class FootballFieldScene: SCNScene {
     /// loads; otherwise the original procedural geometry is built. Both
     /// paths produce identical node names, joint positions and hinge
     /// origins, so all animation code works on either figure.
-    private func makePlayerNode(uniform: Uniform, number: Int) -> SCNNode {
+    private func makePlayerNode(uniform: Uniform, number: Int,
+                                bodyType: BodyType = .medium) -> SCNNode {
         let container = SCNNode()
         container.name = "player_\(number)"
 
@@ -2303,6 +3120,7 @@ class FootballFieldScene: SCNScene {
         figure.name = "figure"
         // Stocky Madden-2000 proportions: extra width at unchanged height —
         // the tank-like silhouette that reads from the pulled-back camera.
+        // applyBodyType below layers the position build on top of this.
         figure.scale = SCNVector3(1.28, 1.18, 1.18)
         container.addChildNode(figure)
 
@@ -2324,6 +3142,7 @@ class FootballFieldScene: SCNScene {
         } else {
             buildProceduralFigure(in: figure, uniform: uniform, number: number)
         }
+        applyBodyType(bodyType, to: container)
 
         // Numbers printed on the jersey itself, chest and back (Madden-2000).
         if let body = figure.childNode(withName: "body", recursively: false) {
@@ -2354,10 +3173,11 @@ class FootballFieldScene: SCNScene {
         )
 
         // Face the number toward the camera (angled up), dimmed so the
-        // jersey decals carry the primary read.
+        // jersey decals carry the primary read. The coach shot dims it
+        // further — see billboardNumberOpacity.
         numberNode.eulerAngles = SCNVector3(-Float.pi / 4, 0, 0)
         numberNode.position = SCNVector3(0, 1.33, 0)
-        numberNode.opacity = 0.6
+        numberNode.opacity = billboardNumberOpacity
 
         // Use billboard constraint so numbers always face the camera
         let billboardConstraint = SCNBillboardConstraint()
