@@ -40,6 +40,25 @@ struct CareerDashboardView: View {
     @State private var showGameSummary = false
     @State private var lastGameResult: GameSimulator.GameResult?
     @State private var lastHomeTeam: Team?
+
+    // MARK: Coached game (live play-calling)
+
+    /// Everything the live match needs, resolved before presentation.
+    /// Passed via `fullScreenCover(item:)` so the cover content never sees
+    /// stale state from the same transaction that presented it.
+    struct CoachedGameSession: Identifiable {
+        let id = UUID()
+        let game: Game
+        let homeTeam: Team
+        let awayTeam: Team
+        let homeCoaches: [Coach]
+        let awayCoaches: [Coach]
+        let playerTeamIsHome: Bool
+        let audibleBoost: Double
+        let defReadBoost: Double
+    }
+
+    @State private var coachedSession: CoachedGameSession?
     @State private var lastAwayTeam: Team?
 
     /// Inbox filter for the messages panel
@@ -137,6 +156,77 @@ struct CareerDashboardView: View {
         }
     }
 
+    // MARK: - Coached Game Launch / Finish
+
+    /// The player's own game for the current week, if it hasn't been played yet.
+    private var currentWeekPlayerGame: Game? {
+        upcomingGames.first { $0.week == career.currentWeek && !$0.isPlayed }
+    }
+
+    /// Gathers teams, staffs and prep boosts, then presents the live match.
+    private func startCoachedGame() {
+        guard let teamID = career.teamID,
+              let playerTeam = allTeamsByID[teamID],
+              let game = currentWeekPlayerGame else { return }
+
+        let opponentID = game.homeTeamID == teamID ? game.awayTeamID : game.homeTeamID
+        guard let opponent = allTeamsByID[opponentID] else { return }
+
+        let coachDescriptor = FetchDescriptor<Coach>()
+        let leagueCoaches = (try? modelContext.fetch(coachDescriptor)) ?? []
+
+        // Same opponent-prep boost the quick sim applies (WeekAdvancer parity).
+        let season = career.currentSeason
+        let week = career.currentWeek
+        let prepDescriptor = FetchDescriptor<OpponentPrepWeek>(
+            predicate: #Predicate {
+                $0.seasonYear == season && $0.weekNumber == week && $0.teamID == teamID
+            }
+        )
+        var audible = 0.0
+        var defRead = 0.0
+        if let prep = (try? modelContext.fetch(prepDescriptor))?.first {
+            let boost = OpponentPrepEngine.gameBoost(prep: prep)
+            audible = boost.audibleBoost
+            defRead = boost.defensiveReadBoost
+        }
+
+        let playerIsHome = game.homeTeamID == teamID
+
+        // Hand the user's saved game plan to the live engine (consumed in
+        // LiveGameEngine.init). nil when the user has never set a plan —
+        // preserving today's exact AI behavior.
+        LiveGameEngine.pendingPlayerGamePlan = career.savedGamePlan
+
+        coachedSession = CoachedGameSession(
+            game: game,
+            homeTeam: playerIsHome ? playerTeam : opponent,
+            awayTeam: playerIsHome ? opponent : playerTeam,
+            homeCoaches: leagueCoaches.filter { $0.teamID == game.homeTeamID },
+            awayCoaches: leagueCoaches.filter { $0.teamID == game.awayTeamID },
+            playerTeamIsHome: playerIsHome,
+            audibleBoost: audible,
+            defReadBoost: defRead
+        )
+    }
+
+    /// Persists the coached result and hands off to the standard summary sheet.
+    private func finishCoachedGame(engine: LiveGameEngine, game: Game) {
+        engine.persist(to: game, context: modelContext, teamsByID: allTeamsByID)
+
+        lastGameResult = WeekAdvancer.lastPlayerGameResult
+        lastHomeTeam = allTeamsByID[game.homeTeamID]
+        lastAwayTeam = allTeamsByID[game.awayTeamID]
+
+        coachedSession = nil
+        loadAllData()
+
+        // Give the cover dismissal a beat before presenting the sheet.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            if lastGameResult != nil { showGameSummary = true }
+        }
+    }
+
     /// Confirm and advance from coaching changes to review roster.
     private func confirmCoachingAdvance() {
         career.currentPhase = .reviewRoster
@@ -191,6 +281,20 @@ struct CareerDashboardView: View {
                     )
                 }
             }
+        }
+        .fullScreenCover(item: $coachedSession) { session in
+            CoachedGameView(
+                homeTeam: session.homeTeam,
+                awayTeam: session.awayTeam,
+                homeCoaches: session.homeCoaches,
+                awayCoaches: session.awayCoaches,
+                playerTeamIsHome: session.playerTeamIsHome,
+                audibleBoost: session.audibleBoost,
+                defReadBoost: session.defReadBoost,
+                onFinish: { engine in
+                    finishCoachedGame(engine: engine, game: session.game)
+                }
+            )
         }
         .sheet(isPresented: $showCoachingStaffReview) {
             CoachingStaffReviewSheet(
@@ -2398,7 +2502,7 @@ struct CareerDashboardView: View {
                 guard !debugSkipRunning else { return }
                 Task { await skipToFreeAgency() }
             } label: {
-                Label(debugSkipRunning ? "Skipping…" : "Skip → FA",
+                Label(debugSkipRunning ? "Skipping…" : "Skip → \(debugSkipTargetLabel)",
                       systemImage: debugSkipRunning ? "hourglass" : "forward.end.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .padding(.horizontal, 8)
@@ -2408,33 +2512,53 @@ struct CareerDashboardView: View {
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
-            .disabled(debugSkipRunning || career.currentPhase == .freeAgency)
+            .disabled(debugSkipRunning
+                      || career.currentPhase == .freeAgency
+                      || career.currentPhase == .regularSeason)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(Color.accentGold.opacity(0.06))
     }
 
-    /// Iterates `WeekAdvancer.advanceWeek` until the career reaches `.freeAgency`
-    /// or the safety cap (60 iterations) is hit. Refreshes UI when finished.
+    /// The phase the skip will stop at from the current position. FA when it
+    /// lies ahead this cycle; otherwise the next regular season. Without the
+    /// regular-season stop, skipping from OTAs would grind a full season of
+    /// play-by-play sim on the main actor (frozen "Skipping…" UI).
+    private var debugSkipTargetLabel: String {
+        switch career.currentPhase {
+        case .otas, .trainingCamp, .preseason, .rosterCuts:
+            return "Reg. Season"
+        default:
+            return "FA"
+        }
+    }
+
+    /// Iterates `WeekAdvancer.advanceWeek` until the career reaches
+    /// `.freeAgency` or `.regularSeason` (whichever comes first) or the safety
+    /// cap is hit. Persists every step — WeekAdvancer never saves, and the
+    /// blocked run loop means autosave cannot flush during the skip.
     @MainActor
     private func skipToFreeAgency() async {
         debugSkipRunning = true
         defer { debugSkipRunning = false }
 
         var safety = 0
-        while career.currentPhase != .freeAgency && safety < 60 {
+        while career.currentPhase != .freeAgency
+                && career.currentPhase != .regularSeason
+                && safety < 60 {
             // CoachingChanges normally requires a user-confirmed sheet; bypass it
             // for the debug skip by mirroring what the confirm-sheet does.
             if career.currentPhase == .coachingChanges {
                 career.currentPhase = .reviewRoster
-                try? modelContext.save()
             } else {
                 WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
             }
+            try? modelContext.save()
             safety += 1
             try? await Task.sleep(nanoseconds: 50_000_000) // 50ms — let UI breathe
         }
+        try? modelContext.save()
         loadAllData()
     }
     #endif
@@ -3165,8 +3289,14 @@ struct CareerDashboardView: View {
     }
 
     private var regularSeasonHeroCard: some View {
-        let week = career.currentWeek
-        let nextOpponent = upcomingGames.first.flatMap { game -> (abbr: String, isHome: Bool)? in
+        // The matchup this card describes: this week's game whether or not
+        // it's been played yet; falls back to the next scheduled game
+        // (upcomingGames only holds unplayed ones, so it alone would skip
+        // ahead to next week's opponent as soon as the game finishes).
+        let currentWeekPlayed = lastGame.flatMap { $0.week == career.currentWeek ? $0 : nil }
+        let heroGame = currentWeekPlayerGame ?? currentWeekPlayed ?? upcomingGames.first
+        let week = heroGame?.week ?? career.currentWeek
+        let nextOpponent = heroGame.flatMap { game -> (abbr: String, isHome: Bool)? in
             let isHome = game.homeTeamID == career.teamID
             let oppID = isHome ? game.awayTeamID : game.homeTeamID
             return allTeamsByID[oppID].map { (abbr: $0.abbreviation, isHome: isHome) }
@@ -3177,12 +3307,66 @@ struct CareerDashboardView: View {
             }
             return "vs TBD"
         }()
+        // No game scheduled this week and none played this week = bye.
+        let isByeWeek = currentWeekPlayerGame == nil && currentWeekPlayed == nil
+        let playerTeam = career.teamID.flatMap { allTeamsByID[$0] }
+        let injuredCount = players.filter(\.isInjured).count
         return phaseCardBase(icon: "calendar.badge.clock", accent: .accentGold) {
-            heroHeader("Week \(week) · \(oppText)")
-            heroStatRow("Game-week prep", value: "60% Opponent / 40% General")
-            heroStatRow("Streak", value: "W3")
-            heroStatRow("Injuries", value: "2 OUT, 3 questionable")
-            heroActionLink(title: "Set Game Plan", destination: .gamePlan)
+            heroHeader(isByeWeek
+                       ? "Week \(career.currentWeek) · Bye Week"
+                       : "Week \(week) · \(oppText)")
+            heroStatRow("Record", value: playerTeam?.record ?? "—")
+            heroStatRow("Injuries", value: injuredCount == 0 ? "Fully healthy" : "\(injuredCount) OUT")
+            if currentWeekPlayerGame != nil {
+                HStack(spacing: DSSpacing.sm) {
+                    Button {
+                        startCoachedGame()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "headset")
+                                .font(.subheadline.weight(.bold))
+                            Text("Coach the Game")
+                                .font(.subheadline.weight(.bold))
+                        }
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, DSSpacing.md)
+                        .padding(.vertical, 8)
+                        .background(Color.accentGold, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        onTaskSelected(.gamePlan)
+                    } label: {
+                        Text("Game Plan")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(Color.accentGold)
+                            .padding(.horizontal, DSSpacing.md)
+                            .padding(.vertical, 8)
+                            .background(Color.accentGold.opacity(0.14), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            } else if isByeWeek {
+                heroStatRow("This week",
+                            value: "Bye — next up \(oppText) in Week \(week)",
+                            accent: .accentGold)
+                heroActionLink(title: "Set Game Plan", destination: .gamePlan)
+            } else {
+                let result: (text: String, won: Bool) = {
+                    if let g = currentWeekPlayed,
+                       let home = g.homeScore, let away = g.awayScore {
+                        let isHome = g.homeTeamID == career.teamID
+                        let mine = isHome ? home : away
+                        let theirs = isHome ? away : home
+                        let tag = mine > theirs ? "W" : (mine < theirs ? "L" : "T")
+                        return ("\(tag) \(mine)–\(theirs) — advance when ready", mine >= theirs)
+                    }
+                    return ("Game played — advance when ready", true)
+                }()
+                heroStatRow("This week", value: result.text, accent: result.won ? .success : .danger)
+                heroActionLink(title: "Set Game Plan", destination: .gamePlan)
+            }
         }
     }
 

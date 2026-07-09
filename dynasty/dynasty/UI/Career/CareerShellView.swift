@@ -221,6 +221,9 @@ struct CareerShellView: View {
     /// Performs the week/phase advance from the TimelineTasksPanel.
     private func performShellAdvance() {
         WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+        // WeekAdvancer never saves (caller's responsibility) — persist the
+        // phase/week change immediately so a force-quit can't lose it.
+        try? modelContext.save()
         // Reload data so the dashboard picks up the new state
         loadShellData()
 
@@ -326,8 +329,11 @@ struct CareerShellView: View {
                     markTaskVisited(for: .depthChart)
                     refreshTaskCompletionStatus()
                 }
+                .onDisappear {
+                    refreshTaskCompletionStatus()
+                }
         case .gamePlan:
-            GamePlanView(gamePlan: .constant(.balanced))
+            GamePlanView(gamePlan: gamePlanBinding, context: gamePlanContext)
                 .onAppear {
                     markTaskVisited(for: .gamePlan)
                     refreshTaskCompletionStatus()
@@ -439,6 +445,13 @@ struct CareerShellView: View {
                 }
         case .trainingPlan:
             TrainingPlanView(career: career, roster: teamRoster)
+                .onAppear {
+                    markTaskVisited(for: .trainingPlan)
+                    refreshTaskCompletionStatus()
+                }
+                .onDisappear {
+                    refreshTaskCompletionStatus()
+                }
         case .workloadDashboard:
             WorkloadDashboard(roster: teamRoster)
         case .rosterCuts:
@@ -448,6 +461,75 @@ struct CareerShellView: View {
                 career: career,
                 consecutiveOpponentWeeks: consecutiveOpponentPrepWeeks
             )
+        }
+    }
+
+    // MARK: - Game Plan Helpers
+
+    /// Live binding between the Game Plan screen and the persisted career.
+    /// Every slider drag / preset tap encodes to `career.gamePlanData`, saves
+    /// the model context, and completes any "Set game plan…" task.
+    private var gamePlanBinding: Binding<GamePlan> {
+        Binding(
+            get: { career.gamePlan },
+            set: { newValue in
+                career.gamePlan = newValue
+                try? modelContext.save()
+                markTaskCompleted(for: .gamePlan)
+            }
+        )
+    }
+
+    /// Situational context (week, opponent, OC scheme) for the Game Plan header
+    /// and scouting panel. All fields degrade gracefully to nil.
+    private var gamePlanContext: GamePlanView.Context {
+        var ctx = GamePlanView.Context()
+
+        // Week / playoff-round label — only meaningful in-season.
+        switch career.currentPhase {
+        case .regularSeason:
+            ctx.weekLabel = "Week \(career.currentWeek)"
+        case .playoffs:
+            ctx.weekLabel = playoffRoundName
+        default:
+            ctx.weekLabel = nil
+        }
+
+        // OC's offensive scheme badge.
+        if let teamID = career.teamID {
+            let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+            let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
+            ctx.schemeName = coaches
+                .first { $0.role == .offensiveCoordinator }?
+                .offensiveScheme?.displayName
+        }
+
+        // Opponent panel — next unplayed game for the user's team.
+        if let teamID = career.teamID, let nextGame = upcomingGames.first {
+            let opponentID = nextGame.homeTeamID == teamID ? nextGame.awayTeamID : nextGame.homeTeamID
+            if let opponent = allTeamsByID[opponentID] {
+                ctx.opponentName = opponent.fullName
+                ctx.opponentRecord = opponent.record
+                ctx.passDefense = Self.defenseStrength(of: opponent, positions: [.CB, .FS, .SS])
+                ctx.runDefense = Self.defenseStrength(of: opponent, positions: [.DE, .DT, .MLB, .OLB])
+            }
+        }
+
+        return ctx
+    }
+
+    /// Buckets a defensive unit's average overall into weak / average / strong.
+    private static func defenseStrength(
+        of team: Team,
+        positions: Set<Position>
+    ) -> GamePlanView.DefenseStrength? {
+        let unit = team.players.filter { positions.contains($0.position) }
+        guard !unit.isEmpty else { return nil }
+        let average = unit.reduce(0) { $0 + $1.overall } / unit.count
+        switch average {
+        case 78...:   return .strong
+        case 70..<78: return .average
+        default:      return .weak
         }
     }
 
@@ -696,6 +778,47 @@ struct CareerShellView: View {
                     currentTasks[index].status = .done
                 }
 
+            // OTAs — verified by actual persisted game state
+            case "Set depth chart":
+                // Done once the user has saved a chart (edit or Auto-Set).
+                // Deliberately does NOT require every slot filled — a roster
+                // hole (e.g. no kicker) must never make the task impossible.
+                if career.depthChartData != nil {
+                    currentTasks[index].status = .done
+                }
+
+            // Game plan — done once the user has saved a plan at least once
+            // (sliders or preset). Weekly "Set game plan for <opponent>" tasks
+            // are completed in-session via markTaskCompleted(.gamePlan).
+            case "Set game plan":
+                if career.gamePlanData != nil {
+                    currentTasks[index].status = .done
+                }
+
+            case "Set training focus":
+                // Done once a TrainingPlan row exists for the current
+                // (team, season, week, phase) key — i.e. the user hit Save.
+                let season = career.currentSeason
+                let week = career.currentWeek
+                let phaseRaw = career.currentPhase.rawValue
+                let planDescriptor = FetchDescriptor<TrainingPlan>(
+                    predicate: #Predicate {
+                        $0.teamID == teamID
+                            && $0.seasonYear == season
+                            && $0.weekNumber == week
+                            && $0.phaseRaw == phaseRaw
+                    }
+                )
+                if let count = try? modelContext.fetchCount(planDescriptor), count > 0 {
+                    currentTasks[index].status = .done
+                }
+
+            // Draft — done when this season's draftees are on the roster
+            case "Enter the Draft":
+                if players.contains(where: { $0.draftPickNumber != nil && $0.yearsPro == 0 }) {
+                    currentTasks[index].status = .done
+                }
+
             // Pro Days — completion checks
             case "Assign scouts to Pro Days":
                 // Done if at least 1 pro day has been attended
@@ -909,8 +1032,10 @@ struct CareerShellView: View {
             .filter { ($0.homeTeamID == teamID || $0.awayTeamID == teamID) && !$0.isPlayed && $0.week >= career.currentWeek }
             .sorted { $0.week < $1.week }
 
-        // Generate tasks on initial load
+        // Generate tasks on initial load, then re-derive completion from
+        // persisted game state so a relaunch doesn't reset finished tasks.
         regenerateTasks(for: career.currentPhase)
+        refreshTaskCompletionStatus()
 
         // Generate initial inbox messages if empty (first time entering dashboard)
         if inboxMessages.isEmpty, let playerTeam = team {

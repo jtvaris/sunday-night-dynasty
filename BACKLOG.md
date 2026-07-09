@@ -1,5 +1,24 @@
 # Dynasty - Backlog (Completed)
 
+## 2026-07-08 — Kierros 2: runkosarja pelattavaksi (game sim korjattu)
+
+- [x] GameSimulatorin regulation-looppi ei voinut KOSKAAN päättyä (Q4:n aikaloppu ei kasvattanut quarteria eikä exit-ehto voinut laueta → ikuinen silmukka nollapituisilla draiveilla). Yksi ottelu ei ollut ikinä simuloitunut loppuun. Korjattu: break kun Q4:n aika loppuu.
+- [x] SimPlayer-snapshot-refaktorointi: pelaajien attribuutit luetaan SwiftData-malleista kerran per ottelu plain structeihin; GameSimulator/DriveSimulator/PlaySimulator ajavat snapshoteilla (SwiftData-getterit dynamic casteineen olivat hot loopissa). Fatigue kirjataan takaisin simin jälkeen. Korjasi samalla piilobugin: "väliaikaiset" moraalimodifikaattorit rappeuttivat pysyvästi live-malleja.
+- [x] Verifioitu simulaattorissa: viikon advance ~2 s (ennen: ikuinen jumi 100 % CPU), viikon 1 ottelu voitettu, post-game-pressitilaisuus toimii (tone-tagit, running impact, Promises Tracked), viikko 2 dashboard 1-0, omistaja 66→81 %.
+- Diagnosointi: `sample`-CPU-profiili simulaattoriprosessista → täsmällinen file:line kahdesti (ensin SwiftData-getterit, sitten looppiraja).
+
+## 2026-07-08 — Kierros 1: pelattavuuden P0-korjaukset (soft-lock poistettu)
+
+- [x] OTAs required task -järjestelmä korjattu: "Set depth chart" ja "Set training focus" valmistuvat nyt oikeasta pelitilasta (refreshTaskCompletionStatus-caset); "Enter the Draft" valmistuu kun rosterissa on tämän kauden varaus. Eteneminen OTAs → Training Camp → Preseason → Roster Cuts → Regular Season Week 1 varmistettu simulaattorissa ilman debug-työkaluja.
+- [x] Depth chart persistoituu: DepthChart tallennetaan Career.depthChartData:an jokaisen muutoksen jälkeen (aiemmin puhdas @State, generoitiin uudelleen joka avauksella). Auto-Set-nappi tekee nyt näkyvän asian (lataa tallennetun + generoi + tallentaa).
+- [x] Training Plan lataa tallennetun suunnitelman avattaessa ja päivittää olemassa olevan rivin (upsert) — 60/20/20 ei enää palaudu 34/33/33:ksi eikä synny duplikaattirivejä.
+- [x] Tallennus: eksplisiittinen save WeekAdvancer.advanceWeek:n jälkeen + scenePhase background/inactive -save DynastyApp:iin — force-quit ei enää kadota vaihetta/muokkauksia.
+- [x] Debug-skip korjattu: pysähtyy .regularSeason/.freeAgency-kohtaan (ei enää koko kauden main-thread-simulaatiota → ei jäätynyttä "Skipping…"-tilaa), tallentaa joka askeleen, dynaaminen label.
+- [x] Draft-varaukseen vahvistusdialogi (kaikki 3 pintaa) + position-chippien deterministinen järjestys — väärät varaukset (3/6 kierroksella 1) eivät enää mahdollisia.
+- [x] KR/PR-kandidaattilistat lajittelevat nopeudella/ketteryydellä (ei enää QB1:tä palauttajaksi); sama pelaaja ei voi enää olla kahdessa positioslotissa (KR/PR-tuplarooli sallittu).
+- [x] "Week 0 Focus" → vaiheen nimi offseasonissa (SeasonPhase.displayName lisätty); inj%-label käyttää WorkloadEngine.injuryRiskPct-kaavaa (durability + workload).
+- Työkalut: 6-agentin map-workflow → juurisyyt file:line-tarkkuudella; ~223 screenshotia /tmp/snd-screenshots/; TODO.md:ssä täysi kierros 1 -analyysi (designer/himopelaaja/casual + FM-treeniauditointi).
+
 ## 2026-03-23
 
 - [x] Palkkajärjestelmä: cap-suhteelliset palkkavaatimukset, realistiset sopimusrakenteet, vuosikohtainen cap hit -erittely
@@ -27,3 +46,65 @@
 - [x] ProspectDetailView: compact redesign, Quick Assessment Row, athletic profile, stock trajectory
 - [x] Salary cap $255M -> $265M (2026), starter-palkkojen kalibrointi
 - [x] Scouting: fokusattribuutit, fokuspositiobonus +15%
+
+## 2026-07-08 — Coach Mode (live 3D -pelinjohto)
+
+- [x] LiveGameEngine: play-by-play -moottori olemassa olevan simun päälle (down/distance/kello/possession, AI-vihjeet, simToEnd, täysi persistointipariteetti WeekAdvancerin kanssa)
+- [x] PlaySimulator: OffensivePlayCall + DefensivePackage -modifikaattorit (nil = vanha käytös), findQB/findRB paras-overall
+- [x] 3D-kenttä: maalitolpat, broadcast-kamera-ajo, PlayStep-aikajana, pallon carry/arc/slide, joukkueväriset maalialueet
+- [x] PlayChoreographer: skriptit kaikille lopputulemille (juoksu/syöttö/sacki/INT/fumble/TD/puntti/FG/safety/kneel/spike)
+- [x] Humanoidipelaajat (jalat, torso, hartiat, kädet, pää, kypärä) + juoksuanimaatio (kääntyminen, lean, bob) — käyttäjäpalaute
+- [x] All-22-koreografia: OL/DL-kontakti, WR-reitit, DB-peitto, LB-pudotukset, takaa-ajo, punttikattaus, TD-juhlinta — käyttäjäpalaute
+- [x] CoachedGameView: play-kutsupaneeli (kategoriat, AI-ehdotus, SNAP), puolustusasennot live vastustajan drivella, 4th down -paneeli, Skip Drive, Sim to End → FINAL → GameSummary
+- [x] Dashboard: "Coach the Game" -nappi, hero näyttää pelatun viikon tuloksen (W/L xx–yy) oikealla viikko+vastustaja-parilla
+- [ ] Balanssiauditointi: boostien stackkaus simToEndissä (yksi 60-21/833yds -outlier)
+- [ ] 3D-viilaus: pallon spiraali potkuissa, TD-kamera-ajo, laitetehoprofilointi
+
+## 2026-07-09 — Coach Mode R4 (matchupit, pelikirjat, X&O, NFL-ilme)
+
+- [x] MatchupResolver: nimetyt kaksinkamppailut joka snapista (edge vs tackle, WR-separaatio vs CB, POA-juoksublokit, INT-luku) — rating-painotettu eli tähdet voittavat useammin; tulokset ohjaavat 3D-visuaalia (taskun romahdus, separaatio, aukon koko)
+- [x] Scheme-tuttuus näkyviin: alle 45% familiarity → busted assignment -callout ("cuts the route short — still learning the playbook")
+- [x] FieldUnit: oikeat avauskokoonpanot kentälle roolijärjestyksessä + stabiilit pelinumerot positioalueittain
+- [x] Matchup-callout-kapselit kentän päälle (voitto/häviö/bust/tähti) + voittajan pulssi hahmossa
+- [x] Pelikirjapohjainen pelivalinta: OC:n scheme + familiarity-% otsikossa, asentamattomat pelit himmennetty, AI ehdottaa vain pelikirjasta; puolustuspresetit scheman mukaan
+- [x] X&O-pelikuviot: reittipiirrokset valitulle pelille + puolustuskuvio (zonet/man/blitz-nuolet) stance-paneeliin
+- [x] NFL-univormut: koti värissä + valkoiset housut, vieras valkoisessa + värilliset housut/kypärä; kypärät + maskit + ihonsävyt
+- [x] Bye-viikon herokortti ("Week 4 · Bye Week — next up vs CHI in Week 6")
+- [ ] Aikataulugeneraattori: GB:llä 2 byetä peräkkäin (viikot 4-5) — varmista 1 bye/joukkue
+- [ ] Sim-target rajaus kentällä oleviin vastaanottajiin (pallo animoituu nyt lähimmälle roolille, feed nimeää oikean)
+
+## 2026-07-09 — Coach Mode R5 (sulavuus, Madden 98, formaatiot, call sheetit)
+
+- [x] Töksähtely pois: play-liikkeet lineaarisia askelten yli (ease vain formaatiosiirtymissä)
+- [x] Madden 98 -ilme: kamera kauempaa/ylempää (~45yd näkyvissä), 1.18× hahmot, leikkuuraidat, proseduraaliset katsomot yleisötekstuurilla
+- [x] Callit ohjaavat formaatioita molemmin puolin (I-form/gun/spread; nickel/dime/goal line/press/blitz-creep) + live-esikatselu selatessa
+- [x] Puolustuksen call sheet: 10 nimettyä peliä kortteina (kaavio+kuvaus+scheme-tagit); AI-puolustus pelaa myös oikeita paketteja
+- [x] Hyökkäyksen clipboard-kortit kuvauksineen; 6 uutta peliä (Counter, Toss, Hitch, TE Seam, Deep Cross, Flood) → 5-6 peliä/osio
+- [x] Kantajan nimeäminen: kentän RB = feedin RB (FieldUnit peilaa findRB:tä)
+
+## 2026-07-09 — Coach Mode R6 (Madden 98 -grafiikka)
+
+- [x] Juoksusykli: lonkka/olka-niveletyt raajat heiluvat vastakkaisvaiheessa liikkeen ajan
+- [x] Linjamiesten kyykkyasennot snapissa (OL+DL)
+- [x] Matala Madden-kamera takaa (FOV 52), koko kenttä näkyvissä, pelaajat isoina etualalla
+- [x] Proseduraalinen spekkeliturf + tummemmat sävyt + etäisyyssumu
+- [x] Kenttäkoristeet: maalialuetekstit, keskilogo, keltainen FD-viiva + sininen LOS, pylonit
+- [x] Pallo: isompi, raidat, spiraali/tumble-pyöritys
+- [x] Varjoläiskät pelaajien alle; kenttä laajenee 68 %:iin pelin ajaksi
+- [x] Katsomot poistettu (käyttäjän toive)
+- [ ] R7: taklauskaatumiset, pallonkanto-asento, polvet/kyynärpäät, seurantakamera pitkillä juoksuilla
+
+## 2026-07-09 — Coach Mode R7–R10
+
+- [x] R7: taklauskaatumiset (kantaja+taklaaja maahan, sacki hautaa QB:n), pallo kainalossa kantoasennossa, seurantakamera pitkillä pelivedoilla (varmennettu 45 jaardin karkumatkalla)
+- [x] R8: kaksisegmenttiset raajat — polvet ja kyynärpäät taipuvat juoksusyklissä
+- [x] R9: kiinniottokurotus (kädet ylös pallon saapuessa), sivuraja-aidat valkoisin reunoin, callout-sijoittelu
+- [x] R10: retro "2ND & 10" -broadcast-kyltti snapissa + TD-konfetti ja kamera-ajo maalialueelle
+- [ ] R11-ehdokkaat: gang-tackle-kasat, QB:n heittoliike, FG-kamera tolppien takaa, pelin nimi kylttiin
+
+## Iso kuva: R21–R40 (kirjattu 2026-07-09, yksityiskohdat muistissa project_roadmap_r11_r40)
+
+- Kaari 1 Offseason: R21 kaupat, R22 sopimusneuvottelut 2.0, R23 FA-syvennys, R24 draft-huone 2.0
+- Kaari 2 Pelaajat: R25 persoonat/pukuhuone, R26 kehitys 2.0 (training-velat), R27 scouting-organisaatio, R28 vammat/lääkintä
+- Kaari 3 Liiga: R29 uutiskierre, R30 coaching carousel + tree, R31 omistaja/talous (SeasonGoals), R32 monikausisilmukka (HOF/LegacyTracker)
+- Kaari 4 Coach-mode 2.0 & tuote: R33 vastustaja-AI, R34 audio, R35 replayt, R36 taktinen syvyys, R37 onboarding, R38 saavutettavuus/lokalisointi, R39 suorituskyky, R40 pelimuodot

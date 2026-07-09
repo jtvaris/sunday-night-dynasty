@@ -496,27 +496,7 @@ struct PlayCallView: View {
 
     /// Short hint string shown below each play button label.
     private func playHintText(for play: OffensivePlayCall) -> String {
-        switch play {
-        case .insideRun:    return "Power between the tackles"
-        case .outsideRun:   return "Stretch to the edge"
-        case .draw:         return "Disguised run; neutralises blitz"
-        case .screen:       return "Behind LOS; big YAC upside"
-        case .slant:        return "Quick inside break; anti-blitz"
-        case .quickOut:     return "Sideline; immediate release"
-        case .flat:         return "RB / TE flat; clock stoppage"
-        case .drag:         return "Shallow crossing route"
-        case .curl:         return "Back-shoulder curl; safe"
-        case .dig:          return "Across the middle, 15–20 yds"
-        case .postCorner:   return "Double-move; beats safety"
-        case .comeback:     return "Down-and-back; precise"
-        case .goRoute:      return "Speed vertical; jump ball"
-        case .post:         return "Deep middle; vs. Cover 2"
-        case .corner:       return "Deep corner; vs. single high"
-        case .bomb:         return "Max effort; high INT risk"
-        case .qbSneak:      return "Short yardage QB push"
-        case .spike:        return "Stop the clock (inc.)"
-        case .kneel:        return "Kill clock, take the loss"
-        }
+        play.blurb
     }
 }
 

@@ -22,6 +22,39 @@ enum CoachingEngine {
         offensiveScheme: OffensiveScheme?,
         defensiveScheme: DefensiveScheme?
     ) -> Double {
+        schemeFit(
+            positionAttributes: player.positionAttributes,
+            physical: player.physical,
+            mental: player.mental,
+            offensiveScheme: offensiveScheme,
+            defensiveScheme: defensiveScheme
+        )
+    }
+
+    /// SimPlayer overload used by the game-simulation hot path, where reading
+    /// the SwiftData @Model per play is too slow.
+    static func schemeFit(
+        player: SimPlayer,
+        offensiveScheme: OffensiveScheme?,
+        defensiveScheme: DefensiveScheme?
+    ) -> Double {
+        schemeFit(
+            positionAttributes: player.positionAttributes,
+            physical: player.physical,
+            mental: player.mental,
+            offensiveScheme: offensiveScheme,
+            defensiveScheme: defensiveScheme
+        )
+    }
+
+    /// Core scheme-fit calculation over raw attribute values.
+    private static func schemeFit(
+        positionAttributes: PositionAttributes,
+        physical: PhysicalAttributes,
+        mental: MentalAttributes,
+        offensiveScheme: OffensiveScheme?,
+        defensiveScheme: DefensiveScheme?
+    ) -> Double {
         var rawScore: Double = 0.5         // Neutral baseline
         var evaluated = false              // Did any scheme clause apply?
 
@@ -32,7 +65,7 @@ enum CoachingEngine {
 
             // Air Raid: pass-heavy; values QB accuracy and WR route running
             case .airRaid:
-                switch player.positionAttributes {
+                switch positionAttributes {
                 case .quarterback(let attr):
                     let accuracy = Double(attr.accuracyShort + attr.accuracyMid + attr.accuracyDeep) / 3.0
                     rawScore = normalize(accuracy)
@@ -49,7 +82,7 @@ enum CoachingEngine {
 
             // West Coast: timing routes, short/mid accuracy, receiving backs
             case .westCoast:
-                switch player.positionAttributes {
+                switch positionAttributes {
                 case .quarterback(let attr):
                     let shortMid = Double(attr.accuracyShort + attr.accuracyMid) / 2.0
                     rawScore = normalize(Double(attr.pocketPresence) * 0.4 + shortMid * 0.6)
@@ -66,12 +99,12 @@ enum CoachingEngine {
 
             // Spread: pace, scrambling QBs, speed at all skill positions
             case .spread:
-                switch player.positionAttributes {
+                switch positionAttributes {
                 case .quarterback(let attr):
                     rawScore = normalize(Double(attr.scrambling) * 0.5 + Double(attr.accuracyShort) * 0.5)
                     evaluated = true
                 case .wideReceiver(let attr):
-                    let speedBonus = normalize(Double(player.physical.speed))
+                    let speedBonus = normalize(Double(physical.speed))
                     let route = normalize(Double(attr.routeRunning))
                     rawScore = speedBonus * 0.4 + route * 0.6
                     evaluated = true
@@ -83,9 +116,9 @@ enum CoachingEngine {
 
             // Power Run: physical OL and powerful backs; deep-ball threats as play-action window dressers
             case .powerRun:
-                switch player.positionAttributes {
+                switch positionAttributes {
                 case .runningBack(let attr):
-                    rawScore = normalize(Double(attr.breakTackle) * 0.5 + Double(player.physical.strength) * 0.5)
+                    rawScore = normalize(Double(attr.breakTackle) * 0.5 + Double(physical.strength) * 0.5)
                     evaluated = true
                 case .offensiveLine(let attr):
                     rawScore = normalize(Double(attr.runBlock + attr.anchor) / 2.0)
@@ -99,9 +132,9 @@ enum CoachingEngine {
 
             // Shanahan (Outside Zone): athletic OL, vision backs, TE as pass-catchers
             case .shanahan:
-                switch player.positionAttributes {
+                switch positionAttributes {
                 case .runningBack(let attr):
-                    rawScore = normalize(Double(attr.vision) * 0.5 + Double(player.physical.agility) * 0.5)
+                    rawScore = normalize(Double(attr.vision) * 0.5 + Double(physical.agility) * 0.5)
                     evaluated = true
                 case .offensiveLine(let attr):
                     rawScore = normalize(Double(attr.runBlock + attr.pull) / 2.0)
@@ -114,7 +147,7 @@ enum CoachingEngine {
 
             // Pro Passing: traditional drop-back; arm strength, pocket QBs, big WRs
             case .proPassing:
-                switch player.positionAttributes {
+                switch positionAttributes {
                 case .quarterback(let attr):
                     let deepAccuracy = Double(attr.accuracyDeep + attr.armStrength) / 2.0
                     rawScore = normalize(deepAccuracy * 0.5 + Double(attr.pocketPresence) * 0.5)
@@ -130,7 +163,7 @@ enum CoachingEngine {
 
             // RPO: dual-threat QBs, quick-twitch RBs and slot WRs
             case .rpo:
-                switch player.positionAttributes {
+                switch positionAttributes {
                 case .quarterback(let attr):
                     rawScore = normalize(Double(attr.scrambling + attr.pocketPresence) / 2.0)
                     evaluated = true
@@ -145,9 +178,9 @@ enum CoachingEngine {
 
             // Option: mobile QBs and powerful fullback-style RBs
             case .option:
-                switch player.positionAttributes {
+                switch positionAttributes {
                 case .quarterback(let attr):
-                    let mobility = Double(player.physical.speed + player.physical.agility) / 2.0
+                    let mobility = Double(physical.speed + physical.agility) / 2.0
                     rawScore = normalize(Double(attr.scrambling) * 0.5 + normalize(mobility) * 0.5)
                     evaluated = true
                 case .runningBack(let attr):
@@ -165,7 +198,7 @@ enum CoachingEngine {
 
             // 3-4 Base: bigger DEs that can two-gap; OLBs as pass rushers/blitzers
             case .base34:
-                switch player.positionAttributes {
+                switch positionAttributes {
                 case .defensiveLine(let attr):
                     rawScore = normalize(Double(attr.blockShedding + attr.powerMoves) / 2.0)
                     evaluated = true
@@ -177,7 +210,7 @@ enum CoachingEngine {
 
             // 4-3 Base: one-gap penetrating DEs, athletic MLBs
             case .base43:
-                switch player.positionAttributes {
+                switch positionAttributes {
                 case .defensiveLine(let attr):
                     rawScore = normalize(Double(attr.passRush + attr.finesseMoves) / 2.0)
                     evaluated = true
@@ -189,7 +222,7 @@ enum CoachingEngine {
 
             // Cover 3: zone CBs, range-covering safeties
             case .cover3:
-                switch player.positionAttributes {
+                switch positionAttributes {
                 case .defensiveBack(let attr):
                     rawScore = normalize(Double(attr.zoneCoverage + attr.ballSkills) / 2.0)
                     evaluated = true
@@ -201,7 +234,7 @@ enum CoachingEngine {
 
             // Press Man: physical press-capable CBs with man coverage skills
             case .pressMan:
-                switch player.positionAttributes {
+                switch positionAttributes {
                 case .defensiveBack(let attr):
                     rawScore = normalize(Double(attr.press + attr.manCoverage) / 2.0)
                     evaluated = true
@@ -210,7 +243,7 @@ enum CoachingEngine {
 
             // Tampa 2: zone-heavy; CBs with zone IQ, LBs that can drop into coverage
             case .tampa2:
-                switch player.positionAttributes {
+                switch positionAttributes {
                 case .defensiveBack(let attr):
                     rawScore = normalize(Double(attr.zoneCoverage + attr.ballSkills) / 2.0)
                     evaluated = true
@@ -223,9 +256,9 @@ enum CoachingEngine {
             // Multiple: versatile players who can play several techniques
             case .multiple:
                 // Reward high awareness and physical versatility across all defensive positions
-                let mentalFlex = normalize(Double(player.mental.awareness + player.mental.decisionMaking) / 2.0)
-                let physFlex = normalize(Double(player.physical.agility + player.physical.speed) / 2.0)
-                switch player.positionAttributes {
+                let mentalFlex = normalize(Double(mental.awareness + mental.decisionMaking) / 2.0)
+                let physFlex = normalize(Double(physical.agility + physical.speed) / 2.0)
+                switch positionAttributes {
                 case .defensiveBack, .linebacker, .defensiveLine:
                     rawScore = mentalFlex * 0.5 + physFlex * 0.5
                     evaluated = true
@@ -234,8 +267,8 @@ enum CoachingEngine {
 
             // Hybrid: speed/athleticism on every level of the defense
             case .hybrid:
-                let athleticism = normalize(Double(player.physical.speed + player.physical.agility + player.physical.acceleration) / 3.0)
-                switch player.positionAttributes {
+                let athleticism = normalize(Double(physical.speed + physical.agility + physical.acceleration) / 3.0)
+                switch positionAttributes {
                 case .defensiveBack, .linebacker, .defensiveLine:
                     rawScore = athleticism
                     evaluated = true
@@ -248,7 +281,7 @@ enum CoachingEngine {
 
         // A player with high adaptability gets up to +0.05 added to their fit score,
         // regardless of scheme—they learn any system faster.
-        let adaptabilityBonus = Double(player.mental.awareness) / 99.0 * 0.05
+        let adaptabilityBonus = Double(mental.awareness) / 99.0 * 0.05
 
         // MARK: Non-evaluated Positions
 

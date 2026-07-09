@@ -21,4 +21,12 @@ struct PlayResult: Codable {
     var scoringPlay: Bool
     /// Points awarded on a scoring play (0, 2, 3, 6, or 7)
     var pointsScored: Int
+
+    // Key-player attribution (optional; set by PlaySimulator so the live
+    // match view can point at the exact players the sim used — ball carrier,
+    // pass target, intercepting defender). Absent in older saved data.
+    /// The offensive player the play ran through: rusher, scramble QB, or pass target.
+    var keyOffensePlayerID: UUID? = nil
+    /// The defensive player who decided the play (e.g. the intercepting DB).
+    var keyDefensePlayerID: UUID? = nil
 }

@@ -18,9 +18,22 @@ enum PlaySimulator {
     ///   - timeRemaining: Seconds left in the current quarter.
     ///   - momentum: Team momentum from -1.0 (defense) to 1.0 (offense).
     ///   - playNumber: Sequential play number within the drive.
+    ///   - offensiveCall: Optional explicit play call (live coached games). When
+    ///     non-nil the play type is derived from the call instead of
+    ///     ``decidePlayCall`` and its ``OffensivePlayCall/SimulatorHint`` shades
+    ///     the pass/run probabilities. `nil` preserves today's AI behavior exactly.
+    ///   - forcedPlayType: Highest-precedence play type override. Used by the
+    ///     live engine for 4th-down decisions (.punt / .fieldGoal / .kneel),
+    ///     which are not `OffensivePlayCall` cases.
+    ///   - defensivePackage: Optional defensive call (live coached games). Its
+    ///     aggregate modifiers adjust completion, sack, and run-yardage odds.
+    ///     `nil` preserves today's behavior exactly.
+    ///   - gamePlan: Optional coaching game plan for the OFFENSE. Shades the
+    ///     AI's run/pass mix and 4th-down aggressiveness inside
+    ///     ``decidePlayCall``. `nil` preserves today's behavior exactly.
     static func simulatePlay(
-        offensePlayers: [Player],
-        defensePlayers: [Player],
+        offensePlayers: [SimPlayer],
+        defensePlayers: [SimPlayer],
         down: Int,
         distance: Int,
         yardLine: Int,
@@ -29,16 +42,30 @@ enum PlaySimulator {
         momentum: Double,
         playNumber: Int,
         offensiveScheme: OffensiveScheme? = nil,
-        defensiveScheme: DefensiveScheme? = nil
+        defensiveScheme: DefensiveScheme? = nil,
+        offensiveCall: OffensivePlayCall? = nil,
+        forcedPlayType: PlayType? = nil,
+        defensivePackage: DefensivePackage? = nil,
+        gamePlan: GamePlan? = nil
     ) -> PlayResult {
-        let playCall = decidePlayCall(
-            down: down,
-            distance: distance,
-            yardLine: yardLine,
-            quarter: quarter,
-            timeRemaining: timeRemaining,
-            offensiveScheme: offensiveScheme
-        )
+        let playCall: PlayType
+        if let forced = forcedPlayType {
+            playCall = forced
+        } else if let call = offensiveCall {
+            playCall = playType(for: call)
+        } else {
+            playCall = decidePlayCall(
+                down: down,
+                distance: distance,
+                yardLine: yardLine,
+                quarter: quarter,
+                timeRemaining: timeRemaining,
+                offensiveScheme: offensiveScheme,
+                gamePlan: gamePlan
+            )
+        }
+
+        let hint = offensiveCall?.simulatorHint
 
         switch playCall {
         case .pass:
@@ -53,7 +80,9 @@ enum PlaySimulator {
                 momentum: momentum,
                 playNumber: playNumber,
                 offensiveScheme: offensiveScheme,
-                defensiveScheme: defensiveScheme
+                defensiveScheme: defensiveScheme,
+                hint: hint,
+                defensivePackage: defensivePackage
             )
         case .run:
             return simulateRunPlay(
@@ -67,7 +96,9 @@ enum PlaySimulator {
                 momentum: momentum,
                 playNumber: playNumber,
                 offensiveScheme: offensiveScheme,
-                defensiveScheme: defensiveScheme
+                defensiveScheme: defensiveScheme,
+                hint: hint,
+                defensivePackage: defensivePackage
             )
         case .punt:
             return simulatePunt(
@@ -121,28 +152,50 @@ enum PlaySimulator {
                 momentum: momentum,
                 playNumber: playNumber,
                 offensiveScheme: offensiveScheme,
-                defensiveScheme: defensiveScheme
+                defensiveScheme: defensiveScheme,
+                hint: hint,
+                defensivePackage: defensivePackage
             )
+        }
+    }
+
+    /// Maps an explicit offensive play call to the simulator's ``PlayType``.
+    ///
+    /// `.screen` is intentionally routed as a PASS: its hint carries
+    /// `passDepth: .short` plus a high YAC multiplier, which models the
+    /// screen game far better than the run path would.
+    static func playType(for call: OffensivePlayCall) -> PlayType {
+        switch call {
+        case .spike:  return .spike
+        case .kneel:  return .kneel
+        case .screen: return .pass
+        default:      return call.isRun ? .run : .pass
         }
     }
 
     // MARK: - Play Call Decision
 
     /// Determines the type of play to call based on game situation.
+    ///
+    /// - Parameter gamePlan: Optional coaching game plan for the offense.
+    ///   `runPassRatio` shifts the pass probability (±0.15 at the extremes)
+    ///   and `fourthDownAggressiveness` widens/narrows the go-for-it window.
+    ///   `nil` — or a fully balanced plan — reproduces today's behavior exactly.
     static func decidePlayCall(
         down: Int,
         distance: Int,
         yardLine: Int,
         quarter: Int,
         timeRemaining: Int,
-        offensiveScheme: OffensiveScheme? = nil
+        offensiveScheme: OffensiveScheme? = nil,
+        gamePlan: GamePlan? = nil
     ) -> PlayType {
         let yardsToEndzone = 100 - yardLine
         let isTwoMinuteDrill = quarter == 4 && timeRemaining <= 120
         let fieldGoalRange = yardsToEndzone <= 45
 
         // Scheme pass bias: shifts pass probability up (pass-heavy) or down (run-heavy)
-        let schemePassBias: Double = {
+        let schemeOnlyPassBias: Double = {
             guard let scheme = offensiveScheme else { return 0.0 }
             switch scheme {
             case .airRaid:    return 0.15   // Heavy pass
@@ -156,8 +209,24 @@ enum PlaySimulator {
             }
         }()
 
+        // Game-plan pass bias: the user's Play Calling Mix slider shifts the
+        // pass probability by up to ±0.15 (runPassRatio 0 → -0.15, 1 → +0.15).
+        // A balanced plan (0.5) contributes exactly 0, preserving old behavior.
+        let planPassBias = ((gamePlan?.runPassRatio ?? 0.5) - 0.5) * 0.3
+        let schemePassBias = schemeOnlyPassBias + planPassBias
+
         // 4th down decisions
         if down == 4 {
+            // Very conservative plans (< 0.35) kick/punt even on 4th & short —
+            // except in a late-game desperation drive, where punting the ball
+            // away would be indefensible.
+            if let plan = gamePlan, plan.fourthDownAggressiveness < 0.35 {
+                if isTwoMinuteDrill && yardsToEndzone > 45 {
+                    return coinFlip(0.7 + schemePassBias * 0.5) ? .pass : .run
+                }
+                if fieldGoalRange { return .fieldGoal }
+                return .punt
+            }
             // Go for it on 4th & short near the goal line
             if distance <= 2 && yardsToEndzone <= 5 {
                 return coinFlip(0.5 + schemePassBias) ? .pass : .run
@@ -165,6 +234,12 @@ enum PlaySimulator {
             // Go for it in desperation (late game, trailing assumed from two-minute drill)
             if isTwoMinuteDrill && yardsToEndzone > 45 {
                 return coinFlip(0.7 + schemePassBias * 0.5) ? .pass : .run
+            }
+            // Aggressive plans (> 0.65) also go for it on 4th & 3-or-less
+            // once past midfield instead of settling for a punt / long FG.
+            if let plan = gamePlan, plan.fourthDownAggressiveness > 0.65,
+               distance <= 3, yardLine >= 50 {
+                return coinFlip(clamp(0.55 + schemePassBias, min: 0.25, max: 0.80)) ? .pass : .run
             }
             // Field goal if in range
             if fieldGoalRange {
@@ -205,8 +280,8 @@ enum PlaySimulator {
     // MARK: - Pass Play
 
     private static func simulatePassPlay(
-        offensePlayers: [Player],
-        defensePlayers: [Player],
+        offensePlayers: [SimPlayer],
+        defensePlayers: [SimPlayer],
         down: Int,
         distance: Int,
         yardLine: Int,
@@ -215,7 +290,9 @@ enum PlaySimulator {
         momentum: Double,
         playNumber: Int,
         offensiveScheme: OffensiveScheme? = nil,
-        defensiveScheme: DefensiveScheme? = nil
+        defensiveScheme: DefensiveScheme? = nil,
+        hint: OffensivePlayCall.SimulatorHint? = nil,
+        defensivePackage: DefensivePackage? = nil
     ) -> PlayResult {
         let qb = findQB(in: offensePlayers)
         let qbAttrs = qbAttributes(for: qb)
@@ -249,7 +326,15 @@ enum PlaySimulator {
         ) * 0.3
 
         let protectionRating = (olPassBlock + momentumBoost * 100) - (dlPassRush + lbBlitz)
-        let sackChance = max(0.05, min(0.35, 0.20 - protectionRating / 500.0))
+        var sackChance = max(0.05, min(0.35, 0.20 - protectionRating / 500.0))
+
+        // Live play-call adjustments (nil hint + nil package = identical to today):
+        // quick-timing throws pick up the blitz; blitz packages add pressure.
+        if hint != nil || defensivePackage != nil {
+            let blitzPickup = (hint?.blitzPickupBonus ?? 0) * 0.15
+            let extraPressure = defensivePackage?.totalPressureModifier ?? 0
+            sackChance = clamp(sackChance - blitzPickup + extraPressure, min: 0.02, max: 0.60)
+        }
 
         if randomChance(sackChance) {
             let sackYards = -Int.random(in: 3...8)
@@ -271,7 +356,8 @@ enum PlaySimulator {
                     isFirstDown: false,
                     isTurnover: false,
                     scoringPlay: true,
-                    pointsScored: 2
+                    pointsScored: 2,
+                    keyOffensePlayerID: qb.id
                 )
             }
 
@@ -289,7 +375,8 @@ enum PlaySimulator {
                 isFirstDown: false,
                 isTurnover: false,
                 scoringPlay: false,
-                pointsScored: 0
+                pointsScored: 0,
+                keyOffensePlayerID: qb.id
             )
         }
 
@@ -311,7 +398,14 @@ enum PlaySimulator {
         }
 
         // --- Pass Distance ---
-        let passDistance = choosePassDistance(distance: distance, yardLine: yardLine)
+        // An explicit play call fixes the depth; otherwise roll it as before.
+        let passDistance: PassDistance
+        switch hint?.passDepth {
+        case .short:  passDistance = .short
+        case .medium: passDistance = .mid
+        case .deep:   passDistance = .deep
+        case nil:     passDistance = choosePassDistance(distance: distance, yardLine: yardLine)
+        }
         let targetYards = passYardsForDistance(passDistance)
 
         // --- Accuracy & Completion Check ---
@@ -326,7 +420,12 @@ enum PlaySimulator {
                               + Double(receiverCatching) * 0.35
                               + Double(qb.mental.decisionMaking) * 0.1) / 100.0
         let coveragePenalty = Double(dbCoverage) / 200.0
-        let completionChance = clamp(completionBase - coveragePenalty + momentumBoost, min: 0.15, max: 0.85)
+        var completionChance = clamp(completionBase - coveragePenalty + momentumBoost, min: 0.15, max: 0.85)
+
+        // Defensive package: tighter coverage shaves the completion odds.
+        if let package = defensivePackage {
+            completionChance = clamp(completionChance - package.totalCoverageModifier, min: 0.05, max: 0.95)
+        }
 
         // --- Interception Check ---
         let intChance = interceptionChance(
@@ -339,7 +438,11 @@ enum PlaySimulator {
         )
 
         if randomChance(intChance) {
-            let defender = defensePlayers.filter { isDB($0) }.randomElement()
+            // Credit a ball-hawking starter, not a random 4th-string DB —
+            // the live match view shows the top DBs on the field.
+            let dbs = defensePlayers.filter { isDB($0) }
+                .sorted { dbBallSkillsRating(for: $0) > dbBallSkillsRating(for: $1) }
+            let defender = dbs.prefix(4).randomElement()
                 ?? defensePlayers.first!
             return PlayResult(
                 playNumber: playNumber,
@@ -355,14 +458,20 @@ enum PlaySimulator {
                 isFirstDown: false,
                 isTurnover: true,
                 scoringPlay: false,
-                pointsScored: 0
+                pointsScored: 0,
+                keyOffensePlayerID: target.id,
+                keyDefensePlayerID: defender.id
             )
         }
 
         // --- Completion or Incompletion ---
         if randomChance(completionChance) {
             // Completed pass
-            let yacBonus = yardsAfterCatch(for: target, momentum: momentum)
+            var yacBonus = yardsAfterCatch(for: target, momentum: momentum)
+            // Play-call YAC shading (screens, flats, go routes).
+            if let hint = hint {
+                yacBonus = max(0, Int((Double(yacBonus) * hint.yacMultiplier).rounded()))
+            }
             var totalYards = targetYards + yacBonus
 
             // Apply scheme fit modifiers: offense fit boosts yards, defense fit reduces them
@@ -387,7 +496,8 @@ enum PlaySimulator {
                     isFirstDown: true,
                     isTurnover: false,
                     scoringPlay: true,
-                    pointsScored: 6
+                    pointsScored: 6,
+                    keyOffensePlayerID: target.id
                 )
             }
 
@@ -411,7 +521,8 @@ enum PlaySimulator {
                 isFirstDown: gainedFirstDown,
                 isTurnover: false,
                 scoringPlay: false,
-                pointsScored: 0
+                pointsScored: 0,
+                keyOffensePlayerID: target.id
             )
         } else {
             // Incomplete pass
@@ -429,7 +540,8 @@ enum PlaySimulator {
                 isFirstDown: false,
                 isTurnover: false,
                 scoringPlay: false,
-                pointsScored: 0
+                pointsScored: 0,
+                keyOffensePlayerID: target.id
             )
         }
     }
@@ -437,8 +549,8 @@ enum PlaySimulator {
     // MARK: - Run Play
 
     private static func simulateRunPlay(
-        offensePlayers: [Player],
-        defensePlayers: [Player],
+        offensePlayers: [SimPlayer],
+        defensePlayers: [SimPlayer],
         down: Int,
         distance: Int,
         yardLine: Int,
@@ -447,7 +559,9 @@ enum PlaySimulator {
         momentum: Double,
         playNumber: Int,
         offensiveScheme: OffensiveScheme? = nil,
-        defensiveScheme: DefensiveScheme? = nil
+        defensiveScheme: DefensiveScheme? = nil,
+        hint: OffensivePlayCall.SimulatorHint? = nil,
+        defensivePackage: DefensivePackage? = nil
     ) -> PlayResult {
         let rb = findRB(in: offensePlayers)
         let rbAttrs = rbAttributes(for: rb)
@@ -479,7 +593,12 @@ enum PlaySimulator {
             extractor: { lbTacklingRating(for: $0) }
         )
 
-        let blockingAdvantage = (olRunBlock - (dlBlockShed * 0.6 + lbTackling * 0.4)) / 100.0
+        var blockingAdvantage = (olRunBlock - (dlBlockShed * 0.6 + lbTackling * 0.4)) / 100.0
+
+        // Play-call gap bonus (interior power runs, QB sneak) shades blocking.
+        if let hint = hint {
+            blockingAdvantage += hint.runGapBonus
+        }
 
         // --- Base Yards ---
         let baseYards = Double.random(in: 2.0...5.0)
@@ -490,6 +609,11 @@ enum PlaySimulator {
         // Apply scheme fit modifiers: offense fit boosts yards, defense fit reduces them
         let schemeYardAdjustment = Double(totalYards) * (offSchemeFit - defSchemeFit)
         totalYards += Int(schemeYardAdjustment.rounded())
+
+        // Defensive package: run-stopping fronts subtract expected yardage.
+        if let package = defensivePackage {
+            totalYards -= Int((package.totalRunStopModifier * 6.0).rounded())
+        }
 
         // --- Breakaway Run Check ---
         let rbSpeed = Double(rb.physical.speed)
@@ -521,7 +645,8 @@ enum PlaySimulator {
                 isFirstDown: false,
                 isTurnover: fumbleLost,
                 scoringPlay: false,
-                pointsScored: 0
+                pointsScored: 0,
+                keyOffensePlayerID: rb.id
             )
         }
 
@@ -548,7 +673,8 @@ enum PlaySimulator {
                 isFirstDown: false,
                 isTurnover: false,
                 scoringPlay: true,
-                pointsScored: 2
+                pointsScored: 2,
+                keyOffensePlayerID: rb.id
             )
         }
 
@@ -570,7 +696,8 @@ enum PlaySimulator {
                 isFirstDown: true,
                 isTurnover: false,
                 scoringPlay: true,
-                pointsScored: 6
+                pointsScored: 6,
+                keyOffensePlayerID: rb.id
             )
         }
 
@@ -591,14 +718,15 @@ enum PlaySimulator {
             isFirstDown: gainedFirstDown,
             isTurnover: false,
             scoringPlay: false,
-            pointsScored: 0
+            pointsScored: 0,
+            keyOffensePlayerID: rb.id
         )
     }
 
     // MARK: - Special Teams
 
     private static func simulatePunt(
-        offensePlayers: [Player],
+        offensePlayers: [SimPlayer],
         down: Int,
         distance: Int,
         yardLine: Int,
@@ -633,7 +761,7 @@ enum PlaySimulator {
     }
 
     private static func simulateFieldGoal(
-        offensePlayers: [Player],
+        offensePlayers: [SimPlayer],
         down: Int,
         distance: Int,
         yardLine: Int,
@@ -686,7 +814,7 @@ enum PlaySimulator {
     }
 
     private static func simulateKneel(
-        offensePlayers: [Player],
+        offensePlayers: [SimPlayer],
         down: Int,
         distance: Int,
         yardLine: Int,
@@ -742,7 +870,7 @@ enum PlaySimulator {
     // MARK: - QB Scramble (fallback when no receivers found)
 
     private static func simulateQBScramble(
-        qb: Player,
+        qb: SimPlayer,
         qbAttrs: QBAttributes,
         down: Int,
         distance: Int,
@@ -773,7 +901,8 @@ enum PlaySimulator {
                 isFirstDown: true,
                 isTurnover: false,
                 scoringPlay: true,
-                pointsScored: 6
+                pointsScored: 6,
+                keyOffensePlayerID: qb.id
             )
         }
 
@@ -792,7 +921,8 @@ enum PlaySimulator {
             isFirstDown: gainedFirstDown,
             isTurnover: false,
             scoringPlay: false,
-            pointsScored: 0
+            pointsScored: 0,
+            keyOffensePlayerID: qb.id
         )
     }
 
@@ -800,7 +930,7 @@ enum PlaySimulator {
 
     /// Simulates an extra point attempt.
     static func simulateExtraPoint(
-        offensePlayers: [Player],
+        offensePlayers: [SimPlayer],
         quarter: Int,
         timeRemaining: Int,
         yardLine: Int,
@@ -833,8 +963,8 @@ enum PlaySimulator {
 
     /// Simulates a two-point conversion attempt.
     static func simulateTwoPointConversion(
-        offensePlayers: [Player],
-        defensePlayers: [Player],
+        offensePlayers: [SimPlayer],
+        defensePlayers: [SimPlayer],
         quarter: Int,
         timeRemaining: Int,
         playNumber: Int
@@ -884,41 +1014,44 @@ enum PlaySimulator {
 
     // MARK: - Player Finders
 
-    private static func findQB(in players: [Player]) -> Player {
-        players.first(where: { $0.position == .QB }) ?? players.first!
-    }
-
-    private static func findRB(in players: [Player]) -> Player {
-        players.first(where: { $0.position == .RB })
-            ?? players.first(where: { $0.position == .FB })
+    // The best player at the position acts as the starter — roster order is
+    // arbitrary, and play descriptions should feature QB1, not the 3rd string.
+    private static func findQB(in players: [SimPlayer]) -> SimPlayer {
+        players.filter { $0.position == .QB }.max(by: { $0.overall < $1.overall })
             ?? players.first!
     }
 
-    private static func eligibleReceivers(from players: [Player]) -> [Player] {
+    private static func findRB(in players: [SimPlayer]) -> SimPlayer {
+        let backs = players.filter { $0.position == .RB }
+        if let best = backs.max(by: { $0.overall < $1.overall }) { return best }
+        return players.first(where: { $0.position == .FB }) ?? players.first!
+    }
+
+    private static func eligibleReceivers(from players: [SimPlayer]) -> [SimPlayer] {
         players.filter { [.WR, .TE, .RB].contains($0.position) }
     }
 
     // MARK: - Position Group Checks
 
-    private static func isOL(_ player: Player) -> Bool {
+    private static func isOL(_ player: SimPlayer) -> Bool {
         [Position.LT, .LG, .C, .RG, .RT].contains(player.position)
     }
 
-    private static func isDL(_ player: Player) -> Bool {
+    private static func isDL(_ player: SimPlayer) -> Bool {
         [Position.DE, .DT].contains(player.position)
     }
 
-    private static func isLB(_ player: Player) -> Bool {
+    private static func isLB(_ player: SimPlayer) -> Bool {
         [Position.OLB, .MLB].contains(player.position)
     }
 
-    private static func isDB(_ player: Player) -> Bool {
+    private static func isDB(_ player: SimPlayer) -> Bool {
         [Position.CB, .FS, .SS].contains(player.position)
     }
 
     // MARK: - Attribute Extractors
 
-    private static func qbAttributes(for player: Player) -> QBAttributes {
+    private static func qbAttributes(for player: SimPlayer) -> QBAttributes {
         if case .quarterback(let attrs) = player.positionAttributes { return attrs }
         return QBAttributes(
             armStrength: 50, accuracyShort: 50, accuracyMid: 50,
@@ -926,68 +1059,68 @@ enum PlaySimulator {
         )
     }
 
-    private static func rbAttributes(for player: Player) -> RBAttributes {
+    private static func rbAttributes(for player: SimPlayer) -> RBAttributes {
         if case .runningBack(let attrs) = player.positionAttributes { return attrs }
         return RBAttributes(vision: 50, elusiveness: 50, breakTackle: 50, receiving: 50)
     }
 
-    private static func olPassBlockRating(for player: Player) -> Double {
+    private static func olPassBlockRating(for player: SimPlayer) -> Double {
         if case .offensiveLine(let attrs) = player.positionAttributes {
             return Double(attrs.passBlock)
         }
         return 50.0
     }
 
-    private static func olRunBlockRating(for player: Player) -> Double {
+    private static func olRunBlockRating(for player: SimPlayer) -> Double {
         if case .offensiveLine(let attrs) = player.positionAttributes {
             return Double(attrs.runBlock)
         }
         return 50.0
     }
 
-    private static func dlPassRushRating(for player: Player) -> Double {
+    private static func dlPassRushRating(for player: SimPlayer) -> Double {
         if case .defensiveLine(let attrs) = player.positionAttributes {
             return Double((attrs.passRush + attrs.powerMoves + attrs.finesseMoves) / 3)
         }
         return 50.0
     }
 
-    private static func dlBlockSheddingRating(for player: Player) -> Double {
+    private static func dlBlockSheddingRating(for player: SimPlayer) -> Double {
         if case .defensiveLine(let attrs) = player.positionAttributes {
             return Double(attrs.blockShedding)
         }
         return 50.0
     }
 
-    private static func lbTacklingRating(for player: Player) -> Double {
+    private static func lbTacklingRating(for player: SimPlayer) -> Double {
         if case .linebacker(let attrs) = player.positionAttributes {
             return Double(attrs.tackling)
         }
         return 50.0
     }
 
-    private static func lbBlitzRating(for player: Player) -> Double {
+    private static func lbBlitzRating(for player: SimPlayer) -> Double {
         if case .linebacker(let attrs) = player.positionAttributes {
             return Double(attrs.blitzing)
         }
         return 50.0
     }
 
-    private static func dbCoverageRating(for player: Player) -> Double {
+    private static func dbCoverageRating(for player: SimPlayer) -> Double {
         if case .defensiveBack(let attrs) = player.positionAttributes {
             return Double((attrs.manCoverage + attrs.zoneCoverage) / 2)
         }
         return 50.0
     }
 
-    private static func dbBallSkillsRating(for player: Player) -> Double {
+    private static func dbBallSkillsRating(for player: SimPlayer) -> Double {
         if case .defensiveBack(let attrs) = player.positionAttributes {
             return Double(attrs.ballSkills)
         }
         return 50.0
     }
 
-    private static func receiverCatchRating(for player: Player) -> Double {
+    private static func receiverCatchRating(for player: SimPlayer) -> Double {
         switch player.positionAttributes {
         case .wideReceiver(let attrs):
             return Double((attrs.catching + attrs.routeRunning) / 2)
@@ -1000,7 +1133,7 @@ enum PlaySimulator {
         }
     }
 
-    private static func receiverRouteWeight(for player: Player) -> Double {
+    private static func receiverRouteWeight(for player: SimPlayer) -> Double {
         switch player.positionAttributes {
         case .wideReceiver(let attrs):
             return Double(attrs.routeRunning + attrs.catching) / 2.0
@@ -1013,7 +1146,7 @@ enum PlaySimulator {
         }
     }
 
-    private static func kickerAccuracyRating(for player: Player) -> Int {
+    private static func kickerAccuracyRating(for player: SimPlayer) -> Int {
         if case .kicking(let attrs) = player.positionAttributes {
             return attrs.kickAccuracy
         }
@@ -1089,7 +1222,7 @@ enum PlaySimulator {
         return clamp(baseRate + accuracyMod + dbMod, min: 0.005, max: 0.08)
     }
 
-    private static func yardsAfterCatch(for player: Player, momentum: Double) -> Int {
+    private static func yardsAfterCatch(for player: SimPlayer, momentum: Double) -> Int {
         let speedFactor = Double(player.physical.speed) / 100.0
         let agilityFactor = Double(player.physical.agility) / 100.0
         let yacBase = (speedFactor + agilityFactor) * 3.0 + momentum * 1.0
@@ -1097,7 +1230,7 @@ enum PlaySimulator {
     }
 
     /// Selects a receiver weighted by route running + catching ability.
-    private static func weightedReceiverSelection(_ receivers: [Player]) -> Player? {
+    private static func weightedReceiverSelection(_ receivers: [SimPlayer]) -> SimPlayer? {
         guard !receivers.isEmpty else { return nil }
         let weights = receivers.map { receiverRouteWeight(for: $0) }
         let totalWeight = weights.reduce(0, +)
@@ -1115,7 +1248,7 @@ enum PlaySimulator {
 
     // MARK: - Description Generators
 
-    private static func completionDescription(qb: Player, target: Player, yards: Int, firstDown: Bool) -> String {
+    private static func completionDescription(qb: SimPlayer, target: SimPlayer, yards: Int, firstDown: Bool) -> String {
         let firstDownText = firstDown ? " for a first down" : ""
         if yards >= 20 {
             return "\(qb.fullName) connects with \(target.fullName) for a \(yards)-yard gain\(firstDownText)!"
@@ -1123,7 +1256,7 @@ enum PlaySimulator {
         return "\(qb.fullName) throws \(yards) yards to \(target.fullName)\(firstDownText)."
     }
 
-    private static func rushDescription(rb: Player, yards: Int, firstDown: Bool) -> String {
+    private static func rushDescription(rb: SimPlayer, yards: Int, firstDown: Bool) -> String {
         let firstDownText = firstDown ? " for a first down" : ""
         if yards < 0 {
             return "\(rb.fullName) is stopped for a loss of \(abs(yards)) yards."
@@ -1143,7 +1276,7 @@ enum PlaySimulator {
     /// Returns a value typically in the range -0.05 to +0.10, representing the
     /// percentage adjustment to yard calculations based on how well players fit their scheme.
     private static func schemeFitModifier(
-        players: [Player],
+        players: [SimPlayer],
         offensiveScheme: OffensiveScheme?,
         defensiveScheme: DefensiveScheme?
     ) -> Double {
@@ -1179,7 +1312,7 @@ enum PlaySimulator {
 
     // MARK: - Utility Functions
 
-    private static func averageAttribute(_ players: [Player], extractor: (Player) -> Double) -> Double {
+    private static func averageAttribute(_ players: [SimPlayer], extractor: (SimPlayer) -> Double) -> Double {
         guard !players.isEmpty else { return 50.0 }
         return players.map(extractor).reduce(0, +) / Double(players.count)
     }

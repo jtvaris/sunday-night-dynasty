@@ -25,9 +25,11 @@ enum DriveSimulator {
     ///   - timeRemaining: Seconds remaining in the quarter at drive start.
     ///   - momentum: Current momentum value from -1.0 to 1.0.
     ///   - teamID: The UUID of the offensive team.
+    ///   - gamePlan: Optional coaching game plan for the OFFENSE — shades the
+    ///     AI play-calling in `PlaySimulator`. `nil` = today's exact behavior.
     static func simulateDrive(
-        offensePlayers: [Player],
-        defensePlayers: [Player],
+        offensePlayers: [SimPlayer],
+        defensePlayers: [SimPlayer],
         startingYardLine: Int,
         driveNumber: Int,
         quarter: Int,
@@ -35,7 +37,8 @@ enum DriveSimulator {
         momentum: Double,
         teamID: UUID,
         offensiveScheme: OffensiveScheme? = nil,
-        defensiveScheme: DefensiveScheme? = nil
+        defensiveScheme: DefensiveScheme? = nil,
+        gamePlan: GamePlan? = nil
     ) -> DriveSimulationResult {
         var plays: [PlayResult] = []
         var currentDown = 1
@@ -81,7 +84,8 @@ enum DriveSimulator {
                 momentum: momentum,
                 playNumber: playNumber,
                 offensiveScheme: offensiveScheme,
-                defensiveScheme: defensiveScheme
+                defensiveScheme: defensiveScheme,
+                gamePlan: gamePlan
             )
 
             // Store the play with current clock values
@@ -182,13 +186,16 @@ enum DriveSimulator {
 
     // MARK: - Down & Distance Management
 
-    private struct DownDistanceState {
+    /// Down/distance/field-position triple after a play. Shared with `LiveGameEngine`.
+    struct DownDistanceState {
         let down: Int
         let distance: Int
         let yardLine: Int
     }
 
-    private static func advanceDownAndDistance(
+    /// Advances down, distance, and yard line based on a play's result.
+    /// Internal (not private) because it is shared with `LiveGameEngine`.
+    static func advanceDownAndDistance(
         playResult: PlayResult,
         currentDown: Int,
         currentDistance: Int,
@@ -216,7 +223,8 @@ enum DriveSimulator {
     // MARK: - Drive End Checks
 
     /// Returns a DriveSimulationResult if the play immediately ends the drive, nil otherwise.
-    private static func checkImmediateDriveEnd(
+    /// Internal (not private) because it is shared with `LiveGameEngine`.
+    static func checkImmediateDriveEnd(
         _ result: PlayResult,
         plays: [PlayResult],
         driveNumber: Int,
@@ -326,7 +334,8 @@ enum DriveSimulator {
     /// Calculates seconds consumed by a play.
     /// Incomplete passes and spikes stop the clock (less time consumed).
     /// Run plays and completions keep the clock running.
-    private static func clockConsumption(for play: PlayResult) -> Int {
+    /// Internal (not private) because it is shared with `LiveGameEngine`.
+    static func clockConsumption(for play: PlayResult) -> Int {
         switch play.outcome {
         case .incompletion:
             // Clock stops on incompletion: just the play itself
@@ -354,7 +363,8 @@ enum DriveSimulator {
     // MARK: - Time Helpers
 
     /// Determines if the current quarter ends the half or game (Q2, Q4, or OT).
-    private static func shouldEndDrive(quarter: Int) -> Bool {
+    /// Internal (not private) because it is shared with `LiveGameEngine`.
+    static func shouldEndDrive(quarter: Int) -> Bool {
         quarter == 2 || quarter >= 4
     }
 

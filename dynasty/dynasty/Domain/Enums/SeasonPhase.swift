@@ -63,6 +63,27 @@ enum SeasonPhaseGroup: String, CaseIterable, Codable {
 }
 
 extension SeasonPhase {
+    /// Human-readable name for player-facing copy.
+    var displayName: String {
+        switch self {
+        case .proBowl:         return "Pro Bowl"
+        case .superBowl:       return "Super Bowl"
+        case .coachingChanges: return "Coaching Changes"
+        case .reviewRoster:    return "Review Roster"
+        case .combine:         return "NFL Combine"
+        case .freeAgency:      return "Free Agency"
+        case .proDays:         return "Pro Days"
+        case .draft:           return "NFL Draft"
+        case .otas:            return "OTAs"
+        case .trainingCamp:    return "Training Camp"
+        case .preseason:       return "Preseason"
+        case .rosterCuts:      return "Roster Cuts"
+        case .regularSeason:   return "Regular Season"
+        case .tradeDeadline:   return "Trade Deadline"
+        case .playoffs:        return "Playoffs"
+        }
+    }
+
     /// The top-level phase group this sub-phase belongs to.
     var group: SeasonPhaseGroup {
         switch self {

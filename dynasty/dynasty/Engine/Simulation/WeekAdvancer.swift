@@ -263,6 +263,11 @@ enum WeekAdvancer {
                     }
                 }
 
+                // The user's saved game plan shades only the user's own
+                // offense; the AI opponent always simulates with `nil` (today's
+                // exact behavior). `savedGamePlan` is nil until the user has
+                // touched the Game Plan screen at least once.
+                let userPlan = career.savedGamePlan
                 let result = GameSimulator.simulate(
                     homeTeam: homeTeam,
                     awayTeam: awayTeam,
@@ -270,7 +275,9 @@ enum WeekAdvancer {
                     awayCoaches: awayCoaches,
                     audibleBoost: audibleBoost,
                     defReadBoost: defReadBoost,
-                    boostedTeamID: userTeamID
+                    boostedTeamID: userTeamID,
+                    homeGamePlan: homeTeam.id == userTeamID ? userPlan : nil,
+                    awayGamePlan: awayTeam.id == userTeamID ? userPlan : nil
                 )
                 game.homeScore = result.homeScore
                 game.awayScore = result.awayScore
@@ -284,8 +291,33 @@ enum WeekAdvancer {
             updateTeamRecords(game: game, teamsByID: teamsByID)
         }
 
-        // Store the latest player game result for UI to access
-        lastPlayerGameResult = playerGameResult
+        // Store the latest player game result for UI to access.
+        //
+        // When the player's game was coached interactively (LiveGameEngine), it
+        // was already played BEFORE advanceWeek: it never appears in
+        // `unplayedGames`, so `playerGameResult` stays nil here. In that case
+        // derive win/loss from the persisted game scores and keep whatever
+        // result the live engine stored in `lastPlayerGameResult` (set by
+        // `LiveGameEngine.persist`) for the press-conference context.
+        var coachedGameWon: Bool?
+        if playerGameResult != nil {
+            lastPlayerGameResult = playerGameResult
+        } else if let playerTeamID = career.teamID,
+                  let coachedGame = fetchPlayedPlayerGame(
+                      week: week,
+                      seasonYear: season,
+                      teamID: playerTeamID,
+                      modelContext: modelContext
+                  ),
+                  let home = coachedGame.homeScore,
+                  let away = coachedGame.awayScore {
+            let isHome = coachedGame.homeTeamID == playerTeamID
+            coachedGameWon = isHome ? home > away : away > home
+            // lastPlayerGameResult stays as the live engine left it.
+        } else {
+            // Player genuinely had no played game this week.
+            lastPlayerGameResult = nil
+        }
 
         // Coach weekly XP
         if let playerTeamID = career.teamID {
@@ -294,6 +326,7 @@ enum WeekAdvancer {
             let ahc = teamCoaches.first { $0.role == .assistantHeadCoach }
             let isPlayoff = career.currentPhase == .playoffs
             let playerTeamWon: Bool = {
+                if let coachedGameWon { return coachedGameWon }
                 guard let result = playerGameResult else { return false }
                 if let game = unplayedGames.first(where: {
                     $0.homeTeamID == playerTeamID || $0.awayTeamID == playerTeamID
@@ -318,6 +351,7 @@ enum WeekAdvancer {
         if let playerTeamID = career.teamID,
            let playerTeam = teamsByID[playerTeamID] {
             let lastGameWon: Bool? = {
+                if let coachedGameWon { return coachedGameWon }
                 guard let result = playerGameResult else { return nil }
                 if let game = unplayedGames.first(where: {
                     $0.homeTeamID == playerTeamID || $0.awayTeamID == playerTeamID
@@ -1273,7 +1307,9 @@ enum WeekAdvancer {
 
     // MARK: - Private: Team Record Updates
 
-    private static func updateTeamRecords(game: Game, teamsByID: [UUID: Team]) {
+    /// Updates `Team.wins`/`losses`/`ties` from a played game's final score.
+    /// Internal (not private) because it is shared with `LiveGameEngine.persist`.
+    static func updateTeamRecords(game: Game, teamsByID: [UUID: Team]) {
         guard let homeScore = game.homeScore,
               let awayScore = game.awayScore else { return }
 
@@ -1309,6 +1345,27 @@ enum WeekAdvancer {
             }
         )
         return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    /// Fetches the player team's already-played regular-season game for the
+    /// given week, if any. Used to detect games coached interactively via
+    /// `LiveGameEngine` (they are played before `advanceWeek` runs).
+    private static func fetchPlayedPlayerGame(
+        week: Int,
+        seasonYear: Int,
+        teamID: UUID,
+        modelContext: ModelContext
+    ) -> Game? {
+        let descriptor = FetchDescriptor<Game>(
+            predicate: #Predicate<Game> { game in
+                game.week == week &&
+                game.seasonYear == seasonYear &&
+                game.isPlayoff == false &&
+                game.homeScore != nil &&
+                (game.homeTeamID == teamID || game.awayTeamID == teamID)
+            }
+        )
+        return (try? modelContext.fetch(descriptor))?.first
     }
 
     private static func fetchTeamsByID(modelContext: ModelContext) -> [UUID: Team] {

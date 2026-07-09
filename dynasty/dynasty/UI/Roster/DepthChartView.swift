@@ -139,6 +139,7 @@ struct DepthChartView: View {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         depthChart.assign(slot: state.slot, playerID: playerID, at: state.slotIndex)
                     }
+                    persistDepthChart()
                     comparisonState = nil
                 },
                 onClear: {
@@ -146,6 +147,7 @@ struct DepthChartView: View {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             depthChart.remove(slot: state.slot, playerID: currentDepth)
                         }
+                        persistDepthChart()
                     }
                     comparisonState = nil
                 },
@@ -153,8 +155,30 @@ struct DepthChartView: View {
             )
         }
         .task {
+            loadOrSeedDepthChart()
+        }
+    }
+
+    // MARK: - Persistence
+
+    /// Loads the saved chart from the career, seeding a fresh auto-generated
+    /// chart (without persisting it) when none has been saved yet. The chart
+    /// is only persisted on explicit user action so the "Set depth chart"
+    /// task completes from a real decision, not a screen visit.
+    private func loadOrSeedDepthChart() {
+        if let data = career.depthChartData,
+           let saved = try? JSONDecoder().decode(DepthChart.self, from: data) {
+            depthChart = saved
+        } else {
             depthChart.autoGenerate(players: rosterPlayers)
         }
+    }
+
+    /// Writes the current chart back to the career and saves the context.
+    /// Called after every user mutation (assign / clear / reorder / auto-set).
+    private func persistDepthChart() {
+        career.depthChartData = try? JSONEncoder().encode(depthChart)
+        try? modelContext.save()
     }
 
     // MARK: - Team Overall Bar
@@ -230,6 +254,7 @@ struct DepthChartView: View {
             withAnimation {
                 depthChart.autoGenerate(players: rosterPlayers)
             }
+            persistDepthChart()
         } label: {
             Label("Auto-Set", systemImage: "wand.and.stars")
         }
@@ -420,6 +445,7 @@ struct DepthChartView: View {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             depthChart.swap(slot: slot, indexA: index, indexB: index - 1)
                         }
+                        persistDepthChart()
                     } label: {
                         Image(systemName: "chevron.up")
                             .font(.system(size: 10, weight: .bold))
@@ -433,6 +459,7 @@ struct DepthChartView: View {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             depthChart.swap(slot: slot, indexA: index, indexB: index + 1)
                         }
+                        persistDepthChart()
                     } label: {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 10, weight: .bold))
@@ -703,6 +730,14 @@ private struct ComparisonSheet: View {
     private func sortCandidate(_ a: CandidatePlayer, _ b: CandidatePlayer) -> Bool {
         switch sortMode {
         case .overall:
+            // Returner slots rank by the trait that actually matters back deep
+            // (speed for KR, agility for PR) — raw overall would put QBs on top.
+            if slot == .KR {
+                return a.player.physical.speed > b.player.physical.speed
+            }
+            if slot == .PR {
+                return a.player.physical.agility > b.player.physical.agility
+            }
             return a.player.overall > b.player.overall
         case .fit:
             if a.versatility != b.versatility {

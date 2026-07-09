@@ -1015,3 +1015,187 @@ What's working well (keep — newly observed):
 - Position Group Grades letter-grade table in Roster Eval is scannable and the right starting point for offseason planning.
 - "Director of Scouting" Combine Report message shows good role-based comms framing — extend to all staff messaging.
 - Cap Outlook 2026 / 2027 projection split is the right financial narrative for a multi-year sim; fix the comparative visualization and it becomes a flagship screen.
+
+## Round 1 full-playthrough findings (2026-07-08) — career start → FA → Draft → OTAs (soft-lock)
+
+Playthrough evidence: ~213 screenshots in /tmp/snd-screenshots/ (r1_001–r1_213). Regular season was NOT reachable legitimately — the run soft-locks in OTAs. Debug skip reaches the Week 1 dashboard but freezes the UI and does not persist. These findings drive Round 1 implementation.
+
+### [P0 Blockers] Progression-breaking bugs (fix before anything else)
+- [x] Bug: [OTAs] "Set depth chart" required task can NEVER complete — completion appears to require every starter slot filled, but the roster has 0 kickers and the K starter picker shows "Candidates (0) — No viable players for K" (r1_192). Hard soft-lock before Training Camp. (Fixed 2026-07-08: root cause was NO completion check at all — refreshTaskCompletionStatus had no case; now completes when a chart is persisted (edit or Auto-Set), never requires unfillable slots. Verified in sim: OTAs → Training Camp → Preseason → Roster Cuts → Regular Season Week 1.)
+- [x] Bug: [OTAs] "Set training focus" required task does not complete even after a successful save (r1_201–r1_202). (Fixed 2026-07-08: added game-state completion check — TrainingPlan row exists for (team, season, week, phase) → done; wired onAppear/onDisappear refresh on both destinations + refresh on shell load.)
+- [x] Bug: [TrainingPlan] Save does not persist — saved 60/20/20, reopened shows 34/33/33 (r1_178 vs r1_200). (Fixed 2026-07-08: the row WAS saved but the editor never loaded it back (hardcoded @State 34/33/33) and save() always inserted duplicates. Now loads existing plan on appear and upserts.)
+- [x] Bug: [Save] In-phase actions are lost on app restart (r1_209). (Fixed 2026-07-08: DepthChart now persisted to Career.depthChartData on every mutation — it was pure ephemeral @State regenerated on each view appearance; explicit save after WeekAdvancer.advanceWeek in performShellAdvance; scenePhase background/inactive save in DynastyApp. Verified: phase + tasks survive terminate/relaunch.)
+- [ ] Bug: [Roster] No kicker on roster after FA + draft and no way to acquire one afterwards — no street free agency / post-FA signing flow exists (Roster, Cap, Scouting all checked). Roster construction guardrail missing: FA phase "Skip Remaining FA" + draft let the user finish with 48 players and 0 K. Add (a) street FA signing screen available year-round, (b) FA-exit warning "You have no kicker" blocking or auto-fill.
+- [x] Bug: [Debug] "Skip → FA" debug button mislabeled, freezes UI in "Skipping…", result never saved (r1_203–r1_209). (Fixed 2026-07-08: root cause — loop target .freeAgency is unreachable from OTAs without simulating a full season synchronously on @MainActor, and the advanceWeek branch never saved while the blocked run loop prevented autosave. Loop now also stops at .regularSeason, saves every iteration + final save, label is dynamic "Skip → Reg. Season"/"Skip → FA".)
+- [ ] Bug: [Dashboard] Gated "Advance to Training Camp" button gives zero feedback on tap — no toast, no shake, nothing (r1_199). Disabled actions must explain themselves.
+- [x] Bug: [Draft] "Enter the Draft" required task never completes after the draft ends. (Fixed 2026-07-08: isDraftComplete was hardcoded default false and never passed; added completion check — team has a player with draftPickNumber != nil && yearsPro == 0.)
+- [ ] Bug: [FA] FA Complete screen infinite layout-loop hang (carried from FA phase; required app restart).
+- [ ] Bug: [Draft] Post-draft war room soft-lock: "ROUND 1 — Pick 0/32 · Overall 0", frozen timer, "Your next pick: #0 (-1 picks away)"; only the back button escapes.
+
+### [Dashboard] Stale / contradictory data (destroys trust in the sim)
+- [ ] Bug: [Dashboard] OTAs dashboard hero shows Training Camp content: "Training Camp · Day 7/21", "18% overloaded", "3 active battles", "Top camp grade Moore · A+" — while the phase rail says OTAS NOW and the workload heatmap is all-green "Healthy". Hero must render the CURRENT phase's data.
+- [ ] Bug: [Dashboard] Week 1 hero (post-skip): "2 OUT, 3 questionable" while the Injuries card on the same screen says "0 out"; "Streak W3" with an 0-0 record; opponent is "vs TBD" and Opponent Scout shows "Vs —" (schedule not generated/bound).
+- [ ] Bug: [Dashboard] Team rank fluctuates between renders with identical 0-0 record (#4 → #1 → #4 observed). Rank should be deterministic.
+- [ ] Bug: [Dashboard] Hero quick-chips (Training / Battles / Camp Grades) ALL navigate to the generic Roster screen — dedicated Battles and Camp Grades views are unreachable from the dashboard (r1_210–r1_213). Wire correct destinations or hide chips whose screens don't exist.
+- [ ] Bug: [Dashboard] Owner rating changed 76% → 66% and player OVRs changed silently (Love 83→84, Moore 83→80) during the debug skip with no event feed entries — every rating change needs a visible cause (news item / recap).
+- [ ] Fix: [Dashboard] "Advance to Regular Season" button text renders overlapped with the "TRADE DEADLINE — Oct" sidebar label (r1_203) — z-order/layout collision in the left rail.
+- [x] Fix: [TrainingPlan] "WEEK 0 FOCUS" label — week numbering starts at 0 in player-facing copy. (Fixed 2026-07-08: header now shows the phase name during offseason — "OTAs Focus", "Training Camp Focus" — and Week N (min 1) only in regular season/playoffs. Added SeasonPhase.displayName. NOTE: the Workout Request weekly modal still says "WEEK 0 — PICK ONE" — separate view, fix in round 2.)
+
+### [DepthChart] Findings (designer + hardcore lens)
+- [x] Bug: [DepthChart] Auto-fill wand button (top-right) does nothing — no action, no feedback (r1_179–r1_180). (Fixed 2026-07-08: it re-ran the same idempotent autoGenerate the view runs on appear, so nothing visibly changed; now the chart loads from the persisted copy and Auto-Set regenerates + persists, making it a real "confirm auto lineup" action.)
+- [x] Game: [DepthChart] KR/PR candidate list ranks the entire roster by raw Overall — recommends QB1/MLB1 as returners (r1_193–r1_194). (Fixed 2026-07-08: Overall sort for KR ranks by physical.speed, PR by physical.agility — mirrors autoGenerate's returner logic.)
+- [x] Game: [DepthChart] Same player can hold two POSITION depth slots simultaneously (DeSean Howard = DT backup AND MLB backup). (Fixed 2026-07-08: assign() now removes the player from all other non-returner slots; KR/PR double-duty deliberately still allowed.)
+- [ ] Fix: [DepthChart] Candidate picker "In Chart" tag only marks players already in THIS position's slots — players holding slots elsewhere (e.g., Khalil Taylor = LOLB starter offered for MLB backup) carry no indicator, so picking them silently strips another position.
+- [ ] Fix: [DepthChart] Group completion badges count starters only ("2/2" green while backup slots are empty) but task completion appears to require more — the two signals disagree; unify the definition of "complete" and show it (e.g., "Starters 2/2 · Backups 1/2").
+- [ ] Game: [DepthChart] Position-change suggestions have no cost/risk display — assigning LG Kwame Coleman as FB backup or DT as MLB backup shows a small icon but no fit penalty %, no learning curve. Surface "out-of-position: -X OVR" like FM does.
+
+### [Draft] Carried-forward bugs from the draft phase (r1_115–r1_175)
+- [ ] Bug: [Draft] Big Board generated 100% QBs → every recommendation is a QB flagged "Position not a top need" and every actual pick grades "C REACH". Big Board generation is broken for this career; grades cascade from it.
+- [x] Bug: [Draft] Pick modal position chips REORDER between renders and drafting is instant on chip tap with no confirmation — caused 3 of 6 picks to select the wrong player. (Fixed 2026-07-08: all three draft surfaces (list row, comparison DRAFT button, position chip) now route through a "Confirm Pick" alert showing pos/name/OVR/college; chip ordering made deterministic with a position tiebreaker — chips visibly reshuffled every clock tick because of unstable dictionary sort + OVR ties.)
+- [ ] Bug: [Draft] "My Pick" fast-forward advances only ~1 pick; 1x/2x/4x speed buttons inert; only "Next Round" works. Draft sim runs near real-time otherwise.
+- [ ] Bug: [Draft] Round recap appears one round late, repeats stale content, and "Your picks this round" lists cumulative picks from all rounds.
+- [ ] Bug: [Draft] Draft-time OVR vs roster OVR mismatch (Zach Allen 72 at pick → 57 on roster). One rating pipeline, not two.
+- [ ] Bug: [Draft] A+ STEAL toast and C+ ticker grade shown simultaneously for the same pick; media toasts stay on screen for minutes.
+- [ ] Fix: [Draft] "NFL Draft 2 026" number formatting (locale group separator applied to a year).
+- [ ] Fix: [Draft] Dashboard draft card contradicts the war room: "Round 1 Pick 14", top targets, "2 active trade offers" vs actual first pick #63 and no trade engine. Localization leak: "Trade engine arrives in Vaihe 3".
+
+### [Training audit] FM-style training verdict (user request: "vastaa football manager -tyylistä harjoittelua?")
+Skeleton is FM-like and GOOD: 100-point Tactical/Physical/Technical team split + presets, weekly workout-request choice with scheme/locker-room/injury tradeoffs, mentoring pairs with leadership + compatibility, per-player workload list, game-plan sliders. The wiring behind it is NOT:
+- [x] Bug: [Training] Per-player workload/injury data is static — every player shows identical "4% inj"; WorkloadEngine.injuryRiskPct never called. (Partially fixed 2026-07-08: injuryRiskLabel now calls WorkloadEngine.injuryRiskPct (durability + workload status), wiring up the dead engine formula — values vary once camp workload ticks accrue. VoluntaryWorkoutEngine dead-code wiring still open for round 2.)
+- [ ] Game: [Training] No per-player individual training focus (FM's core loop: pick attribute targets per player, see weekly deltas). Add "Individual Focus" per player (e.g., +Tackling for a rookie LB) consuming a shared coach-hours budget.
+- [ ] Game: [Training] No feedback loop — after a training week there is no "gains report" (who improved what, who's overworked). Without visible deltas the whole system feels cosmetic. Add a weekly Training Report inbox item.
+- [ ] Game: [Training] Mentoring flow is one-pair-at-a-time — mentor selection clears after each mentee assignment; assigning 5 pairs takes 10 round-trips.
+- [ ] Game: [Training] Coach quality has no visible effect on training output — surface "position coach rating × focus = expected gain" so staff hiring matters.
+
+### Persona summaries (round 1)
+**Designer:** Visual system (dark navy + gold, card grid, letter grades) is genuinely strong and consistent. What breaks it: contradictory numbers on one screen (hero vs cards), dead buttons without state feedback, stale phase content, "Week 0", "2 026", localization leaks, overlapping labels. Ship-quality visuals, prototype-quality data binding.
+**Himopelaaja:** The sim promise collapses on correctness — wrong-player drafting, fake injury %, rank that changes on re-render, ratings that move without cause, and an unfillable K slot mean the hardcore player cannot trust or optimize anything. Fix determinism + persistence first; depth of systems second.
+**Casual:** The required-task rail is the casual player's guide, and it points at an impossible task with no help ("Complete 1 required task" forever, silent disabled button). Auto-fill depth chart, task auto-complete on save, and an explanatory toast would fix 90% of casual frustration. The KR-picker recommending the starting QB is a trap a casual player WILL fall into.
+
+**Loading speed (user request):** App cold start → menu ~6s (acceptable, splash could mask it). Dashboard and sub-screens render <1s; navigation is snappy. The only real "loading" problems are the FA Complete infinite hang and the frozen "Skipping…" debug state — both functional bugs, not performance. No screen needed a spinner beyond these. Draft sim pace is a UX problem (real-time), not a rendering one.
+
+**Top 5 for Round 1 implementation:**
+1. Task-completion event system (one bug class, three instances: training focus, depth chart, Enter the Draft, review interview report) — audit every required task's completion trigger.
+2. Persistence: save after every user mutation (depth chart, training plan) + fix debug skip to persist and clear its busy flag.
+3. Kicker hole: street FA signing + FA-exit roster-composition warning + task logic that can't demand the impossible.
+4. Draft pick confirmation + stable chips (prevents wrong-player picks).
+5. Dashboard data binding: hero must show current-phase real data; injuries/streak/rank from one source of truth.
+
+## Round 2 findings (2026-07-08, post-fix playthrough — IN PROGRESS)
+
+### [P0 Blocker] Regular-season week advance takes minutes at 100% CPU on the main thread
+- [x] Bug: [GameSim/Perf] Tapping "Advance to Week 2" freezes the app FOREVER at 100% CPU. (Fixed 2026-07-08, TWO stacked root causes found via CPU samples: (1) **GameSimulator's regulation loop could never terminate** — at Q4 time-expiry `quarter < totalRegulationQuarters` fails to increment and the `quarter > total` exit was dead code, so the loop spun on zero-length drives forever; the game sim had NEVER completed a game. Fixed by breaking on `quarter >= total && timeRemaining <= 0`. (2) Every player-attribute read in the play-by-play hot loop went through SwiftData @Model getter machinery (swift_dynamicCast + conformance lookups per access) — fixed with the SimPlayer snapshot refactor: rosters snapshotted to plain structs once per game (new Engine/Simulation/SimPlayer.swift; GameSimulator/DriveSimulator/PlaySimulator now run on snapshots; fatigue applied back post-sim; SimPlayer overloads added to CoachingEngine.schemeFit + VersatilityDevelopmentEngine.schemePerformanceModifier; also fixes a latent bug where "transient" morale modifiers permanently degraded live models). VERIFIED: week advance now completes in ~2s — Week 1 game simmed, won, post-game press conference fired, Week 2 dashboard shows 1-0.) Still open: run the advance off the main actor with a progress overlay for slower devices.
+- [ ] Fix: [Dashboard] Advance button gives no busy feedback — during the minutes-long sim the button looks idle and invites double-taps (risking double advance). Disable + spinner while advancing.
+- [ ] Bug: [Dashboard] Week 1 hero says "vs TBD" and Opponent Scout "Vs —" while the sidebar task correctly names "Minnesota Vikings" — the schedule exists but the hero/opponent-scout cards don't resolve the opponent from upcomingGames.
+- [ ] Fix: [Camp] Workout Request weekly modal header still says "WEEK 0 — PICK ONE" (VoluntaryWorkoutPrompt — the TrainingPlanView header was fixed in round 1, this view was not).
+- [ ] Bug: [Tasks] Regular-season sidebar tasks don't refresh between weeks — regenerateTasks guards on `phase != lastGeneratedPhase`, so "Set game plan for Minnesota Vikings" persists into week 2+ (CONFIRMED on Week 2 dashboard). Guard must also compare week during .regularSeason.
+- [x] Bug: [Dashboard] Week 2 hero still shows "@ MIN (Away)" (same opponent as Week 1) — either the schedule really has back-to-back MIN or the hero reads a stale upcomingGames snapshot. (Fixed 2026-07-08 in round 3: hero card now describes the CURRENT week's game — played or not — via currentWeekPlayerGame ?? lastGame(week==current) ?? upcomingGames.first, instead of always upcomingGames.first, which skipped to next week's opponent the moment the game finished. Played state shows "W/L xx–yy — advance when ready" with win/loss color.)
+- [x] Bug: [Dashboard] Hero "Streak W3" shown with a 1-0 record (was also W3 at 0-0) — streak binding reads placeholder/wrong data. (Fixed 2026-07-08 in round 3: regularSeasonHeroCard now shows real team.record and real injury count "Fully healthy / N OUT" instead of hardcoded "W3"/"2 OUT, 3 questionable".)
+- [ ] Game: [Presser] Post-game press conference flow is EXCELLENT (reporter tone tag, per-answer effect previews, running impact, summary with generated headlines + Promises Tracked) — carried the whole post-game narrative. Keep as the pattern for other narrative moments; old PressConf TODO items about tone tags/running totals are now largely implemented in this flow.
+
+**What's working well (keep):**
+- Depth chart candidate picker layout (Overall/Position Fit/Age tabs, Clear Slot, personality tags) — right pattern, wrong default sort for ST.
+- Training Plan preset chips (Balanced/Scheme Heavy/Camp Hard/Recovery Mode) — casual-friendly with hardcore sliders underneath; exactly FM-lite done right.
+- Salary Cap screen: Cap freed / Est. replacement / Net math on expiring contracts is excellent decision support.
+- Roster room grades (S:/D: letter pairs) + "Key FA pending" / "Depth thin" badges — the game KNOWS about the kicker hole; it just doesn't act on it.
+- Special Teams group warning badges (1/2 amber) correctly flagged the K/KR gaps visually.
+
+## Round 3: Coach Mode — live 3D play-calling (2026-07-08, user request: "valmentaja valitsee pelit, näytetään yksinkertaisella 3D grafiikalla")
+
+### Shipped (all verified end-to-end in simulator, home + away games)
+- [x] Feature: [Engine] LiveGameEngine (Engine/Match/LiveGameEngine.swift) — @MainActor per-play wrapper around the existing sim: step(offensiveCall:forcedPlayType:defensivePackage:), quarter/clock/downs/possession @Published state, AI call hints, simToEnd, buildResult + persist(to:context:) with full parity vs GameSimulator (records, fatigue writeback, WeekAdvancer.lastPlayerGameResult so the presser works on pre-played games).
+- [x] Feature: [Engine] PlaySimulator.simulatePlay accepts optional OffensivePlayCall (.simulatorHint: passDepth/runGap/blitzPickup/yac) + DefensivePackage (coverage/pressure/runStop mods); nil = byte-identical legacy behavior. findQB/findRB pick best-overall starter (play feed no longer stars 3rd-string QBs).
+- [x] Feature: [3D] FootballFieldScene extended: goalposts, camera pan/focus rig, sequential PlayStep timeline (runPlay/cancelPlay, playGeneration guard), ball carry/arc/slide, pulse highlights, team-tinted end zones, upright yard numbers for the broadcast camera.
+- [x] Feature: [3D] PlayChoreographer — pure formation + step builder for every PlayOutcome (rush/completion/incompletion/sack/INT/fumble/TD/punt/FG/safety/kneel/spike), 3.5–6s per play, offense-perspective yardLine → world-Z mapping.
+- [x] Feature: [3D] Stylized humanoid players (legs/torso+shoulder pads/arms/head/team-colored helmet) replacing capsule blobs; run gait = face movement direction + forward lean + bob, straighten on arrival; both sides square up across the LOS on formation set. (User request: "tee pelaajista enemmän oikeamman näköisiä")
+- [x] Feature: [3D] All-22 choreography — every snap animates all 22: OL/DL engage (run surge vs pass pocket+rush), WR routes vs CB/S coverage shells, LB drops/run fits, pursuit convergence on the carrier, punt coverage lanes + return wall, FG line surge, TD celebration mob. (User request: "kaikkien pitäisi liikkua kuin oikeassa pelissä")
+- [x] Feature: [UI] CoachedGameView — scoreboard, situation chips, 52% 3D field, 2-row play feed, call panel: category tabs + play chips + AI suggestion chip + gold SNAP; defense stance panel (Balanced/Blitz/Run Stop/Prevent) stays live during opponent drives; 4th-down decision panel (Punt/FG with distance/Go For It); Spike/Kneel late-half; Skip Drive (works mid-animation); Sim to End → FINAL overlay (win/loss line) → GameSummary sheet → dashboard.
+- [x] Feature: [UI] Dashboard hero "Coach the Game" (gold, headset) + "Game Plan" secondary for the current week's unplayed game; played state shows "W/L xx–yy — advance when ready" (loss in red). OpponentPrepWeek boosts flow into the engine.
+- [x] Fix: [UI] MatchTeamColors palette + grass-contrast fallback (GB dark green → gold secondary; very-dark primaries → secondary; similar matchup colors → away swaps). Away-team abbreviation no longer hidden under the exit button.
+- [x] Fix: [UI] fullScreenCover(item:) session struct (was isPresented: + stale @State = black screen).
+- [x] Verified: away game (@ DET) start→final, presser fires with correct win/loss context after pre-played week, Advance to Week N works, owner/morale/legacy impacts land.
+
+### Open polish (round 4 candidates)
+- [ ] Balance: [CoachSim] One sim-to-end produced GB 60–21 / 833 total yards (later game was a realistic 15–33); audit whether audible/defRead + OpponentPrepWeek boosts stack too hard in LiveGameEngine.simToEnd, and cap per-game scoring drift.
+- [ ] UX: [CoachUI] Skip Drive button occupies the same screen area as the "Special" category tab — when the opponent drive ends naturally right before the tap, the tap lands on the tab row. Debounce panel swaps (~300ms) or move Skip Drive out of the tab row's footprint.
+- [ ] UX: [CoachUI] Category tab stays where the user left it when a new AI suggestion is preselected from another category (selection + SNAP stay correct; only the visible tab can point elsewhere). Consider snapping the tab to the suggestion's category on preselect... already done in proceed(); repro only via stray tab tap — low priority.
+- [x] Polish: [3D] Kick/punt ball spiral/tumble (DONE R6/R10 — ball stripes + pass spiral + kick tumble). Still open: slight shadow blob under the pass arc for depth reading.
+- [x] Polish: [3D] TD celebration camera push-in + confetti (DONE R10).
+- [ ] Perf: [3D] 22 humanoids × ~8 geometries each — fine on M-series simulator; profile on device, consider flattenedClone if needed.
+
+## Round 4: Coach Mode — matchups, playbooks, X&O art, NFL look (2026-07-09, user request: "coachi näkee miten pelaajat pärjäävät toisiaan vastaan, pelikirjapohjaiset pelit, X&O-kuviot, NFL-näköiset pelaajat")
+
+### Shipped (verified in simulator, GB vs CHI week 6)
+- [x] Feature: [Engine] MatchupResolver (Engine/Match/MatchupResolver.swift) — attributes every resolved play to named player-vs-player battles, rating-weighted so stars win more reps: sack → "X beats Y around the edge/up the middle" (+ credited rusher role for the 3D pocket collapse), completion → WR-vs-CB separation (0.4 blanket … 4yd wide open, drives how far the corner trails at the catch), incompletion → coverage-win callout, run → hole size drives the DL surge (blown back vs penetration) + credited stuffer, INT → credited ball-hawk. keyOffense/DefensePlayerID added to PlayResult (set by PlaySimulator) so the field, feed, and callouts reference the SAME player.
+- [x] Feature: [Engine] Scheme-familiarity busts — a player under 45% familiarity (or a call outside the installed playbook) can bust an assignment; surfaced as a purple-book callout ("C. Coleman cuts the route short — still learning the playbook", "X blows the assignment — the gap never opens"). VERIFIED live with feed-consistent naming.
+- [x] Feature: [Engine] FieldUnit — role-ordered 11 starters per side (best-by-position), stable pseudo jersey numbers from UUID in position-correct ranges (QB 1-19, RB 20-49, OL 60-79, DL 90-99…); the 3D field now shows the real starters and the sim's INT defender pick is weighted to ball-hawking starters (was randomElement over the whole roster).
+- [x] Feature: [UI] Matchup callout capsules over the field (green sword = your rep won, red = lost, purple book = scheme bust, gold star = star play) + winner pulse on the 3D figure; auto-dismiss 3.4s.
+- [x] Feature: [UI] Playbook-driven call sheet — header "WEST COAST PLAYBOOK · 32% LEARNED" (scheme from OC + avg starter familiarity), plays tagged per scheme (OffensivePlayCall.schemes), out-of-playbook plays dimmed with a book icon and raise bust risk, AI suggestion constrained to installed plays. Defense panel titled by scheme ("HYBRID DEFENSE · STANCE") and presets flavored by scheme (Press Man blitzes out of man/DB pressure, Tampa 2 sits in two-deep…).
+- [x] Feature: [UI] X&O chalkboard diagrams (UI/Match/PlayDiagramView.swift) — per-play route art (gold primary route + arrowheads, dashed gray secondaries, O-line dots) shown for the selected play next to the chips; defensive stance drawn as X's + translucent zone shells / man lines / red blitz arrows next to the stance buttons.
+- [x] Feature: [3D] NFL uniform conventions — home wears team color + white pants, road team white jersey + team-color pants/helmet (instant contrast on grass); helmets + gray facemasks; 4 deterministic skin tones. Verified close-up: figures read as padded football players from broadcast height.
+- [x] Fix: [Dashboard] Bye-week hero state — "Week 4 · Bye Week" + "Bye — next up vs CHI (Home) in Week 6" (was showing the next opponent's title with a bogus "Game played" line). Schedule has GB byes at weeks 4-5 — verify schedule generator produces exactly one bye per team (pre-existing issue, logged below).
+- [x] Fix: [Choreography] QB scrambles now animate the QB keeping the ball (was always handing to the RB); pocket-collapse speed scales sack timing; completion ball goes to the sim's actual target when he's on the field.
+
+### Open polish (round 5 candidates)
+- [ ] Bug?: [Schedule] GB has no games in weeks 4 AND 5 (two byes) — verify schedule generator; teams should get exactly one bye.
+- [ ] Polish: [CoachSim] Pass targets can be bench receivers not on the 3D field (callouts are guarded, but the ball animates to a different player's node than the feed names). Consider weighting sim receiver selection to the on-field 11 (stat-distribution impact needs a look).
+- [ ] Polish: [CoachUI] Matchup callouts could also land in the play feed history (currently transient capsules only).
+- [x] Polish: [3D] Lineman stances (R6), kick spiral (R6), TD camera push-in (R10) — all done.
+
+## Round 5: Coach Mode — smoothness, Madden-98 look, call-driven formations, clipboard call sheets (2026-07-09, user requests: "smoothimpaa, ei töksähtelyä", "Madden 1998 -tyyli kauempaa", "puolustukseen enemmän pelejä", "pelit vaikuttavat formaatioihin", "clipboard-kortit kuvauksineen, enemmän pelejä per section")
+
+### Shipped (verified in simulator)
+- [x] Fix: [3D/Perf] Play-step movement no longer eases in/out at EVERY step boundary — playMove actions are linear so velocity stays continuous across chained steps (formation moves keep easing). This was the primary töksähtely.
+- [x] Feature: [3D] Madden-98 framing — camera raised/pulled back (y46, z-36, ~45yd visible), player figures scaled 1.18 chunky, floating numbers enlarged, mowing stripes every 5yd, raked grandstands on all four sides with a procedural crowd-speck texture (no assets).
+- [x] Feature: [Choreography] Formations are CALL-DRIVEN both ways: offense aligns per play (I-form under center for Inside Run/Sneak, offset back for Outside Run, deep gun for Draw/Screen, spread wide splits for deep shots, victory formation for kneels) and defense shows its call (nickel walks a backer over the slot, dime two out, goal-line squeeze, press-man corners on the line, cover-2/4 safety shells, blitz creep for LB/DB/all-out). Verified live: QB under center + lone deep back on Inside Run.
+- [x] Feature: [UI] Live pre-snap preview — browsing the call sheet realigns the 3D formation immediately (onChange selectedCall / defCall); the play then runs from that same look (call+package threaded into preSnapStep/steps/Context).
+- [x] Feature: [UI] Defensive call sheet: 10 named calls (Cover 3 / Cover 2 Shell / Quarters / Man Press / LB Blitz / Zone Blitz / Corner Blitz / All-Out Blitz / Goal Line / Dime Prevent) as clipboard cards with X&O diagram + blurb, scheme-tagged with installed-first ordering and book-icon dimming; replaces the old 4-preset row. AI defense also plays real packages vs the user (engine.aiDefensivePackage per situation).
+- [x] Feature: [UI] Offense call sheet as clipboard cards — every play card carries its chalkboard diagram, name, badges (brain/check/book) and a one-line coach blurb; 5-column grid per category tab.
+- [x] Feature: [Content] 6 new offensive plays (Counter, Toss Sweep, Hitch, TE Seam, Deep Cross, Flood) with hints, scheme tags, diagrams, blurbs — sections now hold 5-6 plays each; PlayCallView hints unified to OffensivePlayCall.blurb.
+- [x] Fix: [CoachSim] FieldUnit RB pick mirrors PlaySimulator.findRB (RB first, FB fallback) — carrier on the field now always matches the play-feed name (was: FB with higher OVR hijacked the node while the feed named the RB).
+- [x] Fix: [UI] Stable playbook-first card ordering (partition instead of non-strict sort predicate).
+
+### Open polish (round 6 candidates)
+- [x] Polish: [3D] Stands removed entirely in R6 per user feedback (apron walls replaced them in R9) — obsolete.
+- [ ] Polish: [CoachUI] Defense card grid: 10 cards in a 5-col grid needs a scroll on smaller heights — consider 2 rows fixed.
+- [ ] Polish: [Choreography] Route art vs actual on-field routes still generic per depth — could read the diagram geometry to drive receiver paths 1:1.
+
+## Round 6: Coach Mode — Madden 98 graphics leap (2026-07-09, user: "grafiikka ei vastaa Madden 98 -tasoa, enemmän ja parempi 3D" + reference screenshot + "katsomot turhat, kauempaa kuvattuna")
+
+### Shipped (verified: full game played GB 9–6 CHI)
+- [x] Feature: [3D] Articulated run cycle — legs/arms are hip/shoulder-hinged nodes that scissor while a player moves (opposite-phase swings, neutral return); combined with the bob+lean this finally reads as RUNNING, not sliding.
+- [x] Feature: [3D] Lineman stances — OL + DL drop into a crouched 3-point lean when the formation settles (choreographer exposes stanceCrouchIndices; formation moves carry crouch sets).
+- [x] Feature: [3D] Madden-98 camera: LOW behind the offense (y21, z-24, FOV 52) looking downfield — players big in the foreground, whole field visible to the far end zone, slightly farther than the PSX reference per user.
+- [x] Feature: [3D] Speckled procedural turf texture (dark 4-tone noise, tiled), darker end zones/border, mow stripes as subtle translucent bands, distance fog so the far field falls into the night.
+- [x] Feature: [3D] Field dressing: end zone wordmarks (CHI/GB), muted midfield logo disc, broadcast-yellow first-down line + blue LOS line (live-updated per situation incl. goal-to-go hiding), orange pylons.
+- [x] Feature: [3D] Ball: bigger, white stripes, pass spiral / kick tumble rotation, orientation reset on landing.
+- [x] Feature: [3D] Blob shadows under every player (PSX-style drop shadow anchor).
+- [x] Feature: [UI] Field expands to 68% of the screen while the play is live (no more dead spinner panel), shrinks back for the call sheet.
+- [x] Removed: stadium stands (user: turhat) — replaced by clean dark surround + fog. (Round-6a stands attempt left floating boxes in the camera path; removed entirely.)
+
+### Self-analysis — what could STILL look better (round 7 candidates)
+- [x] 3D: Tackle falls (DONE R7).
+- [x] 3D: Ball-carry arm tuck (R7) + catch reach (R9) — done.
+- [x] 3D: Two-segment limbs with knee/elbow bend (DONE R8).
+- [x] 3D: Follow-cam on long gains (DONE R7).
+- [x] 3D: Apron walls with white lips (DONE R9).
+- [x] UI: Callouts lifted clear of the broadcast plate (DONE R9).
+
+## Rounds 7–10: Coach Mode — tackles, poses, follow-cam, joints, broadcast layer (2026-07-09, user: "Toteuta R7 ja R8-R10")
+
+### Shipped (verified in simulator: GB 21–3 MIN, week 7)
+- [x] R7 Feature: [3D] Tackle falls — carrier and tackler rotate to the turf on the tackle step (staggered), lie for a beat and get up; sacks bury the QB under the rusher. VERIFIED: Dixon horizontal on the turf under three defenders after a 45-yard run.
+- [x] R7 Feature: [3D] Ball-carry pose — the ball rides tucked under the carrier's left arm (elbow flexed, no pumping) instead of floating at the chest; releases on detach.
+- [x] R7 Feature: [3D] Follow camera — when a carry or pass arc moves >11yd past the current focus, the camera pans downfield with it. VERIFIED: 45-yard breakaway tracked to the MIN 30.
+- [x] R8 Feature: [3D] Two-segment limbs — thigh+shin hinged at hip and knee, upper arm+forearm hinged at shoulder and elbow; knees/elbows bend during the run cycle and release at rest. Forearms in skin tone read as jersey sleeves.
+- [x] R9 Feature: [3D] Catch reach — the target (and pick-jumping DB) throws both arms up as the ball arrives; incompletions show the lunge.
+- [x] R9 Feature: [3D] Apron walls with white lips on the sidelines + far end zone finish the frame without stands; matchup callouts lifted clear of the broadcast plate.
+- [x] R10 Feature: [UI] Retro broadcast plate — "2ND & 10" in black/red-trim monospace flashes at every snap, Madden-98 style. VERIFIED on-field.
+- [x] R10 Feature: [3D] Touchdown presentation — camera pushes to the end zone and a 42-piece gold/white/team-color confetti burst tumbles over it (deterministic, no particle assets).
+- [x] Field dressing adapts per opponent (purple MIN end zone + wordmark at week 7 after red CHI at week 6).
+
+### Open polish (round 11 candidates)
+- [ ] 3D: Pile-up on tackles — bring 1-2 pursuit defenders into the fall for gang-tackle reads.
+- [ ] 3D: QB throwing motion (arm cock + release timed to the arc start).
+- [ ] 3D: Kick meter / FG camera behind the posts.
+- [ ] UI: Broadcast plate could carry the play call name ("2ND & 10 · DIG").

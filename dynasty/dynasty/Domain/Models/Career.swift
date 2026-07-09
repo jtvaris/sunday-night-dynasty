@@ -39,6 +39,18 @@ final class Career {
     /// Season goals set by the owner during the intro sequence (or generated later).
     var seasonGoals: SeasonGoals?
 
+    // MARK: - Depth Chart
+    /// JSON-encoded `DepthChart` saved whenever the user edits or confirms the
+    /// depth chart. `nil` until the user has set a chart at least once — the
+    /// "Set depth chart" required task keys off this.
+    var depthChartData: Data? = nil
+
+    // MARK: - Game Plan
+    /// JSON-encoded `GamePlan` saved whenever the user adjusts the Game Plan
+    /// sliders or applies a preset. `nil` until the user has touched the plan
+    /// at least once. Optional new attribute → safe lightweight migration.
+    var gamePlanData: Data? = nil
+
     // MARK: - Free Agency State
     /// Current FA round: 0 = pre-FA, 1-6 = rounds (Day 1-3, Week 2-4).
     var freeAgencyRound: Int = 0
@@ -101,5 +113,33 @@ final class Career {
         self.legacy = LegacyTracker()
         self.coachingTree = CoachingTreeData()
         self.hcGMRelationship = CoachRelationshipEngine.HCGMRelationship()
+    }
+}
+
+// MARK: - Game Plan Codable Bridge
+
+extension Career {
+
+    /// The user's saved game plan, JSON-decoded from `gamePlanData`.
+    /// Reading falls back to `.balanced` when nothing has been saved yet;
+    /// writing encodes and stores the new plan (caller saves the context).
+    var gamePlan: GamePlan {
+        get {
+            guard let data = gamePlanData,
+                  let plan = try? JSONDecoder().decode(GamePlan.self, from: data) else {
+                return .balanced
+            }
+            return plan
+        }
+        set {
+            gamePlanData = try? JSONEncoder().encode(newValue)
+        }
+    }
+
+    /// The saved plan, or `nil` when the user has never set one. Simulation
+    /// call sites use this so an untouched career keeps today's exact AI
+    /// play-calling behavior (`nil` game plan = no bias).
+    var savedGamePlan: GamePlan? {
+        gamePlanData == nil ? nil : gamePlan
     }
 }

@@ -239,7 +239,21 @@ struct DepthChart: Codable {
     // MARK: - Mutations (Slot-Based)
 
     /// Assigns a player to a specific depth index in the given slot.
+    ///
+    /// A player may hold a returner slot (KR/PR) in addition to a position
+    /// slot, but never two position slots at once — assigning to a position
+    /// slot removes the player from every other non-returner slot first.
     mutating func assign(slot: DepthChartSlot, playerID: UUID, at index: Int) {
+        if !slot.acceptsAnyPosition {
+            for other in DepthChartSlot.allCases
+            where other != slot && !other.acceptsAnyPosition {
+                if var otherList = storage[other.rawValue], otherList.contains(playerID) {
+                    otherList.removeAll { $0 == playerID }
+                    storage[other.rawValue] = otherList
+                }
+            }
+        }
+
         var list = storage[slot.rawValue] ?? []
         // Remove from this slot if already present
         list.removeAll { $0 == playerID }

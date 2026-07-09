@@ -73,13 +73,23 @@ struct TrainingPlanView: View {
                 .disabled(didSave)
             }
         }
+        .onAppear(perform: loadExistingPlan)
     }
 
     // MARK: - Subviews
 
+    /// "Week 0" reads like a bug during the offseason — use the phase name
+    /// until the regular season gives weeks real meaning.
+    private var headerTitle: String {
+        if career.currentPhase == .regularSeason || career.currentPhase == .playoffs {
+            return "Week \(max(1, career.currentWeek)) Focus"
+        }
+        return "\(career.currentPhase.displayName) Focus"
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
-            SectionHeaderText(title: "Week \(career.currentWeek) Focus")
+            SectionHeaderText(title: headerTitle)
             Text("Distribute 100 points across the three focus areas. The split steers per-player attribute deltas this week.")
                 .font(.footnote)
                 .foregroundStyle(Color.textSecondary)
@@ -283,9 +293,10 @@ struct TrainingPlanView: View {
     }
 
     private func injuryRiskLabel(for player: Player) -> String {
-        let basePct = 4
-        let risk = Int(Double(basePct) * player.workloadStatus.injuryMultiplier)
-        return "\(risk)% inj"
+        // Use the real engine formula (durability + workload status) instead
+        // of a flat base — otherwise every player reads an identical "4% inj".
+        let risk = WorkloadEngine.injuryRiskPct(player: player, baseRisk: 0.04)
+        return "\(Int(risk.rounded()))% inj"
     }
 
     private func applyPreset(_ preset: Preset) {
@@ -378,18 +389,52 @@ struct TrainingPlanView: View {
 
     // MARK: - Persistence
 
+    /// Fetches the already-saved plan for the current (team, season, week,
+    /// phase) key, if any. Shared by load-back and upsert-save.
+    private func fetchExistingPlan() -> TrainingPlan? {
+        guard let teamID = career.teamID else { return nil }
+        let season = career.currentSeason
+        let week = career.currentWeek
+        let phaseRaw = career.currentPhase.rawValue
+        let descriptor = FetchDescriptor<TrainingPlan>(
+            predicate: #Predicate {
+                $0.teamID == teamID
+                    && $0.seasonYear == season
+                    && $0.weekNumber == week
+                    && $0.phaseRaw == phaseRaw
+            }
+        )
+        return (try? modelContext.fetch(descriptor))?.first
+    }
+
+    /// Seeds the sliders from the saved plan so the editor reflects what the
+    /// engine will actually use (instead of always resetting to 34/33/33).
+    private func loadExistingPlan() {
+        guard let existing = fetchExistingPlan() else { return }
+        tacticalPct = existing.tacticalPct
+        physicalPct = existing.physicalPct
+        technicalPct = existing.technicalPct
+        didSave = true
+    }
+
     private func save() {
         guard let teamID = career.teamID else { return }
-        let plan = TrainingPlan(
-            seasonYear: career.currentSeason,
-            weekNumber: career.currentWeek,
-            phaseRaw: career.currentPhase.rawValue,
-            tacticalPct: tacticalPct,
-            physicalPct: physicalPct,
-            technicalPct: technicalPct,
-            teamID: teamID
-        )
-        modelContext.insert(plan)
+        if let existing = fetchExistingPlan() {
+            existing.tacticalPct = tacticalPct
+            existing.physicalPct = physicalPct
+            existing.technicalPct = technicalPct
+        } else {
+            let plan = TrainingPlan(
+                seasonYear: career.currentSeason,
+                weekNumber: career.currentWeek,
+                phaseRaw: career.currentPhase.rawValue,
+                tacticalPct: tacticalPct,
+                physicalPct: physicalPct,
+                technicalPct: technicalPct,
+                teamID: teamID
+            )
+            modelContext.insert(plan)
+        }
         try? modelContext.save()
         didSave = true
     }

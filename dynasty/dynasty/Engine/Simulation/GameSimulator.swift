@@ -19,16 +19,17 @@ enum GameSimulator {
 
     // MARK: - Constants
 
-    private static let quarterDuration = 900   // 15 minutes in seconds
+    // Internal (not private) constants are shared with `LiveGameEngine`.
+    static let quarterDuration = 900   // 15 minutes in seconds
     private static let totalRegulationQuarters = 4
-    private static let overtimeQuarter = 5
-    private static let overtimeDuration = 600  // 10 minutes
-    private static let touchbackYardLine = 25
+    static let overtimeQuarter = 5
+    static let overtimeDuration = 600  // 10 minutes
+    static let touchbackYardLine = 25
     private static let averagePuntDistance = 40
     private static let twoMinuteWarning = 120
 
     // Momentum constants
-    private static let homeFieldMomentum: Double = 0.1
+    static let homeFieldMomentum: Double = 0.1
     private static let momentumDecayRate: Double = 0.10
     private static let momentumTD: Double = 0.15
     private static let momentumTurnover: Double = 0.20
@@ -36,8 +37,8 @@ enum GameSimulator {
     private static let momentumSack: Double = 0.05
 
     // Fatigue constants
-    private static let fatiguePerDriveStarter: Int = 3
-    private static let fatigueRecoveryBench: Int = 2
+    static let fatiguePerDriveStarter: Int = 3
+    static let fatigueRecoveryBench: Int = 2
     private static let halftimeFatigueReduction: Double = 0.30
 
     // Morale constants
@@ -61,6 +62,11 @@ enum GameSimulator {
     ///     (applied as opponent-score dampener).
     ///   - boostedTeamID: The UUID of the team receiving the boost (typically the user's team).
     ///     Pass `nil` to disable boosts entirely.
+    ///   - homeGamePlan: Optional coaching game plan applied to the HOME team's
+    ///     offensive play-calling (run/pass mix, 4th-down aggressiveness).
+    ///     `nil` = today's exact AI behavior. Typically only the user's team
+    ///     gets a non-nil plan.
+    ///   - awayGamePlan: Same, for the AWAY team.
     static func simulate(
         homeTeam: Team,
         awayTeam: Team,
@@ -68,13 +74,24 @@ enum GameSimulator {
         awayCoaches: [Coach] = [],
         audibleBoost: Double = 0,
         defReadBoost: Double = 0,
-        boostedTeamID: UUID? = nil
+        boostedTeamID: UUID? = nil,
+        homeGamePlan: GamePlan? = nil,
+        awayGamePlan: GamePlan? = nil
     ) -> GameResult {
         // -----------------------------------------------------------------
         // 1. Setup
         // -----------------------------------------------------------------
-        let homePlayers = homeTeam.players
-        let awayPlayers = awayTeam.players
+        // Snapshot both rosters into value types once. The play-by-play loop
+        // reads attributes thousands of times, and every read of a SwiftData
+        // @Model property is far too slow for that hot path. The live models
+        // are kept in a lookup so fatigue can be written back after the sim.
+        let homeRoster = homeTeam.players
+        let awayRoster = awayTeam.players
+        var homePlayers = homeRoster.map(SimPlayer.init(from:))
+        var awayPlayers = awayRoster.map(SimPlayer.init(from:))
+        var livePlayerByID: [UUID: Player] = [:]
+        for player in homeRoster { livePlayerByID[player.id] = player }
+        for player in awayRoster { livePlayerByID[player.id] = player }
 
         // Extract team schemes from coaching staff
         let homeOC = homeCoaches.first { $0.role == .offensiveCoordinator }
@@ -120,15 +137,15 @@ enum GameSimulator {
         while quarter <= totalRegulationQuarters {
             driveNumber += 1
 
+            // Apply morale / personality modifiers before the drive.
+            // Mutating the snapshots (rather than the live @Model players, as the
+            // old code did) also fixes a latent bug where these "transient"
+            // modifiers permanently degraded the live models across games.
+            applyMoraleModifiers(players: &homePlayers, quarter: quarter)
+            applyMoraleModifiers(players: &awayPlayers, quarter: quarter)
+
             let offensePlayers = homeHasPossession ? homePlayers : awayPlayers
             let defensePlayers = homeHasPossession ? awayPlayers : homePlayers
-
-            // Apply morale / personality modifiers before the drive
-            applyMoraleModifiers(
-                offensePlayers: offensePlayers,
-                defensePlayers: defensePlayers,
-                quarter: quarter
-            )
 
             // Simulate the drive via DriveSimulator (created in parallel)
             let offenseTeamID = homeHasPossession ? homeTeam.id : awayTeam.id
@@ -142,7 +159,8 @@ enum GameSimulator {
                 momentum: homeHasPossession ? momentum : -momentum,
                 teamID: offenseTeamID,
                 offensiveScheme: homeHasPossession ? homeOffScheme : awayOffScheme,
-                defensiveScheme: homeHasPossession ? awayDefScheme : homeDefScheme
+                defensiveScheme: homeHasPossession ? awayDefScheme : homeDefScheme,
+                gamePlan: homeHasPossession ? homeGamePlan : awayGamePlan
             )
 
             let drive = driveResult.drive
@@ -213,19 +231,28 @@ enum GameSimulator {
             // -----------------------------------------------------------------
             // Fatigue
             // -----------------------------------------------------------------
-            applyFatigue(
-                starters: offensePlayers,
-                bench: defensePlayers,
-                fatigueIncrease: fatiguePerDriveStarter,
-                fatigueRecovery: fatigueRecoveryBench
-            )
+            if homeHasPossession {
+                applyFatigue(
+                    starters: &homePlayers,
+                    bench: &awayPlayers,
+                    fatigueIncrease: fatiguePerDriveStarter,
+                    fatigueRecovery: fatigueRecoveryBench
+                )
+            } else {
+                applyFatigue(
+                    starters: &awayPlayers,
+                    bench: &homePlayers,
+                    fatigueIncrease: fatiguePerDriveStarter,
+                    fatigueRecovery: fatigueRecoveryBench
+                )
+            }
 
             // -----------------------------------------------------------------
             // Halftime recovery between Q2 and Q3
             // -----------------------------------------------------------------
             if quarter == 3 && allDrives.last?.plays.last.map({ $0.quarter <= 2 }) == true {
-                applyHalftimeRecovery(players: homePlayers)
-                applyHalftimeRecovery(players: awayPlayers)
+                applyHalftimeRecovery(players: &homePlayers)
+                applyHalftimeRecovery(players: &awayPlayers)
                 // Home team receives second-half kickoff
                 homeHasPossession = true
                 startingYardLine = touchbackYardLine
@@ -245,14 +272,15 @@ enum GameSimulator {
             // -----------------------------------------------------------------
             // Quarter management & two-minute warning
             // -----------------------------------------------------------------
-            if timeRemaining <= 0 && quarter < totalRegulationQuarters {
+            if timeRemaining <= 0 {
+                // Q4 expiry must break here: quarter never exceeds
+                // totalRegulationQuarters, so a `quarter > total` check can
+                // never fire and the loop would spin on zero-length drives.
+                if quarter >= totalRegulationQuarters {
+                    break
+                }
                 quarter += 1
                 timeRemaining = quarterDuration
-            }
-
-            // End regulation if time expired in Q4
-            if quarter > totalRegulationQuarters {
-                break
             }
         }
 
@@ -280,7 +308,9 @@ enum GameSimulator {
                 homeOffScheme: homeOffScheme,
                 homeDefScheme: homeDefScheme,
                 awayOffScheme: awayOffScheme,
-                awayDefScheme: awayDefScheme
+                awayDefScheme: awayDefScheme,
+                homeGamePlan: homeGamePlan,
+                awayGamePlan: awayGamePlan
             )
             homeScore += otResult.homeOTPoints
             awayScore += otResult.awayOTPoints
@@ -312,31 +342,80 @@ enum GameSimulator {
         // -----------------------------------------------------------------
         // 7. Build Box Score & Stats
         // -----------------------------------------------------------------
+        return finalizeGameResult(
+            homeTeamID: homeTeam.id,
+            awayTeamID: awayTeam.id,
+            homeScore: homeScore,
+            awayScore: awayScore,
+            homeQuarterScores: homeQuarterScores,
+            awayQuarterScores: awayQuarterScores,
+            drives: allDrives,
+            highlights: allHighlights,
+            homeTimeOfPossession: homeTimeOfPossession,
+            awayTimeOfPossession: awayTimeOfPossession,
+            statsAccumulator: statsAccumulator,
+            homePlayers: homePlayers,
+            awayPlayers: awayPlayers,
+            livePlayerByID: livePlayerByID
+        )
+    }
+
+    // MARK: - Result Finalization
+
+    /// Assembles the final ``GameResult`` (box scores, per-player stats, MVP)
+    /// from accumulated simulation state and writes fatigue back to the live
+    /// `Player` models — the only sim-side player mutation that is meant to
+    /// persist beyond the game. Shared with `LiveGameEngine.buildResult()`.
+    static func finalizeGameResult(
+        homeTeamID: UUID,
+        awayTeamID: UUID,
+        homeScore: Int,
+        awayScore: Int,
+        homeQuarterScores: [Int],
+        awayQuarterScores: [Int],
+        drives: [DriveResult],
+        highlights: [PlayResult],
+        homeTimeOfPossession: Int,
+        awayTimeOfPossession: Int,
+        statsAccumulator: [UUID: PlayerGameStats],
+        homePlayers: [SimPlayer],
+        awayPlayers: [SimPlayer],
+        livePlayerByID: [UUID: Player]
+    ) -> GameResult {
         let homeBoxScore = buildTeamBoxScore(
-            teamID: homeTeam.id,
+            teamID: homeTeamID,
             score: homeScore,
             quarterScores: homeQuarterScores,
-            drives: allDrives.filter { driveOwner($0, homeTeam: homeTeam) },
+            drives: drives.filter { $0.teamID == homeTeamID },
             timeOfPossession: homeTimeOfPossession
         )
 
         let awayBoxScore = buildTeamBoxScore(
-            teamID: awayTeam.id,
+            teamID: awayTeamID,
             score: awayScore,
             quarterScores: awayQuarterScores,
-            drives: allDrives.filter { driveOwner($0, awayTeam: awayTeam) },
+            drives: drives.filter { $0.teamID == awayTeamID },
             timeOfPossession: awayTimeOfPossession
         )
 
         let boxScore = BoxScore(
             home: homeBoxScore,
             away: awayBoxScore,
-            drives: allDrives,
-            highlights: allHighlights
+            drives: drives,
+            highlights: highlights
         )
 
         let finalPlayerStats = Array(statsAccumulator.values)
         let mvp = determineMVP(from: finalPlayerStats)
+
+        // Write accumulated fatigue back to the live models — the only sim-side
+        // player mutation that is meant to persist beyond this game.
+        for simPlayer in homePlayers {
+            livePlayerByID[simPlayer.id]?.fatigue = simPlayer.fatigue
+        }
+        for simPlayer in awayPlayers {
+            livePlayerByID[simPlayer.id]?.fatigue = simPlayer.fatigue
+        }
 
         return GameResult(
             homeScore: homeScore,
@@ -361,8 +440,8 @@ enum GameSimulator {
     private static func simulateOvertime(
         homeTeam: Team,
         awayTeam: Team,
-        homePlayers: [Player],
-        awayPlayers: [Player],
+        homePlayers: [SimPlayer],
+        awayPlayers: [SimPlayer],
         driveNumber: inout Int,
         momentum: inout Double,
         statsAccumulator: inout [UUID: PlayerGameStats],
@@ -373,7 +452,9 @@ enum GameSimulator {
         homeOffScheme: OffensiveScheme? = nil,
         homeDefScheme: DefensiveScheme? = nil,
         awayOffScheme: OffensiveScheme? = nil,
-        awayDefScheme: DefensiveScheme? = nil
+        awayDefScheme: DefensiveScheme? = nil,
+        homeGamePlan: GamePlan? = nil,
+        awayGamePlan: GamePlan? = nil
     ) -> OvertimeResult {
         var homeOTPoints = 0
         var awayOTPoints = 0
@@ -400,7 +481,8 @@ enum GameSimulator {
                 momentum: homeHasPossession ? momentum : -momentum,
                 teamID: otOffenseTeamID,
                 offensiveScheme: homeHasPossession ? homeOffScheme : awayOffScheme,
-                defensiveScheme: homeHasPossession ? awayDefScheme : homeDefScheme
+                defensiveScheme: homeHasPossession ? awayDefScheme : homeDefScheme,
+                gamePlan: homeHasPossession ? homeGamePlan : awayGamePlan
             )
 
             let drive = driveResult.drive
@@ -497,14 +579,16 @@ enum GameSimulator {
 
     // MARK: - Possession Management
 
-    private struct NextPossession {
+    /// Next-possession descriptor. Internal because it is shared with `LiveGameEngine`.
+    struct NextPossession {
         let homeHasPossession: Bool
         let startingYardLine: Int
     }
 
     /// Determines which team gets the ball next and where on the field they
     /// start based on how the previous drive ended.
-    private static func determineNextPossession(
+    /// Internal (not private) because it is shared with `LiveGameEngine`.
+    static func determineNextPossession(
         afterDrive drive: DriveResult,
         homeHasPossession: Bool
     ) -> NextPossession {
@@ -562,7 +646,8 @@ enum GameSimulator {
 
     /// Applies momentum decay and shifts based on the outcome of the completed drive.
     /// Positive momentum favors the home team; negative favors the away team.
-    private static func updateMomentum(
+    /// Internal (not private) because it is shared with `LiveGameEngine`.
+    static func updateMomentum(
         currentMomentum: Double,
         drive: DriveResult,
         homeHasPossession: Bool
@@ -608,22 +693,22 @@ enum GameSimulator {
     /// and morale state. Mood-dependent players with low morale suffer a penalty,
     /// while clutch attributes are amplified in the fourth quarter.
     ///
-    /// - Note: These modifications are applied in-place before each drive and
-    ///   are inherently transient because ``DriveSimulator`` reads current
-    ///   attribute values at simulation time.
-    private static func applyMoraleModifiers(
-        offensePlayers: [Player],
-        defensePlayers: [Player],
+    /// - Note: These modifications mutate the ``SimPlayer`` snapshots only, so
+    ///   they are truly transient. (The pre-snapshot code mutated the live
+    ///   @Model players here, permanently degrading them across games.)
+    ///
+    /// Internal (not private) because it is shared with `LiveGameEngine`.
+    static func applyMoraleModifiers(
+        players: inout [SimPlayer],
         quarter: Int
     ) {
-        let allPlayers = offensePlayers + defensePlayers
-        for player in allPlayers {
+        for i in players.indices {
             // Mood-dependent players with low morale get a penalty
-            if player.personality.isMoodDependent && player.morale < lowMoraleThreshold {
-                let penalty = Int(Double(player.physical.speed) * moodDependentPenalty)
-                player.physical.speed = max(1, player.physical.speed - penalty)
-                player.physical.agility = max(1, player.physical.agility - penalty)
-                player.mental.awareness = max(1, player.mental.awareness - penalty)
+            if players[i].isMoodDependent && players[i].morale < lowMoraleThreshold {
+                let penalty = Int(Double(players[i].physical.speed) * moodDependentPenalty)
+                players[i].physical.speed = max(1, players[i].physical.speed - penalty)
+                players[i].physical.agility = max(1, players[i].physical.agility - penalty)
+                players[i].mental.awareness = max(1, players[i].mental.awareness - penalty)
             }
 
             // Consistent players are unaffected by morale — no modification needed
@@ -631,10 +716,10 @@ enum GameSimulator {
             // Clutch matters more in Q4 and OT
             if quarter >= 4 {
                 let clutchBonus = Int(
-                    Double(player.mental.clutch) * (clutchQ4Multiplier - 1.0) / 100.0
-                        * Double(player.physical.speed)
+                    Double(players[i].mental.clutch) * (clutchQ4Multiplier - 1.0) / 100.0
+                        * Double(players[i].physical.speed)
                 )
-                player.mental.decisionMaking = min(99, player.mental.decisionMaking + clutchBonus)
+                players[i].mental.decisionMaking = min(99, players[i].mental.decisionMaking + clutchBonus)
             }
         }
     }
@@ -643,33 +728,36 @@ enum GameSimulator {
 
     /// Increments fatigue for players who just played and slightly recovers
     /// fatigue for bench/opposing-side players.
-    private static func applyFatigue(
-        starters: [Player],
-        bench: [Player],
+    /// Internal (not private) because it is shared with `LiveGameEngine`.
+    static func applyFatigue(
+        starters: inout [SimPlayer],
+        bench: inout [SimPlayer],
         fatigueIncrease: Int,
         fatigueRecovery: Int
     ) {
-        for player in starters {
-            player.fatigue = min(100, player.fatigue + fatigueIncrease)
+        for i in starters.indices {
+            starters[i].fatigue = min(100, starters[i].fatigue + fatigueIncrease)
         }
-        for player in bench {
-            player.fatigue = max(0, player.fatigue - fatigueRecovery)
+        for i in bench.indices {
+            bench[i].fatigue = max(0, bench[i].fatigue - fatigueRecovery)
         }
     }
 
     /// Reduces fatigue by 30% for all players during halftime.
-    private static func applyHalftimeRecovery(players: [Player]) {
-        for player in players {
-            let reduction = Int(Double(player.fatigue) * halftimeFatigueReduction)
-            player.fatigue = max(0, player.fatigue - reduction)
+    /// Internal (not private) because it is shared with `LiveGameEngine`.
+    static func applyHalftimeRecovery(players: inout [SimPlayer]) {
+        for i in players.indices {
+            let reduction = Int(Double(players[i].fatigue) * halftimeFatigueReduction)
+            players[i].fatigue = max(0, players[i].fatigue - reduction)
         }
     }
 
     // MARK: - Stats Initialization
 
     /// Seeds the accumulator dictionary with zeroed-out stats for every player.
-    private static func initializeStats(
-        for players: [Player],
+    /// Internal (not private) because it is shared with `LiveGameEngine`.
+    static func initializeStats(
+        for players: [SimPlayer],
         into accumulator: inout [UUID: PlayerGameStats]
     ) {
         for player in players {
@@ -685,10 +773,11 @@ enum GameSimulator {
 
     /// Iterates over every play in a completed drive and credits the appropriate
     /// offensive and defensive players with the corresponding statistics.
-    private static func accumulateStats(
+    /// Internal (not private) because it is shared with `LiveGameEngine`.
+    static func accumulateStats(
         from drive: DriveResult,
-        offensePlayers: [Player],
-        defensePlayers: [Player],
+        offensePlayers: [SimPlayer],
+        defensePlayers: [SimPlayer],
         into accumulator: inout [UUID: PlayerGameStats]
     ) {
         let qb = offensePlayers.first { $0.position == .QB }
@@ -815,7 +904,7 @@ enum GameSimulator {
 
     /// Selects a player from the array with slight randomness so that touches
     /// are distributed realistically rather than always going to the first player.
-    private static func pickWeightedPlayer(from players: [Player]) -> Player? {
+    private static func pickWeightedPlayer(from players: [SimPlayer]) -> SimPlayer? {
         guard !players.isEmpty else { return nil }
         // Weight by overall rating with randomness
         let weights = players.map { Double($0.overall) + Double.random(in: 0...20) }
@@ -834,16 +923,6 @@ enum GameSimulator {
     }
 
     // MARK: - Box Score Building
-
-    /// Checks whether a drive belongs to a given team based on the teamID.
-    private static func driveOwner(_ drive: DriveResult, homeTeam: Team) -> Bool {
-        drive.teamID == homeTeam.id
-    }
-
-    /// Overload for filtering away-team drives.
-    private static func driveOwner(_ drive: DriveResult, awayTeam: Team) -> Bool {
-        drive.teamID == awayTeam.id
-    }
 
     /// Compiles a ``TeamBoxScore`` from the raw drive and play data for one team.
     private static func buildTeamBoxScore(

@@ -133,4 +133,11 @@ enum VersatilityDevelopmentEngine {
         let familiarity = Double(player.schemeFam(for: scheme))
         return 0.70 + (familiarity / 100.0) * 0.30
     }
+
+    /// SimPlayer overload used by the game-simulation hot path, where reading
+    /// the SwiftData @Model per play is too slow.
+    static func schemePerformanceModifier(player: SimPlayer, scheme: String) -> Double {
+        let familiarity = Double(player.schemeFam(for: scheme))
+        return 0.70 + (familiarity / 100.0) * 0.30
+    }
 }

@@ -14,18 +14,23 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
     // Run
     case insideRun   = "Inside Run"
     case outsideRun  = "Outside Run"
+    case counter     = "Counter"
+    case toss        = "Toss Sweep"
     case draw        = "Draw"
     case screen      = "Screen"
 
     // Short Pass (0-10 yards)
     case slant       = "Slant"
     case quickOut    = "Quick Out"
+    case hitch       = "Hitch"
     case flat        = "Flat"
     case drag        = "Drag"
 
     // Medium Pass (11-20 yards)
     case curl        = "Curl"
     case dig         = "Dig"
+    case seam        = "TE Seam"
+    case cross       = "Deep Cross"
     case postCorner  = "Post Corner"
     case comeback    = "Comeback"
 
@@ -33,6 +38,7 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
     case goRoute     = "Go Route"
     case post        = "Post"
     case corner      = "Corner"
+    case flood       = "Flood"
     case bomb        = "Bomb"
 
     // Special
@@ -45,16 +51,47 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
     /// The display category label shown in `PlayCallView`.
     var category: String {
         switch self {
-        case .insideRun, .outsideRun, .draw, .screen:
+        case .insideRun, .outsideRun, .counter, .toss, .draw, .screen:
             return "Run"
-        case .slant, .quickOut, .flat, .drag:
+        case .slant, .quickOut, .hitch, .flat, .drag:
             return "Short Pass"
-        case .curl, .dig, .postCorner, .comeback:
+        case .curl, .dig, .seam, .cross, .postCorner, .comeback:
             return "Medium Pass"
-        case .goRoute, .post, .corner, .bomb:
+        case .goRoute, .post, .corner, .flood, .bomb:
             return "Deep Pass"
         case .qbSneak, .spike, .kneel:
             return "Special"
+        }
+    }
+
+    /// One-line coach-speak description shown under the play card.
+    var blurb: String {
+        switch self {
+        case .insideRun:  return "Downhill between the tackles."
+        case .outsideRun: return "Stretch the edge, cut upfield."
+        case .counter:    return "Misdirection — guard pulls, back cuts back."
+        case .toss:       return "Pitch wide and win with speed."
+        case .draw:       return "Sell the pass, delayed handoff inside."
+        case .screen:     return "Invite the rush, dump it to the back."
+        case .slant:      return "Quick in-cut behind the blitz."
+        case .quickOut:   return "Three-step timing to the sideline."
+        case .hitch:      return "Catch and turn at five yards."
+        case .flat:       return "Safety valve to the back in the flat."
+        case .drag:       return "Shallow cross under the coverage."
+        case .curl:       return "Break back to the ball at twelve."
+        case .dig:        return "Square-in behind the linebackers."
+        case .seam:       return "Tight end splits the safeties."
+        case .cross:      return "Deep crosser beats man coverage."
+        case .postCorner: return "Double move, break to the pylon."
+        case .comeback:   return "Sell vertical, snap back to the boundary."
+        case .goRoute:    return "Straight vertical — take the top off."
+        case .post:       return "Break inside behind the safety."
+        case .corner:     return "Angle to the flag, away from help."
+        case .flood:      return "Three levels flood one sideline."
+        case .bomb:       return "Max protect and let it fly."
+        case .qbSneak:    return "Surge behind center for the yard."
+        case .spike:      return "Kill the clock."
+        case .kneel:      return "Victory formation."
         }
     }
 
@@ -62,16 +99,16 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
 
     var isRun: Bool {
         switch self {
-        case .insideRun, .outsideRun, .draw, .screen, .qbSneak: return true
+        case .insideRun, .outsideRun, .counter, .toss, .draw, .screen, .qbSneak: return true
         default: return false
         }
     }
 
     var isPass: Bool {
         switch self {
-        case .slant, .quickOut, .flat, .drag,
-             .curl, .dig, .postCorner, .comeback,
-             .goRoute, .post, .corner, .bomb:
+        case .slant, .quickOut, .hitch, .flat, .drag,
+             .curl, .dig, .seam, .cross, .postCorner, .comeback,
+             .goRoute, .post, .corner, .flood, .bomb:
             return true
         default: return false
         }
@@ -82,6 +119,46 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
         case .spike, .kneel: return true
         default: return false
         }
+    }
+
+    // MARK: Playbook Membership
+
+    /// The offensive schemes whose playbook installs this play. A team's
+    /// call sheet highlights plays from its coordinator's scheme; calling
+    /// outside the installed playbook raises the busted-assignment risk
+    /// (see `MatchupResolver.bustRoll`).
+    var schemes: [OffensiveScheme] {
+        switch self {
+        case .insideRun:  return [.powerRun, .shanahan, .rpo, .option, .proPassing, .spread]
+        case .outsideRun: return [.shanahan, .option, .spread, .powerRun, .rpo]
+        case .counter:    return [.powerRun, .shanahan, .option, .proPassing]
+        case .toss:       return [.powerRun, .option, .shanahan, .spread]
+        case .draw:       return [.powerRun, .proPassing, .spread, .rpo]
+        case .screen:     return [.westCoast, .airRaid, .shanahan, .proPassing, .spread]
+        case .slant:      return [.westCoast, .spread, .rpo, .proPassing, .airRaid]
+        case .quickOut:   return [.westCoast, .airRaid, .rpo, .spread]
+        case .hitch:      return [.westCoast, .airRaid, .proPassing, .rpo, .spread]
+        case .flat:       return [.westCoast, .shanahan, .powerRun, .option]
+        case .drag:       return [.westCoast, .spread, .rpo, .shanahan, .option]
+        case .curl:       return [.westCoast, .proPassing, .airRaid]
+        case .dig:        return [.airRaid, .proPassing, .spread, .westCoast, .shanahan]
+        case .seam:       return [.airRaid, .spread, .rpo, .westCoast, .proPassing]
+        case .cross:      return [.shanahan, .westCoast, .airRaid, .proPassing]
+        case .postCorner: return [.airRaid, .proPassing, .powerRun]
+        case .comeback:   return [.proPassing, .westCoast, .powerRun]
+        case .goRoute:    return [.airRaid, .spread, .proPassing, .option]
+        case .post:       return [.airRaid, .proPassing, .spread, .rpo, .shanahan]
+        case .corner:     return [.airRaid, .shanahan, .proPassing]
+        case .flood:      return [.shanahan, .airRaid, .proPassing, .westCoast]
+        case .bomb:       return [.airRaid, .spread]
+        case .qbSneak, .spike, .kneel: return OffensiveScheme.allCases
+        }
+    }
+
+    /// Whether this play is part of the given scheme's installed playbook.
+    func isInPlaybook(of scheme: OffensiveScheme?) -> Bool {
+        guard let scheme else { return true }
+        return schemes.contains(scheme)
     }
 
     // MARK: Simulator Hint
@@ -123,6 +200,12 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
             return SimulatorHint(passDepth: nil, runGapBonus: 0.15, blitzPickupBonus: 0, yacMultiplier: 1.0)
         case .outsideRun:
             return SimulatorHint(passDepth: nil, runGapBonus: -0.05, blitzPickupBonus: 0, yacMultiplier: 1.3)
+        case .counter:
+            // Misdirection: interior gap credit once the pursuit over-flows
+            return SimulatorHint(passDepth: nil, runGapBonus: 0.1, blitzPickupBonus: 0, yacMultiplier: 1.15)
+        case .toss:
+            // Edge speed: boom-or-bust to the perimeter
+            return SimulatorHint(passDepth: nil, runGapBonus: -0.1, blitzPickupBonus: 0, yacMultiplier: 1.45)
         case .draw:
             // Draw holds the pass rush briefly; slightly better vs. blitz
             return SimulatorHint(passDepth: nil, runGapBonus: 0.05, blitzPickupBonus: 0.1, yacMultiplier: 1.1)
@@ -134,6 +217,8 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
             return SimulatorHint(passDepth: .short, runGapBonus: 0, blitzPickupBonus: 0.15, yacMultiplier: 1.2)
         case .quickOut:
             return SimulatorHint(passDepth: .short, runGapBonus: 0, blitzPickupBonus: 0.2, yacMultiplier: 0.8)
+        case .hitch:
+            return SimulatorHint(passDepth: .short, runGapBonus: 0, blitzPickupBonus: 0.2, yacMultiplier: 0.9)
         case .flat:
             return SimulatorHint(passDepth: .short, runGapBonus: 0, blitzPickupBonus: 0.25, yacMultiplier: 1.5)
         case .drag:
@@ -144,6 +229,11 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
             return SimulatorHint(passDepth: .medium, runGapBonus: 0, blitzPickupBonus: 0, yacMultiplier: 0.9)
         case .dig:
             return SimulatorHint(passDepth: .medium, runGapBonus: 0, blitzPickupBonus: -0.05, yacMultiplier: 1.0)
+        case .seam:
+            // TE up the middle: big YAC when the safeties split
+            return SimulatorHint(passDepth: .medium, runGapBonus: 0, blitzPickupBonus: -0.05, yacMultiplier: 1.3)
+        case .cross:
+            return SimulatorHint(passDepth: .medium, runGapBonus: 0, blitzPickupBonus: -0.05, yacMultiplier: 1.25)
         case .postCorner:
             return SimulatorHint(passDepth: .medium, runGapBonus: 0, blitzPickupBonus: -0.1, yacMultiplier: 1.1)
         case .comeback:
@@ -156,6 +246,9 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
             return SimulatorHint(passDepth: .deep, runGapBonus: 0, blitzPickupBonus: -0.1, yacMultiplier: 1.2)
         case .corner:
             return SimulatorHint(passDepth: .deep, runGapBonus: 0, blitzPickupBonus: -0.1, yacMultiplier: 0.9)
+        case .flood:
+            // Three levels one side: an easier read with a checkdown built in
+            return SimulatorHint(passDepth: .deep, runGapBonus: 0, blitzPickupBonus: 0.05, yacMultiplier: 1.1)
         case .bomb:
             // Maximum depth; higher INT risk, massive upside
             return SimulatorHint(passDepth: .deep, runGapBonus: 0, blitzPickupBonus: -0.2, yacMultiplier: 1.0)
@@ -314,4 +407,76 @@ enum MatchControlMode: String, CaseIterable {
     }
 
     var label: String { rawValue }
+}
+
+// MARK: - Named Defensive Calls
+
+/// The defensive call sheet: named, coach-speak defensive plays the user picks
+/// from during a live game. Each call bundles a coverage/blitz/front package
+/// and is tagged with the defensive schemes whose playbook installs it.
+enum DefensiveCall: String, CaseIterable, Identifiable {
+    case cover3Base  = "Cover 3"
+    case cover2Shell = "Cover 2 Shell"
+    case quarters    = "Quarters"
+    case manPress    = "Man Press"
+    case lbFire      = "LB Blitz"
+    case zoneBlitz   = "Zone Blitz"
+    case cornerBlitz = "Corner Blitz"
+    case allOut      = "All-Out Blitz"
+    case goalLineD   = "Goal Line"
+    case dimePrevent = "Dime Prevent"
+
+    var id: String { rawValue }
+
+    var package: DefensivePackage {
+        switch self {
+        case .cover3Base:  return DefensivePackage(coverage: .cover3, blitz: .noBlitz, front: .base)
+        case .cover2Shell: return DefensivePackage(coverage: .cover2, blitz: .noBlitz, front: .base)
+        case .quarters:    return DefensivePackage(coverage: .cover4, blitz: .noBlitz, front: .nickel)
+        case .manPress:    return DefensivePackage(coverage: .manToMan, blitz: .noBlitz, front: .nickel)
+        case .lbFire:      return DefensivePackage(coverage: .cover3, blitz: .lbBlitz, front: .base)
+        case .zoneBlitz:   return DefensivePackage(coverage: .cover2, blitz: .lbBlitz, front: .nickel)
+        case .cornerBlitz: return DefensivePackage(coverage: .manToMan, blitz: .dbBlitz, front: .nickel)
+        case .allOut:      return DefensivePackage(coverage: .manToMan, blitz: .allOutBlitz, front: .nickel)
+        case .goalLineD:   return DefensivePackage(coverage: .manToMan, blitz: .noBlitz, front: .goalLine)
+        case .dimePrevent: return DefensivePackage(coverage: .cover4, blitz: .noBlitz, front: .dime)
+        }
+    }
+
+    /// One-line description shown under the call card.
+    var blurb: String {
+        switch self {
+        case .cover3Base:  return "Three deep, four under — sound vs everything."
+        case .cover2Shell: return "Two-high shell, corners squat on the flats."
+        case .quarters:    return "Four deep. Nothing gets over the top."
+        case .manPress:    return "Corners in their face — no free releases."
+        case .lbFire:      return "Fire a backer through the A-gap."
+        case .zoneBlitz:   return "Backer comes, coverage rotates behind it."
+        case .cornerBlitz: return "Nickel screams in off the edge."
+        case .allOut:      return "Everybody comes. Win the down right now."
+        case .goalLineD:   return "Big bodies, zero cushion — stack the line."
+        case .dimePrevent: return "Concede underneath, never the bomb."
+        }
+    }
+
+    /// The defensive schemes whose playbook installs this call.
+    var schemes: [DefensiveScheme] {
+        switch self {
+        case .cover3Base:  return DefensiveScheme.allCases
+        case .cover2Shell: return [.tampa2, .base43, .multiple, .hybrid]
+        case .quarters:    return [.tampa2, .multiple, .hybrid, .cover3]
+        case .manPress:    return [.pressMan, .hybrid, .multiple]
+        case .lbFire:      return [.base34, .base43, .multiple, .cover3]
+        case .zoneBlitz:   return [.base34, .tampa2, .hybrid, .multiple]
+        case .cornerBlitz: return [.pressMan, .multiple, .hybrid]
+        case .allOut:      return [.pressMan, .multiple, .base34]
+        case .goalLineD:   return DefensiveScheme.allCases
+        case .dimePrevent: return DefensiveScheme.allCases
+        }
+    }
+
+    func isInPlaybook(of scheme: DefensiveScheme?) -> Bool {
+        guard let scheme else { return true }
+        return schemes.contains(scheme)
+    }
 }

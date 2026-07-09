@@ -2,7 +2,7 @@ import Foundation
 
 /// A plain Codable value type that stores coaching philosophy sliders for a single game or season.
 /// All values are normalised to the [0.0, 1.0] range.
-struct GamePlan: Codable {
+struct GamePlan: Codable, Equatable {
 
     // MARK: - Settings
 
@@ -57,6 +57,16 @@ struct GamePlan: Codable {
     }
 
     // MARK: - Helpers
+
+    /// True when every slider matches `other` within the given tolerance.
+    /// Used by the UI to highlight the currently active preset.
+    func matches(_ other: GamePlan, tolerance: Double = 0.01) -> Bool {
+        abs(offensiveAggression - other.offensiveAggression) <= tolerance
+            && abs(defensiveAggression - other.defensiveAggression) <= tolerance
+            && abs(runPassRatio - other.runPassRatio) <= tolerance
+            && abs(blitzFrequency - other.blitzFrequency) <= tolerance
+            && abs(fourthDownAggressiveness - other.fourthDownAggressiveness) <= tolerance
+    }
 
     /// Human-readable summary of the game plan's overall character.
     var styleSummary: String {

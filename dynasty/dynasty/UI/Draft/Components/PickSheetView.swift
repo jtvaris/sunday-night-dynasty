@@ -6,6 +6,25 @@ struct PickSheetView: View {
 
     @State private var showComparison: Bool = false
 
+    /// Prospect awaiting draft confirmation. Every draft surface routes
+    /// through this so a stray tap can't burn a pick instantly.
+    @State private var pendingProspect: CollegeProspect? = nil
+
+    private var showDraftConfirm: Binding<Bool> {
+        Binding(
+            get: { pendingProspect != nil },
+            set: { if !$0 { pendingProspect = nil } }
+        )
+    }
+
+    /// Commits the confirmed pick.
+    private func draftPendingProspect() {
+        guard let prospect = pendingProspect else { return }
+        pendingProspect = nil
+        coordinator.selectProspect(prospect)
+        dismiss()
+    }
+
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: DSSpacing.md) {
@@ -53,6 +72,16 @@ struct PickSheetView: View {
                     Button("Close") { dismiss() }
                 }
             }
+            .alert(
+                "Confirm Pick",
+                isPresented: showDraftConfirm,
+                presenting: pendingProspect
+            ) { prospect in
+                Button("Draft \(prospect.lastName)") { draftPendingProspect() }
+                Button("Cancel", role: .cancel) { pendingProspect = nil }
+            } message: { prospect in
+                Text("\(prospect.position.rawValue) \(prospect.firstName) \(prospect.lastName) — OVR \(prospect.trueOverall) · \(prospect.college)")
+            }
         }
     }
 
@@ -80,8 +109,7 @@ struct PickSheetView: View {
         }()
 
         return Button {
-            coordinator.selectProspect(prospect)
-            dismiss()
+            pendingProspect = prospect
         } label: {
             HStack(spacing: DSSpacing.sm) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -205,8 +233,7 @@ struct PickSheetView: View {
                     .foregroundStyle(Color.textPrimary)
             }
             Button {
-                coordinator.selectProspect(prospect)
-                dismiss()
+                pendingProspect = prospect
             } label: {
                 Text("DRAFT")
                     .font(.caption.weight(.heavy))
@@ -269,7 +296,17 @@ struct PickSheetView: View {
 
     private var bestByPositionStrip: some View {
         let topByPosition = computeTopByPosition()
-        let entries = topByPosition.sorted { $0.value.trueOverall > $1.value.trueOverall }.prefix(8)
+        // Deterministic ordering with a position tiebreaker — dictionary
+        // iteration order + OVR ties made the chips visibly reshuffle on
+        // every clock tick, which caused mis-taps on an instant-draft UI.
+        let entries = topByPosition
+            .sorted {
+                if $0.value.trueOverall != $1.value.trueOverall {
+                    return $0.value.trueOverall > $1.value.trueOverall
+                }
+                return $0.key.rawValue < $1.key.rawValue
+            }
+            .prefix(8)
         return VStack(alignment: .leading, spacing: 4) {
             Text("BEST AVAILABLE BY POSITION")
                 .font(.caption2.weight(.heavy))
@@ -300,8 +337,7 @@ struct PickSheetView: View {
 
     private func positionPick(_ prospect: CollegeProspect, position: Position) -> some View {
         Button {
-            coordinator.selectProspect(prospect)
-            dismiss()
+            pendingProspect = prospect
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(position.rawValue)
