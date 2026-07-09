@@ -7,6 +7,12 @@ struct FAOfferSheet: View {
     let career: Career
     let team: Team
     let marketValue: Int
+    /// R23 — inputs for the live signing-interest meter. Defaults keep older
+    /// call sites compiling; without roster data the role factor is neutral.
+    var allPlayers: [Player] = []
+    var offensiveScheme: OffensiveScheme? = nil
+    var defensiveScheme: DefensiveScheme? = nil
+    var hostedVisit: Bool = false
     let onSubmit: (Int, Int) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -36,6 +42,7 @@ struct FAOfferSheet: View {
                     VStack(spacing: 24) {
                         playerInfoCard
                         offerTermsCard
+                        interestCard
                         capImpactCard
                         if !comparables.isEmpty {
                             comparablesCard
@@ -168,6 +175,115 @@ struct FAOfferSheet: View {
         .padding(16)
         .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+    }
+
+    // MARK: - R23: Signing Interest (live, updates with the offer slider)
+
+    private var currentBreakdown: SigningInterestEngine.Breakdown {
+        SigningInterestEngine.interest(
+            player: player,
+            askingPrice: marketValue,
+            offer: (salary: offerSalary, years: offerYears),
+            team: team,
+            allPlayers: allPlayers,
+            offensiveScheme: offensiveScheme,
+            defensiveScheme: defensiveScheme,
+            hostedVisit: hostedVisit
+        )
+    }
+
+    private var interestCard: some View {
+        let breakdown = currentBreakdown
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "gauge.with.needle")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentGold)
+                Text("Signing Interest")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+                if hostedVisit {
+                    HStack(spacing: 3) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 8))
+                        Text("VISIT BOOST")
+                            .font(.system(size: 8, weight: .black))
+                    }
+                    .foregroundStyle(Color.success)
+                }
+            }
+
+            InterestMeterBar(breakdown: breakdown)
+
+            // Factor rows — the same inputs the player weighs on decision day.
+            VStack(spacing: 6) {
+                factorRow(
+                    label: "Money vs. asking",
+                    value: breakdown.money,
+                    note: offerSalary >= marketValue ? "At or above his number" : "Below his asking price"
+                )
+                factorRow(
+                    label: "Team success",
+                    value: breakdown.teamSuccess,
+                    note: "\(team.wins)-\(team.losses) last season"
+                )
+                factorRow(
+                    label: "Projected role",
+                    value: breakdown.role,
+                    note: roleNoteShort(breakdown.role)
+                )
+                if let scheme = breakdown.schemeFit {
+                    factorRow(
+                        label: "Scheme fit",
+                        value: scheme,
+                        note: scheme >= 0.6 ? "Fits your system" : (scheme >= 0.4 ? "Workable fit" : "Awkward fit")
+                    )
+                }
+            }
+        }
+        .padding(16)
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+    }
+
+    private func factorRow(label: String, value: Double, note: String) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 100, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.backgroundTertiary)
+                    Capsule()
+                        .fill(factorColor(value))
+                        .frame(width: max(3, geo.size.width * value))
+                }
+            }
+            .frame(height: 5)
+            Text(note)
+                .font(.system(size: 8))
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: 110, alignment: .trailing)
+                .lineLimit(2)
+        }
+    }
+
+    private func factorColor(_ value: Double) -> Color {
+        if value >= 0.65 { return .success }
+        if value >= 0.4 { return .warning }
+        return .danger
+    }
+
+    private func roleNoteShort(_ role: Double) -> String {
+        switch role {
+        case 0.9...:   return "Clear starter for you"
+        case 0.6...:   return "Competes to start"
+        case 0.3...:   return "Rotational role"
+        default:       return "Buried on depth chart"
+        }
     }
 
     // MARK: - Cap Impact (live recalculation as slider moves)

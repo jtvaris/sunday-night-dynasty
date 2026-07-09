@@ -50,28 +50,46 @@ struct PressConferenceView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            // Dimmed background image
+            // Dimmed background image — slightly brighter than before so the
+            // podium/microphone context still reads through the scrim (audit).
             GeometryReader { geo in
                 Image("BgPressConference")
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()
-                    .opacity(0.25)
+                    .opacity(0.32)
             }
             .ignoresSafeArea()
 
-            // Dark gradient overlay for readability
+            // Directional vignette: darker top/bottom for text protection, a
+            // lighter mid band where the podium sits so the venue keeps its
+            // atmosphere without swallowing the focal area (audit).
             LinearGradient(
-                colors: [
-                    Color.backgroundPrimary.opacity(0.6),
-                    Color.backgroundPrimary.opacity(0.4),
-                    Color.backgroundPrimary.opacity(0.7)
+                stops: [
+                    .init(color: Color.backgroundPrimary.opacity(0.80), location: 0.0),
+                    .init(color: Color.backgroundPrimary.opacity(0.32), location: 0.38),
+                    .init(color: Color.backgroundPrimary.opacity(0.36), location: 0.62),
+                    .init(color: Color.backgroundPrimary.opacity(0.85), location: 1.0),
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
+
+            // Top safe-area scrim — keeps status bar text protected even if the
+            // background asset ever brightens (audit).
+            VStack(spacing: 0) {
+                LinearGradient(
+                    colors: [Color.black.opacity(0.5), Color.black.opacity(0.0)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 90)
+                Spacer()
+            }
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
 
             switch phase {
             case .intro:
@@ -95,24 +113,28 @@ struct PressConferenceView: View {
 
                 if showHeader {
                     VStack(spacing: 20) {
-                        // Microphone icon
+                        // Microphone icon — gold glow + dark drop shadow so the
+                        // glyph separates from the photo instead of floating flat (audit).
                         Image(systemName: "mic.fill")
                             .font(.system(size: 52))
                             .foregroundStyle(Color.accentGold)
                             .shadow(color: Color.accentGold.opacity(0.4), radius: 16, y: 0)
+                            .shadow(color: Color.black.opacity(0.55), radius: 5, y: 3)
 
+                        // Eyebrow shrunk + tracking widened: clear 3-step ladder of
+                        // eyebrow < subtitle < title (audit).
                         Text("PRESS CONFERENCE")
-                            .font(.system(size: 16, weight: .black))
-                            .tracking(6)
-                            .foregroundStyle(Color.accentGold)
+                            .font(.system(size: 13, weight: .black))
+                            .tracking(8)
+                            .foregroundStyle(Color.accentGold.opacity(0.9))
 
                         Text("\(team.city) \(team.name)")
                             .font(.title.weight(.bold))
                             .foregroundStyle(Color.textPrimary)
 
                         Text("Introductory Press Conference")
-                            .font(.subheadline)
-                            .foregroundStyle(Color.textSecondary)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Color.textPrimary.opacity(0.78))
 
                         // Divider line
                         Rectangle()
@@ -122,7 +144,7 @@ struct PressConferenceView: View {
 
                         Text("The media is waiting. Choose your words carefully — they will be remembered.")
                             .font(.body)
-                            .foregroundStyle(Color.textSecondary)
+                            .foregroundStyle(Color.textPrimary.opacity(0.72))
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 40)
                             .padding(.top, 4)
@@ -134,23 +156,30 @@ struct PressConferenceView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 }
 
-                Spacer(minLength: 40)
+                // Two spacers below the header vs one above: shifts the title
+                // block up ~15% so the coach photo reads as backdrop (audit).
+                Spacer(minLength: 24)
+                Spacer(minLength: 0)
 
                 if showHeader {
+                    // Primary CTA scaled up — the only action on an iPad screen
+                    // should dominate, not whisper (audit).
                     Button(action: { beginQuestioning() }) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: 10) {
                             Text("Take the Podium")
-                                .font(.headline.weight(.bold))
+                                .font(.title3.weight(.bold))
+                                .tracking(0.5)
                             Image(systemName: "chevron.right")
-                                .font(.subheadline.weight(.bold))
+                                .font(.headline.weight(.bold))
                         }
                         .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 36)
-                        .padding(.vertical, 14)
+                        .frame(minWidth: 320)
+                        .padding(.horizontal, 48)
+                        .padding(.vertical, 18)
                         .background(
                             Capsule()
                                 .fill(Color.accentGold)
-                                .shadow(color: Color.accentGold.opacity(0.3), radius: 8, y: 4)
+                                .shadow(color: Color.accentGold.opacity(0.35), radius: 10, y: 4)
                         )
                     }
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -327,6 +356,13 @@ struct PressConferenceView: View {
     /// Shows the player's current baseline stats so they know where they stand before choosing.
     private var currentStatsBar: some View {
         VStack(spacing: 0) {
+        // Audit: label the strip so 0-value baselines read as starting values,
+        // not as errors ("0 Legacy / 0 Media" looked broken without context).
+        Text("CURRENT STANDING \u{00B7} BEFORE THIS SESSION")
+            .font(.system(size: 9, weight: .bold))
+            .tracking(1.4)
+            .foregroundStyle(Color.textTertiary)
+            .padding(.bottom, 6)
         HStack(spacing: 0) {
             statBarItem(
                 icon: "star.fill",
@@ -362,12 +398,13 @@ struct PressConferenceView: View {
         .padding(.horizontal, 20)
 
         // #119: Guidance text explaining what stats matter
+        // (audit: bumped from caption2/tertiary — was unreadably small at iPad distance)
         Text("Owner affects job security  \u{00B7}  Media shapes public narrative  \u{00B7}  Legacy affects career rating")
-            .font(.caption2)
-            .foregroundStyle(Color.textTertiary)
+            .font(.caption)
+            .foregroundStyle(Color.textSecondary)
             .multilineTextAlignment(.center)
             .padding(.horizontal, 20)
-            .padding(.top, 4)
+            .padding(.top, 6)
         }
     }
 
@@ -412,8 +449,9 @@ struct PressConferenceView: View {
 
     private func reporterCard(question: PressQuestion) -> some View {
         let tone = reporterTone(for: question)
-        return VStack(alignment: .leading, spacing: 14) {
-            // Reporter badge
+        return VStack(spacing: 10) {
+            // Reporter identity strip — visually separated from the question so
+            // the prompt reads as the prompt, not metadata (audit).
             HStack(spacing: 10) {
                 Image(systemName: "person.crop.circle.fill")
                     .font(.title2)
@@ -424,51 +462,62 @@ struct PressConferenceView: View {
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(Color.textPrimary)
 
-                    HStack(spacing: 6) {
-                        Text(question.outlet)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.accentGold)
-
-                        // Reporter tone indicator: colored dot + small descriptor
-                        Circle()
-                            .fill(reporterToneColor(tone))
-                            .frame(width: 6, height: 6)
-                        Text(tone.label)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(reporterToneColor(tone))
-                    }
+                    Text(question.outlet)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.accentGold)
                 }
 
                 Spacer()
 
-                // Outlet badge
-                Text(question.outlet)
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(1)
-                    .foregroundStyle(Color.backgroundPrimary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule().fill(Color.accentGold)
-                    )
+                // Right pill now carries the reporter tone instead of duplicating
+                // the outlet a second time (audit).
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(reporterToneColor(tone))
+                        .frame(width: 6, height: 6)
+                    Text(tone.label.uppercased())
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(1)
+                }
+                .foregroundStyle(reporterToneColor(tone))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(reporterToneColor(tone).opacity(0.12))
+                        .overlay(
+                            Capsule().strokeBorder(reporterToneColor(tone).opacity(0.35), lineWidth: 1)
+                        )
+                )
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.backgroundSecondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                    )
+            )
 
-            // Question text
+            // Question card — the prompt stands alone below the reporter strip.
             Text("\"\(question.question)\"")
                 .font(.title3.weight(.semibold))
                 .italic()
                 .foregroundStyle(Color.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.backgroundSecondary)
-                .overlay(
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
+                .background(
                     RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(Color.accentGold.opacity(0.2), lineWidth: 1)
+                        .fill(Color.backgroundSecondary)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16)
+                                .strokeBorder(Color.accentGold.opacity(0.25), lineWidth: 1)
+                        )
                 )
-        )
+        }
         .padding(.horizontal, 20)
     }
 
@@ -520,10 +569,19 @@ struct PressConferenceView: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 14)
                             .strokeBorder(
-                                isSelected ? toneColor(response.tone).opacity(0.6) : Color.surfaceBorder,
+                                // Audit: default stroke tinted by the archetype color so the
+                                // four cards can be pre-scanned by personality, not just read.
+                                isSelected ? toneColor(response.tone).opacity(0.6) : toneColor(response.tone).opacity(0.28),
                                 lineWidth: isSelected ? 2 : 1
                             )
                     )
+                    .overlay(alignment: .leading) {
+                        // Personality accent bar (audit): Confident=gold, Humble=blue,
+                        // Aggressive=red, Diplomatic=green, Funny=amber.
+                        UnevenRoundedRectangle(topLeadingRadius: 14, bottomLeadingRadius: 14)
+                            .fill(toneColor(response.tone).opacity(isDisabled ? 0.35 : 0.85))
+                            .frame(width: 4)
+                    }
             )
             .opacity(isDisabled ? 0.4 : 1.0)
         }
@@ -637,37 +695,33 @@ struct PressConferenceView: View {
     }
 
     // #116: Larger pill fonts; #118: Intensity scaling for negative effects
+    // Audit follow-ups: 12-13pt type at iPad distance, lighter error red on dark
+    // navy (Color.danger sat at the WCAG borderline at these sizes), and neutral
+    // icon/label hue so the colored delta value is the single scannable signal.
     private func effectPill(icon: String, label: String, value: Int, isWeakest: Bool = false) -> some View {
-        let pillColor: Color = {
-            if value > 0 { return Color.success }
-            // Intensity scaling: light red for small negatives, dark red for large
-            let absVal = abs(value)
-            if absVal >= 6 {
-                return Color.danger
-            } else {
-                return Color.danger.opacity(0.65)
-            }
-        }()
-        let pillScale: CGFloat = value < 0 ? (abs(value) >= 6 ? 1.1 : 1.0) : 1.0
+        let negativeRed = Color(red: 1.0, green: 0.45, blue: 0.45)
+        let pillColor: Color = value > 0 ? Color.success : negativeRed
+        let isStrongNegative = value <= -6
 
         return HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.caption)
+                .font(.system(size: 12))
+                .foregroundStyle(Color.textSecondary)
             Text(label)
-                .font(.caption.weight(.medium))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.textSecondary)
             Text(value > 0 ? "+\(value)" : "\(value)")
-                .font(.caption.weight(.bold))
+                .font(.system(size: 13, weight: .bold).monospacedDigit())
+                .foregroundStyle(pillColor)
         }
-        .foregroundStyle(pillColor)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .scaleEffect(pillScale)
         .background(
             Capsule()
                 .fill(pillColor.opacity(0.12))
                 .overlay(
                     Capsule()
-                        .strokeBorder(pillColor.opacity(0.3), lineWidth: value < 0 && abs(value) >= 6 ? 1.5 : 1)
+                        .strokeBorder(pillColor.opacity(isStrongNegative ? 0.55 : 0.3), lineWidth: isStrongNegative ? 1.5 : 1)
                 )
         )
         .overlay(alignment: .topTrailing) {

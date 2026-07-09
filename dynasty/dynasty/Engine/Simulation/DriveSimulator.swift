@@ -27,6 +27,8 @@ enum DriveSimulator {
     ///   - teamID: The UUID of the offensive team.
     ///   - gamePlan: Optional coaching game plan for the OFFENSE — shades the
     ///     AI play-calling in `PlaySimulator`. `nil` = today's exact behavior.
+    ///   - weather: Optional game weather forwarded to every play.
+    ///     `nil` = today's exact behavior.
     static func simulateDrive(
         offensePlayers: [SimPlayer],
         defensePlayers: [SimPlayer],
@@ -38,7 +40,8 @@ enum DriveSimulator {
         teamID: UUID,
         offensiveScheme: OffensiveScheme? = nil,
         defensiveScheme: DefensiveScheme? = nil,
-        gamePlan: GamePlan? = nil
+        gamePlan: GamePlan? = nil,
+        weather: GameWeather? = nil
     ) -> DriveSimulationResult {
         var plays: [PlayResult] = []
         var currentDown = 1
@@ -85,7 +88,8 @@ enum DriveSimulator {
                 playNumber: playNumber,
                 offensiveScheme: offensiveScheme,
                 defensiveScheme: defensiveScheme,
-                gamePlan: gamePlan
+                gamePlan: gamePlan,
+                weather: weather
             )
 
             // Store the play with current clock values

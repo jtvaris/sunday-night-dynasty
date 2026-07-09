@@ -7,6 +7,8 @@ enum ReSignResponse {
     case accepted
     case countered(salary: Int, years: Int, reason: String)
     case rejected(reason: String)
+    /// R22: a hardliner agent was insulted — talks are dead for the offseason.
+    case brokenOff(reason: String)
 }
 
 // MARK: - FinalPushView
@@ -23,6 +25,8 @@ struct FinalPushView: View {
     @State private var allTeams: [Team] = []
     @State private var decisions: [UUID: PlayerDecisionState] = [:]
     @State private var showLeagueYearConfirm = false
+    /// R23 — legal-tampering rumors for the top upcoming FAs (league-wide).
+    @State private var tamperingRumors: [TamperingRumorEngine.TamperingRumor] = []
 
     struct PlayerDecisionState {
         enum Status {
@@ -31,10 +35,14 @@ struct FinalPushView: View {
             case responded(response: ReSignResponse)
             case reSignedAccepted
             case letWalk
+            /// R22: kept for one year via the franchise tag.
+            case tagged(salary: Int)
         }
         var status: Status = .pending
         var offerSalary: Int = 0
         var offerYears: Int = 2
+        /// R22: how many offers the GM has submitted (agents have finite patience).
+        var offerRounds: Int = 0
     }
 
     var body: some View {
@@ -45,6 +53,10 @@ struct FinalPushView: View {
                 ScrollView {
                     VStack(spacing: 24) {
                         headerCard(team: team)
+
+                        if !tamperingRumors.isEmpty {
+                            tamperingBuzzCard
+                        }
 
                         if expiringPlayers.isEmpty {
                             noExpiringCard
@@ -111,6 +123,102 @@ struct FinalPushView: View {
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
     }
 
+    // MARK: - R23: Legal Tampering Buzz
+
+    /// Pre-market intel: projected prices and early suitors for the top
+    /// upcoming FAs, quoted from the same model the live market uses. Own
+    /// expiring players are flagged — this is the last exclusive window.
+    private var tamperingBuzzCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .foregroundStyle(Color.warning)
+                    .font(.system(size: 14))
+                Text("Legal Tampering Buzz")
+                    .font(.headline)
+                    .foregroundStyle(Color.warning)
+                Spacer()
+                Text("LEAGUE SOURCES")
+                    .font(.system(size: 8, weight: .black))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+
+            Text("Numbers already leaking ahead of the market. Names flagged in gold are YOUR expiring players — this is your last exclusive shot at them.")
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+                .padding(.horizontal, 16)
+
+            VStack(spacing: 0) {
+                ForEach(tamperingRumors) { rumor in
+                    tamperingRumorRow(rumor)
+                    if rumor.id != tamperingRumors.last?.id {
+                        Divider().overlay(Color.surfaceBorder.opacity(0.5))
+                    }
+                }
+            }
+            .padding(.bottom, 8)
+        }
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.surfaceBorder, lineWidth: 1))
+    }
+
+    private func tamperingRumorRow(_ rumor: TamperingRumorEngine.TamperingRumor) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Text(rumor.position)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.textPrimary)
+                    .frame(width: 28)
+                    .padding(.vertical, 2)
+                    .background(Color.accentBlue, in: RoundedRectangle(cornerRadius: 3))
+                Text(rumor.playerName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(rumor.isOwnPlayer ? Color.accentGold : Color.textPrimary)
+                    .lineLimit(1)
+                if rumor.isOwnPlayer {
+                    Text("YOURS")
+                        .font(.system(size: 7, weight: .black))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.accentGold, in: Capsule())
+                }
+                Text("\(rumor.overall) OVR")
+                    .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(Color.forRating(rumor.overall))
+                Spacer()
+                Text("~\(formatMillions(rumor.projectedSalary))/yr")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(Color.warning)
+            }
+            HStack(spacing: 6) {
+                if rumor.suitorAbbrs.isEmpty {
+                    Text("Market still forming")
+                        .font(.system(size: 9).italic())
+                        .foregroundStyle(Color.textTertiary)
+                } else {
+                    HStack(spacing: 3) {
+                        Image(systemName: "eye.fill")
+                            .font(.system(size: 7))
+                        Text("\(rumor.suitorAbbrs.joined(separator: ", ")) circling")
+                            .font(.system(size: 9, weight: .medium))
+                    }
+                    .foregroundStyle(Color.danger)
+                }
+                Text("\u{2022} \(TamperingRumorEngine.motivationBlurb(rumor.motivation))")
+                    .font(.system(size: 9).italic())
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.leading, 36)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
     // MARK: - No Expiring
 
     private var noExpiringCard: some View {
@@ -171,6 +279,8 @@ struct FinalPushView: View {
                             .foregroundStyle(Color.textTertiary)
                         motivationBadge(player.personality.motivation)
                     }
+                    // R22: agent identity + negotiation style
+                    agentBadge(for: player)
                 }
 
                 Spacer()
@@ -251,37 +361,79 @@ struct FinalPushView: View {
 
         case .letWalk:
             resolvedBadge(text: "Will hit free agency", icon: "figure.walk.departure", color: .textTertiary)
+
+        case .tagged(let salary):
+            resolvedBadge(
+                text: "Franchise tagged — 1 yr, \(formatMillions(salary))",
+                icon: "tag.fill",
+                color: .accentGold
+            )
         }
     }
 
+    @ViewBuilder
     private func pendingActions(player: Player, marketValue: Int) -> some View {
-        HStack(spacing: 12) {
-            Button {
-                var state = PlayerDecisionState()
-                state.status = .offering(salary: marketValue, years: 2)
-                state.offerSalary = marketValue
-                state.offerYears = 2
-                decisions[player.id] = state
-            } label: {
-                Label("Make Offer", systemImage: "signature")
+        if NegotiationLockRegistry.isLocked(player.id) {
+            // R22: a hardliner agent froze talks earlier this offseason.
+            HStack(spacing: 8) {
+                Image(systemName: "phone.down.fill")
+                    .foregroundStyle(Color.danger)
+                Text("\(AgentPersona.agentName(for: player.id)) isn't returning your calls this offseason.")
                     .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.danger)
+                Spacer()
+                Button {
+                    decisions[player.id]?.status = .letWalk
+                    applyLetWalkPenaltyIfNeeded(player: player)
+                } label: {
+                    Label("Let Walk", systemImage: "figure.walk.departure")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Color.accentGold)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        } else {
+            HStack(spacing: 12) {
+                Button {
+                    var state = PlayerDecisionState()
+                    state.status = .offering(salary: marketValue, years: 2)
+                    state.offerSalary = marketValue
+                    state.offerYears = 2
+                    decisions[player.id] = state
+                } label: {
+                    Label("Make Offer", systemImage: "signature")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.accentGold)
 
-            Button {
-                var state = PlayerDecisionState()
-                state.status = .letWalk
-                decisions[player.id] = state
-                applyLetWalkPenaltyIfNeeded(player: player)
-            } label: {
-                Label("Let Walk", systemImage: "figure.walk.departure")
-                    .font(.caption.weight(.semibold))
+                // R22: franchise tag straight from the re-sign flow (1 per offseason).
+                if !hasUsedFranchiseTag {
+                    Button {
+                        applyFranchiseTag(to: player)
+                    } label: {
+                        Label("Tag (\(formatMillions(franchiseTagValue(for: player.position))))", systemImage: "tag")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Color.accentGold)
+                }
+
+                Button {
+                    var state = PlayerDecisionState()
+                    state.status = .letWalk
+                    decisions[player.id] = state
+                    applyLetWalkPenaltyIfNeeded(player: player)
+                } label: {
+                    Label("Let Walk", systemImage: "figure.walk.departure")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.bordered)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
     }
 
     private func offeringView(player: Player, salary: Int, years: Int, marketValue: Int) -> some View {
@@ -334,14 +486,20 @@ struct FinalPushView: View {
                 Button("Submit Offer") {
                     let currentSalary = decisions[player.id]?.offerSalary ?? salary
                     let currentYears = decisions[player.id]?.offerYears ?? years
+                    decisions[player.id]?.offerRounds += 1
                     let response = Self.evaluateReSignOffer(
                         player: player,
                         offeredSalary: currentSalary,
                         offeredYears: currentYears,
                         marketValue: marketValue,
                         teamWins: career.totalWins,
-                        teamReputation: career.reputation
+                        teamReputation: career.reputation,
+                        roundNumber: decisions[player.id]?.offerRounds ?? 1
                     )
+                    if case .brokenOff = response {
+                        // R22: hardliner freeze-out persists for the offseason.
+                        NegotiationLockRegistry.lock(player.id)
+                    }
                     decisions[player.id]?.status = .responded(response: response)
                 }
                 .buttonStyle(.borderedProminent)
@@ -463,6 +621,28 @@ struct FinalPushView: View {
                 }
                 .buttonStyle(.bordered)
                 .font(.caption.weight(.semibold))
+
+            case .brokenOff(let reason):
+                // R22: hardliner agent cut off talks for the offseason.
+                HStack(spacing: 8) {
+                    Image(systemName: "phone.down.fill")
+                        .foregroundStyle(Color.danger)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(AgentPersona.agentName(for: player.id)) ended all talks")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.danger)
+                        Text("\"\(reason)\"")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                            .italic()
+                    }
+                }
+                Button("Understood") {
+                    decisions[player.id]?.status = .letWalk
+                    applyLetWalkPenaltyIfNeeded(player: player)
+                }
+                .buttonStyle(.bordered)
+                .font(.caption.weight(.semibold))
             }
         }
         .padding(.horizontal, 16)
@@ -516,10 +696,28 @@ struct FinalPushView: View {
         offeredYears: Int,
         marketValue: Int,
         teamWins: Int,
-        teamReputation: Int
+        teamReputation: Int,
+        roundNumber: Int = 1
     ) -> ReSignResponse {
         guard marketValue > 0 else { return .accepted }
         let ratio = Double(offeredSalary) / Double(marketValue)
+
+        // R22: the agent persona shifts the bar and caps patience.
+        let persona = AgentPersona.forPlayer(id: player.id)
+
+        // R22: an insulting lowball to a hardliner kills talks for the offseason.
+        if persona.breaksOffForSeason && ratio < 0.60 {
+            return .brokenOff(
+                reason: "That offer is an insult. \(player.firstName) is done talking to this front office until next year."
+            )
+        }
+
+        // R22: agents have finite patience — past their limit they walk.
+        if roundNumber > persona.maxRounds {
+            return .rejected(
+                reason: "We've gone back and forth enough. \(player.firstName) will test the open market."
+            )
+        }
 
         // Own team loyalty bonus
         let loyaltyBonus = 0.12
@@ -545,7 +743,9 @@ struct FinalPushView: View {
             }
         }()
 
+        // R22: hardliner needs more, deal-maker/loyalist a bit less.
         let threshold = 0.80 - loyaltyBonus - motivationMod - archetypeMod
+            + persona.reSignThresholdShift
 
         if ratio >= threshold {
             return .accepted
@@ -554,20 +754,28 @@ struct FinalPushView: View {
             return .countered(
                 salary: counterSalary,
                 years: offeredYears,
-                reason: counterReason(player: player)
+                reason: counterReason(player: player, persona: persona)
             )
         } else {
             return .rejected(reason: rejectReason(player: player, offeredSalary: offeredSalary, marketValue: marketValue))
         }
     }
 
-    private static func counterReason(player: Player) -> String {
-        switch player.personality.motivation {
-        case .money:   return "Wants more money \u{2014} feels undervalued"
-        case .winning: return "Needs assurance this team can compete"
-        case .stats:   return "Wants a bigger role guarantee"
-        case .loyalty: return "Willing to stay, but needs fair compensation"
-        case .fame:    return "Looking for a market-value deal"
+    private static func counterReason(player: Player, persona: AgentPersona) -> String {
+        // R22: the agent's persona colors the justification.
+        switch persona {
+        case .hardliner:
+            return "\(player.firstName) wants starter money \u{2014} this is the number"
+        case .loyalist:
+            return "He took a discount to stay \u{2014} meet us halfway"
+        case .cooperative:
+            switch player.personality.motivation {
+            case .money:   return "Wants more money \u{2014} feels undervalued"
+            case .winning: return "Needs assurance this team can compete"
+            case .stats:   return "Wants a bigger role guarantee"
+            case .loyalty: return "Willing to stay, but needs fair compensation"
+            case .fame:    return "Looking for a market-value deal"
+            }
         }
     }
 
@@ -584,6 +792,73 @@ struct FinalPushView: View {
         case .fame:
             return "Seeking a big-market team for more exposure"
         }
+    }
+
+    // MARK: - Agent Persona (R22)
+
+    /// Compact agent chip: name + deterministic negotiation style.
+    private func agentBadge(for player: Player) -> some View {
+        let persona = AgentPersona.forPlayer(id: player.id)
+        let color: Color = {
+            switch persona {
+            case .hardliner:   return .danger
+            case .cooperative: return .success
+            case .loyalist:    return .accentGold
+            }
+        }()
+        return HStack(spacing: 4) {
+            Image(systemName: persona.symbolName)
+                .font(.system(size: 8))
+            Text("Agent: \(AgentPersona.agentName(for: player.id))")
+                .font(.system(size: 9, weight: .semibold))
+            Text(persona.styleLabel)
+                .font(.system(size: 9, weight: .bold))
+        }
+        .foregroundStyle(color.opacity(0.9))
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(color.opacity(0.1), in: Capsule())
+    }
+
+    // MARK: - Franchise Tag (R22)
+
+    /// Whether any player on the user's team already carries this season's tag.
+    private var hasUsedFranchiseTag: Bool {
+        guard let teamID = career.teamID else { return false }
+        return allPlayers.contains { $0.teamID == teamID && $0.isFranchiseTagged }
+            || expiringPlayers.contains { $0.isFranchiseTagged }
+    }
+
+    /// Tag cost for a position: average of the league's top-5 salaries there.
+    private func franchiseTagValue(for position: Position) -> Int {
+        let positionSalaries = allPlayers
+            .filter { $0.position == position && $0.annualSalary > 0 }
+            .map { $0.annualSalary }
+        let value = ContractEngine.franchiseTagValue(
+            position: position,
+            topSalaries: positionSalaries,
+            capMode: career.capMode
+        )
+        return career.capMode == .sandbox ? value : max(value, 5_000)
+    }
+
+    /// Applies the franchise tag to an expiring player straight from the
+    /// re-sign flow. Player stays for 1 year at the tag number (morale -10
+    /// is applied inside ContractEngine — nobody wants the tag).
+    private func applyFranchiseTag(to player: Player) {
+        guard let team, !hasUsedFranchiseTag else { return }
+        let tagCost = franchiseTagValue(for: player.position)
+        ContractEngine.applyFranchiseTag(
+            player: player,
+            tagValue: tagCost,
+            team: team,
+            capMode: career.capMode
+        )
+        try? modelContext.save()
+        UserDefaults.standard.set(true, forKey: "franchiseTagVisited")
+        var state = decisions[player.id] ?? PlayerDecisionState()
+        state.status = .tagged(salary: player.annualSalary)
+        decisions[player.id] = state
     }
 
     // MARK: - Helpers
@@ -723,5 +998,12 @@ struct FinalPushView: View {
         // All players + teams for FA preview
         allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
         allTeams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
+
+        // R23: legal-tampering buzz — same pricing/need model the market uses.
+        tamperingRumors = TamperingRumorEngine.generateRumors(
+            allPlayers: allPlayers,
+            allTeams: allTeams,
+            userTeamID: career.teamID
+        )
     }
 }

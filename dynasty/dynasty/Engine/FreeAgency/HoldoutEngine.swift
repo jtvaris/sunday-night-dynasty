@@ -45,8 +45,47 @@ enum HoldoutEngine {
         }
     }
 
+    /// R22: detects STAR players who may hold out at OTAs / start of season.
+    ///
+    /// A star is OVR >= 85 OR one of the team's top-3 players by overall.
+    /// The star holds out when either:
+    /// - the contract is expiring (exactly 1 year left), or
+    /// - the player is clearly underpaid (salary < 85% of market) with 3+
+    ///   years as a pro (players still on rookie deals accept them).
+    /// Franchise-tagged players never hold out (the tag binds them) and a
+    /// player already holding out is not detected twice.
+    static func detectStarHoldoutCandidates(
+        roster: [Player],
+        marketValues: [UUID: Int]
+    ) -> [Player] {
+        let topThreeIDs = Set(
+            roster.sorted { $0.overall > $1.overall }.prefix(3).map(\.id)
+        )
+        return roster
+            .filter { player in
+                guard !player.isFranchiseTagged, !player.isHoldingOut, !player.isInjured else { return false }
+                guard let market = marketValues[player.id], market > 0 else { return false }
+
+                let isStar = player.overall >= 85 || topThreeIDs.contains(player.id)
+                guard isStar else { return false }
+
+                let expiring = player.contractYearsRemaining == 1
+                let underpaid = player.yearsPro >= 3
+                    && player.contractYearsRemaining > 0
+                    && Double(player.annualSalary) < Double(market) * subMarketThreshold
+                return expiring || underpaid
+            }
+            // Biggest pay gap first — the angriest star leads the drama.
+            .sorted {
+                let gapA = (marketValues[$0.id] ?? 0) - $0.annualSalary
+                let gapB = (marketValues[$1.id] ?? 0) - $1.annualSalary
+                return gapA > gapB
+            }
+    }
+
     /// Initiates a holdout for a player. Returns the persisted Holdout record,
-    /// or `nil` if a save error occurs.
+    /// or `nil` if a save error occurs. R22: flags the player as holding out
+    /// so simulation, development and UI all see the same state.
     static func startHoldout(
         player: Player,
         teamID: UUID,
@@ -58,20 +97,24 @@ enum HoldoutEngine {
             teamID: teamID,
             subMarketDelta: subMarketDelta
         )
+        player.isHoldingOut = true
         modelContext.insert(holdout)
         do {
             try modelContext.save()
             return holdout
         } catch {
+            player.isHoldingOut = false
             return nil
         }
     }
 
     /// Resolves a holdout and persists the outcome. Returns `true` on success.
+    /// R22: pass the player so a successful resolution clears `isHoldingOut`.
     @discardableResult
     static func resolveHoldout(
         holdout: Holdout,
         resolution: Resolution,
+        player: Player? = nil,
         modelContext: ModelContext
     ) -> Bool {
         let success: Bool
@@ -95,6 +138,7 @@ enum HoldoutEngine {
         if success {
             holdout.resolvedAt = Date()
             holdout.resolution = mappedResolution
+            player?.isHoldingOut = false
         } else {
             holdout.resolution = .unresolved
         }

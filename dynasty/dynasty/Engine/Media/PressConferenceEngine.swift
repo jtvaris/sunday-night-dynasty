@@ -143,6 +143,50 @@ struct PressConferenceResult: Codable {
 
 enum PressConferenceEngine {
 
+    // MARK: - Last-Game Facts
+
+    /// Concrete facts from the player's most recent game (quick-simmed or
+    /// live-coached), distilled by `WeekAdvancer` from
+    /// `WeekAdvancer.lastPlayerGameResult`. When present, the weekly presser
+    /// swaps in questions that reference what actually happened; when nil,
+    /// question selection is exactly the pre-R18 behavior.
+    struct GameFacts {
+        /// True when the player's team won.
+        let won: Bool
+        /// Absolute final margin.
+        let margin: Int
+        /// Sacks the player's offensive line surrendered.
+        let sacksAllowed: Int
+        /// The player-team rusher who cleared 100 yards, if any.
+        let hundredYardRusherName: String?
+        let hundredYardRusherYards: Int
+        /// The opponent's abbreviation when the game was a division matchup
+        /// (R19) — nil for non-division games. Swaps the post-game question
+        /// for its rivalry variant.
+        let divisionOpponentAbbr: String?
+
+        init(
+            won: Bool,
+            margin: Int,
+            sacksAllowed: Int,
+            hundredYardRusherName: String?,
+            hundredYardRusherYards: Int,
+            divisionOpponentAbbr: String? = nil
+        ) {
+            self.won = won
+            self.margin = margin
+            self.sacksAllowed = sacksAllowed
+            self.hundredYardRusherName = hundredYardRusherName
+            self.hundredYardRusherYards = hundredYardRusherYards
+            self.divisionOpponentAbbr = divisionOpponentAbbr
+        }
+    }
+
+    /// Sacks allowed at or above this line trigger the protection question.
+    private static let sackConcernThreshold = 4
+    /// A loss by this margin or less counts as a heartbreaker.
+    private static let narrowLossMargin = 3
+
     // MARK: - Reporters
 
     private static let reporters: [(name: String, outlet: String)] = [
@@ -199,21 +243,57 @@ enum PressConferenceEngine {
     // MARK: - Weekly Press Conference
 
     /// Generate 2-3 questions for a weekly in-season press conference.
+    /// - Parameter facts: Optional facts from the player's last game
+    ///   (`nil` = pre-R18 question selection, used by every legacy call site).
     static func generateWeeklyPressConference(
         career: Career,
         team: Team,
         lastGameResult: Bool?,
-        week: Int
+        week: Int,
+        facts: GameFacts? = nil
     ) -> [PressQuestion] {
         var questions: [PressQuestion] = []
 
         // Post-game question
         if let won = lastGameResult {
             if won {
-                questions.append(generatePostWinQuestion(team: team, week: week))
+                if let facts, facts.won, let rivalAbbr = facts.divisionOpponentAbbr {
+                    // Beating a division rival gets the rivalry variant (R19).
+                    questions.append(generateDivisionWinQuestion(team: team, rivalAbbr: rivalAbbr))
+                } else {
+                    questions.append(generatePostWinQuestion(team: team, week: week))
+                }
+            } else if let facts, !facts.won, facts.margin > 0, facts.margin <= narrowLossMargin {
+                // A one-score heartbreaker gets its own question.
+                questions.append(generateNarrowLossQuestion(team: team, margin: facts.margin))
+            } else if let facts, !facts.won, let rivalAbbr = facts.divisionOpponentAbbr {
+                // Losing inside the division stings in the standings (R19).
+                questions.append(generateDivisionLossQuestion(team: team, rivalAbbr: rivalAbbr))
             } else {
                 questions.append(generatePostLossQuestion(team: team, week: week))
             }
+        }
+
+        // Fact-based follow-up: protection meltdown or a 100-yard workhorse
+        // takes the situational slot when the game actually produced one.
+        var factQuestionUsed = false
+        if let facts, facts.sacksAllowed >= sackConcernThreshold {
+            questions.append(generateSacksAllowedQuestion(team: team, sacks: facts.sacksAllowed))
+            factQuestionUsed = true
+        } else if let facts, let rusherName = facts.hundredYardRusherName {
+            questions.append(generateWorkhorseQuestion(
+                team: team,
+                rusherName: rusherName,
+                yards: facts.hundredYardRusherYards
+            ))
+            factQuestionUsed = true
+        }
+        if factQuestionUsed {
+            // Occasional third question, same odds as the regular path.
+            if Bool.random() {
+                questions.append(generateLooseWeeklyQuestion(team: team))
+            }
+            return questions
         }
 
         // Situational question — pick the most relevant one
@@ -793,6 +873,260 @@ enum PressConferenceEngine {
                         mediaPerception: 5,
                         legacyPoints: 2,
                         fanExcitement: 0
+                    )
+                ),
+            ]
+        )
+    }
+
+    // MARK: - Fact-Based Weekly Questions (R18)
+
+    /// Loss by 3 or fewer — the reporters want to know about the fine margins.
+    private static func generateNarrowLossQuestion(team: Team, margin: Int) -> PressQuestion {
+        let r = randomReporter()
+        let pointWord = margin == 1 ? "point" : "points"
+
+        return PressQuestion(
+            reporterName: r.name,
+            outlet: r.outlet,
+            question: "A \(margin)-\(pointWord) loss that came down to the final possession. What separates close from winning?",
+            responses: [
+                PressResponse(
+                    text: "One play here or there. Finding those \(margin) \(pointWord) is my job, and I'll find them.",
+                    tone: .humble,
+                    mediaReaction: "\(r.outlet): \"\(team.name) leader owns the fine margins after narrow defeat.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 10,
+                        mediaPerception: 10,
+                        legacyPoints: 2,
+                        fanExcitement: 0
+                    )
+                ),
+                PressResponse(
+                    text: "We're right there. Flip one snap and we're having a very different conversation.",
+                    tone: .confident,
+                    mediaReaction: "\(r.outlet): \"\(team.name) see themselves a play away.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 5,
+                        mediaPerception: 5,
+                        legacyPoints: 1,
+                        fanExcitement: 5
+                    )
+                ),
+                PressResponse(
+                    text: "Close doesn't count in this league. Nobody in that locker room gets a pass for 'almost'.",
+                    tone: .aggressive,
+                    mediaReaction: "\(r.outlet): \"No moral victories in \(team.city).\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 0,
+                        playerMorale: -10,
+                        mediaPerception: 15,
+                        legacyPoints: 2,
+                        fanExcitement: 0
+                    )
+                ),
+            ]
+        )
+    }
+
+    /// The line surrendered a pile of sacks — protection is the story.
+    private static func generateSacksAllowedQuestion(team: Team, sacks: Int) -> PressQuestion {
+        let r = randomReporter()
+
+        return PressQuestion(
+            reporterName: r.name,
+            outlet: r.outlet,
+            question: "Your line gave up \(sacks) sacks — is protection a concern?",
+            responses: [
+                PressResponse(
+                    text: "That's on all of us — scheme, calls, execution. We'll get it fixed in the protection meetings this week.",
+                    tone: .humble,
+                    mediaReaction: "\(r.outlet): \"\(team.name) promise answers up front after \(sacks)-sack afternoon.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 8,
+                        mediaPerception: 5,
+                        legacyPoints: 2,
+                        fanExcitement: 0
+                    )
+                ),
+                PressResponse(
+                    text: "\(sacks) sacks is unacceptable. Jobs are on the line up front, and everybody knows it.",
+                    tone: .aggressive,
+                    mediaReaction: "\(r.outlet): \"\(team.name) boss puts the offensive line on notice.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 0,
+                        playerMorale: -10,
+                        mediaPerception: 15,
+                        legacyPoints: 2,
+                        fanExcitement: 0
+                    )
+                ),
+                PressResponse(
+                    text: "Credit their rush — they brought looks we hadn't seen. Our quarterback is fine, and we have the answers.",
+                    tone: .confident,
+                    mediaReaction: "\(r.outlet): \"\(team.name) unshaken despite the pressure numbers.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 5,
+                        mediaPerception: 5,
+                        legacyPoints: 1,
+                        fanExcitement: 3
+                    )
+                ),
+            ]
+        )
+    }
+
+    /// A back cleared 100 yards — feed him more?
+    private static func generateWorkhorseQuestion(
+        team: Team,
+        rusherName: String,
+        yards: Int
+    ) -> PressQuestion {
+        let r = randomReporter()
+
+        return PressQuestion(
+            reporterName: r.name,
+            outlet: r.outlet,
+            question: "\(rusherName) ran for \(yards) yards — is he your workhorse now?",
+            responses: [
+                PressResponse(
+                    text: "He's a bell cow. When he runs like that, we're a very tough team to beat.",
+                    tone: .confident,
+                    mediaReaction: "\(r.outlet): \"\(team.name) commit to the ground game behind \(rusherName).\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 10,
+                        mediaPerception: 5,
+                        legacyPoints: 2,
+                        fanExcitement: 10
+                    )
+                ),
+                PressResponse(
+                    text: "We ride the hot hand. \(rusherName) earned every one of those yards, but it stays a committee.",
+                    tone: .diplomatic,
+                    mediaReaction: "\(r.outlet): \"\(team.name) keeping the backfield plan flexible.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 5,
+                        mediaPerception: 3,
+                        legacyPoints: 1,
+                        fanExcitement: 3
+                    )
+                ),
+                PressResponse(
+                    text: "I might hand it to him 40 times next week. Somebody should probably warn his agent.",
+                    tone: .funny,
+                    mediaReaction: "\(r.outlet): \"Ha — \(team.city) falling in love with its running back.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 0,
+                        playerMorale: 8,
+                        mediaPerception: 5,
+                        legacyPoints: 1,
+                        fanExcitement: 12
+                    )
+                ),
+            ]
+        )
+    }
+
+    // MARK: - Division Rivalry Questions (R19)
+
+    /// Won a division game — the standings and the rivalry are the story.
+    private static func generateDivisionWinQuestion(team: Team, rivalAbbr: String) -> PressQuestion {
+        let r = randomReporter()
+
+        return PressQuestion(
+            reporterName: r.name,
+            outlet: r.outlet,
+            question: "A win over \(rivalAbbr) inside the division — how much bigger do these ones feel?",
+            responses: [
+                PressResponse(
+                    text: "Division games are worth double — them losing, us winning. That's how you take the \(team.conference.rawValue) \(team.division.rawValue).",
+                    tone: .confident,
+                    mediaReaction: "\(r.outlet): \"\(team.name) planting a flag in the division race.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 10,
+                        mediaPerception: 5,
+                        legacyPoints: 2,
+                        fanExcitement: 10
+                    )
+                ),
+                PressResponse(
+                    text: "They know us, we know them — those are the hardest wins in football. Credit the locker room.",
+                    tone: .humble,
+                    mediaReaction: "\(r.outlet): \"Respect for the rivalry from the \(team.name) boss.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 15,
+                        mediaPerception: 5,
+                        legacyPoints: 2,
+                        fanExcitement: 5
+                    )
+                ),
+                PressResponse(
+                    text: "One division win doesn't hang a banner. Ask me again when we've swept the round-robin.",
+                    tone: .aggressive,
+                    mediaReaction: "\(r.outlet): \"\(team.city) wants more than a rivalry scalp.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: -5,
+                        mediaPerception: 10,
+                        legacyPoints: 2,
+                        fanExcitement: 5
+                    )
+                ),
+            ]
+        )
+    }
+
+    /// Lost a division game — a defeat that counts twice in the standings.
+    private static func generateDivisionLossQuestion(team: Team, rivalAbbr: String) -> PressQuestion {
+        let r = randomReporter()
+
+        return PressQuestion(
+            reporterName: r.name,
+            outlet: r.outlet,
+            question: "Losing to \(rivalAbbr) hurts twice in the division standings. How costly was this one?",
+            responses: [
+                PressResponse(
+                    text: "Division losses are on the head coach. I'll wear this one, and we'll be ready for the rematch.",
+                    tone: .humble,
+                    mediaReaction: "\(r.outlet): \"\(team.name) leader owns the division stumble.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 10,
+                        mediaPerception: 10,
+                        legacyPoints: 3,
+                        fanExcitement: 0
+                    )
+                ),
+                PressResponse(
+                    text: "The race is long. Nobody wins the \(team.conference.rawValue) \(team.division.rawValue) in one afternoon — and nobody loses it in one either.",
+                    tone: .confident,
+                    mediaReaction: "\(r.outlet): \"\(team.name) GM unshaken by the rivalry defeat.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 5,
+                        mediaPerception: 5,
+                        legacyPoints: 1,
+                        fanExcitement: 5
+                    )
+                ),
+                PressResponse(
+                    text: "Circle the rematch. That result is going up on the wall of our building, and they know it.",
+                    tone: .aggressive,
+                    mediaReaction: "\(r.outlet): \"Rivalry heat rising between \(team.city) and \(rivalAbbr).\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 0,
+                        playerMorale: -5,
+                        mediaPerception: 15,
+                        legacyPoints: 1,
+                        fanExcitement: 10
                     )
                 ),
             ]

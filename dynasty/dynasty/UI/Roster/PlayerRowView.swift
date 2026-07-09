@@ -55,6 +55,11 @@ struct PlayerRowView: View {
                             .font(.system(size: 7, weight: .bold))
                             .foregroundStyle(Color.danger)
                     }
+                    if player.isHoldingOut {
+                        Text("Holdout")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(Color.danger)
+                    }
                 }
             }
             .frame(minWidth: 80, alignment: .leading)

@@ -3,6 +3,8 @@ import SwiftData
 
 enum HoldoutResolution: String, Codable, CaseIterable {
     case extended, bonusGiven, traded, unresolved
+    /// R22: the player gave up and reported back without a new deal (~week 3-4).
+    case playerCaved
 }
 
 @Model
@@ -14,6 +16,11 @@ final class Holdout {
     var resolvedAt: Date?
     var resolutionRaw: String?
     var subMarketDelta: Int       // thousands; how far below market
+
+    /// R22: number of regular-season weeks the holdout has been active.
+    /// Drives the "player caves around week 3-4" mechanic.
+    /// Default-value stored property → safe lightweight migration.
+    var weeksActive: Int = 0
 
     var resolution: HoldoutResolution? {
         get {

@@ -823,19 +823,15 @@ struct FACompleteView: View {
         remainingNeeds = needs.sorted { levelPriority($0.level) > levelPriority($1.level) }
 
         // --- Comp Pick Estimate ---
-        if !lostPlayers.isEmpty {
-            let lostValue = lostIDs.compactMap { id in allPlayers.first { $0.id == id } }
-                .reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1, salaryCap: team.salaryCap) }
-            let gainedValue = signedPlayers
-                .reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1, salaryCap: team.salaryCap) }
-            let delta = lostValue - gainedValue
-            if delta > 0 {
-                let numPicks = min(delta / 5_000, 4)
-                compPickEstimate = (0..<numPicks).map { i in
-                    let round = min(3 + i, 7)
-                    return "Round \(round) compensatory pick"
-                }
-            }
+        // R23: project from the real departure ledger + formula, so this
+        // preview matches exactly what the league awards when FA closes.
+        let projectedAwards = CompensatoryPickEngine.projectedAwards(
+            forTeam: teamID,
+            allPlayers: allPlayers,
+            allTeams: allTeams
+        )
+        compPickEstimate = projectedAwards.map { award in
+            "Round \(award.round) compensatory pick — for losing \(award.lostPlayerName)"
         }
 
         // --- FA Grade ---

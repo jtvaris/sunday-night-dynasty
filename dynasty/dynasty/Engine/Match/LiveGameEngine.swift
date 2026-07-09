@@ -2,6 +2,46 @@ import Foundation
 import Combine
 import SwiftData
 
+// MARK: - Halftime Adjustment
+
+/// The coach's one halftime tweak, applied to the PLAYER team's offensive
+/// plays for the entire second half. Deliberately small (±5%-class effects) —
+/// a nudge, not a cheat code. AI teams never pick one, so nil-argument
+/// auto-sim parity with `GameSimulator.simulate` is intact.
+enum HalftimeAdjustment: String, CaseIterable, Identifiable {
+    case tightenProtection = "Tighten Pass Protection"
+    case attackCorners = "Attack Their Corners"
+    case commitToRun = "Commit to the Run"
+
+    var id: String { rawValue }
+
+    /// One-line coach-speak sell for the halftime card.
+    var blurb: String {
+        switch self {
+        case .tightenProtection: return "Keep a back in to chip — fewer sacks on dropbacks."
+        case .attackCorners:     return "Motion and stacked releases — better completion odds."
+        case .commitToRun:       return "Double teams, downhill tracks — extra yards on the ground."
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .tightenProtection: return "shield.lefthalf.filled"
+        case .attackCorners:     return "arrow.up.right.circle.fill"
+        case .commitToRun:       return "figure.run"
+        }
+    }
+
+    /// The concrete simulator tweak this choice buys.
+    var simAdjustments: PlaySimulator.Adjustments {
+        switch self {
+        case .tightenProtection: return PlaySimulator.Adjustments(sackChanceReduction: 0.05)
+        case .attackCorners:     return PlaySimulator.Adjustments(completionBonus: 0.03)
+        case .commitToRun:       return PlaySimulator.Adjustments(runYardageBonus: 0.5)
+        }
+    }
+}
+
 // MARK: - Live Game Engine
 
 /// Play-by-play engine for live, coached games.
@@ -11,7 +51,11 @@ import SwiftData
 /// `GameSimulator` helpers for clock, down-and-distance, scoring, momentum,
 /// fatigue, and stats — but advances one play at a time via ``step`` so the
 /// UI can let the user call plays. A fully-AI game (every `step()` called
-/// with nil arguments) is statistically identical to `GameSimulator.simulate`.
+/// with nil arguments) is statistically identical to `GameSimulator.simulate`,
+/// with one deliberate exception: live games roll per-play injuries (the
+/// quick sim rolls the same aggregate injury chance once per week in
+/// `WeekAdvancer` instead — which skips both live teams so the totals match;
+/// see ``rollInjuries(for:)``).
 ///
 /// Thread model: `@MainActor` because it publishes UI state and holds live
 /// SwiftData `Player` references for the end-of-game fatigue write-back.
@@ -98,6 +142,49 @@ final class LiveGameEngine: ObservableObject {
         return true
     }
 
+    // MARK: - Halftime (live only)
+
+    /// Raised exactly once, when Q2 expires and the engine crosses into Q3.
+    /// The live view pauses on it to show the halftime report; the engine
+    /// itself never blocks on the flag, so a fully-AI game (`simToEnd` /
+    /// nil-argument steps) plays straight through — parity intact.
+    @Published private(set) var halftimePending = false
+
+    /// The coach's chosen second-half tweak (player's team offense only).
+    /// Applied by ``step`` to every player-team play from Q3 on.
+    @Published private(set) var halftimeAdjustment: HalftimeAdjustment?
+
+    /// Every individual battle line from the first half (capped at 30), for
+    /// the halftime report. Purely presentational.
+    private(set) var firstHalfMatchupEvents: [PlayMatchups.Event] = []
+
+    private static let firstHalfMatchupEventCap = 30
+
+    /// The most notable first-half battles for the halftime card: star turns
+    /// first, scheme busts second, then the most decisive regular wins.
+    func topFirstHalfMatchupEvents(limit: Int = 3) -> [PlayMatchups.Event] {
+        func rank(_ kind: PlayMatchups.Event.Kind) -> Int {
+            switch kind {
+            case .star: return 0
+            case .bust: return 1
+            default:    return 2
+            }
+        }
+        return firstHalfMatchupEvents
+            .sorted {
+                (rank($0.kind), -$0.magnitude) < (rank($1.kind), -$1.magnitude)
+            }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    /// Closes the halftime report and locks in the coach's second-half tweak
+    /// (`nil` = ride with the current plan).
+    func resolveHalftime(choosing adjustment: HalftimeAdjustment?) {
+        halftimeAdjustment = adjustment
+        halftimePending = false
+    }
+
     // MARK: - Matchup Grades (live only)
 
     /// Individual matchup wins/losses per player, accumulated from
@@ -117,15 +204,13 @@ final class LiveGameEngine: ObservableObject {
 
     /// Players with the most individual matchup wins this game (ties broken
     /// by fewer losses). Empty until at least one battle has been resolved.
+    /// Names come from the full rosters (not the field units) so a player who
+    /// left the game injured still appears with his tally.
     func topPerformers(limit: Int = 3) -> [MatchupPerformer] {
         guard !matchupWins.isEmpty else { return [] }
         var lookup: [UUID: (name: String, isHome: Bool)] = [:]
-        for unit in [homeOffenseUnit, homeDefenseUnit] {
-            for player in unit.players { lookup[player.id] = (player.shortName, true) }
-        }
-        for unit in [awayOffenseUnit, awayDefenseUnit] {
-            for player in unit.players { lookup[player.id] = (player.shortName, false) }
-        }
+        for player in homePlayers { lookup[player.id] = (player.shortName, true) }
+        for player in awayPlayers { lookup[player.id] = (player.shortName, false) }
         return matchupWins
             .compactMap { id, wins -> MatchupPerformer? in
                 guard let info = lookup[id] else { return nil }
@@ -137,6 +222,127 @@ final class LiveGameEngine: ObservableObject {
             .sorted { ($0.wins, $1.losses) > ($1.wins, $0.losses) }
             .prefix(limit)
             .map { $0 }
+    }
+
+    // MARK: - Milestones (live only)
+
+    /// A statistical milestone crossed during this game, e.g. a back clearing
+    /// 100 rushing yards. Purely presentational — `CoachedGameView` shows a
+    /// gold banner; the simulation never reads it (auto-sim parity intact).
+    struct MilestoneEvent: Equatable, Identifiable {
+        let id = UUID()
+        /// "MILESTONE: M. Dixon — 100 rushing yards"
+        let text: String
+    }
+
+    /// Milestones crossed when the last completed drive's stats were
+    /// accumulated (stats update per drive, so drive granularity is the
+    /// finest the engine can truthfully announce).
+    @Published private(set) var lastMilestones: [MilestoneEvent] = []
+
+    /// "playerID|kind" keys already announced, so each milestone fires once.
+    private var announcedMilestones: Set<String> = []
+
+    /// Yardage lines worth a broadcast banner.
+    private static let rushingMilestoneYards = 100
+    private static let receivingMilestoneYards = 100
+    private static let passingMilestoneYards = 300
+
+    /// Scans the accumulated stats for newly crossed 100-yard rushing /
+    /// receiving and 300-yard passing lines and publishes them (once each).
+    private func publishMilestones() {
+        var events: [MilestoneEvent] = []
+        for stats in statsAccumulator.values {
+            if stats.rushingYards >= LiveGameEngine.rushingMilestoneYards {
+                appendMilestone(stats, kind: "rush",
+                                label: "\(LiveGameEngine.rushingMilestoneYards) rushing yards",
+                                into: &events)
+            }
+            if stats.receivingYards >= LiveGameEngine.receivingMilestoneYards {
+                appendMilestone(stats, kind: "recv",
+                                label: "\(LiveGameEngine.receivingMilestoneYards) receiving yards",
+                                into: &events)
+            }
+            if stats.passingYards >= LiveGameEngine.passingMilestoneYards {
+                appendMilestone(stats, kind: "pass",
+                                label: "\(LiveGameEngine.passingMilestoneYards) passing yards",
+                                into: &events)
+            }
+        }
+        if !events.isEmpty { lastMilestones = events }
+    }
+
+    private func appendMilestone(
+        _ stats: PlayerGameStats,
+        kind: String,
+        label: String,
+        into events: inout [MilestoneEvent]
+    ) {
+        let key = "\(stats.playerID.uuidString)|\(kind)"
+        guard !announcedMilestones.contains(key) else { return }
+        announcedMilestones.insert(key)
+        events.append(MilestoneEvent(
+            text: "MILESTONE: \(shortName(stats.playerName)) — \(label)"
+        ))
+    }
+
+    // MARK: - Injuries & Rotation (live only)
+
+    /// A player knocked out of the live game. Published so the view can show
+    /// the red injury banner and leave his figure on the turf.
+    struct LiveInjuryEvent: Equatable, Identifiable {
+        let id = UUID()
+        let playerID: UUID
+        /// "T. Hill"
+        let playerName: String
+        /// Position abbreviation, e.g. "WR".
+        let position: String
+        let isHomeTeam: Bool
+        /// 3D field node (home 0–10, away 11–21) if he was one of the 22 on
+        /// the field when it happened; nil when the sim used a player who was
+        /// not part of the on-field unit.
+        let nodeIndex: Int?
+        let injuryType: InjuryType
+    }
+
+    /// A fatigue substitution on the player's team ("Fresh legs: RB2 in").
+    struct RotationEvent: Equatable {
+        let inName: String
+        let outName: String
+    }
+
+    /// Injuries that happened on the play just stepped (usually empty,
+    /// occasionally one; carrier and tackler can in theory both go down).
+    @Published private(set) var lastPlayInjuries: [LiveInjuryEvent] = []
+
+    /// The most recent fatigue substitution on the player's team.
+    @Published private(set) var lastRotation: RotationEvent?
+
+    /// Base injury chance per contact involvement (carrier or tackler).
+    /// Calibrated against the quick sim: the weekly roll gives every rostered
+    /// player a 0.5% base chance (`MedicalEngine.injuryCheck`), i.e. ~0.26
+    /// expected injuries per 53-man team-week before modifiers. A live game
+    /// produces ~45 carrier + ~45 tackler contacts per team, so 0.3% per
+    /// involvement lands on the same expected total. `WeekAdvancer` skips the
+    /// weekly roll for both live teams (see `liveGameInjuryTeamIDs`) so the
+    /// live path is never double-counted.
+    private static let perPlayInjuryRisk = 0.003
+
+    /// RB1 sits for the next drive once his fatigue crosses this line
+    /// (and a meaningfully fresher backup exists).
+    private static let rbRotationFatigueThreshold = 75
+
+    /// Players lost to injury during this game (excluded from the sim and
+    /// the field units; written back to the live models in ``persist``).
+    private var injuredPlayerIDs: Set<UUID> = []
+    /// Injuries to persist at game end, with team side for staff lookup.
+    private var gameInjuries: [(playerID: UUID, type: InjuryType, isHomeTeam: Bool)] = []
+    /// The player-team RB currently resting on the bench (fatigue rotation).
+    private var restingRBID: UUID?
+
+    /// Everyone unavailable for the next snap.
+    private var sidelinedIDs: Set<UUID> {
+        restingRBID.map { injuredPlayerIDs.union([$0]) } ?? injuredPlayerIDs
     }
 
     // MARK: - Live Stat Leaders
@@ -278,6 +484,10 @@ final class LiveGameEngine: ObservableObject {
     private let awayDefScheme: DefensiveScheme?
     private let audibleBoost: Double
     private let defReadBoost: Double
+    /// Game weather, applied identically to both teams on every play (same
+    /// value the quick sim would use for this game). `nil` = clear skies =
+    /// today's exact behavior.
+    let weather: GameWeather?
 
     // MARK: - Player Game Plan
 
@@ -298,10 +508,19 @@ final class LiveGameEngine: ObservableObject {
     private var homePlayers: [SimPlayer]
     private var awayPlayers: [SimPlayer]
     /// Role-ordered starters for the 3D field and matchup attribution.
-    let homeOffenseUnit: FieldUnit
-    let homeDefenseUnit: FieldUnit
-    let awayOffenseUnit: FieldUnit
-    let awayDefenseUnit: FieldUnit
+    /// Published because injuries and fatigue rotation swap players mid-game
+    /// (the view's next formation move picks up the new jersey numbers).
+    @Published private(set) var homeOffenseUnit: FieldUnit
+    @Published private(set) var homeDefenseUnit: FieldUnit
+    @Published private(set) var awayOffenseUnit: FieldUnit
+    @Published private(set) var awayDefenseUnit: FieldUnit
+    /// Medical staff per side — shapes live injury risk exactly like the
+    /// quick sim's weekly `MedicalEngine.injuryCheck`, and recovery weeks at
+    /// the end-of-game write-back.
+    private let homeDoctor: Coach?
+    private let homePhysio: Coach?
+    private let awayDoctor: Coach?
+    private let awayPhysio: Coach?
     private let livePlayerByID: [UUID: Player]
     /// Roster membership for splitting the shared stats accumulator per team.
     private let homePlayerIDs: [UUID]
@@ -323,6 +542,8 @@ final class LiveGameEngine: ObservableObject {
     ///   - playerTeamIsHome: Which side the user coaches (drives `playerIsOnOffense`).
     ///   - audibleBoost: 0..0.20 opponent-prep offense boost for the player's team.
     ///   - defReadBoost: 0..0.15 opponent-prep defense boost for the player's team.
+    ///   - weather: Optional game weather (``GameWeather/forGame(id:week:)``).
+    ///     `nil` = clear = today's exact behavior.
     init(
         homeTeam: Team,
         awayTeam: Team,
@@ -330,13 +551,15 @@ final class LiveGameEngine: ObservableObject {
         awayCoaches: [Coach],
         playerTeamIsHome: Bool,
         audibleBoost: Double = 0,
-        defReadBoost: Double = 0
+        defReadBoost: Double = 0,
+        weather: GameWeather? = nil
     ) {
         homeTeamID = homeTeam.id
         awayTeamID = awayTeam.id
         self.playerTeamIsHome = playerTeamIsHome
         self.audibleBoost = max(0.0, min(0.20, audibleBoost))
         self.defReadBoost = max(0.0, min(0.15, defReadBoost))
+        self.weather = weather
 
         // Consume the game-plan hand-off (see `pendingPlayerGamePlan`).
         self.playerGamePlan = LiveGameEngine.pendingPlayerGamePlan
@@ -346,8 +569,9 @@ final class LiveGameEngine: ObservableObject {
         // GameSimulator.simulate): reading SwiftData @Model properties in the
         // play-by-play hot path is far too slow. Live models are kept in a
         // lookup so fatigue can be written back after the game.
-        let homeRoster = homeTeam.players
-        let awayRoster = awayTeam.players
+        // R22: a player holding out over his contract does not suit up.
+        let homeRoster = homeTeam.players.filter { !$0.isHoldingOut }
+        let awayRoster = awayTeam.players.filter { !$0.isHoldingOut }
         homePlayers = homeRoster.map(SimPlayer.init(from:))
         awayPlayers = awayRoster.map(SimPlayer.init(from:))
         homeOffenseUnit = FieldUnit.offense(from: homePlayers)
@@ -367,6 +591,13 @@ final class LiveGameEngine: ObservableObject {
         homeDefScheme = homeCoaches.first { $0.role == .defensiveCoordinator }?.defensiveScheme
         awayOffScheme = awayCoaches.first { $0.role == .offensiveCoordinator }?.offensiveScheme
         awayDefScheme = awayCoaches.first { $0.role == .defensiveCoordinator }?.defensiveScheme
+
+        // Medical staff for live injury risk/recovery (mirrors WeekAdvancer's
+        // per-team doctor/physio lookup for the weekly roll).
+        homeDoctor = homeCoaches.first { $0.role == .teamDoctor }
+        homePhysio = homeCoaches.first { $0.role == .physio }
+        awayDoctor = awayCoaches.first { $0.role == .teamDoctor }
+        awayPhysio = awayCoaches.first { $0.role == .physio }
 
         // Seed stat entries for every rostered player.
         GameSimulator.initializeStats(for: homePlayers, into: &statsAccumulator)
@@ -407,6 +638,8 @@ final class LiveGameEngine: ObservableObject {
             return lastPlay ?? gameOverPlaceholderPlay()
         }
 
+        lastPlayInjuries = []
+
         // GameSimulator applies morale/personality modifiers once per drive.
         if !moraleAppliedForCurrentDrive {
             GameSimulator.applyMoraleModifiers(players: &homePlayers, quarter: quarter)
@@ -414,8 +647,12 @@ final class LiveGameEngine: ObservableObject {
             moraleAppliedForCurrentDrive = true
         }
 
-        let offense = homeHasPossession ? homePlayers : awayPlayers
-        let defense = homeHasPossession ? awayPlayers : homePlayers
+        // Injured (and fatigue-rested) players are off the board: the sim
+        // picks its QB/RB/targets from the remaining roster, so the
+        // replacement genuinely plays. With nobody sidelined these are the
+        // full rosters — identical to GameSimulator.simulate.
+        let offense = availablePlayers(isHome: homeHasPossession)
+        let defense = availablePlayers(isHome: !homeHasPossession)
 
         // Momentum is offense-relative in PlaySimulator; positive favors home.
         // Opponent-prep boosts shade momentum slightly toward the player's
@@ -446,7 +683,10 @@ final class LiveGameEngine: ObservableObject {
             offensiveCall: offensiveCall,
             forcedPlayType: forcedPlayType,
             defensivePackage: defensivePackage,
-            gamePlan: playerIsOnOffense ? playerGamePlan : nil
+            gamePlan: playerIsOnOffense ? playerGamePlan : nil,
+            weather: weather,
+            // Halftime adjustment: player's team offense only, second half only.
+            adjustments: (quarter >= 3 && playerIsOnOffense) ? halftimeAdjustment?.simAdjustments : nil
         )
 
         // Record the play with the clock state at the snap (mirrors DriveSimulator).
@@ -468,6 +708,13 @@ final class LiveGameEngine: ObservableObject {
                 offensiveScheme: homeHasPossession ? homeOffScheme : awayOffScheme,
                 offensiveCall: offensiveCall
             )
+            // First-half battle lines feed the halftime report (capped).
+            if recordedPlay.quarter <= 2, let events = lastMatchups?.events, !events.isEmpty {
+                let room = LiveGameEngine.firstHalfMatchupEventCap - firstHalfMatchupEvents.count
+                if room > 0 {
+                    firstHalfMatchupEvents.append(contentsOf: events.prefix(room))
+                }
+            }
             // Player grades: tally each named battle's winner and loser
             // (presentation only — the play outcome is already decided).
             if let events = lastMatchups?.events {
@@ -485,6 +732,10 @@ final class LiveGameEngine: ObservableObject {
         } else {
             lastMatchups = nil
         }
+
+        // Per-play injury dice for the contact participants (live-game
+        // counterpart of the quick sim's weekly roll — see rollInjuries).
+        rollInjuries(for: recordedPlay)
 
         // --- Consume clock (mirrors DriveSimulator.simulateDrive) ---
         // A pending timeout freezes the clock: this play's runoff is zeroed.
@@ -559,7 +810,8 @@ final class LiveGameEngine: ObservableObject {
             quarter: quarter,
             timeRemaining: timeRemaining,
             offensiveScheme: homeHasPossession ? homeOffScheme : awayOffScheme,
-            gamePlan: playerIsOnOffense ? playerGamePlan : nil
+            gamePlan: playerIsOnOffense ? playerGamePlan : nil,
+            weather: weather
         )
     }
 
@@ -609,6 +861,9 @@ final class LiveGameEngine: ObservableObject {
         if !isGameOver {
             isGameOver = true // hard safety cap — should never trigger in practice
         }
+        // A sim-to-final blows straight through the break — never leave a
+        // stale halftime flag for the view to trip on.
+        halftimePending = false
     }
 
     // MARK: - Result & Persistence
@@ -638,13 +893,227 @@ final class LiveGameEngine: ObservableObject {
     /// Writes the final score to the `Game`, updates both teams' records, and
     /// stores the result in `WeekAdvancer.lastPlayerGameResult` so the weekly
     /// press conference / recap UI can pick it up after `advanceWeek`.
+    ///
+    /// Also writes any live-game injuries back to the SwiftData players with
+    /// the exact mechanism the weekly sim uses (`MedicalEngine.applyInjury`),
+    /// and registers both teams so `WeekAdvancer` skips their weekly injury
+    /// roll this advance — the live game already rolled those dice play by
+    /// play, at the same aggregate probability.
     func persist(to game: Game, context: ModelContext, teamsByID: [UUID: Team]) {
         let result = buildResult()
         game.homeScore = result.homeScore
         game.awayScore = result.awayScore
         WeekAdvancer.updateTeamRecords(game: game, teamsByID: teamsByID)
         WeekAdvancer.lastPlayerGameResult = result
+
+        // Matchup-driven morale: the player's best battle winners come out of
+        // a coached game buoyed; players who kept losing their one-on-ones
+        // take a small hit. Player's team only — the AI opponent (and every
+        // quick-simmed team) is untouched.
+        applyMatchupMorale()
+
+        for injury in gameInjuries {
+            guard let livePlayer = livePlayerByID[injury.playerID], !livePlayer.isInjured else { continue }
+            MedicalEngine.applyInjury(
+                player: livePlayer,
+                injuryType: injury.type,
+                doctor: injury.isHomeTeam ? homeDoctor : awayDoctor,
+                physio: injury.isHomeTeam ? homePhysio : awayPhysio
+            )
+        }
+        WeekAdvancer.liveGameInjuryTeamIDs = [homeTeamID, awayTeamID]
+
         try? context.save()
+    }
+
+    /// R18: end-of-game morale write-back from the individual matchup tallies
+    /// (see ``matchupWins``/``matchupLosses``). The top-3 battle winners on
+    /// the PLAYER's team gain +3 morale (clamped 1...100, same bounds as
+    /// `LockerRoomEngine`); teammates who collected 2+ battle losses without
+    /// at least as many wins lose 1. `PlayerDevelopmentEngine` exposes no
+    /// per-game XP tick (`applyGameExperience` rounds to zero for a single
+    /// game), so morale is the whole effect. Called once from ``persist``,
+    /// which only runs for the user's own coached games.
+    private func applyMatchupMorale() {
+        let playerIDs = Set(playerTeamIsHome ? homePlayerIDs : awayPlayerIDs)
+
+        let winners = matchupWins
+            .filter { playerIDs.contains($0.key) && $0.value > 0 }
+            .map { (id: $0.key, wins: $0.value, losses: matchupLosses[$0.key] ?? 0) }
+            .sorted { ($0.wins, $1.losses) > ($1.wins, $0.losses) }
+            .prefix(3)
+
+        var boosted: Set<UUID> = []
+        for winner in winners {
+            guard let live = livePlayerByID[winner.id] else { continue }
+            live.morale = max(1, min(100, live.morale + 3))
+            boosted.insert(winner.id)
+        }
+
+        for id in playerIDs where !boosted.contains(id) {
+            let losses = matchupLosses[id] ?? 0
+            let wins = matchupWins[id] ?? 0
+            guard losses >= 2, losses > wins, let live = livePlayerByID[id] else { continue }
+            live.morale = max(1, min(100, live.morale - 1))
+        }
+    }
+
+    // MARK: - Injuries & Rotation (private)
+
+    /// Roster minus everyone sidelined (injured or resting). Falls back to
+    /// the full roster if exclusions would leave fewer than 11 players.
+    private func availablePlayers(isHome: Bool) -> [SimPlayer] {
+        let roster = isHome ? homePlayers : awayPlayers
+        let sidelined = sidelinedIDs
+        guard !sidelined.isEmpty else { return roster }
+        let filtered = roster.filter { !sidelined.contains($0.id) }
+        return filtered.count >= 11 ? filtered : roster
+    }
+
+    /// Rebuilds all four field units from the current available rosters —
+    /// the same best-at-position pick used at kickoff, so an injured or
+    /// resting starter is replaced by the next-best player at his spot.
+    private func rebuildFieldUnits() {
+        let home = availablePlayers(isHome: true)
+        let away = availablePlayers(isHome: false)
+        homeOffenseUnit = FieldUnit.offense(from: home)
+        homeDefenseUnit = FieldUnit.defense(from: home)
+        awayOffenseUnit = FieldUnit.offense(from: away)
+        awayDefenseUnit = FieldUnit.defense(from: away)
+    }
+
+    /// Rolls injury dice for the play's contact participants: the ball
+    /// carrier (rusher, receiver, or sacked QB) and one tackler.
+    ///
+    /// This replaces the quick sim's weekly injury roll for both live teams
+    /// (`WeekAdvancer` skips them via `liveGameInjuryTeamIDs`), at the same
+    /// aggregate probability — live coaching never costs extra injuries.
+    private func rollInjuries(for play: PlayResult) {
+        guard play.playType == .pass || play.playType == .run else { return }
+
+        // Contact plays only. Touchdowns injure the carrier at most (nobody
+        // made the tackle); incompletions/penalties/kneels are contact-free.
+        let carrierContact: Bool
+        var tacklerRole: Int?
+        switch play.outcome {
+        case .rush, .fumble, .fumbleLost, .safety:
+            carrierContact = true
+            tacklerRole = Int.random(in: 0...6) // front seven brings him down
+        case .sack:
+            carrierContact = true
+            tacklerRole = Int.random(in: 0...3)
+        case .completion:
+            carrierContact = true
+            tacklerRole = Int.random(in: 4...10)
+        case .touchdown:
+            carrierContact = true
+            tacklerRole = nil
+        default:
+            carrierContact = false
+            tacklerRole = nil
+        }
+        guard carrierContact else { return }
+
+        let offenseIsHome = homeHasPossession
+        let offenseUnit = currentOffenseUnit
+        let defenseUnit = currentDefenseUnit
+
+        if let carrierID = play.keyOffensePlayerID {
+            checkInjury(
+                playerID: carrierID,
+                unitRole: offenseUnit.role(of: carrierID),
+                isHomeTeam: offenseIsHome
+            )
+        }
+        if let tacklerRole {
+            checkInjury(
+                playerID: defenseUnit[tacklerRole].id,
+                unitRole: tacklerRole,
+                isHomeTeam: !offenseIsHome
+            )
+        }
+    }
+
+    /// One involvement's injury check — same modifier shape as
+    /// `MedicalEngine.injuryCheck` (fatigue, durability, team doctor), scaled
+    /// to per-play size. On a hit: the player is pulled from the sim and his
+    /// field unit, and the event is published for the view.
+    private func checkInjury(playerID: UUID, unitRole: Int?, isHomeTeam: Bool) {
+        guard !injuredPlayerIDs.contains(playerID) else { return }
+        let roster = isHomeTeam ? homePlayers : awayPlayers
+        guard let player = roster.first(where: { $0.id == playerID }) else { return }
+        // Never bench a team below a full 11 (absurd-roster safety valve).
+        let teamInjured = roster.reduce(0) { $0 + (injuredPlayerIDs.contains($1.id) ? 1 : 0) }
+        guard roster.count - teamInjured > 12 else { return }
+
+        var risk = LiveGameEngine.perPlayInjuryRisk
+        risk *= 1.0 + Double(max(0, player.fatigue - 50)) / 50.0
+        risk *= 1.0 - Double(player.physical.durability) / 200.0
+        if let doctor = isHomeTeam ? homeDoctor : awayDoctor {
+            risk *= 1.0 - Double(doctor.playerDevelopment) / 330.0
+        }
+        guard Double.random(in: 0...1) < risk else { return }
+
+        let injuryType = InjuryType.allCases.randomElement()!
+        injuredPlayerIDs.insert(playerID)
+        gameInjuries.append((playerID: playerID, type: injuryType, isHomeTeam: isHomeTeam))
+
+        // Node contract: home figures 0–10, away 11–21, role-ordered.
+        let nodeIndex = unitRole.map { (isHomeTeam ? 0 : 11) + $0 }
+        lastPlayInjuries.append(LiveInjuryEvent(
+            playerID: playerID,
+            playerName: player.shortName,
+            position: player.position.rawValue,
+            isHomeTeam: isHomeTeam,
+            nodeIndex: nodeIndex,
+            injuryType: injuryType
+        ))
+
+        // If the resting RB is the only body left at his spot, he re-enters.
+        if restingRBID != nil {
+            let healthyRBs = (playerTeamIsHome ? homePlayers : awayPlayers)
+                .filter { $0.position == .RB && !injuredPlayerIDs.contains($0.id) }
+            if healthyRBs.count < 2 { restingRBID = nil }
+        }
+        rebuildFieldUnits()
+    }
+
+    /// Fatigue rotation, player's team only (an AI game must stay identical
+    /// to the quick sim): once the starting RB crosses the fatigue threshold
+    /// and a meaningfully fresher backup exists, the backup takes the next
+    /// drive; the starter returns when he is the fresher option again
+    /// (e.g. after halftime recovery).
+    private func updateRBRotation() {
+        let roster = playerTeamIsHome ? homePlayers : awayPlayers
+        let healthyRBs = roster
+            .filter { $0.position == .RB && !injuredPlayerIDs.contains($0.id) }
+            .sorted { $0.overall > $1.overall }
+        guard healthyRBs.count >= 2 else {
+            if restingRBID != nil { restingRBID = nil; rebuildFieldUnits() }
+            return
+        }
+        let starter = healthyRBs[0]
+        let backup = healthyRBs[1]
+
+        if let restingID = restingRBID {
+            guard restingID == starter.id else {
+                restingRBID = nil
+                rebuildFieldUnits()
+                return
+            }
+            // Return once the starter is clearly fresher than the backup or
+            // has recovered well below the rotation line.
+            if starter.fatigue + 10 <= backup.fatigue
+                || starter.fatigue < LiveGameEngine.rbRotationFatigueThreshold - 20 {
+                restingRBID = nil
+                rebuildFieldUnits()
+            }
+        } else if starter.fatigue >= LiveGameEngine.rbRotationFatigueThreshold,
+                  backup.fatigue <= starter.fatigue - 10 {
+            restingRBID = starter.id
+            lastRotation = RotationEvent(inName: backup.shortName, outName: starter.shortName)
+            rebuildFieldUnits()
+        }
     }
 
     // MARK: - Drive Lifecycle (private)
@@ -686,6 +1155,8 @@ final class LiveGameEngine: ObservableObject {
             defensePlayers: defense,
             into: &statsAccumulator
         )
+        // Milestone banners ride the same per-drive stat granularity.
+        publishMilestones()
 
         let driveTime = drive.timeConsumed
         if homeHasPossession {
@@ -808,6 +1279,9 @@ final class LiveGameEngine: ObservableObject {
                 homeTimeouts = 3
                 awayTimeouts = 3
                 timeoutClockStopPending = false
+                // The live view pauses here for the halftime report; the
+                // engine itself plays on regardless (auto-sim parity).
+                halftimePending = true
                 nextHome = true
                 let halfKick = GameSimulator.rollKickoff(allowReturnTouchdown: false)
                 nextYardLine = halfKick.startingYardLine
@@ -944,6 +1418,8 @@ final class LiveGameEngine: ObservableObject {
         distance = min(10, 100 - driveStartYardLine)
         currentDrivePlays = []
         moraleAppliedForCurrentDrive = false
+        // Fatigue rotation is decided between drives (player's team only).
+        updateRBRotation()
     }
 
     /// Returned by ``step`` only if it is called after the game has ended.

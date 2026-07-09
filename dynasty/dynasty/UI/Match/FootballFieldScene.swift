@@ -759,7 +759,10 @@ class FootballFieldScene: SCNScene {
     }
 
     /// The carrier and tackler hit the turf, lie there a beat, and get up.
-    private func fall(nodeIndex: Int, delay: TimeInterval = 0) {
+    /// With `stayDown` the figure collapses and stays on the turf (injury
+    /// presentation) — the next formation move stands him back up, by which
+    /// point the node already wears the replacement's number.
+    private func fall(nodeIndex: Int, delay: TimeInterval = 0, stayDown: Bool = false) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         figure.removeAction(forKey: "gait")
@@ -770,6 +773,12 @@ class FootballFieldScene: SCNScene {
             SCNAction.move(to: SCNVector3(0, -0.32, 0.15), duration: 0.3),
         ])
         down.timingMode = .easeIn
+        if stayDown {
+            figure.runAction(SCNAction.sequence([
+                SCNAction.wait(duration: delay), down,
+            ]), forKey: "fall")
+            return
+        }
         let up = SCNAction.group([
             SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.45),
             SCNAction.move(to: SCNVector3Zero, duration: 0.45),
@@ -778,6 +787,12 @@ class FootballFieldScene: SCNScene {
         figure.runAction(SCNAction.sequence([
             SCNAction.wait(duration: delay), down, SCNAction.wait(duration: 0.8), up,
         ]), forKey: "fall")
+    }
+
+    /// Injury presentation: the player drops and stays on the turf until the
+    /// next formation move. `nodeIndex` 0-10 = home players, 11-21 = away.
+    func stayDown(nodeIndex: Int) {
+        fall(nodeIndex: nodeIndex, stayDown: true)
     }
 
     /// Snaps a figure out of its running pose (used when a play is cancelled).
@@ -1734,6 +1749,7 @@ class FootballFieldScene: SCNScene {
         mainLight.shadowMapSize = CGSize(width: 2048, height: 2048)
 
         let mainLightNode = SCNNode()
+        mainLightNode.name = "mainLight"
         mainLightNode.light = mainLight
         mainLightNode.eulerAngles = SCNVector3(-Float.pi / 3, Float.pi / 6, 0)
         mainLightNode.position = SCNVector3(0, 100, 0)
@@ -1747,6 +1763,7 @@ class FootballFieldScene: SCNScene {
         fillLight.castsShadow = false
 
         let fillLightNode = SCNNode()
+        fillLightNode.name = "fillLight"
         fillLightNode.light = fillLight
         fillLightNode.eulerAngles = SCNVector3(-Float.pi / 4, -Float.pi / 4, 0)
         rootNode.addChildNode(fillLightNode)
@@ -1758,7 +1775,134 @@ class FootballFieldScene: SCNScene {
         ambientLight.intensity = 500
 
         let ambientLightNode = SCNNode()
+        ambientLightNode.name = "ambientLight"
         ambientLightNode.light = ambientLight
         rootNode.addChildNode(ambientLightNode)
+    }
+
+    // MARK: - Weather
+
+    /// Applies a visual weather treatment over the field. Idempotent: any
+    /// previous weather visuals are removed first, and the lighting returns
+    /// to its defaults before the new condition is applied.
+    ///
+    /// - rain: procedural streak particles falling from above + dimmer lights
+    /// - snow: slow white flakes + a faint snow blanket over the turf
+    /// - wind/clear: no visuals (gusts would just read as noise from this camera)
+    func setWeather(_ weather: GameWeather) {
+        rootNode.childNode(withName: "weatherEmitter", recursively: false)?.removeFromParentNode()
+        rootNode.childNode(withName: "snowBlanket", recursively: false)?.removeFromParentNode()
+        setLightIntensities(main: 1200, fill: 400, ambient: 500)
+
+        switch weather {
+        case .clear, .wind:
+            break
+        case .rain:
+            addWeatherEmitter(Self.rainSystem())
+            setLightIntensities(main: 850, fill: 300, ambient: 420)
+        case .snow:
+            addWeatherEmitter(Self.snowSystem())
+            addSnowBlanket()
+            setLightIntensities(main: 1200, fill: 400, ambient: 620)
+        }
+    }
+
+    private func setLightIntensities(main: CGFloat, fill: CGFloat, ambient: CGFloat) {
+        rootNode.childNode(withName: "mainLight", recursively: false)?.light?.intensity = main
+        rootNode.childNode(withName: "fillLight", recursively: false)?.light?.intensity = fill
+        rootNode.childNode(withName: "ambientLight", recursively: false)?.light?.intensity = ambient
+    }
+
+    /// Adds the particle emitter high above the field, covering the whole
+    /// playing surface plus the aprons.
+    private func addWeatherEmitter(_ system: SCNParticleSystem) {
+        let node = SCNNode()
+        node.name = "weatherEmitter"
+        node.position = SCNVector3(0, 32, 0)
+        node.addParticleSystem(system)
+        rootNode.addChildNode(node)
+    }
+
+    /// Faint white translucent sheet just above the turf (below the painted
+    /// yard lines' top face at y 0.02) — reads as light snow cover.
+    private func addSnowBlanket() {
+        let blanket = SCNBox(
+            width: CGFloat(FieldConstants.fieldWidth + 8),
+            height: 0.002,
+            length: CGFloat(FieldConstants.totalLength + 8),
+            chamferRadius: 0
+        )
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor(white: 1.0, alpha: 0.15)
+        material.lightingModel = .constant
+        blanket.materials = [material]
+
+        let node = SCNNode(geometry: blanket)
+        node.name = "snowBlanket"
+        node.position = SCNVector3(0, 0.014, 0)
+        rootNode.addChildNode(node)
+    }
+
+    /// Procedural rain: small stretched streaks falling straight down at
+    /// speed, tinted cool and slightly additive so they catch the lights.
+    private static func rainSystem() -> SCNParticleSystem {
+        let system = SCNParticleSystem()
+        system.birthRate = 400
+        system.particleLifeSpan = 1.6
+        system.emitterShape = SCNBox(width: 70, height: 0.5, length: 130, chamferRadius: 0)
+        system.birthLocation = .volume
+        system.emittingDirection = SCNVector3(0, -1, 0)
+        system.spreadingAngle = 2
+        system.particleVelocity = 24
+        system.particleVelocityVariation = 6
+        system.particleImage = rainStreakImage()
+        system.particleSize = 0.55
+        system.particleSizeVariation = 0.2
+        system.particleColor = UIColor(red: 0.65, green: 0.72, blue: 0.85, alpha: 0.4)
+        system.blendMode = .additive
+        system.stretchFactor = 0.12
+        system.isLightingEnabled = false
+        return system
+    }
+
+    /// Procedural snow: slow, drifting white flakes with a long lifespan so
+    /// they cover the full drop from the emitter to the turf.
+    private static func snowSystem() -> SCNParticleSystem {
+        let system = SCNParticleSystem()
+        system.birthRate = 220
+        system.particleLifeSpan = 16
+        system.emitterShape = SCNBox(width: 70, height: 0.5, length: 130, chamferRadius: 0)
+        system.birthLocation = .volume
+        system.emittingDirection = SCNVector3(0, -1, 0)
+        system.spreadingAngle = 14
+        system.particleVelocity = 2.4
+        system.particleVelocityVariation = 0.8
+        system.particleImage = snowflakeImage()
+        system.particleSize = 0.18
+        system.particleSizeVariation = 0.08
+        system.particleColor = UIColor(white: 1.0, alpha: 0.9)
+        system.isLightingEnabled = false
+        return system
+    }
+
+    /// Tiny vertical white streak — the rain drop sprite, drawn in code.
+    private static func rainStreakImage() -> UIImage {
+        let size = CGSize(width: 6, height: 32)
+        return UIGraphicsImageRenderer(size: size).image { _ in
+            UIColor.white.setFill()
+            UIBezierPath(
+                roundedRect: CGRect(x: 2, y: 0, width: 2, height: 32),
+                cornerRadius: 1
+            ).fill()
+        }
+    }
+
+    /// Soft white dot — the snowflake sprite, drawn in code.
+    private static func snowflakeImage() -> UIImage {
+        let size = CGSize(width: 16, height: 16)
+        return UIGraphicsImageRenderer(size: size).image { _ in
+            UIColor.white.setFill()
+            UIBezierPath(ovalIn: CGRect(x: 2, y: 2, width: 12, height: 12)).fill()
+        }
     }
 }

@@ -5,6 +5,20 @@ import Foundation
 /// Simulates individual NFL plays using player attributes, game situation, and randomness.
 enum PlaySimulator {
 
+    // MARK: - Live Coaching Adjustments
+
+    /// Small live-game coaching tweaks (halftime adjustments). Applied on top
+    /// of the normal odds. `nil` — the default everywhere — reproduces today's
+    /// behavior exactly, so quick-sim / auto-sim parity is untouched.
+    struct Adjustments {
+        /// Subtracted from the sack probability (pass-protection emphasis).
+        var sackChanceReduction: Double = 0
+        /// Added to the completion probability (attack-the-corners emphasis).
+        var completionBonus: Double = 0
+        /// Added to expected rushing yards before the roll is rounded.
+        var runYardageBonus: Double = 0
+    }
+
     // MARK: - Public API
 
     /// Simulates a single play and returns the result.
@@ -31,6 +45,12 @@ enum PlaySimulator {
     ///   - gamePlan: Optional coaching game plan for the OFFENSE. Shades the
     ///     AI's run/pass mix and 4th-down aggressiveness inside
     ///     ``decidePlayCall``. `nil` preserves today's behavior exactly.
+    ///   - weather: Optional game weather. `nil` (or `.clear`) preserves
+    ///     today's behavior exactly. Rain/snow slick the ball (completions,
+    ///     fumbles, kicks); snow also kills breakaways and biases play-calling
+    ///     toward the run; wind knocks down deep passes and long field goals.
+    ///   - adjustments: Optional live coaching tweaks (halftime adjustments)
+    ///     for the OFFENSE. `nil` preserves today's behavior exactly.
     static func simulatePlay(
         offensePlayers: [SimPlayer],
         defensePlayers: [SimPlayer],
@@ -46,7 +66,9 @@ enum PlaySimulator {
         offensiveCall: OffensivePlayCall? = nil,
         forcedPlayType: PlayType? = nil,
         defensivePackage: DefensivePackage? = nil,
-        gamePlan: GamePlan? = nil
+        gamePlan: GamePlan? = nil,
+        weather: GameWeather? = nil,
+        adjustments: Adjustments? = nil
     ) -> PlayResult {
         let playCall: PlayType
         if let forced = forcedPlayType {
@@ -61,7 +83,8 @@ enum PlaySimulator {
                 quarter: quarter,
                 timeRemaining: timeRemaining,
                 offensiveScheme: offensiveScheme,
-                gamePlan: gamePlan
+                gamePlan: gamePlan,
+                weather: weather
             )
         }
 
@@ -99,7 +122,9 @@ enum PlaySimulator {
                 offensiveScheme: offensiveScheme,
                 defensiveScheme: defensiveScheme,
                 hint: hint,
-                defensivePackage: defensivePackage
+                defensivePackage: defensivePackage,
+                weather: weather,
+                adjustments: adjustments
             )
         case .run:
             return simulateRunPlay(
@@ -115,7 +140,9 @@ enum PlaySimulator {
                 offensiveScheme: offensiveScheme,
                 defensiveScheme: defensiveScheme,
                 hint: hint,
-                defensivePackage: defensivePackage
+                defensivePackage: defensivePackage,
+                weather: weather,
+                adjustments: adjustments
             )
         case .punt:
             return simulatePunt(
@@ -135,7 +162,8 @@ enum PlaySimulator {
                 yardLine: yardLine,
                 quarter: quarter,
                 timeRemaining: timeRemaining,
-                playNumber: playNumber
+                playNumber: playNumber,
+                weather: weather
             )
         case .kneel:
             return simulateKneel(
@@ -171,7 +199,9 @@ enum PlaySimulator {
                 offensiveScheme: offensiveScheme,
                 defensiveScheme: defensiveScheme,
                 hint: hint,
-                defensivePackage: defensivePackage
+                defensivePackage: defensivePackage,
+                weather: weather,
+                adjustments: adjustments
             )
         }
     }
@@ -198,6 +228,9 @@ enum PlaySimulator {
     ///   `runPassRatio` shifts the pass probability (±0.15 at the extremes)
     ///   and `fourthDownAggressiveness` widens/narrows the go-for-it window.
     ///   `nil` — or a fully balanced plan — reproduces today's behavior exactly.
+    /// - Parameter weather: Optional game weather. Snow shifts the play mix
+    ///   toward the run (pass probability -0.08); other conditions and `nil`
+    ///   leave the call untouched.
     static func decidePlayCall(
         down: Int,
         distance: Int,
@@ -205,7 +238,8 @@ enum PlaySimulator {
         quarter: Int,
         timeRemaining: Int,
         offensiveScheme: OffensiveScheme? = nil,
-        gamePlan: GamePlan? = nil
+        gamePlan: GamePlan? = nil,
+        weather: GameWeather? = nil
     ) -> PlayType {
         let yardsToEndzone = 100 - yardLine
         let isTwoMinuteDrill = quarter == 4 && timeRemaining <= 120
@@ -230,7 +264,11 @@ enum PlaySimulator {
         // pass probability by up to ±0.15 (runPassRatio 0 → -0.15, 1 → +0.15).
         // A balanced plan (0.5) contributes exactly 0, preserving old behavior.
         let planPassBias = ((gamePlan?.runPassRatio ?? 0.5) - 0.5) * 0.3
-        let schemePassBias = schemeOnlyPassBias + planPassBias
+
+        // Weather run bias: in snow both AI coordinators lean on the ground
+        // game — the pass probability drops by 0.08 across every situation.
+        let weatherPassBias: Double = weather == .snow ? -0.08 : 0.0
+        let schemePassBias = schemeOnlyPassBias + planPassBias + weatherPassBias
 
         // 4th down decisions
         if down == 4 {
@@ -309,7 +347,9 @@ enum PlaySimulator {
         offensiveScheme: OffensiveScheme? = nil,
         defensiveScheme: DefensiveScheme? = nil,
         hint: OffensivePlayCall.SimulatorHint? = nil,
-        defensivePackage: DefensivePackage? = nil
+        defensivePackage: DefensivePackage? = nil,
+        weather: GameWeather? = nil,
+        adjustments: Adjustments? = nil
     ) -> PlayResult {
         let qb = findQB(in: offensePlayers)
         let qbAttrs = qbAttributes(for: qb)
@@ -351,6 +391,11 @@ enum PlaySimulator {
             let blitzPickup = (hint?.blitzPickupBonus ?? 0) * 0.15
             let extraPressure = defensivePackage?.totalPressureModifier ?? 0
             sackChance = clamp(sackChance - blitzPickup + extraPressure, min: 0.02, max: 0.60)
+        }
+
+        // Halftime adjustment: extra protection emphasis keeps the QB clean.
+        if let adjustments, adjustments.sackChanceReduction != 0 {
+            sackChance = clamp(sackChance - adjustments.sackChanceReduction, min: 0.02, max: 0.60)
         }
 
         if randomChance(sackChance) {
@@ -442,6 +487,22 @@ enum PlaySimulator {
         // Defensive package: tighter coverage shaves the completion odds.
         if let package = defensivePackage {
             completionChance = clamp(completionChance - package.totalCoverageModifier, min: 0.05, max: 0.95)
+        }
+
+        // Weather: a wet ball slips through hands (rain/snow), and gusts
+        // knock down the deep ball (wind). nil/.clear = today's odds exactly.
+        switch weather {
+        case .rain, .snow:
+            completionChance = clamp(completionChance - 0.05, min: 0.05, max: 0.95)
+        case .wind where passDistance == .deep:
+            completionChance = clamp(completionChance - 0.08, min: 0.05, max: 0.95)
+        default:
+            break
+        }
+
+        // Halftime adjustment: schemed separation lifts the completion odds.
+        if let adjustments, adjustments.completionBonus != 0 {
+            completionChance = clamp(completionChance + adjustments.completionBonus, min: 0.05, max: 0.95)
         }
 
         // --- Interception Check ---
@@ -578,7 +639,9 @@ enum PlaySimulator {
         offensiveScheme: OffensiveScheme? = nil,
         defensiveScheme: DefensiveScheme? = nil,
         hint: OffensivePlayCall.SimulatorHint? = nil,
-        defensivePackage: DefensivePackage? = nil
+        defensivePackage: DefensivePackage? = nil,
+        weather: GameWeather? = nil,
+        adjustments: Adjustments? = nil
     ) -> PlayResult {
         let rb = findRB(in: offensePlayers)
         let rbAttrs = rbAttributes(for: rb)
@@ -621,7 +684,9 @@ enum PlaySimulator {
         let baseYards = Double.random(in: 2.0...5.0)
         let visionBonus = Double(rbAttrs.vision) / 100.0 * 2.0
         let elusivenessBonus = Double(rbAttrs.elusiveness) / 100.0 * 1.5
-        var totalYards = Int((baseYards + visionBonus + elusivenessBonus + blockingAdvantage * 3.0 + momentumBoost * 2.0).rounded())
+        // Halftime adjustment: a run-first commitment adds expected yardage.
+        let adjustmentYards = adjustments?.runYardageBonus ?? 0
+        var totalYards = Int((baseYards + visionBonus + elusivenessBonus + blockingAdvantage * 3.0 + momentumBoost * 2.0 + adjustmentYards).rounded())
 
         // Apply scheme fit modifiers: offense fit boosts yards, defense fit reduces them
         let schemeYardAdjustment = Double(totalYards) * (offSchemeFit - defSchemeFit)
@@ -638,14 +703,18 @@ enum PlaySimulator {
             defensePlayers.filter { isDB($0) },
             extractor: { Double($0.physical.speed) }
         )
-        let breakawayChance = max(0.0, (rbSpeed - avgDBSpeed) / 200.0 + 0.03)
+        var breakawayChance = max(0.0, (rbSpeed - avgDBSpeed) / 200.0 + 0.03)
+        // Snow: nobody outruns the pursuit on a buried track.
+        if weather == .snow { breakawayChance *= 0.5 }
         if randomChance(breakawayChance) {
             totalYards += Int.random(in: 15...45)
         }
 
         // --- Fumble Check ---
         // ~1% base, slightly lower with high break-tackle (implies ball security awareness)
-        let fumbleChance = max(0.005, 0.01 - Double(rbAttrs.breakTackle) / 10000.0)
+        var fumbleChance = max(0.005, 0.01 - Double(rbAttrs.breakTackle) / 10000.0)
+        // Rain/snow: the wet ball comes out more often.
+        if weather == .rain || weather == .snow { fumbleChance += 0.005 }
         if randomChance(fumbleChance) {
             let fumbleLost = coinFlip(0.5)
             return PlayResult(
@@ -875,7 +944,8 @@ enum PlaySimulator {
         yardLine: Int,
         quarter: Int,
         timeRemaining: Int,
-        playNumber: Int
+        playNumber: Int,
+        weather: GameWeather? = nil
     ) -> PlayResult {
         let kicker = offensePlayers.first(where: { $0.position == .K }) ?? offensePlayers.first!
         let fgDistance = 100 - yardLine + 17 // Snap + hold distance
@@ -917,7 +987,18 @@ enum PlaySimulator {
         }
 
         let accuracyModifier = (Double(kickerAccuracy) - 70.0) / 200.0
-        let makeChance = clamp(baseMakeChance + accuracyModifier, min: 0.10, max: 0.98)
+        var makeChance = clamp(baseMakeChance + accuracyModifier, min: 0.10, max: 0.98)
+
+        // Weather: rain/snow slick the hold and plant foot; wind punishes
+        // long tries (45+ yards). nil/.clear keeps today's odds exactly.
+        switch weather {
+        case .rain, .snow:
+            makeChance = clamp(makeChance - 0.05, min: 0.05, max: 0.98)
+        case .wind where fgDistance > 45:
+            makeChance = clamp(makeChance - 0.10, min: 0.05, max: 0.98)
+        default:
+            break
+        }
 
         let isGood = randomChance(makeChance)
 

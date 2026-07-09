@@ -60,6 +60,9 @@ struct CareerDashboardView: View {
 
     @State private var coachedSession: CoachedGameSession?
     @State private var lastAwayTeam: Team?
+    /// Weather of the player's most recently finished game (quick-simmed or
+    /// coached) — shown as a chip in the game summary header.
+    @State private var lastGameWeather: GameWeather?
 
     /// Inbox filter for the messages panel
     @State private var inboxFilter: DashboardInboxFilter = .all
@@ -80,6 +83,18 @@ struct CareerDashboardView: View {
     /// Tracks which Hard Knocks event IDs have already been displayed so the
     /// same event isn't re-shown when the dashboard re-appears.
     @State private var shownHardKnocksEventIDs: Set<UUID> = []
+
+    /// R19: What's riding on this week's game ("Win clinches the NFC North"),
+    /// computed conservatively from the standings in `loadAllData`. nil when
+    /// no claim is provably true — no line beats a wrong line.
+    @State private var seasonStakes: SeasonStakes?
+
+    /// A single late-season stakes statement for the hero card.
+    struct SeasonStakes {
+        let text: String
+        /// Urgent stakes (elimination on the line) render in red.
+        let urgent: Bool
+    }
 
     // MARK: - Derived
 
@@ -143,6 +158,9 @@ struct CareerDashboardView: View {
             onAdvance()
         } else {
             let teamsByID = fetchTeamsByID()
+            // Capture the player's game BEFORE the advance plays it, so the
+            // summary can show the same deterministic weather the sim used.
+            let playedGame = currentWeekPlayerGame
             WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
             if let result = WeekAdvancer.lastPlayerGameResult,
                let home = teamsByID[result.boxScore.home.teamID],
@@ -150,6 +168,7 @@ struct CareerDashboardView: View {
                 lastGameResult = result
                 lastHomeTeam = home
                 lastAwayTeam = away
+                lastGameWeather = playedGame.map { GameWeather.forGame(id: $0.id, week: $0.week) }
                 showGameSummary = true
             }
             loadAllData()
@@ -217,6 +236,7 @@ struct CareerDashboardView: View {
         lastGameResult = WeekAdvancer.lastPlayerGameResult
         lastHomeTeam = allTeamsByID[game.homeTeamID]
         lastAwayTeam = allTeamsByID[game.awayTeamID]
+        lastGameWeather = GameWeather.forGame(id: game.id, week: game.week)
 
         coachedSession = nil
         loadAllData()
@@ -277,7 +297,8 @@ struct CareerDashboardView: View {
                         boxScore: result.boxScore,
                         homeTeam: home,
                         awayTeam: away,
-                        playerStats: result.playerStats
+                        playerStats: result.playerStats,
+                        weather: lastGameWeather
                     )
                 }
             }
@@ -291,6 +312,10 @@ struct CareerDashboardView: View {
                 playerTeamIsHome: session.playerTeamIsHome,
                 audibleBoost: session.audibleBoost,
                 defReadBoost: session.defReadBoost,
+                // Same deterministic draw the quick sim uses for this game.
+                weather: GameWeather.forGame(id: session.game.id, week: session.game.week),
+                // R19: playoff framing (PLAYOFFS badge, win-or-go-home copy).
+                isPlayoff: session.game.isPlayoff,
                 onFinish: { engine in
                     finishCoachedGame(engine: engine, game: session.game)
                 }
@@ -3040,6 +3065,14 @@ struct CareerDashboardView: View {
                 conference: myTeam.conference,
                 division: myTeam.division
             )
+            // R19: late-season stakes line for the hero card.
+            seasonStakes = computeSeasonStakes(
+                myTeam: myTeam,
+                allTeams: allTeams,
+                allRecords: allRecords,
+                divisionStandings: divisionRecords,
+                allGames: allGames
+            )
         }
 
         let myGames = allGames.filter {
@@ -3132,6 +3165,96 @@ struct CareerDashboardView: View {
             results.append((group: group.label, starterGrade: grades.starterGrade, depthGrade: grades.depthGrade, starterOVR: grades.starterOVR, depthOVR: grades.depthOVR))
         }
         return results
+    }
+
+    // MARK: - Season Stakes (R19)
+
+    /// Derives a single stakes statement for this week's game — conservatively.
+    /// Every branch must be provably true from raw win counts (equal schedule
+    /// lengths, no tiebreaker guessing); when ties muddy the math, or the claim
+    /// depends on results we can't guarantee, we return nil instead.
+    private func computeSeasonStakes(
+        myTeam: Team,
+        allTeams: [Team],
+        allRecords: [StandingsRecord],
+        divisionStandings: [StandingsRecord],
+        allGames: [Game]
+    ) -> SeasonStakes? {
+        // Late season only, and only while this week's game is still unplayed.
+        guard career.currentPhase == .regularSeason || career.currentPhase == .tradeDeadline,
+              career.currentWeek >= 10,
+              let nextGame = allGames.first(where: {
+                  !$0.isPlayoff && !$0.isPlayed && $0.week == career.currentWeek
+                      && ($0.homeTeamID == myTeam.id || $0.awayTeamID == myTeam.id)
+              }),
+              let myRecord = divisionStandings.first(where: { $0.teamID == myTeam.id })
+        else { return nil }
+
+        // Ties break the "more wins = higher percentage" shortcut — bail out.
+        guard divisionStandings.allSatisfy({ $0.ties == 0 }) else { return nil }
+
+        /// Unplayed regular-season games left on a team's schedule (this
+        /// week's game included).
+        func remainingGames(_ teamID: UUID) -> Int {
+            allGames.filter {
+                !$0.isPlayoff && !$0.isPlayed
+                    && ($0.homeTeamID == teamID || $0.awayTeamID == teamID)
+            }.count
+        }
+
+        let divisionName = "\(myTeam.conference.rawValue) \(myTeam.division.rawValue)"
+        let rivals = divisionStandings.filter { $0.teamID != myTeam.id }
+
+        // 1. "Win clinches the NFC North" — I lead the division, no rival can
+        //    reach my post-win total even by winning out, and it isn't already
+        //    clinched (the win must actually matter).
+        if divisionStandings.first?.teamID == myTeam.id {
+            let clinchedByWin = rivals.allSatisfy {
+                $0.wins + remainingGames($0.teamID) < myRecord.wins + 1
+            }
+            let alreadyClinched = rivals.allSatisfy {
+                $0.wins + remainingGames($0.teamID) < myRecord.wins
+            }
+            if clinchedByWin && !alreadyClinched {
+                return SeasonStakes(text: "Win clinches the \(divisionName)", urgent: false)
+            }
+        }
+
+        // 2. "Division lead on the line vs CHI" — this week's opponent is a
+        //    division rival with my exact record, and we are the division's
+        //    top two: the winner holds sole possession of the lead.
+        let oppID = nextGame.homeTeamID == myTeam.id ? nextGame.awayTeamID : nextGame.homeTeamID
+        if let oppTeam = allTeamsByID[oppID],
+           oppTeam.conference == myTeam.conference, oppTeam.division == myTeam.division,
+           let oppRecord = divisionStandings.first(where: { $0.teamID == oppID }),
+           oppRecord.wins == myRecord.wins, oppRecord.losses == myRecord.losses {
+            let topTwo = Set(divisionStandings.prefix(2).map(\.teamID))
+            if topTwo.contains(myTeam.id) && topTwo.contains(oppID) {
+                return SeasonStakes(
+                    text: "Division lead on the line vs \(oppTeam.abbreviation)",
+                    urgent: false
+                )
+            }
+        }
+
+        // 3. "Must win to stay in the hunt" — a loss leaves me unable to reach
+        //    even the CURRENT win total of the nearest playoff target (division
+        //    leader or the 7 seed), while a win keeps that total reachable.
+        //    Targets only add wins from here, so the elimination claim is safe.
+        guard let leader = divisionStandings.first, leader.teamID != myTeam.id else { return nil }
+        let confStandings = StandingsCalculator.conferenceStandings(
+            records: allRecords, teams: allTeams, conference: myTeam.conference
+        )
+        guard let seed7 = confStandings.indices.contains(6) ? confStandings[6] : nil,
+              seed7.ties == 0
+        else { return nil }
+        let target = min(leader.wins, seed7.wins)
+        let myCeiling = myRecord.wins + remainingGames(myTeam.id)
+        if myCeiling - 1 < target, myCeiling >= target {
+            return SeasonStakes(text: "Must win to stay in the hunt", urgent: true)
+        }
+
+        return nil
     }
 
     // MARK: - Career Role Helpers
@@ -3315,6 +3438,24 @@ struct CareerDashboardView: View {
             heroHeader(isByeWeek
                        ? "Week \(career.currentWeek) · Bye Week"
                        : "Week \(week) · \(oppText)")
+            // R19: late-season stakes — only rendered when provably true.
+            if let stakes = seasonStakes {
+                HStack(spacing: 6) {
+                    Image(systemName: stakes.urgent ? "exclamationmark.triangle.fill" : "flame.fill")
+                        .font(.caption.weight(.bold))
+                    Text(stakes.text)
+                        .font(.footnote.weight(.heavy))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+                .foregroundStyle(stakes.urgent ? Color.danger : Color.accentGold)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    (stakes.urgent ? Color.danger : Color.accentGold).opacity(0.14),
+                    in: Capsule()
+                )
+            }
             heroStatRow("Record", value: playerTeam?.record ?? "—")
             heroStatRow("Injuries", value: injuredCount == 0 ? "Fully healthy" : "\(injuredCount) OUT")
             if currentWeekPlayerGame != nil {

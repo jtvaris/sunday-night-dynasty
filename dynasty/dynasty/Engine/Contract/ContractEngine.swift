@@ -383,6 +383,7 @@ enum ContractEngine {
 
     /// Apply franchise tag to a player. Sets their salary to the tag value
     /// and marks them as franchise-tagged for the season.
+    /// R22: no player wants the tag — it costs 10 morale.
     static func applyFranchiseTag(
         player: Player,
         tagValue: Int,
@@ -393,6 +394,7 @@ enum ContractEngine {
         player.contractYearsRemaining = 1
         player.annualSalary = tagValue
         player.isFranchiseTagged = true
+        player.morale = max(0, player.morale - 10)
 
         // Update team cap: remove old salary, add new tag salary
         team.currentCapUsage = team.currentCapUsage - previousSalary + tagValue
@@ -414,6 +416,7 @@ enum ContractEngine {
             player.contractYearsRemaining = 1
             player.annualSalary = 0
             player.isFranchiseTagged = true
+            player.morale = max(0, player.morale - 10)
         }
     }
 
@@ -489,6 +492,7 @@ enum ContractEngine {
     }
 
     /// Remove franchise tag from a player. Reverts them to an expiring contract.
+    /// R22: rescinding the tag gives back the 10 morale the tag cost.
     static func removeFranchiseTag(
         player: Player,
         team: Team
@@ -498,6 +502,7 @@ enum ContractEngine {
         player.isFranchiseTagged = false
         player.contractYearsRemaining = 0
         player.annualSalary = 0
+        player.morale = min(100, player.morale + 10)
 
         // Free up the tag salary from team cap
         team.currentCapUsage -= tagSalary
@@ -512,6 +517,7 @@ enum ContractEngine {
             player.isFranchiseTagged = false
             player.contractYearsRemaining = 0
             player.annualSalary = 0
+            player.morale = min(100, player.morale + 10)
         }
     }
 

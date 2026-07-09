@@ -80,6 +80,9 @@ enum GameSimulator {
     ///     `nil` = today's exact AI behavior. Typically only the user's team
     ///     gets a non-nil plan.
     ///   - awayGamePlan: Same, for the AWAY team.
+    ///   - weather: Optional game weather (see ``GameWeather/forGame(id:week:)``).
+    ///     The SAME condition is applied to both teams on every play, so the
+    ///     effect is symmetric. `nil` = today's exact behavior (clear skies).
     static func simulate(
         homeTeam: Team,
         awayTeam: Team,
@@ -89,7 +92,8 @@ enum GameSimulator {
         defReadBoost: Double = 0,
         boostedTeamID: UUID? = nil,
         homeGamePlan: GamePlan? = nil,
-        awayGamePlan: GamePlan? = nil
+        awayGamePlan: GamePlan? = nil,
+        weather: GameWeather? = nil
     ) -> GameResult {
         // -----------------------------------------------------------------
         // 1. Setup
@@ -98,8 +102,9 @@ enum GameSimulator {
         // reads attributes thousands of times, and every read of a SwiftData
         // @Model property is far too slow for that hot path. The live models
         // are kept in a lookup so fatigue can be written back after the sim.
-        let homeRoster = homeTeam.players
-        let awayRoster = awayTeam.players
+        // R22: a player holding out over his contract does not suit up.
+        let homeRoster = homeTeam.players.filter { !$0.isHoldingOut }
+        let awayRoster = awayTeam.players.filter { !$0.isHoldingOut }
         var homePlayers = homeRoster.map(SimPlayer.init(from:))
         var awayPlayers = awayRoster.map(SimPlayer.init(from:))
         var livePlayerByID: [UUID: Player] = [:]
@@ -173,7 +178,8 @@ enum GameSimulator {
                 teamID: offenseTeamID,
                 offensiveScheme: homeHasPossession ? homeOffScheme : awayOffScheme,
                 defensiveScheme: homeHasPossession ? awayDefScheme : homeDefScheme,
-                gamePlan: homeHasPossession ? homeGamePlan : awayGamePlan
+                gamePlan: homeHasPossession ? homeGamePlan : awayGamePlan,
+                weather: weather
             )
 
             let drive = driveResult.drive
@@ -365,7 +371,8 @@ enum GameSimulator {
                 awayOffScheme: awayOffScheme,
                 awayDefScheme: awayDefScheme,
                 homeGamePlan: homeGamePlan,
-                awayGamePlan: awayGamePlan
+                awayGamePlan: awayGamePlan,
+                weather: weather
             )
             homeScore += otResult.homeOTPoints
             awayScore += otResult.awayOTPoints
@@ -573,7 +580,8 @@ enum GameSimulator {
         awayOffScheme: OffensiveScheme? = nil,
         awayDefScheme: DefensiveScheme? = nil,
         homeGamePlan: GamePlan? = nil,
-        awayGamePlan: GamePlan? = nil
+        awayGamePlan: GamePlan? = nil,
+        weather: GameWeather? = nil
     ) -> OvertimeResult {
         var homeOTPoints = 0
         var awayOTPoints = 0
@@ -601,7 +609,8 @@ enum GameSimulator {
                 teamID: otOffenseTeamID,
                 offensiveScheme: homeHasPossession ? homeOffScheme : awayOffScheme,
                 defensiveScheme: homeHasPossession ? awayDefScheme : homeDefScheme,
-                gamePlan: homeHasPossession ? homeGamePlan : awayGamePlan
+                gamePlan: homeHasPossession ? homeGamePlan : awayGamePlan,
+                weather: weather
             )
 
             let drive = driveResult.drive

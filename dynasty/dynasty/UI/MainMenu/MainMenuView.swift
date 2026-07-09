@@ -75,7 +75,9 @@ struct MainMenuView: View {
                         buttonsBlock
                         footerBlock
                     }
-                    .padding(.bottom, 16)
+                    // Extra clearance so the button stack and footer never crowd
+                    // the iPad home-indicator gesture bar (persona audit).
+                    .padding(.bottom, 36)
                 }
             }
         }
@@ -108,6 +110,19 @@ struct MainMenuView: View {
 
     private var titleBlock: some View {
         VStack(spacing: 8) {
+            // Brand monogram — simple glyph mark above the wordmark so the menu
+            // carries an identity beyond pure typography (persona audit).
+            ZStack {
+                Circle()
+                    .strokeBorder(Color.accentGold.opacity(0.75), lineWidth: 1.5)
+                    .frame(width: 52, height: 52)
+                Image(systemName: "football.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(Color.accentGold)
+            }
+            .shadow(color: .black.opacity(0.5), radius: 6, y: 3)
+            .padding(.bottom, 6)
+
             Text("SUNDAY NIGHT")
                 .font(.system(size: 22, weight: .bold))
                 .tracking(10)
@@ -121,8 +136,9 @@ struct MainMenuView: View {
 
             Text("NFL FOOTBALL MANAGER")
                 .font(.system(size: 14, weight: .medium))
-                .tracking(6)
-                .foregroundStyle(Color.white.opacity(0.7))
+                .tracking(7.5)
+                .foregroundStyle(Color.white.opacity(0.85))
+                .shadow(color: .black.opacity(0.55), radius: 4, y: 2)
                 .padding(.top, 4)
         }
         .padding(.bottom, 40)
@@ -299,10 +315,16 @@ private struct MenuButton: View {
         .frame(height: 56)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(isPrimary ? Color.accentGold : Color.white.opacity(0.12))
+                // Secondary buttons: dark base + frosted tint so white labels stay
+                // legible against busy photo areas (persona audit contrast fix).
+                .fill(isPrimary ? Color.accentGold : Color.black.opacity(0.30))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(isPrimary ? Color.clear : Color.white.opacity(0.25), lineWidth: 1)
+                        .fill(isPrimary ? Color.clear : Color.white.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(isPrimary ? Color.clear : Color.white.opacity(0.35), lineWidth: 1)
                 )
                 .shadow(color: isPrimary ? Color.accentGold.opacity(0.3) : Color.clear, radius: 12, y: 4)
         )

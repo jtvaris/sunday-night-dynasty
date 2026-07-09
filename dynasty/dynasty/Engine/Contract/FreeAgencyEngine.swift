@@ -58,32 +58,40 @@ enum FreeAgencyEngine {
 
     // MARK: - Market Generation
 
+    /// Deterministic projected asking price for a (soon-to-be) free agent:
+    /// market value scaled by the player's motivation. Shared by the live FA
+    /// market and the legal-tampering rumor mill (R23) so pre-market previews
+    /// quote exactly what the market will ask.
+    static func projectedAskingPrice(player: Player, salaryCap: Int = 265_000) -> Int {
+        let baseValue = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
+
+        // Motivation-based salary modifier
+        let motivationMultiplier: Double = {
+            switch player.personality.motivation {
+            case .money:
+                return 1.2   // Wants top dollar
+            case .winning:
+                return 0.9   // Will take a discount for a contender
+            case .stats:
+                return 1.05  // Wants a system where they'll produce
+            case .loyalty:
+                return 0.85  // Discount to stay with current team
+            case .fame:
+                return 1.1   // Big market premium
+            }
+        }()
+
+        let minimum = max(Int(0.0028 * Double(salaryCap)), 750)
+        return max(Int(Double(baseValue) * motivationMultiplier), minimum)
+    }
+
     /// Build the free-agent market from all players whose contracts have expired.
     /// Asking prices are influenced by market value and the player's personality motivation.
     static func generateFreeAgentMarket(allPlayers: [Player], salaryCap: Int = 265_000) -> [FreeAgent] {
         allPlayers
             .filter { $0.contractYearsRemaining == 0 && !$0.isFranchiseTagged }
             .map { player in
-                let baseValue = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
-
-                // Motivation-based salary modifier
-                let motivationMultiplier: Double = {
-                    switch player.personality.motivation {
-                    case .money:
-                        return 1.2   // Wants top dollar
-                    case .winning:
-                        return 0.9   // Will take a discount for a contender
-                    case .stats:
-                        return 1.05  // Wants a system where they'll produce
-                    case .loyalty:
-                        return 0.85  // Discount to stay with current team
-                    case .fame:
-                        return 1.1   // Big market premium
-                    }
-                }()
-
-                let minimum = max(Int(0.0028 * Double(salaryCap)), 750)
-                let askingPrice = max(Int(Double(baseValue) * motivationMultiplier), minimum)
+                let askingPrice = projectedAskingPrice(player: player, salaryCap: salaryCap)
 
                 // Desired years: younger players want longer deals, older want shorter
                 let desiredYears: Int = {
@@ -267,6 +275,12 @@ enum FreeAgencyEngine {
                 let formerTeam = allTeams.first { $0.id == player.teamID }
                 let teamAbbr = formerTeam?.abbreviation ?? "FA"
 
+                // R23: log the departure for the compensatory-pick formula
+                // (only contract EXPIRIES count — cuts never pass through here).
+                if let formerTeamID = player.teamID {
+                    CompensatoryPickEngine.recordDeparture(playerID: player.id, formerTeamID: formerTeamID)
+                }
+
                 newFAs.append((
                     name: player.fullName,
                     position: player.position.rawValue,
@@ -325,18 +339,28 @@ enum FreeAgencyEngine {
         let avgCap = allTeams.isEmpty ? 265_000 : allTeams.reduce(0) { $0 + $1.salaryCap } / allTeams.count
         let freeAgents = generateFreeAgentMarket(allPlayers: allPlayers, salaryCap: avgCap)
         let aiTeams = allTeams.filter { $0.id != playerTeamID }
-        simulateAIFreeAgency(freeAgents: freeAgents, teams: aiTeams, modelContext: modelContext, capMode: capMode)
+        simulateAIFreeAgency(
+            freeAgents: freeAgents,
+            teams: aiTeams,
+            modelContext: modelContext,
+            capMode: capMode,
+            allPlayers: allPlayers
+        )
     }
 
     // MARK: - AI Free Agency Simulation
 
     /// Let AI-controlled teams sign available free agents based on need and cap room.
     /// In sandbox cap mode the cap-room filter is dropped so any team can sign anyone.
+    /// R23: when `allPlayers` is provided, teams that actually NEED the position
+    /// jump the queue (critical > high > moderate) instead of pure cap-space order,
+    /// so bulk-simulated FA follows the same logic as the interactive rounds.
     static func simulateAIFreeAgency(
         freeAgents: [FreeAgent],
         teams: [Team],
         modelContext: ModelContext,
-        capMode: CapMode = .simple
+        capMode: CapMode = .simple,
+        allPlayers: [Player]? = nil
     ) {
         // Sort free agents by overall (best first) so elite players go first
         let sortedAgents = freeAgents.sorted { $0.player.overall > $1.player.overall }
@@ -346,7 +370,7 @@ enum FreeAgencyEngine {
             guard agent.player.teamID == nil else { continue }
 
             // In sandbox mode, every team is eligible regardless of cap.
-            let eligibleTeams: [Team]
+            var eligibleTeams: [Team]
             switch capMode {
             case .simple, .realistic:
                 eligibleTeams = teams
@@ -354,6 +378,23 @@ enum FreeAgencyEngine {
                     .sorted { $0.availableCap > $1.availableCap }
             case .sandbox:
                 eligibleTeams = teams.shuffled()
+            }
+
+            // R23: need-first ordering when roster data is available.
+            if let rosterPlayers = allPlayers, !rosterPlayers.isEmpty {
+                func needRank(_ team: Team) -> Int {
+                    switch assessPositionNeed(team: team, position: agent.player.position, allPlayers: rosterPlayers) {
+                    case .critical: return 3
+                    case .high:     return 2
+                    case .moderate: return 1
+                    case .none:     return 0
+                    }
+                }
+                let ranked = eligibleTeams.map { (team: $0, rank: needRank($0)) }
+                // Teams with any need come first; ties broken by cap space order.
+                let needy = ranked.filter { $0.rank > 0 }.sorted { $0.rank > $1.rank }.map(\.team)
+                let rest = ranked.filter { $0.rank == 0 }.map(\.team)
+                eligibleTeams = needy + rest
             }
 
             // Pick from the top interested teams (capped by marketInterest)
@@ -417,7 +458,8 @@ enum FreeAgencyEngine {
     }
 
     /// Returns the position group and ideal roster count for a given position.
-    private static func positionGroupInfo(for position: Position) -> (positions: [Position], idealCount: Int) {
+    /// Internal because the R23 signing-interest meter reuses the same grouping.
+    static func positionGroupInfo(for position: Position) -> (positions: [Position], idealCount: Int) {
         switch position {
         case .QB:                    return ([.QB], 2)
         case .RB, .FB:               return ([.RB, .FB], 3)
@@ -784,12 +826,18 @@ enum FreeAgencyEngine {
 
     /// Determine a free agent's decision given the player's offer and AI bids.
     /// Enhanced with motivation-based preferences and "shopping around" mechanic.
+    /// R23: when `allPlayers` is provided, every bid is also weighed by the
+    /// projected ROLE on that roster (would he start, or sit behind a better
+    /// player?), and a hosted facility visit boosts the user's offer.
     static func resolvePlayerDecision(
         player: Player,
         playerOffer: (salary: Int, years: Int)?,
         aiBids: [AIBid],
         round: Int,
-        allTeams: [Team]? = nil
+        allTeams: [Team]? = nil,
+        allPlayers: [Player]? = nil,
+        userTeamID: UUID? = nil,
+        hostedVisit: Bool = false
     ) -> PlayerDecision {
         // Combine player offer with AI bids
         struct Bid {
@@ -800,6 +848,7 @@ enum FreeAgencyEngine {
             let isPlayer: Bool
             let mediaMarket: MediaMarket?
             let teamRecord: (wins: Int, losses: Int)?
+            let rosterTeamID: UUID?
         }
 
         let teams = allTeams ?? []
@@ -813,7 +862,8 @@ enum FreeAgencyEngine {
                 years: aiBid.years,
                 isPlayer: false,
                 mediaMarket: teamData?.mediaMarket,
-                teamRecord: teamData.map { (wins: $0.wins, losses: $0.losses) }
+                teamRecord: teamData.map { (wins: $0.wins, losses: $0.losses) },
+                rosterTeamID: aiBid.teamID
             )
         }
 
@@ -825,7 +875,8 @@ enum FreeAgencyEngine {
                 years: offer.years,
                 isPlayer: true,
                 mediaMarket: nil,
-                teamRecord: nil
+                teamRecord: nil,
+                rosterTeamID: userTeamID
             ))
         }
 
@@ -902,6 +953,25 @@ enum FreeAgencyEngine {
             // General player-team loyalty bonus
             if bid.isPlayer {
                 score *= 1.1
+            }
+
+            // R23: hosted facility visit — the player got the tour, met the
+            // staff, saw the plan. Clear, explainable edge for the host team.
+            if bid.isPlayer && hostedVisit {
+                score *= 1.15
+            }
+
+            // R23: role factor — players favor rosters where they'd start.
+            // Stats-motivated players weigh it heavily; everyone weighs it some.
+            if let rosterPlayers = allPlayers, !rosterPlayers.isEmpty,
+               let rosterTeamID = bid.rosterTeamID {
+                let role = SigningInterestEngine.roleScore(
+                    player: player,
+                    teamID: rosterTeamID,
+                    allPlayers: rosterPlayers
+                )
+                let roleWeight = (player.personality.motivation == .stats) ? 0.30 : 0.12
+                score *= 1.0 + (role - 0.5) * roleWeight
             }
 
             // Longer deals valued more by young players

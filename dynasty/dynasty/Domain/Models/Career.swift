@@ -57,6 +57,11 @@ final class Career {
     /// Current sub-step within the FA phase (stored as raw value of FreeAgencyStep).
     var freeAgencyStep: String = FreeAgencyStep.finalPush.rawValue
 
+    // MARK: - FA Visits (R23)
+    /// Number of free-agent facility visits hosted this FA phase (max 3).
+    /// Reset when the free agency phase begins. Default value → lightweight migration.
+    var faVisitsUsed: Int = 0
+
     // MARK: - Scouting Counters
     /// Number of combine interviews conducted this year (max 60).
     var interviewsUsed: Int = 0
@@ -76,6 +81,13 @@ final class Career {
     /// Persisted relationship state between the GM and their Head Coach.
     /// Only meaningful when `role == .gm`; ignored for `.gmAndHeadCoach` careers.
     var hcGMRelationship: CoachRelationshipEngine.HCGMRelationship
+
+    // MARK: - Pending Trade Offers (R21)
+    /// JSON-encoded `[TradeProposal]` of AI-initiated trade offers awaiting the
+    /// user's decision. Populated by WeekAdvancer during the regular season,
+    /// consumed by the Trade Center, cleared at the trade deadline and at the
+    /// start of every new season. Optional new attribute → lightweight migration.
+    var pendingTradeOffersData: Data? = nil
 
     var winPercentage: Double {
         let totalGames = totalWins + totalLosses
@@ -141,5 +153,26 @@ extension Career {
     /// play-calling behavior (`nil` game plan = no bias).
     var savedGamePlan: GamePlan? {
         gamePlanData == nil ? nil : gamePlan
+    }
+}
+
+// MARK: - Pending Trade Offers Codable Bridge
+
+extension Career {
+
+    /// AI-initiated trade offers awaiting the user's decision, JSON-decoded
+    /// from `pendingTradeOffersData`. Writing encodes and stores the new list
+    /// (caller saves the context).
+    var pendingTradeOffers: [TradeProposal] {
+        get {
+            guard let data = pendingTradeOffersData,
+                  let offers = try? JSONDecoder().decode([TradeProposal].self, from: data) else {
+                return []
+            }
+            return offers
+        }
+        set {
+            pendingTradeOffersData = try? JSONEncoder().encode(newValue)
+        }
     }
 }

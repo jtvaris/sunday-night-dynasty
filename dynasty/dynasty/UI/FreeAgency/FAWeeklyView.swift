@@ -110,6 +110,13 @@ struct FAWeeklyView: View {
     @State private var milestoneActive: FAMilestone?
     @State private var milestoneFA: FreeAgencyEngine.FreeAgent?
 
+    // R23 — Facility visits + signing interest meter
+    @State private var visitedPlayerIDs: Set<UUID> = []
+    @State private var visitOutcome: FAVisitOutcome?
+    @State private var teamOffensiveScheme: OffensiveScheme?
+    @State private var teamDefensiveScheme: DefensiveScheme?
+    private static let faVisitLimit = 3
+
     // FA Drama Phase 2 — Live Ticker / Heat / Outbid / Day rhythm
     @State private var allBids: [FABid] = []
     @State private var allVisits: [FAVisit] = []
@@ -204,6 +211,7 @@ struct FAWeeklyView: View {
                                 modelContext: modelContext
                             )
                             FASigningTracker.trackSigning(fa.player.id)
+                            markVisitConverted(fa.player.id)
                             generateStorylinesForSigning(player: fa.player, team: team)
                             loadData()
                         }
@@ -214,6 +222,10 @@ struct FAWeeklyView: View {
                         career: career,
                         team: team,
                         marketValue: fa.askingPrice,
+                        allPlayers: allPlayers,
+                        offensiveScheme: teamOffensiveScheme,
+                        defensiveScheme: teamDefensiveScheme,
+                        hostedVisit: visitedPlayerIDs.contains(fa.player.id),
                         onSubmit: { salary, years in
                         // Check for instant signing (big overpay on Day 1)
                         let instantResult = FreeAgencyEngine.checkInstantSigning(
@@ -234,6 +246,7 @@ struct FAWeeklyView: View {
                                 modelContext: modelContext
                             )
                             FASigningTracker.trackSigning(fa.player.id)
+                            markVisitConverted(fa.player.id)
                             generateStorylinesForSigning(player: fa.player, team: team)
                             let salaryStr = formatMillions(salary)
                             instantSigningMessage = "\(fa.player.fullName) signed immediately for \(salaryStr)/yr x \(years)yr! The offer was too good to refuse."
@@ -273,6 +286,79 @@ struct FAWeeklyView: View {
             Button("OK") { instantSigningMessage = nil }
         } message: {
             Text(instantSigningMessage ?? "")
+        }
+        .sheet(item: $visitOutcome) { outcome in
+            FAVisitResultSheet(
+                outcome: outcome,
+                visitsRemaining: visitsRemaining
+            )
+        }
+    }
+
+    // MARK: - R23: Visits
+
+    private var visitsRemaining: Int {
+        max(0, Self.faVisitLimit - career.faVisitsUsed)
+    }
+
+    /// Hosts the free agent on a facility visit: burns a visit slot, persists
+    /// the FAVisit, and reveals the player's true decision drivers.
+    private func hostVisit(fa: FreeAgencyEngine.FreeAgent) {
+        guard let team, let teamID = career.teamID else { return }
+        guard career.faVisitsUsed < Self.faVisitLimit else { return }
+        guard !visitedPlayerIDs.contains(fa.player.id) else { return }
+
+        let visit = FAVisit(
+            playerID: fa.player.id,
+            teamID: teamID,
+            seasonYear: career.currentSeason,
+            expiresAt: Date().addingTimeInterval(48 * 3600),
+            status: .active
+        )
+        modelContext.insert(visit)
+        allVisits.append(visit)
+        career.faVisitsUsed += 1
+        visitedPlayerIDs.insert(fa.player.id)
+        try? modelContext.save()
+
+        let offer = myOffers[fa.player.id].map { (salary: $0.salary, years: $0.years) }
+        let breakdown = SigningInterestEngine.interest(
+            player: fa.player,
+            askingPrice: fa.askingPrice,
+            offer: offer,
+            team: team,
+            allPlayers: allPlayers,
+            offensiveScheme: teamOffensiveScheme,
+            defensiveScheme: teamDefensiveScheme,
+            hostedVisit: true
+        )
+        visitOutcome = FAVisitOutcome(
+            id: fa.player.id,
+            playerName: fa.player.fullName,
+            position: fa.player.position.rawValue,
+            overall: fa.player.overall,
+            age: fa.player.age,
+            askingPrice: fa.askingPrice,
+            motivation: fa.player.personality.motivation,
+            preferences: PlayerPreferenceEngine.generatePreferences(
+                playerID: fa.player.id,
+                position: fa.player.position
+            ),
+            roleNote: SigningInterestEngine.roleNote(
+                player: fa.player,
+                teamID: teamID,
+                allPlayers: allPlayers
+            ),
+            breakdown: breakdown
+        )
+    }
+
+    /// Marks the player's active visit with us as converted (he signed here).
+    private func markVisitConverted(_ playerID: UUID) {
+        guard let teamID = career.teamID else { return }
+        for visit in allVisits
+        where visit.playerID == playerID && visit.teamID == teamID && visit.status == .active {
+            visit.status = .converted
         }
     }
 
@@ -376,6 +462,14 @@ struct FAWeeklyView: View {
                     }
                 }
                 HStack {
+                    // R23: facility visit budget for this FA period
+                    HStack(spacing: 3) {
+                        Image(systemName: "building.2")
+                            .font(.system(size: 8))
+                        Text("Visits left: \(visitsRemaining)/\(Self.faVisitLimit)")
+                            .font(.caption2.monospacedDigit())
+                    }
+                    .foregroundStyle(visitsRemaining > 0 ? Color.accentBlue : Color.textTertiary)
                     Spacer()
                     Text("\(freeAgents.count) available")
                         .font(.caption2)
@@ -695,6 +789,14 @@ struct FAWeeklyView: View {
                     Spacer()
                 }
                 .padding(.leading, 40) // align with player info
+
+                // R23: facility visit + live signing-interest row
+                HStack(spacing: 8) {
+                    visitControl(fa: fa)
+                    interestChip(fa: fa)
+                    Spacer()
+                }
+                .padding(.leading, 40)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -703,6 +805,84 @@ struct FAWeeklyView: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint(hasOffer ? "Tap to update your offer" : "Tap to make an offer")
+    }
+
+    // MARK: - R23: Visit Control + Interest Chip
+
+    @ViewBuilder
+    private func visitControl(fa: FreeAgencyEngine.FreeAgent) -> some View {
+        if visitedPlayerIDs.contains(fa.player.id) {
+            HStack(spacing: 3) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 8))
+                Text("VISITED")
+                    .font(.system(size: 8, weight: .black))
+            }
+            .foregroundStyle(Color.success)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.success.opacity(0.12), in: Capsule())
+        } else {
+            Button {
+                hostVisit(fa: fa)
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "building.2")
+                        .font(.system(size: 8))
+                    Text("Host Visit")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .foregroundStyle(visitsRemaining > 0 ? Color.accentBlue : Color.textTertiary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    (visitsRemaining > 0 ? Color.accentBlue : Color.textTertiary).opacity(0.12),
+                    in: Capsule()
+                )
+            }
+            .buttonStyle(.borderless)
+            .disabled(visitsRemaining <= 0)
+            .accessibilityLabel("Host \(fa.player.fullName) on a facility visit")
+        }
+    }
+
+    /// Live interest reading — shown once we have skin in the game (an offer
+    /// on the table or a hosted visit), matching the decision engine's factors.
+    @ViewBuilder
+    private func interestChip(fa: FreeAgencyEngine.FreeAgent) -> some View {
+        if let team, myOffers[fa.player.id] != nil || visitedPlayerIDs.contains(fa.player.id) {
+            let offer = myOffers[fa.player.id].map { (salary: $0.salary, years: $0.years) }
+            let breakdown = SigningInterestEngine.interest(
+                player: fa.player,
+                askingPrice: fa.askingPrice,
+                offer: offer,
+                team: team,
+                allPlayers: allPlayers,
+                offensiveScheme: teamOffensiveScheme,
+                defensiveScheme: teamDefensiveScheme,
+                hostedVisit: visitedPlayerIDs.contains(fa.player.id)
+            )
+            HStack(spacing: 3) {
+                Image(systemName: breakdown.tier.icon)
+                    .font(.system(size: 8))
+                Text("Interest: \(breakdown.tier.rawValue)")
+                    .font(.system(size: 9, weight: .bold))
+            }
+            .foregroundStyle(interestTierColor(breakdown.tier))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(interestTierColor(breakdown.tier).opacity(0.12), in: Capsule())
+        }
+    }
+
+    private func interestTierColor(_ tier: SigningInterestEngine.InterestTier) -> Color {
+        switch tier {
+        case .cold:      return .accentBlue
+        case .lukewarm:  return .textSecondary
+        case .warm:      return .warning
+        case .hot:       return .danger
+        case .scorching: return .draftStealGold
+        }
     }
 
     // MARK: - Cap Impact Badge (preview)
@@ -863,7 +1043,10 @@ struct FAWeeklyView: View {
                 playerOffer: (salary: offer.salary, years: offer.years),
                 aiBids: playerBids,
                 round: currentRound,
-                allTeams: allTeams
+                allTeams: allTeams,
+                allPlayers: allPlayers,
+                userTeamID: career.teamID,
+                hostedVisit: visitedPlayerIDs.contains(player.id)
             )
 
             if decision.shoppingAround {
@@ -887,6 +1070,7 @@ struct FAWeeklyView: View {
                     modelContext: modelContext
                 )
                 FASigningTracker.trackSigning(player.id)
+                markVisitConverted(player.id)
                 generateStorylinesForSigning(player: player, team: team)
                 accepted.append((
                     playerName: player.fullName,
@@ -984,12 +1168,14 @@ struct FAWeeklyView: View {
             guard let bids = aiBids[fa.player.id], !bids.isEmpty else { continue }
 
             // Resolve which team wins -- player decides among AI offers only
+            // (R23: role factor applies to AI rosters too via allPlayers).
             let decision = FreeAgencyEngine.resolvePlayerDecision(
                 player: fa.player,
                 playerOffer: nil,
                 aiBids: bids,
                 round: currentRound,
-                allTeams: allTeams
+                allTeams: allTeams,
+                allPlayers: allPlayers
             )
 
             if let chosenID = decision.chosenTeamID,
@@ -1096,6 +1282,20 @@ struct FAWeeklyView: View {
         allBids = (try? modelContext.fetch(FetchDescriptor<FABid>())) ?? []
         allVisits = (try? modelContext.fetch(FetchDescriptor<FAVisit>())) ?? []
         refreshOutbidEvents()
+
+        // R23: visits already hosted by the user's team this FA period, plus
+        // the coaching staff's schemes for the interest meter's scheme-fit factor.
+        visitedPlayerIDs = Set(
+            allVisits
+                .filter { $0.teamID == teamID && $0.seasonYear == career.currentSeason }
+                .map(\.playerID)
+        )
+        let coachDesc = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        let teamCoaches = (try? modelContext.fetch(coachDesc)) ?? []
+        teamOffensiveScheme = teamCoaches.first(where: { $0.role == .offensiveCoordinator })?.offensiveScheme
+            ?? teamCoaches.first(where: { $0.role == .headCoach })?.offensiveScheme
+        teamDefensiveScheme = teamCoaches.first(where: { $0.role == .defensiveCoordinator })?.defensiveScheme
+            ?? teamCoaches.first(where: { $0.role == .headCoach })?.defensiveScheme
     }
 
     /// FA Drama: generate storyline events (revenge tour, hometown, coach reunion,

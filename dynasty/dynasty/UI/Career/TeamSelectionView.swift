@@ -375,17 +375,28 @@ struct TeamSelectionView: View {
                         selectedConference = conference
                     }
                 } label: {
-                    Text(conference.rawValue)
-                        .font(.system(size: 16, weight: .bold))
-                        .tracking(2)
-                        .foregroundStyle(selectedConference == conference ? Color.backgroundPrimary : Color.textSecondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(selectedConference == conference ? Color.accentBlue : Color.clear)
-                        )
-                        .contentShape(Rectangle())
+                    // Team-count chip beside the conference name (persona audit).
+                    HStack(spacing: 6) {
+                        Text(conference.rawValue)
+                            .font(.system(size: 16, weight: .bold))
+                            .tracking(2)
+                        Text("\(allTeams.filter { $0.conference == conference }.count)")
+                            .font(.system(size: 11, weight: .bold).monospacedDigit())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(selectedConference == conference ? Color.white.opacity(0.28) : Color.backgroundTertiary)
+                            )
+                    }
+                    .foregroundStyle(selectedConference == conference ? Color.backgroundPrimary : Color.textSecondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(selectedConference == conference ? Color.accentBlue : Color.clear)
+                    )
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -653,13 +664,13 @@ private struct MiniTeamCard: View {
     private var preview: TeamPreview { team.preview }
 
     private var situationColor: Color {
+        // 3-tier color system (persona audit): blue = building, green = ascending,
+        // gold = competing. Amber/red stay reserved for warnings and dangers.
         switch preview.situation {
-        case "Rebuilding": return .accentBlue
-        case "Rising":     return .success
-        case "Contender":  return .accentGold
-        case "Win Now":    return .warning
-        case "Dynasty":    return .danger
-        default:           return .textSecondary
+        case "Rebuilding":                      return .accentBlue
+        case "Rising":                          return .success
+        case "Contender", "Win Now", "Dynasty": return .accentGold
+        default:                                return .textSecondary
         }
     }
 
@@ -715,13 +726,13 @@ private struct TeamGridCard: View {
     private var preview: TeamPreview { team.preview }
 
     private var situationColor: Color {
+        // 3-tier color system (persona audit): blue = building, green = ascending,
+        // gold = competing. Amber/red stay reserved for warnings and dangers.
         switch preview.situation {
-        case "Rebuilding": return .accentBlue
-        case "Rising":     return .success
-        case "Contender":  return .accentGold
-        case "Win Now":    return .warning
-        case "Dynasty":    return .danger
-        default:           return .textSecondary
+        case "Rebuilding":                      return .accentBlue
+        case "Rising":                          return .success
+        case "Contender", "Win Now", "Dynasty": return .accentGold
+        default:                                return .textSecondary
         }
     }
 
@@ -869,13 +880,13 @@ private struct TeamDetailSheet: View {
     private var preview: TeamPreview { team.preview }
 
     private var situationColor: Color {
+        // 3-tier color system (persona audit): blue = building, green = ascending,
+        // gold = competing. Amber/red stay reserved for warnings and dangers.
         switch preview.situation {
-        case "Rebuilding": return .accentBlue
-        case "Rising":     return .success
-        case "Contender":  return .accentGold
-        case "Win Now":    return .warning
-        case "Dynasty":    return .danger
-        default:           return .textSecondary
+        case "Rebuilding":                      return .accentBlue
+        case "Rising":                          return .success
+        case "Contender", "Win Now", "Dynasty": return .accentGold
+        default:                                return .textSecondary
         }
     }
 
@@ -967,7 +978,8 @@ private struct TeamDetailSheet: View {
                     .foregroundStyle(Color.textTertiary)
             }
             Text(value)
-                .font(.system(size: 18, weight: .bold))
+                // Promoted: these three numbers are the core decision data (audit).
+                .font(.system(size: 24, weight: .bold).monospacedDigit())
                 .foregroundStyle(valueColor)
         }
         .frame(maxWidth: .infinity)
@@ -977,7 +989,13 @@ private struct TeamDetailSheet: View {
 
     private var detailHeader: some View {
         VStack(spacing: 12) {
+            // Framed logo — subtle plate + ring + shadow so the team identity
+            // anchors the screen instead of sinking into the background (audit).
             TeamLogoPlaceholder(abbreviation: team.abbreviation, size: isLandscape ? 56 : 72)
+                .padding(7)
+                .background(Circle().fill(Color.backgroundSecondary))
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 1.5))
+                .shadow(color: .black.opacity(0.45), radius: 10, y: 4)
 
             Text("\(team.city) \(team.name)")
                 .font(.system(size: isLandscape ? 22 : 28, weight: .bold))
@@ -997,30 +1015,43 @@ private struct TeamDetailSheet: View {
     // MARK: - Difficulty + Situation
 
     private var difficultySituationRow: some View {
-        HStack(spacing: 24) {
-            VStack(spacing: 6) {
-                HStack(spacing: 3) {
-                    ForEach(1...5, id: \.self) { star in
-                        Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
-                            .font(.system(size: 14))
-                            .foregroundStyle(star <= preview.difficulty ? difficultyColor : Color.textTertiary.opacity(0.4))
+        VStack(spacing: 8) {
+            HStack(spacing: 24) {
+                VStack(spacing: 6) {
+                    // Scale label so the stars aren't mistaken for talent/prestige (audit).
+                    Text("CAREER DIFFICULTY")
+                        .font(.system(size: 9, weight: .bold))
+                        .tracking(1.2)
+                        .foregroundStyle(Color.textTertiary)
+                    HStack(spacing: 3) {
+                        ForEach(1...5, id: \.self) { star in
+                            Image(systemName: star <= preview.difficulty ? "star.fill" : "star")
+                                .font(.system(size: 14))
+                                .foregroundStyle(star <= preview.difficulty ? difficultyColor : Color.textTertiary.opacity(0.4))
+                        }
                     }
+                    Text(preview.difficultyLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(difficultyColor)
                 }
-                Text(preview.difficultyLabel)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(difficultyColor)
+
+                Text(preview.situation)
+                    .font(.system(size: 14, weight: .bold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(situationColor)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(situationColor.opacity(0.15))
+                    )
             }
 
-            Text(preview.situation)
-                .font(.system(size: 14, weight: .bold))
-                .textCase(.uppercase)
-                .foregroundStyle(situationColor)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule()
-                        .fill(situationColor.opacity(0.15))
-                )
+            // One-line rationale so "Easy"/"Hard" isn't an unexplained verdict (audit).
+            Text("Difficulty weighs roster talent, cap room, and draft capital.")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.textTertiary)
+                .multilineTextAlignment(.center)
         }
     }
 
@@ -1157,6 +1188,17 @@ private struct TeamDetailSheet: View {
 
                         Spacer()
 
+                        // Rival roster strength — makes the card read as "how tough
+                        // is my division" instead of filler (audit).
+                        VStack(spacing: 1) {
+                            Text("\(rivalPreview.estimatedOVR)")
+                                .font(.system(size: 14, weight: .bold).monospacedDigit())
+                                .foregroundStyle(Color.forRating(rivalPreview.estimatedOVR))
+                            Text("OVR")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(Color.textTertiary)
+                        }
+
                         Text(rivalPreview.situation.uppercased())
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(Color.textSecondary)
@@ -1175,6 +1217,14 @@ private struct TeamDetailSheet: View {
         .cardBackground()
     }
 
+    /// League-average coaching budget across all 32 static team definitions —
+    /// gives the raw "$NNM" figure a comparison anchor (audit).
+    private var leagueAvgCoachingBudget: Int {
+        let all = NFLTeamData.allTeams
+        guard !all.isEmpty else { return 0 }
+        return all.reduce(0) { $0 + $1.preview.coachingBudget } / all.count
+    }
+
     private var coachingBudgetCard: some View {
         VStack(spacing: 8) {
             sectionLabel("Coaching Budget")
@@ -1190,6 +1240,10 @@ private struct TeamDetailSheet: View {
                     .font(.caption)
                     .foregroundStyle(Color.textTertiary)
             }
+
+            Text("League average: $\(leagueAvgCoachingBudget)M")
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .foregroundStyle(Color.textSecondary)
         }
         .padding(16)
         .frame(maxWidth: .infinity)
@@ -1230,10 +1284,12 @@ private struct TeamDetailSheet: View {
             detailHeader
             lockedBanner
             difficultySituationRow
+            // Franchise vitals promoted directly under the header — the three
+            // most decision-critical numbers read first (audit).
+            statsRow
             startingQBCard
             ownerExpectationsCard
             marketMediaCard
-            statsRow
             coachingBudgetCard
             divisionRivalsCard
         }
@@ -1253,11 +1309,12 @@ private struct TeamDetailSheet: View {
 
             let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
             LazyVGrid(columns: columns, spacing: 12) {
+                // Franchise vitals first — most decision-critical numbers (audit).
+                statsRow
                 startingQBCard
                 ownerExpectationsCard
                 marketMediaCard
                 coachingBudgetCard
-                statsRow
                 divisionRivalsCard
             }
         }

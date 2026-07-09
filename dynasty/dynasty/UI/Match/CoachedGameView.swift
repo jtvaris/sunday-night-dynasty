@@ -20,6 +20,12 @@ struct CoachedGameView: View {
     let homeTeam: Team
     let awayTeam: Team
     let playerTeamIsHome: Bool
+    /// Game weather — biases the engine's plays and dresses the 3D field.
+    let weather: GameWeather
+    /// R19: single-elimination framing — gold PLAYOFFS badge on the
+    /// scoreboard, "WIN OR GO HOME" at kickoff, season-over final text.
+    /// Pure presentation; the engine never reads it.
+    let isPlayoff: Bool
     /// Called when the user taps Continue on the final whistle overlay.
     /// The caller persists the result and presents the game summary.
     let onFinish: (LiveGameEngine) -> Void
@@ -34,11 +40,15 @@ struct CoachedGameView: View {
         playerTeamIsHome: Bool,
         audibleBoost: Double = 0,
         defReadBoost: Double = 0,
+        weather: GameWeather = .clear,
+        isPlayoff: Bool = false,
         onFinish: @escaping (LiveGameEngine) -> Void
     ) {
         self.homeTeam = homeTeam
         self.awayTeam = awayTeam
         self.playerTeamIsHome = playerTeamIsHome
+        self.weather = weather
+        self.isPlayoff = isPlayoff
         self.onFinish = onFinish
         _engine = StateObject(wrappedValue: LiveGameEngine(
             homeTeam: homeTeam,
@@ -47,7 +57,8 @@ struct CoachedGameView: View {
             awayCoaches: awayCoaches,
             playerTeamIsHome: playerTeamIsHome,
             audibleBoost: audibleBoost,
-            defReadBoost: defReadBoost
+            defReadBoost: defReadBoost,
+            weather: weather
         ))
     }
 
@@ -61,6 +72,9 @@ struct CoachedGameView: View {
     @State private var gameStarted = false
     @State private var resultBanner: String? = nil
     @State private var possessionBanner: String? = nil
+    /// Gold "WIN OR GO HOME" plate flashed over the field at a playoff
+    /// opening kickoff (R19) — same visual language as the possession banner.
+    @State private var playoffBanner: String? = nil
     /// Retro broadcast plate ("1ST & 10") flashed at the snap.
     @State private var snapPlate: String? = nil
     /// Player-vs-player callouts for the play that just resolved.
@@ -68,6 +82,12 @@ struct CoachedGameView: View {
     /// Whether the player's team was the offense on the play those callouts
     /// describe (possession may have flipped since).
     @State private var calloutsOffenseWasPlayer = true
+    /// Red injury banner ("INJURY: T. Hill (WR) — leaves the game").
+    @State private var injuryBanner: String? = nil
+    /// Gold milestone banner ("MILESTONE: M. Dixon — 100 rushing yards").
+    @State private var milestoneBanner: String? = nil
+    /// Small sideline note over the field ("Fresh legs: J. Cook in at RB").
+    @State private var sidelineNote: String? = nil
 
     // Offense call state
     @State private var selectedCategory: String = "Run"
@@ -86,6 +106,14 @@ struct CoachedGameView: View {
     @State private var showOnsideDialog = false
     @State private var showFinal = false
     @State private var showStatsSheet = false
+    /// Halftime report overlay (raised by the engine's `halftimePending`).
+    @State private var showHalftime = false
+
+    // Two-minute drill presentation
+    /// Quarters (2 and/or 4) whose two-minute warning chip already fired.
+    @State private var twoMinuteWarnedQuarters: Set<Int> = []
+    /// Transient "2-MINUTE WARNING" chip in the situation strip.
+    @State private var showTwoMinuteChip = false
 
     @Environment(\.dismiss) private var dismiss
 
@@ -111,15 +139,44 @@ struct CoachedGameView: View {
 
             bannerOverlay
 
+            if showHalftime {
+                HalftimeView(
+                    engine: engine,
+                    homeTeam: homeTeam,
+                    awayTeam: awayTeam,
+                    playerTeamIsHome: playerTeamIsHome
+                ) { choice in
+                    engine.resolveHalftime(choosing: choice)
+                    withAnimation(.easeInOut(duration: 0.3)) { showHalftime = false }
+                    if let choice { showBanner("2nd-half adjustment: \(choice.rawValue).") }
+                    proceed(after: 0.5)
+                }
+                .transition(.opacity)
+            }
+
             if showFinal {
                 finalOverlay
             }
         }
         .statusBarHidden()
         .onAppear(perform: startGame)
+        .onChange(of: engine.timeRemaining) { _, remaining in
+            checkTwoMinuteWarning(remaining)
+        }
         .onChange(of: selectedCall) { _, _ in previewFormation() }
         .onChange(of: defCall) { _, _ in
             if !engine.playerIsOnOffense { previewFormation() }
+        }
+        .onChange(of: engine.lastRotation) { _, rotation in
+            if let rotation { showSidelineNote("Fresh legs: \(rotation.inName) in at RB") }
+        }
+        .onChange(of: engine.lastMilestones) { _, milestones in
+            // Multiple lines can fall on the same drive end — stagger them.
+            for (index, milestone) in milestones.enumerated() {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 3.4) {
+                    showMilestoneBanner(milestone.text)
+                }
+            }
         }
         .confirmationDialog(
             "Sim rest of the game?",
@@ -161,6 +218,11 @@ struct CoachedGameView: View {
 
     // MARK: - Scoreboard
 
+    /// True when the two teams share a division — rivalry framing (R19).
+    private var isDivisionGame: Bool {
+        homeTeam.conference == awayTeam.conference && homeTeam.division == awayTeam.division
+    }
+
     private var scoreboardBar: some View {
         HStack(spacing: 0) {
             teamBlock(team: awayTeam, score: engine.awayScore, hasBall: !engine.homeHasPossession, leading: true)
@@ -169,9 +231,40 @@ struct CoachedGameView: View {
                 Text(quarterLabel)
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Color.textTertiary)
-                Text(engine.formattedClock)
-                    .font(.system(size: 24, weight: .heavy).monospacedDigit())
-                    .foregroundStyle(Color.textPrimary)
+                clockDisplay
+                // Stakes chip under the clock: a playoff game outranks the
+                // division rivalry framing when both apply.
+                if isPlayoff {
+                    Text("PLAYOFFS")
+                        .font(.system(size: 9, weight: .black))
+                        .tracking(1.2)
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Color.accentGold, in: Capsule())
+                } else if isDivisionGame {
+                    Text("DIVISION")
+                        .font(.system(size: 9, weight: .black))
+                        .tracking(1.2)
+                        .foregroundStyle(Color.accentGold)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Color.accentGold.opacity(0.14), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.accentGold.opacity(0.4), lineWidth: 1))
+                }
+                if weather != .clear {
+                    HStack(spacing: 3) {
+                        Image(systemName: weather.symbolName)
+                            .font(.system(size: 9, weight: .bold))
+                        Text(weather.label.uppercased())
+                            .font(.system(size: 9, weight: .black))
+                            .tracking(0.8)
+                    }
+                    .foregroundStyle(Color.accentBlue)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Color.accentBlue.opacity(0.14), in: Capsule())
+                }
             }
             Spacer()
             teamBlock(team: homeTeam, score: engine.homeScore, hasBall: engine.homeHasPossession, leading: false)
@@ -186,6 +279,31 @@ struct CoachedGameView: View {
 
     private var quarterLabel: String {
         engine.quarter <= 4 ? "Q\(engine.quarter)" : "OT"
+    }
+
+    /// Q2/Q4 with two minutes or less on the clock — crunch time.
+    private var isTwoMinuteDrill: Bool {
+        (engine.quarter == 2 || engine.quarter == 4)
+            && engine.timeRemaining <= 120 && engine.timeRemaining > 0
+            && !engine.isGameOver
+    }
+
+    /// Broadcast clock — pulses red inside the two-minute drill (Q2/Q4).
+    @ViewBuilder
+    private var clockDisplay: some View {
+        let clockText = Text(engine.formattedClock)
+            .font(.system(size: 24, weight: .heavy).monospacedDigit())
+        if isTwoMinuteDrill {
+            clockText
+                .foregroundStyle(Color.danger)
+                .phaseAnimator([false, true]) { view, dimmed in
+                    view
+                        .opacity(dimmed ? 0.55 : 1.0)
+                        .scaleEffect(dimmed ? 1.05 : 1.0)
+                } animation: { _ in .easeInOut(duration: 0.55) }
+        } else {
+            clockText.foregroundStyle(Color.textPrimary)
+        }
     }
 
     private func teamBlock(team: Team, score: Int, hasBall: Bool, leading: Bool) -> some View {
@@ -254,6 +372,10 @@ struct CoachedGameView: View {
             chip(possessionText, color: engine.playerIsOnOffense ? .success : .danger)
             if !engine.currentDrivePlays.isEmpty {
                 chip(driveChipText, color: .textSecondary)
+            }
+            if showTwoMinuteChip {
+                chip("2-MINUTE WARNING", color: .danger)
+                    .transition(.scale.combined(with: .opacity))
             }
             Spacer()
             if !engine.isGameOver && engine.playerTimeoutsRemaining > 0 {
@@ -358,6 +480,40 @@ struct CoachedGameView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
+            .overlay(alignment: .top) {
+                if let text = playoffBanner {
+                    HStack(spacing: 6) {
+                        Image(systemName: "trophy.fill")
+                            .font(.system(size: 11, weight: .black))
+                        Text(text)
+                            .font(.system(size: 13, weight: .black))
+                            .tracking(1.4)
+                    }
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 7)
+                    .background(Color.accentGold, in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.3), lineWidth: 1))
+                    .padding(.top, 10)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if let note = sidelineNote {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(note)
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.success, in: Capsule())
+                    .padding(10)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
             .overlay(alignment: .bottomLeading) {
                 if !matchupCallouts.isEmpty {
                     VStack(alignment: .leading, spacing: 5) {
@@ -386,8 +542,10 @@ struct CoachedGameView: View {
                 }
             }
             .animation(.spring(duration: 0.3), value: possessionBanner)
+            .animation(.spring(duration: 0.3), value: playoffBanner)
             .animation(.spring(duration: 0.3), value: matchupCallouts.count)
             .animation(.spring(duration: 0.25), value: snapPlate)
+            .animation(.spring(duration: 0.3), value: sidelineNote)
     }
 
     /// One "who won the rep" line over the field: gold sword for a battle
@@ -912,20 +1070,54 @@ struct CoachedGameView: View {
     private var bannerOverlay: some View {
         VStack {
             Spacer()
-            if let banner = resultBanner {
-                Text(banner)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.textPrimary)
-                    .multilineTextAlignment(.center)
+            VStack(spacing: 8) {
+                if let injury = injuryBanner {
+                    HStack(spacing: 8) {
+                        Image(systemName: "cross.fill")
+                            .font(.system(size: 12, weight: .black))
+                        Text(injury)
+                            .font(.system(size: 14, weight: .bold))
+                            .multilineTextAlignment(.center)
+                    }
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 18)
                     .padding(.vertical, 11)
-                    .background(Color.backgroundTertiary.opacity(0.96), in: Capsule())
-                    .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 1))
-                    .padding(.bottom, 352)
+                    .background(Color.danger.opacity(0.95), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.25), lineWidth: 1))
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                if let milestone = milestoneBanner {
+                    HStack(spacing: 8) {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 12, weight: .black))
+                        Text(milestone)
+                            .font(.system(size: 14, weight: .black))
+                            .multilineTextAlignment(.center)
+                    }
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                    .background(Color.accentGold.opacity(0.96), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.3), lineWidth: 1))
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                if let banner = resultBanner {
+                    Text(banner)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.textPrimary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 11)
+                        .background(Color.backgroundTertiary.opacity(0.96), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 1))
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
+            .padding(.bottom, 352)
         }
         .animation(.spring(duration: 0.35), value: resultBanner)
+        .animation(.spring(duration: 0.35), value: injuryBanner)
+        .animation(.spring(duration: 0.35), value: milestoneBanner)
         .allowsHitTesting(false)
     }
 
@@ -951,7 +1143,7 @@ struct CoachedGameView: View {
                     finalTeamScore(team: homeTeam, score: engine.homeScore)
                 }
 
-                Text(playerWon ? "Victory, coach." : (isTie ? "It ends in a tie." : "They got us today."))
+                Text(finalVerdictText)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(playerWon ? Color.success : Color.textSecondary)
 
@@ -1031,6 +1223,14 @@ struct CoachedGameView: View {
 
     private var isTie: Bool { engine.homeScore == engine.awayScore }
 
+    /// One-line verdict under the final score. Playoff games carry
+    /// single-elimination weight; regular-season games keep the classic lines.
+    private var finalVerdictText: String {
+        if isTie { return "It ends in a tie." }
+        if isPlayoff { return playerWon ? "Advancing, coach." : "Season over." }
+        return playerWon ? "Victory, coach." : "They got us today."
+    }
+
     // MARK: - Game Flow
 
     private func startGame() {
@@ -1040,6 +1240,10 @@ struct CoachedGameView: View {
         // The camera always shoots from behind the PLAYER's own unit —
         // mirrored for away games (field text re-orients with it).
         fieldScene.setViewFacing(playerTeamIsHome ? 1 : -1)
+
+        // Weather dressing: rain streaks + dim lights, snowfall + snow
+        // blanket, or nothing for clear/wind.
+        fieldScene.setWeather(weather)
 
         // NFL convention: home wears team color, road team wears white with
         // team-color pants and helmet — always readable against the grass.
@@ -1077,6 +1281,16 @@ struct CoachedGameView: View {
             fieldScene.focusCamera(z: losZ, animated: false)
         }
 
+        // Playoff kickoff: the stakes plate flashes over the field before the
+        // opening boot — win or go home.
+        if isPlayoff {
+            let text = "WIN OR GO HOME"
+            playoffBanner = text
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.4) {
+                if playoffBanner == text { playoffBanner = nil }
+            }
+        }
+
         showPossessionBanner()
         proceed(after: 1.0)
     }
@@ -1085,6 +1299,12 @@ struct CoachedGameView: View {
     private func proceed(after delay: TimeInterval = 0.8) {
         guard !engine.isGameOver else {
             withAnimation(.easeInOut(duration: 0.3)) { showFinal = true }
+            return
+        }
+        // Halftime: pause the flow on the report card before the second-half
+        // kickoff. Dismissing it re-enters proceed() and runs the kick.
+        if engine.halftimePending {
+            withAnimation(.easeInOut(duration: 0.3)) { showHalftime = true }
             return
         }
         // A drive that begins with a kickoff plays the boot first. When the
@@ -1209,6 +1429,13 @@ struct CoachedGameView: View {
         let defPackage = engine.playerIsOnOffense
             ? engine.aiDefensivePackage()
             : defCall.package
+
+        // Capture the on-field units BEFORE the step: if this play knocks a
+        // player out, the engine swaps his replacement in immediately, but
+        // THIS play must still animate with the men who actually ran it.
+        let offUnit = possessionBefore ? engine.homeOffenseUnit : engine.awayOffenseUnit
+        let defUnit = possessionBefore ? engine.awayDefenseUnit : engine.homeDefenseUnit
+
         let play = engine.step(
             offensiveCall: engine.playerIsOnOffense ? offCall : nil,
             forcedPlayType: forcedType,
@@ -1219,8 +1446,6 @@ struct CoachedGameView: View {
         selectedCall = nil
 
         let matchups = engine.lastMatchups
-        let offUnit = possessionBefore ? engine.homeOffenseUnit : engine.awayOffenseUnit
-        let defUnit = possessionBefore ? engine.awayDefenseUnit : engine.homeDefenseUnit
 
         // Pre-snap: shift both teams into the alignment their calls dictate,
         // then run the play from that same look.
@@ -1295,11 +1520,33 @@ struct CoachedGameView: View {
         showBanner(play.description)
         showMatchupCallouts(possessionBefore: possessionBefore)
 
+        // Injury on the play: the man stays on the turf (the next formation
+        // move stands the node up wearing his replacement's number) and the
+        // red banner names him.
+        let hadInjury = !engine.lastPlayInjuries.isEmpty
+        if hadInjury {
+            for event in engine.lastPlayInjuries {
+                if let node = event.nodeIndex { fieldScene.stayDown(nodeIndex: node) }
+            }
+            if let first = engine.lastPlayInjuries.first {
+                showInjuryBanner("INJURY: \(first.playerName) (\(first.position)) — leaves the game")
+            }
+        }
+
         if engine.homeHasPossession != possessionBefore && !engine.isGameOver {
             showPossessionBanner()
         }
 
-        proceed(after: play.scoringPlay ? 1.6 : 0.9)
+        if hadInjury {
+            // Hold the shot on the downed player for a beat — the next
+            // formation move (inside proceed) brings the replacement on.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.7) {
+                guard !isAnimating else { return }
+                proceed(after: 0.9)
+            }
+        } else {
+            proceed(after: play.scoringPlay ? 1.6 : 0.9)
+        }
     }
 
     /// Runs the rest of the opponent's drive instantly (no animation).
@@ -1310,12 +1557,20 @@ struct CoachedGameView: View {
         fieldScene.cancelPlay()
         isAnimating = false
         var safety = 0
-        while !engine.playerIsOnOffense && !engine.isGameOver && safety < 40 {
+        // Stop at the break too — the halftime report must not be skipped
+        // past when the opponent's drive ends the half.
+        while !engine.playerIsOnOffense && !engine.isGameOver
+                && !engine.halftimePending && safety < 40 {
             engine.step(defensivePackage: defCall.package)
             safety += 1
         }
         syncFieldToSituation()
         if let last = engine.lastPlay { showBanner(last.description) }
+        // Injuries rolled during the skipped plays still deserve the banner
+        // (the write-back happens at persist regardless).
+        if let injury = engine.lastPlayInjuries.first {
+            showInjuryBanner("INJURY: \(injury.playerName) (\(injury.position)) — leaves the game")
+        }
         showPossessionBanner()
         proceed(after: 0.6)
     }
@@ -1369,6 +1624,21 @@ struct CoachedGameView: View {
         syncFieldToSituation()
     }
 
+    /// Fires the "2-MINUTE WARNING" chip once per half when the clock first
+    /// crosses 2:00 in Q2/Q4 (the scoreboard clock keeps pulsing red for the
+    /// rest of the window).
+    private func checkTwoMinuteWarning(_ remaining: Int) {
+        guard remaining <= 120, remaining > 0,
+              engine.quarter == 2 || engine.quarter == 4,
+              !engine.isGameOver,
+              !twoMinuteWarnedQuarters.contains(engine.quarter) else { return }
+        twoMinuteWarnedQuarters.insert(engine.quarter)
+        withAnimation(.spring(duration: 0.3)) { showTwoMinuteChip = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            withAnimation(.easeOut(duration: 0.3)) { showTwoMinuteChip = false }
+        }
+    }
+
     /// Burns one of the player's timeouts: the game clock freezes for the
     /// next snap (the engine zeroes that play's clock runoff).
     private func callTimeout() {
@@ -1380,6 +1650,27 @@ struct CoachedGameView: View {
         resultBanner = text
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
             if resultBanner == text { resultBanner = nil }
+        }
+    }
+
+    private func showInjuryBanner(_ text: String) {
+        injuryBanner = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.6) {
+            if injuryBanner == text { injuryBanner = nil }
+        }
+    }
+
+    private func showMilestoneBanner(_ text: String) {
+        milestoneBanner = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.2) {
+            if milestoneBanner == text { milestoneBanner = nil }
+        }
+    }
+
+    private func showSidelineNote(_ text: String) {
+        sidelineNote = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.8) {
+            if sidelineNote == text { sidelineNote = nil }
         }
     }
 

@@ -11,6 +11,8 @@ struct GameSummaryView: View {
     let homeTeam: Team
     let awayTeam: Team
     let playerStats: [PlayerGameStats]
+    /// Game weather; `nil` or `.clear` hides the header chip.
+    var weather: GameWeather? = nil
 
     // MARK: - Body
 
@@ -48,13 +50,23 @@ struct GameSummaryView: View {
 
     private var scoreHeaderCard: some View {
         VStack(spacing: 16) {
-            // FINAL badge
-            Text("FINAL")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(Color.accentGold)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-                .background(Color.accentGold.opacity(0.15), in: Capsule())
+            // FINAL badge (+ weather chip when the game wasn't played clear)
+            HStack(spacing: 8) {
+                Text("FINAL")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.accentGold)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .background(Color.accentGold.opacity(0.15), in: Capsule())
+                if let weather, weather != .clear {
+                    Label(weather.label, systemImage: weather.symbolName)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.accentBlue)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.accentBlue.opacity(0.12), in: Capsule())
+                }
+            }
 
             // Main scoreboard
             HStack(alignment: .center, spacing: 0) {

@@ -7,6 +7,9 @@ struct TradeView: View {
 
     let career: Career
 
+    /// R21: lets the shell surface completed-trade notices in the inbox.
+    var onInboxMessage: ((InboxMessage) -> Void)? = nil
+
     @Environment(\.modelContext) private var modelContext
 
     // MARK: Data
@@ -46,8 +49,10 @@ struct TradeView: View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
 
-            if career.currentPhase == .tradeDeadline ||
-               career.currentPhase == .regularSeason {
+            if TradeValueEngine.isTradeWindowOpen(
+                phase: career.currentPhase,
+                week: career.currentWeek
+            ) {
                 ScrollView {
                     VStack(spacing: 24) {
                         proposeSectionCard
@@ -82,7 +87,7 @@ struct TradeView: View {
             Text("Trade Window Closed")
                 .font(.title2.weight(.bold))
                 .foregroundStyle(Color.textPrimary)
-            Text("Trades are only available during the Regular Season and up to the Trade Deadline.")
+            Text("Trades are open during the offseason and the regular season through the Week \(TradeValueEngine.deadlineWeek) deadline. The window reopens after the season.")
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
@@ -212,8 +217,8 @@ struct TradeView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     assetToggleRow(
                         label: player.fullName,
-                        sublabel: "\(player.position.rawValue) · \(player.overall) OVR",
-                        valueLabel: formatMillions(ContractEngine.estimateMarketValue(player: player)),
+                        sublabel: "\(player.position.rawValue) · \(player.overall) OVR · Age \(player.age)",
+                        valueLabel: "\(TradeValueEngine.playerTradeValue(player: player)) pts",
                         isSelected: selectedPlayers.wrappedValue.contains(player.id),
                         accentColor: accentColor
                     ) {
@@ -232,7 +237,7 @@ struct TradeView: View {
                 assetToggleRow(
                     label: pickLabel(pick),
                     sublabel: "\(pick.seasonYear)",
-                    valueLabel: "\(PickValueChart.points(forPick: pick.pickNumber))",
+                    valueLabel: "\(TradeValueEngine.pickTradeValue(pick: pick, currentSeason: career.currentSeason)) pts",
                     isSelected: selectedPicks.wrappedValue.contains(pick.id),
                     accentColor: accentColor
                 ) {
@@ -305,7 +310,9 @@ struct TradeView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.textSecondary)
                 Spacer()
-                fairnessLabel(sending: sending, receiving: receiving)
+                if let partner = selectedPartner {
+                    partnerVerdictLabel(partner: partner)
+                }
             }
 
             GeometryReader { geo in
@@ -323,14 +330,52 @@ struct TradeView: View {
             .frame(height: 10)
 
             HStack {
-                Label(formatMillions(sending), systemImage: "arrow.up.right")
+                Label("You send \(sending) pts", systemImage: "arrow.up.right")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(Color.accentBlue)
                 Spacer()
-                Label(formatMillions(receiving), systemImage: "arrow.down.left")
+                Label("You get \(receiving) pts", systemImage: "arrow.down.left")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(Color.accentGold)
             }
+        }
+    }
+
+    /// 5-step verdict from the partner's need-adjusted perspective — no exact
+    /// numbers, just how the other GM feels about the deal.
+    private func partnerVerdictLabel(partner: Team) -> some View {
+        let verdict = currentPartnerVerdict(partner: partner)
+        return Label(verdict.label, systemImage: verdict.icon)
+            .font(.caption.weight(.bold))
+            .foregroundStyle(verdictColor(verdict))
+    }
+
+    private func currentPartnerVerdict(partner: Team) -> TradeValueEngine.PartnerVerdict {
+        guard let myTeam = playerTeam else { return .hangUp }
+        let proposal = TradeProposal(
+            offeringTeamID: myTeam.id,
+            receivingTeamID: partner.id,
+            sendingPlayers: Array(mySelectedPlayers),
+            receivingPlayers: Array(theirSelectedPlayers),
+            sendingPicks: Array(mySelectedPicks),
+            receivingPicks: Array(theirSelectedPicks)
+        )
+        return TradeValueEngine.partnerVerdict(
+            proposal: proposal,
+            aiTeam: partner,
+            allPlayers: allPlayers,
+            allPicks: allPicks,
+            currentSeason: career.currentSeason
+        )
+    }
+
+    private func verdictColor(_ verdict: TradeValueEngine.PartnerVerdict) -> Color {
+        switch verdict {
+        case .loveIt:     return .success
+        case .likeIt:     return .success
+        case .onTheFence: return .warning
+        case .wantMore:   return .warning
+        case .hangUp:     return .danger
         }
     }
 
@@ -392,7 +437,7 @@ struct TradeView: View {
                         Text("No incoming offers")
                             .font(.subheadline)
                             .foregroundStyle(Color.textSecondary)
-                        Text("Advance weeks during the regular season to receive AI trade proposals.")
+                        Text("AI offers arrive weekly during the regular season — contenders buy, rebuilders sell. New offers land in your inbox until the Week \(TradeValueEngine.deadlineWeek) deadline.")
                             .font(.caption)
                             .foregroundStyle(Color.textTertiary)
                             .multilineTextAlignment(.center)
@@ -414,10 +459,11 @@ struct TradeView: View {
 
     private func incomingOfferCard(_ offer: TradeProposal) -> some View {
         let aiTeamName = allTeams.first(where: { $0.id == offer.offeringTeamID })?.abbreviation ?? "AI"
-        let values = TradeEngine.evaluateTradeValue(
+        let values = TradeValueEngine.proposalValues(
             proposal: offer,
             allPlayers: allPlayers,
-            allPicks: allPicks
+            allPicks: allPicks,
+            currentSeason: career.currentSeason
         )
         // From user's perspective: "receiving" side is what AI sends (proposal.sendingPlayers/Picks)
         let youReceive = values.sendingValue
@@ -437,7 +483,7 @@ struct TradeView: View {
                     title: "You Send",
                     playerIDs: offer.receivingPlayers,
                     pickIDs: offer.receivingPicks,
-                    valueLabel: formatMillions(youSend),
+                    valueLabel: "\(youSend) pts",
                     accentColor: Color.danger
                 )
                 Divider().overlay(Color.surfaceBorder).frame(maxHeight: 200)
@@ -445,7 +491,7 @@ struct TradeView: View {
                     title: "You Receive",
                     playerIDs: offer.sendingPlayers,
                     pickIDs: offer.sendingPicks,
-                    valueLabel: formatMillions(youReceive),
+                    valueLabel: "\(youReceive) pts",
                     accentColor: Color.success
                 )
             }
@@ -460,6 +506,21 @@ struct TradeView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
                         .background(RoundedRectangle(cornerRadius: 10).fill(Color.success))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    negotiateOffer(offer)
+                } label: {
+                    Label("Negotiate", systemImage: "arrow.left.arrow.right")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.accentGold)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color.accentGold, lineWidth: 1)
+                        )
                 }
                 .buttonStyle(.plain)
 
@@ -647,7 +708,6 @@ struct TradeView: View {
 
     @ViewBuilder
     private func aiWillingnessRow(partner: Team) -> some View {
-        let values = currentProposalValues
         let hasAssets = !mySelectedPlayers.isEmpty || !mySelectedPicks.isEmpty ||
                         !theirSelectedPlayers.isEmpty || !theirSelectedPicks.isEmpty
 
@@ -657,7 +717,7 @@ struct TradeView: View {
             Image(systemName: willingness.icon)
                 .foregroundStyle(willingness.color)
             VStack(alignment: .leading, spacing: 2) {
-                Text("AI Willingness")
+                Text("\(partner.abbreviation) Front Office")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.textSecondary)
                 Text(hasAssets ? willingness.label : "Select assets to gauge interest")
@@ -665,12 +725,6 @@ struct TradeView: View {
                     .foregroundStyle(hasAssets ? willingness.color : Color.textTertiary)
             }
             Spacer()
-            if hasAssets, values.receivingValue > 0 {
-                let ratio = Double(values.sendingValue) / Double(max(values.receivingValue, 1))
-                Text(String(format: "%.0f%%", ratio * 100.0))
-                    .font(.caption.weight(.bold).monospacedDigit())
-                    .foregroundStyle(Color.textSecondary)
-            }
         }
         .padding(10)
         .background(
@@ -679,41 +733,16 @@ struct TradeView: View {
         )
     }
 
+    /// Willingness preview derived from the same 5-step verdict the AI uses
+    /// to respond, so the preview always matches the actual outcome:
+    /// love/like → accepts, on the fence → counters, want more/hang up → rejects.
     private func aiWillingnessForCurrentProposal(partner: Team) -> (label: String, icon: String, color: Color) {
-        guard let myTeam = playerTeam else {
-            return ("Rejects", "xmark.circle.fill", Color.danger)
-        }
-        let proposal = TradeProposal(
-            offeringTeamID: myTeam.id,
-            receivingTeamID: partner.id,
-            sendingPlayers: Array(mySelectedPlayers),
-            receivingPlayers: Array(theirSelectedPlayers),
-            sendingPicks: Array(mySelectedPicks),
-            receivingPicks: Array(theirSelectedPicks)
-        )
-        let values = TradeEngine.evaluateTradeValue(
-            proposal: proposal,
-            allPlayers: allPlayers,
-            allPicks: allPicks
-        )
-
-        // From AI's perspective: AI gives proposal.receivingValue, gets proposal.sendingValue
-        let aiGives    = values.receivingValue
-        let aiReceives = values.sendingValue
-
-        if aiGives <= 0 && aiReceives <= 0 {
-            return ("Rejects", "xmark.circle.fill", Color.danger)
-        }
-        if aiGives <= 0 {
-            return ("Likely accepts", "checkmark.circle.fill", Color.success)
-        }
-
-        let ratio = Double(aiReceives) / Double(aiGives)
-        if ratio >= 0.95 {
-            return ("Likely accepts", "checkmark.circle.fill", Color.success)
-        } else if ratio >= 0.80 {
+        switch currentPartnerVerdict(partner: partner) {
+        case .loveIt, .likeIt:
+            return ("Would accept", "checkmark.circle.fill", Color.success)
+        case .onTheFence:
             return ("Will counter", "arrow.left.arrow.right.circle.fill", Color.warning)
-        } else {
+        case .wantMore, .hangUp:
             return ("Rejects", "xmark.circle.fill", Color.danger)
         }
     }
@@ -1115,10 +1144,10 @@ struct TradeView: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 1) {
-                Text("Sent \(formatMillions(entry.sentValue))")
+                Text("Sent \(entry.sentValue) pts")
                     .font(.system(size: 10).monospacedDigit())
                     .foregroundStyle(Color.accentBlue)
-                Text("Got \(formatMillions(entry.receivedValue))")
+                Text("Got \(entry.receivedValue) pts")
                     .font(.system(size: 10).monospacedDigit())
                     .foregroundStyle(Color.accentGold)
             }
@@ -1144,10 +1173,11 @@ struct TradeView: View {
         counterpartyAbbr: String,
         userIsOfferingTeam: Bool
     ) {
-        let values = TradeEngine.evaluateTradeValue(
+        let values = TradeValueEngine.proposalValues(
             proposal: proposal,
             allPlayers: allPlayers,
-            allPicks: allPicks
+            allPicks: allPicks,
+            currentSeason: career.currentSeason
         )
         // From user's perspective:
         //  if user is the offering team:    user sends sendingValue,   gets receivingValue
@@ -1216,62 +1246,167 @@ struct TradeView: View {
             receivingPicks: Array(theirSelectedPicks)
         )
 
-        let accepted = TradeEngine.aiWouldAccept(
+        // Hard validation first: roster sizes and salary cap (CapMode-aware).
+        let blockers = TradeValueEngine.validationErrors(
             proposal: proposal,
+            allPlayers: allPlayers,
+            teams: allTeams,
+            capMode: career.capMode
+        )
+        if !blockers.isEmpty {
+            tradeResultMessage = "Trade blocked:\n" + blockers.joined(separator: "\n")
+            resultIsSuccess = false
+            showResultAlert = true
+            return
+        }
+
+        // AI responds: accept ≥ 105 % of value, reject < 90 %, else counter.
+        let response = TradeValueEngine.respond(
+            to: proposal,
             aiTeam: partner,
             allPlayers: allPlayers,
-            allPicks: allPicks
+            allPicks: allPicks,
+            currentSeason: career.currentSeason
         )
 
-        if accepted {
-            // Capture history before mutating roster
-            recordCompletedTrade(
-                proposal: proposal,
-                counterpartyAbbr: partner.abbreviation,
-                userIsOfferingTeam: true
-            )
-            TradeEngine.executeTrade(
-                proposal: proposal,
-                allPlayers: allPlayers,
-                allPicks: allPicks,
-                modelContext: modelContext
-            )
-            clearSelections()
-            selectedPartner = nil
-            loadData()
+        switch response {
+        case .accepted:
+            executeUserTrade(proposal, counterparty: partner, userIsOfferingTeam: true)
             tradeResultMessage = "\(partner.abbreviation) accepted the trade!"
             resultIsSuccess = true
-        } else {
-            tradeResultMessage = "\(partner.abbreviation) declined the trade."
+
+        case .rejected(let reason):
+            tradeResultMessage = reason
+            resultIsSuccess = false
+
+        case .countered(let counter, let message):
+            // Pre-fill the builder with the counter so the user can accept it
+            // by tapping Propose again, or keep tweaking.
+            mySelectedPlayers = Set(counter.sendingPlayers)
+            mySelectedPicks = Set(counter.sendingPicks)
+            theirSelectedPlayers = Set(counter.receivingPlayers)
+            theirSelectedPicks = Set(counter.receivingPicks)
+            tradeResultMessage = "\(message)\n\nThe counter is loaded in the trade builder."
             resultIsSuccess = false
         }
 
         showResultAlert = true
     }
 
-    private func acceptOffer(_ offer: TradeProposal) {
-        let teamName = allTeams.first(where: { $0.id == offer.offeringTeamID })?.abbreviation ?? "AI"
-        // Record before executing so lookups still resolve
+    /// Executes an agreed trade, persists it, and drops any pending offers
+    /// that the roster/pick moves invalidated.
+    private func executeUserTrade(
+        _ proposal: TradeProposal,
+        counterparty: Team,
+        userIsOfferingTeam: Bool
+    ) {
+        // Capture history before mutating rosters so lookups still resolve.
         recordCompletedTrade(
-            proposal: offer,
-            counterpartyAbbr: teamName,
-            userIsOfferingTeam: false
+            proposal: proposal,
+            counterpartyAbbr: counterparty.abbreviation,
+            userIsOfferingTeam: userIsOfferingTeam
         )
         TradeEngine.executeTrade(
-            proposal: offer,
+            proposal: proposal,
             allPlayers: allPlayers,
             allPicks: allPicks,
             modelContext: modelContext
         )
-        incomingOffers.removeAll { $0.id == offer.id }
+        // Any stored offers touching the moved assets are now void.
+        career.pendingTradeOffers = career.pendingTradeOffers.filter {
+            $0.id != proposal.id &&
+            TradeValueEngine.isProposalStillValid($0, allPlayers: allPlayers, allPicks: allPicks)
+        }
+        try? modelContext.save()
+
+        // Surface the completed deal in the inbox.
+        onInboxMessage?(completedTradeInboxMessage(
+            proposal: proposal,
+            counterparty: counterparty,
+            userIsOfferingTeam: userIsOfferingTeam
+        ))
+
+        clearSelections()
+        selectedPartner = nil
         loadData()
-        tradeResultMessage = "Trade with \(teamName) completed!"
+    }
+
+    private func acceptOffer(_ offer: TradeProposal) {
+        guard let aiTeam = allTeams.first(where: { $0.id == offer.offeringTeamID }) else { return }
+
+        let blockers = TradeValueEngine.validationErrors(
+            proposal: offer,
+            allPlayers: allPlayers,
+            teams: allTeams,
+            capMode: career.capMode
+        )
+        if !blockers.isEmpty {
+            tradeResultMessage = "Trade blocked:\n" + blockers.joined(separator: "\n")
+            resultIsSuccess = false
+            showResultAlert = true
+            return
+        }
+
+        executeUserTrade(offer, counterparty: aiTeam, userIsOfferingTeam: false)
+        tradeResultMessage = "Trade with \(aiTeam.abbreviation) completed!"
         resultIsSuccess = true
         showResultAlert = true
     }
 
+    /// Loads an incoming offer into the propose builder so the user can
+    /// rework the package and submit a modified version.
+    private func negotiateOffer(_ offer: TradeProposal) {
+        guard let aiTeam = allTeams.first(where: { $0.id == offer.offeringTeamID }) else { return }
+        selectedPartner = aiTeam
+        // In the stored offer the AI is the offering team; in the builder the
+        // user is always the offering side, so the asset directions flip.
+        mySelectedPlayers = Set(offer.receivingPlayers)
+        mySelectedPicks = Set(offer.receivingPicks)
+        theirSelectedPlayers = Set(offer.sendingPlayers)
+        theirSelectedPicks = Set(offer.sendingPicks)
+    }
+
     private func declineOffer(_ offer: TradeProposal) {
         incomingOffers.removeAll { $0.id == offer.id }
+        career.pendingTradeOffers = career.pendingTradeOffers.filter { $0.id != offer.id }
+        try? modelContext.save()
+    }
+
+    /// Inbox notice for a completed trade (both user-initiated and accepted
+    /// incoming offers).
+    private func completedTradeInboxMessage(
+        proposal: TradeProposal,
+        counterparty: Team,
+        userIsOfferingTeam: Bool
+    ) -> InboxMessage {
+        let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
+        let pickLookup   = Dictionary(uniqueKeysWithValues: allPicks.map   { ($0.id, $0) })
+
+        let outgoingPlayerIDs = userIsOfferingTeam ? proposal.sendingPlayers   : proposal.receivingPlayers
+        let outgoingPickIDs   = userIsOfferingTeam ? proposal.sendingPicks     : proposal.receivingPicks
+        let incomingPlayerIDs = userIsOfferingTeam ? proposal.receivingPlayers : proposal.sendingPlayers
+        let incomingPickIDs   = userIsOfferingTeam ? proposal.receivingPicks   : proposal.sendingPicks
+
+        let outNames = outgoingPlayerIDs.compactMap { playerLookup[$0]?.fullName } +
+                       outgoingPickIDs.compactMap { pickLookup[$0].map { pickLabelShort($0) } }
+        let inNames  = incomingPlayerIDs.compactMap { playerLookup[$0]?.fullName } +
+                       incomingPickIDs.compactMap { pickLookup[$0].map { pickLabelShort($0) } }
+
+        return InboxMessage(
+            sender: .leagueOffice,
+            subject: "Trade completed with \(counterparty.abbreviation)",
+            body: """
+            The league office has approved your trade with \(counterparty.fullName).
+
+            You receive: \(inNames.isEmpty ? "—" : inNames.joined(separator: ", "))
+            You send: \(outNames.isEmpty ? "—" : outNames.joined(separator: ", "))
+
+            All roster and cap adjustments have been processed.
+            """,
+            date: "Week \(career.currentWeek), Season \(career.currentSeason)",
+            category: .tradeOffer,
+            actionDestination: .roster
+        )
     }
 
     // MARK: - Data
@@ -1292,17 +1427,18 @@ struct TradeView: View {
         )
         allPicks = (try? modelContext.fetch(pickDescriptor)) ?? []
 
-        // Generate incoming offers if we have none and trading is open
-        if incomingOffers.isEmpty,
-           let myTeam = playerTeam,
-           career.currentPhase == .regularSeason || career.currentPhase == .tradeDeadline {
-            incomingOffers = TradeEngine.generateAITradeOffers(
-                forTeam: myTeam,
-                allTeams: allTeams,
-                allPlayers: allPlayers,
-                allPicks: allPicks
-            )
+        // R21: incoming offers are persisted on the career (generated weekly
+        // by WeekAdvancer). Show only offers whose assets are still where the
+        // offer assumes them to be, and prune the rest from storage.
+        let stored = career.pendingTradeOffers
+        let valid = stored.filter {
+            TradeValueEngine.isProposalStillValid($0, allPlayers: allPlayers, allPicks: allPicks)
         }
+        if valid.count != stored.count {
+            career.pendingTradeOffers = valid
+            try? modelContext.save()
+        }
+        incomingOffers = valid
     }
 
     // MARK: - Computed Helpers
@@ -1351,10 +1487,11 @@ struct TradeView: View {
             sendingPicks: Array(mySelectedPicks),
             receivingPicks: Array(theirSelectedPicks)
         )
-        return TradeEngine.evaluateTradeValue(
+        return TradeValueEngine.proposalValues(
             proposal: proposal,
             allPlayers: allPlayers,
-            allPicks: allPicks
+            allPicks: allPicks,
+            currentSeason: career.currentSeason
         )
     }
 
@@ -1527,40 +1664,36 @@ struct TradeView: View {
         var yourLines: [BreakdownLine] = []
         for id in mySelectedPlayers {
             guard let p = playerLookup[id] else { continue }
-            let v = ContractEngine.estimateMarketValue(player: p)
             yourLines.append(BreakdownLine(
                 label: p.fullName,
-                detail: "\(p.position.rawValue) · \(p.overall) OVR · Age \(p.age)",
-                value: v
+                detail: playerValueDetail(p),
+                value: TradeValueEngine.playerTradeValue(player: p)
             ))
         }
         for id in mySelectedPicks {
             guard let pick = pickLookup[id] else { continue }
-            let v = PickValueChart.points(forPick: pick.pickNumber)
             yourLines.append(BreakdownLine(
                 label: pickLabelShort(pick),
-                detail: "Pick chart value",
-                value: v
+                detail: pickValueDetail(pick),
+                value: TradeValueEngine.pickTradeValue(pick: pick, currentSeason: career.currentSeason)
             ))
         }
 
         var theirLines: [BreakdownLine] = []
         for id in theirSelectedPlayers {
             guard let p = playerLookup[id] else { continue }
-            let v = ContractEngine.estimateMarketValue(player: p)
             theirLines.append(BreakdownLine(
                 label: p.fullName,
-                detail: "\(p.position.rawValue) · \(p.overall) OVR · Age \(p.age)",
-                value: v
+                detail: playerValueDetail(p),
+                value: TradeValueEngine.playerTradeValue(player: p)
             ))
         }
         for id in theirSelectedPicks {
             guard let pick = pickLookup[id] else { continue }
-            let v = PickValueChart.points(forPick: pick.pickNumber)
             theirLines.append(BreakdownLine(
                 label: pickLabelShort(pick),
-                detail: "Pick chart value",
-                value: v
+                detail: pickValueDetail(pick),
+                value: TradeValueEngine.pickTradeValue(pick: pick, currentSeason: career.currentSeason)
             ))
         }
 
@@ -1572,6 +1705,25 @@ struct TradeView: View {
             yourTotal: yourTotal,
             theirTotal: theirTotal
         )
+    }
+
+    /// Explains which value-curve factors drive a player's trade value.
+    private func playerValueDetail(_ player: Player) -> String {
+        var parts = ["\(player.position.rawValue) · \(player.overall) OVR · Age \(player.age)"]
+        let ageMult = TradeValueEngine.ageMultiplier(age: player.age, position: player.position)
+        if ageMult < 0.85 { parts.append("aging") }
+        else if ageMult > 1.0 { parts.append("young upside") }
+        let contractMult = TradeValueEngine.contractMultiplier(player: player)
+        if contractMult > 1.05 { parts.append("bargain contract") }
+        else if player.contractYearsRemaining <= 1 { parts.append("expiring deal") }
+        else if contractMult < 0.9 { parts.append("pricey contract") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func pickValueDetail(_ pick: DraftPick) -> String {
+        pick.seasonYear > career.currentSeason
+            ? "Pick chart value · future-year discount"
+            : "Pick chart value"
     }
 }
 

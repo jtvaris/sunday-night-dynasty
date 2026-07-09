@@ -64,6 +64,14 @@ struct ContractNegotiationView: View {
         return false
     }
 
+    // MARK: - Agent Persona (R22)
+
+    /// Deterministic agent persona for this player (derived from player.id).
+    private var agentPersona: AgentPersona { AgentPersona.forPlayer(id: player.id) }
+
+    /// Deterministic agent name for this player.
+    private var agentName: String { AgentPersona.agentName(for: player.id) }
+
     // MARK: - Player Header
 
     private var playerHeader: some View {
@@ -91,6 +99,24 @@ struct ContractNegotiationView: View {
                             .foregroundStyle(Color.textSecondary)
                     }
                 }
+                // R22: agent identity + negotiation style
+                HStack(spacing: 6) {
+                    Image(systemName: agentPersona.symbolName)
+                        .font(.system(size: 10))
+                        .foregroundStyle(personaColor)
+                    Text("Agent: \(agentName)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textSecondary)
+                    Text(agentPersona.styleLabel)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(personaColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(personaColor.opacity(0.12), in: Capsule())
+                }
+                Text(agentPersona.styleDescription)
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
@@ -151,7 +177,7 @@ struct ContractNegotiationView: View {
     private func agentBubble(_ message: NegotiationMessage) -> some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Agent")
+                Text(agentName)
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.textTertiary)
 
@@ -529,6 +555,20 @@ struct ContractNegotiationView: View {
     // MARK: - Actions
 
     private func startNegotiation() {
+        // R22: a hardliner who was lowballed earlier this offseason refuses
+        // to come back to the table.
+        if NegotiationLockRegistry.isLocked(player.id) {
+            let sysMsg = NegotiationMessage(
+                sender: .system,
+                text: "\(agentName) is not returning your calls. \(player.fullName)'s camp cut off negotiations for the rest of the offseason.",
+                offer: nil
+            )
+            messages.append(sysMsg)
+            outcome = .negotiationsBrokenOff
+            scrollTarget = sysMsg.id
+            return
+        }
+
         let result = ContractNegotiationEngine.generateOpeningDemand(
             player: player,
             negotiationType: negotiationType,
@@ -621,6 +661,17 @@ struct ContractNegotiationView: View {
             messages.append(sysMsg)
             scrollTarget = sysMsg.id
 
+        case .negotiationsBrokenOff:
+            // R22: persist the freeze-out for the rest of the offseason.
+            NegotiationLockRegistry.lock(player.id)
+            let sysMsg = NegotiationMessage(
+                sender: .system,
+                text: "\(agentName) has cut off all contract talks for \(player.fullName) until next offseason.",
+                offer: nil
+            )
+            messages.append(sysMsg)
+            scrollTarget = sysMsg.id
+
         default:
             break
         }
@@ -676,6 +727,15 @@ struct ContractNegotiationView: View {
         case .offense:      return .accentBlue
         case .defense:      return .danger
         case .specialTeams: return .accentGold
+        }
+    }
+
+    /// R22: persona accent color for the agent chip.
+    private var personaColor: Color {
+        switch agentPersona {
+        case .hardliner:   return .danger
+        case .cooperative: return .success
+        case .loyalist:    return .accentGold
         }
     }
 

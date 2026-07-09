@@ -78,6 +78,9 @@ enum NegotiationOutcome {
     case dealReached(NegotiationOffer)
     case walkedAway
     case playerWalked
+    /// R22: a hardliner agent was insulted by a lowball — talks are dead for
+    /// the rest of the offseason (persisted via `NegotiationLockRegistry`).
+    case negotiationsBrokenOff
 }
 
 // MARK: - Negotiation Context
@@ -104,9 +107,12 @@ enum ContractNegotiationEngine {
     ) -> (offer: NegotiationOffer, message: String) {
         let marketValue = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
 
-        // Agent asks 10-25% above market value
-        let aggressiveness = Double.random(in: 1.10...1.25)
-        let askingSalary = Int(Double(marketValue) * aggressiveness)
+        // R22: the agent's persona shifts the ask ±10-15% — a hardliner
+        // opens well above market, a deal-maker close to it.
+        let persona = AgentPersona.forPlayer(id: player.id)
+        let aggressiveness = Double.random(in: 1.08...1.18) * persona.demandFactor
+        // Never open below market — even a deal-maker starts at fair value.
+        let askingSalary = max(marketValue, Int(Double(marketValue) * aggressiveness))
 
         // Preferred years based on age, capped by age-based maximum
         let ageMax = maxContractYears(forAge: player.age)
@@ -205,8 +211,18 @@ enum ContractNegotiationEngine {
             }
         }()
 
-        // Loyalty factor for extensions (longer on team = more willing)
-        let loyaltyFactor: Double = negotiationType == .extend ? 0.03 : 0.0
+        // R22: persona shapes loyalty weighting, patience and lowball tolerance.
+        let persona = AgentPersona.forPlayer(id: player.id)
+
+        // Loyalty factor for extensions (longer on team = more willing).
+        // A loyalist agent leans into tenure: +1% per loyalty year, up to +9%.
+        let loyaltyFactor: Double = {
+            guard negotiationType == .extend else { return 0.0 }
+            if persona == .loyalist {
+                return 0.03 + min(0.06, Double(player.loyaltyYears) * 0.01)
+            }
+            return 0.03
+        }()
 
         let adjustedRatio = offerRatio + moraleFactor + loyaltyFactor
 
@@ -215,6 +231,13 @@ enum ContractNegotiationEngine {
         let guaranteePenalty = guaranteeGap > 15 ? -0.05 : 0.0
 
         let effectiveRatio = adjustedRatio + guaranteePenalty
+
+        // R22: an insulting lowball to a hardliner kills talks for the
+        // whole offseason — no counter, no second chance.
+        if effectiveRatio < persona.lowballCutoff && persona.breaksOffForSeason {
+            let message = generateBreakOffMessage(player: player)
+            return (message, nil, .negotiationsBrokenOff)
+        }
 
         // Decision logic
         if effectiveRatio >= 0.95 {
@@ -230,7 +253,7 @@ enum ContractNegotiationEngine {
                 agentAsk: previousAgentOffer,
                 splitFactor: 0.6 // Agent moves 40%, expects GM to move 60%
             )
-            let message = generateCounterMessage(player: player, tone: .reasonable, round: roundNumber)
+            let message = generateCounterMessage(player: player, persona: persona, tone: .reasonable, round: roundNumber)
             return (message, counterOffer, .pending)
         }
 
@@ -241,12 +264,12 @@ enum ContractNegotiationEngine {
                 agentAsk: previousAgentOffer,
                 splitFactor: 0.75 // Agent barely moves
             )
-            let message = generateCounterMessage(player: player, tone: .disappointed, round: roundNumber)
+            let message = generateCounterMessage(player: player, persona: persona, tone: .disappointed, round: roundNumber)
             return (message, counterOffer, .pending)
         }
 
-        if roundNumber >= 3 || effectiveRatio < 0.65 {
-            // Walk away — offer is too low or negotiations stalled
+        if roundNumber >= persona.maxRounds || effectiveRatio < 0.65 {
+            // Walk away — offer is too low or the agent's patience ran out.
             let message = generateWalkAwayMessage(player: player, ratio: effectiveRatio)
             return (message, nil, .playerWalked)
         }
@@ -257,7 +280,7 @@ enum ContractNegotiationEngine {
             agentAsk: previousAgentOffer,
             splitFactor: 0.85 // Agent barely budges
         )
-        let message = generateCounterMessage(player: player, tone: .insulted, round: roundNumber)
+        let message = generateCounterMessage(player: player, persona: persona, tone: .insulted, round: roundNumber)
         return (message, counterOffer, .pending)
     }
 
@@ -312,22 +335,54 @@ enum ContractNegotiationEngine {
         }
     }
 
-    private static func generateCounterMessage(player: Player, tone: Tone, round: Int) -> String {
+    private static func generateCounterMessage(player: Player, persona: AgentPersona, tone: Tone, round: Int) -> String {
         let name = player.firstName
         switch tone {
         case .reasonable:
-            let msgs = [
-                "We appreciate the offer. We're getting closer — here's where we can meet you.",
-                "\(name) wants to make this work. We've adjusted our ask. Take a look.",
-                "Good progress. Here's a revised number that works for both sides."
-            ]
+            let msgs: [String]
+            switch persona {
+            case .hardliner:
+                msgs = [
+                    "That's movement, but \(name) wants starter money. Here's where the deal gets done.",
+                    "Closer. We're not here to haggle forever — this number closes it today.",
+                    "We appreciate the effort. One more push and \(name) signs."
+                ]
+            case .cooperative:
+                msgs = [
+                    "We appreciate the offer. We're getting closer — here's where we can meet you.",
+                    "\(name) wants to make this work. We've adjusted our ask. Take a look.",
+                    "Good progress. Here's a revised number that works for both sides."
+                ]
+            case .loyalist:
+                msgs = [
+                    "\(name) loves this locker room. He's already taking a discount to stay — meet us here.",
+                    "He wants to retire in this uniform. Show him the respect and this is done.",
+                    "We've shaved our ask because \(name) values what you've built. This is fair."
+                ]
+            }
             return msgs.randomElement()!
         case .disappointed:
-            let msgs = [
-                "Honestly, we expected more given \(name)'s production. Here's our bottom line.",
-                "That's below what the market bears. We've come down, but there's a floor here.",
-                "\(name) is disappointed but willing to negotiate. This is our revised ask."
-            ]
+            let msgs: [String]
+            switch persona {
+            case .hardliner:
+                msgs = [
+                    "That's below what \(name) is worth and you know it. This is our floor — take it seriously.",
+                    "\(name) wants starter money, not a hometown haircut. My patience has limits.",
+                    "We've come down once. We won't keep chasing you. Here's the number."
+                ]
+            case .cooperative:
+                msgs = [
+                    "Honestly, we expected more given \(name)'s production. Here's our bottom line.",
+                    "That's below what the market bears. We've come down, but there's a floor here.",
+                    "\(name) is disappointed but willing to negotiate. This is our revised ask."
+                ]
+            case .loyalist:
+                msgs = [
+                    "\(name) took a discount to stay before. He won't be taken for granted twice.",
+                    "Loyalty runs both ways. He's hurt, but he still wants this to work — here's our ask.",
+                    "He's given this team everything. Reward that, and we sign today."
+                ]
+            }
             return msgs.randomElement()!
         case .insulted:
             let msgs = [
@@ -337,6 +392,17 @@ enum ContractNegotiationEngine {
             ]
             return msgs.randomElement()!
         }
+    }
+
+    /// R22: hardliner break-off — talks are over for the offseason.
+    private static func generateBreakOffMessage(player: Player) -> String {
+        let name = player.firstName
+        let msgs = [
+            "That offer is an insult. Don't call us again this offseason — \(name) is done talking.",
+            "You just told \(name) exactly what you think of him. We're out. Talks are over until next year.",
+            "Unbelievable. We're ending negotiations here. \(name)'s camp won't return calls this offseason."
+        ]
+        return msgs.randomElement()!
     }
 
     private static func generateAcceptMessage(player: Player, offer: NegotiationOffer) -> String {

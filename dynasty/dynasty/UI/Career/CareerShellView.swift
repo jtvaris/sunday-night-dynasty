@@ -151,11 +151,18 @@ struct CareerShellView: View {
                     currentSalary: player.annualSalary,
                     marketValue: pendingHoldoutMarketValue,
                     onResolve: { resolution in
-                        HoldoutEngine.resolveHoldout(
+                        let resolved = HoldoutEngine.resolveHoldout(
                             holdout: holdout,
                             resolution: resolution,
+                            player: player,
                             modelContext: modelContext
                         )
+                        // R22: an extension really pays the player — otherwise
+                        // the same star would be flagged as underpaid again
+                        // next offseason.
+                        if resolved {
+                            applyHoldoutResolutionEffects(resolution, player: player)
+                        }
                         // After resolution, persist a storyline event for the inbox.
                         if let teamID = career.teamID {
                             let evt = FAStorylineEvent(
@@ -186,22 +193,69 @@ struct CareerShellView: View {
         }
     }
 
-    /// FA Drama Phase 5: scan the user's roster at training-camp entry for any
-    /// sub-market players and pop the HoldoutDialog for the first candidate.
-    /// Only triggers once per training-camp transition.
+    /// R22: applies the concrete contract effects of a holdout resolution so
+    /// the underlying grievance is actually fixed (an unresolved pay gap would
+    /// re-trigger the same drama next offseason).
+    private func applyHoldoutResolutionEffects(_ resolution: HoldoutEngine.Resolution, player: Player) {
+        let market = ContractEngine.estimateMarketValue(player: player)
+        switch resolution {
+        case .extend:
+            // Market-rate extension: pay the player and add years.
+            if career.capMode != .sandbox, let team {
+                team.currentCapUsage += market - player.annualSalary
+            }
+            player.annualSalary = market
+            player.contractYearsRemaining = max(player.contractYearsRemaining, 3)
+            player.morale = min(100, player.morale + 10)
+        case .signingBonus:
+            // Stopgap money: happier, but the base contract stays as-is.
+            player.morale = min(100, player.morale + 8)
+        case .mediation:
+            player.morale = min(100, player.morale + 5)
+        case .forceTrade:
+            // The trade itself goes through the Trade Center; here the player
+            // just reports back while the front office shops him.
+            break
+        }
+        try? modelContext.save()
+    }
+
+    /// FA Drama Phase 5 / R22: scan the user's roster when OTAs open for STAR
+    /// players (OVR >= 85 or team top-3) who are expiring or clearly underpaid
+    /// and may hold out. The player's agent persona drives the odds — a
+    /// hardliner agent is far more likely to pull the trigger.
     @MainActor
     private func detectAndShowHoldout() {
         guard let teamID = career.teamID else { return }
         let roster = teamRoster
         guard !roster.isEmpty else { return }
 
+        // Never stack a second holdout on top of an active one.
+        let activeDescriptor = FetchDescriptor<Holdout>(
+            predicate: #Predicate<Holdout> { $0.teamID == teamID && $0.resolvedAt == nil }
+        )
+        if let active = try? modelContext.fetch(activeDescriptor), !active.isEmpty { return }
+
         // Build per-player market value map.
         var marketValues: [UUID: Int] = [:]
         for p in roster {
             marketValues[p.id] = ContractEngine.estimateMarketValue(player: p)
         }
-        let candidates = HoldoutEngine.detectHoldoutCandidates(roster: roster, marketValues: marketValues)
-        guard let first = candidates.first else { return }
+        let candidates = HoldoutEngine.detectStarHoldoutCandidates(roster: roster, marketValues: marketValues)
+
+        // Agent persona decides who actually walks out: hardliner 65%,
+        // loyalist 30%, cooperative 15%. First candidate to pass rolls in.
+        let star: Player? = candidates.first { candidate in
+            let chance: Int
+            switch AgentPersona.forPlayer(id: candidate.id) {
+            case .hardliner:   chance = 65
+            case .loyalist:    chance = 30
+            case .cooperative: chance = 15
+            }
+            return Int.random(in: 1...100) <= chance
+        }
+        guard let first = star else { return }
+
         let market = marketValues[first.id] ?? first.annualSalary
         let delta = max(0, market - first.annualSalary)
         if let holdout = HoldoutEngine.startHoldout(
@@ -213,6 +267,18 @@ struct CareerShellView: View {
             pendingHoldoutPlayer = first
             pendingHoldoutMarketValue = market
             pendingHoldout = holdout
+
+            // Inbox drama: the agent fires the opening shot.
+            let agentName = AgentPersona.agentName(for: first.id)
+            inboxMessages.insert(InboxMessage(
+                sender: .playerAgent(name: agentName),
+                subject: "\(first.fullName) is holding out",
+                body: "Effective immediately, my client will not participate in team activities. He is making $\(first.annualSalary / 1000)M against a market value of $\(market / 1000)M. Until this organization shows it values him, he stays home. You know where to reach me.",
+                date: "Offseason - OTAs, Season \(career.currentSeason)",
+                category: .contractRequest,
+                actionRequired: true,
+                actionDestination: .roster
+            ), at: 0)
         }
     }
 
@@ -242,10 +308,11 @@ struct CareerShellView: View {
             pendingVoluntaryWorkout = true
         }
 
-        // FA Drama Phase 5: at training-camp entry, scan for holdout candidates
-        // (players signed sub-market) and surface a HoldoutDialog if any are
-        // found. Limited to one candidate per camp opening to avoid stacking.
-        if career.currentPhase == .trainingCamp && pendingHoldout == nil {
+        // FA Drama Phase 5 / R22: when OTAs open, scan for star holdout
+        // candidates (expiring or clearly underpaid) and surface a
+        // HoldoutDialog if the agent pulls the trigger. One holdout max —
+        // detection is skipped while another one is active.
+        if career.currentPhase == .otas && pendingHoldout == nil {
             detectAndShowHoldout()
         }
     }
@@ -400,7 +467,12 @@ struct CareerShellView: View {
                     refreshTaskCompletionStatus()
                 }
         case .trades:
-            TradeView(career: career)
+            TradeView(
+                career: career,
+                onInboxMessage: { message in
+                    inboxMessages.insert(message, at: 0)
+                }
+            )
                 .onAppear {
                     markTaskVisited(for: .trades)
                     refreshTaskCompletionStatus()
@@ -935,11 +1007,9 @@ struct CareerShellView: View {
             rosterCount = 53
         }
 
-        // TODO: Wire up when TradeOffer state is persisted on Career or Team.
-        // TradeEngine.generateAITradeOffers() creates offers but they aren't stored
-        // in a persistent collection yet. When added, check for offers where
-        // receivingTeamID == career.teamID && isAccepted == nil.
-        let hasPendingTradeOffers = false
+        // R21: AI trade offers are persisted on the career (WeekAdvancer
+        // generates them weekly; TradeView consumes/prunes them).
+        let hasPendingTradeOffers = !career.pendingTradeOffers.isEmpty
 
         // Detect coaching vacancies
         var hasHC = true

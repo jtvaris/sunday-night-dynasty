@@ -8,6 +8,13 @@ enum WeekAdvancer {
     /// The result of the last player team game simulation (available after advanceWeek)
     static var lastPlayerGameResult: GameSimulator.GameResult?
 
+    /// Teams whose weekly injury roll is skipped on the next advance because
+    /// their game was played live: `LiveGameEngine` already rolled per-play
+    /// injury dice for both sides at the same aggregate probability, so
+    /// rolling again here would double the live coach's injury rate.
+    /// Set by `LiveGameEngine.persist`, cleared at the end of `advanceWeek`.
+    static var liveGameInjuryTeamIDs: Set<UUID> = []
+
     // MARK: - Static Storage for UI Access
 
     /// News items generated during the most recent advance.
@@ -93,6 +100,10 @@ enum WeekAdvancer {
         default:
             advanceOffseasonPhase(career: career, modelContext: modelContext)
         }
+
+        // The live-game injury exemption never outlives the advance it was
+        // registered for (consumed by the regular-season injury pass above).
+        liveGameInjuryTeamIDs = []
     }
 
     // MARK: - Score Simulation
@@ -160,6 +171,10 @@ enum WeekAdvancer {
             player.isFranchiseTagged = false
         }
 
+        // 0c. R22: a new season reopens every negotiation an insulted agent
+        // froze last offseason.
+        NegotiationLockRegistry.reset()
+
         // 1. Reset every team's win/loss/tie record.
         for team in teams {
             team.wins = 0
@@ -194,6 +209,9 @@ enum WeekAdvancer {
         currentDraftPicks = []
         currentMockDraft = []
         mockDraftHistory = [:]
+
+        // 6. R21: stale trade offers never survive into a new season.
+        career.pendingTradeOffers = []
     }
 
     // MARK: - Private: Regular Season
@@ -277,7 +295,10 @@ enum WeekAdvancer {
                     defReadBoost: defReadBoost,
                     boostedTeamID: userTeamID,
                     homeGamePlan: homeTeam.id == userTeamID ? userPlan : nil,
-                    awayGamePlan: awayTeam.id == userTeamID ? userPlan : nil
+                    awayGamePlan: awayTeam.id == userTeamID ? userPlan : nil,
+                    // Deterministic per-game weather — the live coached game
+                    // derives the identical value from the same game id/week.
+                    weather: GameWeather.forGame(id: game.id, week: game.week)
                 )
                 game.homeScore = result.homeScore
                 game.awayScore = result.awayScore
@@ -362,11 +383,23 @@ enum WeekAdvancer {
                 return nil
             }()
 
+            // Distill concrete facts from the played game (quick-simmed or
+            // live-coached — both leave their result in lastPlayerGameResult)
+            // so the presser can reference what actually happened.
+            let gameFacts = pressGameFacts(
+                lastGameWon: lastGameWon,
+                result: lastPlayerGameResult,
+                playerTeamID: playerTeamID,
+                allPlayers: allPlayers,
+                teamsByID: teamsByID
+            )
+
             pendingPressConference = PressConferenceEngine.generateWeeklyPressConference(
                 career: career,
                 team: playerTeam,
                 lastGameResult: lastGameWon,
-                week: week
+                week: week,
+                facts: gameFacts
             )
         }
 
@@ -415,10 +448,47 @@ enum WeekAdvancer {
                 coaches: teamCoaches,
                 owner: playerTeam.owner
             )
+
+            // 4c. R21: AI-initiated trade offer (~15 % chance per week until
+            // the Week 8 deadline). Contenders buy, rebuilders sell — the
+            // offer is persisted on the career and lands as an inbox message.
+            if week <= TradeValueEngine.deadlineWeek, Int.random(in: 1...100) <= 15 {
+                let activePicks = fetchActiveDraftPicks(modelContext: modelContext)
+                if let offer = TradeValueEngine.generateWeeklyAIOffer(
+                    userTeam: playerTeam,
+                    allTeams: Array(teamsByID.values),
+                    allPlayers: allPlayers,
+                    allPicks: activePicks,
+                    capMode: career.capMode,
+                    currentSeason: season
+                ) {
+                    var pending = career.pendingTradeOffers
+                    // Never stack duplicate offers from the same team.
+                    pending.removeAll { $0.offeringTeamID == offer.proposal.offeringTeamID }
+                    pending.append(offer.proposal)
+                    career.pendingTradeOffers = Array(pending.suffix(5))
+                    lastInboxMessages.append(
+                        TradeValueEngine.offerInboxMessage(offer: offer, week: week, season: season)
+                    )
+                }
+            }
+        }
+
+        // 4d. R22: active holdout drama for the user's team — weekly morale
+        // drain, agent escalation, and the player caving around week 3-4.
+        if let playerTeamID = career.teamID {
+            processHoldoutWeek(
+                teamID: playerTeamID,
+                allPlayers: allPlayers,
+                week: week,
+                season: season,
+                modelContext: modelContext
+            )
         }
 
         // 5. Apply fatigue changes for players who played this week
-        for player in allPlayers where player.teamID != nil && !player.isInjured {
+        // (R22: holdout players are away from the facility — no game fatigue).
+        for player in allPlayers where player.teamID != nil && !player.isInjured && !player.isHoldingOut {
             let fatigueGain = Int.random(in: 3...8)
             player.fatigue = min(100, player.fatigue + fatigueGain)
         }
@@ -430,8 +500,13 @@ enum WeekAdvancer {
             player.fatigue = max(0, player.fatigue - recovery)
         }
 
-        // 6. Process injuries for players who played (medical staff reduces risk)
-        for player in allPlayers where player.teamID != nil && !player.isInjured {
+        // 6. Process injuries for players who played (medical staff reduces risk).
+        //    Teams that played their game LIVE this week are exempt: the live
+        //    engine already rolled per-play injury dice at the same aggregate
+        //    rate (see LiveGameEngine.rollInjuries) — rolling here too would
+        //    double the live coach's injury exposure.
+        for player in allPlayers where player.teamID != nil && !player.isInjured && !player.isHoldingOut {
+            if let teamID = player.teamID, liveGameInjuryTeamIDs.contains(teamID) { continue }
             let teamDoctor = allCoaches.first { $0.teamID == player.teamID && $0.role == .teamDoctor }
             let teamPhysio = allCoaches.first { $0.teamID == player.teamID && $0.role == .physio }
 
@@ -452,7 +527,8 @@ enum WeekAdvancer {
         }
 
         // 7. Apply game experience for starters (approximated: high-overall rostered players)
-        for player in allPlayers where player.teamID != nil && !player.isInjured {
+        // (R22: holdout players don't play, so they earn no experience.)
+        for player in allPlayers where player.teamID != nil && !player.isInjured && !player.isHoldingOut {
             // Approximate starters as those with overall >= 65 or on small rosters
             if player.overall >= 65 {
                 PlayerDevelopmentEngine.applyGameExperience(player, gamesPlayed: 1, gamesStarted: 1)
@@ -473,7 +549,7 @@ enum WeekAdvancer {
             let oc = teamCoaches.first { $0.role == .offensiveCoordinator }
             let dc = teamCoaches.first { $0.role == .defensiveCoordinator }
 
-            for player in teamPlayers where !player.isInjured {
+            for player in teamPlayers where !player.isInjured && !player.isHoldingOut {
                 // Scheme learning (reduced intensity during season)
                 if let offScheme = oc?.offensiveScheme, player.position.side == .offense {
                     let gain = VersatilityDevelopmentEngine.learnScheme(
@@ -532,6 +608,35 @@ enum WeekAdvancer {
         if week == 8 {
             career.currentPhase = .tradeDeadline
             career.currentPhase = .regularSeason
+
+            // R21: Deadline drama — 2-4 AI-vs-AI trades (contenders buy
+            // veterans from rebuilders for picks, value-curve validated).
+            // Players and picks really change teams.
+            let activePicks = fetchActiveDraftPicks(modelContext: modelContext)
+            let deadlineTrades = TradeValueEngine.executeDeadlineTrades(
+                userTeamID: career.teamID,
+                teams: Array(teamsByID.values),
+                allPlayers: allPlayers,
+                allPicks: activePicks,
+                capMode: career.capMode,
+                currentSeason: season,
+                modelContext: modelContext
+            )
+            for trade in deadlineTrades {
+                lastNewsItems.append(
+                    TradeValueEngine.newsItem(for: trade, week: week, season: season)
+                )
+            }
+            if !deadlineTrades.isEmpty {
+                lastInboxMessages.append(
+                    TradeValueEngine.deadlineRoundupMessage(
+                        trades: deadlineTrades, week: week, season: season
+                    )
+                )
+            }
+
+            // Any offers the user sat on expire at the deadline.
+            career.pendingTradeOffers = []
         }
 
         // 9b. Midseason mock draft at week 9 (generate draft class early for projections)
@@ -575,6 +680,14 @@ enum WeekAdvancer {
                     if let teamID = player.teamID, let team = teamsByID[teamID] {
                         team.currentCapUsage -= player.annualSalary
                     }
+                    // R23: log the departure for the compensatory-pick formula
+                    // (only contract expiries count — cuts never register here).
+                    if let formerTeamID = player.teamID {
+                        CompensatoryPickEngine.recordDeparture(
+                            playerID: player.id,
+                            formerTeamID: formerTeamID
+                        )
+                    }
                     player.teamID = nil
                     player.annualSalary = 0
                 }
@@ -586,6 +699,139 @@ enum WeekAdvancer {
             career.currentPhase = .playoffs
             career.currentWeek = 19   // Playoff week numbering starts at 19.
         }
+    }
+
+    // MARK: - Private: Holdout Drama (R22)
+
+    /// Weekly tick for any active (unresolved) holdout on the user's team.
+    ///
+    /// Explainable rules:
+    /// - The holdout drags the locker room down: every teammate loses 1
+    ///   morale per week, the holdout himself 2.
+    /// - `weeksActive` counts regular-season weeks only. At week 3 there is
+    ///   a 50% chance the player caves; by week 4 he always reports back
+    ///   without a new deal (morale -10).
+    /// - If the front office already fixed the money (salary at/above ~95%
+    ///   of market, or 2+ contract years now remaining after an extension),
+    ///   the holdout auto-resolves as a settlement.
+    private static func processHoldoutWeek(
+        teamID: UUID,
+        allPlayers: [Player],
+        week: Int,
+        season: Int,
+        modelContext: ModelContext
+    ) {
+        let descriptor = FetchDescriptor<Holdout>(
+            predicate: #Predicate<Holdout> { $0.teamID == teamID && $0.resolvedAt == nil }
+        )
+        let activeHoldouts = (try? modelContext.fetch(descriptor)) ?? []
+        guard !activeHoldouts.isEmpty else { return }
+
+        let teamPlayers = allPlayers.filter { $0.teamID == teamID }
+
+        for holdout in activeHoldouts {
+            guard let player = teamPlayers.first(where: { $0.id == holdout.playerID }) else {
+                // Player was traded or cut — the standoff is moot.
+                holdout.resolvedAt = Date()
+                holdout.resolution = .traded
+                continue
+            }
+
+            // Keep the flag and the record in sync.
+            if !player.isHoldingOut { player.isHoldingOut = true }
+
+            // Settlement check: the front office already fixed the money.
+            let market = ContractEngine.estimateMarketValue(player: player)
+            let paidFairly = market > 0 && Double(player.annualSalary) >= Double(market) * 0.95
+            if paidFairly || player.contractYearsRemaining >= 2 {
+                player.isHoldingOut = false
+                holdout.resolvedAt = Date()
+                holdout.resolution = .extended
+                lastInboxMessages.append(
+                    holdoutSettledMessage(player: player, caved: false, week: week, season: season)
+                )
+                lastNewsItems.append(NewsItem(
+                    headline: "\(player.fullName) holdout ends with new deal",
+                    body: "\(player.fullName) is back in the building after the front office reworked his contract. Teammates welcomed the star back at practice.",
+                    category: .contract,
+                    week: week,
+                    season: season,
+                    relatedTeamID: teamID,
+                    relatedPlayerID: player.id,
+                    sentiment: .positive
+                ))
+                continue
+            }
+
+            holdout.weeksActive += 1
+
+            // Locker-room distraction: teammates -1 morale, the holdout -2.
+            for teammate in teamPlayers where teammate.id != player.id {
+                teammate.morale = max(0, teammate.morale - 1)
+            }
+            player.morale = max(0, player.morale - 2)
+
+            // Cave check: 50% at week 3, guaranteed at week 4.
+            let caves = holdout.weeksActive >= 4 || (holdout.weeksActive == 3 && Bool.random())
+            if caves {
+                player.isHoldingOut = false
+                player.morale = max(0, player.morale - 10)
+                holdout.resolvedAt = Date()
+                holdout.resolution = .playerCaved
+                lastInboxMessages.append(
+                    holdoutSettledMessage(player: player, caved: true, week: week, season: season)
+                )
+                lastNewsItems.append(NewsItem(
+                    headline: "\(player.fullName) ends holdout without new deal",
+                    body: "After \(holdout.weeksActive) weeks away, \(player.fullName) reported back without the contract he wanted. Sources say the star is deeply unhappy with how the standoff played out.",
+                    category: .contract,
+                    week: week,
+                    season: season,
+                    relatedTeamID: teamID,
+                    relatedPlayerID: player.id,
+                    sentiment: .negative
+                ))
+            } else {
+                // Ongoing drama: the agent turns up the heat via the inbox.
+                let agentName = AgentPersona.agentName(for: player.id)
+                let demand = ContractEngine.estimateMarketValue(player: player)
+                lastInboxMessages.append(InboxMessage(
+                    sender: .playerAgent(name: agentName),
+                    subject: "\(player.fullName) holdout — week \(holdout.weeksActive)",
+                    body: "My client remains away from the team. He is worth $\(demand / 1000)M a year and the locker room knows it. Pay him what he has earned, or this drags on. The longer you wait, the worse it gets for everyone.",
+                    date: "Week \(week), Season \(season)",
+                    category: .contractRequest,
+                    actionRequired: true,
+                    actionDestination: .roster
+                ))
+            }
+        }
+    }
+
+    /// Inbox message for a holdout that just ended (settlement or cave-in).
+    private static func holdoutSettledMessage(
+        player: Player,
+        caved: Bool,
+        week: Int,
+        season: Int
+    ) -> InboxMessage {
+        let agentName = AgentPersona.agentName(for: player.id)
+        if caved {
+            return InboxMessage(
+                sender: .playerAgent(name: agentName),
+                subject: "\(player.fullName) reports back",
+                body: "My client is ending his holdout and reporting to the team — not because this was resolved, but because he refuses to let his teammates down. Make no mistake: he has not forgotten how this was handled.",
+                date: "Week \(week), Season \(season)",
+                category: .playerIssue
+            )
+        }
+        return InboxMessage(
+            sender: .playerAgent(name: agentName),
+            subject: "\(player.fullName) holdout resolved",
+            body: "On behalf of my client: thank you for getting this done. \(player.firstName) is back in the building, fully committed, and ready to earn every dollar of the new deal.",
+            date: "Week \(week), Season \(season)",
+            category: .contractRequest
+        )
     }
 
     // MARK: - Private: Playoffs
@@ -942,6 +1188,15 @@ enum WeekAdvancer {
                 teams: teams
             )
 
+            // R23 — Compensatory picks: the market has closed, settle the
+            // departure ledger into extra round 3-7 picks for net FA losers.
+            settleCompensatoryPicks(
+                career: career,
+                teams: teams,
+                allPlayers: allPlayers,
+                modelContext: modelContext
+            )
+
             // Regenerate mock draft after FA signings change team rosters/needs
             if !currentDraftClass.isEmpty {
                 currentMockDraft = ScoutingEngine.generateMockDraft(
@@ -994,11 +1249,29 @@ enum WeekAdvancer {
                 seasonYear: career.currentSeason,
                 modelContext: modelContext
             )
-            let draftPicks = DraftEngine.generateDraftOrder(
+            var draftPicks = DraftEngine.generateDraftOrder(
                 teams: teams,
                 games: allGames,
                 seasonYear: career.currentSeason
             )
+
+            // R23 — attach compensatory picks awarded at the close of free
+            // agency (if they weren't already slotted into a persisted pool).
+            let pendingComp = CompensatoryPickEngine.pendingAwards()
+            if !pendingComp.isEmpty {
+                var teamAbbrs: [UUID: String] = [:]
+                for team in teams { teamAbbrs[team.id] = team.abbreviation }
+                let compPicks = CompensatoryPickEngine.applyAwards(
+                    pendingComp,
+                    toPickPool: draftPicks,
+                    seasonYear: career.currentSeason,
+                    teamAbbrs: teamAbbrs
+                )
+                draftPicks.append(contentsOf: compPicks)
+                draftPicks.sort { $0.pickNumber < $1.pickNumber }
+                CompensatoryPickEngine.clearPendingAwards()
+            }
+
             currentDraftPicks = draftPicks
 
             // Persist draft picks
@@ -1098,8 +1371,9 @@ enum WeekAdvancer {
             applyCampWeeklyTick(career: career, phase: .trainingCamp, modelContext: modelContext, allPlayers: allPlayers)
 
             // Process offseason development for all teams
+            // (R22: holdout players skip camp entirely — no development).
             for team in teams {
-                let teamPlayers = allPlayers.filter { $0.teamID == team.id }
+                let teamPlayers = allPlayers.filter { $0.teamID == team.id && !$0.isHoldingOut }
                 let teamCoaches = allCoaches.filter { $0.teamID == team.id }
                 _ = PlayerDevelopmentEngine.processOffseason(
                     players: teamPlayers,
@@ -1210,7 +1484,25 @@ enum WeekAdvancer {
         if nextPhase == .freeAgency {
             career.freeAgencyRound = 0
             career.freeAgencyStep = FreeAgencyStep.finalPush.rawValue
+            career.faVisitsUsed = 0
             FASigningTracker.reset()
+
+            // R23 — Legal tampering window: leak market projections and early
+            // suitors for the top upcoming FAs before the market opens. The
+            // rumors quote the same pricing/need model the market itself uses.
+            let rumors = TamperingRumorEngine.generateRumors(
+                allPlayers: allPlayers,
+                allTeams: teams,
+                userTeamID: career.teamID
+            )
+            if let digest = TamperingRumorEngine.inboxDigest(rumors: rumors, season: career.currentSeason) {
+                lastInboxMessages.append(digest)
+            }
+            lastNewsItems.append(contentsOf: TamperingRumorEngine.newsItems(
+                rumors: rumors,
+                week: career.currentWeek,
+                season: career.currentSeason
+            ))
         }
 
         // --- Generate inbox messages for the new phase ---
@@ -1223,6 +1515,97 @@ enum WeekAdvancer {
                 team: playerTeam,
                 coaches: teamCoaches,
                 owner: playerTeam.owner
+            ))
+        }
+    }
+
+    // MARK: - Private: Compensatory Picks (R23)
+
+    /// Settles the FA departure ledger into compensatory picks at the close of
+    /// free agency. If an upcoming draft pool is already persisted (e.g. the
+    /// league-generation pool for the first draft), the comp picks are slotted
+    /// straight into it; otherwise they are stashed and attached when the
+    /// draft order is generated. Emits an inbox message for the user's haul
+    /// and a news item for the biggest league-wide winner.
+    private static func settleCompensatoryPicks(
+        career: Career,
+        teams: [Team],
+        allPlayers: [Player],
+        modelContext: ModelContext
+    ) {
+        let departures = CompensatoryPickEngine.departures()
+        guard !departures.isEmpty else { return }
+
+        let awards = CompensatoryPickEngine.computeAwards(
+            departures: departures,
+            allPlayers: allPlayers,
+            allTeams: teams
+        )
+        CompensatoryPickEngine.clearDepartures()
+        guard !awards.isEmpty else {
+            CompensatoryPickEngine.clearPendingAwards()
+            return
+        }
+
+        var teamAbbrs: [UUID: String] = [:]
+        for team in teams { teamAbbrs[team.id] = team.abbreviation }
+
+        // Slot into an already-persisted upcoming pool when one exists;
+        // otherwise leave the awards pending for draft-order generation.
+        let season = career.currentSeason
+        let poolDescriptor = FetchDescriptor<DraftPick>(
+            predicate: #Predicate<DraftPick> { $0.seasonYear == season && $0.isComplete == false }
+        )
+        let existingPool = (try? modelContext.fetch(poolDescriptor)) ?? []
+        if existingPool.count >= 32 {
+            let compPicks = CompensatoryPickEngine.applyAwards(
+                awards,
+                toPickPool: existingPool,
+                seasonYear: season,
+                teamAbbrs: teamAbbrs
+            )
+            for pick in compPicks { modelContext.insert(pick) }
+            CompensatoryPickEngine.clearPendingAwards()
+        } else {
+            CompensatoryPickEngine.stashPendingAwards(awards)
+        }
+
+        // Inbox: the user's own compensatory haul.
+        if let userTeamID = career.teamID {
+            let mine = awards.filter { $0.teamID == userTeamID }
+            if !mine.isEmpty {
+                let lines = mine.map { award in
+                    "\u{2022} Round \(award.round) — for losing \(award.lostPlayerName) ($\(String(format: "%.1f", Double(award.lostPlayerSalary) / 1000.0))M/yr elsewhere)"
+                }
+                lastInboxMessages.append(InboxMessage(
+                    sender: .leagueOffice,
+                    subject: "Compensatory Picks Awarded",
+                    body: """
+                    The league has finalized compensatory selections for the upcoming draft. Based on your net free agency losses, you receive:
+
+                    \(lines.joined(separator: "\n"))
+
+                    Compensatory picks slot in at the end of their round.
+                    """,
+                    date: "Offseason - Free Agency, Season \(career.currentSeason)",
+                    category: .leagueNotice
+                ))
+            }
+        }
+
+        // News: the biggest comp-pick winner league-wide.
+        let byTeam = Dictionary(grouping: awards, by: { $0.teamID })
+        if let (topTeamID, topAwards) = byTeam.max(by: { $0.value.count < $1.value.count }) {
+            let abbr = teamAbbrs[topTeamID] ?? "???"
+            let rounds = topAwards.map { "R\($0.round)" }.joined(separator: ", ")
+            lastNewsItems.append(NewsItem(
+                headline: "\(abbr) lead comp-pick haul with \(topAwards.count) extra selection\(topAwards.count == 1 ? "" : "s")",
+                body: "The league finalized compensatory picks for the upcoming draft. \(abbr) top the list (\(rounds)) after their net free agency losses. \(awards.count) compensatory selection\(awards.count == 1 ? "" : "s") were awarded in total.",
+                category: .draft,
+                week: career.currentWeek,
+                season: career.currentSeason,
+                relatedTeamID: topTeamID,
+                sentiment: .neutral
             ))
         }
     }
@@ -1368,6 +1751,68 @@ enum WeekAdvancer {
         return (try? modelContext.fetch(descriptor))?.first
     }
 
+    /// Distills the player's last game result into the concrete facts the
+    /// weekly press conference can quote (final margin, sacks allowed, a
+    /// 100-yard rusher). Returns nil when the player had no played game this
+    /// week — the presser then falls back to its pre-R18 question selection.
+    ///
+    /// `PlayerGameStats` carries no team id, so team membership is resolved
+    /// via the live rosters: every stat line whose player is NOT on the
+    /// player's roster belongs to the opponent (both game rosters are fully
+    /// covered by `result.playerStats`).
+    private static func pressGameFacts(
+        lastGameWon: Bool?,
+        result: GameSimulator.GameResult?,
+        playerTeamID: UUID,
+        allPlayers: [Player],
+        teamsByID: [UUID: Team]
+    ) -> PressConferenceEngine.GameFacts? {
+        guard let won = lastGameWon, let result else { return nil }
+
+        let playerTeamPlayerIDs = Set(
+            allPlayers.filter { $0.teamID == playerTeamID }.map(\.id)
+        )
+        guard !playerTeamPlayerIDs.isEmpty else { return nil }
+
+        let margin = abs(result.homeScore - result.awayScore)
+
+        // Sacks the player's line surrendered = opponent defenders' sacks.
+        let sacksAllowed = Int(
+            result.playerStats
+                .filter { !playerTeamPlayerIDs.contains($0.playerID) }
+                .reduce(0.0) { $0 + $1.sacks }
+                .rounded()
+        )
+
+        let topRusher = result.playerStats
+            .filter { playerTeamPlayerIDs.contains($0.playerID) && $0.rushingYards >= 100 }
+            .max { $0.rushingYards < $1.rushingYards }
+
+        // Division matchup (R19): the box score names both teams — when the
+        // opponent shares the player's division, the presser gets the rivalry
+        // variants of the win/loss questions.
+        let opponentID = result.boxScore.home.teamID == playerTeamID
+            ? result.boxScore.away.teamID
+            : result.boxScore.home.teamID
+        let divisionOpponentAbbr: String? = {
+            guard let myTeam = teamsByID[playerTeamID],
+                  let opponent = teamsByID[opponentID],
+                  opponent.conference == myTeam.conference,
+                  opponent.division == myTeam.division
+            else { return nil }
+            return opponent.abbreviation
+        }()
+
+        return PressConferenceEngine.GameFacts(
+            won: won,
+            margin: margin,
+            sacksAllowed: sacksAllowed,
+            hundredYardRusherName: topRusher?.playerName,
+            hundredYardRusherYards: topRusher?.rushingYards ?? 0,
+            divisionOpponentAbbr: divisionOpponentAbbr
+        )
+    }
+
     private static func fetchTeamsByID(modelContext: ModelContext) -> [UUID: Team] {
         let descriptor = FetchDescriptor<Team>()
         let teams = (try? modelContext.fetch(descriptor)) ?? []
@@ -1391,6 +1836,14 @@ enum WeekAdvancer {
 
     private static func fetchAllScouts(modelContext: ModelContext) -> [Scout] {
         let descriptor = FetchDescriptor<Scout>()
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    /// Draft picks that haven't been used yet — the tradable pick pool (R21).
+    private static func fetchActiveDraftPicks(modelContext: ModelContext) -> [DraftPick] {
+        let descriptor = FetchDescriptor<DraftPick>(
+            predicate: #Predicate { !$0.isComplete }
+        )
         return (try? modelContext.fetch(descriptor)) ?? []
     }
 

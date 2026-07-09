@@ -50,6 +50,12 @@ final class Player {
     /// Whether this player has been franchise-tagged for the current season.
     var isFranchiseTagged: Bool
 
+    /// R22: whether this player is currently holding out over their contract.
+    /// A holdout player skips practice and games and does not develop until
+    /// the situation is resolved or the player caves (~week 3-4).
+    /// Default-value stored property → safe lightweight migration.
+    var isHoldingOut: Bool = false
+
     /// The overall draft pick number (1-224) if this player was drafted, nil for UDFAs/veterans.
     var draftPickNumber: Int?
 
