@@ -271,6 +271,175 @@ final class LiveGameEngine: ObservableObject {
             .map { $0 }
     }
 
+    // MARK: - Category Matchups & Day Grades (live only)
+
+    /// The skill category a matchup battle was fought in. Derived from the
+    /// participant's role slot plus the play type — the exact attribution
+    /// `MatchupResolver` already made when it picked the event's offRole /
+    /// defRole (no new resolver). Purely presentational.
+    enum MatchupCategory: String, CaseIterable, Identifiable {
+        case passProtection = "Pass Pro"
+        case runBlocking = "Run Block"
+        case receiving = "Routes & Catch"
+        case ballCarrying = "Ball Carry"
+        case passRush = "Pass Rush"
+        case runDefense = "Run Defense"
+        case coverage = "Coverage"
+
+        var id: String { rawValue }
+    }
+
+    /// One player's win/loss count in a single battle category.
+    struct CategoryTally: Equatable {
+        var wins = 0
+        var losses = 0
+
+        mutating func record(win: Bool) {
+            if win { wins += 1 } else { losses += 1 }
+        }
+    }
+
+    /// Per-player, per-category battle record — the categorized companion of
+    /// ``matchupWins``/``matchupLosses``, tallied from the same events in the
+    /// same place in ``step``. Never feeds back into the simulation.
+    @Published private(set) var categoryTallies: [UUID: [MatchupCategory: CategoryTally]] = [:]
+
+    /// The battle category an OFFENSIVE role slot fights in on a play type.
+    /// Role contract: 0=QB 1=RB 2–6=OL 7–9=WR 10=TE.
+    static func offenseCategory(role: Int, playType: PlayType) -> MatchupCategory {
+        switch role {
+        case 2...6:  return playType == .run ? .runBlocking : .passProtection
+        case 7...10: return .receiving
+        default:     return playType == .run ? .ballCarrying : .receiving // QB scramble / RB checkdown
+        }
+    }
+
+    /// The battle category a DEFENSIVE role slot fights in on a play type.
+    /// Role contract: 0–3=DL 4–6=LB 7–8=CB 9–10=S.
+    static func defenseCategory(role: Int, playType: PlayType) -> MatchupCategory {
+        if playType == .run { return .runDefense }
+        return role <= 3 ? .passRush : .coverage
+    }
+
+    /// The categories a position is graded on — shown on the Coach's Board
+    /// even at 0-0 so the coach knows what to look for.
+    static func relevantCategories(for position: Position) -> [MatchupCategory] {
+        switch position {
+        case .QB:                    return [.ballCarrying]
+        case .RB, .FB:               return [.ballCarrying, .receiving]
+        case .WR, .TE:               return [.receiving]
+        case .LT, .LG, .C, .RG, .RT: return [.passProtection, .runBlocking]
+        case .DE, .DT:               return [.passRush, .runDefense]
+        case .OLB, .MLB:             return [.runDefense, .coverage, .passRush]
+        case .CB, .FS, .SS:          return [.coverage, .runDefense]
+        case .K, .P:                 return []
+        }
+    }
+
+    /// One category row for the Coach's Board panel.
+    struct CategoryLine: Identifiable {
+        let category: MatchupCategory
+        let wins: Int
+        let losses: Int
+        var id: String { category.rawValue }
+    }
+
+    /// The player's battle record split by category: his role's relevant
+    /// categories first (always present, 0-0 when unfought), then any other
+    /// category he actually has tallies in (e.g. an OL flagged on a bust).
+    func categoryLines(for playerID: UUID, position: Position) -> [CategoryLine] {
+        let tallies = categoryTallies[playerID] ?? [:]
+        let relevant = LiveGameEngine.relevantCategories(for: position)
+        var lines = relevant.map { category -> CategoryLine in
+            let tally = tallies[category] ?? CategoryTally()
+            return CategoryLine(category: category, wins: tally.wins, losses: tally.losses)
+        }
+        for category in MatchupCategory.allCases where !relevant.contains(category) {
+            if let tally = tallies[category] {
+                lines.append(CategoryLine(category: category, wins: tally.wins, losses: tally.losses))
+            }
+        }
+        return lines
+    }
+
+    // Day-grade extras tallied per play in ``step`` (presentation only):
+    // 20+ yard gains by the ball's key man, turnovers charged to him, and
+    // sacks hung on the QB who took them.
+    private var bigPlayCounts: [UUID: Int] = [:]
+    private var turnoverCounts: [UUID: Int] = [:]
+    private var sackTakenCounts: [UUID: Int] = [:]
+
+    /// Grade snapshots for the Board's trend arrow: `gradeSnapshots` holds
+    /// the player-team grades as of the drive BEFORE last, so the trend
+    /// reflects roughly the last drive's worth of battles and stats.
+    private var gradeSnapshots: [UUID: Int] = [:]
+    private var lastDriveGrades: [UUID: Int] = [:]
+
+    /// The player's day grade, 0–100. Purely presentational — the sim never
+    /// reads it. Base 60, shifted by role-weighted matchup wins/losses
+    /// (trench work weighs heavier, pass pro most of all — OL have no
+    /// counting stats) and headline stat events: TDs +6, sacks made +4,
+    /// 20+ yard plays +2, INTs thrown / fumbles lost −8, sacks taken −2.
+    /// Stats accumulate per completed drive; battles update per play.
+    func playerGameGrade(_ playerID: UUID) -> Int {
+        var score = 60.0
+        if let tallies = categoryTallies[playerID] {
+            for (category, tally) in tallies {
+                let winWeight: Double
+                let lossWeight: Double
+                switch category {
+                case .passProtection: winWeight = 3.5; lossWeight = 3.0
+                case .runBlocking:    winWeight = 3.25; lossWeight = 2.75
+                default:              winWeight = 3.0; lossWeight = 2.5
+                }
+                score += Double(tally.wins) * winWeight
+                score -= Double(tally.losses) * lossWeight
+            }
+        }
+        if let s = statsAccumulator[playerID] {
+            score += Double(s.passingTDs + s.rushingTDs + s.receivingTDs) * 6
+            score += s.sacks * 4
+            score += Double(s.interceptionsCaught) * 6
+            score -= Double(s.interceptions) * 8
+        }
+        score += Double(bigPlayCounts[playerID] ?? 0) * 2
+        score -= Double(turnoverCounts[playerID] ?? 0) * 8
+        score -= Double(sackTakenCounts[playerID] ?? 0) * 2
+        return max(0, min(100, Int(score.rounded())))
+    }
+
+    /// Grade movement since the drive before last: positive = trending up.
+    func gradeTrend(_ playerID: UUID) -> Int {
+        playerGameGrade(playerID) - (gradeSnapshots[playerID] ?? 60)
+    }
+
+    /// Player-team grades right now (drive-end snapshot for ``gradeTrend``).
+    private func playerTeamGrades() -> [UUID: Int] {
+        let ids = playerTeamIsHome ? homePlayerIDs : awayPlayerIDs
+        var grades: [UUID: Int] = [:]
+        for id in ids { grades[id] = playerGameGrade(id) }
+        return grades
+    }
+
+    /// Personality archetype from the live model (Board display only).
+    func personalityArchetype(for playerID: UUID) -> PersonalityArchetype? {
+        livePlayerByID[playerID]?.personality.archetype
+    }
+
+    /// True when the player was knocked out of THIS game.
+    func wentDownThisGame(_ playerID: UUID) -> Bool {
+        injuredPlayerIDs.contains(playerID)
+    }
+
+    /// Roster players of a position group lost to injury during this game —
+    /// shown greyed on the Board's bench with an OUT badge.
+    func injuredPlayers(forHome: Bool, position group: LineupGroup) -> [SimPlayer] {
+        let roster = forHome ? homePlayers : awayPlayers
+        return roster.filter {
+            LineupGroup(of: $0.position) == group && injuredPlayerIDs.contains($0.id)
+        }
+    }
+
     // MARK: - Milestones (live only)
 
     /// A statistical milestone crossed during this game, e.g. a back clearing
@@ -950,18 +1119,51 @@ final class LiveGameEngine: ObservableObject {
                 }
             }
             // Player grades: tally each named battle's winner and loser
-            // (presentation only — the play outcome is already decided).
+            // (presentation only — the play outcome is already decided),
+            // plus the per-category record for the Coach's Board. The
+            // category derives from the participant's own role slot and the
+            // play type — the same attribution MatchupResolver already made.
             if let events = lastMatchups?.events {
                 for event in events {
-                    let winnerID = event.offenseWon
-                        ? event.offRole.map { offenseUnit[$0].id }
-                        : event.defRole.map { defenseUnit[$0].id }
-                    let loserID = event.offenseWon
-                        ? event.defRole.map { defenseUnit[$0].id }
-                        : event.offRole.map { offenseUnit[$0].id }
-                    if let winnerID { matchupWins[winnerID, default: 0] += 1 }
-                    if let loserID { matchupLosses[loserID, default: 0] += 1 }
+                    if let offRole = event.offRole {
+                        let id = offenseUnit[offRole].id
+                        if event.offenseWon {
+                            matchupWins[id, default: 0] += 1
+                        } else {
+                            matchupLosses[id, default: 0] += 1
+                        }
+                        let category = LiveGameEngine.offenseCategory(
+                            role: offRole, playType: recordedPlay.playType
+                        )
+                        categoryTallies[id, default: [:]][category, default: CategoryTally()]
+                            .record(win: event.offenseWon)
+                    }
+                    if let defRole = event.defRole {
+                        let id = defenseUnit[defRole].id
+                        if event.offenseWon {
+                            matchupLosses[id, default: 0] += 1
+                        } else {
+                            matchupWins[id, default: 0] += 1
+                        }
+                        let category = LiveGameEngine.defenseCategory(
+                            role: defRole, playType: recordedPlay.playType
+                        )
+                        categoryTallies[id, default: [:]][category, default: CategoryTally()]
+                            .record(win: !event.offenseWon)
+                    }
                 }
+            }
+            // Day-grade extras (presentation only): 20+ yard plays credit
+            // the ball's key man, lost fumbles are charged to him, and a
+            // sack counts against the QB who took it.
+            if recordedPlay.yardsGained >= 20, let keyID = recordedPlay.keyOffensePlayerID {
+                bigPlayCounts[keyID, default: 0] += 1
+            }
+            if recordedPlay.outcome == .fumbleLost, let keyID = recordedPlay.keyOffensePlayerID {
+                turnoverCounts[keyID, default: 0] += 1
+            }
+            if recordedPlay.outcome == .sack {
+                sackTakenCounts[offenseUnit[0].id, default: 0] += 1
             }
         } else {
             lastMatchups = nil
@@ -1559,6 +1761,13 @@ final class LiveGameEngine: ObservableObject {
         )
         // Milestone banners ride the same per-drive stat granularity.
         publishMilestones()
+
+        // Day-grade trend snapshots (Coach's Board): the trend arrow compares
+        // the live grade against the drive-before-last, so it reads as
+        // "recent form", not "since kickoff". Player's team only — the
+        // grades are never shown for the AI opponent.
+        gradeSnapshots = lastDriveGrades
+        lastDriveGrades = playerTeamGrades()
 
         let driveTime = drive.timeConsumed
         if homeHasPossession {

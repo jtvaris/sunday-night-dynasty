@@ -123,7 +123,8 @@ struct CoachedGameView: View {
     @State private var showExitConfirm = false
     @State private var showFinal = false
     @State private var showStatsSheet = false
-    /// In-game squad management sheet (live stats, fatigue, substitutions).
+    /// Coach's Board — full-screen in-game player management (formation view,
+    /// day grades, category battles, substitutions).
     @State private var showManageSheet = false
     /// Halftime report overlay (raised by the engine's `halftimePending`).
     @State private var showHalftime = false
@@ -221,10 +222,14 @@ struct CoachedGameView: View {
         .sheet(isPresented: $showStatsSheet) {
             LiveBoxScoreSheet(engine: engine, homeTeam: homeTeam, awayTeam: awayTeam)
         }
-        .sheet(isPresented: $showManageSheet) {
-            InGameManagementView(
+        .fullScreenCover(isPresented: $showManageSheet) {
+            CoachesBoardView(
                 engine: engine,
                 teamAbbr: playerAbbr,
+                holdouts: playerTeamModel.players
+                    .filter(\.isHoldingOut)
+                    .map { CoachesBoardView.HoldoutLine(id: $0.id, name: $0.fullName, position: $0.position) },
+                initialUnitIsOffense: engine.playerIsOnOffense,
                 subsDisabled: isAnimating || engine.isGameOver
             )
         }
@@ -243,8 +248,8 @@ struct CoachedGameView: View {
             Spacer()
             VStack(spacing: 2) {
                 Text(quarterLabel)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Color.textTertiary)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Color.textSecondary)
                 clockDisplay
                 // Stakes chip under the clock: a playoff game outranks the
                 // division rivalry framing when both apply.
@@ -306,7 +311,7 @@ struct CoachedGameView: View {
     @ViewBuilder
     private var clockDisplay: some View {
         let clockText = Text(engine.formattedClock)
-            .font(.system(size: 24, weight: .heavy).monospacedDigit())
+            .font(.system(size: 27, weight: .heavy).monospacedDigit())
         if isTwoMinuteDrill {
             clockText
                 .foregroundStyle(Color.danger)
@@ -394,62 +399,81 @@ struct CoachedGameView: View {
             if !engine.pendingSubstitutions.isEmpty {
                 chip("Sub at next whistle", color: .warning)
             }
-            Spacer()
-            if !engine.isGameOver && engine.playerTimeoutsRemaining > 0 {
+            Spacer(minLength: 12)
+            // Action buttons: visually heavier than the info chips on the left —
+            // full 44 pt tap targets with a solid plate and border.
+            HStack(spacing: 8) {
+                if !engine.isGameOver && engine.playerTimeoutsRemaining > 0 {
+                    Button {
+                        callTimeout()
+                    } label: {
+                        actionButtonLabel(
+                            "TO · \(engine.playerTimeoutsRemaining)",
+                            icon: "hand.raised.fill",
+                            tint: .accentGold,
+                            prominent: true
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isAnimating)
+                    .opacity(isAnimating ? 0.45 : 1)
+                }
                 Button {
-                    callTimeout()
+                    showManageSheet = true
                 } label: {
-                    Label("TO · \(engine.playerTimeoutsRemaining)", systemImage: "hand.raised.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.accentGold)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color.accentGold.opacity(0.14), in: Capsule())
+                    actionButtonLabel("Manage", icon: "person.2.fill", tint: .textPrimary)
                 }
                 .buttonStyle(.plain)
-                .disabled(isAnimating)
-            }
-            Button {
-                showManageSheet = true
-            } label: {
-                Label("Manage", systemImage: "person.2.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.textSecondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.backgroundTertiary, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            Button {
-                showStatsSheet = true
-            } label: {
-                Label("Stats", systemImage: "chart.bar.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.textSecondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.backgroundTertiary, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            if !engine.isGameOver {
                 Button {
-                    showSimToEndConfirm = true
+                    showStatsSheet = true
                 } label: {
-                    Label("Sim to End", systemImage: "forward.end.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.textSecondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color.backgroundTertiary, in: Capsule())
+                    actionButtonLabel("Stats", icon: "chart.bar.fill", tint: .textPrimary)
                 }
                 .buttonStyle(.plain)
-                .disabled(isAnimating)
+                if !engine.isGameOver {
+                    Button {
+                        showSimToEndConfirm = true
+                    } label: {
+                        actionButtonLabel("Sim to End", icon: "forward.end.fill", tint: .textPrimary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isAnimating)
+                    .opacity(isAnimating ? 0.45 : 1)
+                }
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(Color.backgroundSecondary)
         .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.surfaceBorder), alignment: .bottom)
+    }
+
+    /// Shared plate for the strip's action buttons: 44 pt minimum tap target,
+    /// bordered background so they read as controls, not status chips.
+    /// `prominent` swaps the neutral plate for the tint's own accent wash.
+    private func actionButtonLabel(
+        _ title: String, icon: String, tint: Color, prominent: Bool = false
+    ) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+            Text(title)
+                .font(.system(size: 14, weight: .bold))
+                .lineLimit(1)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .foregroundStyle(tint)
+        .padding(.horizontal, 14)
+        .frame(minHeight: 44)
+        .background(
+            prominent ? tint.opacity(0.16) : Color.backgroundTertiary,
+            in: RoundedRectangle(cornerRadius: 10)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(prominent ? tint.opacity(0.45) : Color.surfaceBorder, lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 10))
     }
 
     /// Compact current-drive summary, e.g. "Drive: 5 plays, 42 yds".
@@ -464,10 +488,10 @@ struct CoachedGameView: View {
 
     private func chip(_ text: String, color: Color) -> some View {
         Text(text)
-            .font(.system(size: 12, weight: .bold))
+            .font(.system(size: 13, weight: .bold))
             .foregroundStyle(color)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
             .background(color.opacity(0.14), in: Capsule())
     }
 
@@ -604,38 +628,60 @@ struct CoachedGameView: View {
 
     // MARK: - Mini Play Feed
 
+    /// Broadcast ticker under the field: last three plays, chronological,
+    /// with the newest call emphasized (bigger type, event-color accent,
+    /// light plate) and older lines stepped down so the eye lands on "now".
     private var miniPlayFeed: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(engine.playLog.suffix(2).enumerated()), id: \.offset) { _, play in
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(feedDotColor(play))
-                        .frame(width: 6, height: 6)
-                    Text(play.description)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color.textSecondary)
-                        .lineLimit(1)
-                    Spacer()
-                }
+        let recent = Array(engine.playLog.suffix(3))
+        return VStack(alignment: .leading, spacing: 5) {
+            ForEach(Array(recent.enumerated()), id: \.offset) { index, play in
+                feedRow(play, age: recent.count - 1 - index)
             }
-            if engine.playLog.isEmpty {
+            if recent.isEmpty {
                 Text("Kickoff — the game is about to start.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.textTertiary)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .frame(height: 56, alignment: .topLeading)
+        .frame(height: 96, alignment: .bottomLeading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.backgroundPrimary)
     }
 
-    private func feedDotColor(_ play: PlayResult) -> Color {
+    /// One ticker line. `age` 0 = the play that just happened.
+    private func feedRow(_ play: PlayResult, age: Int) -> some View {
+        let accent = feedAccentColor(play)
+        let isLatest = age == 0
+        return HStack(spacing: 9) {
+            Circle()
+                .fill(accent ?? Color.textTertiary)
+                .frame(width: isLatest ? 9 : 6, height: isLatest ? 9 : 6)
+            Text(play.description)
+                .font(.system(size: isLatest ? 16 : 13, weight: isLatest ? .semibold : .regular))
+                .foregroundStyle(isLatest ? (accent ?? Color.textPrimary) : Color.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10) // shared inset keeps the dots aligned across rows
+        .padding(.vertical, isLatest ? 6 : 0)
+        .background {
+            if isLatest {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill((accent ?? Color.textSecondary).opacity(accent == nil ? 0.10 : 0.14))
+            }
+        }
+        .opacity(isLatest ? 1.0 : (age == 1 ? 0.65 : 0.4))
+    }
+
+    /// Event accent for the ticker: touchdown/score gold, turnover or sack
+    /// red, first down blue, routine play neutral (nil).
+    private func feedAccentColor(_ play: PlayResult) -> Color? {
         if play.scoringPlay { return .accentGold }
-        if play.isTurnover { return .danger }
-        if play.isFirstDown { return .success }
-        return .textTertiary
+        if play.isTurnover || play.outcome == .sack { return .danger }
+        if play.isFirstDown { return .accentBlue }
+        return nil
     }
 
     // MARK: - Call Panel
@@ -1730,6 +1776,11 @@ struct CoachedGameView: View {
         playerTeamIsHome ? homeTeam.abbreviation : awayTeam.abbreviation
     }
 
+    /// The coached team's live model (Coach's Board holdout context).
+    private var playerTeamModel: Team {
+        playerTeamIsHome ? homeTeam : awayTeam
+    }
+
     private func attemptOnside() {
         let recovered = engine.attemptOnsideKick()
         syncFieldToSituation()
@@ -1839,7 +1890,8 @@ struct CoachedGameView: View {
         let playGoalToGo = 100 - losYard <= distanceBefore
         fieldScene.updateMarkers(
             losZ: playLosZ,
-            firstDownZ: playGoalToGo ? nil : playLosZ + playDir * Float(distanceBefore)
+            firstDownZ: playGoalToGo ? nil : playLosZ + playDir * Float(distanceBefore),
+            offenseDirection: playDir
         )
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
@@ -1991,7 +2043,7 @@ struct CoachedGameView: View {
         let losZ = PlayChoreographer.losZ(yardLine: engine.yardLine, offenseIsHome: engine.homeHasPossession)
         let goalToGo = 100 - engine.yardLine <= engine.distance
         let firstDownZ: Float? = goalToGo ? nil : losZ + dir * Float(engine.distance)
-        fieldScene.updateMarkers(losZ: losZ, firstDownZ: firstDownZ)
+        fieldScene.updateMarkers(losZ: losZ, firstDownZ: firstDownZ, offenseDirection: dir)
     }
 
     /// Live pre-snap preview: browsing the call sheet realigns the offense on

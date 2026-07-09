@@ -633,15 +633,43 @@ struct PlayChoreographer {
 
         // 4. Tackle: the hit — carrier and tackler go to the turf, and the
         //    nearest chasers dive onto the pile a beat later (falls stagger
-        //    by list order) for a gang-tackle read.
+        //    by list order) for a gang-tackle read. The tackler's arms wrap
+        //    the carrier, and ~30% of hits first drive him back 0.5-1 yard.
         if includeTackle {
-            let gang = gangTacklers(c, x: endX, z: endZ, excluding: [tackler])
-            steps.append(Step(moves: pileOnMoves(c, gang: gang, x: endX, z: endZ),
-                              ballMove: .carry(nodeIndex: carrier), duration: 1.3,
-                              pulses: [tackler], falls: [carrier, tackler] + gang))
+            steps += tackleSteps(c, carrier: carrier, tackler: tackler, x: endX, z: endZ)
         }
 
         return (steps, carrier, end, tackler)
+    }
+
+    /// The shared tackle finish: an optional drive-back (the tackler wraps
+    /// up and pushes the carrier 0.5-1 yard backward before the ground), then
+    /// the pile with the nearest chasers diving on. ~30% of tackles get the
+    /// drive-back — the Madden-2000 push tackle.
+    private static func tackleSteps(_ c: Context, carrier: Int, tackler: Int,
+                                    x: Float, z: Float) -> [Step] {
+        var steps: [Step] = []
+        var pileZ = z
+        let driveBack = Float.random(in: 0..<1) < 0.3
+        if driveBack {
+            pileZ = clampZ(z - c.direction * Float.random(in: 0.5...1))
+            steps.append(Step(
+                moves: [
+                    (nodeIndex: carrier, to: player(x, pileZ), duration: 0.4),
+                    (nodeIndex: tackler, to: player(x + 0.7, pileZ + c.direction * 0.6), duration: 0.4),
+                ],
+                ballMove: .carry(nodeIndex: carrier),
+                duration: 0.4,
+                wraps: [tackler]
+            ))
+        }
+        let gang = gangTacklers(c, x: x, z: pileZ, excluding: [tackler])
+        steps.append(Step(moves: pileOnMoves(c, gang: gang, x: x, z: pileZ),
+                          ballMove: .carry(nodeIndex: carrier), duration: 1.3,
+                          pulses: [tackler],
+                          falls: [carrier, tackler] + gang,
+                          wraps: driveBack ? gang : [tackler] + gang))
+        return steps
     }
 
     /// QB takes the snap and drops to a knee behind a gentle line surge. ~2s.
@@ -763,13 +791,11 @@ struct PlayChoreographer {
             duration: yacDuration
         ))
 
-        // 5. Tackle: receiver is brought down by the DB, with the nearest
-        //    chasers piling on late (staggered falls) for the gang-tackle read.
+        // 5. Tackle: receiver is brought down by the DB — wrap-up arms, an
+        //    occasional drive-back, and the nearest chasers piling on late
+        //    (staggered falls) for the gang-tackle read.
         if includeTackle {
-            let gang = gangTacklers(c, x: endX, z: endZ, excluding: [db])
-            steps.append(Step(moves: pileOnMoves(c, gang: gang, x: endX, z: endZ),
-                              ballMove: .carry(nodeIndex: receiver), duration: 1.3,
-                              pulses: [db], falls: [receiver, db] + gang))
+            steps += tackleSteps(c, carrier: receiver, tackler: db, x: endX, z: endZ)
         }
 
         return (steps, receiver, end, db)
@@ -889,9 +915,10 @@ struct PlayChoreographer {
                 ballMove: .carry(nodeIndex: c.qb),
                 duration: 0.8
             ),
-            // Sack: the QB is buried; both hit the turf.
+            // Sack: the QB is buried; both hit the turf, the rusher wrapped
+            // around him.
             Step(moves: [], ballMove: .carry(nodeIndex: c.qb), duration: 1.3,
-                 pulses: [rusher], falls: [c.qb, rusher]),
+                 pulses: [rusher], falls: [c.qb, rusher], wraps: [rusher]),
             Step(moves: [], ballMove: .carry(nodeIndex: c.qb), duration: 0.4),
         ]
     }
@@ -1294,7 +1321,8 @@ struct PlayChoreographer {
                 ballMove: .carry(nodeIndex: returner),
                 duration: 1.2,
                 pulses: [tacklers[0]],
-                falls: [returner] + tacklers
+                falls: [returner] + tacklers,
+                wraps: tacklers
             ))
         }
 

@@ -59,6 +59,9 @@ class FootballFieldScene: SCNScene {
         var pulses: [Int] = []
         /// Player nodes that go to the ground when the step begins (tackles).
         var falls: [Int] = []
+        /// Player nodes whose arms wrap around the man they're hitting when
+        /// the step begins (wrap tackles — pair with `falls` or a drive-back).
+        var wraps: [Int] = []
         /// Player nodes that throw their arms up when the step begins (catches).
         var reaches: [Int] = []
         /// Player nodes whose moves this step are backpedals: they keep facing
@@ -124,6 +127,11 @@ class FootballFieldScene: SCNScene {
     private var awayEndZoneNode: SCNNode?
     private var losMarkerNode = SCNNode()
     private var firstDownMarkerNode = SCNNode()
+    /// The back judge standing behind the play — pure dressing (see buildReferee).
+    private var refereeNode: SCNNode?
+    /// Last known offense drive direction (+1 toward +Z); keeps the referee
+    /// on the right side of the ball when a goal-to-go snap hides the stripe.
+    private var refereeDirection: Float = 1
     /// Node index currently carrying the ball (for the arm-tuck pose).
     private var carryingIndex: Int?
     /// Camera's current focus Z, so the follow-cam can decide when to pan.
@@ -167,16 +175,14 @@ class FootballFieldScene: SCNScene {
         buildPylons()
         buildApronWalls()
         buildMarkers()
+        buildReferee()
         buildBall()
         buildCamera()
         buildLighting()
 
         // Depth falloff: the far field darkens into the night like a
-        // low-slung TV camera shot.
-        fogColor = UIColor(red: 0.03, green: 0.05, blue: 0.09, alpha: 1)
-        fogStartDistance = 80
-        fogEndDistance = 210
-        fogDensityExponent = 1.4
+        // low-slung TV camera shot. Weather re-tunes this in setWeather().
+        applyFog(color: Self.clearFogColor, start: 70, end: 210)
     }
 
     /// Sets the home team uniform color and updates existing player nodes.
@@ -220,6 +226,12 @@ class FootballFieldScene: SCNScene {
                 default: break
                 }
             }
+        }
+        // Torso number decals contrast against the jersey — re-render them
+        // when the jersey shade flips (node name carries the number).
+        if let name = node.name, name.hasPrefix("player_"),
+           let number = Int(name.dropFirst("player_".count)) {
+            updateNumberDecals(on: node, number: number, jersey: uniform.jersey)
         }
     }
 
@@ -501,15 +513,16 @@ class FootballFieldScene: SCNScene {
         cameraNode.removeAction(forKey: "pushIn")
         let clampedZ = max(-45, min(45, z))
         focusZ = clampedZ
-        // Madden-98 framing: a LOW camera behind the player's own unit
-        // looking downfield — mirrored via `viewFacing` for away games.
+        // Madden-2000 coach framing: a camera behind the player's own unit
+        // looking downfield — mirrored via `viewFacing` for away games —
+        // pulled back and up so the coach reads the whole formation.
         // Defense swaps to the high steep variant (see defensiveFraming).
         let targetPosition = defensiveFraming
-            ? SCNVector3(0, 0.5, clampedZ - viewFacing * 6)
-            : SCNVector3(0, 1.5, clampedZ + viewFacing * 16)
+            ? SCNVector3(0, 0.5, clampedZ - viewFacing * 7)
+            : SCNVector3(0, 1.5, clampedZ + viewFacing * 19)
         let cameraPosition = defensiveFraming
-            ? SCNVector3(0, 30, clampedZ - viewFacing * 34)
-            : SCNVector3(0, 21, clampedZ - viewFacing * 24)
+            ? SCNVector3(0, 33, clampedZ - viewFacing * 39)
+            : SCNVector3(0, 24, clampedZ - viewFacing * 29)
 
         if animated {
             let targetMove = SCNAction.move(to: targetPosition, duration: duration)
@@ -525,6 +538,7 @@ class FootballFieldScene: SCNScene {
             cameraTargetNode.position = targetPosition
             cameraNode.position = cameraPosition
         }
+        moveWeatherEmitter(toZ: clampedZ, animated: animated, duration: duration)
 
         if pushIn && animated {
             // Slow dolly along the (horizontal) view direction toward the LOS.
@@ -560,6 +574,10 @@ class FootballFieldScene: SCNScene {
         let cameraMove = SCNAction.move(to: cameraPosition, duration: duration)
         cameraMove.timingMode = .easeInEaseOut
         cameraNode.runAction(cameraMove, forKey: "focus")
+
+        // Keep the precipitation slab a step downfield of the low kick
+        // camera so streaks/flakes never cross right in front of the lens.
+        moveWeatherEmitter(toZ: sign * 30, animated: true, duration: duration)
     }
 
     /// Runs a sequential play timeline: each step starts after the previous one
@@ -762,8 +780,11 @@ class FootballFieldScene: SCNScene {
     }
 
     /// Moves the broadcast line-of-scrimmage (blue) and first-down (yellow)
-    /// markers. Pass nil to hide either.
-    func updateMarkers(losZ: Float?, firstDownZ: Float?) {
+    /// markers. Pass nil to hide either. `offenseDirection` (+1 = offense
+    /// drives toward +Z) walks the referee to his spot behind the play; when
+    /// omitted it is inferred from the first-down stripe or the last known
+    /// direction (kicks pass nil for everything and the ref stays put).
+    func updateMarkers(losZ: Float?, firstDownZ: Float?, offenseDirection: Float? = nil) {
         if let losZ {
             losMarkerNode.isHidden = false
             losMarkerNode.position = SCNVector3(0, 0.012, max(-50, min(50, losZ)))
@@ -775,6 +796,14 @@ class FootballFieldScene: SCNScene {
             firstDownMarkerNode.position = SCNVector3(0, 0.012, max(-50, min(50, firstDownZ)))
         } else {
             firstDownMarkerNode.isHidden = true
+        }
+        if let losZ {
+            if let offenseDirection {
+                refereeDirection = offenseDirection >= 0 ? 1 : -1
+            } else if let firstDownZ {
+                refereeDirection = firstDownZ >= losZ ? 1 : -1
+            }
+            moveReferee(losZ: max(-50, min(50, losZ)), direction: refereeDirection)
         }
     }
 
@@ -979,9 +1008,11 @@ class FootballFieldScene: SCNScene {
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         figure.removeAction(forKey: "gait")
         figure.removeAction(forKey: "stance")
-        let variance = Float(nodeIndex % 3 - 1) * 0.3
+        // Every man hits the turf at his own angle — a gang pile reads as a
+        // heap of bodies, not a row of synchronized dominoes.
+        let yaw = Float.random(in: -0.6...0.6)
         let down = SCNAction.group([
-            SCNAction.rotateTo(x: CGFloat(-1.45 + variance * 0.1), y: CGFloat(variance), z: 0, duration: 0.3),
+            SCNAction.rotateTo(x: CGFloat(-1.45 + yaw * 0.1), y: CGFloat(yaw), z: 0, duration: 0.3),
             SCNAction.move(to: SCNVector3(0, -0.32, 0.15), duration: 0.3),
         ])
         down.timingMode = .easeIn
@@ -1000,6 +1031,32 @@ class FootballFieldScene: SCNScene {
             SCNAction.wait(duration: delay), down,
             SCNAction.wait(duration: 0.8 + getUpDelay), up,
         ]), forKey: "fall")
+    }
+
+    /// Wrap tackle: both of the tackler's arms whip forward and curl around
+    /// the carrier as the hit begins, then release once the pile settles.
+    /// Runs under the same "swing"/"bend" keys as the run cycle, so the next
+    /// snap's `swingLimbs` replaces it seamlessly.
+    private func wrapArms(nodeIndex: Int) {
+        guard let node = playerNode(at: nodeIndex),
+              let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        for (name, inward) in [("arm", CGFloat(0.7)), ("armR", CGFloat(-0.7))] {
+            guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
+            arm.removeAction(forKey: "swing")
+            let wrap = SCNAction.rotateTo(x: -1.25, y: 0, z: inward, duration: 0.18)
+            wrap.timingMode = .easeOut
+            let release = SCNAction.rotateTo(x: 0, y: 0, z: name == "arm" ? 0.25 : -0.25, duration: 0.3)
+            arm.runAction(SCNAction.sequence([wrap, SCNAction.wait(duration: 1.1), release]),
+                          forKey: "swing")
+            if let forearm = arm.childNode(withName: "forearm", recursively: false) {
+                forearm.removeAction(forKey: "bend")
+                forearm.runAction(SCNAction.sequence([
+                    SCNAction.rotateTo(x: -1.2, y: 0, z: 0, duration: 0.18),
+                    SCNAction.wait(duration: 1.1),
+                    SCNAction.rotateTo(x: -0.15, y: 0, z: 0, duration: 0.3),
+                ]), forKey: "bend")
+            }
+        }
     }
 
     /// Touchdown celebration: the scorer leaps with both arms thrown up.
@@ -1082,13 +1139,21 @@ class FootballFieldScene: SCNScene {
         }
 
         for index in step.pulses { pulse(nodeIndex: index) }
+        for index in step.wraps { wrapArms(nodeIndex: index) }
         for index in step.reaches { reach(nodeIndex: index) }
         for index in step.celebrates { celebrationJump(nodeIndex: index) }
-        // Falls stagger DOWN in list order; the pile unstacks in reverse —
-        // the last man on (top of the pile) is the first back on his feet.
+        // Falls stagger DOWN in list order; the pile unstacks in reverse at
+        // ragged 0.3-0.7s beats — the last man on (top of the pile) is the
+        // first back on his feet, and nobody pops up in lockstep.
+        var riseDelay: TimeInterval = 0
+        var riseDelays = [TimeInterval](repeating: 0, count: step.falls.count)
+        for offset in stride(from: step.falls.count - 2, through: 0, by: -1) {
+            riseDelay += TimeInterval.random(in: 0.3...0.7)
+            riseDelays[offset] = riseDelay
+        }
         for (offset, index) in step.falls.enumerated() {
             fall(nodeIndex: index, delay: Double(offset) * 0.12,
-                 getUpDelay: Double(max(step.falls.count - 1 - offset, 0)) * 0.22)
+                 getUpDelay: riseDelays[offset])
         }
 
         switch step.ballMove {
@@ -1246,7 +1311,8 @@ class FootballFieldScene: SCNScene {
         ballNode.runAction(action, forKey: "ballMove")
     }
 
-    /// Rewrites the floating jersey number on an existing player node.
+    /// Rewrites the floating jersey number AND the chest/back decals on an
+    /// existing player node (substitutions and injuries renumber in place).
     private func updateJerseyNumber(on node: SCNNode, to number: Int) {
         guard let numberNode = node.childNode(withName: "number", recursively: false),
               let text = numberNode.geometry as? SCNText,
@@ -1257,6 +1323,91 @@ class FootballFieldScene: SCNScene {
         let (minB, maxB) = numberNode.boundingBox
         numberNode.pivot = SCNMatrix4MakeTranslation((maxB.x - minB.x) / 2 + minB.x, 0, 0)
         node.name = "player_\(number)"
+        updateNumberDecals(on: node, number: number, jersey: jerseyColor(of: node))
+    }
+
+    // MARK: - Jersey Number Decals
+
+    /// Rendered digit textures, cached per number + text shade — 22 players
+    /// share a handful of images instead of re-rendering every snap.
+    private static var numberTextureCache: [String: UIImage] = [:]
+
+    /// A transparent square with the jersey number drawn in a heavy athletic
+    /// weight: white on dark jerseys, near-black on white ones.
+    private static func numberTexture(_ number: Int, darkText: Bool) -> UIImage {
+        let key = "\(number)-\(darkText ? "d" : "l")"
+        if let cached = numberTextureCache[key] { return cached }
+        let size = CGSize(width: 128, height: 128)
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            let text = "\(number)" as NSString
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.monospacedDigitSystemFont(ofSize: 78, weight: .heavy),
+                .foregroundColor: darkText ? UIColor(white: 0.12, alpha: 1) : UIColor.white,
+            ]
+            let bounds = text.size(withAttributes: attributes)
+            text.draw(at: CGPoint(x: (size.width - bounds.width) / 2,
+                                  y: (size.height - bounds.height) / 2),
+                      withAttributes: attributes)
+        }
+        numberTextureCache[key] = image
+        return image
+    }
+
+    /// Perceived-luminance check deciding the decal text shade for a jersey.
+    private static func isLightColor(_ color: UIColor) -> Bool {
+        var (r, g, b, a): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return 0.299 * r + 0.587 * g + 0.114 * b > 0.55
+    }
+
+    /// The figure's current JERSEY diffuse (decides decal contrast).
+    private func jerseyColor(of node: SCNNode) -> UIColor {
+        var found: UIColor?
+        node.enumerateHierarchy { child, stop in
+            for material in child.geometry?.materials ?? [] where material.name == "JERSEY" {
+                found = material.diffuse.contents as? UIColor
+                stop.pointee = true
+            }
+        }
+        return found ?? .white
+    }
+
+    /// Chest + back number decals: thin planes hovering just off the torso
+    /// surface (the Madden-2000 read). Attached to the "body" node so the
+    /// running torso twist carries them; positions come from the torso's own
+    /// bounding box, so kit and procedural figures both wear them right.
+    private func addNumberDecals(to body: SCNNode, number: Int, jersey: UIColor) {
+        let (minB, maxB) = body.boundingBox
+        let texture = Self.numberTexture(number, darkText: Self.isLightColor(jersey))
+        let chestY = minB.y + (maxB.y - minB.y) * 0.6
+        let centerX = (minB.x + maxB.x) / 2
+        let placements: [(name: String, z: Float, yaw: Float)] = [
+            ("numberFront", maxB.z + 0.02, 0),
+            ("numberBack", minB.z - 0.02, .pi),
+        ]
+        for placement in placements {
+            let plane = SCNPlane(width: 0.34, height: 0.34)
+            let material = SCNMaterial()
+            material.name = "NUMBER"
+            material.diffuse.contents = texture
+            material.lightingModel = .constant
+            plane.materials = [material]
+            let decal = SCNNode(geometry: plane)
+            decal.name = placement.name
+            decal.castsShadow = false
+            decal.position = SCNVector3(centerX, chestY, placement.z)
+            decal.eulerAngles = SCNVector3(0, placement.yaw, 0)
+            body.addChildNode(decal)
+        }
+    }
+
+    /// Re-points both torso decals at the texture for `number` on `jersey`.
+    private func updateNumberDecals(on node: SCNNode, number: Int, jersey: UIColor) {
+        let texture = Self.numberTexture(number, darkText: Self.isLightColor(jersey))
+        for name in ["numberFront", "numberBack"] {
+            node.childNode(withName: name, recursively: true)?
+                .geometry?.firstMaterial?.diffuse.contents = texture
+        }
     }
 
     // MARK: - Field Construction
@@ -1271,11 +1422,13 @@ class FootballFieldScene: SCNScene {
             seed = seed &* 6364136223846793005 &+ 1442695040888963407
             return CGFloat((seed >> 33) & 0xFFFF) / CGFloat(0xFFFF)
         }
+        // Slightly punchier greens than real broadcast turf — the saturated
+        // Madden-2000 palette.
         let tones: [UIColor] = [
-            UIColor(red: 0.10, green: 0.30, blue: 0.11, alpha: 1),
-            UIColor(red: 0.12, green: 0.35, blue: 0.13, alpha: 1),
-            UIColor(red: 0.09, green: 0.26, blue: 0.10, alpha: 1),
-            UIColor(red: 0.14, green: 0.38, blue: 0.14, alpha: 1),
+            UIColor(red: 0.09, green: 0.33, blue: 0.10, alpha: 1),
+            UIColor(red: 0.11, green: 0.39, blue: 0.11, alpha: 1),
+            UIColor(red: 0.08, green: 0.28, blue: 0.09, alpha: 1),
+            UIColor(red: 0.13, green: 0.43, blue: 0.12, alpha: 1),
         ]
         return renderer.image { ctx in
             tones[0].setFill()
@@ -1329,8 +1482,8 @@ class FootballFieldScene: SCNScene {
     /// below the painted lines.
     private func buildMowingStripes() {
         let lightStripe = SCNMaterial()
-        lightStripe.diffuse.contents = UIColor(red: 0.15, green: 0.42, blue: 0.15, alpha: 0.45)
-        lightStripe.transparency = 0.45
+        lightStripe.diffuse.contents = UIColor(red: 0.17, green: 0.49, blue: 0.16, alpha: 0.55)
+        lightStripe.transparency = 0.55
         lightStripe.roughness.contents = 0.9
 
         for (index, yard) in stride(from: 0, to: 100, by: 5).enumerated() {
@@ -1738,6 +1891,115 @@ class FootballFieldScene: SCNScene {
         firstDownMarkerNode = makeMarker(color: UIColor(red: 1.0, green: 0.85, blue: 0.1, alpha: 1))
     }
 
+    // MARK: - Referee
+
+    /// The back judge: a lightweight zebra-striped figure standing in the
+    /// offensive backfield ~7 yards behind the ball, off to the side, sliding
+    /// along with the LOS on every formation move (see updateMarkers). Pure
+    /// dressing — no number, no blob shadow, never part of a play.
+    private func buildReferee() {
+        let container = SCNNode()
+        container.name = "referee"
+
+        let figure = SCNNode()
+        // Leaner than the stocky players — officials don't wear pads.
+        figure.scale = SCNVector3(1.02, 1.14, 1.02)
+        container.addChildNode(figure)
+
+        let stripes = SCNMaterial()
+        stripes.diffuse.contents = Self.refereeStripeTexture()
+        stripes.roughness.contents = 0.75
+
+        let blackCloth = SCNMaterial()
+        blackCloth.diffuse.contents = UIColor(white: 0.09, alpha: 1)
+        blackCloth.roughness.contents = 0.85
+
+        let skin = SCNMaterial()
+        skin.diffuse.contents = Self.skinTones[1]
+        skin.roughness.contents = 0.8
+
+        // Legs: black slacks.
+        for xSign: Float in [-1, 1] {
+            let legGeometry = SCNCapsule(capRadius: 0.085, height: 0.64)
+            legGeometry.radialSegmentCount = 8
+            legGeometry.materials = [blackCloth]
+            let leg = SCNNode(geometry: legGeometry)
+            leg.position = SCNVector3(xSign * 0.13, -0.17, 0)
+            figure.addChildNode(leg)
+        }
+
+        // Striped torso (stripe texture wraps the capsule vertically).
+        let torsoGeometry = SCNCapsule(capRadius: 0.23, height: 0.8)
+        torsoGeometry.radialSegmentCount = 10
+        torsoGeometry.materials = [stripes]
+        let torso = SCNNode(geometry: torsoGeometry)
+        torso.position = SCNVector3(0, 0.42, 0)
+        torso.scale = SCNVector3(1.05, 1.0, 0.8)
+        figure.addChildNode(torso)
+
+        // Arms resting at his sides.
+        for xSign: Float in [-1, 1] {
+            let armGeometry = SCNCapsule(capRadius: 0.06, height: 0.52)
+            armGeometry.radialSegmentCount = 8
+            armGeometry.materials = [stripes]
+            let arm = SCNNode(geometry: armGeometry)
+            arm.position = SCNVector3(xSign * 0.31, 0.5, 0)
+            arm.eulerAngles = SCNVector3(0, 0, xSign * -0.14)
+            figure.addChildNode(arm)
+        }
+
+        // Head + white cap (the referee's hat).
+        let headGeometry = SCNSphere(radius: 0.13)
+        headGeometry.segmentCount = 10
+        headGeometry.materials = [skin]
+        let head = SCNNode(geometry: headGeometry)
+        head.position = SCNVector3(0, 0.95, 0)
+        figure.addChildNode(head)
+
+        let capGeometry = SCNSphere(radius: 0.14)
+        capGeometry.segmentCount = 10
+        let capMaterial = SCNMaterial()
+        capMaterial.diffuse.contents = UIColor(white: 0.93, alpha: 1)
+        capMaterial.roughness.contents = 0.7
+        capGeometry.materials = [capMaterial]
+        let cap = SCNNode(geometry: capGeometry)
+        cap.position = SCNVector3(0, 1.02, -0.02)
+        cap.scale = SCNVector3(1, 0.62, 1)
+        figure.addChildNode(cap)
+
+        // Parked near midfield until the first marker update places him.
+        container.position = SCNVector3(11, FieldConstants.playerHeight / 2, -7)
+        rootNode.addChildNode(container)
+        refereeNode = container
+    }
+
+    /// Vertical black-and-white stripes — wraps a capsule as the zebra shirt.
+    private static func refereeStripeTexture() -> UIImage {
+        let size = CGSize(width: 64, height: 64)
+        return UIGraphicsImageRenderer(size: size).image { ctx in
+            UIColor(white: 0.94, alpha: 1).setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+            UIColor(white: 0.06, alpha: 1).setFill()
+            for x in stride(from: 0, to: 64, by: 16) {
+                ctx.fill(CGRect(x: CGFloat(x), y: 0, width: 8, height: 64))
+            }
+        }
+    }
+
+    /// Walks the referee to his spot ~7 yards behind the offense, facing the
+    /// line — he trails every formation shift like the real back judge.
+    private func moveReferee(losZ: Float, direction: Float) {
+        guard let ref = refereeNode else { return }
+        let z = max(-56, min(56, losZ - direction * 7))
+        let move = SCNAction.move(to: SCNVector3(11, FieldConstants.playerHeight / 2, z),
+                                  duration: 0.8)
+        move.timingMode = .easeInEaseOut
+        ref.runAction(move, forKey: "refMove")
+        let yaw: CGFloat = direction >= 0 ? 0 : .pi
+        ref.runAction(SCNAction.rotateTo(x: 0, y: yaw, z: 0, duration: 0.45,
+                                         usesShortestUnitArc: true), forKey: "refFace")
+    }
+
     // MARK: - Ball
 
     private func buildBall() {
@@ -1948,10 +2210,12 @@ class FootballFieldScene: SCNScene {
         figure.addChildNode(head)
 
         // Helmet: shell + facemask cage grouped under the "helmet" node so
-        // the whole assembly sits where the old helmet sphere was.
+        // the whole assembly sits where the old helmet sphere was. ~8%
+        // oversized — the bobblehead Madden-2000 proportion.
         let helmet = SCNNode()
         helmet.name = "helmet"
         helmet.position = SCNVector3(0, 1.04, 0)
+        helmet.scale = SCNVector3(1.08, 1.08, 1.08)
         helmet.addChildNode(instantiate(kit.helmetShell, retint: retint))
         helmet.addChildNode(instantiate(kit.facemask))
         figure.addChildNode(helmet)
@@ -1984,13 +2248,14 @@ class FootballFieldScene: SCNScene {
 
         let figure = SCNNode()
         figure.name = "figure"
-        // Chunky Madden-98 proportions: reads clearly from the pulled-back camera.
-        figure.scale = SCNVector3(1.18, 1.18, 1.18)
+        // Stocky Madden-2000 proportions: extra width at unchanged height —
+        // the tank-like silhouette that reads from the pulled-back camera.
+        figure.scale = SCNVector3(1.28, 1.18, 1.18)
         container.addChildNode(figure)
 
         // Blob shadow under the feet — the hard PSX-era drop shadow that
         // anchors every player to the turf.
-        let shadowGeometry = SCNCylinder(radius: 0.42, height: 0.01)
+        let shadowGeometry = SCNCylinder(radius: 0.46, height: 0.01)
         let shadowMaterial = SCNMaterial()
         shadowMaterial.diffuse.contents = UIColor(white: 0, alpha: 0.38)
         shadowMaterial.lightingModel = .constant
@@ -2007,14 +2272,21 @@ class FootballFieldScene: SCNScene {
             buildProceduralFigure(in: figure, uniform: uniform, number: number)
         }
 
-        // Jersey number text floating above
+        // Numbers printed on the jersey itself, chest and back (Madden-2000).
+        if let body = figure.childNode(withName: "body", recursively: false) {
+            addNumberDecals(to: body, number: number, jersey: uniform.jersey)
+        }
+
+        // Floating billboard number: now that the jersey carries the number
+        // it drops to a small, dimmed long-range aid — don't remove it, it's
+        // what keeps the far side of the field readable.
         let numberText = SCNText(string: "\(number)", extrusionDepth: 0.01)
-        numberText.font = UIFont.systemFont(ofSize: 0.62, weight: .bold)
+        numberText.font = UIFont.systemFont(ofSize: 0.38, weight: .bold)
         numberText.flatness = 0.4
 
         let numberMaterial = SCNMaterial()
         numberMaterial.diffuse.contents = UIColor.white
-        numberMaterial.emission.contents = UIColor(white: 0.35, alpha: 1.0)
+        numberMaterial.emission.contents = UIColor(white: 0.2, alpha: 1.0)
         numberText.materials = [numberMaterial]
 
         let numberNode = SCNNode(geometry: numberText)
@@ -2028,9 +2300,11 @@ class FootballFieldScene: SCNScene {
             0
         )
 
-        // Face the number toward the camera (angled up)
+        // Face the number toward the camera (angled up), dimmed so the
+        // jersey decals carry the primary read.
         numberNode.eulerAngles = SCNVector3(-Float.pi / 4, 0, 0)
-        numberNode.position = SCNVector3(0, 1.35, 0)
+        numberNode.position = SCNVector3(0, 1.33, 0)
+        numberNode.opacity = 0.6
 
         // Use billboard constraint so numbers always face the camera
         let billboardConstraint = SCNBillboardConstraint()
@@ -2137,8 +2411,8 @@ class FootballFieldScene: SCNScene {
         helmet.name = "helmet"
         helmet.position = SCNVector3(0, 1.04, 0)
         // Open the helmet at the face: shift it slightly up-back so the skin
-        // sphere peeks out at the front.
-        helmet.scale = SCNVector3(1.0, 0.95, 1.05)
+        // sphere peeks out at the front. ~8% oversized (Madden-2000 head).
+        helmet.scale = SCNVector3(1.08, 1.03, 1.13)
         figure.addChildNode(helmet)
 
         // Facemask: a gray bar across the front of the helmet (+Z = facing).
@@ -2253,6 +2527,7 @@ class FootballFieldScene: SCNScene {
         rootNode.childNode(withName: "weatherEmitter", recursively: false)?.removeFromParentNode()
         rootNode.childNode(withName: "snowBlanket", recursively: false)?.removeFromParentNode()
         setLightIntensities(main: 1200, fill: 400, ambient: 500)
+        applyFog(color: Self.clearFogColor, start: 70, end: 210)
 
         switch weather {
         case .clear, .wind:
@@ -2260,11 +2535,39 @@ class FootballFieldScene: SCNScene {
         case .rain:
             addWeatherEmitter(Self.rainSystem())
             setLightIntensities(main: 850, fill: 300, ambient: 420)
+            // Pull the fog in and cool it: the far field dissolves into the
+            // wet night instead of ending in a hard dark edge.
+            applyFog(color: UIColor(red: 0.04, green: 0.06, blue: 0.10, alpha: 1), start: 65, end: 180)
         case .snow:
             addWeatherEmitter(Self.snowSystem())
             addSnowBlanket()
             setLightIntensities(main: 1200, fill: 400, ambient: 620)
+            // Lift the fog toward a snowy sky-glow grey so distant flakes
+            // melt into the haze instead of reading as a starfield against
+            // the black backdrop.
+            applyFog(color: UIColor(red: 0.09, green: 0.11, blue: 0.15, alpha: 1), start: 62, end: 165)
         }
+    }
+
+    /// Night-sky navy that matches the app's dark backdrop; the default
+    /// depth fog for clear conditions.
+    private static let clearFogColor = UIColor(red: 0.03, green: 0.05, blue: 0.09, alpha: 1)
+
+    /// Sets the scene-level distance fog. Start distances stay past the play
+    /// area (camera sits ~40-50 units from the action), so the fog only
+    /// softens the far end of the field and whatever falls through it.
+    ///
+    /// The sky (scene background) is tinted to the same color: SceneKit fog
+    /// does not touch particles, so without this, distant flakes render as
+    /// bright stars against the near-black backdrop. Matching the backdrop
+    /// to the fog both hides that and blends the field's far edge into the
+    /// horizon.
+    private func applyFog(color: UIColor, start: CGFloat, end: CGFloat) {
+        fogColor = color
+        fogStartDistance = start
+        fogEndDistance = end
+        fogDensityExponent = 1.4
+        background.contents = color
     }
 
     private func setLightIntensities(main: CGFloat, fill: CGFloat, ambient: CGFloat) {
@@ -2273,14 +2576,38 @@ class FootballFieldScene: SCNScene {
         rootNode.childNode(withName: "ambientLight", recursively: false)?.light?.intensity = ambient
     }
 
-    /// Adds the particle emitter high above the field, covering the whole
-    /// playing surface plus the aprons.
+    /// Height of the weather emitter node; the spawn slab straddles this
+    /// (y 4-12). Low on purpose: it stays well under the play cameras
+    /// (y 24-33), so nothing spawns next to the lens as a giant blob, and
+    /// distant flakes stay visually below the far field edge instead of
+    /// dotting the dark sky like a starfield.
+    private static let weatherEmitterHeight: Float = 8
+
+    /// Adds the particle emitter over the current camera focus. The slab is
+    /// deliberately smaller than the field (z +-35 around the action) and
+    /// follows focusCamera/kickCamera moves — precipitation lives where the
+    /// camera looks, broadcast-style, not across the whole stadium depth.
     private func addWeatherEmitter(_ system: SCNParticleSystem) {
         let node = SCNNode()
         node.name = "weatherEmitter"
-        node.position = SCNVector3(0, 32, 0)
+        node.position = SCNVector3(0, Self.weatherEmitterHeight, focusZ)
         node.addParticleSystem(system)
         rootNode.addChildNode(node)
+    }
+
+    /// Re-centers the weather slab on the camera's focus. No-op when no
+    /// weather emitter is active.
+    private func moveWeatherEmitter(toZ z: Float, animated: Bool, duration: TimeInterval) {
+        guard let node = rootNode.childNode(withName: "weatherEmitter", recursively: false) else { return }
+        let position = SCNVector3(0, Self.weatherEmitterHeight, z)
+        if animated {
+            let move = SCNAction.move(to: position, duration: duration)
+            move.timingMode = .easeInEaseOut
+            node.runAction(move, forKey: "focus")
+        } else {
+            node.removeAction(forKey: "focus")
+            node.position = position
+        }
     }
 
     /// Faint white translucent sheet just above the turf (below the painted
@@ -2305,42 +2632,46 @@ class FootballFieldScene: SCNScene {
 
     /// Procedural rain: small stretched streaks falling straight down at
     /// speed, tinted cool and slightly additive so they catch the lights.
+    /// Streaks spawn in a low y 4-12 slab around the camera focus (emitter
+    /// node at y 8) and die just past the turf, so none crosses the camera.
     private static func rainSystem() -> SCNParticleSystem {
         let system = SCNParticleSystem()
-        system.birthRate = 400
-        system.particleLifeSpan = 1.6
-        system.emitterShape = SCNBox(width: 70, height: 0.5, length: 130, chamferRadius: 0)
+        system.birthRate = 240
+        system.particleLifeSpan = 0.7
+        system.emitterShape = SCNBox(width: 70, height: 8, length: 70, chamferRadius: 0)
         system.birthLocation = .volume
         system.emittingDirection = SCNVector3(0, -1, 0)
         system.spreadingAngle = 2
         system.particleVelocity = 24
         system.particleVelocityVariation = 6
         system.particleImage = rainStreakImage()
-        system.particleSize = 0.32
-        system.particleSizeVariation = 0.12
-        system.particleColor = UIColor(red: 0.65, green: 0.72, blue: 0.85, alpha: 0.3)
+        system.particleSize = 0.2
+        system.particleSizeVariation = 0.08
+        system.particleColor = UIColor(red: 0.65, green: 0.72, blue: 0.85, alpha: 0.22)
         system.blendMode = .additive
         system.stretchFactor = 0.06
         system.isLightingEnabled = false
         return system
     }
 
-    /// Procedural snow: slow, drifting white flakes with a long lifespan so
-    /// they cover the full drop from the emitter to the turf.
+    /// Procedural snow: slow, drifting white flakes. Flakes spawn in a low
+    /// y 4-12 slab around the camera focus (emitter node at y 8) — far below
+    /// the camera band — so they read against the turf, not as a starfield
+    /// hanging in the dark sky, and the lifespan just covers the drop.
     private static func snowSystem() -> SCNParticleSystem {
         let system = SCNParticleSystem()
-        system.birthRate = 220
-        system.particleLifeSpan = 16
-        system.emitterShape = SCNBox(width: 70, height: 0.5, length: 130, chamferRadius: 0)
+        system.birthRate = 130
+        system.particleLifeSpan = 8
+        system.emitterShape = SCNBox(width: 70, height: 8, length: 70, chamferRadius: 0)
         system.birthLocation = .volume
         system.emittingDirection = SCNVector3(0, -1, 0)
         system.spreadingAngle = 14
         system.particleVelocity = 2.4
         system.particleVelocityVariation = 0.8
         system.particleImage = snowflakeImage()
-        system.particleSize = 0.18
-        system.particleSizeVariation = 0.08
-        system.particleColor = UIColor(white: 1.0, alpha: 0.9)
+        system.particleSize = 0.15
+        system.particleSizeVariation = 0.05
+        system.particleColor = UIColor(white: 1.0, alpha: 0.62)
         system.isLightingEnabled = false
         return system
     }
