@@ -1,5 +1,24 @@
 # Dynasty - TODO
 
+## Game Plan fix & restyle (2026-07-09)
+
+- [x] Fix: GamePlanView oli kytketty vakiobindingiin (`.constant(.balanced)`) CareerShellView'ssa — sliderit eivät liikkuneet eikä mikään tallentunut. Nyt aito binding joka lukee/kirjoittaa `career.gamePlan` ja tallentaa modelContextiin joka muutoksella
+- [x] Career-malliin uusi optionaalinen `gamePlanData: Data?` (kevyt migraatio) + `gamePlan`/`savedGamePlan` computed-avut (JSON-koodaus, fallback .balanced)
+- [x] Sim-kytkentä: `PlaySimulator.decidePlayCall` sai valinnaisen `gamePlan`-parametrin — runPassRatio siirtää pass-todennäköisyyttä (±0.15), fourthDownAggressiveness laajentaa (>0.65: go for it 4&≤3 midfieldin jälkeen) / supistaa (<0.35: punttaa/FG herkemmin) 4. yrityksen ehtoja. nil = täsmälleen vanha käytös
+- [x] `GameSimulator.simulate` sai `homeGamePlan/awayGamePlan`-parametrit (myös OT), `DriveSimulator.simulateDrive` välittää planin; WeekAdvancer syöttää pelaajan tallennetun planin vain pelaajan joukkueelle
+- [x] LiveGameEngine: `pendingPlayerGamePlan`-hand-off (CoachedGameView UI/Match-kiellossa, joten static hand-off kuten WeekAdvancerissa) — plan vaikuttaa pelaajan hyökkäyksen AI-kutsuihin, aiOffensiveCallHintiin ja aiDefensivePackage-blitz/coverage-sävyyn pelaajan puolustaessa
+- [x] Visuaalinen uudistus: kaksipalstainen iPad-leiska (vasen: 3 yhteenvetochipiä + presetit + vastustajapaneeli; oikea: Offense/Defense-sliderikortit), viiden minipalkin duplikaatio poistettu
+- [x] Väripaletti yhtenäistetty: offense-sliderit accentBlue, defense-sliderit danger, presetit/chipit kulta
+- [x] Header-konteksti: "Week N · vs OPP" (seuraavan pelaamattoman pelin viikko) + OC:n scheme-badge + automaattitallennuksen "Saved ✓" -väläys
+- [x] Presetit: aktiivinen korostuu kultareunuksella + checkmarkilla (±0.01 vertailu), yhden rivin kuvaus per preset
+- [x] Slidereille risk/reward-alarivit (esim. 4th Down: "More TDs on the table — more turnovers on downs.")
+- [x] Vastustajapaneeli (Scouting Report): nimi, record, Pass/Run Defense weak/average/strong (puolustusyksiköiden OVR-keskiarvosta) + yhden rivin vinkki
+- [x] Tehtäväkuittaus: "Set game plan..." -tehtävät kuittautuvat kun plania muokataan (markTaskCompleted binding-setterissä); OTAs-vaiheen "Set game plan" kuittautuu pysyvästi `gamePlanData != nil` -ehdolla
+- [x] Verifioitu simulaattorissa: sliderit liikkuvat, arvot säilyvät relaunchissa, presetit toimivat, tehtävä kuittautuu (screenshotit /tmp/snd-screenshots/)
+- [ ] Playoff-viikkojen sim käyttää satunnaista `simulateGameScore()`-generaattoria myös pelaajan pelille — game plan ei vaikuta playoff-pikasimiin ennen kuin playoff-pelit siirretään täyteen play-by-play-simiin
+- [ ] Dashboardin yläpalkin "Game Plan" -pikachip navigoi Week Prep -näkymään (gameWeekPrep) eikä Game Planiin — harkitse otsikon tai kohteen korjausta
+- [ ] LiveGameEnginen blitzFrequency voisi jatkossa vaikuttaa myös täysin AI-simuloituihin puolustussnappeihin (nyt vain aiDefensivePackage-ehdotukseen/oletukseen)
+
 ## Press Conference auto-analyze findings (2026-04-29)
 
 ### [PressConfIntro] Visual Design
@@ -1195,7 +1214,53 @@ Skeleton is FM-like and GOOD: 100-point Tactical/Physical/Technical team split +
 - [x] Field dressing adapts per opponent (purple MIN end zone + wordmark at week 7 after red CHI at week 6).
 
 ### Open polish (round 11 candidates)
-- [ ] 3D: Pile-up on tackles — bring 1-2 pursuit defenders into the fall for gang-tackle reads.
-- [ ] 3D: QB throwing motion (arm cock + release timed to the arc start).
-- [ ] 3D: Kick meter / FG camera behind the posts.
-- [ ] UI: Broadcast plate could carry the play call name ("2ND & 10 · DIG").
+- [x] 3D: Pile-up on tackles — bring 1-2 pursuit defenders into the fall for gang-tackle reads. (DONE R11)
+- [x] 3D: QB throwing motion (arm cock + release timed to the arc start). (DONE R11)
+- [x] 3D: FG camera behind the posts. (DONE R11 — kick meter itself still open)
+- [x] UI: Broadcast plate could carry the play call name ("2ND & 10 · DIG"). (DONE R11)
+
+## Round 11: Coach Mode — 3D-pelimomenttien viimeistely (2026-07-09)
+
+### Shipped (BUILD SUCCEEDED)
+- [x] Feature: [3D] Gang tackles — the 1-2 nearest chasing defenders (ranked by distance to the tackle spot, primary tackler excluded) get short closing moves onto the pile and join the falls list; the existing staggered fall delays (0.12s per slot) turn the stop into a proper pile-up on both rush and completion tackles. (PlayChoreographer: gangTacklers/pileOnMoves + rushSteps/completionSteps tackle steps)
+- [x] Feature: [3D] QB throwing motion — when the ball leaves a carrier into an .arc flight, the passer's right arm ("armR", shoulder pivot) cocks back (rotateTo x +2.2), snaps forward (x -2.6) and settles to neutral, hooked to the start of runBallArc. Also fires on the TD ball spike, which reads correctly.
+- [x] Feature: [3D] Kick camera — new scene API kickCamera(towardZ:) parks the camera low behind the goalposts (pos (0, 8, ±72), target (0, 4, ±40)) looking back up the field; CoachedGameView uses it for fieldGoal/extraPoint in runPlay and hands the shot back via focusCamera in finishPlay. A kickCameraActive flag keeps the follow-cam from stealing the shot during the kick arc (focusCamera always clears it).
+- [x] Feature: [UI] Broadcast plate carries the called play — "2ND & 10 · DIG" (downDistanceText + " · " + call name) whenever the coach dialed an offensive call; AI/forced plays keep the plain situation plate.
+- [x] Feature: [3D] Arc flight shadow — a small dark blob (flat cylinder, alpha 0.3, lightingModel constant) slides along the turf under every .arc flight using the same lerp without the apex term, removes itself at landing; cancelPlay sweeps any stragglers.
+- [x] Feature: [3D] Catch leap — reach() adds a small hop (figure moveBy y +0.25 and back, easeOut/easeIn) under the arms-up reach so catches and pick attempts leave the ground.
+
+### Left out
+- [ ] Simulator verification — settled for green build + code review per round rules (navigation to a live coached game needs cooperative game state); visuals should be eyeballed in the next play session.
+- [ ] Kick meter UI (only the FG camera angle was in scope this round).
+
+## Round 13: Kickoffs & special situations — kickoff distribution, live kickoff choreography, FG blocks, onside kicks (2026-07-09)
+
+### Shipped (BUILD SUCCEEDED)
+- [x] Feature: [Sim] Shared kickoff distribution — `GameSimulator.rollKickoff()` / `kickoffStartYardLine()`: ~55% touchback out to the 30 (2024 dynamic-kickoff rule), otherwise a return to the 20–35, ~2% housed return TD (post-score kicks only). Used by BOTH engines so quick sim and live stay statistically identical: opening kick, post-score kicks (`determineNextPossession` now rolls the kickoff and carries a `KickoffResult` in `NextPossession`), second-half kick, and OT kick all draw from it.
+- [x] Feature: [Sim] Kickoff return touchdowns — on a housed post-score kick the receiving team gets a synthetic one-play drive (`kickoffReturnTouchdownPlay`: playType .kickoff, 6 pts like every TD in this sim, yardsGained 0 so scrimmage yardage stays clean), momentum shift, highlight + play-log entry, then the ensuing kickoff hands the ball back to the original scorers. Identical bookkeeping in `GameSimulator.simulate` and `LiveGameEngine.endRegulationDrive`; gated on time remaining (no kick after the gun). `accumulateStats` skips QB/RB attribution for .kickoff TDs.
+- [x] Fix: [Sim/Parity] OT after the first possession no longer force-teleports to the 25 — it uses `determineNextPossession`'s real start (kickoff draw after scores, actual field position after punts/turnovers), matching what the live engine already did.
+- [x] Feature: [Live] `LiveGameEngine.pendingKickoff: KickoffEvent` (kicking side, start yard, touchback?, housed?) published at game start, after scores, at halftime, and at OT start; consumed by the view via `clearPendingKickoff()`.
+- [x] Feature: [3D] Kickoff choreography — `PlayChoreographer.kickoffFormation` (kicker + 10-man coverage line on the 35 vs front line / wedge wave / upback / deep returner) and `kickoffSteps`: ball to the tee, kicker run-up, high hanging boot (apex 16) with lane coverage flying down and the wedge folding back, catch, then return-to-spot with converging tacklers and a gang-tackle finish — or a touchback kneel, or a full-field housed return (coverage trails, view adds camera push + confetti + banner). CoachedGameView runs it before the first snap of every kick-started drive (opening, post-score, second half, OT), opening lineup now starts in kickoff formation.
+- [x] Feature: [Sim] Field-goal blocks — ~2.5% of FG attempts are swatted at the line before accuracy matters (`PlaySimulator.simulateFieldGoal`, outcome .fieldGoalMissed, "The kick is BLOCKED!" description). Applies identically to quick sim and live via the shared PlaySimulator path; no MatchupResolver change needed.
+- [x] Feature: [Live/UI] Onside kick — when the player's team scores in Q4 (or later) while still trailing, the deep-kick animation is replaced by a confirmationDialog ("Onside Kick" vs cancel-role "Kick Deep", outside-tap = deep so the game can't stall). `LiveGameEngine.attemptOnsideKick()`: ~12% recovery keeps the ball at the player's own 48, failure gives the receivers a short field (their 55). Live-game player choice only — quick sim never onsides and the AI never gets the option, so nil-parameter parity is intact.
+
+### Left out
+- [ ] Kickoff return TDs on opening/second-half/OT kicks — restricted to post-score kickoffs; the non-loop call sites (pre-loop opening draw, halftime `continue` branch, OT possession rules) would each need their own scoring/possession plumbing for a ~1-in-100 event. Distribution position draw is identical everywhere, so parity holds.
+- [ ] Kickoff clock consumption — kickoffs still take 0 game seconds in both engines (identical behavior, so no parity risk); could burn 5–10s later.
+- [ ] Onside kick 3D choreography — the onside choice resolves with banners + formation sync; a bespoke short-hop kick animation was out of scope.
+- [ ] Blocked-FG bespoke animation — blocked kicks reuse the missed-FG script (wide of the posts); a swat-at-the-line visual would need a new choreography step.
+- [ ] Simulator verification — settled for green build + code review per round rules (a live coached game needs cooperative game state); kickoff visuals should be eyeballed in the next play session.
+
+## Round 14: Ottelutilastot ja live-HUD coach-modeen (2026-07-09)
+
+### Shipped (BUILD SUCCEEDED)
+- [x] Feature: [Live] Stat leaders — `LiveGameEngine.passingLeader/rushingLeader/receivingLeader/sackLeader(forHome:)` return a `StatLeader` (id, short name, compact stat line like "18/25 · 245 YDS · 2 TD") computed from the per-drive `statsAccumulator`; team split via new `homePlayerIDs`/`awayPlayerIDs` roster snapshots. `totalYards(forHome:)` sums completed-drive yardage with the same accounting as `GameSimulator.buildTeamBoxScore`.
+- [x] Feature: [UI] Box score sheet — new "Stats" button in the situation strip opens `LiveBoxScoreSheet` (private, CoachedGameView.swift): quarter-by-quarter line score (dashes for unreached quarters, OT column appears in overtime), total-yards comparison via the existing `StatComparisonRow`, and both teams' passing/rushing/receiving/sack leaders side by side. Same dark card style (`.cardBackground()`, accentGold section titles), medium/large detents.
+- [x] Feature: [UI] Drive chip — situation strip shows a compact "Drive: 5 plays, 42 yds" chip for the drive in progress (`currentDrivePlays`; yards counted from scrimmage plays only so punts/kicks don't inflate it).
+- [x] Feature: [Live] Player grades — `matchupWins`/`matchupLosses: [UUID: Int]` published on the engine, tallied in `step()` from every `MatchupResolver` event (offRole/defRole mapped to FieldUnit player ids at resolve time, before possession flips). Presentation-only: never feeds back into the sim, so nil-parameter parity with GameSimulator.simulate is intact.
+- [x] Feature: [UI] Top performers — final overlay shows the 3 players with the most matchup wins (ties broken by fewer losses) as "name + W-L battles + team abbr" cards, player's own team highlighted in gold (`topPerformers(limit:)` + `topPerformersRow`).
+
+### Left out
+- [ ] Top performers in GameSummaryView — not trivial: GameSummary is built from `GameSimulator.GameResult`/`BoxScore` (shared with quick sim, which has no matchup data), so surfacing matchup W-L there would mean widening the shared result type for a live-only stat. GameSummary already has its own stats-based topPerformersCard; final-overlay-only per the round spec's fallback.
+- [ ] Live leaders including the in-progress drive — stats accumulate per completed drive (mirrors the quick sim's accumulateStats cadence); recomputing mid-drive would double-count once the drive finishes. Sheet documents the cadence in a comment.
+- [ ] Simulator verification — settled for green build + code review per round rules (a live coached game needs cooperative game state); the sheet/chip/overlay should be eyeballed in the next play session.

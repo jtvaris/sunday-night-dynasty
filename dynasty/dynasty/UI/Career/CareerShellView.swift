@@ -485,10 +485,13 @@ struct CareerShellView: View {
     private var gamePlanContext: GamePlanView.Context {
         var ctx = GamePlanView.Context()
 
-        // Week / playoff-round label — only meaningful in-season.
+        // Week / playoff-round label — only meaningful in-season. Uses the
+        // NEXT unplayed game's week so the label matches the opponent shown
+        // (after this week's game is played, the plan targets next week).
         switch career.currentPhase {
         case .regularSeason:
-            ctx.weekLabel = "Week \(career.currentWeek)"
+            let week = upcomingGames.first?.week ?? career.currentWeek
+            ctx.weekLabel = "Week \(week)"
         case .playoffs:
             ctx.weekLabel = playoffRoundName
         default:
