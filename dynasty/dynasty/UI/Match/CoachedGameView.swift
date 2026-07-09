@@ -1,5 +1,6 @@
 import SwiftUI
 import SceneKit
+import Combine
 
 // MARK: - CoachedGameView
 
@@ -88,6 +89,9 @@ struct CoachedGameView: View {
     @State private var milestoneBanner: String? = nil
     /// Small sideline note over the field ("Fresh legs: J. Cook in at RB").
     @State private var sidelineNote: String? = nil
+    /// Adaptive-AI intel chip ("CHI is keying on the inside run") — shown
+    /// when the opponent locks onto (or shifts) a read of your tendencies.
+    @State private var adaptationNote: String? = nil
 
     // Offense call state
     @State private var selectedCategory: String = "Run"
@@ -135,6 +139,40 @@ struct CoachedGameView: View {
     /// Transient "2-MINUTE WARNING" chip in the situation strip.
     @State private var showTwoMinuteChip = false
 
+    // MARK: Play clock (decision countdown)
+
+    /// Default decision-clock length: the coach gets this long to pick a
+    /// call before the QB (or the DC) checks into a simple base play and
+    /// the snap goes off automatically. Never a delay-of-game penalty.
+    /// Settings can stretch the window to 15 s or switch the clock off.
+    static let playClockSeconds: Double = 10
+    /// How long the auto-picked card stays highlighted before the auto snap.
+    private static let autoCallShowcaseSeconds: TimeInterval = 1.5
+
+    @AppStorage("playClockSetting") private var playClockSettingRaw: String = PlayClockSetting.ten.rawValue
+
+    /// True while a decision window is open and the countdown is live.
+    @State private var playClockArmed = false
+    /// Seconds left on the decision clock.
+    @State private var playClockRemaining: Double = 0
+    /// The window's full length (ring denominator) — 10 or 15 s per Settings.
+    @State private var playClockTotal: Double = CoachedGameView.playClockSeconds
+    /// True from expiry until the auto-called snap goes off (the showcase
+    /// beat where the picked card highlights); the ring freezes at zero.
+    @State private var playClockExpiring = false
+    /// Invalidation token, bumped on every arm/disarm: a stale auto-snap
+    /// closure (or one racing a manual snap) can never double-fire.
+    @State private var playClockGeneration = 0
+    /// Whether the coach actively tapped an offensive card this window —
+    /// the pre-selected AI suggestion doesn't count; a delay still checks down.
+    @State private var offCallDirtied = false
+    /// Whether the coach touched the defensive call sheet this window.
+    @State private var defCallDirtied = false
+
+    /// 10 Hz heartbeat for the countdown — only decrements while a window
+    /// is armed and nothing (overlay, dialog, live play) pauses it.
+    private let playClockTicker = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
+
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Body
@@ -180,6 +218,7 @@ struct CoachedGameView: View {
         }
         .statusBarHidden()
         .onAppear(perform: startGame)
+        .onReceive(playClockTicker) { _ in tickPlayClock() }
         .onChange(of: engine.timeRemaining) { _, remaining in
             checkTwoMinuteWarning(remaining)
         }
@@ -189,6 +228,9 @@ struct CoachedGameView: View {
         }
         .onChange(of: engine.lastRotation) { _, rotation in
             if let rotation { showSidelineNote("Fresh legs: \(rotation.inName) in at RB") }
+        }
+        .onChange(of: engine.lastAdaptationHint) { _, hint in
+            if let hint { showAdaptationNote(hint.text) }
         }
         .onChange(of: engine.lastMilestones) { _, milestones in
             // Multiple lines can fall on the same drive end — stagger them.
@@ -551,20 +593,36 @@ struct CoachedGameView: View {
                 }
             }
             .overlay(alignment: .topTrailing) {
-                if let note = sidelineNote {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 10, weight: .bold))
-                        Text(note)
-                            .font(.system(size: 12, weight: .bold))
+                VStack(alignment: .trailing, spacing: 6) {
+                    if let note = sidelineNote {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 10, weight: .bold))
+                            Text(note)
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.success, in: Capsule())
+                        .transition(.move(edge: .top).combined(with: .opacity))
                     }
-                    .foregroundStyle(Color.backgroundPrimary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.success, in: Capsule())
-                    .padding(10)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    // Adaptive-AI intel: the opponent has read a tendency.
+                    if let intel = adaptationNote {
+                        HStack(spacing: 6) {
+                            Image(systemName: "eye.fill")
+                                .font(.system(size: 10, weight: .bold))
+                            Text(intel)
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.warning, in: Capsule())
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
+                .padding(10)
             }
             .overlay(alignment: .bottomLeading) {
                 if !matchupCallouts.isEmpty {
@@ -598,6 +656,7 @@ struct CoachedGameView: View {
             .animation(.spring(duration: 0.3), value: matchupCallouts.count)
             .animation(.spring(duration: 0.25), value: snapPlate)
             .animation(.spring(duration: 0.3), value: sidelineNote)
+            .animation(.spring(duration: 0.3), value: adaptationNote)
     }
 
     /// One "who won the rep" line over the field: gold sword for a battle
@@ -824,6 +883,7 @@ struct CoachedGameView: View {
             HStack(spacing: 12) {
                 if let suggestion = cachedSuggestion {
                     Button {
+                        offCallDirtied = true // explicitly adopted — stands on a delay
                         selectedCall = suggestion
                         selectedCategory = suggestion.category
                     } label: {
@@ -857,18 +917,20 @@ struct CoachedGameView: View {
                     .buttonStyle(.plain)
                 }
                 Spacer()
-                Button {
-                    if let call = selectedCall { snap(call: call) }
-                } label: {
-                    Label("SNAP", systemImage: "arrow.up.circle.fill")
-                        .font(.system(size: 16, weight: .black))
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 30)
-                        .padding(.vertical, 12)
-                        .background(selectedCall != nil ? Color.accentGold : Color.backgroundTertiary, in: Capsule())
+                playClockWrapped {
+                    Button {
+                        if let call = selectedCall { snap(call: call) }
+                    } label: {
+                        Label("SNAP", systemImage: "arrow.up.circle.fill")
+                            .font(.system(size: 16, weight: .black))
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .padding(.horizontal, 30)
+                            .padding(.vertical, 12)
+                            .background(selectedCall != nil ? Color.accentGold : Color.backgroundTertiary, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(selectedCall == nil)
                 }
-                .buttonStyle(.plain)
-                .disabled(selectedCall == nil)
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 12)
@@ -925,6 +987,7 @@ struct CoachedGameView: View {
         let isSuggested = cachedSuggestion == play
         let installed = play.isInPlaybook(of: engine.playerOffensiveScheme)
         return Button {
+            offCallDirtied = true // the coach's own pick — a delay snaps it
             withAnimation(.spring(duration: 0.15)) { selectedCall = play }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
@@ -1064,19 +1127,21 @@ struct CoachedGameView: View {
                         .foregroundStyle(Color.textPrimary)
                 }
                 Spacer()
-                Button {
-                    if let choice = fourthDownChoice { snap(forcedType: choice) }
-                } label: {
-                    Label("SNAP", systemImage: "arrow.up.circle.fill")
-                        .font(.system(size: 16, weight: .black))
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 30)
-                        .padding(.vertical, 12)
-                        .background(fourthDownChoice != nil ? Color.accentGold : Color.backgroundTertiary,
-                                    in: Capsule())
+                playClockWrapped {
+                    Button {
+                        if let choice = fourthDownChoice { snap(forcedType: choice) }
+                    } label: {
+                        Label("SNAP", systemImage: "arrow.up.circle.fill")
+                            .font(.system(size: 16, weight: .black))
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .padding(.horizontal, 30)
+                            .padding(.vertical, 12)
+                            .background(fourthDownChoice != nil ? Color.accentGold : Color.backgroundTertiary,
+                                        in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(fourthDownChoice == nil)
                 }
-                .buttonStyle(.plain)
-                .disabled(fourthDownChoice == nil)
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 12)
@@ -1172,18 +1237,21 @@ struct CoachedGameView: View {
                         .foregroundStyle(Color.textPrimary)
                 }
                 Spacer()
-                Button {
-                    awaitingKickoffDecision = false
-                    if onsideSelected { attemptOnside() } else { kickDeep() }
-                } label: {
-                    Label("KICK", systemImage: "arrow.up.circle.fill")
-                        .font(.system(size: 16, weight: .black))
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 30)
-                        .padding(.vertical, 12)
-                        .background(Color.accentGold, in: Capsule())
+                playClockWrapped {
+                    Button {
+                        disarmPlayClock()
+                        awaitingKickoffDecision = false
+                        if onsideSelected { attemptOnside() } else { kickDeep() }
+                    } label: {
+                        Label("KICK", systemImage: "arrow.up.circle.fill")
+                            .font(.system(size: 16, weight: .black))
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .padding(.horizontal, 30)
+                            .padding(.vertical, 12)
+                            .background(Color.accentGold, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 12)
@@ -1239,27 +1307,30 @@ struct CoachedGameView: View {
                         .foregroundStyle(Color.textPrimary)
                 }
                 Spacer()
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { awaitingConversionDecision = false }
-                    if conversionGoForTwo {
-                        goingForTwo = true
-                        selectedCategory = "Run"
-                        selectedCall = nil
-                        cachedSuggestion = nil
-                        syncFieldToSituation()
-                    } else {
-                        runPlay(offCall: nil, forcedType: nil)
+                playClockWrapped {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) { awaitingConversionDecision = false }
+                        if conversionGoForTwo {
+                            goingForTwo = true
+                            selectedCategory = "Run"
+                            selectedCall = nil
+                            cachedSuggestion = nil
+                            syncFieldToSituation()
+                            armPlayClock() // fresh window for calling the try
+                        } else {
+                            runPlay(offCall: nil, forcedType: nil)
+                        }
+                    } label: {
+                        Label(conversionGoForTwo ? "CALL THE PLAY" : "KICK XP",
+                              systemImage: conversionGoForTwo ? "book.fill" : "arrow.up.circle.fill")
+                            .font(.system(size: 16, weight: .black))
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .padding(.horizontal, 30)
+                            .padding(.vertical, 12)
+                            .background(Color.accentGold, in: Capsule())
                     }
-                } label: {
-                    Label(conversionGoForTwo ? "CALL THE PLAY" : "KICK XP",
-                          systemImage: conversionGoForTwo ? "book.fill" : "arrow.up.circle.fill")
-                        .font(.system(size: 16, weight: .black))
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 30)
-                        .padding(.vertical, 12)
-                        .background(Color.accentGold, in: Capsule())
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 12)
@@ -1336,20 +1407,22 @@ struct CoachedGameView: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                Button {
-                    runPlay(offCall: nil, forcedType: nil)
-                } label: {
-                    Label(isAnimating ? "PLAY IS LIVE…" : "READY — SNAP",
-                          systemImage: isAnimating ? "hourglass" : "shield.checkered")
-                        .font(.system(size: 16, weight: .black))
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 26)
-                        .padding(.vertical, 12)
-                        .background(isAnimating ? Color.backgroundTertiary : Color.accentGold,
-                                    in: Capsule())
+                playClockWrapped {
+                    Button {
+                        runPlay(offCall: nil, forcedType: nil)
+                    } label: {
+                        Label(isAnimating ? "PLAY IS LIVE…" : "READY — SNAP",
+                              systemImage: isAnimating ? "hourglass" : "shield.checkered")
+                            .font(.system(size: 16, weight: .black))
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .padding(.horizontal, 26)
+                            .padding(.vertical, 12)
+                            .background(isAnimating ? Color.backgroundTertiary : Color.accentGold,
+                                        in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isAnimating)
                 }
-                .buttonStyle(.plain)
-                .disabled(isAnimating)
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 12)
@@ -1391,6 +1464,7 @@ struct CoachedGameView: View {
         let isSelected = defCall == call
         let installed = call.isInPlaybook(of: engine.playerDefensiveScheme)
         return Button {
+            defCallDirtied = true // the coach's own pick — a delay snaps it
             withAnimation(.easeInOut(duration: 0.15)) { defCall = call }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
@@ -1598,6 +1672,256 @@ struct CoachedGameView: View {
         return playerWon ? "Victory, coach." : "They got us today."
     }
 
+    // MARK: - Play Clock (decision countdown)
+
+    /// The configured window length; nil when the user switched the clock off.
+    private var playClockDuration: Double? {
+        switch PlayClockSetting(rawValue: playClockSettingRaw) ?? .ten {
+        case .off:     return nil
+        case .fifteen: return 15
+        case .ten:     return Self.playClockSeconds
+        }
+    }
+
+    /// Overlays and dialogs that freeze the countdown; it resumes where it
+    /// left off when they close. The halftime report and a live play always
+    /// pause the clock, so it can never expire under either.
+    private var playClockPaused: Bool {
+        isAnimating || showHalftime || showFinal || showStatsSheet || showManageSheet
+            || showSimToEndConfirm || showExitConfirm
+    }
+
+    /// Opens a fresh decision window: full clock, touch flags cleared.
+    /// Call whenever a call panel becomes interactive (offense sheet, defense
+    /// wait, 4th-down / kickoff / point-after choice panels).
+    private func armPlayClock() {
+        playClockGeneration += 1
+        playClockExpiring = false
+        offCallDirtied = false
+        defCallDirtied = false
+        guard let duration = playClockDuration, !engine.isGameOver else {
+            playClockArmed = false
+            return
+        }
+        playClockTotal = duration
+        playClockRemaining = duration
+        playClockArmed = true
+    }
+
+    /// Closes the window (snap committed, drive skipped, sim-to-final…).
+    private func disarmPlayClock() {
+        playClockGeneration += 1
+        playClockArmed = false
+        playClockExpiring = false
+    }
+
+    private func tickPlayClock() {
+        guard playClockArmed, !playClockExpiring, !playClockPaused,
+              !engine.isGameOver else { return }
+        playClockRemaining = max(0, playClockRemaining - 0.1)
+        if playClockRemaining <= 0 { playClockDidExpire() }
+    }
+
+    /// The clock hit zero: the QB (or the DC / special teams) checks into a
+    /// simple call, the picked card highlights for a beat, and the snap goes
+    /// off on its own. Never a delay-of-game penalty — the branch order
+    /// mirrors `callPanel` so the auto call always matches the visible panel.
+    private func playClockDidExpire() {
+        playClockExpiring = true
+        playClockRemaining = 0
+        if awaitingKickoffDecision {
+            autoCommitKickoff()
+        } else if awaitingConversionDecision {
+            autoCommitConversion()
+        } else if !engine.playerIsOnOffense {
+            autoCallDefense()
+        } else if engine.isFourthDown && !wentForIt && engine.pendingConversion == nil {
+            autoCommitFourthDown()
+        } else {
+            autoCallOffense()
+        }
+    }
+
+    /// Runs `commit` after the "here's the auto call" showcase beat, unless
+    /// the window was invalidated meanwhile (a manual snap won the race —
+    /// every manual commit path bumps `playClockGeneration`).
+    private func afterAutoCallShowcase(_ commit: @escaping () -> Void) {
+        let generation = playClockGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.autoCallShowcaseSeconds) {
+            guard generation == playClockGeneration, playClockExpiring else { return }
+            disarmPlayClock()
+            commit()
+        }
+    }
+
+    // MARK: Auto calls (delay of decision, never delay of game)
+
+    /// Offense delay: a card the coach dialed himself stands and snaps;
+    /// otherwise the QB checks it down — 3rd/4th & long takes the installed
+    /// short base pass, anything else ~50/50 Inside Run / short pass.
+    private func autoCallOffense() {
+        let qbName = engine.currentOffenseUnit[0].shortName
+        let pick: OffensivePlayCall
+        if offCallDirtied, let dialed = selectedCall {
+            pick = dialed
+            engine.postFeedNote("Delay — \(qbName) snaps the call as dialed: \(dialed.rawValue)")
+        } else {
+            pick = qbCheckdownCall()
+            engine.postFeedNote("Delay — \(qbName) checks into \(pick.rawValue)")
+            withAnimation(.spring(duration: 0.25)) {
+                selectedCategory = pick.category
+                selectedCall = pick
+            }
+        }
+        afterAutoCallShowcase { snap(call: pick) }
+    }
+
+    /// Defense delay: a call the coach picked this window stands; otherwise
+    /// the DC checks the unit into the scheme's base shell.
+    private func autoCallDefense() {
+        if defCallDirtied {
+            engine.postFeedNote("Delay — \(playerAbbr) defense rolls with \(defCall.rawValue)")
+        } else {
+            let base = schemeBaseDefensiveCall
+            engine.postFeedNote("Delay — \(playerAbbr) defense checks into \(base.rawValue)")
+            withAnimation(.easeInOut(duration: 0.2)) {
+                defCategory = base.category
+                defCall = base
+            }
+        }
+        afterAutoCallShowcase { runPlay(offCall: nil, forcedType: nil) }
+    }
+
+    /// 4th-down delay: send out whichever special-teams card is highlighted
+    /// (the panel pre-selects FG when in range, punt otherwise).
+    private func autoCommitFourthDown() {
+        let choice = fourthDownChoice ?? (engine.canAttemptFieldGoal ? .fieldGoal : .punt)
+        withAnimation(.easeInOut(duration: 0.15)) { fourthDownChoice = choice }
+        engine.postFeedNote(choice == .fieldGoal
+            ? "Delay — the field goal unit trots out"
+            : "Delay — the punt team takes the field")
+        afterAutoCallShowcase { snap(forcedType: choice) }
+    }
+
+    /// Kickoff-panel delay: boot whatever's highlighted (deep by default;
+    /// an onside selection the coach dialed but never committed stands).
+    private func autoCommitKickoff() {
+        engine.postFeedNote(onsideSelected
+            ? "Delay — the onside unit stays on"
+            : "Delay — \(playerAbbr) kicks it deep")
+        afterAutoCallShowcase {
+            awaitingKickoffDecision = false
+            if onsideSelected { attemptOnside() } else { kickDeep() }
+        }
+    }
+
+    /// Post-TD panel delay: commit the highlighted try. XP just kicks; a
+    /// dialed "Go for 2" opens the sheet with an auto-called simple play so
+    /// the try still snaps on its own.
+    private func autoCommitConversion() {
+        if conversionGoForTwo {
+            let pick = Bool.random() ? installedRun() : installedShortPass()
+            engine.postFeedNote("Delay — \(engine.currentOffenseUnit[0].shortName) checks into \(pick.rawValue) on the try")
+            withAnimation(.easeInOut(duration: 0.2)) { awaitingConversionDecision = false }
+            goingForTwo = true
+            selectedCategory = pick.category
+            cachedSuggestion = nil
+            selectedCall = pick
+            afterAutoCallShowcase { snap(call: pick) }
+        } else {
+            engine.postFeedNote("Delay — the extra point unit holds steady")
+            afterAutoCallShowcase { runPlay(offCall: nil, forcedType: nil) }
+        }
+    }
+
+    /// The QB's bail-out call when the play clock runs dry.
+    private func qbCheckdownCall() -> OffensivePlayCall {
+        // 3rd/4th & long: no auto-run into the sticks — base short pass.
+        if engine.down >= 3 && engine.distance >= 7 { return installedShortPass() }
+        return Bool.random() ? installedRun() : installedShortPass()
+    }
+
+    /// The playbook's base short pass (first installed Short Pass; Slant fallback).
+    private func installedShortPass() -> OffensivePlayCall {
+        OffensivePlayCall.allCases.first {
+            $0.category == "Short Pass" && $0.isInPlaybook(of: engine.playerOffensiveScheme)
+        } ?? .slant
+    }
+
+    /// The playbook's base run (Inside Run whenever it's installed).
+    private func installedRun() -> OffensivePlayCall {
+        if OffensivePlayCall.insideRun.isInPlaybook(of: engine.playerOffensiveScheme) {
+            return .insideRun
+        }
+        return OffensivePlayCall.allCases.first {
+            $0.category == "Run" && $0.isInPlaybook(of: engine.playerOffensiveScheme)
+        } ?? .insideRun
+    }
+
+    /// The DC's "check into base" call on a delay: the simplest sound shell
+    /// from the coached team's defensive scheme (always installed).
+    private var schemeBaseDefensiveCall: DefensiveCall {
+        switch engine.playerDefensiveScheme {
+        case .tampa2, .base43: return .cover2Shell
+        case .pressMan:        return .manFree
+        default:               return .cover3Base // base34 / cover3 / multiple / hybrid / nil
+        }
+    }
+
+    // MARK: Play clock visuals
+
+    private var playClockVisible: Bool {
+        playClockArmed && !engine.isGameOver
+    }
+
+    /// Gold while comfortable, amber under 5 s, red (pulsing) under 3 s.
+    private var playClockColor: Color {
+        if playClockRemaining <= 3 { return .danger }
+        if playClockRemaining <= 5 { return .warning }
+        return .accentGold
+    }
+
+    private var playClockFraction: CGFloat {
+        guard playClockTotal > 0 else { return 0 }
+        return CGFloat(max(0, playClockRemaining) / playClockTotal)
+    }
+
+    /// Wraps a snap-bar commit button (SNAP / READY / KICK / KICK XP) with
+    /// the decision-clock ring; the final five seconds add the countdown
+    /// number beside it. Inert when the clock is off or disarmed.
+    private func playClockWrapped<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(spacing: 10) {
+            if playClockVisible && playClockRemaining <= 5 {
+                Text("\(Int(playClockRemaining.rounded(.up)))")
+                    .font(.system(size: 17, weight: .black).monospacedDigit())
+                    .foregroundStyle(playClockColor)
+                    .contentTransition(.numericText(countsDown: true))
+                    .animation(.snappy(duration: 0.2), value: Int(playClockRemaining.rounded(.up)))
+                    .frame(width: 38, height: 38)
+                    .background(playClockColor.opacity(0.14), in: Circle())
+                    .overlay(Circle().strokeBorder(playClockColor, lineWidth: 2))
+                    .modifier(PlayClockPulse(active: playClockRemaining <= 3))
+                    .transition(.scale.combined(with: .opacity))
+            }
+            content()
+                .overlay {
+                    if playClockVisible {
+                        Capsule()
+                            .trim(from: 0, to: max(0.003, playClockFraction))
+                            .stroke(playClockColor,
+                                    style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                            .padding(-4.5)
+                            .animation(.linear(duration: 0.1), value: playClockFraction)
+                            .modifier(PlayClockPulse(active: playClockRemaining <= 3))
+                            .allowsHitTesting(false)
+                    }
+                }
+        }
+        .animation(.spring(duration: 0.25), value: playClockVisible && playClockRemaining <= 5)
+    }
+
     // MARK: - Game Flow
 
     private func startGame() {
@@ -1685,8 +2009,11 @@ struct CoachedGameView: View {
             if engine.playerAttemptsConversion {
                 conversionGoForTwo = false
                 withAnimation(.easeInOut(duration: 0.2)) { awaitingConversionDecision = true }
+                armPlayClock()
             } else if engine.chartCallsForTwo {
+                // The AI goes for two: the coach calls the stop — decision clock on.
                 syncFieldToSituation()
+                armPlayClock()
             } else {
                 runPlay(offCall: nil, forcedType: nil)
             }
@@ -1694,11 +2021,12 @@ struct CoachedGameView: View {
         }
         // A drive that begins with a kickoff plays the boot first. When the
         // situation calls for it, the coach chooses deep/onside from a call
-        // panel — cancellable until the explicit KICK button.
+        // panel — cancellable until the explicit KICK button (or the clock).
         if let kickoff = engine.pendingKickoff {
             if engine.onsideKickAvailable {
                 onsideSelected = false
                 withAnimation(.easeInOut(duration: 0.2)) { awaitingKickoffDecision = true }
+                armPlayClock()
                 return
             }
             engine.clearPendingKickoff()
@@ -1716,10 +2044,12 @@ struct CoachedGameView: View {
             fourthDownChoice = engine.isFourthDown
                 ? (engine.canAttemptFieldGoal ? .fieldGoal : .punt)
                 : nil
+            armPlayClock()
         } else {
-            // Opponent possession: line them up and wait — the next snap
-            // comes only from the coach's READY button (no timer).
+            // Opponent possession: line them up and wait — their offense
+            // snaps from the READY button or the decision clock.
             syncFieldToSituation()
+            armPlayClock()
         }
     }
 
@@ -1737,6 +2067,7 @@ struct CoachedGameView: View {
     /// the new drive's first snap. The outcome is already decided — this is
     /// pure presentation of the engine's kickoff draw.
     private func runKickoff(_ event: LiveGameEngine.KickoffEvent) {
+        disarmPlayClock()
         isAnimating = true
         let formation = PlayChoreographer.kickoffFormation(kickingTeamIsHome: event.kickingTeamIsHome)
         fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.7)
@@ -1804,6 +2135,10 @@ struct CoachedGameView: View {
     private func runPlay(offCall: OffensivePlayCall?, forcedType: PlayType?) {
         guard !isAnimating, !engine.isGameOver else { return }
 
+        // The snap commits the decision — the countdown ends here (a manual
+        // snap racing an in-flight auto call also invalidates it).
+        disarmPlayClock()
+
         let losYard = engine.yardLine
         let distanceBefore = engine.distance
         let offenseIsHome = engine.homeHasPossession
@@ -1842,6 +2177,10 @@ struct CoachedGameView: View {
         let defUnit = possessionBefore ? engine.awayDefenseUnit : engine.homeDefenseUnit
 
         let play: PlayResult
+        // The call the choreography animates: yours as dialed, or — on the
+        // opponent's snap — the adaptive AI's counter play when its read of
+        // your defensive tendencies triggered one (nil = base AI, as today).
+        var animatedCall = offCall
         if isConversionSnap {
             // Point-after try: the player's explicit XP/two choice (his own
             // score) or the shared chart (AI score, defended with defCall).
@@ -1851,8 +2190,9 @@ struct CoachedGameView: View {
                 defensivePackage: defPackage
             )
         } else {
+            if !engine.playerIsOnOffense { animatedCall = engine.aiOffensiveCall() }
             play = engine.step(
-                offensiveCall: engine.playerIsOnOffense ? offCall : nil,
+                offensiveCall: engine.playerIsOnOffense ? offCall : animatedCall,
                 forcedPlayType: forcedType,
                 defensivePackage: defPackage
             )
@@ -1867,7 +2207,7 @@ struct CoachedGameView: View {
         // then run the play from that same look.
         let formation = PlayChoreographer.preSnapStep(
             for: play, losYardLine: losYard, offenseIsHome: offenseIsHome,
-            call: offCall, defensivePackage: defPackage,
+            call: animatedCall, defensivePackage: defPackage,
             offenseNumbers: offUnit.numbers, defenseNumbers: defUnit.numbers
         )
         let presnapStances = PlayChoreographer.stances(offenseIsHome: offenseIsHome)
@@ -1897,7 +2237,7 @@ struct CoachedGameView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
             let steps = PlayChoreographer.steps(for: play, losYardLine: losYard,
                                                 offenseIsHome: offenseIsHome, matchups: matchups,
-                                                call: offCall, defensivePackage: defPackage)
+                                                call: animatedCall, defensivePackage: defPackage)
             // A flagged play gets the yellow laundry: the flag flies in while
             // the (wiped-out) snap plays out.
             if play.outcome == .penalty {
@@ -1981,6 +2321,7 @@ struct CoachedGameView: View {
     /// decided, so cancelling the visuals loses nothing.
     private func skipDrive() {
         guard !engine.isGameOver, !engine.playerIsOnOffense else { return }
+        disarmPlayClock() // skipping bypasses the clock; proceed() re-arms it
         fieldScene.cancelPlay()
         isAnimating = false
         var safety = 0
@@ -1988,7 +2329,10 @@ struct CoachedGameView: View {
         // past when the opponent's drive ends the half.
         while !engine.playerIsOnOffense && !engine.isGameOver
                 && !engine.halftimePending && safety < 40 {
-            engine.step(defensivePackage: defCall.package)
+            // The adaptive AI keeps exploiting the standing defensive call
+            // inside a skipped drive too (nil = base logic, as before).
+            engine.step(offensiveCall: engine.aiOffensiveCall(),
+                        defensivePackage: defCall.package)
             safety += 1
         }
         syncFieldToSituation()
@@ -2004,6 +2348,7 @@ struct CoachedGameView: View {
 
     private func simToEnd() {
         guard !engine.isGameOver else { return }
+        disarmPlayClock()
         fieldScene.cancelPlay()
         isAnimating = false
         engine.simToEnd()
@@ -2074,6 +2419,12 @@ struct CoachedGameView: View {
     private func callTimeout() {
         guard engine.useTimeout(home: playerTeamIsHome) else { return }
         showBanner("Timeout, \(playerAbbr) — the clock is stopped.")
+        // A timeout buys thinking time: the decision clock refills (too late
+        // once the delay auto-call is already in motion).
+        if playClockArmed, !playClockExpiring, let duration = playClockDuration {
+            playClockTotal = duration
+            playClockRemaining = duration
+        }
     }
 
     private func showBanner(_ text: String) {
@@ -2101,6 +2452,15 @@ struct CoachedGameView: View {
         sidelineNote = text
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.8) {
             if sidelineNote == text { sidelineNote = nil }
+        }
+    }
+
+    /// Adaptive-AI intel chip — held a beat longer than the sideline note so
+    /// the coach can actually read the scouting line mid-broadcast.
+    private func showAdaptationNote(_ text: String) {
+        adaptationNote = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) {
+            if adaptationNote == text { adaptationNote = nil }
         }
     }
 
@@ -2136,6 +2496,19 @@ struct CoachedGameView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
             if possessionBanner == text { possessionBanner = nil }
         }
+    }
+}
+
+// MARK: - Play Clock Pulse
+
+/// Opacity pulse applied to the decision-clock ring and countdown number
+/// over the final three seconds. A steady no-op while `active` is false.
+private struct PlayClockPulse: ViewModifier {
+    let active: Bool
+    func body(content: Content) -> some View {
+        content.phaseAnimator([false, true]) { view, dimmed in
+            view.opacity(active && dimmed ? 0.35 : 1.0)
+        } animation: { _ in .easeInOut(duration: 0.3) }
     }
 }
 

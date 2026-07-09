@@ -51,6 +51,11 @@ class FootballFieldScene: SCNScene {
     struct PlayStep {
         /// Player movements: `nodeIndex` 0-10 = home players, 11-21 = away players.
         var moves: [(nodeIndex: Int, to: SCNVector3, duration: TimeInterval)]
+        /// Waypoint runs (route running): the node sprints through each point
+        /// in order within this step, leg times split by distance so speed
+        /// stays constant through the cuts. A node with a path this step must
+        /// not also appear in `moves`.
+        var paths: [(nodeIndex: Int, points: [SCNVector3], duration: TimeInterval)] = []
         /// Optional ball behavior for this step.
         var ballMove: BallMove?
         /// Minimum length of the step in seconds.
@@ -975,6 +980,47 @@ class FootballFieldScene: SCNScene {
         }
     }
 
+    /// Runs a node through a polyline as chained `run` legs — SCNActions all
+    /// the way down, no per-frame work. Each leg gets time proportional to
+    /// its share of the total distance (constant speed through the cuts) and
+    /// the facing/gait logic in `run` banks each turn. Scheduled legs die
+    /// with the play generation, exactly like queued play steps.
+    private func runPath(nodeIndex: Int, points: [SCNVector3], duration: TimeInterval,
+                         backpedal: Bool = false) {
+        guard let node = playerNode(at: nodeIndex), !points.isEmpty else { return }
+        if points.count == 1 {
+            run(node: node, to: points[0], duration: duration, key: "playMove", backpedal: backpedal)
+            return
+        }
+        var lengths: [Float] = []
+        var total: Float = 0
+        var previous = node.position
+        for point in points {
+            let dx = point.x - previous.x
+            let dz = point.z - previous.z
+            let length = max((dx * dx + dz * dz).squareRoot(), 0.01)
+            lengths.append(length)
+            total += length
+            previous = point
+        }
+        let generation = playGeneration
+        var offset: TimeInterval = 0
+        for (index, point) in points.enumerated() {
+            let legDuration = duration * TimeInterval(lengths[index] / total)
+            if index == 0 {
+                run(node: node, to: point, duration: legDuration, key: "playMove",
+                    backpedal: backpedal)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + offset) { [weak self] in
+                    guard let self, self.playGeneration == generation else { return }
+                    self.run(node: node, to: point, duration: legDuration, key: "playMove",
+                             backpedal: backpedal)
+                }
+            }
+            offset += legDuration
+        }
+    }
+
     /// Both arms shoot up for a beat — catch attempts and pick attempts —
     /// with a small leap at the ball while the arms are up.
     private func reach(nodeIndex: Int) {
@@ -1120,6 +1166,9 @@ class FootballFieldScene: SCNScene {
         for move in step.moves {
             duration = max(duration, move.duration)
         }
+        for path in step.paths {
+            duration = max(duration, path.duration)
+        }
         switch step.ballMove {
         case .arc(_, _, let ballDuration), .slide(_, let ballDuration):
             duration = max(duration, ballDuration)
@@ -1136,6 +1185,10 @@ class FootballFieldScene: SCNScene {
             guard let node = playerNode(at: move.nodeIndex) else { continue }
             run(node: node, to: move.to, duration: move.duration, key: "playMove",
                 backpedal: step.backpedals.contains(move.nodeIndex))
+        }
+        for path in step.paths where !path.points.isEmpty {
+            runPath(nodeIndex: path.nodeIndex, points: path.points, duration: path.duration,
+                    backpedal: step.backpedals.contains(path.nodeIndex))
         }
 
         for index in step.pulses { pulse(nodeIndex: index) }

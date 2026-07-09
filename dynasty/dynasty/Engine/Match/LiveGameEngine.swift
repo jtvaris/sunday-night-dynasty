@@ -363,11 +363,14 @@ final class LiveGameEngine: ObservableObject {
     }
 
     // Day-grade extras tallied per play in ``step`` (presentation only):
-    // 20+ yard gains by the ball's key man, turnovers charged to him, and
-    // sacks hung on the QB who took them.
+    // 20+ yard gains by the ball's key man, turnovers charged to him, sacks
+    // hung on the QB who took them, and missed reads (a clearly open man
+    // went unthrown on a failed/short dropback — see MatchupResolver's
+    // qbMissedOpenMan) charged to the QB.
     private var bigPlayCounts: [UUID: Int] = [:]
     private var turnoverCounts: [UUID: Int] = [:]
     private var sackTakenCounts: [UUID: Int] = [:]
+    private var missedReadCounts: [UUID: Int] = [:]
 
     /// Grade snapshots for the Board's trend arrow: `gradeSnapshots` holds
     /// the player-team grades as of the drive BEFORE last, so the trend
@@ -379,7 +382,8 @@ final class LiveGameEngine: ObservableObject {
     /// reads it. Base 60, shifted by role-weighted matchup wins/losses
     /// (trench work weighs heavier, pass pro most of all — OL have no
     /// counting stats) and headline stat events: TDs +6, sacks made +4,
-    /// 20+ yard plays +2, INTs thrown / fumbles lost −8, sacks taken −2.
+    /// 20+ yard plays +2, INTs thrown / fumbles lost −8, sacks taken −2,
+    /// missed reads (open man unthrown on a failed dropback) −1.5.
     /// Stats accumulate per completed drive; battles update per play.
     func playerGameGrade(_ playerID: UUID) -> Int {
         var score = 60.0
@@ -405,6 +409,7 @@ final class LiveGameEngine: ObservableObject {
         score += Double(bigPlayCounts[playerID] ?? 0) * 2
         score -= Double(turnoverCounts[playerID] ?? 0) * 8
         score -= Double(sackTakenCounts[playerID] ?? 0) * 2
+        score -= Double(missedReadCounts[playerID] ?? 0) * 1.5
         return max(0, min(100, Int(score.rounded())))
     }
 
@@ -862,6 +867,45 @@ final class LiveGameEngine: ObservableObject {
     /// Current momentum (-1 away … +1 home), for UI meters.
     var currentMomentum: Double { momentum }
 
+    // MARK: - Adaptive Opponent AI (live only)
+
+    /// Broadcast-style intel line published when the AI opponent locks onto
+    /// (or shifts) a read of the player's tendencies — "CHI is keying on the
+    /// inside run". Rate-limited to ~1 per 2 minutes of game time. Purely
+    /// presentational; the counter-calls themselves flow through
+    /// ``aiDefensivePackage()`` / ``aiOffensiveCall()``.
+    struct AdaptationHint: Equatable, Identifiable {
+        let id = UUID()
+        let text: String
+    }
+
+    @Published private(set) var lastAdaptationHint: AdaptationHint?
+
+    /// The player's recorded call history for this game (see
+    /// ``AdaptiveOpponentAI/Tracker``). Fills only from explicit live calls
+    /// passed to ``step`` — a nil-argument game never records, so quick-sim
+    /// parity is intact.
+    private var tendencyTracker = AdaptiveOpponentAI.Tracker()
+
+    /// The tendency the AI DEFENSE is currently keying on (player attacks).
+    private var activeDefenseRead: AdaptiveOpponentAI.OffenseTendency?
+    /// The tendency the AI OFFENSE is currently exploiting (player defends).
+    private var activeOffenseRead: AdaptiveOpponentAI.DefenseTendency?
+    /// Counter calls rolled once per snap (at the end of the previous
+    /// ``step``), so the pre-snap preview and the actual play always agree.
+    private var pendingDefenseCounter: DefensivePackage?
+    private var pendingOffenseCounter: OffensivePlayCall?
+    /// Absolute game second of the last published hint (rate limiting).
+    private var lastHintGameSecond: Int?
+    private static let hintCooldownSeconds = 120
+
+    /// Opponent coordinator grades — how fast and hard the AI counters
+    /// (see `AdaptiveOpponentAI.scaledThreshold` / `counterShare`).
+    private let opponentDCGrade: Int
+    private let opponentOCGrade: Int
+    /// Opponent abbreviation for the intel lines ("CHI is keying on ...").
+    private let opponentAbbreviation: String
+
     // MARK: - Immutable Setup
 
     let homeTeamID: UUID
@@ -982,6 +1026,16 @@ final class LiveGameEngine: ObservableObject {
         awayOffScheme = awayCoaches.first { $0.role == .offensiveCoordinator }?.offensiveScheme
         awayDefScheme = awayCoaches.first { $0.role == .defensiveCoordinator }?.defensiveScheme
 
+        // Adaptive opponent AI: the OPPONENT's coordinators decide how fast
+        // and hard the AI counters the player's tendencies. Grade blends
+        // play-calling with adaptability; 50 = league-average fallback.
+        let opponentCoaches = playerTeamIsHome ? awayCoaches : homeCoaches
+        opponentDCGrade = opponentCoaches.first { $0.role == .defensiveCoordinator }
+            .map { ($0.playCalling + $0.adaptability) / 2 } ?? 50
+        opponentOCGrade = opponentCoaches.first { $0.role == .offensiveCoordinator }
+            .map { ($0.playCalling + $0.adaptability) / 2 } ?? 50
+        opponentAbbreviation = playerTeamIsHome ? awayTeam.abbreviation : homeTeam.abbreviation
+
         // Medical staff for live injury risk/recovery (mirrors WeekAdvancer's
         // per-team doctor/physio lookup for the weekly roll).
         homeDoctor = homeCoaches.first { $0.role == .teamDoctor }
@@ -1041,6 +1095,12 @@ final class LiveGameEngine: ObservableObject {
         // nothing is queued, so auto-sim parity is intact.
         defer { applyPendingSubstitutions() }
 
+        // Adaptive opponent AI: re-read the player's tendencies and roll the
+        // NEXT snap's counter calls once this play (and any drive/possession
+        // bookkeeping) has fully resolved. A no-op until the player's
+        // explicit calls have filled the tracker — nil-argument parity intact.
+        defer { updateAdaptationState() }
+
         lastPlayInjuries = []
 
         // GameSimulator applies morale/personality modifiers once per drive.
@@ -1091,6 +1151,17 @@ final class LiveGameEngine: ObservableObject {
             // Halftime adjustment: player's team offense only, second half only.
             adjustments: (quarter >= 3 && playerIsOnOffense) ? halftimeAdjustment?.simAdjustments : nil
         )
+
+        // Adaptive opponent AI: log the PLAYER's explicit call for tendency
+        // tracking (scrimmage snaps only — the intent counts even when a
+        // flag wipes the down out). AI-side calls are never recorded.
+        if result.playType == .pass || result.playType == .run {
+            if playerIsOnOffense {
+                if let call = offensiveCall { tendencyTracker.recordOffense(call) }
+            } else if let package = defensivePackage {
+                tendencyTracker.recordDefense(package)
+            }
+        }
 
         // Record the play with the clock state at the snap (mirrors DriveSimulator).
         var recordedPlay = result
@@ -1164,6 +1235,12 @@ final class LiveGameEngine: ObservableObject {
             }
             if recordedPlay.outcome == .sack {
                 sackTakenCounts[offenseUnit[0].id, default: 0] += 1
+            }
+            // Missed read: a clearly open man went unthrown on a failed or
+            // short dropback — small QB grade ding (presentation only; the
+            // feed line comes from the same matchup event).
+            if lastMatchups?.qbMissedOpenMan == true {
+                missedReadCounts[offenseUnit[0].id, default: 0] += 1
             }
         } else {
             lastMatchups = nil
@@ -1280,6 +1357,17 @@ final class LiveGameEngine: ObservableObject {
             package = .standard // Cover 3, no blitz, base front
         }
 
+        // Adaptive counter (AI defense vs the PLAYER's offense, live only):
+        // when the player's calls have shown a clear tendency, the pre-rolled
+        // counter package replaces the base pick — but never the red-zone
+        // sellout or the late-lead prevent shell. The roll happened once at
+        // the end of the previous step (see updateAdaptationState), so the
+        // pre-snap preview and the actual snap always see the same call.
+        if playerIsOnOffense, let counter = pendingDefenseCounter,
+           yardsToEndzone > 10, package.coverage != .prevent {
+            package = counter
+        }
+
         // Game-plan shading — only for the player's own defense.
         if !playerIsOnOffense, let plan = playerGamePlan {
             if plan.blitzFrequency > 0.65, package.blitz == .noBlitz,
@@ -1294,6 +1382,119 @@ final class LiveGameEngine: ObservableObject {
             }
         }
         return package
+    }
+
+    /// The AI's adaptive offensive call for the next snap (player defends,
+    /// live only). Returns the pre-rolled counter play when the player's
+    /// defensive tendencies triggered one, `nil` otherwise — and `nil` keeps
+    /// today's base behavior exactly (`PlaySimulator.decidePlayCall`).
+    /// Never fires on 4th down: punt/FG decisions stay with the base logic.
+    func aiOffensiveCall() -> OffensivePlayCall? {
+        guard !isGameOver, !playerIsOnOffense, down <= 3 else { return nil }
+        return pendingOffenseCounter
+    }
+
+    // MARK: - Adaptive Opponent AI (private)
+
+    /// Re-reads the player's tendencies after each step and rolls the NEXT
+    /// snap's counter calls. Publishes an intel line when the AI's read
+    /// first activates or shifts (rate-limited). With an empty tracker
+    /// (nil-argument games) this resolves to no-ops and consumes no RNG.
+    private func updateAdaptationState() {
+        guard !isGameOver else { return }
+
+        // AI DEFENSE reads the player's offense.
+        let dcThreshold = AdaptiveOpponentAI.scaledThreshold(
+            base: AdaptiveOpponentAI.offenseCategoryBaseThreshold,
+            coordinatorGrade: opponentDCGrade
+        )
+        if let read = tendencyTracker.dominantOffenseTendency(threshold: dcThreshold) {
+            if read != activeDefenseRead {
+                activeDefenseRead = read
+                emitAdaptationHint(
+                    AdaptiveOpponentAI.defenseKeyHint(for: read, opponentAbbr: opponentAbbreviation)
+                )
+            }
+            let share = AdaptiveOpponentAI.counterShare(coordinatorGrade: opponentDCGrade)
+            pendingDefenseCounter = Double.random(in: 0..<1) < share
+                ? AdaptiveOpponentAI.defensiveCounter(
+                    for: read,
+                    scheme: playerTeamIsHome ? awayDefScheme : homeDefScheme
+                )
+                : nil
+        } else {
+            activeDefenseRead = nil
+            pendingDefenseCounter = nil
+        }
+
+        // AI OFFENSE reads the player's defense.
+        if let read = tendencyTracker.dominantDefenseTendency(coordinatorGrade: opponentOCGrade) {
+            if read != activeOffenseRead {
+                activeOffenseRead = read
+                let qbName = (playerTeamIsHome ? awayOffenseUnit : homeOffenseUnit)[0].shortName
+                emitAdaptationHint(
+                    AdaptiveOpponentAI.offenseAdjustHint(for: read, qbName: qbName)
+                )
+            }
+            let share = AdaptiveOpponentAI.counterShare(coordinatorGrade: opponentOCGrade)
+            pendingOffenseCounter = Double.random(in: 0..<1) < share
+                ? AdaptiveOpponentAI.offensiveCounter(
+                    for: read,
+                    scheme: playerTeamIsHome ? awayOffScheme : homeOffScheme,
+                    distance: distance,
+                    yardsToEndzone: 100 - yardLine
+                )
+                : nil
+        } else {
+            activeOffenseRead = nil
+            pendingOffenseCounter = nil
+        }
+    }
+
+    /// Publishes an adaptation intel line (overlay + mini feed), at most one
+    /// per ~2 minutes of game time so the broadcast never spams.
+    private func emitAdaptationHint(_ text: String) {
+        let now = elapsedGameSeconds
+        if let last = lastHintGameSecond, now - last < LiveGameEngine.hintCooldownSeconds {
+            return
+        }
+        lastHintGameSecond = now
+        lastAdaptationHint = AdaptationHint(text: text)
+        // Feed-only line for the broadcast ticker — same mechanism as the
+        // substitution notes: playLog only, never the drive/stats.
+        postFeedNote(text)
+    }
+
+    /// Appends a feed-only line to the broadcast ticker (playNumber 0 —
+    /// never part of any drive, the stats, or the clock), e.g. the play
+    /// clock's "Delay — J. Love checks into Inside Run". Same mechanism as
+    /// the substitution/intel notes; UI-triggered only, so nil-argument
+    /// parity with `GameSimulator.simulate` is untouched.
+    func postFeedNote(_ text: String) {
+        playLog.append(PlayResult(
+            playNumber: 0,
+            quarter: quarter,
+            timeRemaining: timeRemaining,
+            down: down,
+            distance: distance,
+            yardLine: yardLine,
+            playType: .kneel,
+            outcome: .kneel,
+            yardsGained: 0,
+            description: text,
+            isFirstDown: false,
+            isTurnover: false,
+            scoringPlay: false,
+            pointsScored: 0
+        ))
+    }
+
+    /// Absolute game seconds elapsed (Q1 kickoff = 0). Close enough in OT
+    /// for hint rate-limiting purposes.
+    private var elapsedGameSeconds: Int {
+        let quarterLen = GameSimulator.quarterDuration
+        let intoQuarter = quarterLen - max(0, min(quarterLen, timeRemaining))
+        return (min(quarter, 5) - 1) * quarterLen + intoQuarter
     }
 
     // MARK: - Auto-Sim

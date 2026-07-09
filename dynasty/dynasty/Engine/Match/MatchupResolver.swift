@@ -158,6 +158,14 @@ struct PlayMatchups {
     var targetOffRole: Int?
     /// Defense role of the intercepting DB, when known.
     var pickDefRole: Int?
+    /// Offense role of a NON-targeted receiver who clearly won his route on
+    /// a pass play (visual: he uncovers, and if the ball never came his way
+    /// he throws his hands up). Nil when nobody else was obviously open.
+    var openNonTargetOffRole: Int?
+    /// True when the open man above went unthrown on a failed or short
+    /// dropback — the "QB missed the read" signal for the feed line and his
+    /// day grade. Purely presentational; the sim never reads it.
+    var qbMissedOpenMan = false
 }
 
 // MARK: - Matchup Resolver
@@ -194,6 +202,12 @@ enum MatchupResolver {
                        scheme: offensiveScheme, call: offensiveCall)
         default:
             break
+        }
+
+        // Dropbacks: was somebody ELSE clearly open? Rating-driven and purely
+        // presentational — the outcome and target above never change.
+        if play.playType == .pass {
+            resolveOpenNonTarget(&m, play: play, offense: offense, defense: defense)
         }
 
         // Star showcase: an 88+ OVR winner gets flagged so the UI can shine.
@@ -306,6 +320,40 @@ enum MatchupResolver {
                 magnitude: clamp((coverage(corner) - catchRating(receiver)) / 30, 0.4, 1)
             ))
         }
+    }
+
+    // MARK: Open Non-Target (QB read layer)
+
+    /// Finds the best NON-targeted eligible on a pass play. When his edge
+    /// over his cover man is decisive he's flagged as clearly open — the
+    /// choreographer uncovers him on the field. If the ball then failed or
+    /// died short, that reads as a missed read: a feed line names him and
+    /// the QB's day grade takes a small ding (`qbMissedOpenMan`). Outcome,
+    /// target selection and sim distributions are untouched.
+    private static func resolveOpenNonTarget(_ m: inout PlayMatchups, play: PlayResult,
+                                             offense: FieldUnit, defense: FieldUnit) {
+        let eligible: [Int] = [7, 8, 9, 10, 1].filter { $0 != m.targetOffRole }
+        var best: (role: Int, edge: Double)?
+        for role in eligible {
+            let edge = catchRating(offense[role]) - coverage(defense[coverFor(offRole: role)])
+                + Double.random(in: -5...5)
+            if best == nil || edge > best!.edge { best = (role, edge) }
+        }
+        guard let best, best.edge >= 8 else { return }
+        m.openNonTargetOffRole = best.role
+
+        let failed = play.outcome == .incompletion || play.outcome == .interception
+            || play.outcome == .sack
+        let short = play.outcome == .completion && play.yardsGained < min(play.distance, 4)
+        guard failed || short else { return }
+        m.qbMissedOpenMan = true
+        let receiver = offense[best.role]
+        m.events.append(Event(
+            kind: .separation,
+            text: "\(receiver.shortName) had a step — the ball went elsewhere",
+            offenseWon: true, offRole: best.role, defRole: coverFor(offRole: best.role),
+            magnitude: 0.55
+        ))
     }
 
     // MARK: Interception

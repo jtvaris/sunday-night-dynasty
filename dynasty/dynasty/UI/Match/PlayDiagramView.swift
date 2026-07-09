@@ -5,46 +5,40 @@ import SwiftUI
 /// Chalkboard X&O art for an offensive play call, drawn with Canvas in a
 /// normalized space (offense drives toward the top). O = offense; the primary
 /// route/run lane is gold with an arrowhead, secondary routes are dashed gray.
+///
+/// The geometry is NOT hand-drawn here: it is `RouteSpec.diagram(for:)` — a
+/// 2D projection of the exact spec + formation the 3D field choreographs, so
+/// this card and the on-field routes can never disagree.
 struct PlayDiagramView: View {
 
     let call: OffensivePlayCall
-
-    /// One receiver/back path: polyline through normalized points.
-    private struct Route {
-        let points: [CGPoint]
-        let primary: Bool
-    }
 
     var body: some View {
         Canvas { context, size in
             let w = size.width
             let h = size.height
+            let diagram = RouteSpec.diagram(for: call)
             func pt(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * w, y: p.y * h) }
 
             // Line of scrimmage
             var los = Path()
-            los.move(to: CGPoint(x: 0.03 * w, y: losY * h))
-            los.addLine(to: CGPoint(x: 0.97 * w, y: losY * h))
+            los.move(to: CGPoint(x: 0.03 * w, y: diagram.losY * h))
+            los.addLine(to: CGPoint(x: 0.97 * w, y: diagram.losY * h))
             context.stroke(los, with: .color(.white.opacity(0.35)),
                            style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
 
-            // Offensive linemen: five O's on the ball.
-            for i in 0..<5 {
-                let x = 0.5 + CGFloat(i - 2) * 0.09
-                drawO(context, at: pt(CGPoint(x: x, y: losY + 0.055)), radius: 0.026 * w)
+            // Alignments straight from the field formation: five linemen,
+            // the QB (filled) and the skill players.
+            for spot in diagram.linemen {
+                drawO(context, at: pt(spot), radius: 0.026 * w)
             }
-            // QB (gun) + RB
-            drawO(context, at: pt(qbSpot), radius: 0.026 * w, filled: true)
-            if call != .qbSneak {
-                drawO(context, at: pt(rbSpot), radius: 0.026 * w)
-            }
-            // Receivers
-            for spot in receiverSpots {
+            drawO(context, at: pt(diagram.qb), radius: 0.026 * w, filled: true)
+            for spot in diagram.skill {
                 drawO(context, at: pt(spot), radius: 0.026 * w)
             }
 
-            // Routes
-            for route in routes {
+            // Routes — the spec's polylines, primary read in gold.
+            for route in diagram.routes {
                 guard route.points.count > 1 else { continue }
                 var path = Path()
                 path.move(to: pt(route.points[0]))
@@ -62,148 +56,6 @@ struct PlayDiagramView: View {
             }
         }
         .aspectRatio(1.5, contentMode: .fit)
-    }
-
-    // MARK: Geometry
-
-    private var losY: CGFloat { 0.60 }
-    private var qbSpot: CGPoint { CGPoint(x: 0.5, y: losY + 0.20) }
-    private var rbSpot: CGPoint { CGPoint(x: 0.58, y: losY + 0.20) }
-
-    /// WR-L, slot, TE, WR-R alignment spots.
-    private var receiverSpots: [CGPoint] {
-        [CGPoint(x: 0.09, y: losY + 0.05),
-         CGPoint(x: 0.24, y: losY + 0.07),
-         CGPoint(x: 0.76, y: losY + 0.055),
-         CGPoint(x: 0.91, y: losY + 0.05)]
-    }
-
-    /// The play's routes in normalized coords (y decreases downfield).
-    private var routes: [Route] {
-        let wrL = receiverSpots[0], slot = receiverSpots[1]
-        let te = receiverSpots[2], wrR = receiverSpots[3]
-
-        func up(_ p: CGPoint, _ dy: CGFloat) -> CGPoint { CGPoint(x: p.x, y: p.y - dy) }
-
-        switch call {
-        case .insideRun:
-            return [Route(points: [rbSpot, CGPoint(x: 0.53, y: losY + 0.02), CGPoint(x: 0.5, y: 0.16)], primary: true),
-                    Route(points: [wrL, up(wrL, 0.18)], primary: false),
-                    Route(points: [wrR, up(wrR, 0.18)], primary: false)]
-        case .outsideRun:
-            return [Route(points: [rbSpot, CGPoint(x: 0.74, y: losY + 0.06), CGPoint(x: 0.88, y: 0.24)], primary: true),
-                    Route(points: [te, up(te, 0.16)], primary: false),
-                    Route(points: [wrL, up(wrL, 0.2)], primary: false)]
-        case .counter:
-            return [Route(points: [rbSpot, CGPoint(x: 0.68, y: losY + 0.14), CGPoint(x: 0.42, y: losY + 0.02), CGPoint(x: 0.36, y: 0.2)], primary: true),
-                    Route(points: [wrR, up(wrR, 0.18)], primary: false),
-                    Route(points: [te, up(te, 0.12)], primary: false)]
-        case .toss:
-            return [Route(points: [rbSpot, CGPoint(x: 0.8, y: losY + 0.16), CGPoint(x: 0.95, y: 0.3)], primary: true),
-                    Route(points: [wrR, up(wrR, 0.12), CGPoint(x: 0.99, y: losY - 0.1)], primary: false),
-                    Route(points: [wrL, up(wrL, 0.2)], primary: false)]
-        case .draw:
-            return [Route(points: [qbSpot, CGPoint(x: 0.5, y: losY + 0.26)], primary: false),
-                    Route(points: [rbSpot, CGPoint(x: 0.52, y: losY + 0.05), CGPoint(x: 0.5, y: 0.2)], primary: true)]
-        case .screen:
-            return [Route(points: [rbSpot, CGPoint(x: 0.72, y: losY + 0.16), CGPoint(x: 0.86, y: losY + 0.1), CGPoint(x: 0.92, y: 0.3)], primary: true),
-                    Route(points: [wrL, up(wrL, 0.22)], primary: false),
-                    Route(points: [slot, up(slot, 0.18)], primary: false)]
-        case .dive:
-            return [Route(points: [rbSpot, CGPoint(x: 0.5, y: losY + 0.03), CGPoint(x: 0.5, y: 0.34)], primary: true),
-                    Route(points: [te, up(te, 0.08)], primary: false),
-                    Route(points: [wrL, up(wrL, 0.08)], primary: false)]
-        case .jetSweep:
-            return [Route(points: [slot, CGPoint(x: 0.55, y: losY + 0.1), CGPoint(x: 0.82, y: losY + 0.06), CGPoint(x: 0.95, y: 0.3)], primary: true),
-                    Route(points: [rbSpot, CGPoint(x: 0.5, y: losY + 0.06)], primary: false),
-                    Route(points: [wrR, up(wrR, 0.12)], primary: false)]
-        case .slant:
-            return [Route(points: [wrL, up(wrL, 0.1), CGPoint(x: 0.34, y: 0.3)], primary: true),
-                    Route(points: [slot, up(slot, 0.09), CGPoint(x: 0.44, y: 0.38)], primary: false),
-                    Route(points: [wrR, up(wrR, 0.24)], primary: false)]
-        case .quickOut:
-            return [Route(points: [wrR, up(wrR, 0.12), CGPoint(x: 0.99, y: losY - 0.14)], primary: true),
-                    Route(points: [wrL, up(wrL, 0.12), CGPoint(x: 0.01, y: losY - 0.14)], primary: false),
-                    Route(points: [slot, up(slot, 0.2)], primary: false)]
-        case .hitch:
-            return [Route(points: [wrL, up(wrL, 0.14), CGPoint(x: 0.11, y: losY - 0.1)], primary: true),
-                    Route(points: [wrR, up(wrR, 0.14), CGPoint(x: 0.89, y: losY - 0.1)], primary: false),
-                    Route(points: [slot, up(slot, 0.2)], primary: false)]
-        case .flat:
-            return [Route(points: [rbSpot, CGPoint(x: 0.78, y: losY + 0.13), CGPoint(x: 0.95, y: losY - 0.02)], primary: true),
-                    Route(points: [te, up(te, 0.14), CGPoint(x: 0.68, y: 0.34)], primary: false),
-                    Route(points: [wrR, up(wrR, 0.26)], primary: false)]
-        case .drag:
-            return [Route(points: [slot, up(slot, 0.07), CGPoint(x: 0.72, y: losY - 0.11)], primary: true),
-                    Route(points: [te, up(te, 0.07), CGPoint(x: 0.34, y: losY - 0.14)], primary: false),
-                    Route(points: [wrL, up(wrL, 0.26)], primary: false)]
-        case .stick:
-            return [Route(points: [te, up(te, 0.12), CGPoint(x: 0.72, y: losY - 0.08)], primary: true),
-                    Route(points: [wrR, up(wrR, 0.1), CGPoint(x: 0.99, y: losY - 0.12)], primary: false),
-                    Route(points: [rbSpot, CGPoint(x: 0.74, y: losY + 0.12), CGPoint(x: 0.9, y: losY - 0.01)], primary: false)]
-        case .mesh:
-            return [Route(points: [slot, up(slot, 0.06), CGPoint(x: 0.7, y: losY - 0.1)], primary: true),
-                    Route(points: [te, up(te, 0.05), CGPoint(x: 0.3, y: losY - 0.13)], primary: false),
-                    Route(points: [wrL, up(wrL, 0.32)], primary: false)]
-        case .curl:
-            return [Route(points: [wrL, up(wrL, 0.26), CGPoint(x: 0.13, y: losY - 0.19)], primary: true),
-                    Route(points: [wrR, up(wrR, 0.26), CGPoint(x: 0.87, y: losY - 0.19)], primary: false),
-                    Route(points: [slot, up(slot, 0.14), CGPoint(x: 0.32, y: losY - 0.1)], primary: false)]
-        case .dig:
-            return [Route(points: [wrR, up(wrR, 0.3), CGPoint(x: 0.55, y: losY - 0.3)], primary: true),
-                    Route(points: [wrL, up(wrL, 0.34)], primary: false),
-                    Route(points: [slot, up(slot, 0.12), CGPoint(x: 0.4, y: losY - 0.08)], primary: false)]
-        case .seam:
-            return [Route(points: [te, CGPoint(x: 0.72, y: 0.12)], primary: true),
-                    Route(points: [wrL, up(wrL, 0.3)], primary: false),
-                    Route(points: [wrR, up(wrR, 0.14), CGPoint(x: 0.97, y: losY - 0.12)], primary: false)]
-        case .cross:
-            return [Route(points: [slot, up(slot, 0.12), CGPoint(x: 0.62, y: 0.3), CGPoint(x: 0.86, y: 0.22)], primary: true),
-                    Route(points: [wrR, up(wrR, 0.3)], primary: false),
-                    Route(points: [wrL, up(wrL, 0.16), CGPoint(x: 0.08, y: losY - 0.14)], primary: false)]
-        case .postCorner:
-            return [Route(points: [slot, up(slot, 0.2), CGPoint(x: 0.34, y: 0.26), CGPoint(x: 0.16, y: 0.1)], primary: true),
-                    Route(points: [wrL, up(wrL, 0.3)], primary: false),
-                    Route(points: [wrR, up(wrR, 0.26)], primary: false)]
-        case .comeback:
-            return [Route(points: [wrR, up(wrR, 0.34), CGPoint(x: 0.97, y: losY - 0.24)], primary: true),
-                    Route(points: [wrL, up(wrL, 0.34), CGPoint(x: 0.03, y: losY - 0.24)], primary: false),
-                    Route(points: [te, up(te, 0.16)], primary: false)]
-        case .wheel:
-            return [Route(points: [rbSpot, CGPoint(x: 0.78, y: losY + 0.1), CGPoint(x: 0.92, y: losY - 0.04), CGPoint(x: 0.93, y: 0.2)], primary: true),
-                    Route(points: [wrR, up(wrR, 0.2), CGPoint(x: 0.72, y: 0.16)], primary: false),
-                    Route(points: [slot, up(slot, 0.12), CGPoint(x: 0.4, y: losY - 0.1)], primary: false)]
-        case .goRoute:
-            return [Route(points: [wrL, CGPoint(x: 0.09, y: 0.06)], primary: true),
-                    Route(points: [wrR, up(wrR, 0.3)], primary: false),
-                    Route(points: [slot, up(slot, 0.16), CGPoint(x: 0.36, y: losY - 0.12)], primary: false)]
-        case .post:
-            return [Route(points: [wrR, up(wrR, 0.24), CGPoint(x: 0.62, y: 0.08)], primary: true),
-                    Route(points: [wrL, up(wrL, 0.3)], primary: false),
-                    Route(points: [rbSpot, CGPoint(x: 0.7, y: losY + 0.1), CGPoint(x: 0.85, y: losY - 0.02)], primary: false)]
-        case .corner:
-            return [Route(points: [slot, up(slot, 0.22), CGPoint(x: 0.08, y: 0.12)], primary: true),
-                    Route(points: [wrR, up(wrR, 0.28)], primary: false),
-                    Route(points: [wrL, up(wrL, 0.14), CGPoint(x: 0.3, y: losY - 0.1)], primary: false)]
-        case .flood:
-            return [Route(points: [wrR, up(wrR, 0.32)], primary: true),
-                    Route(points: [te, up(te, 0.14), CGPoint(x: 0.93, y: losY - 0.16)], primary: false),
-                    Route(points: [rbSpot, CGPoint(x: 0.78, y: losY + 0.12), CGPoint(x: 0.95, y: losY - 0.01)], primary: false)]
-        case .bomb:
-            return [Route(points: [wrL, CGPoint(x: 0.12, y: 0.03)], primary: true),
-                    Route(points: [wrR, CGPoint(x: 0.88, y: 0.03)], primary: false),
-                    Route(points: [slot, up(slot, 0.24)], primary: false)]
-        case .playActionDeep:
-            return [Route(points: [wrL, up(wrL, 0.2), CGPoint(x: 0.32, y: 0.06)], primary: true),
-                    Route(points: [rbSpot, CGPoint(x: 0.52, y: losY + 0.04)], primary: false),
-                    Route(points: [wrR, up(wrR, 0.36)], primary: false)]
-        case .qbSneak:
-            return [Route(points: [qbSpot, CGPoint(x: 0.5, y: losY - 0.12)], primary: true)]
-        case .spike:
-            return [Route(points: [qbSpot, CGPoint(x: 0.5, y: losY + 0.28)], primary: true)]
-        case .kneel:
-            return [Route(points: [qbSpot, CGPoint(x: 0.5, y: losY + 0.28)], primary: true)]
-        }
     }
 
     // MARK: Drawing helpers

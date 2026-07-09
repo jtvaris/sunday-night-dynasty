@@ -28,6 +28,24 @@ enum ThemePreference: String, CaseIterable, Identifiable {
     }
 }
 
+/// Live-game decision clock: how long the coach gets to call a play before
+/// the QB (offense) or the DC (defense) checks into a simple base call and
+/// the snap goes off automatically. Never a delay-of-game penalty.
+/// Read by `CoachedGameView` via the shared "playClockSetting" UserDefaults key.
+enum PlayClockSetting: String, CaseIterable, Identifiable {
+    case ten = "10"
+    case fifteen = "15"
+    case off = "off"
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .ten:     return "10 s"
+        case .fifteen: return "15 s"
+        case .off:     return "Off"
+        }
+    }
+}
+
 /// Difficulty tier — drives AI strength multipliers across systems.
 enum Difficulty: String, CaseIterable, Identifiable {
     case easy, normal, hard, realistic
@@ -63,6 +81,7 @@ struct SettingsView: View {
     // Gameplay
     @AppStorage("gameSpeed") private var gameSpeedRaw: String = GameSpeed.normal.rawValue
     @AppStorage("difficulty") private var difficultyRaw: String = Difficulty.normal.rawValue
+    @AppStorage("playClockSetting") private var playClockRaw: String = PlayClockSetting.ten.rawValue
 
     // Appearance
     @AppStorage("themePreference") private var themeRaw: String = ThemePreference.dark.rawValue
@@ -214,10 +233,22 @@ struct SettingsView: View {
                 Spacer()
             }
             .listRowBackground(Color.backgroundSecondary)
+
+            Picker(selection: $playClockRaw) {
+                ForEach(PlayClockSetting.allCases) { option in
+                    Text(option.label).tag(option.rawValue)
+                }
+            } label: {
+                Label("Play Clock", systemImage: "timer")
+                    .foregroundStyle(Color.textPrimary)
+            }
+            .pickerStyle(.menu)
+            .tint(Color.accentGold)
+            .listRowBackground(Color.backgroundSecondary)
         } header: {
             sectionHeader("Gameplay")
         } footer: {
-            Text("Difficulty affects AI roster construction, trade valuation, and free-agent competition.")
+            Text("Difficulty affects AI roster construction, trade valuation, and free-agent competition. Play Clock limits live-game decision time — when it runs out, the QB or defense checks into a simple base call (never a penalty).")
                 .foregroundStyle(Color.textTertiary)
         }
     }
@@ -384,6 +415,7 @@ struct SettingsView: View {
         hapticsEnabled = true
         gameSpeedRaw = GameSpeed.normal.rawValue
         difficultyRaw = Difficulty.normal.rawValue
+        playClockRaw = PlayClockSetting.ten.rawValue
         themeRaw = ThemePreference.dark.rawValue
         notificationsEnabled = true
         notifyCapWarnings = true
