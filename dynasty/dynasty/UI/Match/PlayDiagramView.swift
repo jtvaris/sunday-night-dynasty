@@ -109,6 +109,14 @@ struct PlayDiagramView: View {
             return [Route(points: [rbSpot, CGPoint(x: 0.72, y: losY + 0.16), CGPoint(x: 0.86, y: losY + 0.1), CGPoint(x: 0.92, y: 0.3)], primary: true),
                     Route(points: [wrL, up(wrL, 0.22)], primary: false),
                     Route(points: [slot, up(slot, 0.18)], primary: false)]
+        case .dive:
+            return [Route(points: [rbSpot, CGPoint(x: 0.5, y: losY + 0.03), CGPoint(x: 0.5, y: 0.34)], primary: true),
+                    Route(points: [te, up(te, 0.08)], primary: false),
+                    Route(points: [wrL, up(wrL, 0.08)], primary: false)]
+        case .jetSweep:
+            return [Route(points: [slot, CGPoint(x: 0.55, y: losY + 0.1), CGPoint(x: 0.82, y: losY + 0.06), CGPoint(x: 0.95, y: 0.3)], primary: true),
+                    Route(points: [rbSpot, CGPoint(x: 0.5, y: losY + 0.06)], primary: false),
+                    Route(points: [wrR, up(wrR, 0.12)], primary: false)]
         case .slant:
             return [Route(points: [wrL, up(wrL, 0.1), CGPoint(x: 0.34, y: 0.3)], primary: true),
                     Route(points: [slot, up(slot, 0.09), CGPoint(x: 0.44, y: 0.38)], primary: false),
@@ -129,6 +137,14 @@ struct PlayDiagramView: View {
             return [Route(points: [slot, up(slot, 0.07), CGPoint(x: 0.72, y: losY - 0.11)], primary: true),
                     Route(points: [te, up(te, 0.07), CGPoint(x: 0.34, y: losY - 0.14)], primary: false),
                     Route(points: [wrL, up(wrL, 0.26)], primary: false)]
+        case .stick:
+            return [Route(points: [te, up(te, 0.12), CGPoint(x: 0.72, y: losY - 0.08)], primary: true),
+                    Route(points: [wrR, up(wrR, 0.1), CGPoint(x: 0.99, y: losY - 0.12)], primary: false),
+                    Route(points: [rbSpot, CGPoint(x: 0.74, y: losY + 0.12), CGPoint(x: 0.9, y: losY - 0.01)], primary: false)]
+        case .mesh:
+            return [Route(points: [slot, up(slot, 0.06), CGPoint(x: 0.7, y: losY - 0.1)], primary: true),
+                    Route(points: [te, up(te, 0.05), CGPoint(x: 0.3, y: losY - 0.13)], primary: false),
+                    Route(points: [wrL, up(wrL, 0.32)], primary: false)]
         case .curl:
             return [Route(points: [wrL, up(wrL, 0.26), CGPoint(x: 0.13, y: losY - 0.19)], primary: true),
                     Route(points: [wrR, up(wrR, 0.26), CGPoint(x: 0.87, y: losY - 0.19)], primary: false),
@@ -153,6 +169,10 @@ struct PlayDiagramView: View {
             return [Route(points: [wrR, up(wrR, 0.34), CGPoint(x: 0.97, y: losY - 0.24)], primary: true),
                     Route(points: [wrL, up(wrL, 0.34), CGPoint(x: 0.03, y: losY - 0.24)], primary: false),
                     Route(points: [te, up(te, 0.16)], primary: false)]
+        case .wheel:
+            return [Route(points: [rbSpot, CGPoint(x: 0.78, y: losY + 0.1), CGPoint(x: 0.92, y: losY - 0.04), CGPoint(x: 0.93, y: 0.2)], primary: true),
+                    Route(points: [wrR, up(wrR, 0.2), CGPoint(x: 0.72, y: 0.16)], primary: false),
+                    Route(points: [slot, up(slot, 0.12), CGPoint(x: 0.4, y: losY - 0.1)], primary: false)]
         case .goRoute:
             return [Route(points: [wrL, CGPoint(x: 0.09, y: 0.06)], primary: true),
                     Route(points: [wrR, up(wrR, 0.3)], primary: false),
@@ -173,6 +193,10 @@ struct PlayDiagramView: View {
             return [Route(points: [wrL, CGPoint(x: 0.12, y: 0.03)], primary: true),
                     Route(points: [wrR, CGPoint(x: 0.88, y: 0.03)], primary: false),
                     Route(points: [slot, up(slot, 0.24)], primary: false)]
+        case .playActionDeep:
+            return [Route(points: [wrL, up(wrL, 0.2), CGPoint(x: 0.32, y: 0.06)], primary: true),
+                    Route(points: [rbSpot, CGPoint(x: 0.52, y: losY + 0.04)], primary: false),
+                    Route(points: [wrR, up(wrR, 0.36)], primary: false)]
         case .qbSneak:
             return [Route(points: [qbSpot, CGPoint(x: 0.5, y: losY - 0.12)], primary: true)]
         case .spike:
@@ -221,6 +245,8 @@ struct DefenseDiagramView: View {
 
     let coverage: DefensivePlayCall
     let blitz: DefensivePlayCall
+    /// Draws man lock-on lines even for zone shells (2-Man Under etc.).
+    var manUnder: Bool = false
 
     var body: some View {
         Canvas { context, size in
@@ -239,13 +265,18 @@ struct DefenseDiagramView: View {
                 let x = 0.5 + CGFloat(i * 2 - 3) * 0.07
                 drawX(context, at: CGPoint(x: x * w, y: 0.78 * h), size: 0.025 * w)
             }
-            // Linebackers
+            // Linebackers — Double A-Gap mugs both outside backers over center.
             let lbY = 0.62
-            for x in [0.32, 0.5, 0.68] {
-                drawX(context, at: CGPoint(x: x * w, y: lbY * h), size: 0.025 * w)
+            let lbXs: [CGFloat] = blitz == .doubleAGap ? [0.44, 0.56, 0.68] : [0.32, 0.5, 0.68]
+            for (i, x) in lbXs.enumerated() {
+                let y = (blitz == .doubleAGap && i < 2) ? 0.72 : lbY
+                drawX(context, at: CGPoint(x: x * w, y: y * h), size: 0.025 * w)
                 if blitz == .lbBlitz || blitz == .allOutBlitz {
                     drawBlitzArrow(context, from: CGPoint(x: x * w, y: lbY * h),
-                                   to: CGPoint(x: x * w, y: 0.9 * h))
+                                   to: CGPoint(x: (0.5 + (x - 0.5) * 0.6) * w, y: 0.9 * h))
+                } else if blitz == .doubleAGap && i < 2 {
+                    drawBlitzArrow(context, from: CGPoint(x: x * w, y: y * h),
+                                   to: CGPoint(x: (0.5 + (x - 0.5) * 0.5) * w, y: 0.92 * h))
                 }
             }
             // Corners + safeties
@@ -256,15 +287,29 @@ struct DefenseDiagramView: View {
                                    to: CGPoint(x: (x < 0.5 ? x + 0.1 : x - 0.1) * w, y: 0.9 * h))
                 }
             }
-            for x in [0.34, 0.66] {
-                drawX(context, at: CGPoint(x: x * w, y: 0.32 * h), size: 0.025 * w)
+            // Safeties: Cover 1 shows a single-high dome with the other one
+            // down in the box; the safety blitz sends him instead.
+            let safetySpots: [CGPoint] = coverage == .cover1 || blitz == .safetyBlitz
+                ? [CGPoint(x: 0.5, y: 0.22), CGPoint(x: 0.7, y: 0.5)]
+                : [CGPoint(x: 0.34, y: 0.32), CGPoint(x: 0.66, y: 0.32)]
+            for spot in safetySpots {
+                drawX(context, at: CGPoint(x: spot.x * w, y: spot.y * h), size: 0.025 * w)
+            }
+            if blitz == .safetyBlitz {
+                drawBlitzArrow(context, from: CGPoint(x: 0.7 * w, y: 0.5 * h),
+                               to: CGPoint(x: 0.6 * w, y: 0.9 * h))
             }
 
             // Coverage shells
             switch coverage {
+            case .cover1:
+                // Single-high umbrella over man coverage underneath.
+                drawZone(context, center: CGPoint(x: 0.5 * w, y: 0.13 * h), rx: 0.24 * w, ry: 0.09 * h)
+                drawManLines(context, w: w, h: h)
             case .cover2:
                 drawZone(context, center: CGPoint(x: 0.28 * w, y: 0.17 * h), rx: 0.20 * w, ry: 0.10 * h)
                 drawZone(context, center: CGPoint(x: 0.72 * w, y: 0.17 * h), rx: 0.20 * w, ry: 0.10 * h)
+                if manUnder { drawManLines(context, w: w, h: h) }
             case .cover3:
                 for x in [0.18, 0.5, 0.82] {
                     drawZone(context, center: CGPoint(x: x * w, y: 0.17 * h), rx: 0.13 * w, ry: 0.09 * h)
@@ -273,20 +318,30 @@ struct DefenseDiagramView: View {
                 for x in [0.14, 0.38, 0.62, 0.86] {
                     drawZone(context, center: CGPoint(x: x * w, y: 0.17 * h), rx: 0.10 * w, ry: 0.09 * h)
                 }
-            case .manToMan:
-                // Man: lock lines from CBs/safeties straight down at receivers.
-                for x in [0.08, 0.34, 0.66, 0.92] {
-                    var line = Path()
-                    line.move(to: CGPoint(x: x * w, y: (x == 0.08 || x == 0.92 ? 0.6 : 0.32) * h))
-                    line.addLine(to: CGPoint(x: x * w, y: 0.84 * h))
-                    context.stroke(line, with: .color(.accentBlue.opacity(0.6)),
-                                   style: StrokeStyle(lineWidth: 1.5, dash: [2, 3]))
+            case .prevent:
+                // Sky-deep umbrella: three deep zones pushed to the very top.
+                for x in [0.2, 0.5, 0.8] {
+                    drawZone(context, center: CGPoint(x: x * w, y: 0.1 * h), rx: 0.15 * w, ry: 0.07 * h)
                 }
+                drawZone(context, center: CGPoint(x: 0.5 * w, y: 0.42 * h), rx: 0.3 * w, ry: 0.07 * h)
+            case .manToMan:
+                drawManLines(context, w: w, h: h)
             default:
-                break
+                if manUnder { drawManLines(context, w: w, h: h) }
             }
         }
         .aspectRatio(1.5, contentMode: .fit)
+    }
+
+    /// Man lock lines from the CBs/nickel down onto the receivers.
+    private func drawManLines(_ context: GraphicsContext, w: CGFloat, h: CGFloat) {
+        for x in [0.08, 0.34, 0.66, 0.92] {
+            var line = Path()
+            line.move(to: CGPoint(x: x * w, y: (x == 0.08 || x == 0.92 ? 0.6 : 0.45) * h))
+            line.addLine(to: CGPoint(x: x * w, y: 0.84 * h))
+            context.stroke(line, with: .color(.accentBlue.opacity(0.6)),
+                           style: StrokeStyle(lineWidth: 1.5, dash: [2, 3]))
+        }
     }
 
     private func drawX(_ context: GraphicsContext, at point: CGPoint, size: CGFloat) {

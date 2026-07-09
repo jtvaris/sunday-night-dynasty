@@ -93,17 +93,34 @@ struct CoachedGameView: View {
     @State private var selectedCategory: String = "Run"
     @State private var selectedCall: OffensivePlayCall? = nil
     @State private var wentForIt = false
+    /// The special-teams option highlighted on the 4th-down panel. Selecting
+    /// never snaps — only the explicit SNAP button commits the play.
+    @State private var fourthDownChoice: PlayType? = nil
     /// AI suggestion cached per situation — the underlying hint rolls dice,
     /// so recomputing it on every body render would make the brain icon jump.
     @State private var cachedSuggestion: OffensivePlayCall? = nil
 
     // Defense call state
     @State private var defCall: DefensiveCall = .cover3Base
+    @State private var defCategory: String = "Coverage"
+
+    // Kickoff decision state (onside window): the choice renders as a call
+    // panel — no timer, no tap-outside commitment — until KICK is pressed.
+    @State private var awaitingKickoffDecision = false
+    @State private var onsideSelected = false
+
+    // Post-TD conversion state: after the player's touchdown the coach picks
+    // XP or a two-point try (same card language as the onside window); "Go
+    // for 2" opens the normal call sheet with a Back chevron, and the try
+    // snaps only from the explicit button.
+    @State private var awaitingConversionDecision = false
+    @State private var conversionGoForTwo = false
+    /// True while the coach is picking the two-point play from the call sheet.
+    @State private var goingForTwo = false
 
     // Dialogs
     @State private var showSimToEndConfirm = false
     @State private var showExitConfirm = false
-    @State private var showOnsideDialog = false
     @State private var showFinal = false
     @State private var showStatsSheet = false
     /// In-game squad management sheet (live stats, fatigue, substitutions).
@@ -200,18 +217,6 @@ struct CoachedGameView: View {
             Button("Keep Coaching", role: .cancel) {}
         } message: {
             Text("You can sim the remaining plays or abandon (nothing is saved).")
-        }
-        .confirmationDialog(
-            "Onside kick?",
-            isPresented: $showOnsideDialog,
-            titleVisibility: .visible
-        ) {
-            Button("Onside Kick") { attemptOnside() }
-            // Cancel role: tapping outside the dialog also kicks deep, so the
-            // game never stalls waiting for a choice.
-            Button("Kick Deep", role: .cancel) { kickDeep() }
-        } message: {
-            Text("Trailing in the 4th — try to steal the ball back (~12%)? A failed onside hands them a short field.")
         }
         .sheet(isPresented: $showStatsSheet) {
             LiveBoxScoreSheet(engine: engine, homeTeam: homeTeam, awayTeam: awayTeam)
@@ -641,9 +646,16 @@ struct CoachedGameView: View {
             Divider().background(Color.surfaceBorder)
             if engine.isGameOver {
                 Spacer()
+            } else if awaitingKickoffDecision {
+                // Onside window: the choice sits in the panel until the coach
+                // explicitly kicks — no timer, no accidental commitment.
+                kickoffChoicePanel
+            } else if awaitingConversionDecision {
+                // Post-TD: kick the XP or go for two — same commitment rules.
+                conversionChoicePanel
             } else if !engine.playerIsOnOffense {
-                // Opponent possession: stance stays adjustable while plays
-                // roll automatically, so no dead spinner panel.
+                // Opponent possession: the coach browses the call sheet in
+                // peace — their offense snaps only from the READY button.
                 defensePanel
             } else if isAnimating {
                 animatingPanel
@@ -683,6 +695,48 @@ struct CoachedGameView: View {
         VStack(alignment: .leading, spacing: 10) {
             // Playbook header: the scheme decides which plays are installed.
             HStack(spacing: 8) {
+                // Going for it on 4th down keeps a way back to the special
+                // teams choice — nothing locks in until the snap.
+                if engine.isFourthDown && wentForIt {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            wentForIt = false
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 10, weight: .black))
+                            Text("4th Down")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .foregroundStyle(Color.accentGold)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.accentGold.opacity(0.14), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                } else if goingForTwo {
+                    // Two-point call sheet keeps a way back to the XP choice
+                    // — nothing locks in until the snap.
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            goingForTwo = false
+                            awaitingConversionDecision = true
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 10, weight: .black))
+                            Text("Try Options")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .foregroundStyle(Color.accentGold)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.accentGold.opacity(0.14), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
                 Image(systemName: "book.fill")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Color.accentGold)
@@ -736,7 +790,7 @@ struct CoachedGameView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                if clockManagementAvailable {
+                if clockManagementAvailable && engine.pendingConversion == nil {
                     Button { snap(call: .spike) } label: {
                         Text("Spike")
                             .font(.system(size: 12, weight: .semibold))
@@ -905,6 +959,9 @@ struct CoachedGameView: View {
 
     // MARK: 4th down panel
 
+    /// Special-teams decision as a selection, not an instant commit: tapping
+    /// a card highlights it, SNAP executes it, and "Go For It" opens the
+    /// playbook with a Back chevron — nothing snaps until the SNAP button.
     private var fourthDownPanel: some View {
         VStack(spacing: 12) {
             HStack(spacing: 6) {
@@ -921,9 +978,9 @@ struct CoachedGameView: View {
                     title: "Punt",
                     subtitle: "Flip the field",
                     icon: "arrow.up.forward",
-                    prominent: engine.yardLine < 55
+                    selected: fourthDownChoice == .punt
                 ) {
-                    snap(forcedType: .punt)
+                    withAnimation(.easeInOut(duration: 0.15)) { fourthDownChoice = .punt }
                 }
 
                 if engine.canAttemptFieldGoal {
@@ -931,17 +988,17 @@ struct CoachedGameView: View {
                         title: "Field Goal",
                         subtitle: "\(engine.fieldGoalDistance) yd attempt",
                         icon: "flag.fill",
-                        prominent: true
+                        selected: fourthDownChoice == .fieldGoal
                     ) {
-                        snap(forcedType: .fieldGoal)
+                        withAnimation(.easeInOut(duration: 0.15)) { fourthDownChoice = .fieldGoal }
                     }
                 }
 
                 fourthDownButton(
                     title: "Go For It",
-                    subtitle: "Keep the drive alive",
+                    subtitle: "Open the playbook",
                     icon: "flame.fill",
-                    prominent: false
+                    selected: false
                 ) {
                     withAnimation(.easeInOut(duration: 0.2)) { wentForIt = true }
                 }
@@ -949,6 +1006,42 @@ struct CoachedGameView: View {
             .padding(.horizontal, 14)
 
             Spacer(minLength: 0)
+
+            // Snap bar: the special-teams play runs only from this button.
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Selected")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(fourthDownChoiceLabel)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                }
+                Spacer()
+                Button {
+                    if let choice = fourthDownChoice { snap(forcedType: choice) }
+                } label: {
+                    Label("SNAP", systemImage: "arrow.up.circle.fill")
+                        .font(.system(size: 16, weight: .black))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 30)
+                        .padding(.vertical, 12)
+                        .background(fourthDownChoice != nil ? Color.accentGold : Color.backgroundTertiary,
+                                    in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(fourthDownChoice == nil)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 12)
+        }
+    }
+
+    private var fourthDownChoiceLabel: String {
+        switch fourthDownChoice {
+        case .punt:      return "Punt"
+        case .fieldGoal: return "Field Goal (\(engine.fieldGoalDistance) yds)"
+        default:         return "None selected"
         }
     }
 
@@ -956,7 +1049,7 @@ struct CoachedGameView: View {
         title: String,
         subtitle: String,
         icon: String,
-        prominent: Bool,
+        selected: Bool,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -969,21 +1062,170 @@ struct CoachedGameView: View {
                     .font(.system(size: 10))
                     .opacity(0.75)
             }
-            .foregroundStyle(prominent ? Color.backgroundPrimary : Color.textPrimary)
+            .foregroundStyle(selected ? Color.accentGold : Color.textPrimary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .background(
-                prominent ? Color.accentGold : Color.backgroundTertiary,
+                selected ? Color.accentGold.opacity(0.16) : Color.backgroundTertiary,
                 in: RoundedRectangle(cornerRadius: 12)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(selected ? Color.accentGold : Color.surfaceBorder,
+                                  lineWidth: selected ? 1.5 : 1)
             )
         }
         .buttonStyle(.plain)
     }
 
+    // MARK: Kickoff choice panel (onside window)
+
+    /// Post-score kickoff when the onside window is open. Both options are
+    /// cards — the kick launches only from the explicit KICK button, and the
+    /// selection can be flipped back and forth freely.
+    private var kickoffChoicePanel: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Color.accentGold)
+                Text("Kickoff — deep or onside?")
+                    .font(.system(size: 15, weight: .heavy))
+                    .foregroundStyle(Color.textPrimary)
+            }
+            .padding(.top, 14)
+
+            HStack(spacing: 10) {
+                fourthDownButton(
+                    title: "Kick Deep",
+                    subtitle: "Play the field position",
+                    icon: "arrow.up.forward",
+                    selected: !onsideSelected
+                ) {
+                    withAnimation(.easeInOut(duration: 0.15)) { onsideSelected = false }
+                }
+                fourthDownButton(
+                    title: "Onside Kick",
+                    subtitle: "~12% to steal it — short field if it fails",
+                    icon: "flame.fill",
+                    selected: onsideSelected
+                ) {
+                    withAnimation(.easeInOut(duration: 0.15)) { onsideSelected = true }
+                }
+            }
+            .padding(.horizontal, 14)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Selected")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(onsideSelected ? "Onside Kick" : "Kick Deep")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                }
+                Spacer()
+                Button {
+                    awaitingKickoffDecision = false
+                    if onsideSelected { attemptOnside() } else { kickDeep() }
+                } label: {
+                    Label("KICK", systemImage: "arrow.up.circle.fill")
+                        .font(.system(size: 16, weight: .black))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 30)
+                        .padding(.vertical, 12)
+                        .background(Color.accentGold, in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 12)
+        }
+    }
+
+    // MARK: Post-TD conversion panel (XP / two-point choice)
+
+    /// After the player's touchdown: kick the extra point or go for two.
+    /// Both options are cards — nothing snaps until the explicit button —
+    /// and "Go for 2" opens the normal call sheet (with a Back chevron) so
+    /// the try is a real called play from the 2-yard line.
+    private var conversionChoicePanel: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "flag.2.crossed.fill")
+                    .foregroundStyle(Color.accentGold)
+                Text("Touchdown! Kick the point or go for two?")
+                    .font(.system(size: 15, weight: .heavy))
+                    .foregroundStyle(Color.textPrimary)
+            }
+            .padding(.top, 14)
+
+            HStack(spacing: 10) {
+                fourthDownButton(
+                    title: "Kick XP",
+                    subtitle: "Near-automatic +1",
+                    icon: "flag.fill",
+                    selected: !conversionGoForTwo
+                ) {
+                    withAnimation(.easeInOut(duration: 0.15)) { conversionGoForTwo = false }
+                }
+                fourthDownButton(
+                    title: "Go for 2",
+                    subtitle: "One snap from the 2 — +2 or nothing",
+                    icon: "flame.fill",
+                    selected: conversionGoForTwo
+                ) {
+                    withAnimation(.easeInOut(duration: 0.15)) { conversionGoForTwo = true }
+                }
+            }
+            .padding(.horizontal, 14)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Selected")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(conversionGoForTwo ? "Go for 2" : "Kick XP")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                }
+                Spacer()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { awaitingConversionDecision = false }
+                    if conversionGoForTwo {
+                        goingForTwo = true
+                        selectedCategory = "Run"
+                        selectedCall = nil
+                        cachedSuggestion = nil
+                        syncFieldToSituation()
+                    } else {
+                        runPlay(offCall: nil, forcedType: nil)
+                    }
+                } label: {
+                    Label(conversionGoForTwo ? "CALL THE PLAY" : "KICK XP",
+                          systemImage: conversionGoForTwo ? "book.fill" : "arrow.up.circle.fill")
+                        .font(.system(size: 16, weight: .black))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 30)
+                        .padding(.vertical, 12)
+                        .background(Color.accentGold, in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 12)
+        }
+    }
+
     // MARK: Defense panel
 
+    private let defensiveCategories = ["Coverage", "Pressure", "Man", "Packages"]
+
     private var defensePanel: some View {
-        VStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Image(systemName: "shield.fill")
                     .font(.system(size: 10, weight: .bold))
@@ -1004,28 +1246,83 @@ struct CoachedGameView: View {
                         .background(Color.backgroundTertiary, in: Capsule())
                 }
                 .buttonStyle(.plain)
+                .disabled(isAnimating)
             }
             .padding(.horizontal, 14)
             .padding(.top, 12)
 
+            // Same clipboard category tabs as the offensive call sheet.
+            HStack(spacing: 6) {
+                ForEach(defensiveCategories, id: \.self) { cat in
+                    defenseCategoryTab(cat)
+                }
+            }
+            .padding(.horizontal, 14)
+
+            // Installed playbook calls first, original order kept.
+            let sectionCalls = DefensiveCall.allCases.filter { $0.category == defCategory }
+            let calls = sectionCalls.filter { $0.isInPlaybook(of: engine.playerDefensiveScheme) }
+                + sectionCalls.filter { !$0.isInPlaybook(of: engine.playerDefensiveScheme) }
             ScrollView {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 5), spacing: 10) {
-                    ForEach(DefensiveCall.allCases) { call in
+                    ForEach(calls) { call in
                         defenseCallCard(call)
                     }
                 }
                 .padding(.horizontal, 14)
-
-                Text("\(opponentAbbr) has the ball — plays run automatically with your call applied.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 4)
             }
 
             Spacer(minLength: 0)
+
+            // Ready bar: the opponent's offense snaps only when the coach
+            // confirms — no timer, no first-tap surprises.
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(engine.pendingConversion != nil
+                         ? "\(opponentAbbr) going for TWO — call your stop"
+                         : "\(opponentAbbr) ball — they wait for you")
+                        .font(.system(size: 10))
+                        .foregroundStyle(engine.pendingConversion != nil
+                                         ? Color.warning : Color.textTertiary)
+                    Text(defCall.rawValue)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Button {
+                    runPlay(offCall: nil, forcedType: nil)
+                } label: {
+                    Label(isAnimating ? "PLAY IS LIVE…" : "READY — SNAP",
+                          systemImage: isAnimating ? "hourglass" : "shield.checkered")
+                        .font(.system(size: 16, weight: .black))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 26)
+                        .padding(.vertical, 12)
+                        .background(isAnimating ? Color.backgroundTertiary : Color.accentGold,
+                                    in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isAnimating)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 12)
         }
+    }
+
+    private func defenseCategoryTab(_ category: String) -> some View {
+        let isSelected = defCategory == category
+        return Button {
+            withAnimation(.easeInOut(duration: 0.15)) { defCategory = category }
+        } label: {
+            Text(category)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity)
+                .background(isSelected ? Color.accentGold : Color.backgroundTertiary, in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private var defensePanelTitle: String {
@@ -1051,7 +1348,8 @@ struct CoachedGameView: View {
             withAnimation(.easeInOut(duration: 0.15)) { defCall = call }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
-                DefenseDiagramView(coverage: call.package.coverage, blitz: call.package.blitz)
+                DefenseDiagramView(coverage: call.package.coverage, blitz: call.package.blitz,
+                                   manUnder: call.category == "Man")
                     .frame(maxWidth: .infinity)
                     .opacity(installed ? 1 : 0.45)
                 HStack(spacing: 4) {
@@ -1331,11 +1629,30 @@ struct CoachedGameView: View {
             withAnimation(.easeInOut(duration: 0.3)) { showHalftime = true }
             return
         }
+        // Post-TD point-after try — it snaps before the ensuing kickoff (the
+        // onside question, when live, follows it as the next panel). The
+        // coach picks XP or two for his own team; the AI follows the shared
+        // chart: its XP kicks run automatically, a two-point try lines up
+        // and waits for the coach's defensive call (READY snaps it).
+        if engine.pendingConversion != nil {
+            goingForTwo = false
+            if engine.playerAttemptsConversion {
+                conversionGoForTwo = false
+                withAnimation(.easeInOut(duration: 0.2)) { awaitingConversionDecision = true }
+            } else if engine.chartCallsForTwo {
+                syncFieldToSituation()
+            } else {
+                runPlay(offCall: nil, forcedType: nil)
+            }
+            return
+        }
         // A drive that begins with a kickoff plays the boot first. When the
-        // situation calls for it, the coach gets the onside choice instead.
+        // situation calls for it, the coach chooses deep/onside from a call
+        // panel — cancellable until the explicit KICK button.
         if let kickoff = engine.pendingKickoff {
             if engine.onsideKickAvailable {
-                showOnsideDialog = true
+                onsideSelected = false
+                withAnimation(.easeInOut(duration: 0.2)) { awaitingKickoffDecision = true }
                 return
             }
             engine.clearPendingKickoff()
@@ -1350,12 +1667,13 @@ struct CoachedGameView: View {
             selectedCall = cachedSuggestion
             if let suggestion = selectedCall { selectedCategory = suggestion.category }
             wentForIt = false
+            fourthDownChoice = engine.isFourthDown
+                ? (engine.canAttemptFieldGoal ? .fieldGoal : .punt)
+                : nil
         } else {
-            // Opponent possession: auto-run the next play with the user's stance.
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                guard !isAnimating, !engine.isGameOver, !engine.playerIsOnOffense else { return }
-                runPlay(offCall: nil, forcedType: nil)
-            }
+            // Opponent possession: line them up and wait — the next snap
+            // comes only from the coach's READY button (no timer).
+            syncFieldToSituation()
         }
     }
 
@@ -1441,9 +1759,20 @@ struct CoachedGameView: View {
         let possessionBefore = engine.homeHasPossession
 
         // Retro broadcast plate for the snap — situation plus the called play
-        // when the coach dialed one ("2ND & 10 · DIG").
-        let plateText = offCall.map { "\(downDistanceText) · \($0.rawValue.uppercased())" }
-            ?? downDistanceText
+        // when the coach dialed one ("2ND & 10 · DIG"); point-after tries get
+        // their own plates ("2-PT TRY · GOAL LINE DIVE" / "EXTRA POINT").
+        let isConversionSnap = engine.pendingConversion != nil
+        let conversionIsTwo = isConversionSnap
+            && (engine.playerAttemptsConversion ? conversionGoForTwo : engine.chartCallsForTwo)
+        let plateText: String
+        if isConversionSnap {
+            plateText = conversionIsTwo
+                ? (offCall.map { "2-PT TRY · \($0.rawValue.uppercased())" } ?? "2-PT TRY")
+                : "EXTRA POINT"
+        } else {
+            plateText = offCall.map { "\(downDistanceText) · \($0.rawValue.uppercased())" }
+                ?? downDistanceText
+        }
         snapPlate = plateText
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
             if snapPlate == plateText { snapPlate = nil }
@@ -1461,11 +1790,22 @@ struct CoachedGameView: View {
         let offUnit = possessionBefore ? engine.homeOffenseUnit : engine.awayOffenseUnit
         let defUnit = possessionBefore ? engine.awayDefenseUnit : engine.homeDefenseUnit
 
-        let play = engine.step(
-            offensiveCall: engine.playerIsOnOffense ? offCall : nil,
-            forcedPlayType: forcedType,
-            defensivePackage: defPackage
-        )
+        let play: PlayResult
+        if isConversionSnap {
+            // Point-after try: the player's explicit XP/two choice (his own
+            // score) or the shared chart (AI score, defended with defCall).
+            play = engine.attemptConversion(
+                goForTwo: engine.playerAttemptsConversion ? conversionGoForTwo : nil,
+                offensiveCall: engine.playerAttemptsConversion ? offCall : nil,
+                defensivePackage: defPackage
+            )
+        } else {
+            play = engine.step(
+                offensiveCall: engine.playerIsOnOffense ? offCall : nil,
+                forcedPlayType: forcedType,
+                defensivePackage: defPackage
+            )
+        }
 
         isAnimating = true
         selectedCall = nil
@@ -1545,6 +1885,14 @@ struct CoachedGameView: View {
         }
 
         showBanner(play.description)
+
+        // Two-point try verdict: gold broadcast plate over the field.
+        if play.playType == .twoPointConversion {
+            showMilestoneBanner(play.outcome == .twoPointGood
+                ? "TWO-POINT CONVERSION — GOOD!"
+                : "TWO-POINT TRY — NO GOOD")
+        }
+
         showMatchupCallouts(possessionBefore: possessionBefore)
 
         // Injury on the play: the man stays on the turf (the next formation

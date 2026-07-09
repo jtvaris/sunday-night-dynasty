@@ -182,9 +182,28 @@ enum GameSimulator {
                 weather: weather
             )
 
-            let drive = driveResult.drive
+            var drive = driveResult.drive
             quarter = driveResult.endQuarter
             timeRemaining = driveResult.endTime
+
+            // Point-after try: a touchdown drive gets its untimed conversion
+            // snap (XP or two — the shared chart decides) appended before the
+            // drive is booked, so the try's points ride the same
+            // drive-points bookkeeping as the six.
+            if drive.result == .touchdown,
+               let td = drive.plays.last, td.outcome == .touchdown {
+                let offenseScoreAfterTD = (homeHasPossession ? homeScore : awayScore) + td.pointsScored
+                let defenseScore = homeHasPossession ? awayScore : homeScore
+                let tryPlay = rollPointAfterTry(
+                    offensePlayers: offensePlayers,
+                    defensePlayers: defensePlayers,
+                    scoreDiffAfterTD: offenseScoreAfterTD - defenseScore,
+                    quarter: quarter,
+                    timeRemaining: timeRemaining,
+                    playNumber: drive.plays.count + 1
+                )
+                drive.plays.append(tryPlay)
+            }
 
             allDrives.append(drive)
 
@@ -204,9 +223,11 @@ enum GameSimulator {
                 awayTimeOfPossession += driveTime
             }
 
-            // Collect highlights
+            // Collect highlights (extra points are scoring plays but not
+            // highlight-reel material; two-point tries stay in).
             let driveHighlights = drive.plays.filter { play in
-                play.scoringPlay || play.isTurnover || play.yardsGained >= 20
+                (play.scoringPlay && play.playType != .extraPoint)
+                    || play.isTurnover || play.yardsGained >= 20
             }
             allHighlights.append(contentsOf: driveHighlights)
 
@@ -300,23 +321,36 @@ enum GameSimulator {
                     quarter: quarter,
                     timeRemaining: timeRemaining
                 )
-                let returnDrive = DriveResult(
+                var returnDrive = DriveResult(
                     driveNumber: driveNumber,
                     teamID: returnTeamIsHome ? homeTeam.id : awayTeam.id,
                     startingYardLine: kick.startingYardLine,
                     plays: [returnPlay],
                     result: .touchdown
                 )
+                // The housed return earns its point-after try too.
+                let returnScoreAfterTD = (returnTeamIsHome ? homeScore : awayScore) + returnPlay.pointsScored
+                let returnDefScore = returnTeamIsHome ? awayScore : homeScore
+                let returnTry = rollPointAfterTry(
+                    offensePlayers: returnTeamIsHome ? homePlayers : awayPlayers,
+                    defensePlayers: returnTeamIsHome ? awayPlayers : homePlayers,
+                    scoreDiffAfterTD: returnScoreAfterTD - returnDefScore,
+                    quarter: quarter,
+                    timeRemaining: timeRemaining,
+                    playNumber: 2
+                )
+                returnDrive.plays.append(returnTry)
                 allDrives.append(returnDrive)
                 allHighlights.append(returnPlay)
 
+                let returnPoints = returnDrive.plays.reduce(0) { $0 + $1.pointsScored }
                 let qi = min(quarter - 1, 3)
                 if returnTeamIsHome {
-                    homeScore += returnPlay.pointsScored
-                    homeQuarterScores[qi] += returnPlay.pointsScored
+                    homeScore += returnPoints
+                    homeQuarterScores[qi] += returnPoints
                 } else {
-                    awayScore += returnPlay.pointsScored
-                    awayQuarterScores[qi] += returnPlay.pointsScored
+                    awayScore += returnPoints
+                    awayQuarterScores[qi] += returnPoints
                 }
 
                 momentum = updateMomentum(
@@ -757,8 +791,8 @@ enum GameSimulator {
 
     /// Synthetic play describing a kickoff returned for a touchdown. Return
     /// yards are intentionally NOT counted as offensive yards (yardsGained 0)
-    /// so team total-yardage stays a scrimmage stat; TDs are worth 6 in this
-    /// sim (extra points are not modeled anywhere).
+    /// so team total-yardage stays a scrimmage stat. The TD is worth 6; the
+    /// point-after try is rolled separately by the caller (``rollPointAfterTry``).
     /// Internal (not private) because it is shared with `LiveGameEngine`.
     static func kickoffReturnTouchdownPlay(quarter: Int, timeRemaining: Int) -> PlayResult {
         PlayResult(
@@ -777,6 +811,70 @@ enum GameSimulator {
             scoringPlay: true,
             pointsScored: 6
         )
+    }
+
+    // MARK: - Point-After Try (XP / two-point conversion)
+
+    /// Shared two-point decision chart (quick-sim AI, live AI, and both
+    /// teams in fully simulated finishes). Kick the extra point for three
+    /// quarters; from late in the game on, go for two when the score
+    /// difference AFTER the touchdown's six points is one the classic
+    /// analytics chart converts — down 2 (tie it), down 5 (one FG game),
+    /// down 8/16 (one/two-score game with the 2), down 11/13, up 1 (make it
+    /// a field-goal-proof +3), up 5 (+7).
+    static func shouldGoForTwo(scoreDiffAfterTD: Int, quarter: Int, timeRemaining: Int) -> Bool {
+        let lateGame = quarter >= 4 || (quarter == 3 && timeRemaining <= 120)
+        guard lateGame else { return false }
+        switch scoreDiffAfterTD {
+        case -16, -13, -11, -8, -5, -2, 1, 5: return true
+        default: return false
+        }
+    }
+
+    /// Rolls the untimed try after a touchdown: the shared chart picks kick
+    /// vs two (unless `forceTwoPoint` overrides it — the live player's own
+    /// choice), then the shared play simulators resolve the attempt. Used by
+    /// the quick sim and `LiveGameEngine` so both paths stay statistically
+    /// identical; call/package biases only ever arrive from live games.
+    static func rollPointAfterTry(
+        offensePlayers: [SimPlayer],
+        defensePlayers: [SimPlayer],
+        scoreDiffAfterTD: Int,
+        quarter: Int,
+        timeRemaining: Int,
+        playNumber: Int,
+        forceTwoPoint: Bool? = nil,
+        offensiveCall: OffensivePlayCall? = nil,
+        defensivePackage: DefensivePackage? = nil
+    ) -> PlayResult {
+        let goForTwo = forceTwoPoint ?? shouldGoForTwo(
+            scoreDiffAfterTD: scoreDiffAfterTD,
+            quarter: quarter,
+            timeRemaining: timeRemaining
+        )
+        var play: PlayResult
+        if goForTwo {
+            play = PlaySimulator.simulateTwoPointConversion(
+                offensePlayers: offensePlayers,
+                defensePlayers: defensePlayers,
+                quarter: quarter,
+                timeRemaining: max(timeRemaining, 0),
+                playNumber: playNumber,
+                offensiveCall: offensiveCall,
+                defensivePackage: defensivePackage
+            )
+        } else {
+            play = PlaySimulator.simulateExtraPoint(
+                offensePlayers: offensePlayers,
+                quarter: quarter,
+                timeRemaining: max(timeRemaining, 0),
+                yardLine: 98,
+                playNumber: playNumber
+            )
+        }
+        play.quarter = quarter
+        play.timeRemaining = max(timeRemaining, 0)
+        return play
     }
 
     // MARK: - Possession Management

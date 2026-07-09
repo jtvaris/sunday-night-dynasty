@@ -487,6 +487,18 @@ enum PlaySimulator {
         // Defensive package: tighter coverage shaves the completion odds.
         if let package = defensivePackage {
             completionChance = clamp(completionChance - package.totalCoverageModifier, min: 0.05, max: 0.95)
+
+            // Depth-shaded shells (live games only): a prevent look takes
+            // away the deep shot but hands the checkdown out for free.
+            let depthShade: Double
+            switch passDistance {
+            case .deep:  depthShade = package.totalDeepCoverageModifier
+            case .short: depthShade = package.totalShortCoverageModifier
+            case .mid:   depthShade = 0
+            }
+            if depthShade != 0 {
+                completionChance = clamp(completionChance - depthShade, min: 0.05, max: 0.95)
+            }
         }
 
         // Weather: a wet ball slips through hands (rain/snow), and gusts
@@ -1170,34 +1182,64 @@ enum PlaySimulator {
         )
     }
 
-    /// Simulates a two-point conversion attempt.
+    /// Simulates a two-point conversion attempt: one snap from the 2-yard
+    /// line, ~47% baseline success shaded by overall team quality and — in
+    /// live coached games — by the actual offensive call and defensive
+    /// package (the same modifier families every goal-line snap uses).
+    /// Nil call/package reproduces the neutral quick-sim roll exactly.
     static func simulateTwoPointConversion(
         offensePlayers: [SimPlayer],
         defensePlayers: [SimPlayer],
         quarter: Int,
         timeRemaining: Int,
-        playNumber: Int
+        playNumber: Int,
+        offensiveCall: OffensivePlayCall? = nil,
+        defensivePackage: DefensivePackage? = nil
     ) -> PlayResult {
-        // Treat as a single play from the 2-yard line
-        let isPass = coinFlip(0.6)
+        // Honor an explicit call; the AI leans pass (~60/40) from the 2.
+        let isPass = offensiveCall.map { !$0.isRun } ?? coinFlip(0.6)
         let qb = findQB(in: offensePlayers)
 
-        // Simplified conversion check: ~48% success rate league average
+        // Baseline ~47% (league average), shaded by the overall matchup.
         let offenseRating = averageAttribute(offensePlayers, extractor: { Double($0.overall) })
         let defenseRating = averageAttribute(defensePlayers, extractor: { Double($0.overall) })
         let advantage = (offenseRating - defenseRating) / 100.0
-        let conversionChance = clamp(0.48 + advantage, min: 0.25, max: 0.70)
-        let isGood = randomChance(conversionChance)
+        var conversionChance = 0.47 + advantage
+
+        // Live-game shading: on the short field a pass try meets coverage
+        // and pressure, a run try meets the run-stop wall; the called play's
+        // hint credits quick timing (pass) or interior push (run).
+        if isPass {
+            if let package = defensivePackage {
+                conversionChance -= (package.totalCoverageModifier
+                                     + package.totalShortCoverageModifier) * 0.5
+                conversionChance -= package.totalPressureModifier * 0.3
+            }
+            if let hint = offensiveCall?.simulatorHint {
+                conversionChance += hint.blitzPickupBonus * 0.2
+            }
+        } else {
+            if let package = defensivePackage {
+                conversionChance -= package.totalRunStopModifier * 0.5
+            }
+            if let hint = offensiveCall?.simulatorHint {
+                conversionChance += hint.runGapBonus * 0.3
+            }
+        }
+        let isGood = randomChance(clamp(conversionChance, min: 0.20, max: 0.75))
 
         let description: String
+        var keyPlayerID: UUID?
         if isPass {
             let target = eligibleReceivers(from: offensePlayers).randomElement()
             let targetName = target?.fullName ?? "a receiver"
+            keyPlayerID = target?.id
             description = isGood
                 ? "\(qb.fullName) throws to \(targetName) for the two-point conversion!"
                 : "\(qb.fullName) throws to \(targetName), but the two-point conversion fails."
         } else {
             let rb = findRB(in: offensePlayers)
+            keyPlayerID = rb.id
             description = isGood
                 ? "\(rb.fullName) punches it in for the two-point conversion!"
                 : "\(rb.fullName) is stopped short on the two-point conversion attempt."
@@ -1217,7 +1259,8 @@ enum PlaySimulator {
             isFirstDown: false,
             isTurnover: false,
             scoringPlay: isGood,
-            pointsScored: isGood ? 2 : 0
+            pointsScored: isGood ? 2 : 0,
+            keyOffensePlayerID: keyPlayerID
         )
     }
 

@@ -132,16 +132,16 @@ struct PlayChoreographer {
         case .kneel:     qbDepth = 1.2; rb = (0, 4.5); wrSplit = 6; slot = (-4, 1.2); teX = 4
         default:
             switch call {
-            case .insideRun, .qbSneak:
+            case .insideRun, .qbSneak, .dive:
                 // I-formation: QB under center, back deep downhill, tight splits.
                 qbDepth = 1.2; rb = (0, 5.5); wrSplit = 12; slot = (-7, 1.2); teX = 4.2
-            case .outsideRun:
+            case .outsideRun, .jetSweep:
                 qbDepth = 4.5; rb = (-2.5, 5.2); wrSplit = 14; slot = (-8, 1.3)
             case .draw, .screen:
                 qbDepth = 5.5; rb = (1.8, 5.5)
-            case .slant, .quickOut, .flat, .drag:
+            case .slant, .quickOut, .flat, .drag, .stick, .mesh:
                 qbDepth = 4; wrSplit = 15; slot = (-9, 1.3)
-            case .goRoute, .post, .corner, .bomb:
+            case .goRoute, .post, .corner, .bomb, .playActionDeep:
                 // Spread: maximum width, everyone in the pattern.
                 qbDepth = 5.5; wrSplit = 17; slot = (-11, 1.4)
             default:
@@ -189,6 +189,12 @@ struct PlayChoreographer {
         case .dime:
             // Two backers out in coverage, one in the middle.
             lbSpots = [(8, 5.5), (0, 4.5), (-9, 3)]
+        case .bear:
+            // 46 look: DL squeezed tight, backers stacked right behind them.
+            dlXs = [-3.6, -1.2, 1.2, 3.6]
+            dlDepth = 0.9
+            lbSpots = [(-5.5, 2.4), (0, 3.2), (5.5, 2.4)]
+            sSpots = [(-6, 11), (6, 7)]
         case .goalLine:
             dlXs = [-3.2, -1.1, 1.1, 3.2]
             dlDepth = 0.8
@@ -204,12 +210,22 @@ struct PlayChoreographer {
             // Press: corners up in the receivers' faces.
             cbDepth = min(cbDepth, 1.6)
             if package?.front != .goalLine { sSpots = [(-6, 10), (6, 10)] }
+        case .cover1:
+            // Man free: tight corners, single-high safety, the other one down.
+            cbDepth = min(cbDepth, 2.5)
+            if package?.front != .goalLine, package?.front != .bear {
+                sSpots = [(0, 14), (6, 6)]
+            }
         case .cover2:
             cbDepth = min(cbDepth, 5)
             sSpots = [(-9, 13), (9, 13)]
         case .cover4:
             cbDepth = max(cbDepth, 8)
             sSpots = [(-7, 13), (7, 13)]
+        case .prevent:
+            // Everyone bails: corners give a huge cushion, safeties sky-deep.
+            cbDepth = max(cbDepth, 10)
+            sSpots = [(-8, 16), (8, 16)]
         default:
             break
         }
@@ -218,6 +234,11 @@ struct PlayChoreographer {
         switch package?.blitz {
         case .lbBlitz:
             lbSpots = lbSpots.map { (x: $0.x * 0.7, depth: min($0.depth, 2.6)) }
+        case .doubleAGap:
+            // Both backers mug the A-gaps right over the center.
+            lbSpots = [(-1.2, 1.8), (1.2, 1.8), (5, 4.5)]
+        case .safetyBlitz:
+            sSpots[1] = (5, 2.5)   // S-R creeps down off the edge
         case .dbBlitz:
             sSpots[1] = (7, 2.8)   // S-R shows off the edge
         case .allOutBlitz:
@@ -266,6 +287,12 @@ struct PlayChoreographer {
             let endZ = clampZ(context.losZ + context.direction * Float(max(play.yardsGained, 1)))
             return completionSteps(context, endZ: endZ).steps
         case .incompletion, .twoPointFailed:
+            // A stuffed two-point RUN try is swallowed short of the line —
+            // only pass tries (and real incompletions) show the throw.
+            if play.outcome == .twoPointFailed, call?.isRun == true {
+                return rushSteps(context,
+                                 endZ: clampZ(context.losZ + context.direction * 1)).steps
+            }
             return incompletionSteps(context)
         case .sack:
             return sackSteps(context)
@@ -307,6 +334,8 @@ struct PlayChoreographer {
         let defense: [(x: Float, z: Float, number: Int)]
         /// Individual battle results shaping the visuals (nil = neutral).
         let matchups: PlayMatchups?
+        /// The coach's called play, when one was dialed (shapes 2-pt scripts).
+        let call: OffensivePlayCall?
 
         init(play: PlayResult, losYardLine: Int, offenseIsHome: Bool,
              matchups: PlayMatchups? = nil,
@@ -322,6 +351,7 @@ struct PlayChoreographer {
             self.defense = PlayChoreographer.defensePositions(losZ: losZ, direction: direction,
                                                               package: defensivePackage)
             self.matchups = matchups
+            self.call = call
         }
 
         /// Yards of receiver separation at the catch (visual).
@@ -980,12 +1010,16 @@ struct PlayChoreographer {
         // End spot: 2 yards past the goal line.
         let endZ = clampZ(c.direction * 52)
 
+        // A two-point try carries the special-teams play type; the called
+        // play decides whether it looks like a throw or a plunge.
+        let passLike = c.play.playType == .pass
+            || (c.play.playType == .twoPointConversion && c.call?.isPass == true)
+
         let script: (steps: [Step], carrier: Int, end: SCNVector3)
-        switch c.play.playType {
-        case .pass:
+        if passLike {
             let pass = completionSteps(c, endZ: endZ, includeTackle: false)
             script = (pass.steps, pass.carrier, pass.end)
-        default:
+        } else {
             let run = rushSteps(c, endZ: endZ, includeTackle: false)
             script = (run.steps, run.carrier, run.end)
         }

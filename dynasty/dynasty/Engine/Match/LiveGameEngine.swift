@@ -859,6 +859,14 @@ final class LiveGameEngine: ObservableObject {
             return lastPlay ?? gameOverPlaceholderPlay()
         }
 
+        // A pending point-after try resolves before anything else can snap:
+        // the shared chart decides here, so a fully nil-argument game rolls
+        // exactly the same tries the quick sim does (parity intact). The
+        // live view calls ``attemptConversion`` directly for player choices.
+        if pendingConversion != nil {
+            return attemptConversion(defensivePackage: defensivePackage)
+        }
+
         // Coach-ordered substitutions land at the whistle: applied after this
         // play has fully resolved (dead ball), never mid-play. A no-op when
         // nothing is queued, so auto-sim parity is intact.
@@ -977,9 +985,10 @@ final class LiveGameEngine: ObservableObject {
             if DriveSimulator.shouldEndDrive(quarter: quarter) {
                 // Q2 / Q4 / OT: the half or game segment ends here.
                 timeRemaining = 0
-                // The play itself may still have ended the drive (TD at the gun).
+                // The play itself may still have ended the drive (TD at the
+                // gun — which still earns its untimed point-after try).
                 if let driveEnd = immediateDriveEnd(for: result) {
-                    finishDrive(driveEnd.drive)
+                    finishOrHoldDrive(driveEnd.drive, after: result)
                     return recordedPlay
                 }
                 let outcome: DriveOutcome = quarter == 2 ? .endOfHalf : .endOfGame
@@ -994,7 +1003,7 @@ final class LiveGameEngine: ObservableObject {
 
         // --- Immediate drive-ending outcomes (score, turnover, punt, safety) ---
         if let driveEnd = immediateDriveEnd(for: result) {
-            finishDrive(driveEnd.drive)
+            finishOrHoldDrive(driveEnd.drive, after: result)
             return recordedPlay
         }
 
@@ -1047,24 +1056,34 @@ final class LiveGameEngine: ObservableObject {
     /// coverage-first plans call off the situational blitzes.
     func aiDefensivePackage() -> DefensivePackage {
         let yardsToEndzone = 100 - yardLine
+        // Score margin from the DEFENSE's perspective (positive = leading).
+        let defenseLeadsBy = homeHasPossession ? awayScore - homeScore : homeScore - awayScore
         var package: DefensivePackage
         if yardsToEndzone <= 10 {
             // Red zone: sell out against the short field.
             package = DefensivePackage(coverage: .manToMan, blitz: .noBlitz, front: .goalLine)
+        } else if quarter >= 4 && timeRemaining <= 240
+                    && defenseLeadsBy > 0 && defenseLeadsBy <= 16
+                    && yardsToEndzone > 25 {
+            // Protecting a late lead: prevent shell — concede the checkdown,
+            // never the bomb.
+            package = DefensivePackage(coverage: .prevent, blitz: .noBlitz, front: .dime)
         } else if down == 3 && distance >= 7 {
             // 3rd & long: extra DBs and a pressure look.
             package = DefensivePackage(coverage: .cover4, blitz: .dbBlitz, front: .dime)
         } else if distance <= 2 {
-            // Short yardage: stout base front.
-            package = DefensivePackage(coverage: .cover2, blitz: .noBlitz, front: .base)
+            // Short yardage: crowd the box with the bear front.
+            package = DefensivePackage(coverage: .cover1, blitz: .noBlitz, front: .bear)
         } else {
             package = .standard // Cover 3, no blitz, base front
         }
 
         // Game-plan shading — only for the player's own defense.
         if !playerIsOnOffense, let plan = playerGamePlan {
-            if plan.blitzFrequency > 0.65, package.blitz == .noBlitz, yardsToEndzone > 10 {
-                package.blitz = .lbBlitz
+            if plan.blitzFrequency > 0.65, package.blitz == .noBlitz,
+               yardsToEndzone > 10, package.coverage != .prevent {
+                // The heaviest blitz plans send both backers up the middle.
+                package.blitz = plan.blitzFrequency > 0.85 ? .doubleAGap : .lbBlitz
             } else if plan.blitzFrequency < 0.25, package.blitz != .noBlitz {
                 package.blitz = .noBlitz
             }
@@ -1524,7 +1543,10 @@ final class LiveGameEngine: ObservableObject {
     /// Per-drive bookkeeping — mirrors GameSimulator.simulate's drive loop
     /// (stats, time of possession, highlights, scoring incl. safety-to-defense,
     /// momentum, fatigue), then handles the possession/quarter transition.
-    private func finishDrive(_ drive: DriveResult) {
+    /// - Parameter scoreAlreadyBooked: true for a touchdown drive that was
+    ///   held open for its point-after try — its points (6 + the try) were
+    ///   booked play by play, so the drive-points sum must not book again.
+    private func finishDrive(_ drive: DriveResult, scoreAlreadyBooked: Bool = false) {
         allDrives.append(drive)
 
         let offense = homeHasPossession ? homePlayers : awayPlayers
@@ -1546,29 +1568,19 @@ final class LiveGameEngine: ObservableObject {
         }
 
         allHighlights.append(contentsOf: drive.plays.filter {
-            $0.scoringPlay || $0.isTurnover || $0.yardsGained >= 20
+            ($0.scoringPlay && $0.playType != .extraPoint)
+                || $0.isTurnover || $0.yardsGained >= 20
         })
 
         // Score: drive points go to the possessing team; a safety is worth
         // +2 to the defense. Identical bookkeeping to GameSimulator.simulate.
-        let quarterIndex = min(quarter - 1, homeQuarterScores.count - 1)
-        let drivePoints = drive.plays.reduce(0) { $0 + $1.pointsScored }
-        if drivePoints > 0 {
-            if homeHasPossession {
-                homeScore += drivePoints
-                homeQuarterScores[quarterIndex] += drivePoints
-            } else {
-                awayScore += drivePoints
-                awayQuarterScores[quarterIndex] += drivePoints
-            }
-        }
-        if drive.result == .safety {
-            if homeHasPossession {
-                awayScore += 2
-                awayQuarterScores[quarterIndex] += 2
-            } else {
-                homeScore += 2
-                homeQuarterScores[quarterIndex] += 2
+        // A touchdown drive held open for its try booked everything play by
+        // play already (`scoreAlreadyBooked`).
+        if !scoreAlreadyBooked {
+            let drivePoints = drive.plays.reduce(0) { $0 + $1.pointsScored }
+            bookPoints(drivePoints, forHome: homeHasPossession)
+            if drive.result == .safety {
+                bookPoints(2, forHome: !homeHasPossession)
             }
         }
 
@@ -1688,25 +1700,32 @@ final class LiveGameEngine: ObservableObject {
             quarter: quarter,
             timeRemaining: timeRemaining
         )
+        // The housed return earns its point-after try too — auto-resolved
+        // via the shared chart (mirrors the quick sim; no live choreography,
+        // the feed line and score tell the story).
+        let scoreAfterTD = (returnTeamIsHome ? homeScore : awayScore) + play.pointsScored
+        let opponentScore = returnTeamIsHome ? awayScore : homeScore
+        let tryPlay = GameSimulator.rollPointAfterTry(
+            offensePlayers: simAvailablePlayers(isHome: returnTeamIsHome),
+            defensePlayers: simAvailablePlayers(isHome: !returnTeamIsHome),
+            scoreDiffAfterTD: scoreAfterTD - opponentScore,
+            quarter: quarter,
+            timeRemaining: timeRemaining,
+            playNumber: 2
+        )
         let returnDrive = DriveResult(
             driveNumber: driveNumber,
             teamID: returnTeamIsHome ? homeTeamID : awayTeamID,
             startingYardLine: GameSimulator.kickoffTouchbackYardLine,
-            plays: [play],
+            plays: [play, tryPlay],
             result: .touchdown
         )
         allDrives.append(returnDrive)
         allHighlights.append(play)
         playLog.append(play)
+        playLog.append(tryPlay)
 
-        let quarterIndex = min(quarter - 1, homeQuarterScores.count - 1)
-        if returnTeamIsHome {
-            homeScore += play.pointsScored
-            homeQuarterScores[quarterIndex] += play.pointsScored
-        } else {
-            awayScore += play.pointsScored
-            awayQuarterScores[quarterIndex] += play.pointsScored
-        }
+        bookPoints(play.pointsScored + tryPlay.pointsScored, forHome: returnTeamIsHome)
 
         momentum = GameSimulator.updateMomentum(
             currentMomentum: momentum,
@@ -1787,6 +1806,122 @@ final class LiveGameEngine: ObservableObject {
         currentDrivePlays = []
         moraleAppliedForCurrentDrive = false
         return recovered
+    }
+
+    // MARK: - Point-After Try (XP / two-point conversion)
+
+    /// Set when a scrimmage touchdown has just been scored in regulation:
+    /// the six points are already on the board, the touchdown drive is held
+    /// open, and the ensuing kickoff waits for ``attemptConversion``.
+    struct PendingConversion: Equatable {
+        /// The side that scored and now attempts the try.
+        let scoringTeamIsHome: Bool
+    }
+
+    @Published private(set) var pendingConversion: PendingConversion?
+    /// The touchdown drive held open while the try is pending.
+    private var pendingConversionDrive: DriveResult?
+
+    /// True when the PLAYER's team attempts the pending try — drives the
+    /// XP / two-point choice panel (the AI resolves from the shared chart).
+    var playerAttemptsConversion: Bool {
+        pendingConversion?.scoringTeamIsHome == playerTeamIsHome
+    }
+
+    /// What the shared decision chart calls for the pending try. Used for
+    /// AI teams (and both teams in fully simulated finishes) — identical to
+    /// the quick sim's `GameSimulator.shouldGoForTwo`.
+    var chartCallsForTwo: Bool {
+        guard let pending = pendingConversion else { return false }
+        let scoringScore = pending.scoringTeamIsHome ? homeScore : awayScore
+        let opponentScore = pending.scoringTeamIsHome ? awayScore : homeScore
+        return GameSimulator.shouldGoForTwo(
+            scoreDiffAfterTD: scoringScore - opponentScore,
+            quarter: quarter,
+            timeRemaining: timeRemaining
+        )
+    }
+
+    /// Resolves the pending point-after try. `goForTwo == nil` lets the
+    /// shared chart decide (AI teams and sim-to-final — quick-sim parity);
+    /// the player's explicit choice passes true/false. A two-point try is
+    /// one real snap from the 2, biased by the offensive call and defensive
+    /// package like any other play; the extra point is the kicker's near-
+    /// automatic boot. Tries are untimed (no clock runoff). The touchdown
+    /// drive then closes normally — kickoff and possession flip included.
+    @discardableResult
+    func attemptConversion(
+        goForTwo: Bool? = nil,
+        offensiveCall: OffensivePlayCall? = nil,
+        defensivePackage: DefensivePackage? = nil
+    ) -> PlayResult {
+        guard !isGameOver, let pending = pendingConversion,
+              var drive = pendingConversionDrive else {
+            return lastPlay ?? gameOverPlaceholderPlay()
+        }
+        let scoringIsHome = pending.scoringTeamIsHome
+        let scoringScore = scoringIsHome ? homeScore : awayScore
+        let opponentScore = scoringIsHome ? awayScore : homeScore
+
+        let play = GameSimulator.rollPointAfterTry(
+            offensePlayers: simAvailablePlayers(isHome: scoringIsHome),
+            defensePlayers: simAvailablePlayers(isHome: !scoringIsHome),
+            scoreDiffAfterTD: scoringScore - opponentScore,
+            quarter: quarter,
+            timeRemaining: timeRemaining,
+            playNumber: drive.plays.count + 1,
+            forceTwoPoint: goForTwo,
+            offensiveCall: offensiveCall,
+            defensivePackage: defensivePackage
+        )
+
+        drive.plays.append(play)
+        currentDrivePlays.append(play)
+        playLog.append(play)
+        lastPlay = play
+        lastMatchups = nil
+        lastPlayInjuries = []
+
+        // The try's points land now; the touchdown's six were booked when
+        // the drive was held open, so finishDrive must not book either again.
+        bookPoints(play.pointsScored, forHome: scoringIsHome)
+
+        pendingConversion = nil
+        pendingConversionDrive = nil
+        finishDrive(drive, scoreAlreadyBooked: true)
+        return play
+    }
+
+    /// Closes a finished drive — EXCEPT a regulation touchdown, which books
+    /// its six points immediately but holds the drive open for the untimed
+    /// point-after try (see ``attemptConversion``). Overtime is sudden death
+    /// here, so six points already settle it and the try is skipped — the
+    /// quick sim's OT likewise never needs a conversion to break a tie.
+    private func finishOrHoldDrive(_ drive: DriveResult, after play: PlayResult) {
+        guard drive.result == .touchdown, play.outcome == .touchdown, !isOvertime else {
+            finishDrive(drive)
+            return
+        }
+        bookPoints(play.pointsScored, forHome: homeHasPossession)
+        pendingConversionDrive = drive
+        pendingConversion = PendingConversion(scoringTeamIsHome: homeHasPossession)
+        // Present the try from the 2-yard line, goal to go.
+        yardLine = 98
+        down = 1
+        distance = 2
+    }
+
+    /// Adds points to one side's total and the current quarter line.
+    private func bookPoints(_ points: Int, forHome: Bool) {
+        guard points > 0 else { return }
+        let quarterIndex = min(quarter - 1, homeQuarterScores.count - 1)
+        if forHome {
+            homeScore += points
+            homeQuarterScores[quarterIndex] += points
+        } else {
+            awayScore += points
+            awayQuarterScores[quarterIndex] += points
+        }
     }
 
     private func beginDrive(at startingYardLine: Int) {

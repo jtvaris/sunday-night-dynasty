@@ -333,7 +333,7 @@ enum MatchupResolver {
         m.holeSize = yards <= 0 ? 0.1 : (yards <= 3 ? 0.35 : (yards <= 7 ? 0.6 : 0.95))
 
         // Point of attack: interior for inside runs/sneaks, edge otherwise.
-        let inside = call.map { [.insideRun, .qbSneak, .draw, .counter].contains($0) } ?? true
+        let inside = call.map { [.insideRun, .qbSneak, .draw, .counter, .dive].contains($0) } ?? true
         let poaBlockers = inside ? [3, 4, 5] : [2, 6]
         let poaDefenders = inside ? [1, 2, 5] : [0, 3]
         let carrierRole = m.targetOffRole ?? 1
