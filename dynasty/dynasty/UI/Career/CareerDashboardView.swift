@@ -990,6 +990,7 @@ struct CareerDashboardView: View {
             return [
                 QuickAction(icon: "scope", label: "Game Plan", destination: .gameWeekPrep),
                 QuickAction(icon: "list.number", label: "Depth Chart", destination: .depthChart),
+                QuickAction(icon: "chart.line.uptrend.xyaxis", label: "Development", destination: .developmentReport),
                 QuickAction(icon: "cross.case.fill", label: "Injuries", destination: .roster)
             ]
         }

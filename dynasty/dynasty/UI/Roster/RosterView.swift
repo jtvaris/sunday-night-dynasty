@@ -7,6 +7,9 @@ struct RosterView: View {
     var teamSalaryCap: Int = 265_000
     /// The defensive coordinator's scheme, used to determine correct DL starter counts.
     var defensiveScheme: DefensiveScheme = .base43
+    /// R28: career context for the Injury Report (pending return decisions).
+    /// Optional so lightweight call sites and previews keep working.
+    var career: Career? = nil
 
     // MARK: - Environment
 
@@ -36,6 +39,8 @@ struct RosterView: View {
     @State private var customDepthOrder: [Position: [UUID]] = [:]
     @State private var positionPickerPlayer: Player? = nil
     @State private var starterPickerPosition: Position? = nil
+    /// R28: Injury Report sheet.
+    @State private var showInjuryReport = false
 
     /// Track whether the user has seen the sort hint.
     @AppStorage("rosterSortHintSeen") private var sortHintSeen: Bool = false
@@ -350,6 +355,9 @@ struct RosterView: View {
         .sheet(isPresented: $showAssessmentSheet) {
             groupAssessmentSheet
         }
+        .sheet(isPresented: $showInjuryReport) {
+            InjuryReportView(players: players, career: career)
+        }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 filterPicker
@@ -357,7 +365,40 @@ struct RosterView: View {
             ToolbarItem(placement: .primaryAction) {
                 sortMenu
             }
+            ToolbarItem(placement: .primaryAction) {
+                injuryReportButton
+            }
         }
+    }
+
+    // MARK: - Injury Report Button (R28)
+
+    /// Count feeding the toolbar badge: current injuries + pending decisions.
+    private var injuryReportBadgeCount: Int {
+        let injured = players.filter { $0.isInjured }.count
+        let decisions = career?.pendingReturnDecisions.count ?? 0
+        return injured + decisions
+    }
+
+    private var injuryReportButton: some View {
+        Button {
+            showInjuryReport = true
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "cross.case.fill")
+                    .foregroundStyle(injuryReportBadgeCount > 0 ? Color.danger : Color.textSecondary)
+                if injuryReportBadgeCount > 0 {
+                    Text("\(injuryReportBadgeCount)")
+                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.danger, in: Capsule())
+                        .offset(x: 8, y: -6)
+                }
+            }
+        }
+        .accessibilityLabel("Injury report, \(injuryReportBadgeCount) item\(injuryReportBadgeCount == 1 ? "" : "s")")
     }
 
     // MARK: - View Mode Picker

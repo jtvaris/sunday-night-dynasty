@@ -2341,15 +2341,42 @@ enum ScoutingEngine {
 
         var reports: [ScoutingReport] = []
 
+        // R27: consensus board built from public knowledge only (current scouted
+        // overalls + media draft projection) — never from hidden true ratings.
+        // Used to resolve "Top 50 / Top 150" watch assignments.
+        let consensusBoard = prospects.sorted { a, b in
+            let aOvr = a.scoutedOverall ?? -1
+            let bOvr = b.scoutedOverall ?? -1
+            if aOvr != bOvr { return aOvr > bOvr }
+            return (a.draftProjection ?? 8) < (b.draftProjection ?? 8)
+        }
+
         for scout in scouts {
             let regionalColleges = colleges(forRegion: scout.scoutRole)
             let regionalProspects = prospects.filter { regionalColleges.contains($0.college) }
 
             guard !regionalProspects.isEmpty else { continue }
 
-            // Each scout evaluates 3-5 prospects per week
-            let evaluationCount = Int.random(in: 3...5)
-            let shuffled = regionalProspects.shuffled()
+            // R27: narrow the weekly visit pool by the scout's assignments.
+            // Watch pool (top-50/top-150 of the consensus board) first, then
+            // focus position. Always fall back to the region if a filter
+            // would empty the pool.
+            var visitPool = regionalProspects
+            if let pool = scout.assignmentPool {
+                let watchIDs = Set(consensusBoard.prefix(pool.boardSize).map(\.id))
+                let watched = visitPool.filter { watchIDs.contains($0.id) }
+                if !watched.isEmpty { visitPool = watched }
+            }
+            if let focusPos = scout.focusPosition {
+                let focused = visitPool.filter { $0.position == focusPos }
+                if !focused.isEmpty { visitPool = focused }
+            }
+            let isTargeted = scout.assignmentPool != nil || scout.focusPosition != nil
+
+            // Each scout evaluates 3-5 prospects per week; a targeted scout
+            // covers a narrower pool and gets one extra visit in (4-6).
+            let evaluationCount = isTargeted ? Int.random(in: 4...6) : Int.random(in: 3...5)
+            let shuffled = visitPool.shuffled()
             let toEvaluate = Array(shuffled.prefix(evaluationCount))
 
             for prospect in toEvaluate {
@@ -2362,6 +2389,15 @@ enum ScoutingEngine {
                 // Position specialization bonus
                 if let spec = scout.positionSpecialization, spec == prospect.position {
                     effectiveAccuracy = min(99, effectiveAccuracy + 10)
+                }
+
+                // R27: focus assignment bonuses — a scout dialed into a position
+                // reads it sharper; a watch-pool assignment means deeper film work.
+                if let focusPos = scout.focusPosition, focusPos == prospect.position {
+                    effectiveAccuracy = min(99, effectiveAccuracy + 10)
+                }
+                if scout.assignmentPool != nil {
+                    effectiveAccuracy = min(99, effectiveAccuracy + 5)
                 }
 
                 // Earlier weeks = more uncertainty, later weeks = better data

@@ -6,6 +6,8 @@ struct HireScoutView: View {
     let scoutRole: ScoutRole
     let teamID: UUID
     let remainingBudget: Int
+    /// R27: deterministic candidate pool seed (same team/role/season → same pool).
+    var poolSeed: UInt64? = nil
     var onHired: ((String, String) -> Void)?
 
     @Environment(\.modelContext) private var modelContext
@@ -171,7 +173,7 @@ struct HireScoutView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
             if candidates.isEmpty {
-                candidates = CoachingEngine.generateScoutCandidates(role: scoutRole, count: 20)
+                candidates = CoachingEngine.generateScoutCandidates(role: scoutRole, count: 20, seed: poolSeed)
             }
         }
     }

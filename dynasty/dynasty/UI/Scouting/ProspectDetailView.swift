@@ -1484,6 +1484,12 @@ struct ProspectDetailView: View {
                         .foregroundStyle(Color.success)
                     Text("Scouted (\(prospect.scoutingReports.count) report\(prospect.scoutingReports.count == 1 ? "" : "s"))")
                         .foregroundStyle(Color.success)
+                    // R27: attribution + accuracy indicator for the latest report
+                    if let scoutedBy = prospect.latestScoutName {
+                        Text("\u{00B7} latest by \(scoutedBy)\(prospect.latestReportConfidence.map { " (\(Int($0 * 100))% confidence)" } ?? "")")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                    }
                 }
             }
         }

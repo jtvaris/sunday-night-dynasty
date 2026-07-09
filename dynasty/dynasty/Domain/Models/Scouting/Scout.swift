@@ -40,6 +40,16 @@ final class Scout {
         set { focusAttributeRaw = newValue?.rawValue }
     }
 
+    /// R27: Which slice of the consensus draft board this scout is assigned to
+    /// watch during the college season. nil = whole assigned region.
+    /// Optional stored field → lightweight SwiftData migration.
+    var assignmentPoolRaw: String?
+
+    var assignmentPool: ScoutAssignmentPool? {
+        get { assignmentPoolRaw.flatMap { ScoutAssignmentPool(rawValue: $0) } }
+        set { assignmentPoolRaw = newValue?.rawValue }
+    }
+
     // MARK: - Computed Properties
 
     var fullName: String {

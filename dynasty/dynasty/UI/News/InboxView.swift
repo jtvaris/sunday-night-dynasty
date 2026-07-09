@@ -277,6 +277,7 @@ struct InboxView: View {
         case .media:                    return Color(red: 0.6, green: 0.3, blue: 0.9)
         case .leagueOffice:             return Color.warning
         case .playerAgent:              return Color.textSecondary
+        case .developmentStaff:         return Color.eliteGreen
         }
     }
 }

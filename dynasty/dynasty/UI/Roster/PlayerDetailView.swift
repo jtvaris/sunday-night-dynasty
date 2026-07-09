@@ -1189,6 +1189,16 @@ struct PlayerDetailView: View {
                         Text("\(player.injuryWeeksRemaining) of \(player.injuryWeeksOriginal) weeks remaining")
                             .font(.caption2)
                             .foregroundStyle(Color.textTertiary)
+                        // R28: rehab trajectory
+                        if let rehab = player.rehabStatus {
+                            HStack(spacing: 3) {
+                                Image(systemName: rehab.icon)
+                                    .font(.system(size: 8))
+                                Text(rehab.displayName)
+                                    .font(.system(size: 9, weight: .semibold))
+                            }
+                            .foregroundStyle(rehabColor(rehab))
+                        }
                     }
                     Spacer()
                     // Recovery progress
@@ -1198,7 +1208,49 @@ struct PlayerDetailView: View {
                     CircularProgressView(progress: progress, color: .danger)
                         .frame(width: 32, height: 32)
                 }
-            } else {
+            } else if player.rushBackWeeksRemaining > 0 {
+                // R28: recently rushed back — elevated re-injury risk window
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .foregroundStyle(Color.warning)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Returned early — elevated re-injury risk")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.warning)
+                        Text("\(player.rushBackWeeksRemaining) week\(player.rushBackWeeksRemaining == 1 ? "" : "s") until fully conditioned")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    Spacer()
+                }
+            }
+
+            // R28: permanent injury history (newest first), with recurrence flags
+            let history = player.injuryHistory
+            if !history.isEmpty {
+                ForEach(history.suffix(6).reversed()) { record in
+                    let repeatCount = history.filter { $0.injuryTypeRaw == record.injuryTypeRaw }.count
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.textTertiary)
+                        Text(record.summary)
+                            .font(.caption2)
+                            .foregroundStyle(Color.textSecondary)
+                        if repeatCount >= 2 {
+                            HStack(spacing: 2) {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 8, weight: .bold))
+                                Text("x\(repeatCount)")
+                                    .font(.system(size: 9, weight: .bold).monospacedDigit())
+                            }
+                            .foregroundStyle(Color.warning)
+                            .accessibilityLabel("Recurring injury, \(repeatCount) times")
+                        }
+                        Spacer()
+                    }
+                }
+            } else if !player.isInjured {
                 // #180: Show "No injury history" with durability rating
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")
@@ -1225,6 +1277,15 @@ struct PlayerDetailView: View {
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// R28: theme color for a rehab trajectory.
+    private func rehabColor(_ status: RehabStatus) -> Color {
+        switch status {
+        case .aheadOfSchedule: return .success
+        case .onTrack:         return .textSecondary
+        case .setback:         return .warning
+        }
     }
 
     // MARK: - Position Change Sheet (#41)

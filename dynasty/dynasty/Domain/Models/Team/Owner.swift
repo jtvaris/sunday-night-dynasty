@@ -29,6 +29,14 @@ final class Owner {
     /// Previous season's coaching budget in thousands, for showing budget change in UI.
     var previousCoachingBudget: Int
 
+    /// R27: Dedicated scouting department budget in thousands (e.g. 4000 = $4M).
+    /// Separate pot from `coachingBudget` — scout salaries draw from this one.
+    /// Default keeps old saves valid (lightweight migration).
+    var scoutingBudget: Int = 4_000
+
+    /// R27: Previous season's scouting budget, for showing change in UI.
+    var previousScoutingBudget: Int = 0
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -39,7 +47,9 @@ final class Owner {
         prefersWinNow: Bool = false,
         satisfaction: Int = 70,
         coachingBudget: Int = 20_000,
-        previousCoachingBudget: Int = 0
+        previousCoachingBudget: Int = 0,
+        scoutingBudget: Int = 4_000,
+        previousScoutingBudget: Int = 0
     ) {
         self.id = id
         self.name = name
@@ -51,5 +61,7 @@ final class Owner {
         self.satisfaction = satisfaction
         self.coachingBudget = coachingBudget
         self.previousCoachingBudget = previousCoachingBudget
+        self.scoutingBudget = scoutingBudget
+        self.previousScoutingBudget = previousScoutingBudget
     }
 }

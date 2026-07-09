@@ -89,6 +89,28 @@ final class Career {
     /// start of every new season. Optional new attribute → lightweight migration.
     var pendingTradeOffersData: Data? = nil
 
+    // MARK: - Development Reports (R26)
+    /// JSON-encoded `[DevelopmentReport]` — weekly development digests for
+    /// the user's team, newest first, capped at 10.
+    /// Optional new attribute → lightweight migration.
+    var developmentReportLogData: Data? = nil
+
+    // MARK: - Injury Return Decisions (R28)
+    /// JSON-encoded `[ReturnDecision]` — user-team players in their final
+    /// rehab week awaiting a "rush back vs. hold out" call. Ignoring an entry
+    /// is always safe (normal recovery). Optional attribute → light migration.
+    var pendingReturnDecisionsData: Data? = nil
+
+    // MARK: - League Narrative (R29)
+    /// JSON-encoded `[NewsItem]` — the persisted news feed, newest first,
+    /// capped at 150. Written by WeekAdvancer after every advance so the News
+    /// screen survives app restarts. Optional attribute → light migration.
+    var newsLogData: Data? = nil
+    /// JSON-encoded `LeagueNarrativeState` — power rankings (with last week's
+    /// order for movement arrows), MVP race, and anti-repeat story markers.
+    /// Optional new attribute → lightweight migration.
+    var leagueNarrativeData: Data? = nil
+
     // MARK: - Locker Room (R25)
     /// JSON-encoded `[LockerRoomEvent]` — resolved locker-room happenings,
     /// newest first, capped at 12. Optional new attribute → lightweight migration.
@@ -182,6 +204,79 @@ extension Career {
         }
         set {
             pendingTradeOffersData = try? JSONEncoder().encode(newValue)
+        }
+    }
+}
+
+// MARK: - Development Reports Codable Bridge (R26)
+
+extension Career {
+
+    /// Weekly development digests, newest first (max 10). Writing encodes
+    /// and stores the trimmed list (caller saves the context).
+    var developmentReports: [DevelopmentReport] {
+        get {
+            guard let data = developmentReportLogData,
+                  let reports = try? JSONDecoder().decode([DevelopmentReport].self, from: data) else {
+                return []
+            }
+            return reports
+        }
+        set {
+            developmentReportLogData = try? JSONEncoder().encode(Array(newValue.prefix(10)))
+        }
+    }
+}
+
+// MARK: - Return Decisions Codable Bridge (R28)
+
+extension Career {
+
+    /// Pending "rush back vs. hold out" decisions for user-team players in
+    /// their final rehab week. Writing encodes and stores the new list
+    /// (caller saves the context).
+    var pendingReturnDecisions: [ReturnDecision] {
+        get {
+            guard let data = pendingReturnDecisionsData,
+                  let decisions = try? JSONDecoder().decode([ReturnDecision].self, from: data) else {
+                return []
+            }
+            return decisions
+        }
+        set {
+            pendingReturnDecisionsData = try? JSONEncoder().encode(newValue)
+        }
+    }
+}
+
+// MARK: - League Narrative Codable Bridge (R29)
+
+extension Career {
+
+    /// Persisted news feed, newest first (max 150). Writing encodes and
+    /// stores the trimmed list (caller saves the context).
+    var newsLog: [NewsItem] {
+        get {
+            guard let data = newsLogData,
+                  let items = try? JSONDecoder().decode([NewsItem].self, from: data) else {
+                return []
+            }
+            return items
+        }
+        set {
+            newsLogData = try? JSONEncoder().encode(Array(newValue.prefix(150)))
+        }
+    }
+
+    /// League narrative storyline state (power rankings, MVP race, story
+    /// markers). `nil` until the first regular-season week has been played.
+    var leagueNarrative: LeagueNarrativeState? {
+        get {
+            guard let data = leagueNarrativeData else { return nil }
+            return try? JSONDecoder().decode(LeagueNarrativeState.self, from: data)
+        }
+        set {
+            leagueNarrativeData = newValue.flatMap { try? JSONEncoder().encode($0) }
         }
     }
 }

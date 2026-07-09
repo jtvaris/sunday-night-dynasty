@@ -209,6 +209,17 @@ final class CollegeProspect {
         return String(repeating: "\u{25CF}", count: filled) + String(repeating: "\u{25CB}", count: empty)
     }
 
+    /// R27: Name of the scout who filed the most recent report, for the
+    /// "scouted by X" attribution line on prospect cards.
+    var latestScoutName: String? {
+        scoutingReports.last?.scoutName
+    }
+
+    /// R27: Confidence of the most recent report (0.0-1.0), for the accuracy indicator.
+    var latestReportConfidence: Double? {
+        scoutingReports.last?.confidenceLevel
+    }
+
     // MARK: - College Production
     //
     // Derived deterministically from `truePotential` + `truePositionAttributes`,

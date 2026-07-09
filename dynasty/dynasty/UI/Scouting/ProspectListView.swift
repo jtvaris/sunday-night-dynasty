@@ -715,6 +715,13 @@ struct ProspectRowView: View {
                             .font(.system(size: 7))
                             .foregroundStyle(prospect.scoutReportCount >= 3 ? Color.success : prospect.scoutReportCount >= 2 ? Color.accentBlue : Color.textTertiary)
                     }
+                    // R27: "scouted by X" attribution + confidence of the latest report
+                    if let scoutedBy = prospect.latestScoutName {
+                        Text("by \(shortScoutName(scoutedBy))\(latestConfidenceSuffix)")
+                            .font(.system(size: 7))
+                            .foregroundStyle(Color.textTertiary)
+                            .lineLimit(1)
+                    }
                     if prospect.combineInvite {
                         Text("CMB")
                             .font(.system(size: 7, weight: .bold))
@@ -776,6 +783,21 @@ struct ProspectRowView: View {
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
+    }
+
+    // MARK: - Scouted-By Attribution (R27)
+
+    /// "Ray Collins" → "R. Collins" to keep the sub-info row compact.
+    private func shortScoutName(_ fullName: String) -> String {
+        let parts = fullName.split(separator: " ")
+        guard parts.count >= 2, let firstInitial = parts.first?.first else { return fullName }
+        return "\(firstInitial). \(parts.last!)"
+    }
+
+    /// Latest report confidence as a compact percent suffix, e.g. " · 70%".
+    private var latestConfidenceSuffix: String {
+        guard let confidence = prospect.latestReportConfidence else { return "" }
+        return " \u{00B7} \(Int(confidence * 100))%"
     }
 
     // MARK: - Overview Columns

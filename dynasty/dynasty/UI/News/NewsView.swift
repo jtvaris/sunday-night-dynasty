@@ -194,13 +194,46 @@ struct NewsView: View {
 
     // MARK: - News List
 
+    /// R29: storyline state persisted on the career by the narrative engine.
+    private var narrative: LeagueNarrativeState? {
+        guard let state = career.leagueNarrative,
+              state.season == career.currentSeason,
+              !state.rankings.isEmpty else { return nil }
+        return state
+    }
+
+    /// The MVP-race card appears from midseason on (the race needs a body of
+    /// work before it means anything).
+    private var showMVPRace: Bool {
+        guard let narrative else { return false }
+        return narrative.week >= 10 && !narrative.mvpRace.isEmpty
+    }
+
+    /// League cards render on the default and League feeds only.
+    private var showsLeagueCards: Bool {
+        narrative != nil && (activeFilter == .all || activeFilter == .league)
+    }
+
     private var newsListContent: some View {
         Group {
-            if filteredItems.isEmpty {
+            if filteredItems.isEmpty && !showsLeagueCards {
                 emptyState
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 20) {
+                        // R29: league cards lead the default + league feeds.
+                        if let narrative, showsLeagueCards {
+                            PowerRankingsCard(
+                                state: narrative,
+                                userTeamID: career.teamID
+                            )
+                            if showMVPRace {
+                                MVPRaceCard(
+                                    race: narrative.mvpRace,
+                                    userTeamID: career.teamID
+                                )
+                            }
+                        }
                         if !pinnedTrending.isEmpty {
                             trendingSection
                         }
@@ -246,7 +279,13 @@ struct NewsView: View {
     // MARK: Date Group Section
 
     private func dateGroupSection(bucket: DateBucket, items: [NewsItem]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        // R29: within each date bucket the feed reads "Your Team" first,
+        // then "League News" (sub-labels only shown when both exist).
+        let myTeamItems = items.filter { career.teamID != nil && $0.relatedTeamID == career.teamID }
+        let leagueItems = items.filter { !(career.teamID != nil && $0.relatedTeamID == career.teamID) }
+        let showSubLabels = !myTeamItems.isEmpty && !leagueItems.isEmpty
+
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text(bucket.rawValue)
                     .font(.headline.weight(.bold))
@@ -257,11 +296,29 @@ struct NewsView: View {
                     .foregroundStyle(Color.textTertiary)
                 Spacer()
             }
+            if showSubLabels {
+                newsSubLabel("Your Team", icon: "star.fill", color: Color.accentGold)
+            }
             VStack(spacing: 12) {
-                ForEach(items) { item in
+                ForEach(myTeamItems) { item in
                     NewsItemCard(
                         item: item,
-                        isMyTeam: item.relatedTeamID == career.teamID,
+                        isMyTeam: true,
+                        isExpanded: expandedItemIDs.contains(item.id),
+                        isPinned: false
+                    ) {
+                        toggleExpansion(item.id)
+                    }
+                }
+            }
+            if showSubLabels {
+                newsSubLabel("League News", icon: "sportscourt.fill", color: Color.textTertiary)
+            }
+            VStack(spacing: 12) {
+                ForEach(leagueItems) { item in
+                    NewsItemCard(
+                        item: item,
+                        isMyTeam: false,
                         isExpanded: expandedItemIDs.contains(item.id),
                         isPinned: false
                     ) {
@@ -270,6 +327,18 @@ struct NewsView: View {
                 }
             }
         }
+    }
+
+    private func newsSubLabel(_ title: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .bold))
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .heavy))
+                .tracking(0.8)
+        }
+        .foregroundStyle(color)
+        .padding(.top, 2)
     }
 
     // MARK: Empty State
@@ -366,10 +435,9 @@ struct NewsView: View {
     // MARK: - Data
 
     private func loadNews() {
-        // NewsItem is a plain Codable struct, not a SwiftData model.
-        // In a full implementation this would load from the career's stored news.
-        // For now, initialize with an empty array until news is generated.
-        newsItems = []
+        // R29: the news feed is persisted on the career (JSON-encoded,
+        // newest first) by WeekAdvancer after every advance.
+        newsItems = career.newsLog
     }
 }
 
@@ -504,6 +572,227 @@ private struct NewsItemCard: View {
             .fill(sentiment.color)
             .frame(width: 8, height: 8)
             .accessibilityLabel(sentiment.accessibilityLabel)
+    }
+}
+
+// MARK: - Power Rankings Card (R29)
+
+private struct PowerRankingsCard: View {
+
+    let state: LeagueNarrativeState
+    let userTeamID: UUID?
+
+    /// Top-10 always; the user's team is appended when it sits below the line.
+    private var visibleEntries: [PowerRankingEntry] {
+        let topTen = Array(state.rankings.prefix(10))
+        guard let userTeamID,
+              let userEntry = state.rankings.first(where: { $0.teamID == userTeamID }),
+              userEntry.rank > 10 else {
+            return topTen
+        }
+        return topTen + [userEntry]
+    }
+
+    private var userBelowLine: Bool {
+        guard let userTeamID,
+              let userEntry = state.rankings.first(where: { $0.teamID == userTeamID }) else {
+            return false
+        }
+        return userEntry.rank > 10
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "list.number")
+                    .foregroundStyle(Color.accentBlue)
+                Text("Power Rankings")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+                Text("Week \(state.week)")
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.textTertiary)
+            }
+
+            VStack(spacing: 6) {
+                ForEach(visibleEntries) { entry in
+                    if userBelowLine && entry.teamID == userTeamID {
+                        HStack {
+                            Image(systemName: "ellipsis")
+                                .font(.caption2)
+                                .foregroundStyle(Color.textTertiary)
+                            Spacer()
+                        }
+                        .padding(.leading, 12)
+                    }
+                    rankingRow(entry)
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private func rankingRow(_ entry: PowerRankingEntry) -> some View {
+        let isUserTeam = entry.teamID == userTeamID
+        return HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text("\(entry.rank)")
+                .font(.subheadline.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(entry.rank <= 3 ? Color.accentGold : Color.textSecondary)
+                .frame(width: 26, alignment: .trailing)
+
+            movementBadge(entry.movement)
+                .frame(width: 38, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(entry.teamAbbr)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(isUserTeam ? Color.accentGold : Color.textPrimary)
+                    Text(entry.teamName)
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                    Text(entry.record)
+                        .font(.caption.weight(.medium))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.textTertiary)
+                }
+                Text(entry.blurb)
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isUserTeam ? Color.accentGold.opacity(0.12) : Color.clear)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(
+                            isUserTeam ? Color.accentGold.opacity(0.45) : Color.clear,
+                            lineWidth: 1
+                        )
+                )
+        )
+    }
+
+    @ViewBuilder
+    private func movementBadge(_ movement: Int) -> some View {
+        if movement > 0 {
+            HStack(spacing: 2) {
+                Image(systemName: "arrowtriangle.up.fill")
+                    .font(.system(size: 8, weight: .bold))
+                Text("\(movement)")
+                    .font(.caption2.weight(.bold))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(Color.success)
+            .accessibilityLabel("Up \(movement) spots")
+        } else if movement < 0 {
+            HStack(spacing: 2) {
+                Image(systemName: "arrowtriangle.down.fill")
+                    .font(.system(size: 8, weight: .bold))
+                Text("\(-movement)")
+                    .font(.caption2.weight(.bold))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(Color.danger)
+            .accessibilityLabel("Down \(-movement) spots")
+        } else {
+            Text("—")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(Color.textTertiary)
+                .accessibilityLabel("No movement")
+        }
+    }
+}
+
+// MARK: - MVP Race Card (R29)
+
+private struct MVPRaceCard: View {
+
+    let race: [MVPCandidate]
+    let userTeamID: UUID?
+
+    private var leaderPoints: Double {
+        max(race.map(\.points).max() ?? 1, 1)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "trophy.fill")
+                    .foregroundStyle(Color.accentGold)
+                Text("MVP Race")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+            }
+
+            VStack(spacing: 8) {
+                ForEach(Array(race.enumerated()), id: \.element.id) { index, candidate in
+                    candidateRow(candidate, position: index + 1)
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private func candidateRow(_ candidate: MVPCandidate, position: Int) -> some View {
+        let isUserTeam = candidate.teamID != nil && candidate.teamID == userTeamID
+        let share = candidate.points / leaderPoints
+        return HStack(spacing: 10) {
+            Text("\(position)")
+                .font(.subheadline.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(position == 1 ? Color.accentGold : Color.textSecondary)
+                .frame(width: 18, alignment: .trailing)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(candidate.playerName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(isUserTeam ? Color.accentGold : Color.textPrimary)
+                        .lineLimit(1)
+                    Text("\(candidate.positionRaw) · \(candidate.teamAbbr)")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
+                // Relative "case strength" bar vs. the race leader.
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.backgroundTertiary)
+                        Capsule()
+                            .fill(position == 1 ? Color.accentGold : Color.accentBlue)
+                            .frame(width: max(8, geo.size.width * share))
+                    }
+                }
+                .frame(height: 5)
+            }
+        }
     }
 }
 

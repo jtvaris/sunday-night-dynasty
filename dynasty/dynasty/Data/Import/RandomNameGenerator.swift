@@ -42,4 +42,11 @@ enum RandomNameGenerator {
         let last = lastNames.randomElement()!
         return (first, last)
     }
+
+    /// R27: Seeded variant — returns a deterministic name for a given generator state.
+    static func randomName<G: RandomNumberGenerator>(using generator: inout G) -> (first: String, last: String) {
+        let first = firstNames.randomElement(using: &generator)!
+        let last = lastNames.randomElement(using: &generator)!
+        return (first, last)
+    }
 }

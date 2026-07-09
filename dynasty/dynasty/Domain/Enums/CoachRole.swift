@@ -18,6 +18,9 @@ enum CoachRole: String, Codable, CaseIterable, Identifiable {
     case strengthCoach           = "StrengthCoach"
     case teamDoctor              = "TeamDoctor"
     case physio                  = "Physio"
+    /// R28: leads the rehab program — better trainers speed recovery,
+    /// reduce setbacks, and lower re-injury risk after early returns.
+    case headTrainer             = "HeadTrainer"
 
     /// Real NFL salary range for this role, in thousands per year.
     /// E.g. (min: 2000, max: 20000) means $2M–$20M.
@@ -38,6 +41,7 @@ enum CoachRole: String, Codable, CaseIterable, Identifiable {
         case .strengthCoach:           return (min: 250,   avg: 500,    max: 1_100)
         case .teamDoctor:              return (min: 300,   avg: 650,    max: 1_300)
         case .physio:                  return (min: 250,   avg: 500,    max: 1_000)
+        case .headTrainer:             return (min: 250,   avg: 550,    max: 1_100)
         }
     }
 
@@ -54,7 +58,7 @@ enum CoachRole: String, Codable, CaseIterable, Identifiable {
         case .olCoach, .dlCoach:       return ["playerDevelopment", "discipline"]
         case .lbCoach, .dbCoach:       return ["playerDevelopment", "gamePlanning"]
         case .strengthCoach:           return ["playerDevelopment", "discipline", "motivation"]
-        case .teamDoctor, .physio:     return ["playerDevelopment"]
+        case .teamDoctor, .physio, .headTrainer: return ["playerDevelopment"]
         }
     }
 

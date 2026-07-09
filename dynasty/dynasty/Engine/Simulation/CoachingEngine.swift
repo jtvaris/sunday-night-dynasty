@@ -1171,10 +1171,18 @@ enum CoachingEngine {
     /// - Parameters:
     ///   - role: The scouting role being filled.
     ///   - count: How many candidates to generate (defaults to 20).
+    ///   - seed: R27 — when provided, the pool is generated deterministically
+    ///           (same team/role/season always sees the same candidates).
     /// - Returns: An array of freshly created `Scout` objects not yet attached to any team.
-    static func generateScoutCandidates(role: ScoutRole, count: Int = 20) -> [Scout] {
-        (0..<count).map { _ in
-            let name = RandomNameGenerator.randomName()
+    static func generateScoutCandidates(role: ScoutRole, count: Int = 20, seed: UInt64? = nil) -> [Scout] {
+        var seededRNG = ScoutPoolGenerator(state: (seed ?? 0) == 0 ? 0x9E3779B97F4A7C15 : seed!)
+        var systemRNG = SystemRandomNumberGenerator()
+
+        func makeScout() -> Scout {
+            let name: (first: String, last: String)
+            let experience: Int
+            let spec: Position?
+            let accuracy: Int, personality: Int, potential: Int, salary: Int
 
             let expRange: ClosedRange<Int>
             let salaryRange: ClosedRange<Int>
@@ -1186,23 +1194,69 @@ enum CoachingEngine {
                 salaryRange = 150...1_000
             }
 
-            let experience = Int.random(in: expRange)
-            let baseCeiling = min(99, 40 + experience * 3)
-            let baseFloor = max(25, baseCeiling - 35)
+            if seed != nil {
+                name = RandomNameGenerator.randomName(using: &seededRNG)
+                experience = Int.random(in: expRange, using: &seededRNG)
+                let ceil = min(99, 40 + experience * 3)
+                let floor = max(25, ceil - 35)
+                spec = role.isChief ? nil : Position.allCases.randomElement(using: &seededRNG)
+                accuracy = Int.random(in: floor...ceil, using: &seededRNG)
+                personality = Int.random(in: floor...ceil, using: &seededRNG)
+                potential = Int.random(in: floor...ceil, using: &seededRNG)
+                salary = Int.random(in: salaryRange, using: &seededRNG)
+            } else {
+                name = RandomNameGenerator.randomName(using: &systemRNG)
+                experience = Int.random(in: expRange, using: &systemRNG)
+                let ceil = min(99, 40 + experience * 3)
+                let floor = max(25, ceil - 35)
+                spec = role.isChief ? nil : Position.allCases.randomElement(using: &systemRNG)
+                accuracy = Int.random(in: floor...ceil, using: &systemRNG)
+                personality = Int.random(in: floor...ceil, using: &systemRNG)
+                potential = Int.random(in: floor...ceil, using: &systemRNG)
+                salary = Int.random(in: salaryRange, using: &systemRNG)
+            }
 
             return Scout(
                 firstName: name.first,
                 lastName: name.last,
                 teamID: nil,
-                positionSpecialization: role.isChief ? nil : Position.allCases.randomElement(),
-                accuracy: Int.random(in: baseFloor...baseCeiling),
-                personalityRead: Int.random(in: baseFloor...baseCeiling),
-                potentialRead: Int.random(in: baseFloor...baseCeiling),
+                positionSpecialization: spec,
+                accuracy: accuracy,
+                personalityRead: personality,
+                potentialRead: potential,
                 experience: experience,
-                salary: Int.random(in: salaryRange),
+                salary: salary,
                 scoutRole: role
             )
         }
+
+        return (0..<count).map { _ in makeScout() }
+    }
+
+    /// R27: Stable seed for a team's scout hiring pool: same team + role + season
+    /// always produces the same candidate list (FNV-1a over a stable string —
+    /// `Hasher` is randomized per launch, so it cannot be used here).
+    static func scoutPoolSeed(teamID: UUID, role: ScoutRole, season: Int) -> UInt64 {
+        let key = "\(teamID.uuidString)|\(role.rawValue)|\(season)"
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in key.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x100000001b3
+        }
+        return hash
+    }
+}
+
+/// R27: SplitMix64 — small deterministic RNG for seeded candidate pools.
+private struct ScoutPoolGenerator: RandomNumberGenerator {
+    var state: UInt64
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9E3779B97F4A7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        return z ^ (z >> 31)
     }
 }
 

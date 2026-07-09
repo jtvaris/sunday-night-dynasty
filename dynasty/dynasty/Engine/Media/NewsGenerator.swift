@@ -63,8 +63,8 @@ enum NewsGenerator {
     ) -> [NewsItem] {
         var items: [NewsItem] = []
 
-        // 1) Power rankings
-        items.append(generatePowerRankings(teams: teams, week: week, season: season))
+        // 1) Power rankings — owned by LeagueNarrativeEngine since R29 (it
+        //    computes the full ranked board with movement); no duplicate here.
 
         // 2) Standout player performance (player of the week)
         if let potw = generatePlayerOfTheWeek(players: players, teams: teams, week: week, season: season) {
@@ -294,36 +294,6 @@ enum NewsGenerator {
     }
 
     // MARK: - Private Generators
-
-    private static func generatePowerRankings(teams: [Team], week: Int, season: Int) -> NewsItem {
-        let sorted = teams.sorted { lhs, rhs in
-            let lhsWinPct = (lhs.wins + lhs.losses) > 0
-                ? Double(lhs.wins) / Double(lhs.wins + lhs.losses)
-                : 0.5
-            let rhsWinPct = (rhs.wins + rhs.losses) > 0
-                ? Double(rhs.wins) / Double(rhs.wins + rhs.losses)
-                : 0.5
-            return lhsWinPct > rhsWinPct
-        }
-
-        let topThree = sorted.prefix(3).map { $0.fullName }
-        let headline = "Week \(week) Power Rankings: \(topThree.first ?? "TBD") holds top spot"
-        let body: String
-        if topThree.count >= 3 {
-            body = "This week's top three: 1. \(topThree[0]), 2. \(topThree[1]), 3. \(topThree[2]). The race for the number one seed continues to tighten."
-        } else {
-            body = "The power rankings are taking shape as the season progresses."
-        }
-
-        return NewsItem(
-            headline: headline,
-            body: body,
-            category: .teamRanking,
-            week: week,
-            season: season,
-            sentiment: .neutral
-        )
-    }
 
     private static func generatePlayerOfTheWeek(
         players: [Player],

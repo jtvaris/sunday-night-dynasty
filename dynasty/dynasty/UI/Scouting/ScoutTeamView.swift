@@ -6,7 +6,8 @@ struct ScoutTeamView: View {
     let career: Career
     let scoutsSentToCombine: Bool
     let prospects: [CollegeProspect]
-    let coachingBudget: Int
+    /// R27: dedicated scouting department budget (in thousands).
+    let scoutingBudget: Int
     let onHire: () -> Void
     let onFire: (Scout) -> Void
     let onSendToCombine: () -> Void
@@ -14,10 +15,14 @@ struct ScoutTeamView: View {
     @State private var scoutToFire: Scout?
     @State private var showFireConfirmation = false
 
-    // MARK: - Budget Computed Properties (#232)
+    // MARK: - Budget Computed Properties (#232, R27: separate scouting pot)
 
     private var totalScoutSalary: Int {
         scouts.reduce(0) { $0 + $1.salary }
+    }
+
+    private var remainingScoutBudget: Int {
+        scoutingBudget - totalScoutSalary
     }
 
     private var formattedTotalSalary: String {
@@ -28,10 +33,18 @@ struct ScoutTeamView: View {
     }
 
     private var formattedBudget: String {
-        if coachingBudget >= 1000 {
-            return String(format: "$%.1fM", Double(coachingBudget) / 1000.0)
+        if scoutingBudget >= 1000 {
+            return String(format: "$%.1fM", Double(scoutingBudget) / 1000.0)
         }
-        return "$\(coachingBudget)K"
+        return "$\(scoutingBudget)K"
+    }
+
+    private var formattedRemaining: String {
+        let value = abs(remainingScoutBudget)
+        if value >= 1000 {
+            return String(format: "$%.1fM", Double(value) / 1000.0)
+        }
+        return "$\(value)K"
     }
 
     /// Count of prospects scouted by a specific scout (matched by scoutID in reports).
@@ -63,9 +76,12 @@ struct ScoutTeamView: View {
                             Image(systemName: "dollarsign.circle")
                                 .foregroundStyle(Color.accentGold)
                                 .font(.caption)
-                            Text("Scout salaries: \(formattedTotalSalary) / \(formattedBudget) budget")
+                            Text("Scout salaries: \(formattedTotalSalary) / \(formattedBudget) scouting budget")
                                 .font(.caption)
                                 .foregroundStyle(Color.textSecondary)
+                            Text(remainingScoutBudget >= 0 ? "(\(formattedRemaining) left)" : "(\(formattedRemaining) over)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(remainingScoutBudget >= 0 ? Color.success : Color.danger)
                             Spacer()
                             if let spec = dominantSpecialization {
                                 Text("\(spec.rawValue) Specialist: +10% accuracy on \(spec.rawValue) evaluations")
@@ -218,17 +234,17 @@ struct ScoutTeamView: View {
                     .frame(width: 52, alignment: .center)
                 Spacer(minLength: 4)
                 Text("Focus Assignment")
-                    .frame(minWidth: 180, alignment: .center)
+                    .frame(minWidth: 260, alignment: .center)
             }
             .font(.caption2.weight(.bold))
             .foregroundStyle(Color.textTertiary)
 
             HStack {
                 Spacer()
-                Text("Focus: narrow position or attribute to boost scouting accuracy in that area")
+                Text("Focus: position/attribute boosts accuracy \u{00B7} Watch: Top 50/150 targets get more weekly visits")
                     .font(.system(size: 9))
                     .foregroundStyle(Color.textTertiary)
-                    .frame(minWidth: 180, alignment: .center)
+                    .frame(minWidth: 260, alignment: .center)
             }
         }
         .padding(.vertical, 6)
@@ -413,8 +429,38 @@ struct ScoutTableRow: View {
                             .strokeBorder(Color.accentBlue.opacity(0.3), lineWidth: 1)
                     )
                 }
+
+                // R27: watch-pool assignment — concentrate weekly visits on a
+                // slice of the consensus board (faster, sharper reveals there).
+                Menu {
+                    Button("Whole Region") { scout.assignmentPool = nil }
+                    ForEach(ScoutAssignmentPool.allCases) { pool in
+                        Button {
+                            scout.assignmentPool = pool
+                        } label: {
+                            Label(pool.label, systemImage: pool.icon)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: scout.assignmentPool?.icon ?? "globe.americas")
+                            .font(.system(size: 10))
+                        Text(scout.assignmentPool?.label ?? "Region")
+                            .font(.caption.weight(.semibold))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundStyle(Color.success)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.success.opacity(0.15), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.success.opacity(0.3), lineWidth: 1)
+                    )
+                }
             }
-            .frame(minWidth: 180, alignment: .center)
+            .frame(minWidth: 260, alignment: .center)
         }
         .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
@@ -521,6 +567,28 @@ struct ScoutDetailView: View {
                 }
                 .listRowBackground(Color.backgroundSecondary)
 
+                // R27: current assignments at a glance
+                Section("Assignments") {
+                    LabeledContent("Focus Position") {
+                        Text(scout.focusPosition?.rawValue ?? "All Positions")
+                            .foregroundStyle(scout.focusPosition != nil ? Color.accentGold : Color.textSecondary)
+                    }
+                    LabeledContent("Focus Attribute") {
+                        Text(scout.focusAttribute?.label ?? "General")
+                            .foregroundStyle(scout.focusAttribute != nil ? Color.accentBlue : Color.textSecondary)
+                    }
+                    LabeledContent("Watch Pool") {
+                        Text(scout.assignmentPool?.label ?? "Whole Region")
+                            .foregroundStyle(scout.assignmentPool != nil ? Color.success : Color.textSecondary)
+                    }
+                    if let pool = scout.assignmentPool {
+                        Text(pool.poolDescription)
+                            .font(.caption)
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+                .listRowBackground(Color.backgroundSecondary)
+
                 Section("Scouting Ratings") {
                     AttributeRow(name: "Accuracy",         value: scout.accuracy)
                     AttributeRow(name: "Personality Read", value: scout.personalityRead)
@@ -617,7 +685,7 @@ struct ScoutRowView: View {
             ),
             scoutsSentToCombine: false,
             prospects: [],
-            coachingBudget: 20_000,
+            scoutingBudget: 4_000,
             onHire: {},
             onFire: { _ in },
             onSendToCombine: {}

@@ -129,9 +129,20 @@ struct CoachingStaffView: View {
         owner?.coachingBudget ?? 20_000
     }
 
-    /// Remaining budget available for new hires.
+    /// R27: Dedicated scouting budget from the owner (in thousands).
+    private var scoutingBudget: Int {
+        owner?.scoutingBudget ?? 4_000
+    }
+
+    /// Remaining coaching budget available for new coach hires.
+    /// R27: scouts no longer draw from this pot — they have their own budget.
     private var remainingBudget: Int {
-        coachingBudget - totalStaffSalaryUsed
+        coachingBudget - totalCoachSalaryUsed
+    }
+
+    /// R27: Remaining scouting budget available for new scout hires.
+    private var remainingScoutBudget: Int {
+        scoutingBudget - totalScoutSalaryUsed
     }
 
     // MARK: - Grouped coaches
@@ -157,7 +168,7 @@ struct CoachingStaffView: View {
     // MARK: - Medical staff
 
     private var medicalStaff: [Coach] {
-        coaches.filter { [.teamDoctor, .physio].contains($0.role) }
+        coaches.filter { [.teamDoctor, .physio, .headTrainer].contains($0.role) }
             .sorted { $0.role.sortOrder < $1.role.sortOrder }
     }
 
@@ -191,9 +202,9 @@ struct CoachingStaffView: View {
 
     // MARK: - Hiring priority & budget helpers
 
-    /// Whether the budget is over (negative remaining).
+    /// Whether either staff budget is over (negative remaining). (R27: split pots)
     private var isBudgetOverspent: Bool {
-        remainingBudget < 0
+        remainingBudget < 0 || remainingScoutBudget < 0
     }
 
     /// Required roles that must be filled before locking in staff.
@@ -259,7 +270,7 @@ struct CoachingStaffView: View {
             return .high
         case .qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach, .strengthCoach:
             return .recommended
-        case .teamDoctor, .physio:
+        case .teamDoctor, .physio, .headTrainer:
             return .recommended
         default:
             return .normal
@@ -351,7 +362,7 @@ struct CoachingStaffView: View {
 
     /// Medical staff section salary range.
     private var medicalCostRange: String? {
-        let roles: [CoachRole] = [.teamDoctor, .physio]
+        let roles: [CoachRole] = [.teamDoctor, .physio, .headTrainer]
         guard let range = sectionSalaryRange(roles: roles) else { return nil }
         return formatSalaryRange(range)
     }
@@ -391,6 +402,7 @@ struct CoachingStaffView: View {
         case .strengthCoach:  return "Improves conditioning & injury prevention"
         case .teamDoctor:     return "Reduces injury risk by up to 30%"
         case .physio:         return "Speeds recovery by up to 25%"
+        case .headTrainer:    return "Runs rehab: fewer setbacks, safer returns"
         default:              return nil
         }
     }
@@ -439,6 +451,7 @@ struct CoachingStaffView: View {
         case .strengthCoach:           return "-15% injury risk across roster"
         case .teamDoctor:              return "-30% injury severity"
         case .physio:                  return "+25% recovery speed"
+        case .headTrainer:             return "Fewer rehab setbacks, lower re-injury risk"
         case .assistantHeadCoach:      return "+5% staff chemistry bonus"
         case .headCoach:               return "+15% overall team performance"
         }
@@ -593,10 +606,20 @@ struct CoachingStaffView: View {
                                 }
                             )
                         case .scout(let role):
-                            HireScoutView(scoutRole: role, teamID: teamID, remainingBudget: remainingBudget, onHired: { name, roleName in
-                                activeHireSheet = nil
-                                showHiringConfirmation(coachName: name, roleName: roleName)
-                            })
+                            HireScoutView(
+                                scoutRole: role,
+                                teamID: teamID,
+                                remainingBudget: remainingScoutBudget,
+                                poolSeed: CoachingEngine.scoutPoolSeed(
+                                    teamID: teamID,
+                                    role: role,
+                                    season: career.currentSeason
+                                ),
+                                onHired: { name, roleName in
+                                    activeHireSheet = nil
+                                    showHiringConfirmation(coachName: name, roleName: roleName)
+                                }
+                            )
                         case .medical(let role, let candidates):
                             SimpleMedicalHireSheet(
                                 role: role,
@@ -707,7 +730,7 @@ struct CoachingStaffView: View {
                                 Text("Over Budget")
                                     .font(.subheadline.weight(.bold))
                                     .foregroundStyle(Color.danger)
-                                Text("You are $\(formatBudget(abs(remainingBudget)))M over the coaching budget. Release staff or reduce salaries to proceed.")
+                                Text(overBudgetMessage)
                                     .font(.caption)
                                     .foregroundStyle(Color.textSecondary)
                             }
@@ -872,7 +895,7 @@ struct CoachingStaffView: View {
                             // Left column: Medical Staff
                             VStack(alignment: .leading, spacing: 0) {
                                 DisclosureGroup(isExpanded: $isMedicalExpanded) {
-                                    let medRoles: [CoachRole] = [.teamDoctor, .physio]
+                                    let medRoles: [CoachRole] = [.teamDoctor, .physio, .headTrainer]
                                     ForEach(medRoles, id: \.self) { role in
                                         if let coach = coaches.first(where: { $0.role == role }) {
                                             Button {
@@ -884,7 +907,7 @@ struct CoachingStaffView: View {
                                         } else {
                                             compactVacantMedicalCard(role: role)
                                         }
-                                        if role != .physio {
+                                        if role != .headTrainer {
                                             Divider().padding(.vertical, 4)
                                         }
                                     }
@@ -907,9 +930,9 @@ struct CoachingStaffView: View {
                                         }
                                         // #275: Filled/total count
                                         let filledCount = medicalStaff.count
-                                        Text("\(filledCount)/2")
+                                        Text("\(filledCount)/3")
                                             .font(.caption.weight(.medium).monospacedDigit())
-                                            .foregroundStyle(filledCount == 2 ? Color.success : Color.textTertiary)
+                                            .foregroundStyle(filledCount == 3 ? Color.success : Color.textTertiary)
                                     }
                                 }
                                 .tint(Color.accentGold)
@@ -970,7 +993,7 @@ struct CoachingStaffView: View {
                     // MARK: - Medical Staff (single column, collapsible)
                     Section {
                         DisclosureGroup(isExpanded: $isMedicalExpanded) {
-                            let medRoles: [CoachRole] = [.teamDoctor, .physio]
+                            let medRoles: [CoachRole] = [.teamDoctor, .physio, .headTrainer]
                             ForEach(medRoles, id: \.self) { role in
                                 if let coach = coaches.first(where: { $0.role == role }) {
                                     Button {
@@ -1003,9 +1026,9 @@ struct CoachingStaffView: View {
                                 }
                                 // #275: Filled/total count
                                 let filledCount = medicalStaff.count
-                                Text("\(filledCount)/2")
+                                Text("\(filledCount)/3")
                                     .font(.caption.weight(.medium).monospacedDigit())
-                                    .foregroundStyle(filledCount == 2 ? Color.success : Color.textTertiary)
+                                    .foregroundStyle(filledCount == 3 ? Color.success : Color.textTertiary)
                             }
                         }
                         .tint(Color.accentGold)
@@ -1902,6 +1925,17 @@ struct CoachingStaffView: View {
     }
 
     @ViewBuilder
+    /// R27: names the pot(s) that are overspent now that coaching and scouting are split.
+    private var overBudgetMessage: String {
+        if remainingBudget < 0 && remainingScoutBudget < 0 {
+            return "You are $\(formatBudget(abs(remainingBudget)))M over the coaching budget and $\(formatBudget(abs(remainingScoutBudget)))M over the scouting budget. Release staff or reduce salaries to proceed."
+        }
+        if remainingScoutBudget < 0 {
+            return "You are $\(formatBudget(abs(remainingScoutBudget)))M over the scouting budget. Release scouts or reduce salaries to proceed."
+        }
+        return "You are $\(formatBudget(abs(remainingBudget)))M over the coaching budget. Release staff or reduce salaries to proceed."
+    }
+
     private var budgetHeaderView: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -1910,7 +1944,7 @@ struct CoachingStaffView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.textPrimary)
                     HStack(spacing: 4) {
-                        Text("$\(formatBudget(totalStaffSalaryUsed))M / $\(formatBudget(coachingBudget))M used")
+                        Text("$\(formatBudget(totalCoachSalaryUsed))M / $\(formatBudget(coachingBudget))M used")
                             .font(.caption)
                             .foregroundStyle(remainingBudget >= 0 ? Color.textSecondary : Color.danger)
 
@@ -1942,14 +1976,43 @@ struct CoachingStaffView: View {
                 }
             }
 
-            // Progress bar
+            // Progress bar (coaches)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 4)
                         .fill(Color.backgroundTertiary)
                     RoundedRectangle(cornerRadius: 4)
                         .fill(remainingBudget >= 0 ? Color.accentGold : Color.danger)
-                        .frame(width: geo.size.width * min(1.0, Double(totalStaffSalaryUsed) / max(1.0, Double(coachingBudget))))
+                        .frame(width: geo.size.width * min(1.0, Double(totalCoachSalaryUsed) / max(1.0, Double(coachingBudget))))
+                }
+            }
+            .frame(height: 6)
+
+            // R27: separate scouting budget line + bar
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "binoculars")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.accentBlue)
+                    Text("Scouting Budget")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text("$\(formatBudget(totalScoutSalaryUsed))M / $\(formatBudget(scoutingBudget))M used")
+                        .font(.caption)
+                        .foregroundStyle(remainingScoutBudget >= 0 ? Color.textSecondary : Color.danger)
+                }
+                Spacer()
+                Text("$\(formatBudget(remainingScoutBudget))M left")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(remainingScoutBudget >= 0 ? Color.success : Color.danger)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.backgroundTertiary)
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(remainingScoutBudget >= 0 ? Color.accentBlue : Color.danger)
+                        .frame(width: geo.size.width * min(1.0, Double(totalScoutSalaryUsed) / max(1.0, Double(scoutingBudget))))
                 }
             }
             .frame(height: 6)
@@ -2828,6 +2891,7 @@ extension CoachRole {
         case .strengthCoach:           return "Strength & Conditioning"
         case .teamDoctor:              return "Team Doctor"
         case .physio:                  return "Physiotherapist"
+        case .headTrainer:             return "Head Trainer"
         }
     }
 
@@ -2848,6 +2912,7 @@ extension CoachRole {
         case .strengthCoach:           return "S&C"
         case .teamDoctor:              return "DOC"
         case .physio:                  return "PHY"
+        case .headTrainer:             return "TRN"
         }
     }
 
@@ -2868,6 +2933,7 @@ extension CoachRole {
         case .strengthCoach:           return 12
         case .teamDoctor:              return 13
         case .physio:                  return 14
+        case .headTrainer:             return 15
         }
     }
 
@@ -2888,6 +2954,7 @@ extension CoachRole {
         case .strengthCoach:           return "Manages conditioning, injury prevention, and recovery"
         case .teamDoctor:              return "Reduces injury risk and speeds diagnosis for faster return to play"
         case .physio:                  return "Speeds injury recovery and improves weekly fatigue management"
+        case .headTrainer:             return "Leads rehab programs — fewer setbacks and safer early returns"
         }
     }
 
@@ -2898,7 +2965,7 @@ extension CoachRole {
         case .offensiveCoordinator:    return .accentBlue
         case .defensiveCoordinator:    return .danger
         case .specialTeamsCoordinator: return .success
-        case .teamDoctor, .physio:     return .accentBlue.opacity(0.7)
+        case .teamDoctor, .physio, .headTrainer: return .accentBlue.opacity(0.7)
         default:                       return .backgroundTertiary
         }
     }

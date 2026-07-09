@@ -32,7 +32,8 @@ enum LeagueGenerator {
         .dbCoach,
         .strengthCoach,
         .teamDoctor,
-        .physio
+        .physio,
+        .headTrainer
     ]
 
     // MARK: - Owner Names
@@ -256,7 +257,9 @@ enum LeagueGenerator {
             spendingWillingness: spending,
             meddling: Int.random(in: 5...80),
             prefersWinNow: Bool.random(),
-            coachingBudget: coachingBudget
+            coachingBudget: coachingBudget,
+            // R27: dedicated scouting pot scales with spending willingness
+            scoutingBudget: BudgetEngine.defaultScoutingBudget(spendingWillingness: spending)
         )
     }
 

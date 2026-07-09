@@ -641,6 +641,9 @@ struct CoachDetailView: View {
         case .physio:
             rows.append(.init(icon: "bandage.fill", color: .accentBlue,
                               text: "+\(scaled(25, by: coach.reputation))% recovery speed"))
+        case .headTrainer:
+            rows.append(.init(icon: "figure.strengthtraining.traditional", color: .accentBlue,
+                              text: "Rehab: +\(scaled(10, by: coach.playerDevelopment))% ahead-of-schedule odds, fewer setbacks, safer early returns"))
         }
 
         // Generic motivation/morale bonus when high

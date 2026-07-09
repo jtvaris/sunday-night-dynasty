@@ -70,6 +70,7 @@ enum TaskDestination: String, Codable, CaseIterable {
     case franchiseTag
     case interviewReport
     case personalWorkouts
+    case developmentReport
     // Camp destinations
     case trainingPlan
     case workloadDashboard

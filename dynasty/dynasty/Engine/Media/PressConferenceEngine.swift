@@ -164,6 +164,15 @@ enum PressConferenceEngine {
         /// (R19) — nil for non-division games. Swaps the post-game question
         /// for its rivalry variant.
         let divisionOpponentAbbr: String?
+        /// R29: the team's spot in this week's league power rankings (1-32),
+        /// nil when the narrative engine hasn't run yet.
+        let powerRank: Int?
+        /// R29: week-over-week ranking movement (+ = climbed).
+        let powerRankMovement: Int
+        /// R29: a player from this team inside the MVP top-3, if any.
+        let mvpCandidateName: String?
+        /// R29: that player's position in the race (1 = leading).
+        let mvpCandidateRank: Int?
 
         init(
             won: Bool,
@@ -171,7 +180,11 @@ enum PressConferenceEngine {
             sacksAllowed: Int,
             hundredYardRusherName: String?,
             hundredYardRusherYards: Int,
-            divisionOpponentAbbr: String? = nil
+            divisionOpponentAbbr: String? = nil,
+            powerRank: Int? = nil,
+            powerRankMovement: Int = 0,
+            mvpCandidateName: String? = nil,
+            mvpCandidateRank: Int? = nil
         ) {
             self.won = won
             self.margin = margin
@@ -179,6 +192,10 @@ enum PressConferenceEngine {
             self.hundredYardRusherName = hundredYardRusherName
             self.hundredYardRusherYards = hundredYardRusherYards
             self.divisionOpponentAbbr = divisionOpponentAbbr
+            self.powerRank = powerRank
+            self.powerRankMovement = powerRankMovement
+            self.mvpCandidateName = mvpCandidateName
+            self.mvpCandidateRank = mvpCandidateRank
         }
     }
 
@@ -290,8 +307,15 @@ enum PressConferenceEngine {
         }
         if factQuestionUsed {
             // Occasional third question, same odds as the regular path.
+            // R29: a power-ranking / MVP-race angle takes the loose slot
+            // about half the time when the storyline supports one.
             if Bool.random() {
-                questions.append(generateLooseWeeklyQuestion(team: team))
+                if let narrativeQ = generateNarrativeQuestion(team: team, facts: facts),
+                   Bool.random() {
+                    questions.append(narrativeQ)
+                } else {
+                    questions.append(generateLooseWeeklyQuestion(team: team))
+                }
             }
             return questions
         }
@@ -333,9 +357,15 @@ enum PressConferenceEngine {
             questions.append(generateGenericWeeklyQuestion(team: team, week: week))
         }
 
-        // Occasional third question
+        // Occasional third question — R29: the power-ranking / MVP-race
+        // angle takes the slot about half the time when one applies.
         if Bool.random() {
-            questions.append(generateLooseWeeklyQuestion(team: team))
+            if let narrativeQ = generateNarrativeQuestion(team: team, facts: facts),
+               Bool.random() {
+                questions.append(narrativeQ)
+            } else {
+                questions.append(generateLooseWeeklyQuestion(team: team))
+            }
         }
 
         return questions
@@ -1127,6 +1157,150 @@ enum PressConferenceEngine {
                         mediaPerception: 15,
                         legacyPoints: 1,
                         fanExcitement: 10
+                    )
+                ),
+            ]
+        )
+    }
+
+    // MARK: - League Narrative Questions (R29)
+
+    /// A power-ranking or MVP-race angle for the loose weekly slot. Returns
+    /// nil when neither storyline applies to this team right now.
+    private static func generateNarrativeQuestion(
+        team: Team,
+        facts: GameFacts?
+    ) -> PressQuestion? {
+        guard let facts else { return nil }
+
+        var options: [PressQuestion] = []
+        if let rank = facts.powerRank,
+           rank <= 5 || abs(facts.powerRankMovement) >= 5 {
+            options.append(generatePowerRankQuestion(
+                team: team, rank: rank, movement: facts.powerRankMovement
+            ))
+        }
+        if let name = facts.mvpCandidateName, let raceRank = facts.mvpCandidateRank {
+            options.append(generateMVPRaceQuestion(
+                team: team, playerName: name, raceRank: raceRank
+            ))
+        }
+        return options.randomElement()
+    }
+
+    /// The team sits high in (or moved sharply through) the power rankings.
+    private static func generatePowerRankQuestion(
+        team: Team,
+        rank: Int,
+        movement: Int
+    ) -> PressQuestion {
+        let r = randomReporter()
+        let question: String
+        if movement >= 5 {
+            question = "You jumped \(movement) spots to No. \(rank) in this week's power rankings. Is this team finally getting the respect it deserves?"
+        } else if movement <= -5 {
+            question = "You dropped \(abs(movement)) spots to No. \(rank) in the power rankings this week. Do those lists mean anything inside the building?"
+        } else if rank == 1 {
+            question = "The power rankings have you as the No. 1 team in the league. How do you handle being the hunted?"
+        } else {
+            question = "The pundits have you at No. \(rank) in the league this week. Does that match how you see this team?"
+        }
+
+        return PressQuestion(
+            reporterName: r.name,
+            outlet: r.outlet,
+            question: question,
+            responses: [
+                PressResponse(
+                    text: "Rankings in \(rank <= 5 ? "November" : "midseason") don't hang banners. The only list that matters is the one in January.",
+                    tone: .aggressive,
+                    mediaReaction: "\(r.outlet): \"\(team.name) boss dismisses the rankings talk.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 5,
+                        mediaPerception: 10,
+                        legacyPoints: 2,
+                        fanExcitement: 5
+                    )
+                ),
+                PressResponse(
+                    text: "It's a nice nod to the work the players put in, but we know how fast those lists flip.",
+                    tone: .humble,
+                    mediaReaction: "\(r.outlet): \"Level heads in \(team.city) despite the rankings buzz.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 10,
+                        mediaPerception: 5,
+                        legacyPoints: 1,
+                        fanExcitement: 0
+                    )
+                ),
+                PressResponse(
+                    text: "Honestly? I had us higher.",
+                    tone: .funny,
+                    mediaReaction: "\(r.outlet): \"Ha — \(team.name) front office wants an even better seed on the board.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 0,
+                        playerMorale: 8,
+                        mediaPerception: 5,
+                        legacyPoints: 1,
+                        fanExcitement: 12
+                    )
+                ),
+            ]
+        )
+    }
+
+    /// One of the team's stars is in the MVP top-3.
+    private static func generateMVPRaceQuestion(
+        team: Team,
+        playerName: String,
+        raceRank: Int
+    ) -> PressQuestion {
+        let r = randomReporter()
+        let question = raceRank == 1
+            ? "\(playerName) leads the MVP race right now. What makes his season special?"
+            : "\(playerName) is squarely in the MVP conversation. How is he handling the spotlight?"
+
+        return PressQuestion(
+            reporterName: r.name,
+            outlet: r.outlet,
+            question: question,
+            responses: [
+                PressResponse(
+                    text: "He's the best player in football, and it's not particularly close. Watch the tape.",
+                    tone: .confident,
+                    mediaReaction: "\(r.outlet): \"\(team.name) go all-in on \(playerName)'s MVP campaign.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 12,
+                        mediaPerception: 8,
+                        legacyPoints: 2,
+                        fanExcitement: 12
+                    )
+                ),
+                PressResponse(
+                    text: "Individual awards follow team success. He'd tell you the same thing — wins first.",
+                    tone: .diplomatic,
+                    mediaReaction: "\(r.outlet): \"Team-first message around \(playerName)'s award chatter.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 5,
+                        mediaPerception: 5,
+                        legacyPoints: 2,
+                        fanExcitement: 3
+                    )
+                ),
+                PressResponse(
+                    text: "We don't talk about it in the building. The minute you chase trophies, you stop chasing wins.",
+                    tone: .humble,
+                    mediaReaction: "\(r.outlet): \"\(team.city) keeping the MVP noise outside the walls.\"",
+                    effects: PressEffects(
+                        ownerSatisfaction: 5,
+                        playerMorale: 5,
+                        mediaPerception: 5,
+                        legacyPoints: 1,
+                        fanExcitement: 0
                     )
                 ),
             ]

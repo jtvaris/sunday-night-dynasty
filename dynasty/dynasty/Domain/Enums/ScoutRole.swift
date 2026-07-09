@@ -86,6 +86,46 @@ enum ScoutRole: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Scout Assignment Pool (R27)
+
+/// The slice of the consensus draft board a scout is assigned to watch weekly.
+/// Targeted prospects are evaluated more often and with a small accuracy edge.
+enum ScoutAssignmentPool: String, Codable, CaseIterable, Identifiable {
+    case top50   // concentrate on the consensus top 50
+    case top150  // concentrate on the consensus top 150
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .top50:  return "Top 50"
+        case .top150: return "Top 150"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .top50:  return "star.circle"
+        case .top150: return "list.star"
+        }
+    }
+
+    /// How many prospects of the consensus board this pool covers.
+    var boardSize: Int {
+        switch self {
+        case .top50:  return 50
+        case .top150: return 150
+        }
+    }
+
+    var poolDescription: String {
+        switch self {
+        case .top50:  return "Focuses weekly visits on consensus top-50 prospects"
+        case .top150: return "Focuses weekly visits on consensus top-150 prospects"
+        }
+    }
+}
+
 // MARK: - Scout Focus Attribute
 
 /// The attribute category a scout focuses on during evaluation.

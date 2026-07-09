@@ -403,7 +403,7 @@ struct ScoutingHubView: View {
                 career: career,
                 scoutsSentToCombine: scoutsSentToCombine,
                 prospects: prospects,
-                coachingBudget: fetchCoachingBudget(),
+                scoutingBudget: fetchScoutingBudget(),
                 onHire: { showHireScout = true },
                 onFire: { fireScout($0) },
                 onSendToCombine: { sendScoutsToCombine() }
@@ -470,10 +470,11 @@ struct ScoutingHubView: View {
         }
     }
 
-    private func fetchCoachingBudget() -> Int {
-        guard let teamID = career.teamID else { return 20_000 }
+    /// R27: scouts draw from the owner's dedicated scouting budget.
+    private func fetchScoutingBudget() -> Int {
+        guard let teamID = career.teamID else { return 4_000 }
         let desc = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
-        return (try? modelContext.fetch(desc))?.first?.owner?.coachingBudget ?? 20_000
+        return (try? modelContext.fetch(desc))?.first?.owner?.scoutingBudget ?? 4_000
     }
 
     private var visibleTabs: [ScoutingTab] {
@@ -662,13 +663,27 @@ private struct HireScoutSheet: View {
             .first { !filledRoles.contains($0) }
     }
 
+    /// R27: real remaining scouting budget (owner's scouting pot minus current
+    /// scout salaries) instead of the old hardcoded placeholder.
+    private var remainingScoutBudget: Int {
+        guard let teamID = career.teamID else { return 4_000 }
+        let teamDesc = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
+        let budget = (try? modelContext.fetch(teamDesc))?.first?.owner?.scoutingBudget ?? 4_000
+        let scoutDesc = FetchDescriptor<Scout>(predicate: #Predicate { $0.teamID == teamID })
+        let used = ((try? modelContext.fetch(scoutDesc)) ?? []).reduce(0) { $0 + $1.salary }
+        return budget - used
+    }
+
     var body: some View {
         NavigationStack {
             if let role = nextAvailableRole {
                 HireScoutView(
                     scoutRole: role,
                     teamID: career.teamID ?? UUID(),
-                    remainingBudget: 5_000
+                    remainingBudget: remainingScoutBudget,
+                    poolSeed: career.teamID.map {
+                        CoachingEngine.scoutPoolSeed(teamID: $0, role: role, season: career.currentSeason)
+                    }
                 ) { _, _ in
                     dismiss()
                 }

@@ -10,7 +10,7 @@ struct RosterViewWrapper: View {
     @State private var defensiveScheme: DefensiveScheme = .base43
 
     var body: some View {
-        RosterView(players: players, teamSalaryCap: teamSalaryCap, defensiveScheme: defensiveScheme)
+        RosterView(players: players, teamSalaryCap: teamSalaryCap, defensiveScheme: defensiveScheme, career: career)
             .task {
                 guard let teamID = career.teamID else { return }
                 let playerDescriptor = FetchDescriptor<Player>(

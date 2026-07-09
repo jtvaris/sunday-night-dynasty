@@ -115,6 +115,61 @@ final class Player {
         set { campGradeRaw = newValue?.rawValue }
     }
 
+    // MARK: - Training Focus (R26)
+
+    /// Raw value of `TrainingFocusArea` — the weekly training emphasis the
+    /// coaching staff has put on this player. `nil` = no focus. At most 3
+    /// players per team hold a focus slot (enforced by UI and AI logic).
+    /// Optional new attribute → safe lightweight migration.
+    var trainingFocusAreaRaw: String? = nil
+
+    /// Typed accessor for the player's weekly training focus.
+    var trainingFocusArea: TrainingFocusArea? {
+        get { trainingFocusAreaRaw.flatMap(TrainingFocusArea.init(rawValue:)) }
+        set { trainingFocusAreaRaw = newValue?.rawValue }
+    }
+
+    // MARK: - Injuries & Medical 2.0 (R28)
+
+    /// JSON-encoded `[InjuryRecord]` — permanent injury history, newest last.
+    /// Optional new attribute → safe lightweight migration.
+    var injuryHistoryData: Data? = nil
+
+    /// Raw value of `RehabStatus` for the current injury (nil when healthy).
+    /// Optional new attribute → safe lightweight migration.
+    var rehabStatusRaw: String? = nil
+
+    /// Weeks of elevated re-injury risk remaining after the player rushed
+    /// back from an injury one week early. Decremented weekly; 0 = no risk.
+    /// Default-value attribute → safe lightweight migration.
+    var rushBackWeeksRemaining: Int = 0
+
+    /// Typed accessor for the current rehab trajectory.
+    var rehabStatus: RehabStatus? {
+        get { rehabStatusRaw.flatMap(RehabStatus.init(rawValue:)) }
+        set { rehabStatusRaw = newValue?.rawValue }
+    }
+
+    /// Permanent injury history (newest last). Writing encodes and stores the
+    /// list; the caller saves the context.
+    var injuryHistory: [InjuryRecord] {
+        get {
+            guard let data = injuryHistoryData,
+                  let records = try? JSONDecoder().decode([InjuryRecord].self, from: data) else {
+                return []
+            }
+            return records
+        }
+        set {
+            injuryHistoryData = try? JSONEncoder().encode(newValue)
+        }
+    }
+
+    /// How many times this player has previously suffered the given injury type.
+    func priorInjuryCount(of type: InjuryType) -> Int {
+        injuryHistory.filter { $0.injuryTypeRaw == type.rawValue }.count
+    }
+
     // MARK: - Computed Properties
 
     var fullName: String {

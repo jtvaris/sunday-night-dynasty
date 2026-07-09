@@ -344,6 +344,7 @@ struct CareerShellView: View {
         case contractTimeline, mentoring, trades, news
         case ownerMeeting, lockerRoom, inbox, rosterEvaluation
         case franchiseTag
+        case developmentReport
         // Camp destinations
         case trainingPlan, workloadDashboard, rosterCuts, gameWeekPrep
     }
@@ -513,6 +514,12 @@ struct CareerShellView: View {
             FranchiseTagView(career: career)
                 .onAppear {
                     markTaskVisited(for: .franchiseTag)
+                    refreshTaskCompletionStatus()
+                }
+        case .developmentReport:
+            DevelopmentReportView(career: career)
+                .onAppear {
+                    markTaskVisited(for: .developmentReport)
                     refreshTaskCompletionStatus()
                 }
         case .trainingPlan:
@@ -706,6 +713,7 @@ struct CareerShellView: View {
             UserDefaults.standard.set("interviews", forKey: "scoutingPendingTab")
             shellDest = .scouting
         case .personalWorkouts:   shellDest = .scouting
+        case .developmentReport:  shellDest = .developmentReport
         case .trainingPlan:        shellDest = .trainingPlan
         case .workloadDashboard:   shellDest = .workloadDashboard
         case .rosterCuts:          shellDest = .rosterCuts

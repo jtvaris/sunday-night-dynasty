@@ -53,6 +53,7 @@ enum MessageSender: Codable, Equatable {
     case media(outlet: String)
     case leagueOffice
     case playerAgent(name: String)
+    case developmentStaff
 
     var displayName: String {
         switch self {
@@ -63,6 +64,7 @@ enum MessageSender: Codable, Equatable {
         case .media(let outlet):                return outlet
         case .leagueOffice:                     return "League Office"
         case .playerAgent(let name):            return name
+        case .developmentStaff:                 return "Player Development"
         }
     }
 
@@ -76,6 +78,7 @@ enum MessageSender: Codable, Equatable {
         case .media:                    return "newspaper.fill"
         case .leagueOffice:             return "building.columns.fill"
         case .playerAgent:              return "briefcase.fill"
+        case .developmentStaff:         return "chart.line.uptrend.xyaxis"
         }
     }
 
@@ -89,6 +92,7 @@ enum MessageSender: Codable, Equatable {
         case .media:                    return "Media"
         case .leagueOffice:             return "NFL"
         case .playerAgent:              return "Agent"
+        case .developmentStaff:         return "Coaching Staff"
         }
     }
 }
@@ -198,6 +202,7 @@ extension TaskDestination {
         case .franchiseTag:         return "Franchise Tag"
         case .interviewReport:      return "Interview Report"
         case .personalWorkouts:     return "Personal Workouts"
+        case .developmentReport:    return "Development Report"
         case .trainingPlan:         return "Training Plan"
         case .workloadDashboard:    return "Workload"
         case .rosterCuts:           return "Roster Cuts"

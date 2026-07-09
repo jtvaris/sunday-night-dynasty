@@ -108,6 +108,13 @@ enum WeekAdvancer {
         // The live-game injury exemption never outlives the advance it was
         // registered for (consumed by the regular-season injury pass above).
         liveGameInjuryTeamIDs = []
+
+        // R29: persist this advance's headlines (newest first) so the News
+        // screen has real content that survives app restarts. `lastNewsItems`
+        // stays available for same-advance consumers (owner satisfaction).
+        if !lastNewsItems.isEmpty {
+            career.newsLog = lastNewsItems + career.newsLog
+        }
     }
 
     // MARK: - Score Simulation
@@ -166,6 +173,14 @@ enum WeekAdvancer {
                     previousSeasonWins: team.wins,
                     madePlayoffs: madePlayoffs
                 )
+                // R27: recalculate the dedicated scouting department budget too
+                owner.previousScoutingBudget = owner.scoutingBudget
+                owner.scoutingBudget = BudgetEngine.calculateScoutingBudget(
+                    owner: owner,
+                    team: team,
+                    previousSeasonWins: team.wins,
+                    madePlayoffs: madePlayoffs
+                )
             }
         }
 
@@ -216,6 +231,10 @@ enum WeekAdvancer {
 
         // 6. R21: stale trade offers never survive into a new season.
         career.pendingTradeOffers = []
+
+        // 6b. R28: return decisions are week-scoped calls — never carry them
+        // into a new season (offseason rehab resolves the injuries anyway).
+        career.pendingReturnDecisions = []
     }
 
     // MARK: - Private: Regular Season
@@ -386,6 +405,22 @@ enum WeekAdvancer {
             }
         }
 
+        // 0a. R29: league narrative — power rankings, MVP race, storyline
+        // headlines (streaks, upsets, hot seats, division races, season arc).
+        // Runs before the presser so this week's fresh ranking can be quoted.
+        // Presentation only: reads results, never touches them.
+        let seasonGames = fetchAllGamesForSeason(seasonYear: season, modelContext: modelContext)
+        let narrativeUpdate = LeagueNarrativeEngine.updateWeekly(
+            previousState: career.leagueNarrative,
+            teams: Array(teamsByID.values),
+            players: allPlayers,
+            games: seasonGames,
+            career: career,
+            week: week,
+            season: season
+        )
+        career.leagueNarrative = narrativeUpdate.state
+
         // 0. Generate weekly press conference questions
         if let playerTeamID = career.teamID,
            let playerTeam = teamsByID[playerTeamID] {
@@ -399,7 +434,8 @@ enum WeekAdvancer {
                 result: lastPlayerGameResult,
                 playerTeamID: playerTeamID,
                 allPlayers: allPlayers,
-                teamsByID: teamsByID
+                teamsByID: teamsByID,
+                narrative: narrativeUpdate.state
             )
 
             pendingPressConference = PressConferenceEngine.generateWeeklyPressConference(
@@ -423,6 +459,10 @@ enum WeekAdvancer {
             week: week,
             season: season
         )
+
+        // 1b. R29: storyline headlines from the narrative engine (power
+        // rankings, streaks, upsets, MVP race, division races, hot seats).
+        lastNewsItems.append(contentsOf: narrativeUpdate.news)
 
         // 2. Generate weekly events for the player's team
         if let playerTeamID = career.teamID,
@@ -533,21 +573,45 @@ enum WeekAdvancer {
             if let teamID = player.teamID, liveGameInjuryTeamIDs.contains(teamID) { continue }
             let teamDoctor = allCoaches.first { $0.teamID == player.teamID && $0.role == .teamDoctor }
             let teamPhysio = allCoaches.first { $0.teamID == player.teamID && $0.role == .physio }
+            let teamTrainer = allCoaches.first { $0.teamID == player.teamID && $0.role == .headTrainer }
 
             // Use MedicalEngine for injury check with medical staff awareness
             if let injury = MedicalEngine.injuryCheck(
                 player: player,
                 playType: .run,  // Approximate — actual play type not tracked at weekly level
                 doctor: teamDoctor,
-                physio: teamPhysio
+                physio: teamPhysio,
+                trainer: teamTrainer
             ) {
                 MedicalEngine.applyInjury(
                     player: player,
                     injuryType: injury,
                     doctor: teamDoctor,
-                    physio: teamPhysio
+                    physio: teamPhysio,
+                    season: season,
+                    week: week
                 )
+
+                // R28: league star injuries make headlines.
+                if player.overall >= 85, let teamID = player.teamID,
+                   let team = teamsByID[teamID] {
+                    lastNewsItems.append(NewsItem(
+                        headline: "\(team.abbreviation) star \(player.fullName) suffers \(injury.rawValue.lowercased()) injury",
+                        body: "\(team.fullName) \(player.position.rawValue) \(player.fullName) left this week's action with a \(injury.rawValue.lowercased()) injury and is expected to miss around \(player.injuryWeeksOriginal) week\(player.injuryWeeksOriginal == 1 ? "" : "s"). The medical staff has started his rehab program.",
+                        category: .injury,
+                        week: week,
+                        season: season,
+                        relatedTeamID: teamID,
+                        relatedPlayerID: player.id,
+                        sentiment: .negative
+                    ))
+                }
             }
+        }
+
+        // R28: tick down post-rush-back exposure windows (healthy players only).
+        for player in allPlayers where player.rushBackWeeksRemaining > 0 && !player.isInjured {
+            player.rushBackWeeksRemaining -= 1
         }
 
         // 7. Apply game experience for starters (approximated: high-overall rostered players)
@@ -569,10 +633,123 @@ enum WeekAdvancer {
             }
         }
 
-        // 8. Process existing injuries (decrement recovery time via MedicalEngine)
-        for player in allPlayers where player.isInjured {
-            _ = MedicalEngine.processWeeklyRecovery(player: player)
+        // 7b. R26: weekly training-focus micro-development. Every team runs
+        // the same tick; AI teams auto-focus their best young players so the
+        // user gains no free edge. Gains are +1 attribute bumps capped by the
+        // same potential ceiling the offseason development engine uses.
+        var userFocusGains: [TrainingFocusEngine.FocusGain] = []
+        var userBreakout: (player: Player, pointsGained: Int)?
+        for team in teams {
+            let roster = allPlayers.filter { $0.teamID == team.id }
+            guard !roster.isEmpty else { continue }
+
+            if team.id != career.teamID {
+                TrainingFocusEngine.autoAssignFocus(roster: roster)
+            }
+            let teamCoaches = allCoaches.filter { $0.teamID == team.id }
+            let gains = TrainingFocusEngine.applyWeeklyFocusTick(roster: roster, coaches: teamCoaches)
+
+            // Rare breakout leap for a high-potential youngster (max 2/season/team).
+            let breakout = TrainingFocusEngine.rollBreakout(roster: roster, season: season, teamID: team.id)
+            if let breakout {
+                lastNewsItems.append(NewsItem(
+                    headline: "Breakout: \(breakout.player.fullName) has arrived",
+                    body: "\(team.fullName) \(breakout.player.position.rawValue) \(breakout.player.fullName) has taken a massive leap in practice — coaches say the game has finally slowed down for the \(max(1, breakout.player.yearsPro))-year pro.",
+                    category: .playerPerformance,
+                    week: week,
+                    season: season,
+                    relatedTeamID: team.id,
+                    relatedPlayerID: breakout.player.id,
+                    sentiment: .positive
+                ))
+            }
+
+            if team.id == career.teamID {
+                userFocusGains = gains
+                userBreakout = breakout
+            }
         }
+
+        // 7c. R26: assemble the weekly Development Report for the user's team
+        // (focus gains, R25 mentor pairs, breakouts, stalled players) and
+        // drop a digest in the inbox. The report screen keeps the last 10.
+        if let playerTeamID = career.teamID {
+            let userRoster = allPlayers.filter { $0.teamID == playerTeamID }
+            let report = DevelopmentReportBuilder.buildWeeklyReport(
+                roster: userRoster,
+                focusGains: userFocusGains,
+                breakout: userBreakout,
+                week: week,
+                season: season
+            )
+            if !report.isEmpty {
+                career.developmentReports = [report] + career.developmentReports
+                let focusedCount = userRoster.filter { $0.trainingFocusArea != nil }.count
+                lastInboxMessages.append(
+                    DevelopmentReportBuilder.inboxMessage(report: report, focusedCount: focusedCount)
+                )
+            }
+        }
+
+        // 8. Process existing injuries — R28 rehab with variance: the weekly
+        // roll can land ahead of schedule, on track, or on a setback. Head
+        // trainer skill shifts the odds (no trainer = neutral averages, so
+        // quick-sim time-missed parity holds).
+        var pendingDecisions = career.pendingReturnDecisions
+        for player in allPlayers where player.isInjured {
+            let teamTrainer = allCoaches.first { $0.teamID == player.teamID && $0.role == .headTrainer }
+            let result = MedicalEngine.processWeeklyRehab(player: player, trainer: teamTrainer)
+
+            guard player.teamID == career.teamID else { continue }
+
+            // Inbox nudge on notable rehab swings for key players.
+            let isNotable = player.overall >= 78 || player.injuryWeeksOriginal >= 4
+            if !result.recovered, result.status != .onTrack, isNotable {
+                let subject = result.status == .aheadOfSchedule
+                    ? "\(player.lastName) ahead of schedule"
+                    : "Setback in \(player.lastName)'s rehab"
+                let body = result.status == .aheadOfSchedule
+                    ? "\(player.fullName)'s \(player.injuryType?.rawValue.lowercased() ?? "injury") rehab is progressing faster than expected — the training staff now projects him back in \(player.injuryWeeksRemaining) week\(player.injuryWeeksRemaining == 1 ? "" : "s")."
+                    : "\(player.fullName) had a setback in his \(player.injuryType?.rawValue.lowercased() ?? "injury") rehab this week. Current projection: \(player.injuryWeeksRemaining) week\(player.injuryWeeksRemaining == 1 ? "" : "s") until return."
+                lastInboxMessages.append(InboxMessage(
+                    sender: .developmentStaff,
+                    subject: subject,
+                    body: body,
+                    date: "Week \(week), Season \(season)",
+                    category: .playerIssue,
+                    actionDestination: .roster
+                ))
+            }
+
+            // R28: entering the final rehab week → offer the rush-back call.
+            // Ignoring it is always safe (normal recovery next week). AI teams
+            // never rush players back.
+            if !result.recovered, player.injuryWeeksRemaining == 1,
+               !pendingDecisions.contains(where: { $0.playerID == player.id }) {
+                pendingDecisions.append(ReturnDecision(
+                    playerID: player.id,
+                    playerName: player.fullName,
+                    injuryTypeRaw: player.injuryType?.rawValue ?? "Injury",
+                    season: season,
+                    week: week
+                ))
+                lastInboxMessages.append(InboxMessage(
+                    sender: .developmentStaff,
+                    subject: "\(player.lastName) nearly ready — return decision",
+                    body: "\(player.fullName) (\(player.injuryType?.rawValue ?? "injury")) is one week from full clearance. He could be rushed back for this week's game, but the medical staff warns of elevated re-injury risk and a short conditioning dip. Holding him out one more week is the safe call.\n\nDecide in the Roster screen's Injury Report — if you do nothing, he completes rehab normally.",
+                    date: "Week \(week), Season \(season)",
+                    category: .playerIssue,
+                    actionRequired: true,
+                    actionDestination: .roster
+                ))
+            }
+        }
+        // Drop stale decisions (player recovered, was rushed back, or left the team).
+        pendingDecisions.removeAll { decision in
+            guard let player = allPlayers.first(where: { $0.id == decision.playerID }) else { return true }
+            return !player.isInjured || player.teamID != career.teamID
+        }
+        career.pendingReturnDecisions = pendingDecisions
 
         // 8b. Weekly scheme learning and position training (during season, reduced intensity)
         for team in teams {
@@ -1883,7 +2060,8 @@ enum WeekAdvancer {
         result: GameSimulator.GameResult?,
         playerTeamID: UUID,
         allPlayers: [Player],
-        teamsByID: [UUID: Team]
+        teamsByID: [UUID: Team],
+        narrative: LeagueNarrativeState? = nil
     ) -> PressConferenceEngine.GameFacts? {
         guard let won = lastGameWon, let result else { return nil }
 
@@ -1921,13 +2099,21 @@ enum WeekAdvancer {
             return opponent.abbreviation
         }()
 
+        // R29: this week's power ranking + MVP-race hooks for the presser.
+        let rankingEntry = narrative?.rankings.first { $0.teamID == playerTeamID }
+        let mvpEntry = narrative?.mvpRace.enumerated().first { $0.element.teamID == playerTeamID }
+
         return PressConferenceEngine.GameFacts(
             won: won,
             margin: margin,
             sacksAllowed: sacksAllowed,
             hundredYardRusherName: topRusher?.playerName,
             hundredYardRusherYards: topRusher?.rushingYards ?? 0,
-            divisionOpponentAbbr: divisionOpponentAbbr
+            divisionOpponentAbbr: divisionOpponentAbbr,
+            powerRank: rankingEntry?.rank,
+            powerRankMovement: rankingEntry?.movement ?? 0,
+            mvpCandidateName: mvpEntry?.element.playerName,
+            mvpCandidateRank: mvpEntry.map { $0.offset + 1 }
         )
     }
 
