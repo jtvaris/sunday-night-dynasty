@@ -43,6 +43,81 @@ struct PlayChoreographer {
     private static let ballGroundY: Float = 0.3  // ball resting on the turf
     private static let ballCarryY: Float = 0.9   // ball at chest height
 
+    // MARK: - Physical Pacing
+
+    /// Ball velocity of a thrown pass (yd/s): ~20 air yards ≈ 1.1 s.
+    private static let passVelocity: Float = 18
+
+    /// Role-ordered fallback top speeds (yd/s) when the view supplies no
+    /// attribute feed: OL crawl ~6.5, the fastest WR/CB run ~9.5.
+    /// Offense: 0=QB 1=RB 2-6=OL 7/8=WR 9=slot 10=TE.
+    static let defaultOffenseSpeeds: [Float] = [7.6, 8.8, 6.6, 6.5, 6.5, 6.5, 6.6, 9.2, 9.2, 9.0, 8.1]
+    /// Defense: 0-3=DL 4-6=LB 7-8=CB 9-10=S.
+    static let defaultDefenseSpeeds: [Float] = [7.3, 6.8, 6.8, 7.3, 8.2, 8.0, 8.2, 9.2, 9.2, 9.0, 9.0]
+
+    /// Cheap deterministic 0…1 hash for per-player reaction/jitter variation.
+    private static func hash01(_ seed: Int) -> Float {
+        var x = UInt64(truncatingIfNeeded: seed &* 2654435761 &+ 0x9E37)
+        x ^= x >> 13
+        x = x &* 0x9E3779B97F4A7C15
+        x ^= x >> 31
+        return Float(x % 1024) / 1023.0
+    }
+
+    /// Arc-length fractions at each step boundary for a runner covering
+    /// `total` yards at his own `speed` — he runs his route at HIS pace and
+    /// simply finishes when it's done (min'd at 1), instead of stretching to
+    /// fill the play like the uniform schedule does.
+    private static func speedFractions(_ durations: [TimeInterval], total: Float,
+                                       speed: Float) -> [Float] {
+        var elapsed: TimeInterval = 0
+        return durations.map {
+            elapsed += $0
+            return min(Float(elapsed) * speed / max(total, 0.01), 1)
+        }
+    }
+
+    /// Snap reaction time for one man: deterministic from role + his speed
+    /// feed, in football order — the OL knows the count (fastest), the QB
+    /// starts the play, backs/receivers fire off next, the defensive line
+    /// reads the ball, the linebackers read the play, and the secondary
+    /// reads routes (slowest).
+    private static func reaction(role: Int, isOffense: Bool, speed: Float) -> TimeInterval {
+        let band: ClosedRange<TimeInterval>
+        if isOffense {
+            switch role {
+            case 0: return 0.02              // QB initiates
+            case 2...6: band = 0.05...0.10   // OL
+            case 1, 10: band = 0.08...0.16   // RB / TE
+            default: band = 0.10...0.20      // WRs
+            }
+        } else {
+            switch role {
+            case 0...3: band = 0.08...0.16   // DL
+            case 4...6: band = 0.14...0.24   // LBs
+            default: band = 0.18...0.30      // secondary
+            }
+        }
+        let t = TimeInterval(hash01(role * 31 + Int(speed * 13) + (isOffense ? 0 : 7)))
+        return band.lowerBound + (band.upperBound - band.lowerBound) * t
+    }
+
+    /// All 22 reaction delays for a snap step, keyed by scene node index.
+    private static func snapReactionDelays(_ c: Context) -> [Int: TimeInterval] {
+        var out: [Int: TimeInterval] = [:]
+        for role in 0..<11 {
+            out[c.oBase + role] = reaction(role: role, isOffense: true, speed: c.oSpeed(role))
+            out[c.dBase + role] = reaction(role: role, isOffense: false, speed: c.dSpeed(role))
+        }
+        return out
+    }
+
+    /// Per-player lateral route jitter, ±0.3 yd deterministic — two men on
+    /// the same concept never trace pixel-identical stems.
+    private static func lateralJitter(role: Int, c: Context) -> Float {
+        hash01(role * 17 + Int(c.oSpeed(role) * 7)) * 0.6 - 0.3
+    }
+
     // MARK: - Coordinate Mapping
 
     /// World Z of the line of scrimmage for a 0-100 yard line measured from
@@ -313,10 +388,13 @@ struct PlayChoreographer {
     static func steps(for play: PlayResult, losYardLine: Int, offenseIsHome: Bool,
                       matchups: PlayMatchups? = nil,
                       call: OffensivePlayCall? = nil,
-                      defensivePackage: DefensivePackage? = nil)
+                      defensivePackage: DefensivePackage? = nil,
+                      offenseSpeeds: [Float]? = nil,
+                      defenseSpeeds: [Float]? = nil)
         -> [FootballFieldScene.PlayStep] {
         let context = Context(play: play, losYardLine: losYardLine, offenseIsHome: offenseIsHome,
-                              matchups: matchups, call: call, defensivePackage: defensivePackage)
+                              matchups: matchups, call: call, defensivePackage: defensivePackage,
+                              offenseSpeeds: offenseSpeeds, defenseSpeeds: defenseSpeeds)
         let gainZ = clampZ(context.losZ + context.direction * Float(play.yardsGained))
 
         switch play.outcome {
@@ -382,11 +460,27 @@ struct PlayChoreographer {
         /// The play's route map — the called play's spec, or a depth-tiered
         /// generic concept when nobody dialed a call (AI drives).
         let spec: RouteSpec
+        /// Role-ordered top speeds (yd/s) fed from the real units' speed
+        /// attributes; defaults when the caller supplies none.
+        let offenseSpeeds: [Float]
+        let defenseSpeeds: [Float]
+
+        func oSpeed(_ role: Int) -> Float {
+            offenseSpeeds.indices.contains(role) ? offenseSpeeds[role]
+                : PlayChoreographer.defaultOffenseSpeeds[role]
+        }
+
+        func dSpeed(_ role: Int) -> Float {
+            defenseSpeeds.indices.contains(role) ? defenseSpeeds[role]
+                : PlayChoreographer.defaultDefenseSpeeds[role]
+        }
 
         init(play: PlayResult, losYardLine: Int, offenseIsHome: Bool,
              matchups: PlayMatchups? = nil,
              call: OffensivePlayCall? = nil,
-             defensivePackage: DefensivePackage? = nil) {
+             defensivePackage: DefensivePackage? = nil,
+             offenseSpeeds: [Float]? = nil,
+             defenseSpeeds: [Float]? = nil) {
             self.play = play
             self.losZ = PlayChoreographer.losZ(yardLine: losYardLine, offenseIsHome: offenseIsHome)
             self.direction = offenseIsHome ? 1 : -1
@@ -399,6 +493,8 @@ struct PlayChoreographer {
             self.matchups = matchups
             self.call = call
             self.package = defensivePackage
+            self.offenseSpeeds = offenseSpeeds ?? PlayChoreographer.defaultOffenseSpeeds
+            self.defenseSpeeds = defenseSpeeds ?? PlayChoreographer.defaultDefenseSpeeds
             if let call {
                 self.spec = RouteSpec.spec(for: call)
             } else {
@@ -677,12 +773,22 @@ struct PlayChoreographer {
     private typealias PathMove = (nodeIndex: Int, points: [SCNVector3], duration: TimeInterval)
 
     /// Field-space route path for an offense role, or nil when he blocks.
+    /// Interior waypoints carry the player's deterministic ±0.3 yd lateral
+    /// jitter (start and end stay exact — alignment and catch points hold),
+    /// so no two runners trace identical rails or stack inside each other.
     private static func specPath(role: Int, c: Context, depthScale: Float = 1) -> RoutePath? {
         let start = c.offense[role]
         guard let pts = c.spec.points(role: role, startX: start.x, startZ: start.z,
                                       losZ: c.losZ, direction: c.direction,
                                       depthScale: depthScale) else { return nil }
-        return RoutePath(points: pts.map { (clampX($0.x), clampZ($0.z)) })
+        var mapped = pts.map { (x: clampX($0.x), z: clampZ($0.z)) }
+        if mapped.count > 2 {
+            let jitter = lateralJitter(role: role, c: c)
+            for index in 1..<(mapped.count - 1) {
+                mapped[index].x = clampX(mapped[index].x + jitter)
+            }
+        }
+        return RoutePath(points: mapped)
     }
 
     /// Checkdown path when the sim targeted a role the spec has blocking.
@@ -854,6 +960,8 @@ struct PlayChoreographer {
         var manOnTarget: Int?
         /// True when the back stays in to block (no spec route for him).
         var rbBlocks: Bool
+        /// offense role → where his route ends (post-catch jog anchors).
+        var routeEnds: [Int: (x: Float, z: Float)] = [:]
     }
 
     private static func dropbackFrame(_ c: Context, targetRole: Int?,
@@ -861,7 +969,7 @@ struct PlayChoreographer {
                                       durations: [TimeInterval],
                                       qbDropZ: Float) -> DropbackFrame {
         var plan = defensePlan(c)
-        let fractions = uniformFractions(durations)
+        let uniform = uniformFractions(durations)
 
         // Route runners: the target on his fitted path, everyone else runs
         // his FULL spec route for the whole play.
@@ -875,14 +983,25 @@ struct PlayChoreographer {
                 routes[role] = fallbackPath(role: role, c: c)
             }
         }
+        // The target's timing stays synced to the ball (uniform schedule);
+        // every other runner covers his route at HIS OWN attribute speed —
+        // fast men clear early, plodders are still stemming at the throw.
+        var routeFractions: [Int: [Float]] = [:]
         var routeSlices: [Int: [PathMove?]] = [:]
+        var routeEnds: [Int: (x: Float, z: Float)] = [:]
         for (role, path) in routes {
+            let fractions = role == targetRole
+                ? uniform
+                : speedFractions(durations, total: path.total, speed: c.oSpeed(role))
+            routeFractions[role] = fractions
+            routeEnds[role] = path.end
             routeSlices[role] = pathMoves(path, nodeIndex: c.oBase + role,
                                           fractions: fractions, durations: durations)
         }
 
-        // Man mirrors trail their men; a man defender whose man stayed in to
-        // block falls into a hook zone instead.
+        // Man mirrors trail their men (phase-locked to the man's schedule so
+        // the trail distance stays honest); a man defender whose man stayed
+        // in to block falls into a hook zone instead.
         var defenseSlices: [Int: [PathMove?]] = [:]
         var manOnTarget: Int?
         for (defRole, offRole) in plan.man {
@@ -896,7 +1015,8 @@ struct PlayChoreographer {
                                     trail: trailYards(offRole: offRole, c: c),
                                     direction: c.direction)
             defenseSlices[defRole] = pathMoves(mirror, nodeIndex: c.dBase + defRole,
-                                               fractions: fractions, durations: durations)
+                                               fractions: routeFractions[offRole] ?? uniform,
+                                               durations: durations)
         }
 
         // Blitzers cross the line on the snap and reach the QB by the end of
@@ -915,7 +1035,8 @@ struct PlayChoreographer {
                              defenseSlices: defenseSlices,
                              plan: plan,
                              manOnTarget: manOnTarget,
-                             rbBlocks: routes[1] == nil)
+                             rbBlocks: routes[1] == nil,
+                             routeEnds: routeEnds)
     }
 
     /// All route/coverage/blitz path moves for one step of the frame.
@@ -969,7 +1090,8 @@ struct PlayChoreographer {
         let moves = merge(scripted, pocketMoves(c, p: 0.45, d: d) + zone)
             .filter { !taken.contains($0.nodeIndex) }
         return Step(moves: moves, paths: paths, ballMove: c.snapExchange, duration: d,
-                    blocks: lineBlockNodes(c))
+                    blocks: lineBlockNodes(c),
+                    startDelays: snapReactionDelays(c))
     }
 
     /// Frame step 1: the dropback — the QB backpedals to depth (eyes down
@@ -1125,9 +1247,12 @@ struct PlayChoreographer {
         let end = player(track.end.x, track.end.z)
         let endX = end.x
 
-        let snapDur: TimeInterval = isDraw ? 0.95 : (panicScramble ? 0.75 : 0.6)
+        let snapDur: TimeInterval = isDraw ? 0.95 : (panicScramble ? 0.8 : 0.65)
         let meshDur: TimeInterval = 0.55
-        let runDur = TimeInterval(min(max(Double(track.total) * Double(1 - f2) * 0.12, 1.0), 2.4))
+        // The open-field leg is covered at the CARRIER's attribute speed —
+        // a 4.4 burner outruns the pursuit, a plodding back gets swallowed.
+        let carrierSpeed = c.oSpeed(carrierRole)
+        let runDur = TimeInterval(min(max(Double(track.total * (1 - f2)) / Double(carrierSpeed), 0.9), 3.4))
         let durations = [snapDur, meshDur, runDur]
         let carrierSlices = pathMoves(track, nodeIndex: carrier,
                                       fractions: [f1, f2, 1], durations: durations)
@@ -1161,8 +1286,10 @@ struct PlayChoreographer {
             for role in [7, 8, 9, 10] {
                 guard let path = specPath(role: role, c: c) else { continue }
                 stalkExclude.insert(c.oBase + role)
-                clearSlices += pathMoves(path, nodeIndex: c.oBase + role,
-                                         fractions: [0.5, 0.8, 1], durations: durations)
+                clearSlices += pathMoves(
+                    path, nodeIndex: c.oBase + role,
+                    fractions: speedFractions(durations, total: path.total, speed: c.oSpeed(role)),
+                    durations: durations)
             }
         }
         func clears(_ step: Int) -> [PathMove] {
@@ -1195,7 +1322,8 @@ struct PlayChoreographer {
             ballMove: c.snapExchange,
             duration: snapDur,
             backpedals: snapBackpedals,
-            blocks: lineBlockNodes(c)
+            blocks: lineBlockNodes(c),
+            startDelays: snapReactionDelays(c)
         ))
 
         // 2. Handoff (or the QB tucks it): the carrier hits the mesh on his
@@ -1362,7 +1490,8 @@ struct PlayChoreographer {
         let qbStart = c.offenseStart(0)
         return [
             Step(moves: lineSurgeMoves(c, p: 0.3, d: 0.5),
-                 ballMove: c.snapExchange, duration: 0.6),
+                 ballMove: c.snapExchange, duration: 0.6,
+                 startDelays: snapReactionDelays(c)),
             Step(
                 moves: [(nodeIndex: c.qb, to: player(qbStart.x, qbStart.z - c.direction * 1), duration: 0.8)],
                 ballMove: .carry(nodeIndex: c.qb),
@@ -1414,10 +1543,15 @@ struct PlayChoreographer {
 
         let isPA = c.call == .playActionDeep
         let deepDrop = airDepth >= 15
-        let flight = TimeInterval(min(max(0.5 + Double(catchDepth) * 0.02, 0.45), 1.1))
-        let durations: [TimeInterval] = [isPA ? 0.9 : 0.55, deepDrop ? 1.05 : 0.8, flight]
         let qbStart = c.offenseStart(0)
         let qbDropZ = clampZ(qbStart.z - c.direction * dropDepth(c, deep: deepDrop))
+        // Physical pacing: the drop takes a real 1.25-1.6 s and the ball
+        // flies at ~18 yd/s from the launch point (20 air yards ≈ 1.1 s).
+        let throwDX = catchSpot.x - qbStart.x
+        let throwDZ = catchSpot.z - qbDropZ
+        let throwDistance = (throwDX * throwDX + throwDZ * throwDZ).squareRoot()
+        let flight = TimeInterval(min(max(throwDistance / Self.passVelocity, 0.5), 1.5))
+        let durations: [TimeInterval] = [isPA ? 1.0 : 0.65, deepDrop ? 1.6 : 1.25, flight]
         let frame = dropbackFrame(c, targetRole: receiverRole, targetPath: targetPath,
                                   durations: durations, qbDropZ: qbDropZ)
 
@@ -1504,8 +1638,18 @@ struct PlayChoreographer {
         //    run flashes an open-field move mid-runway.
         let endX = clampX(catchSpot.x + (catchSpot.x <= 0 ? 1.5 : -1.5))
         let end = player(endX, endZ)
-        let yacDuration = TimeInterval(min(max(yacDistance * 0.12, 0.6), 2.0))
+        // YAC runway covered at the receiver's own attribute speed.
+        let yacDuration = TimeInterval(min(max(yacDistance / c.oSpeed(receiverRole), 0.5), 2.4))
         let trail = 0.6 - c.separation * 0.8
+        // Receivers whose routes are done turn to the ball and jog toward
+        // the runway (YAC support) instead of standing at their route ends.
+        var yacSupport: [Move] = []
+        for role in [1, 7, 8, 9, 10] where role != receiverRole {
+            guard let from = frame.routeEnds[role] else { continue }
+            yacSupport.append((c.oBase + role,
+                               player(lerp(from.x, endX, 0.35), lerp(from.z, endZ, 0.35)),
+                               yacDuration))
+        }
         var yacOpenField: [FootballFieldScene.OpenFieldMove] = []
         if yacDistance >= 12 {
             let kinds: [FootballFieldScene.OpenFieldMove.Kind] = [.juke, .spin, .stiffArm]
@@ -1523,6 +1667,7 @@ struct PlayChoreographer {
                 ],
                 pursuitMoves(c, toX: endX, toZ: endZ, fraction: 0.5, d: yacDuration)
                     + trailMoves(c, toX: endX, toZ: endZ, roles: [0], fraction: 0.25, d: yacDuration)
+                    + yacSupport
             ),
             ballMove: .carry(nodeIndex: receiver),
             duration: yacDuration,
@@ -1555,7 +1700,7 @@ struct PlayChoreographer {
         let screenSpot = player(clampX(screenRole == 1 ? recStart.x + side * 5 : recStart.x * 0.85),
                                 c.losZ - c.direction * 1.6)
 
-        let durations: [TimeInterval] = [0.6, 0.8]
+        let durations: [TimeInterval] = [0.7, 0.9]
         let fractions = uniformFractions(durations)
 
         // The target leaks behind the line; the other wideouts clear the lid.
@@ -1616,7 +1761,8 @@ struct PlayChoreographer {
             paths: stepPaths(0),
             ballMove: c.snapExchange,
             duration: durations[0],
-            backpedals: [c.qb]
+            backpedals: [c.qb],
+            startDelays: snapReactionDelays(c)
         ))
 
         // 2. The trap springs: rushers close on the QB while the interior
@@ -1674,7 +1820,8 @@ struct PlayChoreographer {
         //    runway is the sim's yardage — blockers escort, defense rallies.
         let endX = clampX(screenSpot.x + side * 1.5)
         let end = player(endX, endZ)
-        let yacDuration = TimeInterval(min(max(abs(endZ - screenSpot.z) * 0.11, 0.9), 2.2))
+        // The screen runway is covered at the catcher's attribute speed.
+        let yacDuration = TimeInterval(min(max(abs(endZ - screenSpot.z) / c.oSpeed(screenRole), 0.8), 2.6))
         let runway = RoutePath(points: [
             (screenSpot.x, screenSpot.z),
             (clampX(screenSpot.x + side * 1.2), clampZ(c.losZ + c.direction * 2)),
@@ -1731,10 +1878,14 @@ struct PlayChoreographer {
 
         let isPA = c.call == .playActionDeep
         let deepDrop = routeDepth >= 15
-        let flight: TimeInterval = 0.7
-        let durations: [TimeInterval] = [isPA ? 0.9 : 0.55, deepDrop ? 1.05 : 0.85, flight]
         let qbStart = c.offenseStart(0)
         let qbDropZ = clampZ(qbStart.z - c.direction * dropDepth(c, deep: deepDrop))
+        // Real drop time + ball flight from the actual throw distance.
+        let missDX = miss.x - qbStart.x
+        let missDZ = miss.z - qbDropZ
+        let missDistance = (missDX * missDX + missDZ * missDZ).squareRoot()
+        let flight = TimeInterval(min(max(missDistance / Self.passVelocity, 0.55), 1.5))
+        let durations: [TimeInterval] = [isPA ? 1.0 : 0.65, deepDrop ? 1.6 : 1.25, flight]
         let frame = dropbackFrame(c, targetRole: receiverRole, targetPath: route,
                                   durations: durations, qbDropZ: qbDropZ)
 
@@ -1786,9 +1937,10 @@ struct PlayChoreographer {
         let rusherRole = c.matchups?.rushWinnerDefRole ?? 2
         let rusher = c.dl(rusherRole)
         let beaten = blockerFacing(defRole: rusherRole)
-        // pocketCollapse 0.7…1.0 → rush closes in 1.0…0.7s.
-        let rushTime = TimeInterval(1.7 - c.pocketCollapse)
-        let durations: [TimeInterval] = [0.55, rushTime, 0.8]
+        // Real pocket time: pocketCollapse 0…1 → the rush gets home in
+        // 2.3…1.4 s (a snap-to-sack of roughly 3-3.5 s with the snap step).
+        let rushTime = TimeInterval(2.3 - c.pocketCollapse * 0.9)
+        let durations: [TimeInterval] = [0.65, rushTime, 0.8]
         let frame = dropbackFrame(c, targetRole: nil, targetPath: nil,
                                   durations: durations, qbDropZ: sackSpot.z)
 
@@ -1857,10 +2009,14 @@ struct PlayChoreographer {
 
         let isPA = c.call == .playActionDeep
         let deepDrop = routeDepth >= 15
-        let flight: TimeInterval = 0.7
-        let durations: [TimeInterval] = [isPA ? 0.9 : 0.55, deepDrop ? 1.05 : 0.85, flight]
         let qbStart = c.offenseStart(0)
         let qbDropZ = clampZ(qbStart.z - c.direction * dropDepth(c, deep: deepDrop))
+        // Real drop time + ball flight from the throw distance to the pick.
+        let pickDX = pick.x - qbStart.x
+        let pickDZ = pick.z - qbDropZ
+        let pickDistance = (pickDX * pickDX + pickDZ * pickDZ).squareRoot()
+        let flight = TimeInterval(min(max(pickDistance / Self.passVelocity, 0.55), 1.5))
+        let durations: [TimeInterval] = [isPA ? 1.0 : 0.65, deepDrop ? 1.6 : 1.25, flight]
         let frame = dropbackFrame(c, targetRole: receiverRole, targetPath: route,
                                   durations: durations, qbDropZ: qbDropZ)
 
@@ -2000,12 +2156,13 @@ struct PlayChoreographer {
 
         // Coverage: everyone on the kicking team but the punter sprints
         // downfield — gunners (outside WRs) lead the charge.
+        let hang: TimeInterval = 2.1  // punt hang time (visual compromise)
         var coverage: [Move] = []
         for role in 1...10 {
             let start = c.offense[role]
             let depth: Float = (role == 7 || role == 8) ? 2 : 6
             coverage.append((c.oBase + role,
-                             player(start.x * 0.85, clampZ(landZ - c.direction * depth)), 1.6))
+                             player(start.x * 0.85, clampZ(landZ - c.direction * depth)), hang))
         }
         // Return unit falls back to wall off in front of the returner.
         var wall: [Move] = []
@@ -2013,7 +2170,7 @@ struct PlayChoreographer {
             let start = c.defense[role]
             wall.append((c.dBase + role,
                          player(lerp(start.x, Float(role % 3 - 1) * 4, 0.5),
-                                lerp(start.z, clampZ(landZ - c.direction * 7), 0.7)), 1.6))
+                                lerp(start.z, clampZ(landZ - c.direction * 7), 0.7)), hang))
         }
 
         let returnEnd = player(1, landZ - c.direction * 3)
@@ -2027,10 +2184,10 @@ struct PlayChoreographer {
             // Boot: high arc downfield; coverage races under it while the
             // return unit sets its wall and the returner settles.
             Step(
-                moves: merge([(nodeIndex: returner, to: player(0, landZ), duration: 1.6)],
+                moves: merge([(nodeIndex: returner, to: player(0, landZ), duration: hang)],
                              coverage + wall),
-                ballMove: .arc(to: air(0, landZ), apex: 12, duration: 1.6),
-                duration: 1.6
+                ballMove: .arc(to: air(0, landZ), apex: 12, duration: hang),
+                duration: hang
             ),
             // Catch and a short ~3yd return; the coverage rallies to the ball.
             Step(
@@ -2155,22 +2312,23 @@ struct PlayChoreographer {
         // 2. Boot: high hanging kick. Ten coverage men fly downfield in their
         //    lanes, the kicker trails as the safety, the front line folds back
         //    into the wedge and the returner settles under the ball.
-        var bootMoves: [Move] = [(returner, player(0, catchZ), 2.0)]
+        let hang: TimeInterval = 2.4  // real kickoff hang time
+        var bootMoves: [Move] = [(returner, player(0, catchZ), hang)]
         for i in 1...10 {
-            bootMoves.append((kBase + i, player(kicking[i].x * 0.8, clampZ(ownYard(22))), 2.0))
+            bootMoves.append((kBase + i, player(kicking[i].x * 0.8, clampZ(ownYard(22))), hang))
         }
-        bootMoves.append((kBase, player(0, teeZ + kickDir * 4), 2.0))
+        bootMoves.append((kBase, player(0, teeZ + kickDir * 4), hang))
         for i in 0..<5 {
-            bootMoves.append((rBase + i, player(receiving[i].x * 0.55, clampZ(ownYard(18))), 2.0))
+            bootMoves.append((rBase + i, player(receiving[i].x * 0.55, clampZ(ownYard(18))), hang))
         }
         for i in 5..<9 {
-            bootMoves.append((rBase + i, player(receiving[i].x * 0.7, clampZ(ownYard(10))), 2.0))
+            bootMoves.append((rBase + i, player(receiving[i].x * 0.7, clampZ(ownYard(10))), hang))
         }
-        bootMoves.append((rBase + 9, player(-2, clampZ(ownYard(6))), 2.0))
+        bootMoves.append((rBase + 9, player(-2, clampZ(ownYard(6))), hang))
         steps.append(Step(
             moves: bootMoves,
-            ballMove: .arc(to: air(0, catchZ), apex: 16, duration: 2.0),
-            duration: 2.0,
+            ballMove: .arc(to: air(0, catchZ), apex: 16, duration: hang),
+            duration: hang,
             reaches: [returner]
         ))
 
@@ -2187,7 +2345,8 @@ struct PlayChoreographer {
         let endZ = clampZ(ownYard(endYard))
         let endX: Float = isReturnTouchdown ? 6 : 4
         let runDistance = abs(endZ - catchZ)
-        let runDuration = TimeInterval(min(max(runDistance * 0.06, 1.0), 3.2))
+        // Return covered at a returner's sprint (~9 yd/s), not warp speed.
+        let runDuration = TimeInterval(min(max(runDistance / 9.0, 1.2), 3.6))
         // A housed return leaves the coverage trailing; a normal one rallies in.
         let convergence: Float = isReturnTouchdown ? 0.35 : 0.75
         var returnMoves: [Move] = [(returner, player(endX, endZ), runDuration)]
@@ -2244,7 +2403,8 @@ struct PlayChoreographer {
         let qbStart = c.offenseStart(0)
         return [
             Step(moves: lineSurgeMoves(c, p: 0.3, d: 0.4),
-                 ballMove: c.snapExchange, duration: 0.45),
+                 ballMove: c.snapExchange, duration: 0.45,
+                 startDelays: snapReactionDelays(c)),
             Step(
                 moves: [],
                 ballMove: .slide(to: ground(qbStart.x, qbStart.z), duration: 0.4),
@@ -2260,7 +2420,8 @@ struct PlayChoreographer {
         [
             Step(moves: lineSurgeMoves(c, p: 0.5, d: 0.55),
                  ballMove: c.snapExchange, duration: 0.6,
-                 blocks: lineBlockNodes(c)),
+                 blocks: lineBlockNodes(c),
+                 startDelays: snapReactionDelays(c)),
             Step(moves: [], ballMove: .carry(nodeIndex: c.qb), duration: 1.0),
         ]
     }

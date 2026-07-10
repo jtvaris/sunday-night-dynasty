@@ -89,6 +89,11 @@ class FootballFieldScene: SCNScene {
         var diveFalls: [Int] = []
         /// Scheduled jukes/spins/stiff-arms for ball carriers inside this step.
         var openField: [OpenFieldMove] = []
+        /// Per-node reaction delays (seconds from step start) before that
+        /// node's move/path launches — staggered get-offs at the snap so the
+        /// 22 never fire in lockstep. Small (≤0.3 s); a late mover simply
+        /// bleeds into the next step, where his next move takes over.
+        var startDelays: [Int: TimeInterval] = [:]
     }
 
     /// How a receiver plays the ball at the catch point.
@@ -283,11 +288,12 @@ class FootballFieldScene: SCNScene {
         focusCamera(z: focusZ, animated: true, duration: 0.7)
     }
 
-    /// Billboard numbers: 0.6 opacity long-range aid in broadcast, dimmer in
-    /// the elevated coach shot — the foreground jersey decals read on their
-    /// own there, but the far side of the formation still needs the assist.
+    /// Billboard numbers: 0.6 opacity long-range aid in broadcast, much
+    /// dimmer in the elevated coach shot — the jersey decals carry the read
+    /// there, and at 0.35 the floating digits projected onto the turf (and
+    /// onto the players behind them) from the low angle as ghost numbers.
     private var billboardNumberOpacity: CGFloat {
-        cameraStyle == .coach ? 0.35 : 0.6
+        cameraStyle == .coach ? 0.2 : 0.6
     }
 
     private func applyBillboardNumberVisibility() {
@@ -447,6 +453,7 @@ class FootballFieldScene: SCNScene {
             node.eulerAngles = SCNVector3(0, homeYaw, 0)
             rootNode.addChildNode(node)
             homePlayerNodes.append(node)
+            startIdle(on: node, seed: index)
         }
 
         for (index, info) in away.enumerated() {
@@ -456,7 +463,41 @@ class FootballFieldScene: SCNScene {
             node.eulerAngles = SCNVector3(0, awayYaw, 0)
             rootNode.addChildNode(node)
             awayPlayerNodes.append(node)
+            startIdle(on: node, seed: index + 11)
         }
+    }
+
+    // MARK: - Idle Micro-Motion
+
+    /// A permanent, tiny breath/weight-shift loop on the torso so nobody ever
+    /// stands statue-still: the body bobs ~2 cm and rocks a hair, with phase
+    /// and tempo staggered deterministically per figure. It runs on the
+    /// "body" child under its own key, composing with every other animation
+    /// (gait bob and stance both drive the figure node, the run twist is an
+    /// absolute rotate the relative sway rides on), so it never needs to be
+    /// paused — one repeatForever action per figure, no per-frame work.
+    private func startIdle(on node: SCNNode, seed: Int) {
+        guard let figure = node.childNode(withName: "figure", recursively: false),
+              let body = figure.childNode(withName: "body", recursively: false) else { return }
+        body.removeAction(forKey: "idle")
+        // Re-anchor the loop from the torso's rest pose so repeated resets
+        // can't accumulate a drift offset.
+        body.position = SCNVector3(0, 0.42, 0)
+
+        let period = 2.0 + Self.hash01(seed * 17 + 3) * 1.4          // 2.0-3.4 s
+        let phase = Self.hash01(seed * 29 + 7) * period              // staggered start
+        let breathe = SCNAction.moveBy(x: 0, y: 0.022, z: 0, duration: period / 2)
+        breathe.timingMode = .easeInEaseOut
+        let sway = SCNAction.rotateBy(x: 0.02, y: 0, z: 0.012, duration: period / 2)
+        sway.timingMode = .easeInEaseOut
+        let cycle = SCNAction.sequence([
+            SCNAction.group([breathe, sway]),
+            SCNAction.group([breathe.reversed(), sway.reversed()]),
+        ])
+        body.runAction(SCNAction.sequence([
+            SCNAction.wait(duration: phase),
+            SCNAction.repeatForever(cycle),
+        ]), forKey: "idle")
     }
 
     /// Moves the football to a position on the field.
@@ -557,26 +598,17 @@ class FootballFieldScene: SCNScene {
         let homeYaw: Float = awayAvgZ >= homeAvgZ ? 0 : .pi
         let awayYaw: Float = homeYaw == 0 ? .pi : 0
 
+        let generation = playGeneration
         for (offset, pair) in zip(homePlayerNodes + awayPlayerNodes, home + away).enumerated() {
             let (node, info) = pair
             let target = SCNVector3(info.x, FieldConstants.playerHeight / 2, info.z)
-            run(node: node, to: target, duration: duration, key: "formationMove")
             updateJerseyNumber(on: node, to: info.number)
 
             let isHomeNode = offset < homePlayerNodes.count
             let settleYaw = isHomeNode ? homeYaw : awayYaw
-            let settle = SCNAction.sequence([
-                SCNAction.wait(duration: duration),
-                SCNAction.rotateTo(x: 0, y: CGFloat(settleYaw), z: 0, duration: 0.25, usesShortestUnitArc: true),
-            ])
-            node.runAction(settle, forKey: "settleFacing")
-
-            // Everyone drops into his stance once he arrives at the line
-            // (upright is applied too — it resets any previous stance).
             let stance = isHomeNode
                 ? (stancesHome[offset] ?? .upright)
                 : (stancesAway[offset - homePlayerNodes.count] ?? .upright)
-            applyStance(stance, to: node, delay: duration + 0.2)
 
             // Restamp the position build: the same node flips between
             // offense and defense roles on possession changes. An empty
@@ -586,7 +618,40 @@ class FootballFieldScene: SCNScene {
                 let teamIndex = isHomeNode ? offset : offset - homePlayerNodes.count
                 applyBodyType(bodyTypes[teamIndex] ?? .medium, to: node)
             }
+
+            let start = { [weak self, weak node] in
+                guard let self, let node, self.playGeneration == generation else { return }
+                self.run(node: node, to: target, duration: duration, key: "formationMove")
+                let settle = SCNAction.sequence([
+                    SCNAction.wait(duration: duration),
+                    SCNAction.rotateTo(x: 0, y: CGFloat(settleYaw), z: 0, duration: 0.25,
+                                       usesShortestUnitArc: true),
+                ])
+                node.runAction(settle, forKey: "settleFacing")
+                // Everyone drops into his stance once he arrives at the line
+                // (upright is applied too — it resets any previous stance).
+                self.applyStance(stance, to: node, delay: duration + 0.2)
+            }
+
+            // Staggered break to the line: 0-0.4 s per man, deterministic by
+            // slot, so the formation never assembles in lockstep. Teleport
+            // syncs (duration ≤ 0.3) keep the old instant behavior.
+            let stagger = duration > 0.3 ? Self.hash01(offset * 13 + 5) * 0.4 : 0
+            if stagger < 0.02 {
+                start()
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + stagger, execute: start)
+            }
         }
+    }
+
+    /// Cheap deterministic 0…1 hash for per-player stagger/idle variation.
+    private static func hash01(_ seed: Int) -> Double {
+        var x = UInt64(truncatingIfNeeded: seed &* 2654435761 &+ 0x9E37)
+        x ^= x >> 13
+        x = x &* 0x9E3779B97F4A7C15
+        x ^= x >> 31
+        return Double(x % 1024) / 1023.0
     }
 
     /// Gathers one side's 11 players into a huddle ring at the given spots
@@ -599,15 +664,27 @@ class FootballFieldScene: SCNScene {
         guard nodes.count == positions.count, !positions.isEmpty else { return }
         let centerX = positions.map(\.x).reduce(0, +) / Float(positions.count)
         let centerZ = positions.map(\.z).reduce(0, +) / Float(positions.count)
-        for (node, spot) in zip(nodes, positions) {
-            run(node: node, to: SCNVector3(spot.x, FieldConstants.playerHeight / 2, spot.z),
-                duration: duration, key: "formationMove")
-            let yaw = atan2(centerX - spot.x, centerZ - spot.z)
-            node.runAction(SCNAction.sequence([
-                SCNAction.wait(duration: duration),
-                SCNAction.rotateTo(x: 0, y: CGFloat(yaw), z: 0, duration: 0.22,
-                                   usesShortestUnitArc: true),
-            ]), forKey: "settleFacing")
+        let generation = playGeneration
+        for (offset, pair) in zip(nodes, positions).enumerated() {
+            let (node, spot) = pair
+            let start = { [weak self, weak node] in
+                guard let self, let node, self.playGeneration == generation else { return }
+                self.run(node: node, to: SCNVector3(spot.x, FieldConstants.playerHeight / 2, spot.z),
+                         duration: duration, key: "formationMove")
+                let yaw = atan2(centerX - spot.x, centerZ - spot.z)
+                node.runAction(SCNAction.sequence([
+                    SCNAction.wait(duration: duration),
+                    SCNAction.rotateTo(x: 0, y: CGFloat(yaw), z: 0, duration: 0.22,
+                                       usesShortestUnitArc: true),
+                ]), forKey: "settleFacing")
+            }
+            // A ragged 0-0.25 s trickle into the ring — no synchronized rush.
+            let stagger = Self.hash01(offset * 7 + 11) * 0.25
+            if stagger < 0.02 {
+                start()
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + stagger, execute: start)
+            }
         }
     }
 
@@ -757,7 +834,11 @@ class FootballFieldScene: SCNScene {
         let clampedZ = max(-45, min(45, z))
         focusZ = clampedZ
         let style = styleOverride ?? cameraStyle
+        let shotStyleChanged = style != currentShotStyle
         currentShotStyle = style
+        // The precipitation is tuned per shot style (the low coach lens sits
+        // inside the spawn slab) — swap the emitter when the framing flips.
+        if shotStyleChanged { retuneWeatherEmitter() }
 
         // The camera always sits behind the player's own unit, mirrored via
         // `viewFacing` for away games; defense swaps to its own variant so
@@ -767,19 +848,22 @@ class FootballFieldScene: SCNScene {
         let fieldOfView: CGFloat
         switch style {
         case .coach:
-            // Elevated coach view: raised behind the offense (~16.5 yd behind
-            // the LOS at 7.5 up), normal 52-degree lens. Measured on-device:
-            // the backfield reads ~13-15 % of the viewport height, the whole
-            // core formation (OL box + backfield + LB level) fits, and the
-            // LOS spans the frame — split-wide receivers may clip at the
-            // edges. Defense raises the same shot (8.5 vs 7.5) so the routes
-            // read over the OL instead of being walled off by it.
+            // Elevated coach view: raised behind the offense (~18.6 yd behind
+            // the LOS at 8.2 up — the previous 16.5/7.5 shot pulled ~10 %
+            // further out along its own aim ray per user feedback), normal
+            // 52-degree lens. Estimated from the ray geometry: the backfield
+            // QB reads ~13-14 % of the viewport height (was ~15 %), the OL
+            // ~9-10 % (was ~11 %); the whole core formation (OL box +
+            // backfield + LB level) fits with a touch more air, and the LOS
+            // spans the frame — split-wide receivers may clip at the edges.
+            // Defense raises the same shot (9.3 vs 8.2) so the routes read
+            // over the OL instead of being walled off by it.
             if defensiveFraming {
                 targetPosition = SCNVector3(0, 1.0, clampedZ + viewFacing * 3)
-                cameraPosition = SCNVector3(0, 8.5, clampedZ - viewFacing * 16.5)
+                cameraPosition = SCNVector3(0, 9.3, clampedZ - viewFacing * 18.5)
             } else {
                 targetPosition = SCNVector3(0, 1.0, clampedZ + viewFacing * 4)
-                cameraPosition = SCNVector3(0, 7.5, clampedZ - viewFacing * 16.5)
+                cameraPosition = SCNVector3(0, 8.2, clampedZ - viewFacing * 18.6)
             }
             fieldOfView = 52
         case .broadcast:
@@ -863,7 +947,8 @@ class FootballFieldScene: SCNScene {
 
         // Keep the precipitation slab a step downfield of the low kick
         // camera so streaks/flakes never cross right in front of the lens.
-        moveWeatherEmitter(toZ: sign * 30, animated: true, duration: duration)
+        // The slab center is explicit here — no coach-mode offset on top.
+        moveWeatherEmitter(toZ: sign * 30, animated: true, duration: duration, applyOffset: false)
     }
 
     /// Post-tackle beat for the tight coach shot: eases the camera ~30 %
@@ -886,17 +971,52 @@ class FootballFieldScene: SCNScene {
         cameraNode.runAction(move, forKey: "focus")
     }
 
+    /// Playback rate for play timelines (the HUD's 1x/2x button): 2 halves
+    /// every step/move/ball duration at schedule time — pure presentation,
+    /// the sim result and the game clock are untouched.
+    var playbackSpeed: Double = 1
+
+    /// One step re-timed by a duration factor (playback speed).
+    private func scaledStep(_ step: PlayStep, by factor: Double) -> PlayStep {
+        var out = step
+        out.duration = step.duration * factor
+        out.moves = step.moves.map { ($0.nodeIndex, $0.to, $0.duration * factor) }
+        out.paths = step.paths.map { ($0.nodeIndex, $0.points, $0.duration * factor) }
+        out.startDelays = step.startDelays.mapValues { $0 * factor }
+        out.openField = step.openField.map {
+            OpenFieldMove(nodeIndex: $0.nodeIndex, kind: $0.kind, delay: $0.delay * factor)
+        }
+        switch step.ballMove {
+        case .arc(let to, let apex, let duration):
+            out.ballMove = .arc(to: to, apex: apex, duration: duration * factor)
+        case .slide(let to, let duration):
+            out.ballMove = .slide(to: to, duration: duration * factor)
+        default:
+            break
+        }
+        return out
+    }
+
     /// Runs a sequential play timeline: each step starts after the previous one
     /// finishes; within a step all moves (and the ball behavior) start together.
     /// `completion` fires on the main queue after the last step ends.
+    ///
+    /// When the timeline ends, everyone still on his feet gets a short
+    /// decelerating follow-through slide (no hard freeze at the whistle), and
+    /// a beat later the field starts a slow walk toward the ball — the
+    /// between-plays wait reads as players regrouping, not statues. Both die
+    /// with the play generation as soon as anything else claims the field.
     func runPlay(steps: [PlayStep], completion: @escaping () -> Void) {
         cancelPlay()
         // The snap kills the pre-snap push-in; the follow-cam owns the shot now.
         cameraNode.removeAction(forKey: "pushIn")
         let generation = playGeneration
 
+        let rate = min(max(playbackSpeed, 0.5), 4)
+        let timed = rate == 1 ? steps : steps.map { scaledStep($0, by: 1 / rate) }
+
         var startTime: TimeInterval = 0
-        for step in steps {
+        for step in timed {
             DispatchQueue.main.asyncAfter(deadline: .now() + startTime) { [weak self] in
                 guard let self = self, self.playGeneration == generation else { return }
                 self.execute(step: step)
@@ -904,10 +1024,69 @@ class FootballFieldScene: SCNScene {
             startTime += effectiveDuration(of: step)
         }
 
+        // Whoever was in motion over the final beats keeps sliding to a stop.
+        let lastMovers = Set(timed.suffix(2).flatMap { step in
+            step.moves.map(\.nodeIndex) + step.paths.map(\.nodeIndex)
+        })
+
         DispatchQueue.main.asyncAfter(deadline: .now() + startTime) { [weak self] in
             guard let self = self, self.playGeneration == generation else { return }
+            self.followThrough(nodeIndexes: lastMovers)
             self.detachBallToRoot()
             completion()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+                guard let self = self, self.playGeneration == generation else { return }
+                self.postPlayWalk()
+            }
+        }
+    }
+
+    /// Post-whistle momentum: each node that was still moving when the play
+    /// ended drifts 0.4-0.8 s further along its facing, easing out — players
+    /// decelerate through the whistle instead of stopping dead. Fallen men
+    /// stay in the pile.
+    private func followThrough(nodeIndexes: Set<Int>) {
+        for index in nodeIndexes {
+            guard let node = playerNode(at: index),
+                  let figure = node.childNode(withName: "figure", recursively: false),
+                  figure.action(forKey: "fall") == nil else { continue }
+            let yaw = node.eulerAngles.y
+            let reach = Float.random(in: 0.6...1.1)
+            let duration = TimeInterval.random(in: 0.4...0.8)
+            let drift = SCNAction.moveBy(x: CGFloat(sin(yaw) * reach), y: 0,
+                                         z: CGFloat(cos(yaw) * reach), duration: duration)
+            drift.timingMode = .easeOut
+            node.runAction(drift, forKey: "walk")
+        }
+    }
+
+    /// Between plays everyone on his feet walks slowly toward (a ring around)
+    /// the dead ball — deterministic per-man ring spots keep them separated,
+    /// and the walk is capped at a few yards so a 50-yard punt doesn't march
+    /// the line downfield. Any formation move / snap replaces the walk (see
+    /// the cross-key cleanup in `run`).
+    private func postPlayWalk() {
+        let ball = ballNode.worldPosition
+        for (index, node) in (homePlayerNodes + awayPlayerNodes).enumerated() {
+            guard let figure = node.childNode(withName: "figure", recursively: false),
+                  figure.action(forKey: "fall") == nil,
+                  node.action(forKey: "playMove") == nil,
+                  node.action(forKey: "formationMove") == nil else { continue }
+            // A deterministic ring spot per node: staggered angles + radii.
+            let angle = Float(index) / 22 * 2 * .pi + 0.45
+            let radius = 2.4 + Float(index % 5) * 0.8
+            let targetX = min(max(ball.x + sin(angle) * radius, -25), 25)
+            let targetZ = min(max(ball.z + cos(angle) * radius, -56), 56)
+            let dx = targetX - node.position.x
+            let dz = targetZ - node.position.z
+            let distance = (dx * dx + dz * dz).squareRoot()
+            guard distance > 1.4 else { continue }
+            let capped = min(distance, 4.5)
+            let to = SCNVector3(node.position.x + dx / distance * capped,
+                                node.position.y,
+                                node.position.z + dz / distance * capped)
+            // Walk pace ~1.6 yd/s — `run` drops into the low-speed walk gait.
+            run(node: node, to: to, duration: TimeInterval(capped / 1.6), key: "walk")
         }
     }
 
@@ -917,6 +1096,7 @@ class FootballFieldScene: SCNScene {
         playGeneration += 1
         for node in homePlayerNodes + awayPlayerNodes {
             node.removeAction(forKey: "playMove")
+            node.removeAction(forKey: "walk")
             node.removeAction(forKey: "pulse")
             node.removeAction(forKey: "settleFacing")
             resetGait(of: node)
@@ -1122,9 +1302,12 @@ class FootballFieldScene: SCNScene {
     }
 
     /// One full leg cycle for a runner at `speed` yards/second — faster feet
-    /// as the player moves faster; backpedals chop at a fixed cadence.
+    /// as the player moves faster; backpedals chop at a fixed cadence, and
+    /// sub-3 yd/s paces drop into a leisurely walking cadence.
     private func strideTime(forSpeed speed: Float, backpedal: Bool) -> TimeInterval {
-        backpedal ? 0.3 : min(max(0.38 - TimeInterval(speed) * 0.022, 0.16), 0.34)
+        if backpedal { return 0.3 }
+        if speed < 3 { return 0.5 }
+        return min(max(0.38 - TimeInterval(speed) * 0.022, 0.16), 0.34)
     }
 
     /// Moves a player container to `target` with the full running presentation:
@@ -1137,6 +1320,12 @@ class FootballFieldScene: SCNScene {
     /// through half-yard adjustments.
     private func run(node: SCNNode, to target: SCNVector3, duration: TimeInterval, key: String,
                      backpedal: Bool = false) {
+        // One mover at a time: a snap cancels a late formation shift or the
+        // post-play walk, a formation move cancels the walk, and so on —
+        // concurrent move(to:) actions under different keys would fight.
+        for other in ["playMove", "formationMove", "walk"] where other != key {
+            node.removeAction(forKey: other)
+        }
         let move = SCNAction.move(to: target, duration: duration)
         // Play steps chain into each other, so easing in and out of EVERY
         // step makes players pump-stop at each boundary. Linear keeps the
@@ -1180,8 +1369,10 @@ class FootballFieldScene: SCNScene {
         // Rise out of any stance sink first so the bob oscillates around zero.
         let rise = SCNAction.move(to: SCNVector3Zero, duration: 0.1)
 
-        // Forward lean scales with speed (~8-12°); backpedal sits slightly back.
-        let lean: CGFloat = backpedal ? -0.1 : CGFloat(0.14 + min(speed, 9) / 9 * 0.08)
+        // Forward lean scales with speed (~8-12°); backpedal sits slightly
+        // back; a walking pace stays nearly upright.
+        let lean: CGFloat = backpedal ? -0.1
+            : (speed < 3 ? 0.05 : CGFloat(0.14 + min(speed, 9) / 9 * 0.08))
         // Momentary inward bank on a sharp cut, released mid-move.
         let bank: CGFloat = (!backpedal && key == "playMove" && abs(turn) > 0.6)
             ? CGFloat(max(-0.32, min(0.32, -turn * 0.35)))
@@ -1224,7 +1415,9 @@ class FootballFieldScene: SCNScene {
                             speed: Float = 5, backpedal: Bool = false) {
         let stride = strideTime(forSpeed: speed, backpedal: backpedal)
         let cycles = max(Int(duration / stride), 1)
-        let swing: Float = backpedal ? 0.4 : min(0.45 + speed * 0.035, 0.8)
+        // Walking paces swing small and easy; running scales with speed.
+        let swing: Float = backpedal ? 0.4
+            : (speed < 3 ? 0.28 : min(0.45 + speed * 0.035, 0.8))
 
         func swingAction(startForward: Bool, restZ: CGFloat) -> SCNAction {
             let fwd = SCNAction.rotateTo(x: CGFloat(-swing), y: 0, z: restZ, duration: stride / 2)
@@ -1654,6 +1847,10 @@ class FootballFieldScene: SCNScene {
             body.removeAction(forKey: "twist")
             body.eulerAngles = SCNVector3Zero
         }
+        // Re-anchor the idle breath loop from the fresh rest pose (a loop cut
+        // mid-cycle would otherwise leave a tiny cumulative offset).
+        let allPlayers = homePlayerNodes + awayPlayerNodes
+        startIdle(on: node, seed: allPlayers.firstIndex(where: { $0 === node }) ?? 0)
         for name in ["leg", "legR", "arm", "armR"] {
             guard let limb = figure.childNode(withName: name, recursively: false) else { continue }
             limb.removeAction(forKey: "swing")
@@ -1689,14 +1886,35 @@ class FootballFieldScene: SCNScene {
     /// Kicks off everything inside a single step: player moves, pulses, falls,
     /// reaches, celebrations, ball behavior — plus the follow-cam on long carries.
     private func execute(step: PlayStep) {
+        // Staggered get-offs: a node with a reaction delay launches its move
+        // a beat late (dies with the play generation like every queued beat).
+        let generation = playGeneration
         for move in step.moves {
             guard let node = playerNode(at: move.nodeIndex) else { continue }
-            run(node: node, to: move.to, duration: move.duration, key: "playMove",
-                backpedal: step.backpedals.contains(move.nodeIndex))
+            let backpedal = step.backpedals.contains(move.nodeIndex)
+            if let delay = step.startDelays[move.nodeIndex], delay > 0.02 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self, self.playGeneration == generation else { return }
+                    self.run(node: node, to: move.to, duration: move.duration, key: "playMove",
+                             backpedal: backpedal)
+                }
+            } else {
+                run(node: node, to: move.to, duration: move.duration, key: "playMove",
+                    backpedal: backpedal)
+            }
         }
         for path in step.paths where !path.points.isEmpty {
-            runPath(nodeIndex: path.nodeIndex, points: path.points, duration: path.duration,
-                    backpedal: step.backpedals.contains(path.nodeIndex))
+            let backpedal = step.backpedals.contains(path.nodeIndex)
+            if let delay = step.startDelays[path.nodeIndex], delay > 0.02 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self, self.playGeneration == generation else { return }
+                    self.runPath(nodeIndex: path.nodeIndex, points: path.points,
+                                 duration: path.duration, backpedal: backpedal)
+                }
+            } else {
+                runPath(nodeIndex: path.nodeIndex, points: path.points, duration: path.duration,
+                        backpedal: backpedal)
+            }
         }
 
         let stepDuration = effectiveDuration(of: step)
@@ -2014,22 +2232,34 @@ class FootballFieldScene: SCNScene {
     private static var numberTextureCache: [String: UIImage] = [:]
 
     /// A transparent square with the jersey number drawn in a heavy athletic
-    /// weight: white on dark jerseys, near-black on white ones. 256 px so
-    /// the digits stay crisp in the tight coach shot.
+    /// weight: white on dark jerseys, near-black on white ones — each with a
+    /// thin counter-shade outline so the digits keep reading on mid-tone
+    /// jerseys either side of the luminance cut. 256 px so the digits stay
+    /// crisp in the tight coach shot.
     private static func numberTexture(_ number: Int, darkText: Bool) -> UIImage {
         let key = "\(number)-\(darkText ? "d" : "l")"
         if let cached = numberTextureCache[key] { return cached }
         let size = CGSize(width: 256, height: 256)
         let image = UIGraphicsImageRenderer(size: size).image { _ in
             let text = "\(number)" as NSString
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.monospacedDigitSystemFont(ofSize: 156, weight: .heavy),
-                .foregroundColor: darkText ? UIColor(white: 0.12, alpha: 1) : UIColor.white,
-            ]
-            let bounds = text.size(withAttributes: attributes)
-            text.draw(at: CGPoint(x: (size.width - bounds.width) / 2,
-                                  y: (size.height - bounds.height) / 2),
-                      withAttributes: attributes)
+            let font = UIFont.monospacedDigitSystemFont(ofSize: 156, weight: .heavy)
+            let fill = darkText ? UIColor(white: 0.12, alpha: 1) : UIColor.white
+            let halo = darkText ? UIColor(white: 1.0, alpha: 0.85)
+                                : UIColor(white: 0.1, alpha: 0.85)
+            let bounds = text.size(withAttributes: [.font: font])
+            let origin = CGPoint(x: (size.width - bounds.width) / 2,
+                                 y: (size.height - bounds.height) / 2)
+            // Halo drawn by hand (8 offset passes under the fill pass):
+            // NSAttributedString's strokeWidth/strokeColor pair renders the
+            // fill with the STROKE shade on this path, which inverted the
+            // digits (white-on-white chest numbers) — so no stroke attrs.
+            for dx in [-3, 0, 3] {
+                for dy in [-3, 0, 3] where !(dx == 0 && dy == 0) {
+                    text.draw(at: CGPoint(x: origin.x + CGFloat(dx), y: origin.y + CGFloat(dy)),
+                              withAttributes: [.font: font, .foregroundColor: halo])
+                }
+            }
+            text.draw(at: origin, withAttributes: [.font: font, .foregroundColor: fill])
         }
         numberTextureCache[key] = image
         return image
@@ -3174,9 +3404,12 @@ class FootballFieldScene: SCNScene {
 
         // Face the number toward the camera (angled up), dimmed so the
         // jersey decals carry the primary read. The coach shot dims it
-        // further — see billboardNumberOpacity.
+        // further — see billboardNumberOpacity. Sits clear ABOVE the helmet
+        // (top ~1.4): at the old 1.33 the digits overlapped the helmet and,
+        // from the low coach angle, read as phantom chest numbers on
+        // whoever stood behind.
         numberNode.eulerAngles = SCNVector3(-Float.pi / 4, 0, 0)
-        numberNode.position = SCNVector3(0, 1.33, 0)
+        numberNode.position = SCNVector3(0, 1.52, 0)
         numberNode.opacity = billboardNumberOpacity
 
         // Use billboard constraint so numbers always face the camera
@@ -3397,6 +3630,7 @@ class FootballFieldScene: SCNScene {
     /// - snow: slow white flakes + a faint snow blanket over the turf
     /// - wind/clear: no visuals (gusts would just read as noise from this camera)
     func setWeather(_ weather: GameWeather) {
+        activeWeather = weather
         rootNode.childNode(withName: "weatherEmitter", recursively: false)?.removeFromParentNode()
         rootNode.childNode(withName: "snowBlanket", recursively: false)?.removeFromParentNode()
         setLightIntensities(main: 1200, fill: 400, ambient: 500)
@@ -3406,13 +3640,13 @@ class FootballFieldScene: SCNScene {
         case .clear, .wind:
             break
         case .rain:
-            addWeatherEmitter(Self.rainSystem())
+            addWeatherEmitter(Self.rainSystem(coach: currentShotStyle == .coach))
             setLightIntensities(main: 850, fill: 300, ambient: 420)
             // Pull the fog in and cool it: the far field dissolves into the
             // wet night instead of ending in a hard dark edge.
             applyFog(color: UIColor(red: 0.04, green: 0.06, blue: 0.10, alpha: 1), start: 65, end: 180)
         case .snow:
-            addWeatherEmitter(Self.snowSystem())
+            addWeatherEmitter(Self.snowSystem(coach: currentShotStyle == .coach))
             addSnowBlanket()
             setLightIntensities(main: 1200, fill: 400, ambient: 620)
             // Lift the fog toward a snowy sky-glow grey so distant flakes
@@ -3450,29 +3684,66 @@ class FootballFieldScene: SCNScene {
     }
 
     /// Height of the weather emitter node; the spawn slab straddles this
-    /// (y 4-12). Low on purpose: it stays well under the play cameras
-    /// (y 24-33), so nothing spawns next to the lens as a giant blob, and
+    /// (y 4-12). Low on purpose: it stays well under the broadcast cameras
+    /// (y 24-33), so nothing spawns next to that lens as a giant blob, and
     /// distant flakes stay visually below the far field edge instead of
     /// dotting the dark sky like a starfield.
+    ///
+    /// The COACH lens (y 8.2-9.3) sits INSIDE this band, so coach shots
+    /// additionally push the whole slab downfield (`weatherSlabZOffset`)
+    /// and run smaller/dimmer particles (see rainSystem/snowSystem) —
+    /// nothing may spawn on the near ray as a lens-filling blob.
     private static let weatherEmitterHeight: Float = 8
 
+    /// The weather condition currently dressed on the field, so camera-style
+    /// changes can re-tune the live emitter (coach vs broadcast particles).
+    private var activeWeather: GameWeather = .clear
+
+    /// How far the slab center slides downfield of the camera focus. The
+    /// camera always sits on the -viewFacing side of the focus, so a
+    /// +viewFacing push moves spawns away from the lens: with the coach
+    /// slab (length 40, so ±20) the nearest spawn plane ends up ~10.6 units
+    /// in front of the low lens instead of straddling it.
+    private var weatherSlabZOffset: Float {
+        currentShotStyle == .coach ? viewFacing * 12 : 0
+    }
+
     /// Adds the particle emitter over the current camera focus. The slab is
-    /// deliberately smaller than the field (z +-35 around the action) and
-    /// follows focusCamera/kickCamera moves — precipitation lives where the
-    /// camera looks, broadcast-style, not across the whole stadium depth.
+    /// deliberately smaller than the field and follows focusCamera moves —
+    /// precipitation lives where the camera looks, broadcast-style, not
+    /// across the whole stadium depth. Coach shots push it downfield so no
+    /// particle spawns next to the low lens (`weatherSlabZOffset`).
     private func addWeatherEmitter(_ system: SCNParticleSystem) {
         let node = SCNNode()
         node.name = "weatherEmitter"
-        node.position = SCNVector3(0, Self.weatherEmitterHeight, focusZ)
+        node.position = SCNVector3(0, Self.weatherEmitterHeight, focusZ + weatherSlabZOffset)
         node.addParticleSystem(system)
         rootNode.addChildNode(node)
     }
 
-    /// Re-centers the weather slab on the camera's focus. No-op when no
-    /// weather emitter is active.
-    private func moveWeatherEmitter(toZ z: Float, animated: Bool, duration: TimeInterval) {
+    /// Swaps the live emitter for one tuned to the current shot style
+    /// (coach: small dim close-range particles in an offset slab; broadcast:
+    /// the classic wide slab). No-op when the weather has no particles.
+    /// The systems carry a warmup, so the swap doesn't blank the sky.
+    private func retuneWeatherEmitter() {
         guard let node = rootNode.childNode(withName: "weatherEmitter", recursively: false) else { return }
-        let position = SCNVector3(0, Self.weatherEmitterHeight, z)
+        node.removeFromParentNode()
+        switch activeWeather {
+        case .rain: addWeatherEmitter(Self.rainSystem(coach: currentShotStyle == .coach))
+        case .snow: addWeatherEmitter(Self.snowSystem(coach: currentShotStyle == .coach))
+        case .clear, .wind: break
+        }
+    }
+
+    /// Re-centers the weather slab on the camera's focus. No-op when no
+    /// weather emitter is active. `z` is the raw focus/aim Z; the coach-mode
+    /// downfield push is applied here unless `applyOffset` is false (the
+    /// kick camera aims the slab explicitly).
+    private func moveWeatherEmitter(toZ z: Float, animated: Bool, duration: TimeInterval,
+                                    applyOffset: Bool = true) {
+        guard let node = rootNode.childNode(withName: "weatherEmitter", recursively: false) else { return }
+        let position = SCNVector3(0, Self.weatherEmitterHeight,
+                                  z + (applyOffset ? weatherSlabZOffset : 0))
         if animated {
             let move = SCNAction.move(to: position, duration: duration)
             move.timingMode = .easeInEaseOut
@@ -3506,46 +3777,62 @@ class FootballFieldScene: SCNScene {
     /// Procedural rain: small stretched streaks falling straight down at
     /// speed, tinted cool and slightly additive so they catch the lights.
     /// Streaks spawn in a low y 4-12 slab around the camera focus (emitter
-    /// node at y 8) and die just past the turf, so none crosses the camera.
-    private static func rainSystem() -> SCNParticleSystem {
+    /// node at y 8) and die just past the turf.
+    ///
+    /// `coach` re-tunes for the low coach lens that sits inside that band:
+    /// a smaller slab (pushed downfield by `weatherSlabZOffset`), finer and
+    /// dimmer streaks, fewer of them — atmosphere, not a car wash.
+    private static func rainSystem(coach: Bool) -> SCNParticleSystem {
         let system = SCNParticleSystem()
-        system.birthRate = 240
+        system.birthRate = coach ? 170 : 240
         system.particleLifeSpan = 0.7
-        system.emitterShape = SCNBox(width: 70, height: 8, length: 70, chamferRadius: 0)
+        system.emitterShape = SCNBox(width: coach ? 46 : 70, height: 8,
+                                     length: coach ? 40 : 70, chamferRadius: 0)
         system.birthLocation = .volume
         system.emittingDirection = SCNVector3(0, -1, 0)
         system.spreadingAngle = 2
         system.particleVelocity = 24
         system.particleVelocityVariation = 6
         system.particleImage = rainStreakImage()
-        system.particleSize = 0.2
-        system.particleSizeVariation = 0.08
-        system.particleColor = UIColor(red: 0.65, green: 0.72, blue: 0.85, alpha: 0.22)
+        system.particleSize = coach ? 0.12 : 0.2
+        system.particleSizeVariation = coach ? 0.04 : 0.08
+        system.particleColor = UIColor(red: 0.65, green: 0.72, blue: 0.85,
+                                       alpha: coach ? 0.16 : 0.22)
         system.blendMode = .additive
         system.stretchFactor = 0.06
         system.isLightingEnabled = false
+        // Pre-roll so setWeather/retuneWeatherEmitter never shows a dry sky.
+        system.warmupDuration = 1
         return system
     }
 
     /// Procedural snow: slow, drifting white flakes. Flakes spawn in a low
     /// y 4-12 slab around the camera focus (emitter node at y 8) — far below
-    /// the camera band — so they read against the turf, not as a starfield
-    /// hanging in the dark sky, and the lifespan just covers the drop.
-    private static func snowSystem() -> SCNParticleSystem {
+    /// the broadcast camera band — so they read against the turf, not as a
+    /// starfield hanging in the dark sky.
+    ///
+    /// `coach` re-tunes for the low coach lens that sits inside that band:
+    /// a smaller slab (pushed downfield by `weatherSlabZOffset`) and small,
+    /// faint flakes — the old 0.15 flakes read as head-sized white balls
+    /// between the players at coach distance.
+    private static func snowSystem(coach: Bool) -> SCNParticleSystem {
         let system = SCNParticleSystem()
-        system.birthRate = 130
+        system.birthRate = coach ? 80 : 130
         system.particleLifeSpan = 8
-        system.emitterShape = SCNBox(width: 70, height: 8, length: 70, chamferRadius: 0)
+        system.emitterShape = SCNBox(width: coach ? 46 : 70, height: 8,
+                                     length: coach ? 40 : 70, chamferRadius: 0)
         system.birthLocation = .volume
         system.emittingDirection = SCNVector3(0, -1, 0)
         system.spreadingAngle = 14
         system.particleVelocity = 2.4
         system.particleVelocityVariation = 0.8
         system.particleImage = snowflakeImage()
-        system.particleSize = 0.15
-        system.particleSizeVariation = 0.05
-        system.particleColor = UIColor(white: 1.0, alpha: 0.62)
+        system.particleSize = coach ? 0.09 : 0.15
+        system.particleSizeVariation = coach ? 0.03 : 0.05
+        system.particleColor = UIColor(white: 1.0, alpha: coach ? 0.45 : 0.62)
         system.isLightingEnabled = false
+        // Pre-roll so setWeather/retuneWeatherEmitter never shows an empty sky.
+        system.warmupDuration = 5
         return system
     }
 

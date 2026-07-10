@@ -73,6 +73,10 @@ struct CoachedGameView: View {
     private var cameraStyle: FootballFieldScene.CameraStyle {
         FootballFieldScene.CameraStyle(rawValue: cameraStyleRaw) ?? .coach
     }
+    /// Persisted play-animation speed (HUD 1x/2x toggle) for the impatient:
+    /// 2x halves every play timeline. Presentation only — sim results and
+    /// clock runoff are identical at both speeds.
+    @AppStorage("coachPlaybackSpeed") private var playbackSpeedRaw: Double = 1.0
     @State private var isAnimating = false
     /// While set (and in the future), the offense is in its between-plays
     /// huddle ring: formation previews hold off until the break time so a
@@ -205,8 +209,6 @@ struct CoachedGameView: View {
                 }
                 .animation(.easeInOut(duration: 0.4), value: fieldExpanded)
             }
-
-            bannerOverlay
 
             if showHalftime {
                 HalftimeView(
@@ -651,7 +653,13 @@ struct CoachedGameView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .overlay(alignment: .bottomTrailing) { cameraToggleButton.padding(10) }
+            .overlay(alignment: .bottomTrailing) {
+                HStack(spacing: 8) {
+                    playbackSpeedButton
+                    cameraToggleButton
+                }
+                .padding(10)
+            }
             .overlay(alignment: .bottom) {
                 if let plate = snapPlate {
                     HStack(spacing: 0) {
@@ -667,12 +675,36 @@ struct CoachedGameView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
+            // Result/injury/milestone toasts anchor to the field's own lower
+            // edge, so they track the field height (0.52/0.68 expansion)
+            // instead of a fixed screen offset that could land on the
+            // play-call cards below.
+            .overlay(alignment: .bottom) { bannerOverlay }
             .animation(.spring(duration: 0.3), value: possessionBanner)
             .animation(.spring(duration: 0.3), value: playoffBanner)
             .animation(.spring(duration: 0.3), value: matchupCallouts.count)
             .animation(.spring(duration: 0.25), value: snapPlate)
             .animation(.spring(duration: 0.3), value: sidelineNote)
             .animation(.spring(duration: 0.3), value: adaptationNote)
+    }
+
+    /// 1x/2x play-speed toggle over the field: 2x halves every play timeline
+    /// for the impatient. Persists across games (UserDefaults); applies from
+    /// the next snap. Presentation only — the sim and the clock don't change.
+    private var playbackSpeedButton: some View {
+        Button {
+            playbackSpeedRaw = playbackSpeedRaw >= 2 ? 1.0 : 2.0
+            fieldScene.playbackSpeed = playbackSpeedRaw
+        } label: {
+            Text(playbackSpeedRaw >= 2 ? "2×" : "1×")
+                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(Color.black.opacity(0.45), in: Circle())
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.25), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(playbackSpeedRaw >= 2 ? "Play speed 2x" : "Play speed 1x")
     }
 
     /// Coach/Broadcast camera toggle over the field: video = the Madden-scale
@@ -1544,9 +1576,10 @@ struct CoachedGameView: View {
 
     // MARK: - Banner
 
+    /// Result/injury/milestone toasts. Rendered as a bottom overlay on the
+    /// field section (see fieldSection), so the stack floats just above the
+    /// bottom panel whatever height the panel happens to have.
     private var bannerOverlay: some View {
-        VStack {
-            Spacer()
             VStack(spacing: 8) {
                 if let injury = injuryBanner {
                     HStack(spacing: 8) {
@@ -1590,8 +1623,9 @@ struct CoachedGameView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .padding(.bottom, 352)
-        }
+            // Clear of the snap plate / matchup callouts hugging the
+            // field's bottom edge.
+            .padding(.bottom, 54)
         .animation(.spring(duration: 0.35), value: resultBanner)
         .animation(.spring(duration: 0.35), value: injuryBanner)
         .animation(.spring(duration: 0.35), value: milestoneBanner)
@@ -1969,6 +2003,9 @@ struct CoachedGameView: View {
         // focusCamera below places the shot without animation.
         fieldScene.setCameraStyle(cameraStyle, refocus: false)
 
+        // Persisted play-animation speed (the HUD 1x/2x toggle).
+        fieldScene.playbackSpeed = playbackSpeedRaw
+
         // The camera always shoots from behind the PLAYER's own unit —
         // mirrored for away games (field text re-orients with it).
         fieldScene.setViewFacing(playerTeamIsHome ? 1 : -1)
@@ -2157,7 +2194,8 @@ struct CoachedGameView: View {
             isTouchback: event.isTouchback,
             isReturnTouchdown: event.isReturnTouchdown
         )
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+        // Covers the 0.7 s formation move + the staggered departures.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.15) {
             fieldScene.runPlay(steps: steps) {
                 isAnimating = false
                 if event.isReturnTouchdown {
@@ -2205,6 +2243,18 @@ struct CoachedGameView: View {
         }
         engine.clearPendingKickoff()
         runKickoff(kickoff)
+    }
+
+    /// Role-ordered top speeds (yd/s) for a field unit, mapped from each
+    /// man's SPEED attribute (40-99) onto the choreographer's physical band:
+    /// ~6.5 yd/s for a lumbering lineman up to ~9.5 for a burner. The play
+    /// animation covers every yard at these speeds, so fast players are
+    /// visibly fast — presentation only, outcomes are already decided.
+    private func fieldSpeeds(_ unit: FieldUnit) -> [Float] {
+        unit.players.map { player in
+            let attribute = Float(player.physical.speed)
+            return min(max(6.5 + (attribute - 40) / 59 * 3.0, 6.3), 9.5)
+        }
     }
 
     /// Steps the engine one play and choreographs the result on the field.
@@ -2316,10 +2366,14 @@ struct CoachedGameView: View {
             offenseDirection: playDir
         )
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+        // 1.15 s pre-snap window: the 0.7 s formation move plus the 0-0.4 s
+        // staggered departures finish before the ball moves.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.15) {
             let steps = PlayChoreographer.steps(for: play, losYardLine: losYard,
                                                 offenseIsHome: offenseIsHome, matchups: matchups,
-                                                call: animatedCall, defensivePackage: defPackage)
+                                                call: animatedCall, defensivePackage: defPackage,
+                                                offenseSpeeds: fieldSpeeds(offUnit),
+                                                defenseSpeeds: fieldSpeeds(defUnit))
             // A flagged play gets the yellow laundry: the flag flies in while
             // the (wiped-out) snap plays out.
             if play.outcome == .penalty {

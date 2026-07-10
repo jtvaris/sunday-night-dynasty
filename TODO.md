@@ -1,5 +1,35 @@
 # Dynasty - TODO
 
+## Motion & polish — videoverifiointi (2026-07-10)
+
+Build BUILD SUCCEEDED → asennus + coached-peli (GB vs ATL, Week 9, lumisää) iPad Pro 13" -simulaattorissa. 17,4 min video (`/tmp/snd-screenshots/motion-verify/session1.mp4`), analyysi käyttäjän menetelmällä: 10 fps / 320 px framet, PIL ImageChops -keskierotus, 0-9-skaala.
+
+### Liikeprofiili: ennen → jälkeen
+- ENNEN (käyttäjän video): purskeet 0,5-1,2 s + 0→9→0-piikit, >1 s täysjäätymiä, paneelivaihe taso 0.
+- JÄLKEEN (session1.mp4, 10 453 framea): jatkuva pohjataso 3-4 (idle + lumi), play-purskeet 5-9 ja kesto 2,1-8,5 s (26 purskettta, mediaani ~3,4 s; scrimmage-playt 3,3-8,5 s), EI yhtään ≥0,5 s täysjäätymää koko videossa (pisin nollajakso 0,2 s = tulosplaten isku-hold), taso ≥1 ajasta 98,2 % / ≥2 97,8 %.
+- Esimerkki aikajanasta (1 merkki = 1 s): `433333356457886474433333345554374744433333335898664744433333` — purske nousee pohjatasosta ja laskee takaisin ilman nollia.
+
+### Hyväksymiskriteerit
+- (a) Playn liike 3-6 s ilman 0→9→0-pursketta, taso ≥2 koko playn: PASS (purskeissa min-diff >0,2 lukuun ottamatta 0,1-0,2 s tulosplate-holdia purskeiden lopussa; ei 0→9→0-kuviota).
+- (b) Ei >1,0 s täysjäätymiä playn aikana eikä 2 s sisällä: PASS (pisin 0,2 s; tarkistettu kaikki 26 purskeikkunaa +2 s).
+- (c) Paneelivaihe taso ≥1: PASS — paneeli auki pohjataso 3-4 (raw diff 1,1-1,9; idle-liike + lumi; ennen 0).
+- Frame-tarkistukset:
+  - Porrastetut lähdöt: PASS — screen-playssa (G034→G038, 0,4 s) RB/WR:t liikkuneet selvästi, OL vasta sitoutumassa; puntissa gunnerit irti ennen linjaa.
+  - Nopeuserot: PASS — WR/RB ~10× OL:n siirtymä 0,4 s ikkunassa; OL pysyy blokissa.
+  - Post-play: PASS — tuloksen jälkeen 0,2-0,9 s liikepiikki (5-8) = kävely uuteen muodostelmaan, ei patsasriviä (C010 vs C030 -vertailu).
+  - Muodostelma: PASS — ei sisäkkäisiä figuureja pre-snapissa; blokkipareissa lievä mesh-limitys (odotettu).
+  - Lumi: PASS molemmissa kameramoodeissa (coach + away/broadcast-toggle) — pienet hiutaleet, ei linssipalloja (mv_23/mv_24/mv_27).
+  - Rintanumerot: PASS — GB 19/34/72/75/76/64/68/89 ja ATL 96/94/99/50/53 luettavissa full-res-cropeista.
+  - Kamera: QB 257 px / viewport 1848 px = 13,9 % → osuu 13-14 %:n tavoitteeseen (mitattu pre-snap-framesta G034 pikselianalyysillä).
+- 1x/2x-nappi: PASS — tap vaihtaa 1x→2x (mv_25/mv_26-cropit), pelinopeus kasvoi. Kameratoggle: PASS — coach↔away vaihtuu, ikoni päivittyy.
+
+### Havainnot (ei-blokkaavia)
+- [ ] Päätöskello (10 s) ajaa auto-playt jos coach ei ehdi valita — automaatioajossa playt rullasivat itsekseen; live-pacing silti reaaliaikainen (purskeet 2-8,5 s).
+- [ ] Tulosplaten ilmestyessä 0,1-0,2 s render-hold (2 duplikaattiframea 10 fps:ssä) — alle kriteerirajan, mutta jos halutaan täysin sileä, plate-animaation voi ajaa omalla layerillä.
+- [ ] Kenttäplaten down-teksti ("3RD & 2") vs. ylächipin down ("4th & 2") ehtivät hetkeksi eri tilaan play-transitiossa (mv_15) — kosmeettinen.
+
+Artefaktit: `/tmp/snd-screenshots/motion-verify/` (session1.mp4 + mv_00-mv_28 + frame-ikkunat A/B/C/D/E/G scratchpadissa). EI committoitu.
+
 ## Sää-slab-fix + UI/Match-pikkuviimeistelyt (2026-07-10)
 
 ### Shipped (BUILD SUCCEEDED)

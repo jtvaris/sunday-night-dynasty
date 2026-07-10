@@ -467,6 +467,12 @@ struct CoachesBoardView: View {
 
     // MARK: Selected Player
 
+    /// Placeholder for an empty live stat line: skill players accumulate
+    /// "touches", defenders don't — their empty line says "No stats yet".
+    private var emptyStatLineText: String {
+        selectedPlayer.position.side == .defense ? "No stats yet" : "No touches yet"
+    }
+
     private var selectedPlayerCard: some View {
         let player = selectedPlayer
         let line = engine.liveLine(for: player.id)
@@ -518,8 +524,10 @@ struct CoachesBoardView: View {
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(trendColor(trend))
                     }
-                    Text(line.map { $0.statLine.isEmpty ? "No touches yet" : $0.statLine }
-                         ?? "No touches yet")
+                    // Defenders don't get "touches" — an empty line reads
+                    // "No stats yet" on that side of the ball.
+                    Text(line.map { $0.statLine.isEmpty ? emptyStatLineText : $0.statLine }
+                         ?? emptyStatLineText)
                         .font(.system(size: 12, weight: .semibold).monospacedDigit())
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(2)
