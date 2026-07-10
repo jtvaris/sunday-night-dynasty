@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 // MARK: - Training Focus Area (R26)
 
@@ -96,9 +97,29 @@ enum TrainingFocusEngine {
     /// (~1 expected breakout per team per season, capped at 2).
     private static let weeklyBreakoutChance = 0.06
 
-    /// Breakouts consumed per "season|team" key. In-memory only — an app
-    /// restart resets the cap, which errs on the side of more fun.
+    /// Breakouts consumed per "season|team" key. Write-through cache of the
+    /// Career-persisted counts (`Career.seasonBreakoutCounts`) so the
+    /// 2/season/team cap survives app restarts.
     private static var breakoutCounts: [String: Int] = [:]
+
+    /// teamID → careerID cache for multi-save stores, so the career lookup's
+    /// league walk runs at most once per team.
+    private static var careerIDByTeamID: [UUID: UUID] = [:]
+
+    // MARK: - Breakout Cap Persistence
+
+    /// Season-scoped per-team breakout usage, JSON-persisted on the Career
+    /// (`Career.breakoutCountsData`). The payload carries its season: when
+    /// the stored season differs from the season being played, the engine
+    /// treats it as empty and overwrites — a new season therefore starts
+    /// from zero automatically, with no explicit `startNewSeason` hook
+    /// (covers the R32 season-reset audit for this counter).
+    struct SeasonBreakoutCounts: Codable {
+        /// Season year the counts belong to; any other season reads as empty.
+        var season: Int
+        /// `teamID.uuidString` → breakouts consumed this season.
+        var counts: [String: Int]
+    }
 
     // MARK: - Result Type
 
@@ -243,6 +264,8 @@ enum TrainingFocusEngine {
         teamID: UUID
     ) -> (player: Player, pointsGained: Int)? {
         let key = "\(season)|\(teamID.uuidString)"
+        let career = resolveCareer(roster: roster, teamID: teamID)
+        hydrateBreakoutCount(from: career, season: season, teamID: teamID)
         guard breakoutCounts[key, default: 0] < maxBreakoutsPerSeason else { return nil }
         guard Double.random(in: 0.0..<1.0) < weeklyBreakoutChance else { return nil }
 
@@ -272,14 +295,75 @@ enum TrainingFocusEngine {
         guard applied > 0 else { return nil }
 
         breakoutCounts[key, default: 0] += 1
+        persistBreakoutCount(
+            to: career,
+            season: season,
+            teamID: teamID,
+            count: breakoutCounts[key, default: 0]
+        )
         return (star, applied)
+    }
+
+    // MARK: - Breakout Cap Persistence Helpers
+
+    /// Finds the `Career` that owns this roster's league so the breakout cap
+    /// can be persisted. Fast path: a store with a single career (the normal
+    /// case, and the R32 smoke-test's isolated store). With multiple save
+    /// slots in one store the career is matched through its league's team
+    /// list (`career.leagueID` → `League.teams`), cached per teamID.
+    /// Returns `nil` when the roster isn't in a SwiftData context (unit-style
+    /// callers) — the cap then falls back to in-memory-only, as before.
+    private static func resolveCareer(roster: [Player], teamID: UUID) -> Career? {
+        guard let context = roster.first?.modelContext else { return nil }
+        let careers = (try? context.fetch(FetchDescriptor<Career>())) ?? []
+        guard careers.count > 1 else { return careers.first }
+
+        if let cachedID = careerIDByTeamID[teamID],
+           let cached = careers.first(where: { $0.id == cachedID }) {
+            return cached
+        }
+        let leagues = (try? context.fetch(FetchDescriptor<League>())) ?? []
+        for career in careers {
+            guard let leagueID = career.leagueID,
+                  let league = leagues.first(where: { $0.id == leagueID }),
+                  league.teams.contains(where: { $0.id == teamID }) else { continue }
+            careerIDByTeamID[teamID] = career.id
+            return career
+        }
+        return nil
+    }
+
+    /// Merges the persisted count for this team+season into the in-memory
+    /// cache (max-wins, so neither a restart nor an unsaved context can
+    /// lower an already-consumed count). Idempotent — safe to call weekly.
+    private static func hydrateBreakoutCount(from career: Career?, season: Int, teamID: UUID) {
+        guard let stored = career?.seasonBreakoutCounts,
+              stored.season == season,
+              let persisted = stored.counts[teamID.uuidString] else { return }
+        let key = "\(season)|\(teamID.uuidString)"
+        breakoutCounts[key] = max(breakoutCounts[key, default: 0], persisted)
+    }
+
+    /// Writes the new count through to the Career. A payload from an older
+    /// season is discarded wholesale — the season rollover reset. The caller
+    /// (WeekAdvancer's weekly tick) saves the model context.
+    private static func persistBreakoutCount(to career: Career?, season: Int, teamID: UUID, count: Int) {
+        guard let career else { return }
+        var stored = career.seasonBreakoutCounts ?? SeasonBreakoutCounts(season: season, counts: [:])
+        if stored.season != season {
+            stored = SeasonBreakoutCounts(season: season, counts: [:])
+        }
+        stored.counts[teamID.uuidString] = count
+        career.seasonBreakoutCounts = stored
     }
 
     // MARK: - Attribute Application
 
-    /// Same ceiling formula as `PlayerDevelopmentEngine`.
+    /// Shared ceiling formula — delegates to the single source of truth in
+    /// `PlayerDevelopmentEngine.developmentCeiling(for:)` so the two engines
+    /// can never drift apart.
     static func potentialCeiling(for player: Player) -> Int {
-        Int(Double(player.truePotential) * 0.65 + 35.0)
+        PlayerDevelopmentEngine.developmentCeiling(for: player)
     }
 
     /// Applies a single +1 point inside the given focus area, respecting the

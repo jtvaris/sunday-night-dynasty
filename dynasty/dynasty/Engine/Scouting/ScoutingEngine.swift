@@ -277,7 +277,16 @@ enum ScoutingEngine {
             archetype: PersonalityArchetype.allCases.randomElement()!,
             motivation: Motivation.allCases.randomElement()!
         )
-        let potential = bellCurveRating(min: 35, max: 99, center: 60)
+        // League OVR-drift calibration (R32 multi-season verify): prospect
+        // potential must roughly match the veteran outflow or the league's
+        // potential base drains every season. Measured: retirees leave with
+        // avgPot ≈ 73, while the old bellCurveRating(35...99, center: 60)
+        // gave classes avgPot ≈ 63.4 and a hard ~80 cap (the (raw+center)/2
+        // bias halves the spread — no 90+ potential prospect could EVER
+        // spawn). leaguePot decayed ~0.8/season → 10+ season careers rotted.
+        // New draw: mean of two uniforms in 41...99 → triangular bell,
+        // mean 70, full upper tail (~2.4 % of a class ≥ 90, ~0.6 % ≥ 95).
+        let potential = (Int.random(in: 41...99) + Int.random(in: 41...99)) / 2
         let anthro = generateAnthropometrics(for: position)
 
         let prospect = CollegeProspect(

@@ -84,6 +84,7 @@ enum MultiSeasonSmokeTest {
         var draftedThisCycle = 0
         var firedNotes = 0
         var retiredTotalPrev = 0
+        var seenRetiredIDs = Set<UUID>()      // OVR-drift diag: newly retired per cycle
         var hcSnapshot = headCoachByTeam(context: context)
         let maxAdvances = seasons * 60 + 60   // watchdog: infinite-loop guard
 
@@ -133,6 +134,14 @@ enum MultiSeasonSmokeTest {
                 retiredTotalPrev = retiredNow
                 draftedThisCycle = 0
                 hcSnapshot = hcNow
+
+                // OVR-drift diagnostics: who left, who arrived, and how the
+                // yearsPro cohorts are trending.
+                printDriftDiagnostics(
+                    seasonLabel: finishedSeason,
+                    seenRetiredIDs: &seenRetiredIDs,
+                    context: context
+                )
             }
 
             try? context.save()
@@ -235,6 +244,8 @@ enum MultiSeasonSmokeTest {
         }
 
         var drafted = 0
+        var draftedOVRSum = 0
+        var draftedPotSum = 0
         for pick in picks {
             guard !available.isEmpty, let team = teamsByID[pick.currentTeamID] else { continue }
             let chosen = DraftEngine.aiMakePick(
@@ -247,6 +258,8 @@ enum MultiSeasonSmokeTest {
                 teamID: pick.currentTeamID,
                 pickNumber: pick.pickNumber
             )
+            draftedOVRSum += player.overall
+            draftedPotSum += player.truePotential
             context.insert(player)
             pick.playerID = player.id
             pick.playerName = chosen.fullName
@@ -259,8 +272,65 @@ enum MultiSeasonSmokeTest {
             available.removeAll { $0.id == chosen.id }
             drafted += 1
         }
+        if drafted > 0 {
+            print(String(
+                format: "SMOKE: diag draft season=%d drafted=%d avgOVR=%.2f avgPot=%.2f",
+                season, drafted,
+                Double(draftedOVRSum) / Double(drafted),
+                Double(draftedPotSum) / Double(drafted)
+            ))
+        }
         try? context.save()
         return drafted
+    }
+
+    // MARK: - OVR-drift diagnostics
+
+    /// Prints, once per completed cycle: the quality of the players who just
+    /// retired (what the league lost), and the rostered yearsPro cohorts
+    /// (whether young classes climb fast enough to replace them).
+    private static func printDriftDiagnostics(
+        seasonLabel: Int,
+        seenRetiredIDs: inout Set<UUID>,
+        context: ModelContext
+    ) {
+        let players = (try? context.fetch(FetchDescriptor<Player>())) ?? []
+
+        // Newly retired since the previous cycle (attributes survive retire()).
+        let newlyRetired = players.filter { $0.isRetired && !seenRetiredIDs.contains($0.id) }
+        for player in newlyRetired { seenRetiredIDs.insert(player.id) }
+        if !newlyRetired.isEmpty {
+            let avgOVR = Double(newlyRetired.reduce(0) { $0 + $1.overall }) / Double(newlyRetired.count)
+            let avgAge = Double(newlyRetired.reduce(0) { $0 + $1.age }) / Double(newlyRetired.count)
+            let avgPot = Double(newlyRetired.reduce(0) { $0 + $1.truePotential }) / Double(newlyRetired.count)
+            print(String(
+                format: "SMOKE: diag retired season=%d count=%d avgOVR=%.2f avgAge=%.1f avgPot=%.2f",
+                seasonLabel, newlyRetired.count, avgOVR, avgAge, avgPot
+            ))
+        }
+
+        // Rostered cohorts by yearsPro (at this point the fresh draft class is yp1).
+        let rostered = players.filter { $0.teamID != nil && !$0.isRetired }
+        func cohort(_ range: ClosedRange<Int>) -> String {
+            let group = rostered.filter { range.contains($0.yearsPro) }
+            guard !group.isEmpty else { return "-" }
+            let avg = Double(group.reduce(0) { $0 + $1.overall }) / Double(group.count)
+            return String(format: "%.1f(n=%d)", avg, group.count)
+        }
+        let veterans = rostered.filter { $0.yearsPro >= 8 }
+        let vetText: String
+        if veterans.isEmpty {
+            vetText = "-"
+        } else {
+            let avg = Double(veterans.reduce(0) { $0 + $1.overall }) / Double(veterans.count)
+            vetText = String(format: "%.1f(n=%d)", avg, veterans.count)
+        }
+        let avgPot = rostered.isEmpty ? 0 :
+            Double(rostered.reduce(0) { $0 + $1.truePotential }) / Double(rostered.count)
+        print("SMOKE: diag cohorts season=\(seasonLabel) "
+              + "yp1=\(cohort(1...1)) yp2=\(cohort(2...2)) yp3=\(cohort(3...3)) "
+              + "yp4to7=\(cohort(4...7)) yp8plus=\(vetText) "
+              + String(format: "leaguePot=%.2f", avgPot))
     }
 
     // MARK: - AI stand-in for user roster management

@@ -164,6 +164,16 @@ final class Career {
     /// Default → lightweight migration (normal = today's exact rates).
     var injuryFrequencyRaw: String = InjuryFrequency.normal.rawValue
 
+    // MARK: - Training-Focus Breakout Cap (R26 jämä)
+    /// JSON-encoded `TrainingFocusEngine.SeasonBreakoutCounts` — how many
+    /// training-focus breakout events each team has consumed in the CURRENT
+    /// season (hard cap 2/team/season). The payload is season-scoped: when
+    /// its stored season differs from the season being played, the engine
+    /// ignores and overwrites it, so a new season starts from zero without
+    /// an explicit `startNewSeason` hook.
+    /// Optional new attribute → lightweight migration.
+    var breakoutCountsData: Data? = nil
+
     // MARK: - Locker Room (R25)
     /// JSON-encoded `[LockerRoomEvent]` — resolved locker-room happenings,
     /// newest first, capped at 12. Optional new attribute → lightweight migration.
@@ -468,6 +478,24 @@ extension Career {
         }
         set {
             hallOfFameData = try? JSONEncoder().encode(Array(newValue.prefix(80)))
+        }
+    }
+}
+
+// MARK: - Training-Focus Breakout Cap Codable Bridge
+
+extension Career {
+
+    /// Season-scoped per-team breakout usage (max 2/team/season), decoded
+    /// from `breakoutCountsData`. Assigning `nil` clears it (caller saves
+    /// the context).
+    var seasonBreakoutCounts: TrainingFocusEngine.SeasonBreakoutCounts? {
+        get {
+            guard let data = breakoutCountsData else { return nil }
+            return try? JSONDecoder().decode(TrainingFocusEngine.SeasonBreakoutCounts.self, from: data)
+        }
+        set {
+            breakoutCountsData = newValue.flatMap { try? JSONEncoder().encode($0) }
         }
     }
 }

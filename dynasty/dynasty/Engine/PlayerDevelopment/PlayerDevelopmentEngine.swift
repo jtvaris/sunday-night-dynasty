@@ -6,6 +6,20 @@ import Foundation
 /// and offseason processing in Sunday Night Dynasty.
 enum PlayerDevelopmentEngine {
 
+    // MARK: - Development Ceiling (shared formula)
+
+    /// Single source of truth for the attribute-development ceiling scaled
+    /// from `truePotential` (1-99): `truePotential * 0.65 + 35`.
+    /// A truePotential of 99 allows attributes up to 99; potential of 50
+    /// caps around 67.
+    ///
+    /// Every development path (offseason growth here, the R26 weekly
+    /// training-focus tick, and the camp `TrainingPlanEngine`) MUST use this
+    /// helper so the formula cannot drift between copies.
+    static func developmentCeiling(for player: Player) -> Int {
+        Int(Double(player.truePotential) * 0.65 + 35.0)
+    }
+
     // MARK: - 1. Offseason Development
 
     /// Develops a player's attributes during the offseason based on work ethic, coaching,
@@ -122,9 +136,8 @@ enum PlayerDevelopmentEngine {
         }
 
         // --- Potential ceiling ---
-        // Attribute ceiling scaled from truePotential (1-99).
-        // A truePotential of 99 allows attributes up to 99; potential of 50 caps around 65.
-        let ceiling = Int(Double(player.truePotential) * 0.65 + 35.0)
+        // Attribute ceiling scaled from truePotential (1-99); shared formula.
+        let ceiling = developmentCeiling(for: player)
 
         // --- Distribute points across attributes ---
         // Young players: physical develops faster. Older players: mental develops faster.
@@ -146,6 +159,47 @@ enum PlayerDevelopmentEngine {
 
         // Distribute mental points randomly across mental attributes.
         distributeMentalPoints(player: player, points: mentalPoints, ceiling: ceiling)
+
+        // --- Young-player catch-up growth (league OVR-drift calibration) ---
+        // Rookies convert at 60-90 % of their college attributes, but the
+        // point distribution above only ever touches physical/mental —
+        // position skills (50 % of OVR) stayed frozen at the scaled-down
+        // entry level. Measured result (R32 multi-season verify): draft
+        // classes entered ~12 OVR below the veterans they replaced, matured
+        // only ~+1 OVR/season, and the league decayed ~0.5 OVR/season.
+        // Fix: for their first offseasons young players close a fraction of
+        // the gap between each position skill / mental attribute and the
+        // shared development ceiling — self-limiting (gap shrinks, ceiling
+        // caps), stronger for better coaching, zero for a struggle-rookie.
+        if rookieOutcome != .struggle {
+            // NOTE: processOffseason ages players BEFORE developPlayer, so a
+            // player in his first pro camp arrives here with yearsPro == 1 —
+            // the table therefore covers yearsPro 1-4 (first four camps);
+            // case 0 only guards direct un-aged call paths.
+            // Calibration iteration 2 (measured): with the prospect-potential
+            // lift in place (intake avgPot ≈ 70, leaguePot stable ≈ 75) the
+            // original fractions 0.25/0.18/0.12/0.08 INFLATED the league
+            // +1.6 OVR in 4 seasons — higher ceilings made the same fraction
+            // worth more points. Trimmed ~25 % to hold 5-season drift in
+            // |Δ| ≤ 1.5 while young classes still mature into starters.
+            let catchUpFraction: Double
+            switch player.yearsPro {
+            case 0, 1: catchUpFraction = 0.19
+            case 2:    catchUpFraction = 0.13
+            case 3:    catchUpFraction = 0.09
+            case 4:    catchUpFraction = 0.06
+            default:   catchUpFraction = 0.0
+            }
+            if catchUpFraction > 0 {
+                // Coaching quality sways the reps a little (±10 %).
+                let coachFactor = min(1.1, max(0.9, coachBonus))
+                applyCatchUpGrowth(
+                    player: player,
+                    fraction: catchUpFraction * coachFactor,
+                    ceiling: ceiling
+                )
+            }
+        }
 
         // --- Position Training (offseason = full intensity) ---
         if let trainingPos = player.trainingPosition, trainingPos != player.position {
@@ -598,6 +652,88 @@ private extension PlayerDevelopmentEngine {
             let actualGain = newValue - current
             player.mental[keyPath: kp] = newValue
             remaining -= actualGain
+        }
+    }
+
+    // MARK: Young-Player Catch-Up Growth
+
+    /// Moves every position skill and mental attribute a fraction of the way
+    /// toward the player's development ceiling (never past 99, never
+    /// downward). Physical attributes are excluded: rookies convert with a
+    /// +0.05 physical readiness bonus and already enter near-complete.
+    static func applyCatchUpGrowth(player: Player, fraction: Double, ceiling: Int) {
+        let cap = min(99, ceiling)
+
+        func grown(_ value: Int) -> Int {
+            guard value < cap else { return value }
+            let gain = Int((Double(cap - value) * fraction).rounded())
+            return min(cap, value + gain)
+        }
+
+        // Mental attributes (20 % of OVR) enter scaled-down too.
+        let mentalPaths: [WritableKeyPath<MentalAttributes, Int>] = [
+            \.awareness, \.decisionMaking, \.clutch, \.workEthic, \.coachability, \.leadership
+        ]
+        for kp in mentalPaths {
+            player.mental[keyPath: kp] = grown(player.mental[keyPath: kp])
+        }
+
+        // Position skills (50 % of OVR) — the frozen component this fixes.
+        switch player.positionAttributes {
+        case .quarterback(var a):
+            a.armStrength = grown(a.armStrength)
+            a.accuracyShort = grown(a.accuracyShort)
+            a.accuracyMid = grown(a.accuracyMid)
+            a.accuracyDeep = grown(a.accuracyDeep)
+            a.pocketPresence = grown(a.pocketPresence)
+            a.scrambling = grown(a.scrambling)
+            player.positionAttributes = .quarterback(a)
+        case .runningBack(var a):
+            a.vision = grown(a.vision)
+            a.elusiveness = grown(a.elusiveness)
+            a.breakTackle = grown(a.breakTackle)
+            a.receiving = grown(a.receiving)
+            player.positionAttributes = .runningBack(a)
+        case .wideReceiver(var a):
+            a.routeRunning = grown(a.routeRunning)
+            a.catching = grown(a.catching)
+            a.release = grown(a.release)
+            a.spectacularCatch = grown(a.spectacularCatch)
+            player.positionAttributes = .wideReceiver(a)
+        case .tightEnd(var a):
+            a.blocking = grown(a.blocking)
+            a.catching = grown(a.catching)
+            a.routeRunning = grown(a.routeRunning)
+            a.speed = grown(a.speed)
+            player.positionAttributes = .tightEnd(a)
+        case .offensiveLine(var a):
+            a.runBlock = grown(a.runBlock)
+            a.passBlock = grown(a.passBlock)
+            a.pull = grown(a.pull)
+            a.anchor = grown(a.anchor)
+            player.positionAttributes = .offensiveLine(a)
+        case .defensiveLine(var a):
+            a.passRush = grown(a.passRush)
+            a.blockShedding = grown(a.blockShedding)
+            a.powerMoves = grown(a.powerMoves)
+            a.finesseMoves = grown(a.finesseMoves)
+            player.positionAttributes = .defensiveLine(a)
+        case .linebacker(var a):
+            a.tackling = grown(a.tackling)
+            a.zoneCoverage = grown(a.zoneCoverage)
+            a.manCoverage = grown(a.manCoverage)
+            a.blitzing = grown(a.blitzing)
+            player.positionAttributes = .linebacker(a)
+        case .defensiveBack(var a):
+            a.manCoverage = grown(a.manCoverage)
+            a.zoneCoverage = grown(a.zoneCoverage)
+            a.press = grown(a.press)
+            a.ballSkills = grown(a.ballSkills)
+            player.positionAttributes = .defensiveBack(a)
+        case .kicking(var a):
+            a.kickPower = grown(a.kickPower)
+            a.kickAccuracy = grown(a.kickAccuracy)
+            player.positionAttributes = .kicking(a)
         }
     }
 

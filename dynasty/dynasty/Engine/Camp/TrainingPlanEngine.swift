@@ -28,8 +28,8 @@ enum TrainingPlanEngine {
             // Skip injured / holding-out players entirely.
             guard !player.isInjured else { continue }
 
-            // Per-player ceiling: scaled from truePotential (1-99).
-            let ceiling = Int(Double(player.truePotential) * 0.65 + 35.0)
+            // Per-player ceiling: scaled from truePotential (1-99); shared formula.
+            let ceiling = PlayerDevelopmentEngine.developmentCeiling(for: player)
 
             // --- Tactical → mental.awareness, decisionMaking ---
             let tacticalRoll = rollPoints(delta: tDelta, ceiling: ceiling, current: player.mental.awareness)
