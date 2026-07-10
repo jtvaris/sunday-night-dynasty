@@ -653,6 +653,19 @@ struct CareerShellView: View {
                 ctx.opponentRecord = opponent.record
                 ctx.passDefense = Self.defenseStrength(of: opponent, positions: [.CB, .FS, .SS])
                 ctx.runDefense = Self.defenseStrength(of: opponent, positions: [.DE, .DT, .MLB, .OLB])
+
+                // R33: coordinator persona intel — the exact personas the
+                // live game's AI will call with (deterministic derivation).
+                let oppCoachDescriptor = FetchDescriptor<Coach>(
+                    predicate: #Predicate { $0.teamID == opponentID }
+                )
+                let oppCoaches = (try? modelContext.fetch(oppCoachDescriptor)) ?? []
+                ctx.opponentDCPersona = oppCoaches
+                    .first { $0.role == .defensiveCoordinator }
+                    .map(DCPersona.derive(for:))
+                ctx.opponentOCPersona = oppCoaches
+                    .first { $0.role == .offensiveCoordinator }
+                    .map(OCPersona.derive(for:))
             }
         }
 

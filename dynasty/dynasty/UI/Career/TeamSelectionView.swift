@@ -9,6 +9,12 @@ struct TeamSelectionView: View {
     let selectedRole: CareerRole
     let selectedCapMode: CapMode
 
+    // R40 — Game modes & custom league settings. Defaults preserve the
+    // pre-R40 call shape (standard career, normal injury rates).
+    var gameMode: CareerGameMode = .standard
+    var scenario: CareerScenario? = nil
+    var injuryFrequency: InjuryFrequency = .normal
+
     @Environment(\.modelContext) private var modelContext
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var selectedCareer: Career?
@@ -23,6 +29,18 @@ struct TeamSelectionView: View {
     @State private var compareModeOn: Bool = false
     @State private var selectedForCompare: Set<String> = []
     @State private var showCompareSheet: Bool = false
+
+    // R40 — Fantasy Draft hand-off: the generated league waits here (nothing
+    // inserted into the model context yet) while the draft screen runs.
+    @State private var pendingFantasy: PendingFantasyDraft? = nil
+
+    /// Un-persisted league snapshot passed into the fantasy draft cover.
+    private struct PendingFantasyDraft: Identifiable {
+        let id = UUID()
+        let career: Career
+        let result: LeagueGenerator.GeneratedLeague
+        let chosenTeamID: UUID
+    }
 
     /// iPad always reports .regular for both size classes, so use actual width
     private var isLandscape: Bool { viewWidth > 900 }
@@ -190,7 +208,11 @@ struct TeamSelectionView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .fullScreenCover(item: $detailTeam) { team in
             NavigationStack {
-                TeamDetailSheet(team: team) {
+                TeamDetailSheet(
+                    team: team,
+                    setupSummary: setupSummary,
+                    selectTitle: gameMode == .fantasyDraft ? "START FANTASY DRAFT" : "SELECT THIS TEAM"
+                ) {
                     detailTeam = nil
                     startCareer(with: team)
                 }
@@ -202,6 +224,19 @@ struct TeamSelectionView: View {
                 }
                 .toolbarColorScheme(.dark, for: .navigationBar)
             }
+        }
+        // R40 — Fantasy Draft runs before anything is persisted; cancelling
+        // abandons the un-inserted league and returns to team selection.
+        .fullScreenCover(item: $pendingFantasy) { pending in
+            FantasyDraftView(
+                teams: pending.result.teams,
+                userTeamID: pending.chosenTeamID,
+                poolPlayers: pending.result.players,
+                onComplete: { rosters in
+                    completeFantasyDraft(pending: pending, rosters: rosters)
+                },
+                onCancel: { pendingFantasy = nil }
+            )
         }
         .navigationDestination(item: $selectedCareer) { career in
             IntroSequenceView(career: career)
@@ -435,6 +470,23 @@ struct TeamSelectionView: View {
         .padding(.horizontal, 4)
     }
 
+    // MARK: - Setup Summary (R40)
+
+    /// One-line recap of the chosen mode + league settings, shown on the
+    /// team confirmation sheet so the final step confirms the full setup.
+    private var setupSummary: String {
+        var parts: [String] = []
+        switch gameMode {
+        case .standard:
+            parts.append(scenario.map { "\($0.displayName) Scenario" } ?? "Standard Career")
+        case .fantasyDraft:
+            parts.append("Fantasy Draft")
+        }
+        parts.append("\(selectedCapMode.rawValue) Cap")
+        parts.append(injuryFrequency == .off ? "Injuries Off" : "\(injuryFrequency.displayName) Injuries")
+        return parts.joined(separator: " \u{2022} ")
+    }
+
     // MARK: - Start Career
 
     private func startCareer(with teamDef: NFLTeamDefinition) {
@@ -447,6 +499,10 @@ struct TeamSelectionView: View {
             role: selectedRole,
             capMode: selectedCapMode
         )
+        // R40 — persist the game mode & custom league settings.
+        career.gameMode = gameMode
+        career.scenario = scenario
+        career.injuryFrequency = injuryFrequency
 
         let result = LeagueGenerator.generate(startYear: career.currentSeason)
 
@@ -456,9 +512,85 @@ struct TeamSelectionView: View {
         career.leagueID = result.league.id
         career.teamID = chosenTeam?.id
 
+        // R40 — scenario starts re-parametrize the generated league (roster
+        // strength, owner traits, pick ownership, cap sheet) before insertion.
+        if let scenario, let chosenTeam, let owner = chosenTeam.owner {
+            CareerScenarioApplier.apply(
+                scenario,
+                chosenTeam: chosenTeam,
+                owner: owner,
+                teamPlayers: result.players.filter { $0.teamID == chosenTeam.id },
+                draftPicks: result.draftPicks,
+                allTeams: result.teams
+            )
+        }
+
+        // R40 — Fantasy Draft: pool every player and run the draft screen
+        // before anything is persisted. Standard mode finalizes immediately.
+        if gameMode == .fantasyDraft, let chosenTeam {
+            for player in result.players { player.teamID = nil }
+            for team in result.teams {
+                team.players = []
+                team.currentCapUsage = 0
+            }
+            isLoading = false
+            let pending = PendingFantasyDraft(
+                career: career,
+                result: result,
+                chosenTeamID: chosenTeam.id
+            )
+            // Deferred: the team-detail cover is still dismissing — presenting
+            // a second fullScreenCover in the same transaction can be dropped.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
+                pendingFantasy = pending
+            }
+            return
+        }
+
+        finalizeCareer(career: career, result: result, chosenTeamID: chosenTeam?.id)
+    }
+
+    /// R40 — Fantasy Draft completion: assign rosters, regenerate OVR-based
+    /// contracts (cap-mode compatible), then persist the league as usual.
+    private func completeFantasyDraft(pending: PendingFantasyDraft, rosters: [UUID: [Player]]) {
+        for team in pending.result.teams {
+            let drafted = rosters[team.id] ?? []
+            for player in drafted {
+                player.teamID = team.id
+                let contract = FantasyDraftEngine.fantasyContract(
+                    overall: player.overall,
+                    age: player.age,
+                    position: player.position
+                )
+                player.annualSalary = contract.salary
+                player.contractYearsRemaining = contract.years
+            }
+            team.players = drafted
+            team.currentCapUsage = FantasyDraftEngine.normalizeSalaries(
+                for: drafted,
+                cap: team.salaryCap
+            )
+        }
+
+        pendingFantasy = nil
+        finalizeCareer(
+            career: pending.career,
+            result: pending.result,
+            chosenTeamID: pending.chosenTeamID
+        )
+    }
+
+    /// Shared tail of career creation: strips the user team's coaching staff
+    /// (the wizard guides hiring), inserts the whole generated graph, resets
+    /// per-career flags, and navigates to the intro sequence.
+    private func finalizeCareer(
+        career: Career,
+        result: LeagueGenerator.GeneratedLeague,
+        chosenTeamID: UUID?
+    ) {
         // Bug fix #2: Player's team starts with NO coaches — the wizard guides
         // them to hire staff first. Remove all coaches from the chosen team only.
-        if let chosenTeamID = chosenTeam?.id {
+        if let chosenTeamID {
             for coach in result.coaches where coach.teamID == chosenTeamID {
                 coach.teamID = nil
             }
@@ -870,6 +1002,10 @@ enum TeamColors {
 
 private struct TeamDetailSheet: View {
     let team: NFLTeamDefinition
+    /// R40 — one-line mode + league-settings recap above the confirm button.
+    var setupSummary: String = ""
+    /// R40 — confirm-button title (fantasy draft changes the next step).
+    var selectTitle: String = "SELECT THIS TEAM"
     let onSelect: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -939,21 +1075,33 @@ private struct TeamDetailSheet: View {
             viewWidth = newWidth
         }
         .safeAreaInset(edge: .bottom) {
-            Button(action: onSelect) {
-                Text("SELECT THIS TEAM")
-                    .font(.system(size: 16, weight: .bold))
-                    .tracking(1.5)
-                    .foregroundStyle(Color.backgroundPrimary)
-                    .frame(maxWidth: 500)
-                    .padding(.vertical, 16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.accentGold)
-                    )
+            VStack(spacing: 8) {
+                // R40 — setup recap so this screen doubles as the final
+                // confirmation step (team + mode + settings in one glance).
+                if !setupSummary.isEmpty {
+                    Text(setupSummary)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.textSecondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                Button(action: onSelect) {
+                    Text(selectTitle)
+                        .font(.system(size: 16, weight: .bold))
+                        .tracking(1.5)
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .frame(maxWidth: 500)
+                        .padding(.vertical, 16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.accentGold)
+                        )
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 24)
+            .padding(.top, 8)
             .padding(.bottom, 16)
             .background(Color.backgroundPrimary.opacity(0.95))
         }

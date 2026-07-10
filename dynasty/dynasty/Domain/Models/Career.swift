@@ -151,6 +151,19 @@ final class Career {
     /// Optional new attribute → lightweight migration.
     var hallOfFameData: Data? = nil
 
+    // MARK: - Game Modes & League Settings (R40)
+    /// Raw `CareerGameMode` — how this career's league was bootstrapped
+    /// (standard rosters or a full fantasy draft). Default → light migration.
+    var gameModeRaw: String = CareerGameMode.standard.rawValue
+    /// Raw `CareerScenario` when the career was started from a scenario card
+    /// (Rebuild / Win Now / Cap Hell). `nil` = plain start.
+    /// Optional new attribute → lightweight migration.
+    var scenarioRaw: String? = nil
+    /// Raw `InjuryFrequency` league setting. Consumed by WeekAdvancer's
+    /// weekly injury pass as a multiplier on `MedicalEngine.injuryCheck`.
+    /// Default → lightweight migration (normal = today's exact rates).
+    var injuryFrequencyRaw: String = InjuryFrequency.normal.rawValue
+
     // MARK: - Locker Room (R25)
     /// JSON-encoded `[LockerRoomEvent]` — resolved locker-room happenings,
     /// newest first, capped at 12. Optional new attribute → lightweight migration.
@@ -196,6 +209,30 @@ final class Career {
         self.legacy = LegacyTracker()
         self.coachingTree = CoachingTreeData()
         self.hcGMRelationship = CoachRelationshipEngine.HCGMRelationship()
+    }
+}
+
+// MARK: - Game Modes & League Settings Bridge (R40)
+
+extension Career {
+
+    /// Typed accessor for the career's game mode. Unknown raw values (from
+    /// future versions) fall back to `.standard`.
+    var gameMode: CareerGameMode {
+        get { CareerGameMode(rawValue: gameModeRaw) ?? .standard }
+        set { gameModeRaw = newValue.rawValue }
+    }
+
+    /// Typed accessor for the scenario this career started from, if any.
+    var scenario: CareerScenario? {
+        get { scenarioRaw.flatMap { CareerScenario(rawValue: $0) } }
+        set { scenarioRaw = newValue?.rawValue }
+    }
+
+    /// Typed accessor for the league's injury-frequency setting.
+    var injuryFrequency: InjuryFrequency {
+        get { InjuryFrequency(rawValue: injuryFrequencyRaw) ?? .normal }
+        set { injuryFrequencyRaw = newValue.rawValue }
     }
 }
 

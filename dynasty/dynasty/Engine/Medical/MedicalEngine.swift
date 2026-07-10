@@ -11,20 +11,28 @@ enum MedicalEngine {
     /// - Player durability (higher durability reduces risk)
     /// - Team Doctor quality (up to 30% risk reduction)
     /// - R28: an active rush-back window multiplies risk (head trainer dampens it)
+    /// - R40: an optional league-setting frequency multiplier (off/low/normal)
     ///
     /// R28 parity note: baseline incidence is unchanged — the only rate change
     /// is the opt-in rush-back multiplier, and injury-type selection is now
     /// weighted toward body parts the player has hurt before (recurrence),
     /// which redistributes types without changing how often injuries happen.
+    /// R40 parity note: `frequencyMultiplier` defaults to 1.0 (= today's exact
+    /// rates); only careers created with a custom injury-frequency league
+    /// setting pass anything else.
     static func injuryCheck(
         player: Player,
         playType: PlayType,
         doctor: Coach?,
         physio: Coach?,
-        trainer: Coach? = nil
+        trainer: Coach? = nil,
+        frequencyMultiplier: Double = 1.0
     ) -> InjuryType? {
+        // R40: "Off" league setting short-circuits the roll entirely.
+        guard frequencyMultiplier > 0 else { return nil }
+
         // Base risk: 0.5% per play
-        var risk = 0.005
+        var risk = 0.005 * frequencyMultiplier
 
         // Fatigue increases risk (fatigue 80+ = 2x risk)
         risk *= 1.0 + Double(max(0, player.fatigue - 50)) / 50.0

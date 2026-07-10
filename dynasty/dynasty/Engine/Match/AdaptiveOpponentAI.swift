@@ -131,6 +131,11 @@ enum AdaptiveOpponentAI {
         private(set) var offenseCalls: [OffensivePlayCall] = []
         private(set) var defenseSnaps: [DefenseSnap] = []
 
+        /// True until the player's first explicit live call is recorded —
+        /// the engine gates ALL persona/counter RNG on this so nil-argument
+        /// games stay RNG-identical to today (quick-sim parity).
+        var isEmpty: Bool { offenseCalls.isEmpty && defenseSnaps.isEmpty }
+
         mutating func recordOffense(_ call: OffensivePlayCall) {
             guard AdaptiveOpponentAI.tendency(of: call) != nil else { return }
             offenseCalls.append(call)
@@ -177,7 +182,12 @@ enum AdaptiveOpponentAI {
         /// The defensive family currently over its trigger line, if any —
         /// the strongest signal (largest margin over its own scaled
         /// threshold) wins when several families qualify at once.
-        func dominantDefenseTendency(coordinatorGrade: Int) -> DefenseTendency? {
+        /// `thresholdOffset` is the OC persona's shade (R33): negative =
+        /// keys sooner, positive = more stubborn. 0 = today's behavior.
+        func dominantDefenseTendency(
+            coordinatorGrade: Int,
+            thresholdOffset: Double = 0
+        ) -> DefenseTendency? {
             guard defenseSnaps.count >= AdaptiveOpponentAI.minSampleSize else { return nil }
             var blitz = 0.0, man = 0.0, zone = 0.0, singleHigh = 0.0, total = 0.0
             for (age, snap) in defenseSnaps.reversed().enumerated() {
@@ -191,6 +201,7 @@ enum AdaptiveOpponentAI {
             guard total > 0 else { return nil }
             func threshold(_ base: Double) -> Double {
                 AdaptiveOpponentAI.scaledThreshold(base: base, coordinatorGrade: coordinatorGrade)
+                    + thresholdOffset
             }
             let margins: [(tendency: DefenseTendency, margin: Double)] = [
                 (.blitzHeavy, blitz / total - threshold(AdaptiveOpponentAI.blitzBaseThreshold)),
@@ -266,25 +277,53 @@ enum AdaptiveOpponentAI {
     // MARK: - Broadcast hints
 
     /// Feed line when the AI DEFENSE starts keying on the player's offense.
-    static func defenseKeyHint(for tendency: OffenseTendency, opponentAbbr: String) -> String {
+    /// The DC persona (R33) colors the line — an aggressive DC "sells out",
+    /// an exotic one gets weirder; balanced/conservative read as today.
+    static func defenseKeyHint(
+        for tendency: OffenseTendency,
+        opponentAbbr: String,
+        persona: DCPersona = .balanced
+    ) -> String {
+        // The spec line: an aggressive DC vs a run tendency.
+        if persona == .aggressive, tendency == .insideRun || tendency == .outsideRun {
+            return "Their aggressive DC is all-in on stopping the run"
+        }
+        let base: String
         switch tendency {
-        case .insideRun:  return "\(opponentAbbr) is keying on the inside run"
-        case .outsideRun: return "\(opponentAbbr) is stringing out your sweeps — they've seen the edge run"
-        case .screen:     return "\(opponentAbbr) is sniffing out the screen game"
-        case .shortPass:  return "They're sitting on your short routes"
-        case .mediumPass: return "They're squeezing the intermediate windows"
-        case .deepPass:   return "\(opponentAbbr) is dropping two deep — the shot plays are covered"
-        case .playAction: return "They've stopped biting on the play fake"
+        case .insideRun:  base = "\(opponentAbbr) is keying on the inside run"
+        case .outsideRun: base = "\(opponentAbbr) is stringing out your sweeps — they've seen the edge run"
+        case .screen:     base = "\(opponentAbbr) is sniffing out the screen game"
+        case .shortPass:  base = "They're sitting on your short routes"
+        case .mediumPass: base = "They're squeezing the intermediate windows"
+        case .deepPass:   base = "\(opponentAbbr) is dropping two deep — the shot plays are covered"
+        case .playAction: base = "They've stopped biting on the play fake"
+        }
+        switch persona {
+        case .aggressive: return base + " — their aggressive DC is selling out to take it away"
+        case .exotic:     return base + " — and the pressure looks keep getting stranger"
+        case .conservative, .balanced: return base
         }
     }
 
-    /// Feed line when the AI OFFENSE starts exploiting the player's defense.
-    static func offenseAdjustHint(for tendency: DefenseTendency, qbName: String) -> String {
+    /// Feed line when the AI OFFENSE starts exploiting the player's defense,
+    /// colored by the OC persona (R33).
+    static func offenseAdjustHint(
+        for tendency: DefenseTendency,
+        qbName: String,
+        persona: OCPersona = .balanced
+    ) -> String {
+        let base: String
         switch tendency {
-        case .blitzHeavy:      return "\(qbName) checks to the quick game — they saw the blitz coming"
-        case .manHeavy:        return "They're attacking your man coverage with crossers"
-        case .zoneHeavy:       return "They're working the soft spots in your zone"
-        case .singleHighHeavy: return "They're taking shots at your single-high safety"
+        case .blitzHeavy:      base = "\(qbName) checks to the quick game — they saw the blitz coming"
+        case .manHeavy:        base = "They're attacking your man coverage with crossers"
+        case .zoneHeavy:       base = "They're working the soft spots in your zone"
+        case .singleHighHeavy: base = "They're taking shots at your single-high safety"
+        }
+        switch persona {
+        case .groundAndPound: return base + " — but they'd still rather run it at you"
+        case .airRaid:        return base + " — the Air Raid smells blood"
+        case .westCoast:      return base + " — rhythm throws, right on schedule"
+        case .balanced:       return base
         }
     }
 }

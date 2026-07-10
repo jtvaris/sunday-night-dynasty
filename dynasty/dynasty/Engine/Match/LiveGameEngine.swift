@@ -906,6 +906,23 @@ final class LiveGameEngine: ObservableObject {
     /// Opponent abbreviation for the intel lines ("CHI is keying on ...").
     private let opponentAbbreviation: String
 
+    // MARK: - Coordinator Personas (R33, live only)
+
+    /// The opponent coordinators' play-calling personas (deterministic from
+    /// scheme + Coach id — see `CoordinatorPersona.swift`). They shade the
+    /// AI's BASE calls (`aiDefensivePackage` / `aiOffensiveCall`) and scale
+    /// the adaptive core's thresholds/counter shares. No coordinator on the
+    /// roster = `.balanced` = today's exact behavior.
+    private let opponentDCPersona: DCPersona
+    private let opponentOCPersona: OCPersona
+
+    /// Persona-shaded base defense pre-rolled for the NEXT snap (same
+    /// once-per-snap contract as the counters, so every `aiDefensivePackage`
+    /// call this snap agrees). `nil` = unshaded base.
+    private var pendingPersonaDefense: DefensivePackage?
+    /// OC-persona signature play pre-rolled for the NEXT AI offensive snap.
+    private var pendingSignatureCall: OffensivePlayCall?
+
     // MARK: - Immutable Setup
 
     let homeTeamID: UUID
@@ -1036,6 +1053,13 @@ final class LiveGameEngine: ObservableObject {
             .map { ($0.playCalling + $0.adaptability) / 2 } ?? 50
         opponentAbbreviation = playerTeamIsHome ? awayTeam.abbreviation : homeTeam.abbreviation
 
+        // R33: coordinator personas — deterministic from the opponent's DC/OC
+        // (scheme + Coach id). No coordinator = balanced = today's behavior.
+        opponentDCPersona = opponentCoaches.first { $0.role == .defensiveCoordinator }
+            .map(DCPersona.derive(for:)) ?? .balanced
+        opponentOCPersona = opponentCoaches.first { $0.role == .offensiveCoordinator }
+            .map(OCPersona.derive(for:)) ?? .balanced
+
         // Medical staff for live injury risk/recovery (mirrors WeekAdvancer's
         // per-team doctor/physio lookup for the weekly roll).
         homeDoctor = homeCoaches.first { $0.role == .teamDoctor }
@@ -1059,6 +1083,12 @@ final class LiveGameEngine: ObservableObject {
             isTouchback: openingKick.isTouchback,
             isReturnTouchdown: false
         )
+
+        // R33: pre-kickoff booth intel on the opponent's coordinators —
+        // feed-only lines (playNumber 0), fixed strings, no RNG, so both
+        // auto-sim parity and the once-per-snap counter contract hold.
+        postFeedNote(opponentDCPersona.broadcastIntro(abbr: opponentAbbreviation))
+        postFeedNote(opponentOCPersona.broadcastIntro(abbr: opponentAbbreviation))
     }
 
     // MARK: - Step (one play)
@@ -1335,37 +1365,23 @@ final class LiveGameEngine: ObservableObject {
     /// coverage-first plans call off the situational blitzes.
     func aiDefensivePackage() -> DefensivePackage {
         let yardsToEndzone = 100 - yardLine
-        // Score margin from the DEFENSE's perspective (positive = leading).
-        let defenseLeadsBy = homeHasPossession ? awayScore - homeScore : homeScore - awayScore
-        var package: DefensivePackage
-        if yardsToEndzone <= 10 {
-            // Red zone: sell out against the short field.
-            package = DefensivePackage(coverage: .manToMan, blitz: .noBlitz, front: .goalLine)
-        } else if quarter >= 4 && timeRemaining <= 240
-                    && defenseLeadsBy > 0 && defenseLeadsBy <= 16
-                    && yardsToEndzone > 25 {
-            // Protecting a late lead: prevent shell — concede the checkdown,
-            // never the bomb.
-            package = DefensivePackage(coverage: .prevent, blitz: .noBlitz, front: .dime)
-        } else if down == 3 && distance >= 7 {
-            // 3rd & long: extra DBs and a pressure look.
-            package = DefensivePackage(coverage: .cover4, blitz: .dbBlitz, front: .dime)
-        } else if distance <= 2 {
-            // Short yardage: crowd the box with the bear front.
-            package = DefensivePackage(coverage: .cover1, blitz: .noBlitz, front: .bear)
-        } else {
-            package = .standard // Cover 3, no blitz, base front
-        }
+        var package = baseDefensivePackage()
 
-        // Adaptive counter (AI defense vs the PLAYER's offense, live only):
-        // when the player's calls have shown a clear tendency, the pre-rolled
-        // counter package replaces the base pick — but never the red-zone
-        // sellout or the late-lead prevent shell. The roll happened once at
-        // the end of the previous step (see updateAdaptationState), so the
-        // pre-snap preview and the actual snap always see the same call.
-        if playerIsOnOffense, let counter = pendingDefenseCounter,
-           yardsToEndzone > 10, package.coverage != .prevent {
-            package = counter
+        if playerIsOnOffense, yardsToEndzone > 10, package.coverage != .prevent {
+            // R33: DC-persona shading of the base fabric (aggressive blitzes
+            // standard downs, conservative calls pressure off, exotic mixes
+            // in Double A-Gap / Zone Blitz / Bear). Pre-rolled once per snap
+            // (see updateAdaptationState) so every preview agrees. Never the
+            // red-zone sellout or the late-lead prevent shell.
+            if let shaded = pendingPersonaDefense {
+                package = shaded
+            }
+            // Adaptive counter (AI defense vs the PLAYER's offense, live
+            // only): when the player's calls have shown a clear tendency,
+            // the pre-rolled counter replaces the (persona-shaded) base pick.
+            if let counter = pendingDefenseCounter {
+                package = counter
+            }
         }
 
         // Game-plan shading — only for the player's own defense.
@@ -1384,14 +1400,41 @@ final class LiveGameEngine: ObservableObject {
         return package
     }
 
+    /// The purely situational base package (today's exact logic) — shared by
+    /// the live pick and the persona pre-roll so both see the same fabric.
+    private func baseDefensivePackage() -> DefensivePackage {
+        let yardsToEndzone = 100 - yardLine
+        // Score margin from the DEFENSE's perspective (positive = leading).
+        let defenseLeadsBy = homeHasPossession ? awayScore - homeScore : homeScore - awayScore
+        if yardsToEndzone <= 10 {
+            // Red zone: sell out against the short field.
+            return DefensivePackage(coverage: .manToMan, blitz: .noBlitz, front: .goalLine)
+        } else if quarter >= 4 && timeRemaining <= 240
+                    && defenseLeadsBy > 0 && defenseLeadsBy <= 16
+                    && yardsToEndzone > 25 {
+            // Protecting a late lead: prevent shell — concede the checkdown,
+            // never the bomb.
+            return DefensivePackage(coverage: .prevent, blitz: .noBlitz, front: .dime)
+        } else if down == 3 && distance >= 7 {
+            // 3rd & long: extra DBs and a pressure look.
+            return DefensivePackage(coverage: .cover4, blitz: .dbBlitz, front: .dime)
+        } else if distance <= 2 {
+            // Short yardage: crowd the box with the bear front.
+            return DefensivePackage(coverage: .cover1, blitz: .noBlitz, front: .bear)
+        } else {
+            return .standard // Cover 3, no blitz, base front
+        }
+    }
+
     /// The AI's adaptive offensive call for the next snap (player defends,
     /// live only). Returns the pre-rolled counter play when the player's
-    /// defensive tendencies triggered one, `nil` otherwise — and `nil` keeps
-    /// today's base behavior exactly (`PlaySimulator.decidePlayCall`).
+    /// defensive tendencies triggered one, else the OC persona's pre-rolled
+    /// signature call (R33), `nil` otherwise — and `nil` keeps today's base
+    /// behavior exactly (`PlaySimulator.decidePlayCall`).
     /// Never fires on 4th down: punt/FG decisions stay with the base logic.
     func aiOffensiveCall() -> OffensivePlayCall? {
         guard !isGameOver, !playerIsOnOffense, down <= 3 else { return nil }
-        return pendingOffenseCounter
+        return pendingOffenseCounter ?? pendingSignatureCall
     }
 
     // MARK: - Adaptive Opponent AI (private)
@@ -1403,40 +1446,73 @@ final class LiveGameEngine: ObservableObject {
     private func updateAdaptationState() {
         guard !isGameOver else { return }
 
-        // AI DEFENSE reads the player's offense.
+        // AI DEFENSE reads the player's offense. The DC persona (R33) shades
+        // how fast it keys and how hard it counters.
         let dcThreshold = AdaptiveOpponentAI.scaledThreshold(
             base: AdaptiveOpponentAI.offenseCategoryBaseThreshold,
             coordinatorGrade: opponentDCGrade
-        )
+        ) + opponentDCPersona.thresholdOffset
         if let read = tendencyTracker.dominantOffenseTendency(threshold: dcThreshold) {
             if read != activeDefenseRead {
                 activeDefenseRead = read
                 emitAdaptationHint(
-                    AdaptiveOpponentAI.defenseKeyHint(for: read, opponentAbbr: opponentAbbreviation)
+                    AdaptiveOpponentAI.defenseKeyHint(
+                        for: read,
+                        opponentAbbr: opponentAbbreviation,
+                        persona: opponentDCPersona
+                    )
                 )
             }
-            let share = AdaptiveOpponentAI.counterShare(coordinatorGrade: opponentDCGrade)
-            pendingDefenseCounter = Double.random(in: 0..<1) < share
-                ? AdaptiveOpponentAI.defensiveCounter(
-                    for: read,
+            let share = min(
+                AdaptiveOpponentAI.maxCounterShare,
+                max(0.10, AdaptiveOpponentAI.counterShare(coordinatorGrade: opponentDCGrade)
+                        * opponentDCPersona.counterShareMultiplier)
+            )
+            if Double.random(in: 0..<1) < share {
+                // R33 over-reaction: an aggressive DC sometimes counters a
+                // tendency that isn't the real one — the wrong package's
+                // modifiers then work FOR the player.
+                var counterRead = read
+                if opponentDCPersona.misreadChance > 0,
+                   Double.random(in: 0..<1) < opponentDCPersona.misreadChance,
+                   let wrong = AdaptiveOpponentAI.OffenseTendency.allCases
+                       .filter({ $0 != read }).randomElement() {
+                    counterRead = wrong
+                }
+                pendingDefenseCounter = AdaptiveOpponentAI.defensiveCounter(
+                    for: counterRead,
                     scheme: playerTeamIsHome ? awayDefScheme : homeDefScheme
                 )
-                : nil
+            } else {
+                pendingDefenseCounter = nil
+            }
         } else {
             activeDefenseRead = nil
             pendingDefenseCounter = nil
         }
 
-        // AI OFFENSE reads the player's defense.
-        if let read = tendencyTracker.dominantDefenseTendency(coordinatorGrade: opponentOCGrade) {
+        // AI OFFENSE reads the player's defense — OC persona shades the
+        // trigger threshold and counter share mildly (identity > adaptation).
+        if let read = tendencyTracker.dominantDefenseTendency(
+            coordinatorGrade: opponentOCGrade,
+            thresholdOffset: opponentOCPersona.adaptThresholdOffset
+        ) {
             if read != activeOffenseRead {
                 activeOffenseRead = read
                 let qbName = (playerTeamIsHome ? awayOffenseUnit : homeOffenseUnit)[0].shortName
                 emitAdaptationHint(
-                    AdaptiveOpponentAI.offenseAdjustHint(for: read, qbName: qbName)
+                    AdaptiveOpponentAI.offenseAdjustHint(
+                        for: read,
+                        qbName: qbName,
+                        persona: opponentOCPersona
+                    )
                 )
             }
-            let share = AdaptiveOpponentAI.counterShare(coordinatorGrade: opponentOCGrade)
+            let share = min(
+                AdaptiveOpponentAI.maxCounterShare,
+                max(0.10, AdaptiveOpponentAI.counterShare(coordinatorGrade: opponentOCGrade)
+                        * opponentOCPersona.counterShareMultiplier)
+            )
             pendingOffenseCounter = Double.random(in: 0..<1) < share
                 ? AdaptiveOpponentAI.offensiveCounter(
                     for: read,
@@ -1449,6 +1525,41 @@ final class LiveGameEngine: ObservableObject {
             activeOffenseRead = nil
             pendingOffenseCounter = nil
         }
+
+        // R33: persona pre-rolls for the NEXT snap. Gated on the tracker
+        // having at least one explicit player call, so a fully nil-argument
+        // game (auto-sim) still consumes no RNG here — parity intact. The
+        // situation (down/distance/possession) is already the next snap's.
+        guard !tendencyTracker.isEmpty else {
+            pendingPersonaDefense = nil
+            pendingSignatureCall = nil
+            return
+        }
+
+        // DC persona shades the base defense the AI would otherwise call
+        // (never the red-zone sellout or the prevent shell).
+        if playerIsOnOffense {
+            let base = baseDefensivePackage()
+            pendingPersonaDefense = (100 - yardLine > 10 && base.coverage != .prevent)
+                ? opponentDCPersona.shadedDefense(
+                    base: base,
+                    distance: distance,
+                    scheme: playerTeamIsHome ? awayDefScheme : homeDefScheme
+                )
+                : nil
+        } else {
+            pendingPersonaDefense = nil
+        }
+
+        // OC persona rolls a signature identity call when no counter is
+        // pending (counters keep priority — a read beats an identity).
+        pendingSignatureCall = (!playerIsOnOffense && down <= 3 && pendingOffenseCounter == nil)
+            ? opponentOCPersona.rollSignatureCall(
+                distance: distance,
+                yardsToEndzone: 100 - yardLine,
+                scheme: playerTeamIsHome ? awayOffScheme : homeOffScheme
+            )
+            : nil
     }
 
     /// Publishes an adaptation intel line (overlay + mini feed), at most one

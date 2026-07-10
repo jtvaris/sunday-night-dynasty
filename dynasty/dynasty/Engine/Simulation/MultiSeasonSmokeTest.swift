@@ -17,8 +17,8 @@ import SwiftData
 @MainActor
 enum MultiSeasonSmokeTest {
 
-    static func run(seasons: Int = 5) {
-        print("SMOKE: ===== multi-season smoke test, \(seasons) seasons =====")
+    static func run(seasons: Int = 5, fantasy: Bool = false) {
+        print("SMOKE: ===== multi-season smoke test, \(seasons) seasons\(fantasy ? " (FANTASY DRAFT career)" : "") =====")
 
         // Isolated in-memory container (same schema as DataContainer).
         let schema = Schema([
@@ -54,6 +54,14 @@ enum MultiSeasonSmokeTest {
         career.leagueID = generated.league.id
         career.teamID = generated.teams.first?.id
         career.hasCompletedIntro = true
+
+        // R40 — optional fantasy-draft career: pool every generated player and
+        // snake-draft all 32 rosters headlessly (mirrors FantasyDraftView's
+        // auto-fill + TeamSelectionView.completeFantasyDraft) BEFORE insertion.
+        if fantasy {
+            career.gameMode = .fantasyDraft
+            applyFantasyDraft(generated: generated)
+        }
 
         context.insert(career)
         context.insert(generated.league)
@@ -136,6 +144,66 @@ enum MultiSeasonSmokeTest {
         let finalOVR = leagueAverageOVR(context: context)
         print(String(format: "SMOKE: ===== done: %d seasons, %d advances, firedNotes=%d, final avgOVR=%.2f (baseline %.2f) =====",
                      seasonsCompleted, advances, firedNotes, finalOVR, baselineOVR))
+    }
+
+    // MARK: - Fantasy draft bootstrap (R40)
+
+    /// Strips every generated roster, pools all players, and snake-drafts 53
+    /// rounds with `FantasyDraftEngine.aiPickIndex` for every team, then
+    /// assigns fantasy contracts + per-team salary normalization — the exact
+    /// headless equivalent of Auto-Complete in `FantasyDraftView`.
+    private static func applyFantasyDraft(generated: LeagueGenerator.GeneratedLeague) {
+        for player in generated.players { player.teamID = nil }
+        for team in generated.teams {
+            team.players = []
+            team.currentCapUsage = 0
+        }
+
+        var pool = generated.players
+            .map(FantasyDraftEngine.PoolEntry.init(player:))
+            .sorted { $0.overall > $1.overall }
+        var rosters: [UUID: [FantasyDraftEngine.PoolEntry]] =
+            Dictionary(uniqueKeysWithValues: generated.teams.map { ($0.id, []) })
+        let baseOrder = generated.teams.map(\.id).shuffled()
+        let teamCount = generated.teams.count
+        let totalPicks = FantasyDraftEngine.rosterSize * teamCount
+
+        var pickIndex = 0
+        while pickIndex < totalPicks && !pool.isEmpty {
+            let round = pickIndex / teamCount + 1
+            let order = FantasyDraftEngine.order(forRound: round, baseOrder: baseOrder)
+            let teamID = order[pickIndex % teamCount]
+            let counts = (rosters[teamID] ?? []).reduce(into: [Position: Int]()) {
+                $0[$1.position, default: 0] += 1
+            }
+            guard let index = FantasyDraftEngine.aiPickIndex(
+                pool: pool, rosterCounts: counts, round: round
+            ) else { break }
+            rosters[teamID, default: []].append(pool[index])
+            pool.remove(at: index)
+            pickIndex += 1
+        }
+
+        for team in generated.teams {
+            let drafted = (rosters[team.id] ?? []).map(\.player)
+            for player in drafted {
+                player.teamID = team.id
+                let contract = FantasyDraftEngine.fantasyContract(
+                    overall: player.overall,
+                    age: player.age,
+                    position: player.position
+                )
+                player.annualSalary = contract.salary
+                player.contractYearsRemaining = contract.years
+            }
+            team.players = drafted
+            team.currentCapUsage = FantasyDraftEngine.normalizeSalaries(
+                for: drafted,
+                cap: team.salaryCap
+            )
+        }
+        let sizes = generated.teams.map { $0.players.count }
+        print("SMOKE: fantasy draft complete — picks=\(pickIndex) roster min=\(sizes.min() ?? 0) max=\(sizes.max() ?? 0)")
     }
 
     // MARK: - AI draft (mirrors DraftDayCoordinator's AI path)

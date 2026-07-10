@@ -96,6 +96,7 @@ enum LeagueNarrativeEngine {
         previousState: LeagueNarrativeState?,
         teams: [Team],
         players: [Player],
+        coaches: [Coach] = [],
         games: [Game],
         career: Career,
         week: Int,
@@ -149,6 +150,14 @@ enum LeagueNarrativeEngine {
         news.append(contentsOf: streakNews(
             teams: teams, streaks: streaks, state: &state, week: week, season: season
         ))
+
+        // R33: coordinator-persona flavor — an exotic DC stifling an offense.
+        if let personaItem = exoticDefenseNews(
+            teams: teams, coaches: coaches, playedGames: playedGames,
+            week: week, season: season
+        ) {
+            news.append(personaItem)
+        }
 
         if week >= 6, week % 3 == 0, !state.mvpRace.isEmpty {
             news.append(mvpRaceNews(race: state.mvpRace, week: week, season: season))
@@ -539,6 +548,51 @@ enum LeagueNarrativeEngine {
             week: week,
             season: season,
             relatedTeamID: upset.winner.id,
+            sentiment: .positive
+        )
+    }
+
+    // MARK: - Coordinator Personas (R33)
+
+    /// One persona-flavored defensive headline per week at most: a winner
+    /// whose DC calls an EXOTIC game (see ``DCPersona/derive(for:)``) held
+    /// the loser to 13 points or fewer. Picks the most smothered loser when
+    /// several games qualify. Purely presentational — reads results only.
+    private static func exoticDefenseNews(
+        teams: [Team],
+        coaches: [Coach],
+        playedGames: [Game],
+        week: Int,
+        season: Int
+    ) -> NewsItem? {
+        guard !coaches.isEmpty else { return nil }
+        let teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
+
+        var best: (winner: Team, loser: Team, loserScore: Int)?
+        for game in playedGames where game.week == week {
+            guard let winnerID = game.winnerID, let loserID = game.loserID,
+                  let winner = teamsByID[winnerID], let loser = teamsByID[loserID],
+                  let home = game.homeScore, let away = game.awayScore
+            else { continue }
+            let loserScore = min(home, away)
+            guard loserScore <= 13 else { continue }
+            guard let dc = coaches.first(where: {
+                $0.teamID == winnerID && $0.role == .defensiveCoordinator
+            }), DCPersona.derive(for: dc) == .exotic else { continue }
+
+            if best == nil || loserScore < best!.loserScore {
+                best = (winner, loser, loserScore)
+            }
+        }
+
+        guard let pick = best else { return nil }
+        return NewsItem(
+            headline: "Exotic defense confuses \(pick.loser.name)",
+            body: "The \(pick.winner.fullName)' shape-shifting pressure packages held the \(pick.loser.fullName) to \(pick.loserScore) points. Bear fronts, mugged-up A-gaps, coverage rotating late — \(pick.loser.city) never got a clean look at any of it.",
+            category: .gameResult,
+            week: week,
+            season: season,
+            relatedTeamID: pick.winner.id,
             sentiment: .positive
         )
     }

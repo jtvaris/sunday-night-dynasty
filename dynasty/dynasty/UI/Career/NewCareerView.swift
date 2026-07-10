@@ -36,6 +36,10 @@ struct NewCareerView: View {
     @State private var currentStep = 1
     @State private var showNameError = false
 
+    // R40 — Game mode / scenario card + custom league settings.
+    @State private var selectedSetup: CareerSetup = .standard
+    @State private var injuryFrequency: InjuryFrequency = .normal
+
     @State private var viewWidth: CGFloat = 0
 
     /// iPad always reports .regular for both size classes, so use actual width
@@ -45,9 +49,18 @@ struct NewCareerView: View {
         playerName.trimmingCharacters(in: .whitespaces).count >= 2
     }
 
-    /// Quick Start skips Step 2 entirely, so the indicator should reflect a
-    /// single-step flow when that mode is active.
-    private var totalSteps: Int { flowMode == .quickStart ? 1 : 2 }
+    /// Quick Start collapses to a single step; Custom League runs the full
+    /// three-step flow (Career → Game Mode → Identity).
+    private var totalSteps: Int { flowMode == .quickStart ? 1 : 3 }
+
+    /// Step titles for the indicator and the navigation bar.
+    private func stepTitle(_ step: Int) -> String {
+        switch step {
+        case 1:  return "Your Career"
+        case 2:  return "Game Mode"
+        default: return "Your Identity"
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -80,10 +93,10 @@ struct NewCareerView: View {
                 }
 
                 // MARK: - Page Content
-                if currentStep == 1 {
-                    page1Content(isLandscape: isLandscape)
-                } else {
-                    page2Content(isLandscape: isLandscape)
+                switch currentStep {
+                case 1:  page1Content(isLandscape: isLandscape)
+                case 2:  gameModeContent(isLandscape: isLandscape)
+                default: identityContent(isLandscape: isLandscape)
                 }
             }
         }
@@ -92,7 +105,7 @@ struct NewCareerView: View {
         } action: { newWidth in
             viewWidth = newWidth
         }
-        .navigationTitle(currentStep == 1 ? "Your Career" : "Your Identity")
+        .navigationTitle(stepTitle(currentStep))
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
@@ -118,7 +131,7 @@ struct NewCareerView: View {
 
                 Spacer()
 
-                Text(currentStep == 1 ? "Your Career" : "Your Identity")
+                Text(stepTitle(currentStep))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.textSecondary)
             }
@@ -132,7 +145,7 @@ struct NewCareerView: View {
 
                     let progress: CGFloat = {
                         if totalSteps == 1 { return 1.0 }
-                        return currentStep == 1 ? 0.5 : 1.0
+                        return CGFloat(currentStep) / CGFloat(totalSteps)
                     }()
 
                     RoundedRectangle(cornerRadius: 3)
@@ -164,12 +177,14 @@ struct NewCareerView: View {
                     selectedRole = .gmAndHeadCoach
                     capSelection = .realistic
                     selectedCoachingStyle = .tactician
+                    selectedSetup = .standard
+                    injuryFrequency = .normal
                 }
             }
 
             Text(flowMode == .quickStart
-                 ? "Jump straight in with sensible defaults: GM & Head Coach, Realistic cap, Tactician style."
-                 : "Tailor every detail of your career: role, salary cap rules, coaching style, and avatar.")
+                 ? "Jump straight in with sensible defaults: GM & Head Coach, Realistic cap, standard mode, Tactician style."
+                 : "Tailor everything: role, cap rules, game mode or scenario, league settings, coaching style, and avatar.")
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
         }
@@ -219,10 +234,41 @@ struct NewCareerView: View {
         }
     }
 
-    // MARK: - Page 2: Your Identity
+    // MARK: - Page 2: Game Mode & League Settings (R40)
 
     @ViewBuilder
-    private func page2Content(isLandscape: Bool) -> some View {
+    private func gameModeContent(isLandscape: Bool) -> some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                VStack(spacing: 16) {
+                    if isLandscape {
+                        HStack(alignment: .top, spacing: 16) {
+                            gameModeSection
+                            leagueSettingsSection
+                        }
+                    } else {
+                        gameModeSection
+                        leagueSettingsSection
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+
+                VStack(spacing: 8) {
+                    nextToIdentityButton
+                    backButton
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 16)
+            }
+        }
+    }
+
+    // MARK: - Page 3: Your Identity
+
+    @ViewBuilder
+    private func identityContent(isLandscape: Bool) -> some View {
         ScrollView {
             VStack(spacing: 0) {
                 VStack(spacing: 16) {
@@ -441,6 +487,65 @@ struct NewCareerView: View {
         }
     }
 
+    // MARK: - Game Mode Section (R40)
+
+    private var gameModeSection: some View {
+        cardSection(icon: "square.grid.2x2.fill", title: "Game Mode & Scenarios") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("How do you want to start? Modes change how the league is built; scenarios drop you into a hand-crafted situation.")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
+
+                ForEach(CareerSetup.allCases, id: \.self) { setup in
+                    CareerSetupCard(setup: setup, isSelected: selectedSetup == setup)
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3)) {
+                                selectedSetup = setup
+                            }
+                        }
+                }
+            }
+        }
+    }
+
+    // MARK: - League Settings Section (R40)
+
+    private var leagueSettingsSection: some View {
+        cardSection(icon: "slider.horizontal.3", title: "League Settings") {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Injury Frequency")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+
+                    Picker("Injury Frequency", selection: $injuryFrequency) {
+                        ForEach(InjuryFrequency.allCases, id: \.self) { frequency in
+                            Text(frequency.displayName).tag(frequency)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text(injuryFrequency.blurb)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.textSecondary)
+                }
+
+                Divider().overlay(Color.surfaceBorder)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Salary cap rules are set in Step 1 (\(capSelection.capMode.rawValue)).",
+                          systemImage: "dollarsign.circle")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                    Label("Season length is fixed at 17 games (18 weeks).",
+                          systemImage: "calendar")
+                        .font(.caption)
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+        }
+    }
+
     // MARK: - Comparison Helpers
 
     // #102: Role comparison row
@@ -533,6 +638,35 @@ struct NewCareerView: View {
         .padding(.top, 4)
     }
 
+    /// Step 2 → Step 3 (Game Mode → Identity).
+    private var nextToIdentityButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentStep = 3
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Text("Next")
+                    .font(.headline)
+                Image(systemName: "arrow.right")
+                    .font(.body.weight(.semibold))
+            }
+            .foregroundStyle(Color.backgroundPrimary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.accentGold)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.accentGold.opacity(0.6), lineWidth: 1)
+            )
+        }
+        .accessibilityHint("Continues to Step 3, Your Identity")
+        .padding(.top, 4)
+    }
+
     /// Quick Start path: skips Step 2 and feeds the same destination with
     /// the pre-filled defaults. Disabled until the name is valid.
     private var quickStartChooseTeamButton: some View {
@@ -541,7 +675,10 @@ struct NewCareerView: View {
             avatarID: selectedAvatarID,
             coachingStyle: selectedCoachingStyle,
             selectedRole: selectedRole,
-            selectedCapMode: capSelection.capMode
+            selectedCapMode: capSelection.capMode,
+            gameMode: selectedSetup.mode,
+            scenario: selectedSetup.scenario,
+            injuryFrequency: injuryFrequency
         )) {
             HStack(spacing: 10) {
                 Image(systemName: "sportscourt.fill")
@@ -577,7 +714,10 @@ struct NewCareerView: View {
             avatarID: selectedAvatarID,
             coachingStyle: selectedCoachingStyle,
             selectedRole: selectedRole,
-            selectedCapMode: capSelection.capMode
+            selectedCapMode: capSelection.capMode,
+            gameMode: selectedSetup.mode,
+            scenario: selectedSetup.scenario,
+            injuryFrequency: injuryFrequency
         )) {
             HStack(spacing: 10) {
                 Image(systemName: "sportscourt.fill")
@@ -605,7 +745,7 @@ struct NewCareerView: View {
     private var backButton: some View {
         Button {
             withAnimation(.easeInOut(duration: 0.3)) {
-                currentStep = 1
+                currentStep = max(1, currentStep - 1)
             }
         } label: {
             HStack(spacing: 10) {
@@ -642,6 +782,85 @@ struct NewCareerView: View {
         }
         .padding(20)
         .cardBackground()
+    }
+}
+
+// MARK: - Career Setup Card (R40)
+
+/// Single-select card for the Game Mode step: two modes (Standard, Fantasy
+/// Draft) and three scenario starts (Rebuild, Win Now, Cap Hell).
+private struct CareerSetupCard: View {
+    let setup: CareerSetup
+    let isSelected: Bool
+
+    private var accent: Color {
+        setup.scenario == nil ? Color.accentBlue : Color.accentGold
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(isSelected ? accent.opacity(0.2) : Color.backgroundSecondary)
+                    .frame(width: 34, height: 34)
+                Image(systemName: setup.icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(isSelected ? accent : Color.textSecondary)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(setup.displayName)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+
+                    Text(setup.badge)
+                        .font(.system(size: 8, weight: .heavy))
+                        .tracking(0.8)
+                        .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule().fill(isSelected ? accent : Color.backgroundSecondary)
+                        )
+
+                    if let scenario = setup.scenario {
+                        Text(scenario.tagline)
+                            .font(.system(size: 9, weight: .medium).italic())
+                            .foregroundStyle(Color.textTertiary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Text(setup.blurb)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(isSelected ? Color.textSecondary : Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 4)
+
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(isSelected ? accent : Color.textTertiary.opacity(0.5))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isSelected ? accent.opacity(0.08) : Color.backgroundPrimary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(
+                    isSelected ? accent : Color.surfaceBorder,
+                    lineWidth: isSelected ? 2 : 1
+                )
+        )
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(setup.displayName), \(setup.badge.lowercased()). \(setup.blurb)")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
 

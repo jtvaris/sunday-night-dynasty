@@ -29,6 +29,10 @@ struct GamePlanView: View {
         var passDefense: DefenseStrength?
         var runDefense: DefenseStrength?
         var schemeName: String?       // OC's offensive scheme display name
+        /// R33: opponent coordinator play-calling personas (scouting intel —
+        /// the same personas the live game's AI actually calls with).
+        var opponentDCPersona: DCPersona?
+        var opponentOCPersona: OCPersona?
 
         init(
             weekLabel: String? = nil,
@@ -36,7 +40,9 @@ struct GamePlanView: View {
             opponentRecord: String? = nil,
             passDefense: DefenseStrength? = nil,
             runDefense: DefenseStrength? = nil,
-            schemeName: String? = nil
+            schemeName: String? = nil,
+            opponentDCPersona: DCPersona? = nil,
+            opponentOCPersona: OCPersona? = nil
         ) {
             self.weekLabel = weekLabel
             self.opponentName = opponentName
@@ -44,6 +50,8 @@ struct GamePlanView: View {
             self.passDefense = passDefense
             self.runDefense = runDefense
             self.schemeName = schemeName
+            self.opponentDCPersona = opponentDCPersona
+            self.opponentOCPersona = opponentOCPersona
         }
     }
 
@@ -349,6 +357,16 @@ struct GamePlanView: View {
                 defenseRow(label: "Run Defense", strength: runD)
             }
 
+            // R33: coordinator persona intel — how their DC/OC actually call.
+            if let dc = context?.opponentDCPersona {
+                coordinatorRow(side: "Their DC", persona: dc.displayName,
+                               blurb: dc.scoutingBlurb, color: .danger)
+            }
+            if let oc = context?.opponentOCPersona {
+                coordinatorRow(side: "Their OC", persona: oc.displayName,
+                               blurb: oc.scoutingBlurb, color: .accentBlue)
+            }
+
             if let tip = opponentTip {
                 Text(tip)
                     .font(.caption)
@@ -376,6 +394,34 @@ struct GamePlanView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(label): \(strength.rawValue)")
+    }
+
+    /// R33: one coordinator persona line — label, persona chip, scouting blurb.
+    private func coordinatorRow(
+        side: String,
+        persona: String,
+        blurb: String,
+        color: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(side)
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+                Text(persona)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(color)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(color.opacity(0.12)))
+            }
+            Text(blurb)
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(side): \(persona). \(blurb)")
     }
 
     /// One-line coaching suggestion derived from the opponent's weak spots.
@@ -549,7 +595,9 @@ struct GamePlanView: View {
                 opponentRecord: "3-1",
                 passDefense: .weak,
                 runDefense: .strong,
-                schemeName: "West Coast"
+                schemeName: "West Coast",
+                opponentDCPersona: .exotic,
+                opponentOCPersona: .groundAndPound
             )
         )
     }

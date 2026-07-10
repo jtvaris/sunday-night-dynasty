@@ -484,6 +484,7 @@ enum WeekAdvancer {
             previousState: career.leagueNarrative,
             teams: Array(teamsByID.values),
             players: allPlayers,
+            coaches: allCoaches,
             games: seasonGames,
             career: career,
             week: week,
@@ -659,13 +660,16 @@ enum WeekAdvancer {
             let teamPhysio = allCoaches.first { $0.teamID == player.teamID && $0.role == .physio }
             let teamTrainer = allCoaches.first { $0.teamID == player.teamID && $0.role == .headTrainer }
 
-            // Use MedicalEngine for injury check with medical staff awareness
+            // Use MedicalEngine for injury check with medical staff awareness.
+            // R40: the career's injury-frequency league setting scales (or
+            // disables) the weekly roll; .normal = 1.0 = today's exact rates.
             if let injury = MedicalEngine.injuryCheck(
                 player: player,
                 playType: .run,  // Approximate — actual play type not tracked at weekly level
                 doctor: teamDoctor,
                 physio: teamPhysio,
-                trainer: teamTrainer
+                trainer: teamTrainer,
+                frequencyMultiplier: career.injuryFrequency.riskMultiplier
             ) {
                 MedicalEngine.applyInjury(
                     player: player,
