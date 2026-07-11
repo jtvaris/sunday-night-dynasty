@@ -2179,7 +2179,8 @@ struct PlayChoreographer {
             Step(
                 moves: [],
                 ballMove: .slide(to: ground(punterSpot.x, punterSpot.z), duration: 0.5),
-                duration: 0.6
+                duration: 0.6,
+                sound: .snap
             ),
             // Boot: high arc downfield; coverage races under it while the
             // return unit sets its wall and the returner settles.
@@ -2187,7 +2188,8 @@ struct PlayChoreographer {
                 moves: merge([(nodeIndex: returner, to: player(0, landZ), duration: hang)],
                              coverage + wall),
                 ballMove: .arc(to: air(0, landZ), apex: 12, duration: hang),
-                duration: hang
+                duration: hang,
+                sound: .kickThump
             ),
             // Catch and a short ~3yd return; the coverage rallies to the ball.
             Step(
@@ -2220,7 +2222,8 @@ struct PlayChoreographer {
             Step(
                 moves: [],
                 ballMove: .slide(to: ground(holdSpot.x, holdSpot.z), duration: 0.45),
-                duration: 0.5
+                duration: 0.5,
+                sound: .snap
             ),
             // Hold beat.
             Step(moves: [], ballMove: nil, duration: 0.35),
@@ -2228,7 +2231,8 @@ struct PlayChoreographer {
             Step(
                 moves: lineSurgeMoves(c, p: 0.8, d: 0.5),
                 ballMove: .arc(to: SCNVector3(clampX(targetX), targetY, postZ), apex: 8, duration: 1.6),
-                duration: 1.7
+                duration: 1.7,
+                sound: .kickThump
             ),
             Step(moves: [], ballMove: nil, duration: 0.45),
         ]
@@ -2329,7 +2333,8 @@ struct PlayChoreographer {
             moves: bootMoves,
             ballMove: .arc(to: air(0, catchZ), apex: 16, duration: hang),
             duration: hang,
-            reaches: [returner]
+            reaches: [returner],
+            sound: .kickThump
         ))
 
         if isTouchback {

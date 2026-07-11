@@ -11,6 +11,10 @@ struct GamePlanView: View {
 
     @Binding var gamePlan: GamePlan
     var context: Context?
+    /// R36: weekly practice play — pick one not-installed play to drill;
+    /// it installs into the call sheet for the season after enough weeks.
+    /// `nil` hides the card (entry points without a career).
+    var practice: PracticeContext?
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -55,6 +59,23 @@ struct GamePlanView: View {
         }
     }
 
+    /// R36: everything the practice-play card needs. Plain values + a
+    /// callback so the career shell owns persistence.
+    struct PracticeContext {
+        /// The OC's scheme — decides which plays are already installed.
+        var scheme: OffensiveScheme?
+        /// The play currently being drilled (nil = nothing queued).
+        var currentPlay: OffensivePlayCall?
+        /// Practice weeks already banked on `currentPlay`.
+        var weeksDone: Int
+        /// Weeks needed to install (1 with an expert OC, otherwise 2).
+        var weeksRequired: Int
+        /// Plays already installed through practice this season.
+        var installedThisSeason: [OffensivePlayCall]
+        /// Persists a new pick (or nil to cancel practice).
+        var onSelect: (OffensivePlayCall?) -> Void
+    }
+
     /// How strong one facet of the opponent's defense is. Colored from the
     /// player's perspective: a weak opponent unit is an opportunity (green).
     enum DefenseStrength: String {
@@ -86,6 +107,7 @@ struct GamePlanView: View {
                             VStack(spacing: DSSpacing.md) {
                                 summaryChips
                                 presetsCard
+                                if practice != nil { practiceCard }
                                 if hasOpponentData { opponentCard }
                             }
                             .frame(width: 340)
@@ -99,6 +121,7 @@ struct GamePlanView: View {
                     } else {
                         summaryChips
                         presetsCard
+                        if practice != nil { practiceCard }
                         if hasOpponentData { opponentCard }
                         offensiveSection
                         defensiveSection
@@ -324,6 +347,138 @@ struct GamePlanView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Apply \(preset.label) preset\(isActive ? ", currently active" : "")")
+    }
+
+    // MARK: - Practice Play Card (R36)
+
+    /// The plays NOT yet on the call sheet (scheme playbook + practiced
+    /// installs), grouped by category for the picker menu.
+    private func practicablePlays(_ practice: PracticeContext) -> [OffensivePlayCall] {
+        OffensivePlayCall.allCases.filter { play in
+            !play.isSpecial && play != .qbSneak
+                && !play.isInPlaybook(of: practice.scheme)
+                && !practice.installedThisSeason.contains(play)
+        }
+    }
+
+    @ViewBuilder
+    private var practiceCard: some View {
+        if let practice {
+            VStack(alignment: .leading, spacing: DSSpacing.sm) {
+                SectionHeaderText(title: "Practice Play of the Week")
+
+                if let play = practice.currentPlay {
+                    // Drilling in progress: name, progress line, cancel.
+                    HStack(spacing: DSSpacing.sm) {
+                        Image(systemName: "figure.strengthtraining.functional")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color.accentGold)
+                            .frame(width: 34, height: 34)
+                            .background(Circle().fill(Color.accentGold.opacity(0.12)))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(play.rawValue)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(Color.textPrimary)
+                            Text(practiceProgressLine(practice))
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                        Spacer(minLength: 0)
+                        Button {
+                            practice.onSelect(nil)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 18))
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Cancel practice play")
+                    }
+                    .padding(.horizontal, DSSpacing.sm)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                            .fill(Color.accentGold.opacity(0.08))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                                    .strokeBorder(Color.accentGold.opacity(0.5), lineWidth: 1)
+                            )
+                    )
+                } else {
+                    // Nothing queued: pick a play to drill.
+                    Menu {
+                        ForEach(["Run", "Short Pass", "Medium Pass", "Deep Pass"], id: \.self) { category in
+                            let plays = practicablePlays(practice).filter { $0.category == category }
+                            if !plays.isEmpty {
+                                Section(category) {
+                                    ForEach(plays, id: \.self) { play in
+                                        Button(play.rawValue) { practice.onSelect(play) }
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: DSSpacing.sm) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(Color.accentGold)
+                            Text("Choose a play to drill")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption)
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                        .padding(.horizontal, DSSpacing.sm)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                                .fill(Color.backgroundTertiary.opacity(0.55))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                                )
+                        )
+                    }
+                }
+
+                Text(practice.weeksRequired == 1
+                     ? "Your coordinator installs a new play in one practice week."
+                     : "Two practice weeks install the play into the call sheet for the season.")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+
+                if !practice.installedThisSeason.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("INSTALLED THIS SEASON")
+                            .font(.caption2.weight(.bold))
+                            .tracking(0.8)
+                            .foregroundStyle(Color.textTertiary)
+                        ForEach(practice.installedThisSeason, id: \.self) { play in
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.success)
+                                Text(play.rawValue)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(Color.textPrimary)
+                            }
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            }
+            .padding(DSSpacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cardBackground()
+        }
+    }
+
+    private func practiceProgressLine(_ practice: PracticeContext) -> String {
+        let remaining = max(0, practice.weeksRequired - practice.weeksDone)
+        if remaining <= 1 { return "Installs after this week's practice" }
+        return "\(practice.weeksDone) of \(practice.weeksRequired) practice weeks done"
     }
 
     // MARK: - Opponent Card

@@ -475,20 +475,6 @@ enum GameSimulator {
         let home = teams[10]
         let away = teams[21]
 
-        var points: [Double] = []
-        var yards: [Double] = []
-        var penaltiesPerGame: [Double] = []
-        var margins: [Double] = []
-        for _ in 0..<n {
-            let result = simulate(homeTeam: home, awayTeam: away)
-            points.append(Double(result.homeScore))
-            points.append(Double(result.awayScore))
-            yards.append(Double(result.boxScore.home.totalYards))
-            yards.append(Double(result.boxScore.away.totalYards))
-            penaltiesPerGame.append(Double(result.boxScore.home.penalties + result.boxScore.away.penalties))
-            margins.append(Double(abs(result.homeScore - result.awayScore)))
-        }
-
         func stats(_ values: [Double]) -> (mean: Double, std: Double, min: Double, max: Double) {
             guard !values.isEmpty else { return (0, 0, 0, 0) }
             let mean = values.reduce(0, +) / Double(values.count)
@@ -496,15 +482,47 @@ enum GameSimulator {
             return (mean, variance.squareRoot(), values.min() ?? 0, values.max() ?? 0)
         }
 
-        let p = stats(points)
-        let y = stats(yards)
-        let pen = stats(penaltiesPerGame)
-        let m = stats(margins)
-        print(String(format: "DEBUG-SIM: games=%d", n))
-        print(String(format: "DEBUG-SIM: points/team mean=%.1f std=%.1f min=%.0f max=%.0f", p.mean, p.std, p.min, p.max))
-        print(String(format: "DEBUG-SIM: yards/team  mean=%.0f std=%.0f min=%.0f max=%.0f", y.mean, y.std, y.min, y.max))
-        print(String(format: "DEBUG-SIM: penalties/game mean=%.1f", pen.mean))
-        print(String(format: "DEBUG-SIM: score margin mean=%.1f", m.mean))
+        /// One measurement pass over the SAME two rosters. R36 runs it twice
+        /// — awareness targeting off, then on — for a paired comparison
+        /// (league generation is unseeded, so separate launches don't compare).
+        func measure(label: String) {
+            var points: [Double] = []
+            var yards: [Double] = []
+            var penaltiesPerGame: [Double] = []
+            var margins: [Double] = []
+            var completions = 0
+            var attempts = 0
+            for _ in 0..<n {
+                let result = simulate(homeTeam: home, awayTeam: away)
+                points.append(Double(result.homeScore))
+                points.append(Double(result.awayScore))
+                yards.append(Double(result.boxScore.home.totalYards))
+                yards.append(Double(result.boxScore.away.totalYards))
+                penaltiesPerGame.append(Double(result.boxScore.home.penalties + result.boxScore.away.penalties))
+                margins.append(Double(abs(result.homeScore - result.awayScore)))
+                for stats in result.playerStats {
+                    completions += stats.completions
+                    attempts += stats.attempts
+                }
+            }
+            let p = stats(points)
+            let y = stats(yards)
+            let pen = stats(penaltiesPerGame)
+            let m = stats(margins)
+            print(String(format: "DEBUG-SIM[%@]: games=%d", label, n))
+            print(String(format: "DEBUG-SIM[%@]: points/team mean=%.1f std=%.1f min=%.0f max=%.0f", label, p.mean, p.std, p.min, p.max))
+            print(String(format: "DEBUG-SIM[%@]: yards/team  mean=%.0f std=%.0f min=%.0f max=%.0f", label, y.mean, y.std, y.min, y.max))
+            print(String(format: "DEBUG-SIM[%@]: penalties/game mean=%.1f", label, pen.mean))
+            print(String(format: "DEBUG-SIM[%@]: score margin mean=%.1f", label, m.mean))
+            let completionPct = attempts > 0 ? Double(completions) / Double(attempts) * 100 : 0
+            print(String(format: "DEBUG-SIM[%@]: completion%%  %.1f (%d/%d)", label, completionPct, completions, attempts))
+        }
+
+        // R36 gate: QB-awareness target weighting OFF vs ON, same league.
+        PlaySimulator.debugNeutralAwarenessTargeting = true
+        measure(label: "base")
+        PlaySimulator.debugNeutralAwarenessTargeting = false
+        measure(label: "aware")
 
         // Schedule integrity: several season years through the generator.
         var scheduleOK = true

@@ -444,7 +444,7 @@ enum PlaySimulator {
 
         // --- Choose Target ---
         let receivers = eligibleReceivers(from: offensePlayers)
-        guard let target = weightedReceiverSelection(receivers) else {
+        guard let target = weightedReceiverSelection(receivers, qb: qb) else {
             // No eligible receivers; QB scrambles
             return simulateQBScramble(
                 qb: qb,
@@ -1506,10 +1506,30 @@ enum PlaySimulator {
         return ids
     }
 
+    /// R36: how strongly the QB's AWARENESS bends target selection toward
+    /// the best separators. The route-weight exponent is
+    /// `1 + (awareness - 70) * slope`: an aware QB (99) sharpens the weights
+    /// (gamma ≈ 1.23 — finds the open man), a low-awareness QB (40) flattens
+    /// them (gamma ≈ 0.76 — sprays the ball around). Awareness 70 = exactly
+    /// today's distribution. Measured with `GameSimulator.debugSimulate`:
+    /// points/team and completion % must stay inside ±1.5 pts / ±2 %-pts.
+    private static let qbAwarenessTargetSlope = 0.008
+
+    #if DEBUG
+    /// Balance-harness switch: `GameSimulator.debugSimulate` measures the
+    /// awareness targeting ON vs OFF over the SAME generated league (paired
+    /// comparison — league generation is unseeded, so separate app launches
+    /// can't be compared). Never set outside the debug harness.
+    static var debugNeutralAwarenessTargeting = false
+    #endif
+
     /// Selects a pass target: ~85% of throws go to the primary group (top-3
     /// WR + best TE + best RB), the rest to depth receivers. Within each
-    /// group the pick is weighted by route running + catching ability.
-    private static func weightedReceiverSelection(_ receivers: [SimPlayer]) -> SimPlayer? {
+    /// group the pick is weighted by route running + catching ability,
+    /// sharpened or flattened by the QB's awareness (R36).
+    private static func weightedReceiverSelection(
+        _ receivers: [SimPlayer], qb: SimPlayer? = nil
+    ) -> SimPlayer? {
         guard !receivers.isEmpty else { return nil }
 
         let primaryIDs = primaryTargets(among: receivers)
@@ -1525,13 +1545,23 @@ enum PlaySimulator {
             pool = depth
         }
 
-        return weightedPick(from: pool) ?? receivers.randomElement()
+        var gamma = qb.map { 1.0 + (Double($0.mental.awareness) - 70.0) * qbAwarenessTargetSlope }
+        #if DEBUG
+        if debugNeutralAwarenessTargeting { gamma = nil }
+        #endif
+        return weightedPick(from: pool, gamma: gamma) ?? receivers.randomElement()
     }
 
-    /// Route-weight roulette pick within one group of receivers.
-    private static func weightedPick(from receivers: [SimPlayer]) -> SimPlayer? {
+    /// Route-weight roulette pick within one group of receivers. `gamma`
+    /// exponentiates the weights (QB awareness, R36); nil or 1.0 = the
+    /// baseline distribution exactly.
+    private static func weightedPick(from receivers: [SimPlayer],
+                                     gamma: Double? = nil) -> SimPlayer? {
         guard !receivers.isEmpty else { return nil }
-        let weights = receivers.map { receiverRouteWeight(for: $0) }
+        var weights = receivers.map { receiverRouteWeight(for: $0) }
+        if let gamma, gamma != 1.0 {
+            weights = weights.map { pow(max($0, 0), gamma) }
+        }
         let totalWeight = weights.reduce(0, +)
         guard totalWeight > 0 else { return receivers.randomElement() }
 

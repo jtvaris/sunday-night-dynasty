@@ -30,6 +30,10 @@ struct CoachedGameView: View {
     /// Called when the user taps Continue on the final whistle overlay.
     /// The caller persists the result and presents the game summary.
     let onFinish: (LiveGameEngine) -> Void
+    /// R36: "Practice this" on a dimmed (not-installed) call-sheet card —
+    /// the caller queues the play as the week's practice play. `nil` hides
+    /// the action (e.g. entry points without a career context).
+    let onPracticeRequest: ((OffensivePlayCall) -> Void)?
 
     @StateObject private var engine: LiveGameEngine
 
@@ -43,6 +47,8 @@ struct CoachedGameView: View {
         defReadBoost: Double = 0,
         weather: GameWeather = .clear,
         isPlayoff: Bool = false,
+        bonusPlays: Set<OffensivePlayCall> = [],
+        onPracticeRequest: ((OffensivePlayCall) -> Void)? = nil,
         onFinish: @escaping (LiveGameEngine) -> Void
     ) {
         self.homeTeam = homeTeam
@@ -51,6 +57,7 @@ struct CoachedGameView: View {
         self.weather = weather
         self.isPlayoff = isPlayoff
         self.onFinish = onFinish
+        self.onPracticeRequest = onPracticeRequest
         _engine = StateObject(wrappedValue: LiveGameEngine(
             homeTeam: homeTeam,
             awayTeam: awayTeam,
@@ -59,7 +66,8 @@ struct CoachedGameView: View {
             playerTeamIsHome: playerTeamIsHome,
             audibleBoost: audibleBoost,
             defReadBoost: defReadBoost,
-            weather: weather
+            weather: weather,
+            playerBonusPlays: bonusPlays
         ))
     }
 
@@ -83,8 +91,37 @@ struct CoachedGameView: View {
     /// call-sheet browse doesn't snap the ring apart mid-gather.
     @State private var huddleBreakTime: Date? = nil
     /// The field grows while a play is live and shrinks back when the call
-    /// sheet needs the room.
-    private var fieldExpanded: Bool { isAnimating }
+    /// sheet needs the room. Replays keep the big frame — they're the show.
+    private var fieldExpanded: Bool { isAnimating || isReplaying }
+
+    // MARK: Replays & highlights (R35)
+
+    /// Rolling buffer of the last few plays' recorded choreography (newest
+    /// last). Storage for the replay system; the instant offer and the
+    /// highlight reel both draw from recordings made at the snap.
+    @State private var recentReplays: [RecordedPlay] = []
+    /// This game's highlight-reel candidates (TDs, turnovers, chunk plays),
+    /// capped small — the weakest candidate drops when the game runs long.
+    @State private var highlightReel: [RecordedPlay] = []
+    /// The big play currently offered behind the REPLAY button. Cleared at
+    /// the next snap/kickoff so the offer always means "what just happened".
+    @State private var replayOffer: RecordedPlay? = nil
+    /// The recorded play now on screen, while a replay is running.
+    @State private var activeReplay: RecordedPlay? = nil
+    /// The running replay's camera angle (the HUD chips cut between angles).
+    @State private var replayAngle: FootballFieldScene.ReplayAngle = .sideline
+    /// True while a replay owns the field. Pure presentation: the engine
+    /// never steps, and the decision clock freezes for the duration.
+    @State private var isReplaying = false
+    /// Invalidation token for scheduled replay beats — skip kills stale closures.
+    @State private var replayGeneration = 0
+    /// Remaining queue while the final-whistle highlight reel is playing.
+    @State private var replayQueue: [RecordedPlay] = []
+    /// True from "Watch highlights" until the reel ends (final overlay returns).
+    @State private var reelActive = false
+    /// A post-play beat (proceed) fired while a replay was on screen — run
+    /// it when the replay tears down so the game flow never stalls.
+    @State private var pendingProceedAfterReplay = false
     @State private var gameStarted = false
     @State private var resultBanner: String? = nil
     @State private var possessionBanner: String? = nil
@@ -122,6 +159,33 @@ struct CoachedGameView: View {
     // Defense call state
     @State private var defCall: DefensiveCall = .cover3Base
     @State private var defCategory: String = "Coverage"
+
+    // MARK: Audibles & coverage read (R36)
+
+    /// Offensive audibles left this half (a same-formation check at the line).
+    @State private var offAudiblesLeft = 2
+    /// Defensive shell audibles left this half.
+    @State private var defAudiblesLeft = 2
+    /// True while the offensive audible strip is open over the snap bar.
+    @State private var showAudibleStrip = false
+    /// True while the defensive shell strip is open over the ready bar.
+    @State private var showShellStrip = false
+    /// A shell audible for the NEXT snap: the named call keeps its blitz and
+    /// front, but the coverage rotates to this shell at the line. Cleared at
+    /// the snap and whenever a new defensive call is picked.
+    @State private var defShellOverride: DefensivePlayCall? = nil
+    /// The QB's pre-snap read of the defensive shell (R36) — rolled once per
+    /// offensive decision window from his AWARENESS. High awareness reads the
+    /// shell reliably; low awareness hedges ("Looks like…?") and is flat-out
+    /// wrong up to ~30% of the time. Information only — the sim never reads it.
+    struct CoverageRead {
+        let text: String
+        let uncertain: Bool
+        /// The shell the QB BELIEVES he sees (drives the audible ✓ tags —
+        /// a misread poisons the suggestions too, that's the trap).
+        let believedShell: DefensivePlayCall
+    }
+    @State private var coverageRead: CoverageRead? = nil
 
     // Kickoff decision state (onside window): the choice renders as a call
     // panel — no timer, no tap-outside commitment — until KICK is pressed.
@@ -231,12 +295,23 @@ struct CoachedGameView: View {
         }
         .statusBarHidden()
         .onAppear(perform: startGame)
+        .onDisappear { AudioDirector.shared.endMatch() }
         .onReceive(playClockTicker) { _ in tickPlayClock() }
         .onChange(of: engine.timeRemaining) { _, remaining in
             checkTwoMinuteWarning(remaining)
         }
+        .onChange(of: engine.quarter) { _, quarter in
+            // R36: the audible budget is per half — fresh pair after the break.
+            if quarter == 3 {
+                offAudiblesLeft = 2
+                defAudiblesLeft = 2
+            }
+        }
         .onChange(of: selectedCall) { _, _ in previewFormation() }
         .onChange(of: defCall) { _, _ in
+            // A new named call replaces any shell audible dialed on the old one.
+            defShellOverride = nil
+            showShellStrip = false
             if !engine.playerIsOnOffense { previewFormation() }
         }
         .onChange(of: engine.lastRotation) { _, rotation in
@@ -654,12 +729,20 @@ struct CoachedGameView: View {
                 }
             }
             .overlay(alignment: .bottomTrailing) {
-                HStack(spacing: 8) {
-                    playbackSpeedButton
-                    cameraToggleButton
+                // A replay owns the shot — the live camera/speed toggles
+                // (which would fight the replay rig) sit out until it ends.
+                if !isReplaying {
+                    HStack(spacing: 8) {
+                        playbackSpeedButton
+                        cameraToggleButton
+                    }
+                    .padding(10)
                 }
-                .padding(10)
             }
+            .overlay(alignment: .top) {
+                if isReplaying { replayHUD }
+            }
+            .overlay(alignment: .bottom) { replayOfferControl }
             .overlay(alignment: .bottom) {
                 if let plate = snapPlate {
                     HStack(spacing: 0) {
@@ -686,6 +769,124 @@ struct CoachedGameView: View {
             .animation(.spring(duration: 0.25), value: snapPlate)
             .animation(.spring(duration: 0.3), value: sidelineNote)
             .animation(.spring(duration: 0.3), value: adaptationNote)
+            .animation(.spring(duration: 0.3), value: replayOffer == nil)
+            .animation(.spring(duration: 0.3), value: isReplaying)
+    }
+
+    // MARK: Replay overlays (R35)
+
+    /// The instant-replay offer after a big play: a small gold REPLAY button
+    /// riding just under the result toasts. Player's choice — nothing plays
+    /// automatically, and the offer expires at the next snap.
+    @ViewBuilder
+    private var replayOfferControl: some View {
+        if let offer = replayOffer, !isReplaying, !isAnimating, !showFinal, !showHalftime {
+            Button {
+                startReplay(offer, angle: offer.isTouchdown ? .endZone : .sideline)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.counterclockwise.circle.fill")
+                        .font(.system(size: 12, weight: .black))
+                    Text("REPLAY")
+                        .font(.system(size: 12, weight: .black))
+                        .tracking(1.2)
+                }
+                .foregroundStyle(Color.backgroundPrimary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(Color.accentGold, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.3), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 14)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    /// In-replay HUD: the title plate plus angle cuts and skip controls.
+    private var replayHUD: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color.danger)
+                    .frame(width: 7, height: 7)
+                Text("REPLAY")
+                    .font(.system(size: 12, weight: .black))
+                    .tracking(1.6)
+                if let title = activeReplay?.title {
+                    Text("·")
+                        .font(.system(size: 12, weight: .black))
+                        .foregroundStyle(Color.textTertiary)
+                    Text(title)
+                        .font(.system(size: 13, weight: .bold))
+                        .lineLimit(1)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color.black.opacity(0.85), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.25), lineWidth: 1))
+
+            HStack(spacing: 6) {
+                replayAngleChip("Sideline", angle: .sideline)
+                replayAngleChip("End zone", angle: .endZone)
+                if let iso = activeReplay?.keyDefenderNode {
+                    replayAngleChip("Iso D", angle: .isolateDefense(nodeIndex: iso))
+                }
+                Button {
+                    replayFinished()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "forward.fill")
+                            .font(.system(size: 9, weight: .bold))
+                        Text("Skip")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.black.opacity(0.6), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.3), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                if reelActive && !replayQueue.isEmpty {
+                    Button {
+                        replayQueue.removeAll()
+                        replayFinished()
+                    } label: {
+                        Text("Skip all")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.black.opacity(0.6), in: Capsule())
+                            .overlay(Capsule().strokeBorder(Color.white.opacity(0.3), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.top, 10)
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    /// One camera-cut chip in the replay HUD; the live angle shows gold.
+    private func replayAngleChip(_ label: String,
+                                 angle: FootballFieldScene.ReplayAngle) -> some View {
+        let active = replayAngle == angle
+        return Button {
+            setReplayAngle(angle)
+        } label: {
+            Text(label)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(active ? Color.backgroundPrimary : .white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(active ? Color.accentGold : Color.black.opacity(0.6), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.white.opacity(active ? 0 : 0.3), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     /// 1x/2x play-speed toggle over the field: 2x halves every play timeline
@@ -918,6 +1119,25 @@ struct CoachedGameView: View {
                     .foregroundStyle(Color.textTertiary)
                     .tracking(1.4)
                 Spacer()
+                // R36: the QB's pre-snap read of the shell — his awareness
+                // decides whether you can trust it (a hedge reads "Looks
+                // like…?" and is sometimes plain wrong).
+                if let read = coverageRead {
+                    HStack(spacing: 5) {
+                        Image(systemName: "eye.fill")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(read.text)
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .foregroundStyle(read.uncertain ? Color.warning : Color.accentBlue)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        (read.uncertain ? Color.warning : Color.accentBlue).opacity(0.13),
+                        in: Capsule()
+                    )
+                    .transition(.opacity)
+                }
             }
             .padding(.horizontal, 14)
             .padding(.top, 10)
@@ -930,12 +1150,13 @@ struct CoachedGameView: View {
             .padding(.horizontal, 14)
 
             // Clipboard-style call sheet: every play as a card with its
-            // chalkboard art and a one-line description; installed plays first.
+            // chalkboard art and a one-line description; installed plays first
+            // (practice-installed plays count — R36).
             let sectionPlays = OffensivePlayCall.allCases
                 .filter { $0.category == selectedCategory && $0 != .kneel && $0 != .spike }
             // Stable order: installed playbook plays first, original order kept.
-            let plays = sectionPlays.filter { $0.isInPlaybook(of: engine.playerOffensiveScheme) }
-                + sectionPlays.filter { !$0.isInPlaybook(of: engine.playerOffensiveScheme) }
+            let plays = sectionPlays.filter { engine.playerHasInstalled($0) }
+                + sectionPlays.filter { !engine.playerHasInstalled($0) }
             ScrollView {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 5), spacing: 10) {
                     ForEach(plays, id: \.self) { play in
@@ -947,8 +1168,33 @@ struct CoachedGameView: View {
 
             Spacer(minLength: 0)
 
+            // R36: the audible strip — same-formation installed checks the
+            // QB can flip to at the line. A ✓ marks plays that attack the
+            // shell HE believes he's reading (a misread poisons the tags).
+            if showAudibleStrip, let current = selectedCall {
+                audibleStrip(for: current)
+            }
+
             // Snap bar
             HStack(spacing: 12) {
+                if offenseAudibleAvailable {
+                    Button {
+                        withAnimation(.spring(duration: 0.2)) { showAudibleStrip.toggle() }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "megaphone.fill")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("AUDIBLE · \(offAudiblesLeft)")
+                                .font(.system(size: 12, weight: .black))
+                        }
+                        .foregroundStyle(showAudibleStrip ? Color.backgroundPrimary : Color.accentGold)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(showAudibleStrip ? Color.accentGold : Color.accentGold.opacity(0.14),
+                                    in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
                 if let suggestion = cachedSuggestion {
                     Button {
                         offCallDirtied = true // explicitly adopted — stands on a delay
@@ -1053,7 +1299,7 @@ struct CoachedGameView: View {
     private func playCard(_ play: OffensivePlayCall) -> some View {
         let isSelected = selectedCall == play
         let isSuggested = cachedSuggestion == play
-        let installed = play.isInPlaybook(of: engine.playerOffensiveScheme)
+        let installed = engine.playerHasInstalled(play)
         return Button {
             offCallDirtied = true // the coach's own pick — a delay snaps it
             withAnimation(.spring(duration: 0.15)) { selectedCall = play }
@@ -1104,6 +1350,81 @@ struct CoachedGameView: View {
             )
         }
         .buttonStyle(.plain)
+        // R36: a dimmed card can be queued as the week's practice play —
+        // two weeks of reps (one with an expert OC) installs it for the season.
+        .contextMenu {
+            if !installed, let onPracticeRequest {
+                Button {
+                    onPracticeRequest(play)
+                    showBanner("\(play.rawValue) queued as this week's practice play.")
+                } label: {
+                    Label("Practice this week", systemImage: "figure.strengthtraining.functional")
+                }
+            }
+        }
+    }
+
+    // MARK: Audibles (R36)
+
+    /// The audible button shows only when there's a call to audible from,
+    /// budget left this half, and at least one same-formation installed play.
+    private var offenseAudibleAvailable: Bool {
+        guard offAudiblesLeft > 0, let call = selectedCall else { return false }
+        return !call.audibleOptions(installed: { engine.playerHasInstalled($0) }).isEmpty
+    }
+
+    /// Horizontal strip of same-formation checks. Picking one swaps the call
+    /// in place (no re-huddle — the look at the line doesn't change), burns
+    /// one audible, and tells the feed.
+    private func audibleStrip(for call: OffensivePlayCall) -> some View {
+        let options = call.audibleOptions(installed: { engine.playerHasInstalled($0) })
+        let believedShell = coverageRead?.believedShell
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Text("CHECK INTO:")
+                    .font(.system(size: 10, weight: .black))
+                    .foregroundStyle(Color.textTertiary)
+                    .tracking(1.2)
+                ForEach(options, id: \.self) { option in
+                    Button {
+                        commitAudible(to: option)
+                    } label: {
+                        HStack(spacing: 5) {
+                            if let shell = believedShell, option.goodAgainst(shell) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(Color.success)
+                            }
+                            Text(option.rawValue)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(Color.textPrimary)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(Color.backgroundTertiary, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.accentGold.opacity(0.5), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+        }
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    /// Executes the offensive audible: swap the call, burn the resource,
+    /// tell the broadcast. The formation preview updates via `selectedCall`.
+    private func commitAudible(to option: OffensivePlayCall) {
+        guard offAudiblesLeft > 0 else { return }
+        offAudiblesLeft -= 1
+        offCallDirtied = true
+        withAnimation(.spring(duration: 0.2)) {
+            selectedCall = option
+            selectedCategory = option.category
+            showAudibleStrip = false
+        }
+        let qbName = engine.currentOffenseUnit[0].shortName
+        engine.postFeedNote("Audible — \(qbName) checks into \(option.rawValue)")
     }
 
     /// Spike/kneel shortcuts are only meaningful late in a half.
@@ -1127,10 +1448,10 @@ struct CoachedGameView: View {
         default: raw = nil
         }
         guard let pick = raw else { return nil }
-        if pick.isInPlaybook(of: engine.playerOffensiveScheme) { return pick }
+        if engine.playerHasInstalled(pick) { return pick }
         // Substitute the closest installed play from the same category.
         return OffensivePlayCall.allCases.first {
-            $0.category == pick.category && $0.isInPlaybook(of: engine.playerOffensiveScheme)
+            $0.category == pick.category && engine.playerHasInstalled($0)
         } ?? pick
     }
 
@@ -1459,6 +1780,12 @@ struct CoachedGameView: View {
 
             Spacer(minLength: 0)
 
+            // R36: the shell strip — rotate the coverage at the line while
+            // the named call keeps its blitz and front. Costs one audible.
+            if showShellStrip {
+                shellAudibleStrip
+            }
+
             // Ready bar: the opponent's offense snaps only when the coach
             // confirms — no timer, no first-tap surprises.
             HStack(spacing: 12) {
@@ -1469,10 +1796,29 @@ struct CoachedGameView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(engine.pendingConversion != nil
                                          ? Color.warning : Color.textTertiary)
-                    Text(defCall.rawValue)
+                    Text(defShellOverride.map { "\(defCall.rawValue) · shell: \($0.shellShortLabel)" }
+                         ?? defCall.rawValue)
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(Color.textPrimary)
+                        .foregroundStyle(defShellOverride == nil ? Color.textPrimary : Color.accentGold)
                         .lineLimit(1)
+                }
+                if defAudiblesLeft > 0 {
+                    Button {
+                        withAnimation(.spring(duration: 0.2)) { showShellStrip.toggle() }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "megaphone.fill")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("SHELL · \(defAudiblesLeft)")
+                                .font(.system(size: 12, weight: .black))
+                        }
+                        .foregroundStyle(showShellStrip ? Color.backgroundPrimary : Color.accentBlue)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(showShellStrip ? Color.accentBlue : Color.accentBlue.opacity(0.14),
+                                    in: Capsule())
+                    }
+                    .buttonStyle(.plain)
                 }
                 Spacer()
                 playClockWrapped {
@@ -1574,6 +1920,60 @@ struct CoachedGameView: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: Shell audible (R36)
+
+    /// The defensive package the next snap actually plays: the named call,
+    /// with a dialed shell audible replacing its coverage.
+    private var effectiveDefensePackage: DefensivePackage {
+        var package = defCall.package
+        if let shell = defShellOverride { package.coverage = shell }
+        return package
+    }
+
+    /// Alternate coverage shells for the current call (the active one drops out).
+    private var shellAudibleStrip: some View {
+        let current = effectiveDefensePackage.coverage
+        let options = DefensivePlayCall.audibleShells.filter { $0 != current }
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Text("ROTATE SHELL:")
+                    .font(.system(size: 10, weight: .black))
+                    .foregroundStyle(Color.textTertiary)
+                    .tracking(1.2)
+                ForEach(options, id: \.self) { shell in
+                    Button {
+                        commitShellAudible(to: shell)
+                    } label: {
+                        Text(shell.shellShortLabel)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Color.textPrimary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color.backgroundTertiary, in: Capsule())
+                            .overlay(Capsule().strokeBorder(Color.accentBlue.opacity(0.5), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+        }
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    /// Executes the defensive shell audible for the NEXT snap only.
+    private func commitShellAudible(to shell: DefensivePlayCall) {
+        guard defAudiblesLeft > 0 else { return }
+        defAudiblesLeft -= 1
+        defCallDirtied = true
+        withAnimation(.spring(duration: 0.2)) {
+            defShellOverride = shell
+            showShellStrip = false
+        }
+        engine.postFeedNote("Audible — \(playerAbbr) rotates the shell to \(shell.shellShortLabel)")
+        // The disguised look shows on the field right away.
+        if !engine.playerIsOnOffense { previewFormation() }
+    }
+
     // MARK: - Banner
 
     /// Result/injury/milestone toasts. Rendered as a bottom overlay on the
@@ -1659,6 +2059,27 @@ struct CoachedGameView: View {
                     .foregroundStyle(playerWon ? Color.success : Color.textSecondary)
 
                 topPerformersRow
+
+                // R35: the game's biggest plays, back to back on the replay
+                // camera. Only offered when something reel-worthy happened.
+                if !highlightReel.isEmpty {
+                    Button {
+                        startHighlightReel()
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "play.rectangle.fill")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("Watch Highlights")
+                                .font(.system(size: 14, weight: .bold))
+                        }
+                        .foregroundStyle(Color.textPrimary)
+                        .padding(.horizontal, 22)
+                        .padding(.vertical, 10)
+                        .background(Color.backgroundTertiary, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 Button {
                     onFinish(engine)
@@ -1757,8 +2178,8 @@ struct CoachedGameView: View {
     /// left off when they close. The halftime report and a live play always
     /// pause the clock, so it can never expire under either.
     private var playClockPaused: Bool {
-        isAnimating || showHalftime || showFinal || showStatsSheet || showManageSheet
-            || showSimToEndConfirm || showExitConfirm
+        isAnimating || isReplaying || showHalftime || showFinal || showStatsSheet
+            || showManageSheet || showSimToEndConfirm || showExitConfirm
     }
 
     /// Opens a fresh decision window: full clock, touch flags cleared.
@@ -1769,6 +2190,12 @@ struct CoachedGameView: View {
         playClockExpiring = false
         offCallDirtied = false
         defCallDirtied = false
+        // R36: a fresh snap window — audible strips close and the QB takes
+        // his pre-snap look at the shell (rolled here so it works with the
+        // decision clock off too).
+        showAudibleStrip = false
+        showShellStrip = false
+        rollCoverageRead()
         guard let duration = playClockDuration, !engine.isGameOver else {
             playClockArmed = false
             return
@@ -1776,6 +2203,36 @@ struct CoachedGameView: View {
         playClockTotal = duration
         playClockRemaining = duration
         playClockArmed = true
+    }
+
+    // MARK: - QB Coverage Read (R36)
+
+    /// Rolls the QB's read of the defense for this snap window. The actual
+    /// shell comes from the same pre-rolled `aiDefensivePackage()` the snap
+    /// will use, so the read (when right) is genuinely predictive. Pure
+    /// pre-snap information — the simulated play never changes.
+    private func rollCoverageRead() {
+        guard engine.playerIsOnOffense, !engine.isGameOver else {
+            coverageRead = nil
+            return
+        }
+        let actual = engine.aiDefensivePackage().coverage
+        let awareness = engine.currentOffenseUnit[0].mental.awareness
+        // 85+ awareness never misreads; 40 misreads ~30% of his looks.
+        let misreadChance = min(0.30, max(0, Double(85 - awareness)) * (0.30 / 45.0))
+        let believed: DefensivePlayCall
+        if Double.random(in: 0..<1) < misreadChance {
+            believed = DefensivePlayCall.audibleShells.filter { $0 != actual }.randomElement() ?? actual
+        } else {
+            believed = actual
+        }
+        let uncertain = awareness < 75 || believed != actual
+        let shellName = believed.shellShortLabel
+        coverageRead = CoverageRead(
+            text: uncertain ? "Looks like \(shellName)?" : "Reads: \(shellName) shell",
+            uncertain: uncertain,
+            believedShell: believed
+        )
     }
 
     /// Closes the window (snap committed, drive skipped, sim-to-final…).
@@ -1914,17 +2371,17 @@ struct CoachedGameView: View {
     /// The playbook's base short pass (first installed Short Pass; Slant fallback).
     private func installedShortPass() -> OffensivePlayCall {
         OffensivePlayCall.allCases.first {
-            $0.category == "Short Pass" && $0.isInPlaybook(of: engine.playerOffensiveScheme)
+            $0.category == "Short Pass" && engine.playerHasInstalled($0)
         } ?? .slant
     }
 
     /// The playbook's base run (Inside Run whenever it's installed).
     private func installedRun() -> OffensivePlayCall {
-        if OffensivePlayCall.insideRun.isInPlaybook(of: engine.playerOffensiveScheme) {
+        if engine.playerHasInstalled(.insideRun) {
             return .insideRun
         }
         return OffensivePlayCall.allCases.first {
-            $0.category == "Run" && $0.isInPlaybook(of: engine.playerOffensiveScheme)
+            $0.category == "Run" && engine.playerHasInstalled($0)
         } ?? .insideRun
     }
 
@@ -1998,6 +2455,10 @@ struct CoachedGameView: View {
         guard !gameStarted else { return }
         gameStarted = true
 
+        // R34 audio: preload every SFX voice before the first snap and bring
+        // the stadium bed up under the opening kickoff.
+        AudioDirector.shared.startMatch(initialIntensity: crowdIntensity())
+
         // Scrimmage framing: the persisted Coach/Broadcast choice (billboard
         // numbers hide in the coach shot). No refocus yet — the opening
         // focusCamera below places the shot without animation.
@@ -2070,9 +2531,27 @@ struct CoachedGameView: View {
         proceed(after: 1.0)
     }
 
+    /// Situation-driven stadium loudness (0…1) for the crowd bed: a home
+    /// crowd runs hotter, a one-score fourth quarter and the red zone both
+    /// pull everyone off their seats. Presentation only.
+    private func crowdIntensity() -> Double {
+        var intensity = 0.4
+        if playerTeamIsHome { intensity += 0.08 }
+        let margin = abs(engine.homeScore - engine.awayScore)
+        if engine.quarter >= 4 && margin <= 8 {
+            intensity += 0.25          // one-score game in crunch time
+        } else if margin <= 4 {
+            intensity += 0.1           // tight game keeps the buzz up
+        }
+        if engine.yardLine >= 80 { intensity += 0.2 }  // red zone
+        return min(intensity, 1)
+    }
+
     /// Decides what happens after a play fully resolves.
     private func proceed(after delay: TimeInterval = 0.8) {
         guard !engine.isGameOver else {
+            // Final gun: the crowd settles under the overlay.
+            AudioDirector.shared.setCrowdIntensity(0.2)
             withAnimation(.easeInOut(duration: 0.3)) { showFinal = true }
             return
         }
@@ -2156,8 +2635,8 @@ struct CoachedGameView: View {
         huddleBreakTime = Date().addingTimeInterval(1.2)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             huddleBreakTime = nil
-            // The snap (or a skip) may already own the field again.
-            guard !isAnimating, !engine.isGameOver else { return }
+            // The snap (or a skip, or a running replay) may own the field.
+            guard !isAnimating, !isReplaying, !engine.isGameOver else { return }
             syncFieldToSituation()
         }
     }
@@ -2177,6 +2656,8 @@ struct CoachedGameView: View {
     /// pure presentation of the engine's kickoff draw.
     private func runKickoff(_ event: LiveGameEngine.KickoffEvent) {
         disarmPlayClock()
+        abortReplay()      // the boot owns the field; a stale replay yields
+        replayOffer = nil  // the offer never outlives the next live snap
         isAnimating = true
         let formation = PlayChoreographer.kickoffFormation(kickingTeamIsHome: event.kickingTeamIsHome)
         fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.7)
@@ -2198,6 +2679,13 @@ struct CoachedGameView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.15) {
             fieldScene.runPlay(steps: steps) {
                 isAnimating = false
+                if event.isReturnTouchdown {
+                    AudioDirector.shared.play(.tdHorn)
+                    AudioDirector.shared.play(.crowdSwell)
+                } else {
+                    AudioDirector.shared.play(.whistle)
+                }
+                AudioDirector.shared.setCrowdIntensity(crowdIntensity())
                 if event.isReturnTouchdown {
                     // Housed: camera to the end zone the returner reached.
                     let endzoneZ: Float = event.kickingTeamIsHome ? -50 : 50
@@ -2259,11 +2747,17 @@ struct CoachedGameView: View {
 
     /// Steps the engine one play and choreographs the result on the field.
     private func runPlay(offCall: OffensivePlayCall?, forcedType: PlayType?) {
-        guard !isAnimating, !engine.isGameOver else { return }
+        guard !isAnimating, !isReplaying, !engine.isGameOver else { return }
 
         // The snap commits the decision — the countdown ends here (a manual
-        // snap racing an in-flight auto call also invalidates it).
+        // snap racing an in-flight auto call also invalidates it). The
+        // instant-replay offer expires with it: the next play is the show now.
         disarmPlayClock()
+        replayOffer = nil
+        // R36: the pre-snap read and any open audible strips die at the snap.
+        coverageRead = nil
+        showAudibleStrip = false
+        showShellStrip = false
 
         let losYard = engine.yardLine
         let distanceBefore = engine.distance
@@ -2292,9 +2786,18 @@ struct CoachedGameView: View {
 
         // Both sides always play a real call: yours from the call sheet, the
         // AI's from its situational picker — so both formations mean something.
+        // A dialed shell audible (R36) rotates the coverage for THIS snap.
         let defPackage = engine.playerIsOnOffense
             ? engine.aiDefensivePackage()
-            : defCall.package
+            : effectiveDefensePackage
+        defShellOverride = nil  // consumed — the next snap plays the named call
+
+        // R36: the opponent occasionally sells its pre-rolled tendency
+        // counter as a line-of-scrimmage audible — feed line only, the
+        // counter itself was already in the package/call above.
+        if engine.pendingConversion == nil && forcedType == nil {
+            _ = engine.opponentAudibleFeedNote()
+        }
 
         // Capture the on-field units BEFORE the step: if this play knocks a
         // player out, the engine swaps his replacement in immediately, but
@@ -2374,6 +2877,15 @@ struct CoachedGameView: View {
                                                 call: animatedCall, defensivePackage: defPackage,
                                                 offenseSpeeds: fieldSpeeds(offUnit),
                                                 defenseSpeeds: fieldSpeeds(defUnit))
+            // R35: capture the deterministic timeline for replays — the
+            // recent buffer, the highlight reel and the instant offer.
+            recordPlay(steps: steps, play: play,
+                       formation: formation,
+                       stances: presnapStances, builds: presnapBuilds,
+                       losZ: playLosZ,
+                       firstDownZ: playGoalToGo ? nil : playLosZ + playDir * Float(distanceBefore),
+                       direction: playDir, matchups: matchups,
+                       offenseIsHome: offenseIsHome, offUnit: offUnit, defUnit: defUnit)
             // A flagged play gets the yellow laundry: the flag flies in while
             // the (wiped-out) snap plays out.
             if play.outcome == .penalty {
@@ -2391,6 +2903,21 @@ struct CoachedGameView: View {
     private func finishPlay(_ play: PlayResult, possessionBefore: Bool,
                             distanceBefore: Int = 99) {
         isAnimating = false
+
+        // R34 audio: the result stings — horn on six, whistle otherwise,
+        // and the crowd swells for scores and takeaways. The bed then
+        // re-levels to the new situation (red zone, crunch time).
+        if play.pointsScored >= 6 {
+            AudioDirector.shared.play(.tdHorn)
+            AudioDirector.shared.play(.crowdSwell)
+        } else {
+            AudioDirector.shared.play(.whistle)
+            if play.outcome == .fieldGoalGood || play.outcome == .twoPointGood
+                || play.isTurnover {
+                AudioDirector.shared.play(.crowdSwell)
+            }
+        }
+        AudioDirector.shared.setCrowdIntensity(crowdIntensity())
 
         // The back judge sells the result: touchdown arms for scores, the
         // downfield point when the play moved the chains.
@@ -2467,14 +2994,18 @@ struct CoachedGameView: View {
             // formation move (inside proceed) brings the replacement on.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.7) {
                 guard !isAnimating else { return }
+                if isReplaying { pendingProceedAfterReplay = true; return }
                 proceed(after: 0.9)
             }
         } else if play.scoringPlay || wasKick {
             proceed(after: play.scoringPlay ? 1.6 : 0.9)
         } else {
             // Let the pull-back breathe before the next formation forms up.
+            // A replay started in this window swallows the beat; the replay
+            // teardown runs it so the flow never stalls.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.05) {
                 guard !isAnimating else { return }
+                if isReplaying { pendingProceedAfterReplay = true; return }
                 proceed(after: 0.9)
             }
         }
@@ -2486,9 +3017,15 @@ struct CoachedGameView: View {
     private func skipDrive() {
         guard !engine.isGameOver, !engine.playerIsOnOffense else { return }
         disarmPlayClock() // skipping bypasses the clock; proceed() re-arms it
+        abortReplay()     // a running replay yields; the skip owns the field
+        replayOffer = nil
         fieldScene.cancelPlay()
         isAnimating = false
         var safety = 0
+        // A dialed shell audible covers the first skipped snap, then the
+        // named call stands for the rest of the drive (R36).
+        var skipPackage = effectiveDefensePackage
+        defShellOverride = nil
         // Stop at the break too — the halftime report must not be skipped
         // past when the opponent's drive ends the half.
         while !engine.playerIsOnOffense && !engine.isGameOver
@@ -2496,7 +3033,8 @@ struct CoachedGameView: View {
             // The adaptive AI keeps exploiting the standing defensive call
             // inside a skipped drive too (nil = base logic, as before).
             engine.step(offensiveCall: engine.aiOffensiveCall(),
-                        defensivePackage: defCall.package)
+                        defensivePackage: skipPackage)
+            skipPackage = defCall.package
             safety += 1
         }
         syncFieldToSituation()
@@ -2513,6 +3051,8 @@ struct CoachedGameView: View {
     private func simToEnd() {
         guard !engine.isGameOver else { return }
         disarmPlayClock()
+        abortReplay()
+        replayOffer = nil
         fieldScene.cancelPlay()
         isAnimating = false
         engine.simToEnd()
@@ -2527,7 +3067,8 @@ struct CoachedGameView: View {
         let formation = PlayChoreographer.formation(
             for: .run,
             call: engine.playerIsOnOffense ? (selectedCall ?? cachedSuggestion) : nil,
-            defensivePackage: engine.playerIsOnOffense ? engine.aiDefensivePackage() : defCall.package,
+            defensivePackage: engine.playerIsOnOffense
+                ? engine.aiDefensivePackage() : effectiveDefensePackage,
             losZ: losZ, direction: engine.homeHasPossession ? 1 : -1,
             offenseNumbers: engine.currentOffenseUnit.numbers,
             defenseNumbers: engine.currentDefenseUnit.numbers
@@ -2568,7 +3109,7 @@ struct CoachedGameView: View {
     /// mid-huddle the preview waits — the scheduled break applies the newest
     /// call anyway.
     private func previewFormation() {
-        guard gameStarted, !isAnimating, !engine.isGameOver else { return }
+        guard gameStarted, !isAnimating, !isReplaying, !engine.isGameOver else { return }
         if let breakTime = huddleBreakTime, breakTime > Date() { return }
         syncFieldToSituation()
     }
@@ -2670,6 +3211,222 @@ struct CoachedGameView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
             if possessionBanner == text { possessionBanner = nil }
         }
+    }
+
+    // MARK: - Replays & Highlights (R35)
+
+    /// Captures a snap's deterministic choreography for replay. Every play
+    /// lands in the small recent buffer; reel-worthy plays join the game's
+    /// highlight candidates; and a big finish (TD / turnover / 20+ yards)
+    /// arms the instant REPLAY offer next to the result banner.
+    private func recordPlay(steps: [FootballFieldScene.PlayStep], play: PlayResult,
+                            formation: (home: [(x: Float, z: Float, number: Int)],
+                                        away: [(x: Float, z: Float, number: Int)]),
+                            stances: (home: [Int: FootballFieldScene.Stance],
+                                      away: [Int: FootballFieldScene.Stance]),
+                            builds: (home: [Int: FootballFieldScene.BodyType],
+                                     away: [Int: FootballFieldScene.BodyType]),
+                            losZ: Float, firstDownZ: Float?, direction: Float,
+                            matchups: PlayMatchups?, offenseIsHome: Bool,
+                            offUnit: FieldUnit, defUnit: FieldUnit) {
+        let recorded = RecordedPlay(
+            sequence: play.playNumber,
+            steps: steps,
+            formationHome: formation.home, formationAway: formation.away,
+            stancesHome: stances.home, stancesAway: stances.away,
+            bodyTypesHome: builds.home, bodyTypesAway: builds.away,
+            losZ: losZ, firstDownZ: firstDownZ, direction: direction,
+            isTouchdown: play.pointsScored >= 6,
+            keyDefenderNode: keyDefenderNode(matchups: matchups, offenseIsHome: offenseIsHome),
+            title: replayTitle(for: play, offense: offUnit, defense: defUnit),
+            highlightScore: highlightScore(for: play)
+        )
+        recentReplays.append(recorded)
+        if recentReplays.count > 5 { recentReplays.removeFirst() }
+        if recorded.highlightScore > 0 {
+            highlightReel.append(recorded)
+            // Keep the reel light: past a dozen candidates, the weakest drops.
+            if highlightReel.count > 12,
+               let weakest = highlightReel.indices.min(by: {
+                   highlightReel[$0].highlightScore < highlightReel[$1].highlightScore
+               }) {
+                highlightReel.remove(at: weakest)
+            }
+        }
+        // Only scrimmage fireworks arm the offer — a long punt or kickoff
+        // travels 20+ yards without being anyone's highlight (and the low
+        // sideline rig would just stare at the sky chasing the kick).
+        let chunkFromScrimmage = play.yardsGained >= 20
+            && (play.outcome == .rush || play.outcome == .completion)
+        if play.pointsScored >= 6 || play.isTurnover || chunkFromScrimmage {
+            replayOffer = recorded
+        }
+    }
+
+    /// Reel weight: touchdowns top the bill, turnovers next, then a 4th-down
+    /// sack and chunk gains. 0 = not reel material.
+    private func highlightScore(for play: PlayResult) -> Int {
+        if play.pointsScored >= 6 { return 100 + max(play.yardsGained, 0) }
+        if play.isTurnover { return 80 + max(play.yardsGained, 0) }
+        if play.down == 4 && play.outcome == .sack { return 70 }
+        if play.yardsGained >= 25 && (play.outcome == .rush || play.outcome == .completion) {
+            return 40 + play.yardsGained
+        }
+        return 0
+    }
+
+    /// Short broadcast plate for a recorded play: "Q2 — M. Dixon 34 yd TD".
+    private func replayTitle(for play: PlayResult, offense: FieldUnit, defense: FieldUnit) -> String {
+        let quarter = play.quarter >= 5 ? "OT" : "Q\(play.quarter)"
+        let keyOff = offense.players.first { $0.id == play.keyOffensePlayerID }?.shortName
+        let keyDef = defense.players.first { $0.id == play.keyDefensePlayerID }?.shortName
+        let line: String
+        if play.pointsScored >= 6 {
+            line = "\(keyOff.map { "\($0) " } ?? "")\(max(play.yardsGained, 1)) yd TD"
+        } else if play.outcome == .interception {
+            line = keyDef.map { "INT \($0)" } ?? "Interception"
+        } else if play.outcome == .fumbleLost || play.outcome == .fumble {
+            line = "Fumble"
+        } else if play.outcome == .sack {
+            line = play.down == 4 ? "4th-down sack" : (keyDef.map { "Sack by \($0)" } ?? "Sack")
+        } else if play.playType == .punt {
+            line = "\(max(play.yardsGained, 0)) yd punt"
+        } else if play.outcome == .penalty {
+            line = "Penalty"
+        } else {
+            line = "\(keyOff.map { "\($0) " } ?? "")\(play.yardsGained) yd gain"
+        }
+        return "\(quarter) — \(line)"
+    }
+
+    /// Scene node index of the defense's key man for the isolation camera:
+    /// the intercepting DB when there is one, else the named defender on the
+    /// play's most decisive battle (winner or loser — both tell the story).
+    private func keyDefenderNode(matchups: PlayMatchups?, offenseIsHome: Bool) -> Int? {
+        guard let matchups else { return nil }
+        let dBase = offenseIsHome ? 11 : 0
+        if let pick = matchups.pickDefRole { return dBase + pick }
+        let named = matchups.events.filter { $0.defRole != nil }
+        guard let key = named.max(by: { $0.magnitude < $1.magnitude }),
+              let role = key.defRole else { return nil }
+        return dBase + role
+    }
+
+    /// Restages a recorded play and runs its exact steps under the replay
+    /// camera with a light slow-mo. Pure presentation: the engine never
+    /// steps, and the decision clock is frozen for the duration.
+    private func startReplay(_ replay: RecordedPlay, angle: FootballFieldScene.ReplayAngle) {
+        guard !isAnimating, !isReplaying else { return }
+        replayGeneration += 1
+        let generation = replayGeneration
+        isReplaying = true
+        activeReplay = replay
+        replayAngle = angle
+        huddleBreakTime = nil
+        // Same scene, no second instance: cancel whatever the field was
+        // doing and walk everyone back to the play's pre-snap spots.
+        fieldScene.cancelPlay()
+        fieldScene.movePlayersToFormation(
+            home: replay.formationHome, away: replay.formationAway, duration: 0.45,
+            stancesHome: replay.stancesHome, stancesAway: replay.stancesAway,
+            bodyTypesHome: replay.bodyTypesHome, bodyTypesAway: replay.bodyTypesAway)
+        fieldScene.updateMarkers(losZ: replay.losZ, firstDownZ: replay.firstDownZ,
+                                 offenseDirection: replay.direction)
+        fieldScene.moveBall(to: SCNVector3(0, 0.26, replay.losZ))
+        fieldScene.beginReplayCamera(angle: angle, losZ: replay.losZ,
+                                     direction: replay.direction)
+        // Replay-truck slow-mo; the live 1x/2x choice comes back at teardown.
+        fieldScene.playbackSpeed = 0.7
+        // The restage window mirrors the live pre-snap beat (formation move
+        // + staggered breaks + stance settle) before the ball goes off.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.15) {
+            guard isReplaying, replayGeneration == generation else { return }
+            fieldScene.runPlay(steps: replay.steps) {
+                guard replayGeneration == generation else { return }
+                // Hold the final frame a beat before handing the field back.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    guard replayGeneration == generation else { return }
+                    replayFinished()
+                }
+            }
+        }
+    }
+
+    /// Cuts the running replay to a different camera angle (HUD chips) —
+    /// the timeline keeps playing, only the shot changes.
+    private func setReplayAngle(_ angle: FootballFieldScene.ReplayAngle) {
+        guard isReplaying, let replay = activeReplay else { return }
+        replayAngle = angle
+        fieldScene.beginReplayCamera(angle: angle, losZ: replay.losZ,
+                                     direction: replay.direction)
+    }
+
+    /// Tears down the running replay (camera, slow-mo, stale steps) and
+    /// decides what the field shows next: the next reel item, the final
+    /// overlay, or the live game restaged exactly where it left off.
+    private func replayFinished() {
+        guard isReplaying else { return }
+        replayGeneration += 1
+        isReplaying = false
+        activeReplay = nil
+        fieldScene.cancelPlay()
+        fieldScene.playbackSpeed = playbackSpeedRaw
+        fieldScene.endReplayCamera()
+
+        // Highlight reel: play the next item, or return to the final overlay.
+        if reelActive {
+            if !replayQueue.isEmpty {
+                let next = replayQueue.removeFirst()
+                // A small beat between items so the restage reads as a cut.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    guard reelActive, !isReplaying else { return }
+                    startReplay(next, angle: next.isTouchdown ? .endZone : .sideline)
+                }
+            } else {
+                reelActive = false
+                fieldScene.updateMarkers(losZ: nil, firstDownZ: nil)
+                withAnimation(.easeInOut(duration: 0.3)) { showFinal = true }
+            }
+            return
+        }
+
+        // Live game: run the post-play beat the replay swallowed (it lines
+        // the teams up itself), or just restage the current situation.
+        if pendingProceedAfterReplay {
+            pendingProceedAfterReplay = false
+            proceed(after: 0.4)
+        } else {
+            syncFieldToSituation()
+        }
+    }
+
+    /// Kills a running replay without restaging the field — the caller
+    /// (drive skip, sim-to-final, kickoff) owns the field state next.
+    private func abortReplay() {
+        guard isReplaying else { return }
+        replayGeneration += 1
+        isReplaying = false
+        activeReplay = nil
+        pendingProceedAfterReplay = false
+        replayQueue.removeAll()
+        reelActive = false
+        fieldScene.playbackSpeed = playbackSpeedRaw
+        fieldScene.endReplayCamera()
+    }
+
+    /// "Watch highlights": the game's 3-5 biggest recorded plays back to
+    /// back under the replay camera, each with its title plate. Skip
+    /// advances one item; Skip all returns straight to the final overlay.
+    private func startHighlightReel() {
+        let top = highlightReel
+            .sorted { $0.highlightScore > $1.highlightScore }
+            .prefix(5)
+            .sorted { $0.sequence < $1.sequence }
+        guard let first = top.first else { return }
+        replayQueue = Array(top.dropFirst())
+        reelActive = true
+        withAnimation(.easeInOut(duration: 0.3)) { showFinal = false }
+        startReplay(first, angle: first.isTouchdown ? .endZone : .sideline)
     }
 }
 

@@ -94,6 +94,11 @@ class FootballFieldScene: SCNScene {
         /// 22 never fire in lockstep. Small (≤0.3 s); a late mover simply
         /// bleeds into the next step, where his next move takes over.
         var startDelays: [Int: TimeInterval] = [:]
+        /// Explicit SFX cue fired when the step begins (kick thumps, long
+        /// snaps). Snap/hit/catch sounds are derived automatically from the
+        /// step's ball move and contact lists — this slot is for beats the
+        /// scene can't infer.
+        var sound: MatchSound? = nil
     }
 
     /// How a receiver plays the ball at the catch point.
@@ -249,6 +254,9 @@ class FootballFieldScene: SCNScene {
     /// stays parked so the ball arcs toward the lens. Any `focusCamera` call
     /// hands the shot back.
     private var kickCameraActive = false
+    /// The camera's aim constraint, kept so the replay camera can restore it
+    /// after swapping in its per-frame follower constraints.
+    private var cameraLookAtConstraint: SCNLookAtConstraint?
 
     // MARK: Camera style
 
@@ -829,6 +837,9 @@ class FootballFieldScene: SCNScene {
     /// during the play inherit the override via `currentShotStyle`.
     func focusCamera(z: Float, animated: Bool = true, duration: TimeInterval = 0.8,
                      pushIn: Bool = false, style styleOverride: CameraStyle? = nil) {
+        // A running replay owns the shot outright — scripted refocuses (and
+        // the follow-cam) resume once endReplayCamera() hands it back.
+        guard !replayCameraActive else { return }
         kickCameraActive = false
         cameraNode.removeAction(forKey: "pushIn")
         let clampedZ = max(-45, min(45, z))
@@ -958,7 +969,7 @@ class FootballFieldScene: SCNScene {
     /// No-op in broadcast framing (already wide) and while a kick shot or a
     /// scoring refocus owns the camera.
     func pullBackAfterPlay(duration: TimeInterval = 1.0) {
-        guard currentShotStyle == .coach, !kickCameraActive else { return }
+        guard currentShotStyle == .coach, !kickCameraActive, !replayCameraActive else { return }
         cameraNode.removeAction(forKey: "pushIn")
         let cam = cameraNode.position
         let aim = cameraTargetNode.position
@@ -969,6 +980,117 @@ class FootballFieldScene: SCNScene {
         move.timingMode = .easeInEaseOut
         // Same action key as the focus move so the next focus replaces it.
         cameraNode.runAction(move, forKey: "focus")
+    }
+
+    // MARK: - Replay Camera (R35)
+
+    /// Camera angles for the instant-replay presentation. The choreography
+    /// steps are deterministic, so a replay is just the same timeline run
+    /// again — these shots make it read as NEW footage: per-frame follower
+    /// constraints ease the aim point onto the ball (or an isolated
+    /// defender), replay-truck style, instead of the scripted focus pans.
+    enum ReplayAngle: Equatable {
+        /// Low shot from the near rail that slides along the field with the
+        /// ball — the classic sideline replay angle.
+        case sideline
+        /// Parked low behind the end zone the offense attacks — touchdowns
+        /// fly straight at the lens.
+        case endZone
+        /// Isolation on the defense's key man of the play (matchup
+        /// winner/loser): the camera trails him from behind the defense so
+        /// his read-and-react tells the story of the snap.
+        case isolateDefense(nodeIndex: Int)
+    }
+
+    /// While true the replay presentation owns the shot: `focusCamera` (and
+    /// with it the in-play follow-cam and every scripted refocus) stands
+    /// down until `endReplayCamera()` hands the field back.
+    private(set) var replayCameraActive = false
+
+    /// Installs the replay shot: parks the camera at the angle's vantage
+    /// point and swaps in per-frame constraints that chase the story —
+    /// the camera target eases onto the ball/defender every rendered frame
+    /// (trailing smoothing, no hard cuts mid-play), and the sideline/iso
+    /// bodies slide to keep the action in frame. Call again mid-replay to
+    /// cut to a different angle; the constraints simply reinstall.
+    func beginReplayCamera(angle: ReplayAngle, losZ: Float, direction: Float) {
+        replayCameraActive = true
+        kickCameraActive = false
+        cameraNode.removeAction(forKey: "pushIn")
+        cameraNode.removeAction(forKey: "focus")
+        cameraTargetNode.removeAction(forKey: "focus")
+
+        // Slight tele from the rail; the end zone keeps a normal lens so the
+        // whole goal-line picture fits.
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = 0.3
+        cameraNode.camera?.fieldOfView = angle == .endZone ? 50 : 44
+        SCNTransaction.commit()
+
+        // What the shot follows: the ball, or the isolated defender.
+        let storyPoint: () -> SCNVector3?
+        switch angle {
+        case .sideline, .endZone:
+            storyPoint = { [weak self] in self?.ballNode.presentation.worldPosition }
+        case .isolateDefense(let index):
+            storyPoint = { [weak self] in self?.playerNode(at: index)?.presentation.worldPosition }
+        }
+        let aim = SCNTransformConstraint.positionConstraint(inWorldSpace: true) { _, position in
+            guard let goal = storyPoint() else { return position }
+            return SCNVector3(position.x + (goal.x - position.x) * 0.14,
+                              position.y + (goal.y + 0.3 - position.y) * 0.14,
+                              position.z + (goal.z - position.z) * 0.14)
+        }
+        cameraTargetNode.constraints = [aim]
+        cameraTargetNode.position = SCNVector3(0, 0.9, losZ)
+
+        guard let lookAt = cameraLookAtConstraint else { return }
+        switch angle {
+        case .sideline:
+            // Near rail, low, level with the LOS; the body slides along Z
+            // with the ball while X/Y stay parked (the bump can still dip Y).
+            cameraNode.position = SCNVector3(-27.5, 3.2, max(-58, min(58, losZ)))
+            let slide = SCNTransformConstraint.positionConstraint(inWorldSpace: true) {
+                [weak self] _, position in
+                guard let self else { return position }
+                let ballZ = max(-58, min(58, self.ballNode.presentation.worldPosition.z))
+                return SCNVector3(position.x, position.y,
+                                  position.z + (ballZ - position.z) * 0.08)
+            }
+            cameraNode.constraints = [slide, lookAt]
+        case .endZone:
+            // Behind the goal line the offense attacks, looking back upfield.
+            cameraNode.position = SCNVector3(0, 5.0, direction * 63)
+            cameraNode.constraints = [lookAt]
+        case .isolateDefense(let index):
+            let man = playerNode(at: index)?.presentation.worldPosition
+                ?? SCNVector3(0, 1, losZ + direction * 8)
+            cameraNode.position = SCNVector3(man.x * 0.7, 3.6,
+                                             max(-58, min(58, man.z + direction * 12)))
+            let trail = SCNTransformConstraint.positionConstraint(inWorldSpace: true) {
+                [weak self] _, position in
+                guard let self, let spot = self.playerNode(at: index)?.presentation.worldPosition
+                else { return position }
+                let goalX = max(-24, min(24, spot.x * 0.7))
+                let goalZ = max(-58, min(58, spot.z + direction * 12))
+                return SCNVector3(position.x + (goalX - position.x) * 0.07,
+                                  position.y,
+                                  position.z + (goalZ - position.z) * 0.07)
+            }
+            cameraNode.constraints = [trail, lookAt]
+        }
+    }
+
+    /// Removes the replay follower constraints and hands the camera back to
+    /// the normal focus machinery. The caller refocuses (`focusCamera` /
+    /// pre-snap sync) — this only restores the plain look-at rig.
+    func endReplayCamera() {
+        guard replayCameraActive else { return }
+        replayCameraActive = false
+        cameraTargetNode.constraints = nil
+        if let lookAt = cameraLookAtConstraint {
+            cameraNode.constraints = [lookAt]
+        }
     }
 
     /// Playback rate for play timelines (the HUD's 1x/2x button): 2 halves
@@ -1010,6 +1132,7 @@ class FootballFieldScene: SCNScene {
         cancelPlay()
         // The snap kills the pre-snap push-in; the follow-cam owns the shot now.
         cameraNode.removeAction(forKey: "pushIn")
+        pendingCatchNodes = []
         let generation = playGeneration
 
         let rate = min(max(playbackSpeed, 0.5), 4)
@@ -1883,9 +2006,47 @@ class FootballFieldScene: SCNScene {
         return duration
     }
 
+    /// Receivers whose hands went up under a live arc: when the very next
+    /// ball attachment lands on one of them, that beat IS the catch and the
+    /// catch-pop cue fires (completions, picks, kickoff fields — never an
+    /// incompletion, whose arc dies into a slide instead).
+    private var pendingCatchNodes: Set<Int> = []
+
+    /// Fires the SFX a step implies — the explicit cue slot plus contact
+    /// sounds derived from the ball move and the tackle/catch lists. Kept
+    /// out of `execute` proper so the animation path stays readable.
+    private func playStepAudio(_ step: PlayStep) {
+        if let cue = step.sound { AudioDirector.shared.play(cue) }
+        // Contact: one thud per contact beat (gang tackles share it); a big
+        // hit hits harder and pulls the crowd up with the camera bump.
+        if !step.bigHits.isEmpty {
+            AudioDirector.shared.play(.hitBig)
+            AudioDirector.shared.play(.crowdSwell)
+        } else if !step.falls.isEmpty || !step.wraps.isEmpty || !step.diveFalls.isEmpty {
+            AudioDirector.shared.play(.hitLight)
+        }
+        switch step.ballMove {
+        case .snap:
+            AudioDirector.shared.play(.snap)
+            pendingCatchNodes = []
+        case .arc:
+            pendingCatchNodes = Set(step.reaches)
+        case .carry(let nodeIndex), .carryChest(let nodeIndex):
+            if pendingCatchNodes.contains(nodeIndex) {
+                AudioDirector.shared.play(.catchPop)
+            }
+            pendingCatchNodes = []
+        case .slide:
+            pendingCatchNodes = []
+        case nil:
+            break
+        }
+    }
+
     /// Kicks off everything inside a single step: player moves, pulses, falls,
     /// reaches, celebrations, ball behavior — plus the follow-cam on long carries.
     private func execute(step: PlayStep) {
+        playStepAudio(step)
         // Staggered get-offs: a node with a reaction delay launches its move
         // a beat late (dies with the play generation like every queued beat).
         let generation = playGeneration
@@ -1971,7 +2132,8 @@ class FootballFieldScene: SCNScene {
             }
             // Follow-cam: when the carrier breaks well past the current frame,
             // pan downfield with him so long gains don't run out of shot.
-            if !kickCameraActive,
+            // (A replay's constraint-driven camera tracks the ball itself.)
+            if !kickCameraActive, !replayCameraActive,
                let move = step.moves.first(where: { $0.nodeIndex == nodeIndex }),
                abs(move.to.z - focusZ) > followTriggerDistance {
                 followCamera(toZ: move.to.z, stepDuration: move.duration)
@@ -1980,7 +2142,8 @@ class FootballFieldScene: SCNScene {
             runSnapExchange(to: toNodeIndex, shotgun: shotgun)
         case .arc(let to, let apex, let duration):
             runBallArc(to: to, apex: apex, duration: duration)
-            if !kickCameraActive, abs(to.z - focusZ) > followTriggerDistance {
+            if !kickCameraActive, !replayCameraActive,
+               abs(to.z - focusZ) > followTriggerDistance {
                 followCamera(toZ: to.z, stepDuration: duration)
             }
         case .slide(let to, let duration):
@@ -3569,6 +3732,7 @@ class FootballFieldScene: SCNScene {
 
         let lookAtConstraint = SCNLookAtConstraint(target: cameraTargetNode)
         lookAtConstraint.isGimbalLockEnabled = true
+        cameraLookAtConstraint = lookAtConstraint
         cameraNode.constraints = [lookAtConstraint]
 
         rootNode.addChildNode(cameraNode)

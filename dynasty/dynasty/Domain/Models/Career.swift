@@ -174,6 +174,21 @@ final class Career {
     /// Optional new attribute → lightweight migration.
     var breakoutCountsData: Data? = nil
 
+    // MARK: - Weekly Practice Play (R36)
+    /// Raw `OffensivePlayCall` the team drills in practice this week. After
+    /// enough practice weeks the play installs into the call sheet for the
+    /// season. `nil` = nothing queued. Optional attribute → light migration.
+    var weeklyPracticePlayRaw: String? = nil
+    /// Practice weeks already banked on `weeklyPracticePlayRaw` (an expert OC
+    /// installs in 1 week, otherwise 2). Default → lightweight migration.
+    var weeklyPracticeWeeksDone: Int = 0
+    /// Raw `OffensivePlayCall` values installed through practice — valid for
+    /// `bonusInstalledSeason` only. Default → lightweight migration.
+    var bonusInstalledPlaysRaw: [String] = []
+    /// The season `bonusInstalledPlaysRaw` belongs to; a new season starts
+    /// from an empty practiced playbook. Default → lightweight migration.
+    var bonusInstalledSeason: Int = 0
+
     // MARK: - Locker Room (R25)
     /// JSON-encoded `[LockerRoomEvent]` — resolved locker-room happenings,
     /// newest first, capped at 12. Optional new attribute → lightweight migration.
@@ -497,6 +512,42 @@ extension Career {
         set {
             breakoutCountsData = newValue.flatMap { try? JSONEncoder().encode($0) }
         }
+    }
+}
+
+// MARK: - Weekly Practice Play Bridge (R36)
+
+extension Career {
+
+    /// The play being drilled in practice this week, or `nil`. Setting a new
+    /// play resets the banked weeks (caller saves the context).
+    var weeklyPracticePlay: OffensivePlayCall? {
+        get { weeklyPracticePlayRaw.flatMap(OffensivePlayCall.init(rawValue:)) }
+        set {
+            weeklyPracticePlayRaw = newValue?.rawValue
+            weeklyPracticeWeeksDone = 0
+        }
+    }
+
+    /// Plays installed through practice for the CURRENT season. A stale
+    /// season's payload reads as empty (the write path resets it).
+    var bonusInstalledPlays: [OffensivePlayCall] {
+        guard bonusInstalledSeason == currentSeason else { return [] }
+        return bonusInstalledPlaysRaw.compactMap(OffensivePlayCall.init(rawValue:))
+    }
+
+    /// Installs a practiced play into this season's bonus playbook and clears
+    /// the practice slot (caller saves the context).
+    func installPracticedPlay(_ play: OffensivePlayCall) {
+        if bonusInstalledSeason != currentSeason {
+            bonusInstalledPlaysRaw = []
+            bonusInstalledSeason = currentSeason
+        }
+        if !bonusInstalledPlaysRaw.contains(play.rawValue) {
+            bonusInstalledPlaysRaw.append(play.rawValue)
+        }
+        weeklyPracticePlayRaw = nil
+        weeklyPracticeWeeksDone = 0
     }
 }
 

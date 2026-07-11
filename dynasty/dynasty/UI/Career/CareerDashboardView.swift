@@ -316,6 +316,14 @@ struct CareerDashboardView: View {
                 weather: GameWeather.forGame(id: session.game.id, week: session.game.week),
                 // R19: playoff framing (PLAYOFFS badge, win-or-go-home copy).
                 isPlayoff: session.game.isPlayoff,
+                // R36: plays installed through weekly practice widen the sheet.
+                bonusPlays: Set(career.bonusInstalledPlays),
+                onPracticeRequest: { play in
+                    // "Practice this" from a dimmed call-sheet card: queue the
+                    // play as the week's drill (replaces any previous pick).
+                    career.weeklyPracticePlay = play
+                    try? modelContext.save()
+                },
                 onFinish: { engine in
                     finishCoachedGame(engine: engine, game: session.game)
                 }

@@ -181,6 +181,75 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
         return schemes.contains(scheme)
     }
 
+    // MARK: Formation Family (R36 audibles)
+
+    /// Pre-snap alignment families, mirroring the call-driven alignment
+    /// switch in `PlayChoreographer.offensePositions` exactly. An audible can
+    /// only check into a play from the SAME family — the offense is already
+    /// lined up in that look, so the swap needs no re-alignment.
+    enum FormationFamily: String {
+        case iForm       // QB under center, back deep downhill
+        case stretch     // sprint flow to the edge
+        case backfield   // deep gun set, back beside the QB
+        case quick       // wide splits, three-step timing
+        case crossSet    // slot flipped right for the crossers
+        case spreadDeep  // maximum width, everyone vertical
+        case baseGun     // the standard shotgun look
+        case special     // spike/kneel — never audibled into or out of
+    }
+
+    /// The alignment family this call snaps from (see `FormationFamily`).
+    var formationFamily: FormationFamily {
+        switch self {
+        case .insideRun, .qbSneak, .dive:                       return .iForm
+        case .outsideRun, .jetSweep:                            return .stretch
+        case .draw, .screen:                                    return .backfield
+        case .slant, .quickOut, .flat, .drag, .stick, .mesh:    return .quick
+        case .cross:                                            return .crossSet
+        case .goRoute, .post, .corner, .bomb, .playActionDeep:  return .spreadDeep
+        case .spike, .kneel:                                    return .special
+        default:                                                return .baseGun
+        }
+    }
+
+    /// The plays this call can audible into: same formation family, installed
+    /// per the caller's check, never itself and never a special. Order is the
+    /// declaration order of the call sheet.
+    func audibleOptions(installed: (OffensivePlayCall) -> Bool) -> [OffensivePlayCall] {
+        guard formationFamily != .special else { return [] }
+        return OffensivePlayCall.allCases.filter {
+            $0 != self && $0.formationFamily == formationFamily && installed($0)
+        }
+    }
+
+    /// Whether this play historically fares well against the given coverage
+    /// shell — the ✓ tag on the audible strip. Pure pre-snap information for
+    /// the coach (fed by the QB's coverage read); the sim never reads it.
+    func goodAgainst(_ coverage: DefensivePlayCall) -> Bool {
+        switch coverage {
+        case .manToMan:
+            // Rubs and crossers shake man coverage.
+            return [.drag, .mesh, .cross, .slant, .wheel, .jetSweep].contains(self)
+        case .cover1:
+            // Attack the lone deep safety.
+            return [.post, .goRoute, .bomb, .playActionDeep, .cross].contains(self)
+        case .cover2:
+            // The seams and the deep middle split a two-high shell.
+            return [.seam, .post, .dig, .corner, .cross].contains(self)
+        case .cover3:
+            // Out-breaking timing throws beat the three-deep zone.
+            return [.quickOut, .flat, .comeback, .curl, .stick].contains(self)
+        case .cover4:
+            // Quarters gives the ground game and the flats away.
+            return [.insideRun, .outsideRun, .counter, .toss, .flat, .drag].contains(self)
+        case .prevent:
+            // Take the free underneath yards.
+            return [.slant, .hitch, .drag, .screen, .draw, .insideRun].contains(self)
+        default:
+            return false
+        }
+    }
+
     // MARK: Simulator Hint
 
     /// A lightweight struct the `PlaySimulator` reads to adjust probabilities.
@@ -405,6 +474,23 @@ enum DefensivePlayCall: String, Codable, CaseIterable {
         case .dime:       return -0.10
         case .bear:       return 0.14    // 46-style front swallows interior runs
         case .goalLine:   return 0.18
+        }
+    }
+
+    // MARK: Shell Audibles (R36)
+
+    /// The coverage shells a defensive audible can rotate into at the line
+    /// (prevent stays a situational call — never an audible target).
+    static let audibleShells: [DefensivePlayCall] = [
+        .cover1, .cover2, .cover3, .cover4, .manToMan
+    ]
+
+    /// Short chip label for the shell-audible strip.
+    var shellShortLabel: String {
+        switch self {
+        case .manToMan: return "Man"
+        case .cover4:   return "Quarters"
+        default:        return rawValue
         }
     }
 

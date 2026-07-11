@@ -458,7 +458,11 @@ struct CareerShellView: View {
                     refreshTaskCompletionStatus()
                 }
         case .gamePlan:
-            GamePlanView(gamePlan: gamePlanBinding, context: gamePlanContext)
+            GamePlanView(
+                gamePlan: gamePlanBinding,
+                context: gamePlanContext,
+                practice: gamePlanPracticeContext
+            )
                 .onAppear {
                     markTaskVisited(for: .gamePlan)
                     refreshTaskCompletionStatus()
@@ -670,6 +674,29 @@ struct CareerShellView: View {
         }
 
         return ctx
+    }
+
+    /// R36: the practice-play card's data — current drill, banked weeks, and
+    /// how fast the OC installs (expert = 1 week, otherwise 2). Selecting a
+    /// play (or cancelling) persists straight onto the career.
+    private var gamePlanPracticeContext: GamePlanView.PracticeContext? {
+        guard let teamID = career.teamID else { return nil }
+        let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
+        let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
+        let oc = coaches.first { $0.role == .offensiveCoordinator }
+        let scheme = oc?.offensiveScheme
+        let expertise = scheme.map { oc?.expertise(for: $0.rawValue) ?? 20 } ?? 20
+        return GamePlanView.PracticeContext(
+            scheme: scheme,
+            currentPlay: career.weeklyPracticePlay,
+            weeksDone: career.weeklyPracticeWeeksDone,
+            weeksRequired: expertise >= 75 ? 1 : 2,
+            installedThisSeason: career.bonusInstalledPlays,
+            onSelect: { play in
+                career.weeklyPracticePlay = play
+                try? modelContext.save()
+            }
+        )
     }
 
     /// Buckets a defensive unit's average overall into weak / average / strong.

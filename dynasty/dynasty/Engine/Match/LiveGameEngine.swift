@@ -954,6 +954,19 @@ final class LiveGameEngine: ObservableObject {
     /// for the opponent is never affected.
     private let playerGamePlan: GamePlan?
 
+    // MARK: - Practiced Playbook Additions (R36)
+
+    /// Plays the user's team installed through weekly practice this season,
+    /// on top of the scheme playbook. Empty = today's exact behavior. They
+    /// only widen the PLAYER's own call sheet — the AI never reads them.
+    let playerBonusPlays: Set<OffensivePlayCall>
+
+    /// Whether the given play is on the player's installed call sheet: in
+    /// the scheme playbook, or added through weekly practice (R36).
+    func playerHasInstalled(_ play: OffensivePlayCall) -> Bool {
+        play.isInPlaybook(of: playerOffensiveScheme) || playerBonusPlays.contains(play)
+    }
+
     // MARK: - Simulation State
 
     private var homePlayers: [SimPlayer]
@@ -1003,7 +1016,8 @@ final class LiveGameEngine: ObservableObject {
         playerTeamIsHome: Bool,
         audibleBoost: Double = 0,
         defReadBoost: Double = 0,
-        weather: GameWeather? = nil
+        weather: GameWeather? = nil,
+        playerBonusPlays: Set<OffensivePlayCall> = []
     ) {
         homeTeamID = homeTeam.id
         awayTeamID = awayTeam.id
@@ -1011,6 +1025,7 @@ final class LiveGameEngine: ObservableObject {
         self.audibleBoost = max(0.0, min(0.20, audibleBoost))
         self.defReadBoost = max(0.0, min(0.15, defReadBoost))
         self.weather = weather
+        self.playerBonusPlays = playerBonusPlays
 
         // Consume the game-plan hand-off (see `pendingPlayerGamePlan`).
         self.playerGamePlan = LiveGameEngine.pendingPlayerGamePlan
@@ -1560,6 +1575,40 @@ final class LiveGameEngine: ObservableObject {
                 scheme: playerTeamIsHome ? awayOffScheme : homeOffScheme
             )
             : nil
+    }
+
+    // MARK: - Opponent Audibles (R36, live only, presentation only)
+
+    /// When the AI's pre-rolled tendency counter is live for this snap, the
+    /// coordinator occasionally sells it as a line-of-scrimmage audible — a
+    /// feed line only. The counter itself (already folded into
+    /// `aiDefensivePackage()` / `aiOffensiveCall()`) is untouched, so this
+    /// changes nothing about the play; it just tells the story at the line.
+    /// Aggressive DCs check more often. Call once per snap from the live
+    /// view, right before the step; never fires in nil-argument games.
+    func opponentAudibleFeedNote() -> String? {
+        guard !isGameOver else { return nil }
+        if playerIsOnOffense {
+            guard pendingDefenseCounter != nil else { return nil }
+            let chance: Double
+            switch opponentDCPersona {
+            case .aggressive:   chance = 0.35
+            case .exotic:       chance = 0.25
+            case .balanced:     chance = 0.15
+            case .conservative: chance = 0.08
+            }
+            guard Double.random(in: 0..<1) < chance else { return nil }
+            let text = "Audible — \(opponentAbbreviation) rotates the shell at the line"
+            postFeedNote(text)
+            return text
+        } else {
+            guard pendingOffenseCounter != nil else { return nil }
+            guard Double.random(in: 0..<1) < 0.20 else { return nil }
+            let qbName = (playerTeamIsHome ? awayOffenseUnit : homeOffenseUnit)[0].shortName
+            let text = "Audible — \(qbName) changes the call at the line"
+            postFeedNote(text)
+            return text
+        }
     }
 
     /// Publishes an adaptation intel line (overlay + mini feed), at most one

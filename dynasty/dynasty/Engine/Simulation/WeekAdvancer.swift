@@ -881,6 +881,36 @@ enum WeekAdvancer {
             }
         }
 
+        // 8b2. R36: the week's practice play. Each week of reps banks one
+        // practice week; the play installs into the season's call sheet after
+        // 2 weeks — 1 when the OC is a true expert in his scheme (75+).
+        if let practicePlay = career.weeklyPracticePlay, let teamID = career.teamID {
+            let oc = allCoaches.first {
+                $0.teamID == teamID && $0.role == .offensiveCoordinator
+            }
+            let expertise = oc?.offensiveScheme.map { oc?.expertise(for: $0.rawValue) ?? 20 } ?? 20
+            let weeksRequired = expertise >= 75 ? 1 : 2
+            career.weeklyPracticeWeeksDone += 1
+            if career.weeklyPracticeWeeksDone >= weeksRequired {
+                career.installPracticedPlay(practicePlay)
+                lastInboxMessages.append(InboxMessage(
+                    sender: .developmentStaff,
+                    subject: "\(practicePlay.rawValue) is installed",
+                    body: "The offense has \(practicePlay.rawValue) down cold after \(weeksRequired) week\(weeksRequired == 1 ? "" : "s") of practice reps\(weeksRequired == 1 ? " — your coordinator taught it in record time" : ""). It's on the call sheet for the rest of the season.",
+                    date: "Week \(week), Season \(season)",
+                    category: .gamePrep
+                ))
+            } else {
+                lastInboxMessages.append(InboxMessage(
+                    sender: .developmentStaff,
+                    subject: "Practice report: \(practicePlay.rawValue)",
+                    body: "The unit ran \(practicePlay.rawValue) all week. One more week of reps and it's installed.",
+                    date: "Week \(week), Season \(season)",
+                    category: .gamePrep
+                ))
+            }
+        }
+
         // 8c. Generate weekly scout reports for the player's team's scouting staff
         if let playerTeamID = career.teamID, !currentDraftClass.isEmpty {
             let scouts = fetchAllScouts(modelContext: modelContext).filter {
