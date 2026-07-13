@@ -1,5 +1,104 @@
 # Dynasty - TODO
 
+## ✅ VERIFIOINTI — animaatiovariantit + smoothness videolla (2026-07-13)
+
+**Build:** `xcodebuild ... -scheme dynasty` → **BUILD SUCCEEDED**. Asennettu + käynnistetty simulaattoriin (049C7295, iPad Pro 13" M5, iOS 26.4), Coach the Game (BUF vs MIA, viikko 4). Nauhoitettu ~7,8 min live-peli (`/tmp/snd-screenshots/animation-variety/gameplay_1.mp4`, ~25 pelisuoritusta: hyökkäys + puolustusvuoro), framet purettu ffmpegillä 12–20 fps + tiukka crop, arvioitu frame-sarjoina (montaget/stripit samassa kansiossa).
+
+**Menetelmällinen rajoite:** coach-kamera on kaukana (pelaajat ~40–60 px), joten RAAJATASON tyylierottelu (5 heittotyyliä keskenään, 5 avokenttäliikettä keskenään jne.) EI ole luotettavasti erotettavissa videolta — se nojaa koodikatselmukseen (determ. `hash01`-siemenet id:stä, erilliset SCNAction-parametrit per tyyli, kaikissa anticipation+follow-through easing). Auto-sim tuotti pääosin lyhyitä juoksuja (≤9 yd) ja pikasyöttöjä, joten avokenttäliikkeet (portti ≥12 yd), big-hit/dive/pylon-dive/QB-slide -tilanteet eivät laukenneet tässä otoksessa. Kontrolloitu pelinvalinta (Toss Sweep/Screen/useat Deep) esti **jumittunut XP/2-piste-modaali** (ks. alla).
+
+**Per-animaatiotyyppi (frame-havainto, karkea liiketaso):**
+- **HEITTO — PASS.** Pallo lähtee QB:n kädestä ja kaartuu kentälle, kamera seuraa (regressio #4 OK); QB:n käsivarsi/vartalo tekevät windup→release→follow-through sulavasti (ei teleporttia). Havaittu useilla syötöillä (Allen/BUF, Tagovailoa/MIA). 5 tyylin keskinäinen ero ei erotu tällä zoomilla.
+- **AVOKENTTÄ — EI TODENNETTAVISSA tästä otoksesta** (kaikki juoksut ≤9 yd → juke/spin/stiff-arm/hurdle/deadLeg gate ≥12 yd ei lauennut; ei bugi, odotettu).
+- **TAKLAUS — PASS (karkea).** Wrap/gang-swarm-kasaukset juoksuissa; QB-sackit (Ryan Harris, Micah Dixon, Garrett Reed) — kantaja/QB kaatuu progressiivisesti settle-pompulla. Erilliset variantit (blow-up/drag/dive/trip) eivät isoloituneet visuaalisesti.
+- **BLOKKAUS — PASS.** OL/DL selvästi rinta rintaa vasten -engagement, ja osassa repeistä puolustaja livahtaa/uipi ohi (whiff/beaten vs anchor/drive erottuu lopputulostasolla).
+- **HEITTÄYTYMINEN — PASS (karkea).** Puolustaja heittäytyy vaakaan katkopisteessä (diving PBU); diving-liikkeet läsnä. Pylon-dive / QB-slide ei isoloitunut.
+- **SMOOTHNESS — PASS.** `motion_profile.py` (crop 320x200+0+60): jokainen play kehittyy sulavana monisekuntisena ramppina (esim. TD 160–171 s: 0→2→3→6→7→9→4→lasku; muut 1→2→3→4→huippu→lasku), EI 0→9→0-piikkejä alle 2 s, EI jäätymiä playn aikana. Ainoat staattiset "0"-jaksot ovat pre-snap-muodostelman pito päätöskellon aikana (odotettu, ei säätä sisällä → ei idle-baselinea).
+
+**Regressio:** pallo lähtee QB:n kädestä ✓, kamera seuraa ✓, tulokset vastaavat lokia (juoksut/syötöt/sackit/TD/XP) ✓, pistetahti live-pelissä BUF 10 – MIA 0 Q2 ~10:00 (linjassa ~20–25/joukkue-tavoitteen kanssa). Ei uusia jäätymiä. Ei räikeitä animaatiovikoja (ei väärään suuntaan taipuvia raajoja, ei klipattuja asentoja havaituilla zoomeilla) → **ei lähdekoodikorjauksia tehty**.
+
+**⚠️ LÖYDETTY BUGI (EI näissä animaatiomuutoksissa — XP/2-piste-flow):** TD:n jälkeen "Touchdown! Kick the point or go for two?" -modaali JUMITTUU eikä sulkeudu (Kick XP -vahvistus ei rekisteröi; jäljellä myös laskuri); se peittää hyökkäyksen pelinvalintavalikon loppupeliksi. Presentation-only-animaatiomuutokset (FootballFieldScene/PlayChoreographer) eivät liity tähän → jätetty korjaamatta (scope + ei committia). Suositus: erillinen tiketti XP/2pt-modaalin dismiss-logiikkaan.
+
+**Polut:** `/tmp/snd-screenshots/animation-variety/` (gameplay_1.mp4, montage_A/B/C, p1throw_strip, qbz_strip, tackleA–D, bigplay, av_*). **Ei committia.**
+
+---
+
+## 🏈 TAKLAUS-, BLOKKAUS- JA HEITTÄYTYMISANIMAATIOT — variantit + smoothness (2026-07-13, `BUILD SUCCEEDED`)
+
+**Muutetut tiedostot:** `UI/Match/FootballFieldScene.swift`, `UI/Match/PlayChoreographer.swift`. Presentation-only — sim-tulos (kohde/jaardit/outcome) muuttumaton. Kaikki SCNAction+easing, EI per-frame-logiikkaa; siivous kulkee `resetGait`/`cancelPlay`-vahdin läpi ("fall"/"shove"/"spinMove"/"swing"/"bend"). Ei committia.
+
+**1. TAKLAUSVARIANTIT** (`tackleSteps` PlayChoreographer + `fall(style:)` FootballFieldScene) — **5 varianttia**, valittu **deterministisesti** (seed = taklaaja-id + kantaja + gain + x → `hash01`, ei enää `Float.random` → ei välky, sama taklaaja = sama signature) ja **koko-/kulma-painotettuna**:
+  - **big-hit blow-up** — pysäytetty kantaja lentää selälleen (`.backward`) + `cameraBump`; todennäköisyys skaalaa taklaajan koosta (`bigHitChance = 0.18 + size*0.45`, DL size 1.0 → 0.63, DB 0.25 → 0.29 → iso taklaaja enemmän blow-uppeja).
+  - **drag-down from behind** — breakaway (gain≥12): molemmat liukuvat eteenpäin, wrap.
+  - **diving tackle** — pitkä approach (>12yd): matala `.dive`-lento jalkoihin.
+  - **shoestring/ankle** (UUSI) — lyhyt gain (≤8) + lähietäisyys: taklaaja `diveFalls` nilkkoihin, kantaja **kompastuu eteen** uudella `FallStyle.trip`-tyylillä (jyrkkä etunoja -1.72, kädet ojoon murtamaan kaatuminen); pienet/nopeat pelaajat heittävät sen useammin.
+  - **wrap-up / gang-swarm** (default) — pysty-wrap + satunn. drive-back, gang kasautuu porrastetusti.
+  - **EASING kaikkiin kaatumisiin**: `fall()` sai anticipation (brace/coil ennen pudotusta, per tyyli) + follow-through (settle-pomppu laskeutumisessa) — ei lineaarista lysähdystä.
+
+**2. BLOKKAUSVARIANTIT** (`blockEngage(nodeIndex:duration:style:)` FootballFieldScene, uusi `BlockStyle`-enum + `PlayStep.blockStyles`) — **5 tyyliä**, valittu **matchupin tuloksesta** (`blockStyleMap(_:run:beatenBlocker:)`: trench/pressure-eventit → voittaja pancake, `beatenBlocker` → OL whiff + rusher drive; run/pass → drive/anchor baseline; determ. cut kun holeSize>0.55):
+  - **drive-block** — voittaja työntää eteen sykleissä (anticipation load-back → drive-surge → follow-through neutral).
+  - **pass-pro-anchor** — istuu blokkiin, absorboi taakse, ankkuroi takaisin (net-neutral).
+  - **pancake** — selvä voitto: coil → eteen-alas draivi häviäjän päälle → nousu.
+  - **whiff/beaten** — swim/rip yli + vartalon kääntö kun mies livahtaa ohi + kompastus.
+  - **cut-block** — matala sukellus jalkoihin → nousu.
+  - Vanha punch+shove-sykli smoothattu (load→push→recover easeInEaseOut).
+
+**3. HEITTÄYTYMISVARIANTIT** — **5 varianttia**, kytketty oikeisiin tilanteisiin:
+  - **diving catch** (`divingCatch`, jo ollut) — täyskurotus + lento + luisto.
+  - **diving tackle** (`fall(.dive)` + `diveFalls`) — erottuu matala jalkoihin.
+  - **pylon/TD dive** (UUSI `pylonDive`) — kantaja sukeltaa maalialueelle pallo ojossa; kytketty `touchdownSteps`iin kun juoksu-TD goal-linella (≤6yd maalista), nousee juhlaan.
+  - **QB slide** (UUSI `qbSlide`) — feet-first suojaava liuku; kytketty `rushSteps`iin kun scramble + ei-triviaali gain (4–14yd), korvaa taklauksen determ.
+  - **first-down/marker lunge** (UUSI `lunge`) — kantaja ojentaa pallon eteen kun gain saavuttaa line-to-gain (`play.distance`); kerrostuu wrap/drag/dive-fallin päälle (vain käsi, "swing"-key → ei törmää body-falliin).
+
+**4. YLEIS-SMOOTHNESS:** anticipation + follow-through kaikkiin uusiin/muokattuihin liikkeisiin, ei mitään lineaarista kaatumista/nousua/blokkia.
+
+---
+
+## 🏈 HEITTO- JA AVOKENTTÄANIMAATIOT — variantit + smoothness (2026-07-13, `BUILD SUCCEEDED`)
+
+**Muutetut tiedostot:** `UI/Match/FootballFieldScene.swift`, `UI/Match/PlayChoreographer.swift`. Presentation-only — sim-tulos (kohde/jaardit/outcome) muuttumaton. Kaikki SCNAction+easing, EI per-frame-logiikkaa. Ei committia.
+
+**1. HEITTOVARIANTIT** (`throwMotion(of:style:)` FootballFieldScene) — nyt **5 tyyliä** `ThrowStyle`-enumista, valittu deterministisesti PlayChoreographerin `throwStyle(_:depth:tight:forced:)`-helperillä (syvyys + coverage + QB:n speed-signature, rakennettu kerran/peli → ei välkkyä):
+  - `.overhand` — puhdas yliolan perus (windup 2.2, release 0.18s).
+  - `.sidearm` — 3/4 sivukäsi, kyynärpää ulos (armZ -0.7), nopea lyhyt release (0.12s) — lyhyet syötöt (depth<8) mobiililta QB:ltä (oSpeed≥8.2).
+  - `.offFoot` — pakotettu/pressure: epätasapainoinen, vartalo bailaa sivulle (trunkTilt -0.28), EI painonsiirtoa — pakko-INT (`forced:true`) + syvät overthrow-incompletionit.
+  - `.lob` — syvä touch: iso windup (2.55), hidas korkea follow-through (0.26s) — auki oleva syvä kohde.
+  - `.bullet` — syvä draivi: täysi windup + terävä nopea flat release (0.12s) — tiukka syvä coverage.
+  - Jokaisessa nyt: anticipation (käsi taakse) → release synkassa pallon `.arc`-lähtöön → follow-through (trunk-pitch + hartioiden y-kierto `body`-node + etujalka-plantti). LISÄKSI: forearm wrist-snap ja **off-hand (vasen käsi) irtoaa rintakannosta neutraaliin** (ei enää jäätynyttä chest-hold-poosia heiton jälkeen). Kaikki easeOut/easeIn/easeInEaseOut.
+
+**2. PUMP FAKE** (`pumpFake(nodeIndex:delay:quick:)`) — **2 tyyliä**: täysi wind-up-double-clutch (pocket-QB) vs nopea shoulder-shrug (`quick`, mobiili-QB oSpeed≥8.2, `body`-twist myy sen). `PlayStep.pumpFakeQuick` asetetaan `dropStep`issa.
+
+**3. AVOKENTTÄHARHAUTUKSET** (`performOpenFieldMove`) — **3 → 5 varianttia** + smoothaus:
+  - `.juke` — jab-step: terävä plant + koko figuurin lateraali-hop (moveBy, net-zero) + bank; polun `jig` myy loppusiirron.
+  - `.spin` — 360° y + dip-and-rise (moveBy y).
+  - `.stiffArm` — käsi ojoon + vartalon lean työntöön.
+  - `.hurdle` (UUSI) — hyppy (moveBy y 0.55) + jalat/shin koukkuun.
+  - `.deadLeg` (UUSI) — hesitation-stutter: nopea sink-hitch + pop takaisin pystyyn.
+  - **Valinta nyt DETERMINISTINEN** (poistettu `.shuffled()`/`Bool.random()`/`randomElement()`): ketterä carrier (oSpeed≥8.4) → juke/spin/deadLeg; power-back → stiffArm/hurdle/juke. Signature = `carrierStart.x + runGain` (RB) / `catchSpot.x + yacDistance` (WR). Matchup-voittaja näyttää 2 liikettä.
+
+**4. SMOOTHNESS:** heiton off-hand-release + forearm-snap + hartiakierto poistavat jäykän chest-hold-jäännöksen; kaikki uudet hopit net-zero-displacement (moveBy) → figuuri palaa gaitin polulle; `resetGait` siivoaa jo hop/spinMove/gait/twist/swing/bend-keyt (ei uusia siivottavia).
+
+**Seuraavat (aiemmasta analyysistä, EI tässä):** blockEngage-variantit, tackleSteps-determinismi, catch-variantit (yhden käden/high-point), aktiivinen athletic-stance-idle.
+
+---
+
+## 🎥 ANIMAATIOANALYYSI 2026-07-13 — nykytila (fresh build 317b8e9, ei koodimuutoksia)
+
+**Build:** `BUILD SUCCEEDED` (Debug, iPad Pro 13" M5 `049C7295`, DerivedData `dynasty-arklysztnruxtvfbogjmrinmtdqt`). Coach the Game pelattu (BUF koti vs MIA): Deep pass, Inside Run, Short/Slant, sack, punt. Video `play1.mp4` (~5 min, 2064×2752), framet `scratchpad/{dp,ir,sp,a}*.png` + zoomit. idb-tap: px/2 = pisteet.
+
+**Yleisdiagnoosi:** kaikki animaatiot ovat jo SCNAction+easing (EI lineaarista, EI per-frame) — "jäykkyys" EI johdu easingin puutteesta vaan (1) matalapolyisistä "weeble"-figuureista joilla suorat sylinterikädet, (2) siitä että pelaajat viettävät suurimman osan näkyvästä ajasta TÄYSIN STAATTISESSA lepopoosissa (huddle, pre-snap, taklauksen jälkeinen settle → kädet suorana alhaalla, ei painonsiirtoa — todiste `pb1_z.png`: sukeltava taklaaja animoituu mutta KAIKKI ympärillä seisovat naulattuina), (3) yhden variantin heitto/blokki → toistuvat pelit näyttävät identtisiltä, (4) juke/spin/taklaus valitaan `Bool.random()/.shuffled()/Float.random()` → EI pelaajakohtaista signaturea JA välkkyy (rikkoo determinismiohjeen).
+
+**Per animaatiotyyppi (node-nimet + kestot koodista):**
+- **HEITTO** (`throwMotion` FootballFieldScene:2558): **1 variantti.** armR windup x:2.2 z:-0.25 (0.16s easeOut) → release x:-2.6 (0.18s easeIn) → neutral; figure-lean x:0.24 + etujalka `leg` x:-0.5 follow-through. On anticipation+follow-through ✓. **Puutteet:** vain yliolan; heitto on puhtaasti sagittaalinen (ei lonkka/hartia y-rotaatiota) → näyttää mekaaniselta takaa; ei 3/4-sivukättä, rollout/liikkeestä-heittoa, off-platform/takajalka-fadea, lob vs bullet -eroa. `pitchMotion` (alakautta) + `pumpFake` erillisiä. → **Lisää 2-4:** 3/4 sidearm (+figure.eulerAngles.y sweep), rollout (säilytä gait+puolikäännös), off-platform lean-back, lob/bullet (windup-syvyys+release-nopeus pass-depth/arm-attribuutista). Deterministinen QB-id+syvyys.
+- **BLOKKAUS** (`blockEngage` :1967): **1 variantti.** molemmat armit punch x:-1.15 z:±0.18 (0.16s), forearm x:-0.4; shove = figure moveBy z:0.13 -oskillointi. **Puutteet:** joka OL/DL-pari tekee IDENTTISEN rintalukko-shoven; ei run-block-drivea (jatkuva työntö+pancake), pass-set-kick-slidea, whiff/hävittyä blokkia, double-teamia. → **Lisää 2-4:** run-block drive (sustained moveBy+lean, voittajalle pancake), pass-set (kick-slide, kädet ylös), beaten/whiff (puolustaja livahtaa ohi, blokkaaja yliojentuu), double-team. Voitto/häviö `matchups.events`ista, punch-ajoitus lineman-id:stä.
+- **HARHAUTUS** (`performOpenFieldMove` :2014): **3 varianttia** juke/spin/stiffArm. spin=figure rotateBy y:2π 0.45s; juke=z-lean feint 0.38→-0.3 (hento, lukee heikosti); stiffArm=armR x:0.5 z:-1.25. **Valinta NON-DETERMINISTINEN** (`.shuffled()`/`randomElement()`, PlayChoreographer:1241,1665). **Puutteet:** ei hurdlea, jump-cut/dead-legiä, truckia; juke liian pieni. → **Lisää 2-4:** hurdle (hop+jalkatuck), jump-cut (terävä lateraali+jalkaplantti), truck (olka-lean x + puolustajan knockback). Tee valinta DETERMINISTISEKSI carrier-id+attribuutti (elusiveness→juke/spin, power→truck/stiffArm). Voimista jukea.
+- **TAKLAUS** (`tackleSteps` PlayChoreographer:1408 + `fall` :2058 + `wrapArms` :2113): **4 haaraa** (big-hit backward / drag-down slide / diving / standard+driveBack) + `fall` 3 FallStyleä (forward/backward/dive) + satunnainen yaw. Sukellus lukee hyvin (`pb1_z.png`). **Valinta NON-DETERMINISTINEN** (`Float.random`, :1420,1474). **Puutteet:** taklaaja usein vain liukuu paikalle ilman lunge-anticipationia; ei form-wrap-drivea vs olka-charge vs nilkkataklaus -selkeää eroa; taklauksen jälkeen ympärille jää naulattu idle-poosi. → **Korjaa:** korvaa `Float.random` tackler-id+gain-hashilla (deterministinen signature, säilytä 4 haaraa), lisää lunge/madallus ennen kontaktia, lisää strip-yritys; korjaa post-play static-settle.
+- **HEITTÄYTYMINEN/KOPPI** (`divingCatch` :1915, `overShoulderReach` :1891, `toeTapReach` :1949, `reach` :1860): **4 tyyliä**, valinta **DETERMINISTINEN ✓** (catchDepth/coverage/boundary). Vahvin osa-alue: divingCatch launch x:-1.5 + move(0,0.12,0.5)→land(0,-0.34,0.8)→hold 1.5s→up; on anticipation+hold ✓. **Puutteet:** ei yhden käden extensionia, high-point-hyppykoppia (kontestattu), back-shoulderia; reach-hop (0.25) pieni. → **Lisää 2-4:** yhden käden (vain armR), high-point-leap (isompi hop+molemmat max), layout/back-shoulder. Säilytä determinismi.
+- **IDLE/GAIT** (`swingLimbs` :1743): juoksusykli leg/arm ±swing easeInEaseOut + shin/forearm bend + body-twist ✓. **Iso ongelma:** lepopoosi liian staattinen (kädet suorana, ei painonsiirtoa); idle-"hengitys" liian hento lukeakseen. → **Korjaa globaali smoothness:** aktiivinen "athletic stance" -idle (polvitaivutus, painonsiirto, kädet valmiina) ettei figuuri koskaan näytä jäätyneeltä; anticipation-kyykky ennen snapia; varmista että KAIKKI pelaajat (downfield WR/DB) heiluttavat raajoja pelin aikana; blendaa idle→action (älä snäppää).
+
+**Seuraava vaihe:** toteuta variantit + determinismi (id-johdettu, ei RNG) + aktiivinen idle. Tulospariteetti: kaikki presentation-only.
+
+---
+
 ## ✅ VERIFIOINTI 2026-07-13 — 4 korjausta (pallon lähtö / vaihdot / dome / koordinaattorisuositus)
 
 **Build:** `BUILD SUCCEEDED` (Debug, iPad Pro 13" M5 -sim `049C7295`, DerivedData `dynasty-arklysztnruxtvfbogjmrinmtdqt`). Asennettu + käynnistetty `com.brewcrow.dynasty`. Coach the Game pelattu (BUF koti vs MIA). idb-tap-kalibrointi: screenshot 2064×2752 px = 2× → idb-pisteet = px/2.

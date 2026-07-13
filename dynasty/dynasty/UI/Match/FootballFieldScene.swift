@@ -80,6 +80,12 @@ class FootballFieldScene: SCNScene {
         var blocks: [Int] = []
         /// QB nodes selling a pump fake late in this step (deep shots).
         var pumpFakes: [Int] = []
+        /// When true, the pump fake is a quick shoulder shrug rather than a
+        /// full wind-up double-clutch (mobile QBs flash the short version).
+        var pumpFakeQuick: Bool = false
+        /// The passer's throwing motion when this step's ball arc is a real
+        /// pass. nil = the default over-the-top overhand.
+        var throwStyle: ThrowStyle? = nil
         /// Catch presentation per reaching node (missing = the basic reach).
         var catchStyles: [Int: CatchStyle] = [:]
         /// Carriers blown off their feet by a big hit this step: they fly
@@ -87,6 +93,19 @@ class FootballFieldScene: SCNScene {
         var bigHits: [Int] = []
         /// Tacklers finishing with a flat horizontal dive at the carrier's legs.
         var diveFalls: [Int] = []
+        /// Carriers whose legs get cut out (shoestring/ankle tackle): they
+        /// pitch forward and stumble to the turf instead of a clean collapse.
+        var trips: [Int] = []
+        /// Ball carriers laying out into the end zone with the ball extended
+        /// over the pylon (goal-line dives) — they stretch out and stay down.
+        var pylonDives: [Int] = []
+        /// A QB giving himself up feet-first with a protective slide (scrambles).
+        var qbSlides: [Int] = []
+        /// Ball carriers stretching the ball forward on a lunge — reaching the
+        /// first-down marker / goal line as they go down.
+        var lunges: [Int] = []
+        /// Per-node blocking-engagement style (missing = a plain drive block).
+        var blockStyles: [Int: BlockStyle] = [:]
         /// Scheduled jukes/spins/stiff-arms for ball carriers inside this step.
         var openField: [OpenFieldMove] = []
         /// Per-node reaction delays (seconds from step start) before that
@@ -114,20 +133,58 @@ class FootballFieldScene: SCNScene {
         case toeTap
     }
 
+    /// How an OL/DL figure plays out a blocking engagement. Chosen from the
+    /// trench matchup so the winning side visibly wins the rep.
+    enum BlockStyle {
+        /// Winner presses forward in short surges (the base run block).
+        case drive
+        /// Pass-pro set: absorb the bull rush, give a little ground, re-anchor.
+        case anchor
+        /// Decisive win: the blocker lunges forward and drives his man down.
+        case pancake
+        /// Beaten: a swim/rip over the top as his man slips past, half a turn.
+        case whiff
+        /// Cut block: down at the legs, then back up.
+        case cut
+    }
+
     /// A scheduled open-field move for a ball carrier mid-step.
     /// `delay` is seconds from the step start.
     struct OpenFieldMove {
         enum Kind {
-            /// Sharp side-step feint (pairs with a lateral jig in the path).
+            /// Sharp jab-step side-step feint (pairs with a lateral jig in the
+            /// path) — a hard plant one way sold by a quick lateral hop.
             case juke
-            /// Full 360° spin without breaking stride.
+            /// Full 360° spin, dipping and rising out of the turn.
             case spin
-            /// Off arm extended into the nearest chaser.
+            /// Off arm extended into the nearest chaser, with a lean into it.
             case stiffArm
+            /// Hurdle: a short leap with the knees tucked (power backs jumping
+            /// a fallen defender).
+            case hurdle
+            /// Dead-leg / hesitation: a quick stutter-hitch that freezes the
+            /// pursuit before the carrier bursts back to speed.
+            case deadLeg
         }
         var nodeIndex: Int
         var kind: Kind
         var delay: TimeInterval
+    }
+
+    /// How the passer's arm and body drive a throw. Chosen deterministically
+    /// from the QB and the situation so a given passer keeps a signature.
+    enum ThrowStyle {
+        /// Clean over-the-top base motion — the default.
+        case overhand
+        /// 3/4 sidearm flick: elbow drops out, quick short release.
+        case sidearm
+        /// Off the back foot under pressure/scramble: unbalanced, no weight
+        /// transfer, the trunk bails away instead of driving forward.
+        case offFoot
+        /// Deep touch throw: a big wind-up and a slow, high follow-through.
+        case lob
+        /// Deep drive: full wind-up snapped through on a fast, flat release.
+        case bullet
     }
 
     /// How the ball behaves during a `PlayStep`.
@@ -1884,6 +1941,9 @@ class FootballFieldScene: SCNScene {
         case backward
         /// A fast, flat horizontal launch forward (diving tackles/catches).
         case dive
+        /// Legs cut from under him: a hard forward pitch, arms flung out to
+        /// break the fall — the shoestring-tackle stumble.
+        case trip
     }
 
     /// Deep-ball catch: both arms extend up and FORWARD along the run — the
@@ -1964,70 +2024,233 @@ class FootballFieldScene: SCNScene {
     /// Blocking engagement: both arms punch out locked at chest height and
     /// the figure works a short fore-aft shove cycle for the step — OL/DL
     /// pairs read as locked up chest to chest instead of jogging to spots.
-    private func blockEngage(nodeIndex: Int, duration: TimeInterval) {
+    private func blockEngage(nodeIndex: Int, duration: TimeInterval, style: BlockStyle = .drive) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
-        for (name, inward) in [("arm", CGFloat(0.18)), ("armR", CGFloat(-0.18))] {
-            guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
-            arm.removeAction(forKey: "swing")
-            let punch = SCNAction.rotateTo(x: -1.15, y: 0, z: inward, duration: 0.16)
-            punch.timingMode = .easeOut
-            arm.runAction(punch, forKey: "swing")
-            if let forearm = arm.childNode(withName: "forearm", recursively: false) {
-                forearm.removeAction(forKey: "bend")
-                forearm.runAction(SCNAction.rotateTo(x: -0.4, y: 0, z: 0, duration: 0.16),
-                                  forKey: "bend")
+
+        // Hands punch out and lock onto the chest — shared by the engaged
+        // styles; the cut block keeps the hands low instead.
+        func punchArms(x: CGFloat, forearm: CGFloat) {
+            for (name, inward) in [("arm", CGFloat(0.18)), ("armR", CGFloat(-0.18))] {
+                guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
+                arm.removeAction(forKey: "swing")
+                let punch = SCNAction.rotateTo(x: x, y: 0, z: inward, duration: 0.16)
+                punch.timingMode = .easeOut
+                arm.runAction(punch, forKey: "swing")
+                if let fa = arm.childNode(withName: "forearm", recursively: false) {
+                    fa.removeAction(forKey: "bend")
+                    fa.runAction(SCNAction.rotateTo(x: forearm, y: 0, z: 0, duration: 0.16),
+                                 forKey: "bend")
+                }
             }
         }
-        // The push-pull battle: a small local fore-aft oscillation, back to
-        // neutral at the end (moveBy composes with the gait bob's y moves).
+
         figure.removeAction(forKey: "shove")
-        let push = SCNAction.moveBy(x: 0, y: 0, z: 0.13, duration: 0.24)
-        push.timingMode = .easeInEaseOut
-        let cycles = max(Int(duration / 0.48), 1)
-        figure.runAction(SCNAction.sequence([
-            SCNAction.repeat(SCNAction.sequence([push, push.reversed()]), count: cycles),
-            SCNAction.move(to: SCNVector3Zero, duration: 0.12),
-        ]), forKey: "shove")
+
+        switch style {
+        case .drive:
+            // Winner's rep: anticipation (a short load back), then repeated
+            // forward drive surges, resolved back to neutral at the whistle.
+            // moveBy composes with the gait bob's y moves, so the gait stays.
+            punchArms(x: -1.15, forearm: -0.4)
+            let load = SCNAction.moveBy(x: 0, y: 0, z: -0.06, duration: 0.12)
+            load.timingMode = .easeOut
+            let push = SCNAction.moveBy(x: 0, y: 0, z: 0.19, duration: 0.26)
+            push.timingMode = .easeInEaseOut
+            let recover = SCNAction.moveBy(x: 0, y: 0, z: -0.13, duration: 0.24)
+            recover.timingMode = .easeInEaseOut
+            let cycles = max(Int(duration / 0.5), 1)
+            figure.runAction(SCNAction.sequence([
+                load,
+                SCNAction.repeat(SCNAction.sequence([push, recover]), count: cycles),
+                SCNAction.move(to: SCNVector3Zero, duration: 0.14),
+            ]), forKey: "shove")
+
+        case .anchor:
+            // Pass-pro set: sit into the block, absorb the bull rush backward
+            // then re-anchor forward — net-neutral, everything eased.
+            punchArms(x: -1.05, forearm: -0.55)
+            let sink = SCNAction.moveBy(x: 0, y: -0.07, z: 0, duration: 0.16)
+            sink.timingMode = .easeOut
+            let give = SCNAction.moveBy(x: 0, y: 0, z: -0.12, duration: 0.28)
+            give.timingMode = .easeInEaseOut
+            let anchorBack = SCNAction.moveBy(x: 0, y: 0, z: 0.09, duration: 0.3)
+            anchorBack.timingMode = .easeInEaseOut
+            let cycles = max(Int(duration / 0.6), 1)
+            figure.runAction(SCNAction.sequence([
+                sink,
+                SCNAction.repeat(SCNAction.sequence([give, anchorBack]), count: cycles),
+                SCNAction.move(to: SCNVector3Zero, duration: 0.16),
+            ]), forKey: "shove")
+
+        case .pancake:
+            // Decisive win: hands punch high, the blocker coils then lunges
+            // forward and drives his man to the turf, then straightens up.
+            // Owns the figure (gait removed) so the pitch doesn't fight the lean.
+            figure.removeAction(forKey: "gait")
+            figure.removeAction(forKey: "hop")
+            punchArms(x: -1.5, forearm: -0.2)
+            let coil = SCNAction.group([
+                SCNAction.rotateTo(x: -0.2, y: 0, z: 0, duration: 0.12),
+                SCNAction.moveBy(x: 0, y: 0.05, z: -0.06, duration: 0.12),
+            ])
+            coil.timingMode = .easeOut
+            let drive = SCNAction.group([
+                SCNAction.rotateTo(x: 0.6, y: 0, z: 0, duration: 0.22),
+                SCNAction.moveBy(x: 0, y: -0.14, z: 0.6, duration: 0.22),
+            ])
+            drive.timingMode = .easeIn
+            let rise = SCNAction.group([
+                SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.42),
+                SCNAction.move(to: SCNVector3Zero, duration: 0.42),
+            ])
+            rise.timingMode = .easeInEaseOut
+            figure.runAction(SCNAction.sequence([
+                coil, drive, SCNAction.wait(duration: 0.35), rise,
+            ]), forKey: "shove")
+
+        case .whiff:
+            // Beaten: a swim/rip reaches over the top, the body turns as his
+            // man slips past and he catches himself half a step behind.
+            figure.removeAction(forKey: "gait")
+            for (name, over) in [("arm", CGFloat(2.6)), ("armR", CGFloat(-1.0))] {
+                guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
+                arm.removeAction(forKey: "swing")
+                let reach = SCNAction.rotateTo(x: -1.6, y: 0, z: name == "arm" ? 0.4 : -0.3, duration: 0.14)
+                reach.timingMode = .easeOut
+                let swipe = SCNAction.rotateTo(x: 0.2, y: 0, z: over, duration: 0.22)
+                swipe.timingMode = .easeInEaseOut
+                let settle = SCNAction.rotateTo(x: 0, y: 0, z: name == "arm" ? 0.25 : -0.25, duration: 0.32)
+                arm.runAction(SCNAction.sequence([reach, swipe, settle]), forKey: "swing")
+            }
+            let turn = SCNAction.rotateTo(x: 0, y: 0.7, z: 0, duration: 0.28)
+            turn.timingMode = .easeOut
+            let stumble = SCNAction.moveBy(x: 0.12, y: 0, z: -0.14, duration: 0.28)
+            stumble.timingMode = .easeOut
+            let recover = SCNAction.group([
+                SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.4),
+                SCNAction.move(to: SCNVector3Zero, duration: 0.4),
+            ])
+            recover.timingMode = .easeInEaseOut
+            figure.runAction(SCNAction.sequence([
+                SCNAction.group([turn, stumble]), SCNAction.wait(duration: 0.2), recover,
+            ]), forKey: "shove")
+
+        case .cut:
+            // Cut block: hands down, the blocker pitches low at the legs then
+            // pops back up onto his feet.
+            figure.removeAction(forKey: "gait")
+            figure.removeAction(forKey: "hop")
+            for (name, inward) in [("arm", CGFloat(0.1)), ("armR", CGFloat(-0.1))] {
+                guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
+                arm.removeAction(forKey: "swing")
+                arm.runAction(SCNAction.sequence([
+                    SCNAction.rotateTo(x: 0.6, y: 0, z: inward, duration: 0.16),
+                    SCNAction.wait(duration: 0.5),
+                    SCNAction.rotateTo(x: 0, y: 0, z: name == "arm" ? 0.25 : -0.25, duration: 0.3),
+                ]), forKey: "swing")
+            }
+            let anticipate = SCNAction.moveBy(x: 0, y: 0.05, z: 0, duration: 0.1)
+            anticipate.timingMode = .easeOut
+            let dive = SCNAction.group([
+                SCNAction.rotateTo(x: 0.95, y: 0, z: 0, duration: 0.18),
+                SCNAction.moveBy(x: 0, y: -0.39, z: 0.35, duration: 0.18),
+            ])
+            dive.timingMode = .easeIn
+            let up = SCNAction.group([
+                SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.44),
+                SCNAction.move(to: SCNVector3Zero, duration: 0.44),
+            ])
+            up.timingMode = .easeInEaseOut
+            figure.runAction(SCNAction.sequence([
+                anticipate, dive, SCNAction.wait(duration: 0.32), up,
+            ]), forKey: "shove")
+        }
     }
 
     /// Pump fake: the throwing arm cocks and half-fires without the ball,
     /// then recovers to the two-hand chest hold. `delay` places it late in
     /// the drop, just before the real throw.
-    private func pumpFake(nodeIndex: Int, delay: TimeInterval) {
+    /// Two pump-fake flavours: the full wind-up double-clutch (a real throwing
+    /// motion pulled back at the last instant) or, with `quick`, a short sharp
+    /// shoulder shrug that jerks the torso without cocking the arm all the way.
+    private func pumpFake(nodeIndex: Int, delay: TimeInterval, quick: Bool = false) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false),
               let arm = figure.childNode(withName: "armR", recursively: false) else { return }
-        let windup = SCNAction.rotateTo(x: 1.7, y: 0, z: -0.25, duration: 0.13)
+        let windupX: CGFloat = quick ? 1.0 : 1.7
+        let windupDur: TimeInterval = quick ? 0.1 : 0.13
+        let flickX: CGFloat = quick ? -0.5 : -1.2
+        let flickDur: TimeInterval = quick ? 0.09 : 0.12
+        let windup = SCNAction.rotateTo(x: windupX, y: 0, z: -0.25, duration: windupDur)
         windup.timingMode = .easeOut
-        let halfThrow = SCNAction.rotateTo(x: -1.2, y: 0, z: -0.25, duration: 0.12)
+        let halfThrow = SCNAction.rotateTo(x: flickX, y: 0, z: -0.25, duration: flickDur)
         halfThrow.timingMode = .easeIn
         let rechamber = SCNAction.rotateTo(x: -1.0, y: 0, z: -0.28, duration: 0.2)
         arm.runAction(SCNAction.sequence([
             SCNAction.wait(duration: delay), windup, halfThrow, rechamber,
         ]), forKey: "swing")
+        // Shoulder shrug into the pump — bigger on the quick fake, which sells
+        // the whole thing with the torso rather than the arm.
+        if let body = figure.childNode(withName: "body", recursively: false) {
+            let twist: CGFloat = quick ? 0.22 : 0.14
+            body.removeAction(forKey: "twist")
+            body.runAction(SCNAction.sequence([
+                SCNAction.wait(duration: delay),
+                SCNAction.rotateTo(x: 0, y: twist, z: 0, duration: windupDur),
+                SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: flickDur + 0.12),
+            ]), forKey: "twist")
+        }
     }
 
-    /// One-shot open-field move on a ball carrier: a juke feint (hard
-    /// opposite-side bank, sold by the lateral jig in his path), a full
-    /// 360° spin, or a stiff-arm out of the free (right) hand.
+    /// One-shot open-field move on a ball carrier. Every variant is pure
+    /// presentation — the carrier's underlying track/timing is untouched, so
+    /// the sim's yardage is unchanged. All banks, hops and dips ride easing
+    /// (no per-frame work) and run under the "gait"/"spinMove"/"swing" keys so
+    /// the next move or `resetGait` clears them seamlessly.
     private func performOpenFieldMove(nodeIndex: Int, kind: OpenFieldMove.Kind) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         switch kind {
         case .spin:
+            // Full 360° turn that dips and rises out of the spin.
             figure.removeAction(forKey: "gait")
             let spin = SCNAction.rotateBy(x: 0, y: CGFloat.pi * 2, z: 0, duration: 0.45)
             spin.timingMode = .easeInEaseOut
             figure.runAction(spin, forKey: "spinMove")
+            let dip = SCNAction.moveBy(x: 0, y: -0.12, z: 0, duration: 0.22)
+            dip.timingMode = .easeInEaseOut
+            let rise = SCNAction.moveBy(x: 0, y: 0.12, z: 0, duration: 0.23)
+            rise.timingMode = .easeInEaseOut
+            figure.runAction(SCNAction.sequence([dip, rise]), forKey: "hop")
         case .juke:
+            // Jab-step cut: a hard plant one way (bank + a quick lateral hop of
+            // the whole figure) sold before the path's jig carries him across.
             figure.removeAction(forKey: "gait")
-            let feintOne = SCNAction.rotateTo(x: 0.15, y: 0, z: 0.38, duration: 0.12)
-            feintOne.timingMode = .easeOut
-            let feintTwo = SCNAction.rotateTo(x: 0.15, y: 0, z: -0.3, duration: 0.14)
+            figure.removeAction(forKey: "hop")
+            let plant = SCNAction.rotateTo(x: 0.15, y: 0, z: 0.4, duration: 0.11)
+            plant.timingMode = .easeOut
+            let cutBack = SCNAction.rotateTo(x: 0.18, y: 0, z: -0.34, duration: 0.14)
+            cutBack.timingMode = .easeInEaseOut
             let recover = SCNAction.rotateTo(x: 0.15, y: 0, z: 0, duration: 0.15)
-            figure.runAction(SCNAction.sequence([feintOne, feintTwo, recover]), forKey: "spinMove")
+            recover.timingMode = .easeOut
+            figure.runAction(SCNAction.sequence([plant, cutBack, recover]), forKey: "spinMove")
+            let jab = SCNAction.moveBy(x: 0.28, y: 0, z: 0, duration: 0.11)
+            jab.timingMode = .easeOut
+            let ret = SCNAction.moveBy(x: -0.28, y: 0, z: 0, duration: 0.18)
+            ret.timingMode = .easeInEaseOut
+            figure.runAction(SCNAction.sequence([jab, ret]), forKey: "hop")
         case .stiffArm:
+            // Off (right) arm punches straight out into the chaser with a lean
+            // into the push.
+            figure.removeAction(forKey: "gait")
+            let lean = SCNAction.sequence([
+                SCNAction.rotateTo(x: 0.24, y: 0, z: -0.16, duration: 0.15),
+                SCNAction.wait(duration: 0.4),
+                SCNAction.rotateTo(x: 0.15, y: 0, z: 0, duration: 0.25),
+            ])
+            lean.timingMode = .easeInEaseOut
+            figure.runAction(lean, forKey: "spinMove")
             guard let arm = figure.childNode(withName: "armR", recursively: false) else { return }
             arm.removeAction(forKey: "swing")
             let extend = SCNAction.rotateTo(x: 0.5, y: 0, z: -1.25, duration: 0.15)
@@ -2036,7 +2259,54 @@ class FootballFieldScene: SCNScene {
             arm.runAction(SCNAction.sequence([extend, SCNAction.wait(duration: 0.55), release]),
                           forKey: "swing")
             arm.childNode(withName: "forearm", recursively: false)?
-                .runAction(SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.15), forKey: "bend")
+                .runAction(SCNAction.sequence([
+                    SCNAction.rotateTo(x: 0.15, y: 0, z: 0, duration: 0.15),
+                    SCNAction.wait(duration: 0.55),
+                    SCNAction.rotateTo(x: -0.15, y: 0, z: 0, duration: 0.25),
+                ]), forKey: "bend")
+        case .hurdle:
+            // A short leap with the knees tucked — clearing a fallen defender.
+            figure.removeAction(forKey: "gait")
+            figure.removeAction(forKey: "hop")
+            let up = SCNAction.moveBy(x: 0, y: 0.55, z: 0, duration: 0.2)
+            up.timingMode = .easeOut
+            let down = SCNAction.moveBy(x: 0, y: -0.55, z: 0, duration: 0.22)
+            down.timingMode = .easeIn
+            figure.runAction(SCNAction.sequence([up, down]), forKey: "hop")
+            let launch = SCNAction.rotateTo(x: -0.1, y: 0, z: 0, duration: 0.2)
+            let land = SCNAction.rotateTo(x: 0.15, y: 0, z: 0, duration: 0.22)
+            figure.runAction(SCNAction.sequence([launch, land]), forKey: "spinMove")
+            for name in ["leg", "legR"] {
+                guard let leg = figure.childNode(withName: name, recursively: false) else { continue }
+                leg.removeAction(forKey: "swing")
+                leg.runAction(SCNAction.sequence([
+                    SCNAction.rotateTo(x: -0.9, y: 0, z: 0, duration: 0.2),
+                    SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.22),
+                ]), forKey: "swing")
+                leg.childNode(withName: "shin", recursively: false)?
+                    .runAction(SCNAction.sequence([
+                        SCNAction.rotateTo(x: 1.0, y: 0, z: 0, duration: 0.2),
+                        SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.22),
+                    ]), forKey: "bend")
+            }
+        case .deadLeg:
+            // Hesitation stutter: a quick sink-and-hitch that freezes the
+            // pursuit, then a snap back upright as he bursts through.
+            figure.removeAction(forKey: "gait")
+            figure.removeAction(forKey: "hop")
+            let sink = SCNAction.moveBy(x: 0, y: -0.14, z: 0, duration: 0.1)
+            sink.timingMode = .easeOut
+            let hold = SCNAction.moveBy(x: 0, y: 0.04, z: 0, duration: 0.12)
+            let pop = SCNAction.moveBy(x: 0, y: 0.1, z: 0, duration: 0.13)
+            pop.timingMode = .easeIn
+            figure.runAction(SCNAction.sequence([sink, hold, pop]), forKey: "hop")
+            let hitch = SCNAction.sequence([
+                SCNAction.rotateTo(x: 0.32, y: 0, z: 0.12, duration: 0.1),
+                SCNAction.rotateTo(x: 0.28, y: 0, z: -0.08, duration: 0.12),
+                SCNAction.rotateTo(x: 0.15, y: 0, z: 0, duration: 0.14),
+            ])
+            hitch.timingMode = .easeInEaseOut
+            figure.runAction(hitch, forKey: "spinMove")
         }
     }
 
@@ -2068,31 +2338,74 @@ class FootballFieldScene: SCNScene {
         let pitch: CGFloat
         let landing: SCNVector3
         let dropTime: TimeInterval
+        // Anticipation: a beat of load/recoil before the body commits to the
+        // turf so nobody snaps flat from a dead-linear standstill.
+        let brace: SCNAction?
         switch style {
         case .forward:
             pitch = CGFloat(-1.45 + yaw * 0.1)
             landing = SCNVector3(0, -0.32, 0.15)
             dropTime = 0.3
+            let b = SCNAction.group([
+                SCNAction.rotateBy(x: 0.12, y: 0, z: 0, duration: 0.07),
+                SCNAction.moveBy(x: 0, y: 0.04, z: -0.04, duration: 0.07),
+            ])
+            b.timingMode = .easeOut
+            brace = b
         case .backward:
             // Feet fly out, shoulders hit last — flat on his back.
             pitch = CGFloat(1.35 + yaw * 0.1)
             landing = SCNVector3(0, -0.3, -0.35)
             dropTime = 0.26
+            let b = SCNAction.rotateBy(x: -0.22, y: 0, z: 0, duration: 0.06)
+            b.timingMode = .easeOut
+            brace = b
         case .dive:
             // Horizontal launch at the legs: fast, flat and long.
             pitch = -1.52
             landing = SCNVector3(0, -0.36, 0.55)
             dropTime = 0.17
+            brace = nil   // a diving tackle is already a committed launch
+        case .trip:
+            // Shoestring: legs cut out, the body pitches hard forward and
+            // long, hands flung ahead to break the fall.
+            pitch = CGFloat(-1.72 + yaw * 0.08)
+            landing = SCNVector3(0, -0.34, 0.5)
+            dropTime = 0.22
+            let b = SCNAction.group([
+                SCNAction.rotateBy(x: 0.16, y: 0, z: 0, duration: 0.06),
+                SCNAction.moveBy(x: 0, y: 0.05, z: 0, duration: 0.06),
+            ])
+            b.timingMode = .easeOut
+            brace = b
+            for name in ["arm", "armR"] {
+                guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
+                arm.removeAction(forKey: "swing")
+                arm.runAction(SCNAction.sequence([
+                    SCNAction.rotateTo(x: -2.4, y: 0, z: name == "arm" ? 0.2 : -0.2, duration: 0.16),
+                    SCNAction.wait(duration: 0.9),
+                    SCNAction.rotateTo(x: 0, y: 0, z: name == "arm" ? 0.25 : -0.25, duration: 0.3),
+                ]), forKey: "swing")
+            }
         }
         let down = SCNAction.group([
             SCNAction.rotateTo(x: pitch, y: CGFloat(yaw), z: 0, duration: dropTime),
             SCNAction.move(to: landing, duration: dropTime),
         ])
         down.timingMode = .easeIn
+        // Follow-through: a small settle bounce as the mass loads onto the turf
+        // — the impact doesn't die on a hard linear stop.
+        let settle = SCNAction.sequence([
+            SCNAction.moveBy(x: 0, y: 0.05, z: 0, duration: 0.09),
+            SCNAction.moveBy(x: 0, y: -0.05, z: 0, duration: 0.11),
+        ])
+        settle.timingMode = .easeInEaseOut
+        var downSeq: [SCNAction] = [SCNAction.wait(duration: delay)]
+        if let brace { downSeq.append(brace) }
+        downSeq.append(down)
+        downSeq.append(settle)
         if stayDown {
-            figure.runAction(SCNAction.sequence([
-                SCNAction.wait(duration: delay), down,
-            ]), forKey: "fall")
+            figure.runAction(SCNAction.sequence(downSeq), forKey: "fall")
             return
         }
         let up = SCNAction.group([
@@ -2100,10 +2413,9 @@ class FootballFieldScene: SCNScene {
             SCNAction.move(to: SCNVector3Zero, duration: 0.45),
         ])
         up.timingMode = .easeInEaseOut
-        figure.runAction(SCNAction.sequence([
-            SCNAction.wait(duration: delay), down,
-            SCNAction.wait(duration: 0.8 + getUpDelay), up,
-        ]), forKey: "fall")
+        downSeq.append(SCNAction.wait(duration: 0.8 + getUpDelay))
+        downSeq.append(up)
+        figure.runAction(SCNAction.sequence(downSeq), forKey: "fall")
     }
 
     /// Wrap tackle: both of the tackler's arms whip forward and curl around
@@ -2153,6 +2465,129 @@ class FootballFieldScene: SCNScene {
             let lower = SCNAction.rotateTo(x: 0, y: 0, z: name == "arm" ? 0.25 : -0.25, duration: 0.3)
             arm.runAction(SCNAction.sequence([raise, SCNAction.wait(duration: 0.7), lower]), forKey: "swing")
         }
+    }
+
+    /// Goal-line dive: the carrier gathers, lays out flat with the ball
+    /// reaching over the pylon, hits the turf stretched out, then pops up for
+    /// the celebration. Pure presentation on a scoring carry.
+    private func pylonDive(nodeIndex: Int) {
+        guard let node = playerNode(at: nodeIndex),
+              let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        figure.removeAction(forKey: "gait")
+        figure.removeAction(forKey: "hop")
+        figure.removeAction(forKey: "stance")
+        figure.removeAction(forKey: "spinMove")
+        // Ball-side (left) arm thrusts the ball forward over the goal line; the
+        // off arm trails back for the layout line.
+        if let arm = figure.childNode(withName: "arm", recursively: false) {
+            arm.removeAction(forKey: "swing")
+            arm.runAction(SCNAction.sequence([
+                SCNAction.rotateTo(x: -2.5, y: 0, z: 0.15, duration: 0.2),
+                SCNAction.wait(duration: 0.9),
+                SCNAction.rotateTo(x: 0, y: 0, z: 0.25, duration: 0.3),
+            ]), forKey: "swing")
+            arm.childNode(withName: "forearm", recursively: false)?
+                .runAction(SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.2), forKey: "bend")
+        }
+        if let armR = figure.childNode(withName: "armR", recursively: false) {
+            armR.removeAction(forKey: "swing")
+            armR.runAction(SCNAction.sequence([
+                SCNAction.rotateTo(x: 1.0, y: 0, z: -0.3, duration: 0.2),
+                SCNAction.wait(duration: 0.9),
+                SCNAction.rotateTo(x: 0, y: 0, z: -0.25, duration: 0.3),
+            ]), forKey: "swing")
+        }
+        let gather = SCNAction.group([
+            SCNAction.rotateTo(x: 0.2, y: 0, z: 0, duration: 0.1),
+            SCNAction.moveBy(x: 0, y: -0.1, z: 0, duration: 0.1),
+        ])
+        gather.timingMode = .easeOut
+        let launch = SCNAction.group([
+            SCNAction.rotateTo(x: -1.5, y: 0, z: 0, duration: 0.22),
+            SCNAction.move(to: SCNVector3(0, 0.15, 0.7), duration: 0.22),
+        ])
+        launch.timingMode = .easeOut
+        let land = SCNAction.group([
+            SCNAction.rotateTo(x: -1.62, y: 0, z: 0, duration: 0.16),
+            SCNAction.move(to: SCNVector3(0, -0.34, 1.0), duration: 0.16),
+        ])
+        land.timingMode = .easeIn
+        let settle = SCNAction.sequence([
+            SCNAction.moveBy(x: 0, y: 0.05, z: 0, duration: 0.09),
+            SCNAction.moveBy(x: 0, y: -0.05, z: 0, duration: 0.11),
+        ])
+        settle.timingMode = .easeInEaseOut
+        let rise = SCNAction.group([
+            SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.5),
+            SCNAction.move(to: SCNVector3Zero, duration: 0.5),
+        ])
+        rise.timingMode = .easeInEaseOut
+        figure.runAction(SCNAction.sequence([
+            gather, launch, land, settle, SCNAction.wait(duration: 0.5), rise,
+        ]), forKey: "fall")
+    }
+
+    /// QB slide: he gives himself up feet-first — leans back, drops into a
+    /// low protective slide with the hands up, then climbs back to his feet.
+    private func qbSlide(nodeIndex: Int) {
+        guard let node = playerNode(at: nodeIndex),
+              let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        figure.removeAction(forKey: "gait")
+        figure.removeAction(forKey: "hop")
+        figure.removeAction(forKey: "stance")
+        // Anticipation: a quick gather-up before he sits it down.
+        let gather = SCNAction.moveBy(x: 0, y: 0.06, z: 0, duration: 0.1)
+        gather.timingMode = .easeOut
+        // Sit back into the slide — torso tips back, hips drop.
+        let sit = SCNAction.group([
+            SCNAction.rotateTo(x: 0.75, y: 0, z: 0, duration: 0.22),
+            SCNAction.move(to: SCNVector3(0, -0.34, -0.12), duration: 0.22),
+        ])
+        sit.timingMode = .easeOut
+        let hold = SCNAction.wait(duration: 0.5)
+        let up = SCNAction.group([
+            SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.45),
+            SCNAction.move(to: SCNVector3Zero, duration: 0.45),
+        ])
+        up.timingMode = .easeInEaseOut
+        figure.runAction(SCNAction.sequence([gather, sit, hold, up]), forKey: "fall")
+        // Feet kick forward ahead of the hips, then recover under him.
+        for name in ["leg", "legR"] {
+            guard let leg = figure.childNode(withName: name, recursively: false) else { continue }
+            leg.removeAction(forKey: "swing")
+            leg.runAction(SCNAction.sequence([
+                SCNAction.rotateTo(x: -0.6, y: 0, z: 0, duration: 0.22),
+                SCNAction.wait(duration: 0.5),
+                SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.4),
+            ]), forKey: "swing")
+        }
+        // Hands up out of harm's way.
+        for name in ["arm", "armR"] {
+            guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
+            arm.removeAction(forKey: "swing")
+            arm.runAction(SCNAction.sequence([
+                SCNAction.rotateTo(x: -0.4, y: 0, z: name == "arm" ? 1.4 : -1.4, duration: 0.2),
+                SCNAction.wait(duration: 0.5),
+                SCNAction.rotateTo(x: 0, y: 0, z: name == "arm" ? 0.25 : -0.25, duration: 0.4),
+            ]), forKey: "swing")
+        }
+    }
+
+    /// Forward lunge: the carrier stretches the ball out ahead to reach the
+    /// marker (or goal line) as he goes down. Arms only — the body's forward
+    /// fall runs concurrently on its own key.
+    private func lunge(nodeIndex: Int) {
+        guard let node = playerNode(at: nodeIndex),
+              let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        guard let arm = figure.childNode(withName: "arm", recursively: false) else { return }
+        arm.removeAction(forKey: "swing")
+        arm.runAction(SCNAction.sequence([
+            SCNAction.rotateTo(x: -2.5, y: 0, z: 0.15, duration: 0.18),
+            SCNAction.wait(duration: 0.9),
+            SCNAction.rotateTo(x: 0, y: 0, z: 0.25, duration: 0.3),
+        ]), forKey: "swing")
+        arm.childNode(withName: "forearm", recursively: false)?
+            .runAction(SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.18), forKey: "bend")
     }
 
     /// Injury presentation: the player drops and stays on the turf until the
@@ -2290,9 +2725,13 @@ class FootballFieldScene: SCNScene {
         let stepDuration = effectiveDuration(of: step)
         for index in step.pulses { pulse(nodeIndex: index) }
         for index in step.wraps { wrapArms(nodeIndex: index) }
-        for index in step.blocks { blockEngage(nodeIndex: index, duration: stepDuration) }
+        for index in step.blocks {
+            blockEngage(nodeIndex: index, duration: stepDuration,
+                        style: step.blockStyles[index] ?? .drive)
+        }
         for index in step.pumpFakes {
-            pumpFake(nodeIndex: index, delay: max(stepDuration - 0.65, 0.15))
+            pumpFake(nodeIndex: index, delay: max(stepDuration - 0.65, 0.15),
+                     quick: step.pumpFakeQuick)
         }
         for index in step.reaches {
             switch step.catchStyles[index] ?? .reach {
@@ -2320,6 +2759,11 @@ class FootballFieldScene: SCNScene {
         for index in step.bigHits { fall(nodeIndex: index, style: .backward) }
         if !step.bigHits.isEmpty { cameraBump() }
         for index in step.diveFalls { fall(nodeIndex: index, style: .dive) }
+        // Shoestring trips, goal-line pylon dives, QB slides, marker lunges.
+        for index in step.trips { fall(nodeIndex: index, style: .trip) }
+        for index in step.pylonDives { pylonDive(nodeIndex: index) }
+        for index in step.qbSlides { qbSlide(nodeIndex: index) }
+        for index in step.lunges { lunge(nodeIndex: index) }
         // Open-field moves fire mid-step at their scheduled beats; they die
         // with the play generation like every queued step.
         if !step.openField.isEmpty {
@@ -2342,7 +2786,7 @@ class FootballFieldScene: SCNScene {
         case .snap(let toNodeIndex, let shotgun):
             runSnapExchange(to: toNodeIndex, shotgun: shotgun)
         case .arc(let to, let apex, let duration, let from):
-            runBallArc(to: to, apex: apex, duration: duration, from: from)
+            runBallArc(to: to, apex: apex, duration: duration, from: from, style: step.throwStyle)
         case .slide(let to, let duration):
             runBallSlide(to: to, duration: duration)
         case nil:
@@ -2479,7 +2923,7 @@ class FootballFieldScene: SCNScene {
     /// passer's hands: `from` (or the live carry) resolves the thrower and
     /// the flight starts at his ANIMATED chest position — never a stale spot.
     private func runBallArc(to target: SCNVector3, apex: Float, duration: TimeInterval,
-                            from passerIndex: Int? = nil) {
+                            from passerIndex: Int? = nil, style: ThrowStyle? = nil) {
         // Claim the ball so any pending snap-attach for this play no-ops.
         ballHandoffToken += 1
         // Whoever carries the ball is the passer; a snap→throw race can leave
@@ -2499,7 +2943,7 @@ class FootballFieldScene: SCNScene {
         // get no arm at all.
         if let thrower {
             if apex <= 2.0 { pitchMotion(of: thrower, toward: target) }
-            else { throwMotion(of: thrower) }
+            else { throwMotion(of: thrower, style: style ?? .overhand) }
         }
 
         let start = release ?? ballNode.position
@@ -2551,37 +2995,121 @@ class FootballFieldScene: SCNScene {
         shadow.runAction(SCNAction.sequence([track, SCNAction.removeFromParentNode()]))
     }
 
-    /// The passer's right arm cocks back and snaps forward overhead as the
-    /// ball releases into its arc, then settles back to neutral. The trunk
-    /// follows through onto the front foot — a small forward pitch and a
-    /// front-leg plant timed with the release.
-    private func throwMotion(of node: SCNNode) {
+    /// Per-style shaping of the throwing motion. Amplitudes and durations
+    /// only — the actual node wiring lives in `throwMotion`.
+    private struct ThrowShape {
+        var windupX: CGFloat        // how far the arm cocks back
+        var armZ: CGFloat           // elbow carriage (more negative = 3/4 out)
+        var releaseX: CGFloat       // how far the arm whips through
+        var windupDur: TimeInterval
+        var releaseDur: TimeInterval
+        var trunkPitch: CGFloat     // forward follow-through onto the front foot
+        var trunkTilt: CGFloat      // sideways lean (off-foot bails away)
+        var shoulderTwist: CGFloat  // torso rotation driving the arm through
+        var frontLegStep: CGFloat   // plant of the lead leg (negative = forward)
+        var settle: TimeInterval    // how long the follow-through hangs
+    }
+
+    private func throwShape(_ style: ThrowStyle) -> ThrowShape {
+        switch style {
+        case .overhand:
+            return ThrowShape(windupX: 2.2, armZ: -0.25, releaseX: -2.6,
+                              windupDur: 0.16, releaseDur: 0.18, trunkPitch: 0.24,
+                              trunkTilt: 0, shoulderTwist: 0.22, frontLegStep: -0.5,
+                              settle: 0.2)
+        case .sidearm:
+            // Elbow drops out to the side, short quick flick, minimal weight
+            // transfer — the 3/4 out-breaking dart.
+            return ThrowShape(windupX: 1.5, armZ: -0.7, releaseX: -1.9,
+                              windupDur: 0.12, releaseDur: 0.12, trunkPitch: 0.12,
+                              trunkTilt: 0.1, shoulderTwist: 0.3, frontLegStep: -0.3,
+                              settle: 0.12)
+        case .offFoot:
+            // Unbalanced under pressure: arm gets there but the trunk bails
+            // away instead of driving forward — no lead-leg plant.
+            return ThrowShape(windupX: 1.9, armZ: -0.35, releaseX: -2.2,
+                              windupDur: 0.14, releaseDur: 0.15, trunkPitch: -0.14,
+                              trunkTilt: -0.28, shoulderTwist: 0.16, frontLegStep: 0.15,
+                              settle: 0.18)
+        case .lob:
+            // Deep touch: a big wind-up, a slow high finish, full weight over.
+            return ThrowShape(windupX: 2.55, armZ: -0.25, releaseX: -2.7,
+                              windupDur: 0.2, releaseDur: 0.26, trunkPitch: 0.3,
+                              trunkTilt: 0, shoulderTwist: 0.26, frontLegStep: -0.6,
+                              settle: 0.26)
+        case .bullet:
+            // Deep drive: full wind-up snapped through on a fast flat release.
+            return ThrowShape(windupX: 2.45, armZ: -0.22, releaseX: -2.9,
+                              windupDur: 0.16, releaseDur: 0.12, trunkPitch: 0.3,
+                              trunkTilt: 0, shoulderTwist: 0.34, frontLegStep: -0.55,
+                              settle: 0.2)
+        }
+    }
+
+    /// The passer's right arm cocks back and snaps forward as the ball
+    /// releases into its arc, then settles back to neutral. The trunk follows
+    /// through (a pitch + shoulder rotation + a lead-leg plant) timed with the
+    /// release; the off hand releases the chest carry to neutral. `style`
+    /// shapes the whole motion — a soft deep lob, a driven bullet, a quick
+    /// 3/4 sidearm out, or an unbalanced off-the-back-foot heave.
+    private func throwMotion(of node: SCNNode, style: ThrowStyle = .overhand) {
         guard let figure = node.childNode(withName: "figure", recursively: false),
               let arm = figure.childNode(withName: "armR", recursively: false) else { return }
+        let s = throwShape(style)
         arm.removeAction(forKey: "swing")
-        let windup = SCNAction.rotateTo(x: 2.2, y: 0, z: -0.25, duration: 0.16)
+        let windup = SCNAction.rotateTo(x: s.windupX, y: 0, z: s.armZ, duration: s.windupDur)
         windup.timingMode = .easeOut
-        let release = SCNAction.rotateTo(x: -2.6, y: 0, z: -0.25, duration: 0.18)
+        let release = SCNAction.rotateTo(x: s.releaseX, y: 0, z: s.armZ, duration: s.releaseDur)
         release.timingMode = .easeIn
         let neutral = SCNAction.rotateTo(x: 0, y: 0, z: -0.25, duration: 0.3)
         neutral.timingMode = .easeInEaseOut
-        arm.runAction(SCNAction.sequence([windup, release, SCNAction.wait(duration: 0.2), neutral]),
+        arm.runAction(SCNAction.sequence([windup, release,
+                                          SCNAction.wait(duration: s.settle), neutral]),
                       forKey: "swing")
+        // Forearm wrist snap: cocked back during the wind-up, whipped straight
+        // through the release — the crack that sells the throw.
+        if let forearm = arm.childNode(withName: "forearm", recursively: false) {
+            forearm.removeAction(forKey: "bend")
+            forearm.runAction(SCNAction.sequence([
+                SCNAction.rotateTo(x: -1.2, y: 0, z: 0, duration: s.windupDur),
+                SCNAction.rotateTo(x: 0.1, y: 0, z: 0, duration: s.releaseDur),
+                SCNAction.rotateTo(x: -0.15, y: 0, z: 0, duration: 0.3),
+            ]), forKey: "bend")
+        }
+        // The off (left) hand lets go of the two-hand carry and drops to
+        // neutral so the QB doesn't finish frozen in the chest hold.
+        if let offArm = figure.childNode(withName: "arm", recursively: false) {
+            offArm.removeAction(forKey: "swing")
+            let drop = SCNAction.rotateTo(x: 0, y: 0, z: 0.25, duration: s.windupDur + s.releaseDur)
+            drop.timingMode = .easeInEaseOut
+            offArm.runAction(drop, forKey: "swing")
+            offArm.childNode(withName: "forearm", recursively: false)?
+                .runAction(SCNAction.rotateTo(x: -0.15, y: 0, z: 0, duration: 0.2), forKey: "bend")
+        }
 
-        // Follow-through: weight transfers onto the front foot through the
-        // release (figure pitch + a front-leg step), then straightens.
+        // Follow-through: the trunk pitches (or bails, off-foot) and the
+        // shoulders rotate through the release, then straighten.
         figure.removeAction(forKey: "gait")
         let lean = SCNAction.sequence([
-            SCNAction.wait(duration: 0.16),
-            SCNAction.rotateTo(x: 0.24, y: 0, z: 0, duration: 0.18),
+            SCNAction.wait(duration: s.windupDur),
+            SCNAction.rotateTo(x: s.trunkPitch, y: 0, z: s.trunkTilt, duration: s.releaseDur),
             SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.3),
         ])
+        lean.timingMode = .easeInEaseOut
         figure.runAction(lean, forKey: "gait")
+        if let body = figure.childNode(withName: "body", recursively: false) {
+            body.removeAction(forKey: "twist")
+            body.runAction(SCNAction.sequence([
+                SCNAction.rotateTo(x: 0, y: s.shoulderTwist, z: 0, duration: s.windupDur),
+                SCNAction.rotateTo(x: 0, y: -s.shoulderTwist * 0.6, z: 0, duration: s.releaseDur),
+                SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.3),
+            ]), forKey: "twist")
+        }
         if let leg = figure.childNode(withName: "leg", recursively: false) {
             leg.removeAction(forKey: "swing")
             leg.runAction(SCNAction.sequence([
-                SCNAction.wait(duration: 0.14),
-                SCNAction.rotateTo(x: -0.5, y: 0, z: 0, duration: 0.16),
+                SCNAction.wait(duration: s.windupDur - 0.02),
+                SCNAction.rotateTo(x: s.frontLegStep, y: 0, z: 0, duration: 0.16),
                 SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.3),
             ]), forKey: "swing")
         }

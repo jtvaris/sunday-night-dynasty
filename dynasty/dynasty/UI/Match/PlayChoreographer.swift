@@ -646,6 +646,50 @@ struct PlayChoreographer {
         (2...6).map { c.oBase + $0 } + (0...3).map { c.dl($0) }
     }
 
+    /// Per-node block STYLE from the trench matchup so the winning side of
+    /// each rep visibly wins it: run blocks drive, pass sets anchor, a decided
+    /// rep pancakes the loser, a beaten protector gets swum past. Deterministic
+    /// (seeded by node/spot) — pure presentation, the block list is unchanged.
+    private static func blockStyleMap(_ c: Context, run: Bool,
+                                      beatenBlocker: Int? = nil)
+        -> [Int: FootballFieldScene.BlockStyle] {
+        var m: [Int: FootballFieldScene.BlockStyle] = [:]
+        for role in 2...6 { m[c.oBase + role] = run ? .drive : .anchor }
+        for role in 0...3 { m[c.dl(role)] = run ? .anchor : .drive }
+
+        // The DL squared up on an OL role (inverse of blockerFacing).
+        func facingDL(_ olRole: Int) -> Int? {
+            switch olRole {
+            case 2: return 0; case 3: return 1
+            case 5: return 2; case 6: return 3; default: return nil
+            }
+        }
+
+        // The sim's trench/pressure verdicts: the winner pancakes his man.
+        for event in c.matchups?.events ?? [] where event.kind == .trench || event.kind == .pressure {
+            if event.offenseWon, let ol = event.offRole, (2...6).contains(ol) {
+                m[c.oBase + ol] = .pancake
+                if let dl = facingDL(ol) { m[c.dl(dl)] = .anchor }
+            } else if !event.offenseWon, let dl = event.defRole, (0...3).contains(dl) {
+                m[c.dl(dl)] = .pancake
+                m[c.oBase + blockerFacing(defRole: dl)] = .whiff
+            }
+        }
+
+        // The beaten pass-pro side: the OL whiffs, his rusher drives through.
+        if let beaten = beatenBlocker, (2...6).contains(beaten) {
+            m[c.oBase + beaten] = .whiff
+            if let dl = facingDL(beaten) { m[c.dl(dl)] = .drive }
+        }
+
+        // One interior lineman cuts on a wide-open run lane — deterministic
+        // per spot so the trenches never move in perfect lockstep.
+        let cutRole = 2 + Int(hash01(c.oBase &* 17 &+ Int(c.losZ)) * 4.99) % 5
+        let cut = c.oBase + cutRole
+        if run && c.holeSize > 0.55 && m[cut] == .drive { m[cut] = .cut }
+        return m
+    }
+
     /// Receivers release into routes; on runs they throttle down into stalk
     /// blocks (`depthScale` < 1). Excluded roles (the scripted target) skipped.
     private static func routeMoves(_ c: Context, p: Float, depthScale: Float = 1,
@@ -1095,6 +1139,7 @@ struct PlayChoreographer {
             .filter { !taken.contains($0.nodeIndex) }
         return Step(moves: moves, paths: paths, ballMove: c.snapExchange, duration: d,
                     blocks: lineBlockNodes(c),
+                    blockStyles: blockStyleMap(c, run: false),
                     startDelays: snapReactionDelays(c))
     }
 
@@ -1114,7 +1159,11 @@ struct PlayChoreographer {
         return Step(moves: moves, paths: paths, ballMove: .carryChest(nodeIndex: c.qb),
                     duration: d, backpedals: [c.qb],
                     blocks: lineBlockNodes(c),
-                    pumpFakes: pumpFake ? [c.qb] : [])
+                    pumpFakes: pumpFake ? [c.qb] : [],
+                    // Mobile QBs sell the quick shoulder shrug; pocket passers
+                    // the full double-clutch wind-up.
+                    pumpFakeQuick: c.oSpeed(0) >= 8.2,
+                    blockStyles: blockStyleMap(c, run: false))
     }
 
     /// QB drop depth past his alignment: from under center he runs a real
@@ -1122,6 +1171,22 @@ struct PlayChoreographer {
     /// the gun he only settles a step or two deeper.
     private static func dropDepth(_ c: Context, deep: Bool) -> Float {
         deep ? (c.qbUnderCenter ? 4.8 : 2.5) : (c.qbUnderCenter ? 3.2 : 1.5)
+    }
+
+    /// The passer's signature throwing motion for a pass, chosen from throw
+    /// depth, coverage and a per-QB lean (his own speed nudges mobile passers
+    /// toward the quick 3/4 flick). A deep ball drives (bullet) into tight
+    /// coverage and floats (lob) when the man is open; a `forced` throw
+    /// (undercut pick, pressured heave) comes off the back foot. Derived from
+    /// deterministic sim inputs and built once per play — no per-frame flicker,
+    /// pure presentation (the sim result is untouched).
+    private static func throwStyle(_ c: Context, depth: Float,
+                                   tight: Bool = false, forced: Bool = false)
+        -> FootballFieldScene.ThrowStyle {
+        if forced { return .offFoot }
+        if depth >= 16 { return tight ? .bullet : .lob }
+        if depth < 8 { return c.oSpeed(0) >= 8.2 ? .sidearm : .overhand }
+        return .overhand
     }
 
     /// The zone defender whose landmark sits closest to a point — he's the
@@ -1230,20 +1295,28 @@ struct PlayChoreographer {
         let f2: Float = isDraw ? 0.3 : (isScramble ? 0.42 : 0.32)
 
         // Breakaway runs flash 1-2 open-field moves; a juke also splices a
-        // hard lateral jig into the track so the cut is real, not just a
-        // body feint. Matchup winners show off more often.
+        // hard lateral jig into the track so the cut is real, not just a body
+        // feint. Agile backs (high top speed) flash jukes/spins/dead-legs;
+        // power backs truck through with stiff-arms and hurdles. A stable
+        // per-carrier signature (his start spot + the sim's own gain) picks
+        // WHICH move and WHICH way he jigs, so the same back shows the same
+        // style, the roster stays varied, and nothing flickers frame to frame.
+        // Matchup winners show off a second move. Pure presentation.
         let runGain = (endZ - c.losZ) * c.direction
         var openFieldPlan: [(kind: FootballFieldScene.OpenFieldMove.Kind, fraction: Float)] = []
         if runGain >= 12 {
             let carrierWon = c.matchups?.events
                 .contains { $0.offenseWon && $0.offRole == carrierRole } ?? false
-            let two = runGain >= 22 || (carrierWon && Bool.random())
-            let kinds: [FootballFieldScene.OpenFieldMove.Kind] = [.juke, .spin, .stiffArm].shuffled()
+            let two = runGain >= 22 || carrierWon
+            let agile = c.oSpeed(carrierRole) >= 8.4
+            let pool: [FootballFieldScene.OpenFieldMove.Kind] =
+                agile ? [.juke, .spin, .deadLeg] : [.stiffArm, .hurdle, .juke]
+            let sig = Int((abs(carrierStart.x) * 2 + runGain).rounded())
             let beats: [Float] = two ? [0.55, 0.82] : [0.62]
             for (index, fraction) in beats.enumerated() {
-                let kind = kinds[index]
+                let kind = pool[(sig + index) % pool.count]
                 if kind == .juke {
-                    track = jig(track, at: fraction, side: Bool.random() ? 1 : -1)
+                    track = jig(track, at: fraction, side: sig % 2 == 0 ? 1 : -1)
                 }
                 openFieldPlan.append((kind, fraction))
             }
@@ -1327,6 +1400,7 @@ struct PlayChoreographer {
             duration: snapDur,
             backpedals: snapBackpedals,
             blocks: lineBlockNodes(c),
+            blockStyles: blockStyleMap(c, run: !sellsPass),
             startDelays: snapReactionDelays(c)
         ))
 
@@ -1353,7 +1427,8 @@ struct PlayChoreographer {
             paths: meshPaths,
             ballMove: meshBall,
             duration: meshDur,
-            blocks: lineBlockNodes(c)
+            blocks: lineBlockNodes(c),
+            blockStyles: blockStyleMap(c, run: !sellsPass)
         ))
 
         // 3. Run: the carrier finishes his track downfield; the credited
@@ -1390,7 +1465,16 @@ struct PlayChoreographer {
         //    by list order) for a gang-tackle read. The tackler's arms wrap
         //    the carrier, and ~30% of hits first drive him back 0.5-1 yard.
         if includeTackle {
-            steps += tackleSteps(c, carrier: carrier, tackler: tackler, x: endX, z: end.z)
+            // A scrambling QB with room slides feet-first to protect himself
+            // on a non-trivial gain rather than take the hit (deterministic).
+            let slideQB = isScramble && carrier == c.qb && runGain >= 4 && runGain <= 14
+                && hash01(carrier &* 51 &+ Int(runGain.rounded())) < 0.5
+            if slideQB {
+                steps.append(Step(moves: [], ballMove: .carry(nodeIndex: carrier),
+                                  duration: 1.3, qbSlides: [carrier]))
+            } else {
+                steps += tackleSteps(c, carrier: carrier, tackler: tackler, x: endX, z: end.z)
+            }
         }
 
         return (steps, carrier, end, tackler)
@@ -1417,11 +1501,30 @@ struct PlayChoreographer {
         } else {
             approach = 0
         }
-        let roll = Float.random(in: 0..<1)
+        // Deterministic variant selection: the same tackler in the same spot
+        // gets the same "signature" hit, but the roster stays varied and
+        // nothing flickers frame to frame (seed = who + where). Size class
+        // (DL heavier than DB) tilts a stopped runner toward the blow-up.
+        let seed = tackler &* 92821 &+ carrier &* 68917
+            &+ Int(gain.rounded()) &* 40507 &+ Int(x.rounded()) &* 15486
+        let roll = hash01(seed)
+        let roll2 = hash01(seed &+ 777)
+        let size: Float          // 0 = a DB … 1 = a lineman
+        switch tacklerRole {
+        case 0...3: size = 1        // DL
+        case 4...6: size = 0.6      // LB
+        default: size = 0.25        // CB / S
+        }
+        // Line to gain reached on this rep → the carrier reaches the ball out.
+        let toGo = Float(c.play.distance)
+        let reachedMarker = toGo > 0 && gain >= toGo - 0.5 && gain <= toGo + 2
+        let markerLunge = reachedMarker ? [carrier] : []
 
-        // Big hit: the carrier flies backward off his feet onto his back.
-        if c.defenseWinnerRole != nil, gain < 3, roll < 0.35 {
-            let backZ = clampZ(z - c.direction * Float.random(in: 0.9...1.3))
+        // BIG HIT: a stopped runner is blown backward off his feet — bigger
+        // hitters land it more often.
+        let bigHitChance = 0.18 + size * 0.45
+        if c.defenseWinnerRole != nil, gain < 3, roll < bigHitChance {
+            let backZ = clampZ(z - c.direction * (0.9 + hash01(seed &+ 5) * 0.4))
             let gang = gangTacklers(c, x: x, z: backZ, excluding: [tackler])
             return [Step(
                 moves: [
@@ -1436,7 +1539,7 @@ struct PlayChoreographer {
             )]
         }
 
-        // Drag-down from behind on a breakaway: both slide forward together.
+        // DRAG-DOWN from behind on a breakaway: both slide forward together.
         if gain >= 12, roll < 0.6 {
             let slideZ = clampZ(z + c.direction * 0.9)
             let gang = gangTacklers(c, x: x, z: slideZ, excluding: [tackler])
@@ -1449,12 +1552,13 @@ struct PlayChoreographer {
                 duration: 1.4,
                 pulses: [tackler],
                 falls: [carrier, tackler] + gang,
-                wraps: [tackler]
+                wraps: [tackler],
+                lunges: markerLunge
             )]
         }
 
-        // Diving tackle: the tackler closed from distance — a flat launch
-        // at the carrier's legs cuts him down.
+        // DIVING TACKLE: the tackler closed from distance — a flat launch at
+        // the carrier's legs cuts him down (carrier collapses forward).
         if approach > 12, roll < 0.7 {
             let gang = gangTacklers(c, x: x, z: z, excluding: [tackler])
             return [Step(
@@ -1465,15 +1569,38 @@ struct PlayChoreographer {
                 duration: 1.3,
                 pulses: [tackler],
                 falls: [carrier] + gang,
-                diveFalls: [tackler]
+                diveFalls: [tackler],
+                lunges: markerLunge
             )]
         }
 
+        // SHOESTRING / ANKLE TACKLE: a short-range dive at the shoetops — the
+        // carrier's legs are cut out and he stumbles forward onto the turf.
+        // Quicker, smaller defenders throw it more than heavy linemen do.
+        if gain <= 8, approach <= 12, roll2 < 0.24 + (1 - size) * 0.18 {
+            let tripZ = clampZ(z + c.direction * 0.3)
+            let gang = gangTacklers(c, x: x, z: tripZ, excluding: [tackler])
+            return [Step(
+                moves: [
+                    (nodeIndex: carrier, to: player(x, tripZ), duration: 0.32),
+                    (nodeIndex: tackler, to: player(x - 0.3, z - c.direction * 0.3), duration: 0.22),
+                ] + pileOnMoves(c, gang: gang, x: x, z: tripZ),
+                ballMove: .carry(nodeIndex: carrier),
+                duration: 1.3,
+                pulses: [tackler],
+                falls: gang,
+                diveFalls: [tackler],
+                trips: [carrier]
+            )]
+        }
+
+        // WRAP-UP (default): stand-up wrap, an occasional short drive-back,
+        // gang chasers piling on staggered.
         var steps: [Step] = []
         var pileZ = z
-        let driveBack = Float.random(in: 0..<1) < 0.3
+        let driveBack = hash01(seed &+ 313) < 0.3
         if driveBack {
-            pileZ = clampZ(z - c.direction * Float.random(in: 0.5...1))
+            pileZ = clampZ(z - c.direction * (0.5 + hash01(seed &+ 99) * 0.5))
             steps.append(Step(
                 moves: [
                     (nodeIndex: carrier, to: player(x, pileZ), duration: 0.4),
@@ -1489,7 +1616,8 @@ struct PlayChoreographer {
                           ballMove: .carry(nodeIndex: carrier), duration: 1.3,
                           pulses: [tackler],
                           falls: [carrier, tackler] + gang,
-                          wraps: driveBack ? gang : [tackler] + gang))
+                          wraps: driveBack ? gang : [tackler] + gang,
+                          lunges: markerLunge))
         return steps
     }
 
@@ -1610,6 +1738,7 @@ struct PlayChoreographer {
             ballMove: .arc(to: air(catchSpot.x, catchSpot.z), apex: apex, duration: flight, from: c.qb),
             duration: flight,
             reaches: [receiver],
+            throwStyle: throwStyle(c, depth: catchDepth, tight: tightCoverage),
             catchStyles: [receiver: catchStyle]
         ))
 
@@ -1660,9 +1789,15 @@ struct PlayChoreographer {
         }
         var yacOpenField: [FootballFieldScene.OpenFieldMove] = []
         if yacDistance >= 12 {
-            let kinds: [FootballFieldScene.OpenFieldMove.Kind] = [.juke, .spin, .stiffArm]
+            // Receivers are open-field runners: burners juke/spin away, bigger
+            // possession types dead-leg and stiff-arm through. Deterministic
+            // per-catch signature so the man plays to type without flicker.
+            let agile = c.oSpeed(receiverRole) >= 8.6
+            let pool: [FootballFieldScene.OpenFieldMove.Kind] =
+                agile ? [.juke, .spin, .deadLeg] : [.spin, .stiffArm, .deadLeg]
+            let sig = Int((abs(catchSpot.x) * 2 + yacDistance).rounded())
             yacOpenField.append(.init(nodeIndex: receiver,
-                                      kind: kinds.randomElement() ?? .spin,
+                                      kind: pool[sig % pool.count],
                                       delay: yacDuration * 0.4))
         }
         steps.append(Step(
@@ -1916,7 +2051,8 @@ struct PlayChoreographer {
             paths: flightPaths,
             ballMove: .arc(to: miss, apex: 4, duration: flight, from: c.qb),
             duration: flight,
-            reaches: [receiver]
+            reaches: [receiver],
+            throwStyle: throwStyle(c, depth: routeDepth, forced: deepDrop)
         ))
 
         // Ball skips dead along the turf. No advance — but a clearly open
@@ -1974,7 +2110,8 @@ struct PlayChoreographer {
             ballMove: .carryChest(nodeIndex: c.qb),
             duration: rushTime,
             backpedals: [c.qb],
-            blocks: lineBlockNodes(c).filter { $0 != rusher }
+            blocks: lineBlockNodes(c).filter { $0 != rusher },
+            blockStyles: blockStyleMap(c, run: false, beatenBlocker: beaten)
         ))
 
         // Rusher closes the last yard; the patterns finish with nowhere to go.
@@ -2052,7 +2189,8 @@ struct PlayChoreographer {
             paths: flightPaths,
             ballMove: .arc(to: air(pick.x, pick.z), apex: 4.5, duration: flight, from: c.qb),
             duration: flight,
-            reaches: [db, receiver]
+            reaches: [db, receiver],
+            throwStyle: throwStyle(c, depth: routeDepth, forced: true)
         ))
 
         // Return: DB takes it back the other way ~5yd while the offense
@@ -2124,6 +2262,14 @@ struct PlayChoreographer {
         }
 
         var steps = script.steps
+
+        // Goal-line run: the scorer lays out over the pylon with the ball
+        // extended before he pops up to celebrate.
+        let yardsToGoal = (c.direction * 50 - c.losZ) * c.direction
+        if !passLike, yardsToGoal <= 6 {
+            steps.append(Step(moves: [], ballMove: .carry(nodeIndex: script.carrier),
+                              duration: 1.2, pylonDives: [script.carrier]))
+        }
 
         // Celebration: the scorer leaps with his arms up while teammates
         // sprint in to mob him…
@@ -2435,6 +2581,7 @@ struct PlayChoreographer {
             Step(moves: lineSurgeMoves(c, p: 0.5, d: 0.55),
                  ballMove: c.snapExchange, duration: 0.6,
                  blocks: lineBlockNodes(c),
+                 blockStyles: blockStyleMap(c, run: true),
                  startDelays: snapReactionDelays(c)),
             Step(moves: [], ballMove: .carry(nodeIndex: c.qb), duration: 1.0),
         ]
