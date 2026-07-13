@@ -20,6 +20,30 @@ enum TeamStrength {
         let total = starters.reduce(0) { $0 + $1.overall }
         return total / starters.count
     }
+
+    /// League-wide mean of the starters OVR — the pivot the schedule badge
+    /// colors hang off. Compute it once per view appearance (32 roster sorts)
+    /// and pass it down; don't recompute per row.
+    static func leagueAverageStartersOVR(_ teams: [Team]) -> Int {
+        let values = teams.map { startersOVR($0) }.filter { $0 > 0 }
+        guard !values.isEmpty else { return 0 }
+        return values.reduce(0, +) / values.count
+    }
+
+    /// Relative strength color. The league's starters OVR sits in a narrow
+    /// band (~75-78), so the old absolute thresholds (80+/70-79/<70) parked
+    /// every team in yellow and the badge carried no signal. Colors relative
+    /// to the league mean instead: green = strong roster, red = weak roster,
+    /// yellow = the league-average band. `leagueAverage` is the truncated
+    /// integer mean (sits ~0.5 below the true mean), so the asymmetric +2/-1
+    /// offsets land ≈ ±1.5 around the real average — with the observed
+    /// spread that colors 78+ green and 75-and-under red.
+    static func ovrColor(_ ovr: Int, leagueAverage: Int) -> Color {
+        let pivot = leagueAverage > 0 ? leagueAverage : 76
+        if ovr >= pivot + 2 { return Color.success }
+        if ovr <= pivot - 1 { return Color.danger }
+        return Color.warning
+    }
 }
 
 struct ScheduleView: View {
@@ -31,6 +55,9 @@ struct ScheduleView: View {
 
     @State private var selectedWeek: Int
     @State private var previewGame: Game?
+    /// League mean of starters OVR — computed once when the view appears so
+    /// the badge colors compare opponents against the actual league spread.
+    @State private var leagueAvgOVR = 0
 
     // MARK: - Init
 
@@ -98,7 +125,8 @@ struct ScheduleView: View {
                                         game: game,
                                         teams: allTeams,
                                         playerTeamID: playerTeamID,
-                                        teamRecords: teamRecords
+                                        teamRecords: teamRecords,
+                                        leagueAvgOVR: leagueAvgOVR
                                     )
                                     .onTapGesture { previewGame = game }
                                 }
@@ -115,6 +143,11 @@ struct ScheduleView: View {
         }
         .navigationTitle("Week \(selectedWeek) Schedule")
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .onAppear {
+            if leagueAvgOVR == 0 {
+                leagueAvgOVR = TeamStrength.leagueAverageStartersOVR(allTeams)
+            }
+        }
         .sheet(item: $previewGame) { game in
             GamePreviewSheet(
                 game: game,
@@ -202,7 +235,8 @@ struct ScheduleView: View {
                         teams: allTeams,
                         playerTeamID: playerTeamID,
                         teamRecords: teamRecords,
-                        isCurrentWeek: game.week == career.currentWeek
+                        isCurrentWeek: game.week == career.currentWeek,
+                        leagueAvgOVR: leagueAvgOVR
                     )
                     .onTapGesture { previewGame = game }
                 }
@@ -304,6 +338,7 @@ private struct NextGamePill: View {
     let playerTeamID: UUID?
     let teamRecords: [UUID: StandingsRecord]
     let isCurrentWeek: Bool
+    let leagueAvgOVR: Int
 
     private var opponentID: UUID? {
         guard let pid = playerTeamID else { return nil }
@@ -377,11 +412,7 @@ private struct NextGamePill: View {
     }
 
     private func ovrColor(_ ovr: Int) -> Color {
-        switch ovr {
-        case 80...: return Color.danger
-        case 70..<80: return Color.warning
-        default: return Color.success
-        }
+        TeamStrength.ovrColor(ovr, leagueAverage: leagueAvgOVR)
     }
 }
 
@@ -392,6 +423,7 @@ private struct GameCard: View {
     let teams: [Team]
     let playerTeamID: UUID?
     let teamRecords: [UUID: StandingsRecord]
+    let leagueAvgOVR: Int
 
     private var homeTeam: Team? { teams.first { $0.id == game.homeTeamID } }
     private var awayTeam: Team? { teams.first { $0.id == game.awayTeamID } }
@@ -554,11 +586,7 @@ private struct GameCard: View {
     }
 
     private func ovrColor(_ ovr: Int) -> Color {
-        switch ovr {
-        case 80...: return Color.danger
-        case 70..<80: return Color.warning
-        default: return Color.success
-        }
+        TeamStrength.ovrColor(ovr, leagueAverage: leagueAvgOVR)
     }
 
     // MARK: - Result Label

@@ -85,6 +85,9 @@ struct SettingsView: View {
     @AppStorage("gameSpeed") private var gameSpeedRaw: String = GameSpeed.normal.rawValue
     @AppStorage("difficulty") private var difficultyRaw: String = Difficulty.normal.rawValue
     @AppStorage("playClockSetting") private var playClockRaw: String = PlayClockSetting.ten.rawValue
+    /// Live-game quarter reports (end of Q1/Q3 player situation card).
+    /// Read by `CoachedGameView` via the shared "quarterReportsEnabled" key.
+    @AppStorage("quarterReportsEnabled") private var quarterReportsEnabled = true
 
     // Appearance
     @AppStorage("themePreference") private var themeRaw: String = ThemePreference.dark.rawValue
@@ -271,10 +274,17 @@ struct SettingsView: View {
             .pickerStyle(.menu)
             .tint(Color.accentGold)
             .listRowBackground(Color.backgroundSecondary)
+
+            Toggle(isOn: $quarterReportsEnabled) {
+                Label("Quarter Reports", systemImage: "chart.bar.doc.horizontal")
+                    .foregroundStyle(Color.textPrimary)
+            }
+            .tint(Color.accentGold)
+            .listRowBackground(Color.backgroundSecondary)
         } header: {
             sectionHeader("Gameplay")
         } footer: {
-            Text("Difficulty affects AI roster construction, trade valuation, and free-agent competition. Play Clock limits live-game decision time — when it runs out, the QB or defense checks into a simple base call (never a penalty).")
+            Text("Difficulty affects AI roster construction, trade valuation, and free-agent competition. Play Clock limits live-game decision time — when it runs out, the QB or defense checks into a simple base call (never a penalty). Quarter Reports pause a live game after Q1 and Q3 with a player situation card.")
                 .foregroundStyle(Color.textTertiary)
         }
     }
@@ -456,6 +466,7 @@ struct SettingsView: View {
         gameSpeedRaw = GameSpeed.normal.rawValue
         difficultyRaw = Difficulty.normal.rawValue
         playClockRaw = PlayClockSetting.ten.rawValue
+        quarterReportsEnabled = true
         themeRaw = ThemePreference.dark.rawValue
         notificationsEnabled = true
         notifyCapWarnings = true

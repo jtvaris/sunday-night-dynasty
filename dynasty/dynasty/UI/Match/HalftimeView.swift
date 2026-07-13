@@ -19,6 +19,12 @@ struct HalftimeView: View {
 
     @State private var selection: HalftimeAdjustment? = nil
 
+    /// Report = line score, battles, and the adjustment; Players = the same
+    /// per-player situation panel the quarter reports use (shared component,
+    /// so Q2's end never stacks two overlays).
+    private enum Tab { case report, players }
+    @State private var tab: Tab = .report
+
     var body: some View {
         ZStack {
             Color.black.opacity(0.55).ignoresSafeArea()
@@ -32,13 +38,19 @@ struct HalftimeView: View {
                         .padding(.vertical, 5)
                         .background(Color.accentGold, in: Capsule())
 
-                    lineScoreGrid
+                    tabSwitcher
 
-                    totalYardsRow
+                    if tab == .report {
+                        lineScoreGrid
 
-                    keyBattles
+                        totalYardsRow
 
-                    adjustmentPicker
+                        keyBattles
+
+                        adjustmentPicker
+                    } else {
+                        QuarterPlayersPanel(engine: engine)
+                    }
 
                     Button {
                         onContinue(selection)
@@ -53,7 +65,7 @@ struct HalftimeView: View {
                     .buttonStyle(.plain)
                 }
                 .padding(30)
-                .frame(maxWidth: 620)
+                .frame(maxWidth: 720)
                 .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 20))
                 .overlay(
                     RoundedRectangle(cornerRadius: 20)
@@ -63,6 +75,32 @@ struct HalftimeView: View {
                 .frame(maxWidth: .infinity)
             }
         }
+    }
+
+    // MARK: - Tabs
+
+    private var tabSwitcher: some View {
+        HStack(spacing: 4) {
+            tabButton("REPORT", isOn: tab == .report) { tab = .report }
+            tabButton("PLAYERS", isOn: tab == .players) { tab = .players }
+        }
+        .padding(3)
+        .background(Color.backgroundTertiary, in: Capsule())
+    }
+
+    private func tabButton(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15), action)
+        } label: {
+            Text(title)
+                .font(.system(size: 11, weight: .black))
+                .tracking(0.8)
+                .foregroundStyle(isOn ? Color.backgroundPrimary : Color.textSecondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 7)
+                .background(isOn ? Color.accentGold : Color.clear, in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Line score (Q1 / Q2 / total)

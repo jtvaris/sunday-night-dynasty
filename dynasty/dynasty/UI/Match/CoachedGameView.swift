@@ -219,6 +219,12 @@ struct CoachedGameView: View {
     @State private var showManageSheet = false
     /// Halftime report overlay (raised by the engine's `halftimePending`).
     @State private var showHalftime = false
+    /// End-of-quarter report overlay (raised by the engine's
+    /// `quarterBreakPending` at Q1→Q2 and Q3→Q4).
+    @State private var showQuarterReport = false
+    /// Settings toggle: switch the Q1/Q3 quarter reports off entirely
+    /// (halftime keeps its own card either way).
+    @AppStorage("quarterReportsEnabled") private var quarterReportsEnabled = true
 
     // Two-minute drill presentation
     /// Quarters (2 and/or 4) whose two-minute warning chip already fired.
@@ -329,6 +335,20 @@ struct CoachedGameView: View {
                     withAnimation(.easeInOut(duration: 0.3)) { showHalftime = false }
                     if let choice { showBanner("2nd-half adjustment: \(choice.rawValue).") }
                     proceed(after: 0.5)
+                }
+                .transition(.opacity)
+            }
+
+            if showQuarterReport {
+                QuarterReportView(
+                    engine: engine,
+                    homeTeam: homeTeam,
+                    awayTeam: awayTeam,
+                    playerTeamIsHome: playerTeamIsHome
+                ) {
+                    engine.resolveQuarterBreak()
+                    withAnimation(.easeInOut(duration: 0.3)) { showQuarterReport = false }
+                    proceed(after: 0.4)
                 }
                 .transition(.opacity)
             }
@@ -2454,7 +2474,8 @@ struct CoachedGameView: View {
     /// left off when they close. The halftime report and a live play always
     /// pause the clock, so it can never expire under either.
     private var playClockPaused: Bool {
-        isAnimating || isReplaying || showHalftime || showFinal || showStatsSheet
+        isAnimating || isReplaying || showHalftime || showQuarterReport
+            || showFinal || showStatsSheet
             || showManageSheet || showSimToEndConfirm || showExitConfirm
             || firstSnapTipStep != nil // R37: reading the walkthrough costs nothing
     }
@@ -2854,6 +2875,16 @@ struct CoachedGameView: View {
         if engine.halftimePending {
             withAnimation(.easeInOut(duration: 0.3)) { showHalftime = true }
             return
+        }
+        // End of Q1 / Q3: pause on the quarter report (player situation +
+        // decision flags). Dismissing re-enters proceed(). With the Settings
+        // toggle off the flag just clears and the flow plays on.
+        if engine.quarterBreakPending {
+            if quarterReportsEnabled {
+                withAnimation(.easeInOut(duration: 0.3)) { showQuarterReport = true }
+                return
+            }
+            engine.resolveQuarterBreak()
         }
         // Post-TD point-after try — it snaps before the ensuing kickoff (the
         // onside question, when live, follows it as the next panel). The
@@ -3340,10 +3371,13 @@ struct CoachedGameView: View {
         // named call stands for the rest of the drive (R36).
         var skipPackage = effectiveDefensePackage
         defShellOverride = nil
-        // Stop at the break too — the halftime report must not be skipped
-        // past when the opponent's drive ends the half.
+        // Stop at the breaks too — the halftime report must not be skipped
+        // past when the opponent's drive ends the half, and (when enabled)
+        // the quarter report stops the skip at the Q1/Q3 line as well.
         while !engine.playerIsOnOffense && !engine.isGameOver
-                && !engine.halftimePending && safety < 40 {
+                && !engine.halftimePending
+                && !(quarterReportsEnabled && engine.quarterBreakPending)
+                && safety < 40 {
             // The adaptive AI keeps exploiting the standing defensive call
             // inside a skipped drive too (nil = base logic, as before).
             engine.step(offensiveCall: engine.aiOffensiveCall(),

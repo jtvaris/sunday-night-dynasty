@@ -232,6 +232,18 @@ final class LiveGameEngine: ObservableObject {
         halftimePending = false
     }
 
+    // MARK: - Quarter Breaks (live only)
+
+    /// Raised when the clock rolls Q1→Q2 or Q3→Q4 mid-drive (Q2→Q3 belongs
+    /// to ``halftimePending`` — the two never coexist). Same contract as the
+    /// halftime flag: the live view pauses on it to show the quarter report;
+    /// the engine itself never blocks, so a fully-AI game (`simToEnd` /
+    /// nil-argument steps) plays straight through — parity intact.
+    @Published private(set) var quarterBreakPending = false
+
+    /// Closes the quarter report.
+    func resolveQuarterBreak() { quarterBreakPending = false }
+
     // MARK: - Matchup Grades (live only)
 
     /// Individual matchup wins/losses per player, accumulated from
@@ -443,6 +455,98 @@ final class LiveGameEngine: ObservableObject {
         return roster.filter {
             LineupGroup(of: $0.position) == group && injuredPlayerIDs.contains($0.id)
         }
+    }
+
+    // MARK: - Quarter Report Extras (live only, presentation)
+
+    /// Rolling window of each player's most recent matchup results
+    /// (true = win), newest last. Only the last ``recentFormWindow`` battles
+    /// count — that recency cut IS the weighting behind the HOT/COLD streak.
+    /// Tallied in ``step`` from the same events as ``matchupWins``; never
+    /// feeds back into the simulation.
+    private var recentMatchupForm: [UUID: [Bool]] = [:]
+    private static let recentFormWindow = 5
+
+    /// A player's current form streak for the quarter report: hot when he
+    /// has won 3+ of his last 5 battles, cold when he has lost 3+.
+    enum FormStreak {
+        case hot, cold
+    }
+
+    /// `nil` until the player has fought at least 3 recent battles (or when
+    /// his recent record is mixed).
+    func formStreak(_ playerID: UUID) -> FormStreak? {
+        guard let recent = recentMatchupForm[playerID], recent.count >= 3 else { return nil }
+        let wins = recent.filter { $0 }.count
+        if wins >= 3 { return .hot }
+        if recent.count - wins >= 3 { return .cold }
+        return nil
+    }
+
+    private func recordRecentForm(_ playerID: UUID, win: Bool) {
+        var window = recentMatchupForm[playerID, default: []]
+        window.append(win)
+        if window.count > LiveGameEngine.recentFormWindow {
+            window.removeFirst(window.count - LiveGameEngine.recentFormWindow)
+        }
+        recentMatchupForm[playerID] = window
+    }
+
+    /// Scrimmage snaps each player was on the field for — incremented in
+    /// ``step`` for the 22 men in the field units. Presentation only.
+    private var snapCounts: [UUID: Int] = [:]
+
+    func snapCount(_ playerID: UUID) -> Int { snapCounts[playerID] ?? 0 }
+
+    /// R28: true while the player is inside the elevated re-injury window
+    /// after rushing back from an injury a week early — the quarter report
+    /// flags him red so the coach can weigh resting him.
+    func hasElevatedInjuryRisk(_ playerID: UUID) -> Bool {
+        (livePlayerByID[playerID]?.rushBackWeeksRemaining ?? 0) > 0
+    }
+
+    // MARK: Rookie watch
+
+    /// Draft slot per rookie (`yearsPro == 0`) on either roster; a stored
+    /// `nil` value = undrafted. `Player` carries no scouted letter grade
+    /// after the draft converts the prospect, so the draft slot IS the
+    /// scouting expectation his day grade is measured against.
+    private let rookieDraftPicks: [UUID: Int?]
+
+    /// How a rookie's day is tracking against his pre-draft billing.
+    enum RookieVerdict {
+        case exceeding, meeting, struggling
+    }
+
+    /// One rookie's expectation line for the quarter report.
+    struct RookieWatch {
+        let verdict: RookieVerdict
+        /// "1st-round pick" / "Day 2 pick" / "Day 3 pick" / "UDFA".
+        let expectationLabel: String
+    }
+
+    func isRookie(_ playerID: UUID) -> Bool { rookieDraftPicks.keys.contains(playerID) }
+
+    /// The rookie's day grade measured against his draft billing — `nil` for
+    /// veterans and for rookies who have not taken a snap yet. Day grades
+    /// start at 60 and a higher pick carries a higher bar, so a 1st-rounder
+    /// must actually produce to "exceed" while a Day 3 pick holding steady
+    /// already meets his.
+    func rookieWatch(_ playerID: UUID) -> RookieWatch? {
+        guard let pick = rookieDraftPicks[playerID], snapCount(playerID) > 0 else { return nil }
+        let expected: Int
+        let label: String
+        if let pick {
+            if pick <= 32 { expected = 63; label = "1st-round pick" }
+            else if pick <= 104 { expected = 61; label = "Day 2 pick" }
+            else { expected = 59; label = "Day 3 pick" }
+        } else {
+            expected = 57; label = "UDFA"
+        }
+        let grade = playerGameGrade(playerID)
+        let verdict: RookieVerdict = grade >= expected + 4 ? .exceeding
+            : (grade <= expected - 4 ? .struggling : .meeting)
+        return RookieWatch(verdict: verdict, expectationLabel: label)
     }
 
     // MARK: - Milestones (live only)
@@ -1072,6 +1176,18 @@ final class LiveGameEngine: ObservableObject {
         homePlayerIDs = homePlayers.map(\.id)
         awayPlayerIDs = awayPlayers.map(\.id)
 
+        // Rookie watch (quarter report): this game's rookies with their
+        // draft slots. `updateValue` so an undrafted rookie stores a nil
+        // VALUE (subscript assignment would drop the key instead).
+        var rookiePicks: [UUID: Int?] = [:]
+        for player in homeRoster where player.yearsPro == 0 {
+            rookiePicks.updateValue(player.draftPickNumber, forKey: player.id)
+        }
+        for player in awayRoster where player.yearsPro == 0 {
+            rookiePicks.updateValue(player.draftPickNumber, forKey: player.id)
+        }
+        rookieDraftPicks = rookiePicks
+
         // Extract team schemes from the coaching staff, exactly like
         // GameSimulator.simulate.
         homeOffScheme = homeCoaches.first { $0.role == .offensiveCoordinator }?.offensiveScheme
@@ -1263,6 +1379,10 @@ final class LiveGameEngine: ObservableObject {
         if result.playType == .pass || result.playType == .run {
             let offenseUnit = currentOffenseUnit
             let defenseUnit = currentDefenseUnit
+            // Snap participation (quarter report; presentation only): every
+            // man on the field for a scrimmage snap gets a tick.
+            for player in offenseUnit.players { snapCounts[player.id, default: 0] += 1 }
+            for player in defenseUnit.players { snapCounts[player.id, default: 0] += 1 }
             lastMatchups = MatchupResolver.resolve(
                 play: recordedPlay,
                 offense: offenseUnit,
@@ -1291,6 +1411,7 @@ final class LiveGameEngine: ObservableObject {
                         } else {
                             matchupLosses[id, default: 0] += 1
                         }
+                        recordRecentForm(id, win: event.offenseWon)
                         let category = LiveGameEngine.offenseCategory(
                             role: offRole, playType: recordedPlay.playType
                         )
@@ -1304,6 +1425,7 @@ final class LiveGameEngine: ObservableObject {
                         } else {
                             matchupWins[id, default: 0] += 1
                         }
+                        recordRecentForm(id, win: !event.offenseWon)
                         let category = LiveGameEngine.defenseCategory(
                             role: defRole, playType: recordedPlay.playType
                         )
@@ -1363,8 +1485,11 @@ final class LiveGameEngine: ObservableObject {
                 return recordedPlay
             } else {
                 // Quarter transition (Q1 -> Q2, Q3 -> Q4): drive continues.
+                // The live view pauses on the flag for the quarter report —
+                // the engine plays straight through (see quarterBreakPending).
                 quarter += 1
                 timeRemaining = GameSimulator.quarterDuration - overflow
+                quarterBreakPending = true
             }
         }
 
@@ -2187,9 +2312,10 @@ final class LiveGameEngine: ObservableObject {
         if !isGameOver {
             isGameOver = true // hard safety cap — should never trigger in practice
         }
-        // A sim-to-final blows straight through the break — never leave a
-        // stale halftime flag for the view to trip on.
+        // A sim-to-final blows straight through the breaks — never leave a
+        // stale halftime or quarter-break flag for the view to trip on.
         halftimePending = false
+        quarterBreakPending = false
     }
 
     // MARK: - Result & Persistence

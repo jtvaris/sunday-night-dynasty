@@ -1,5 +1,67 @@
 # Dynasty - TODO
 
+## ✅ VERIFIOINTI: neljännesraportti + idle (#29) + schedule (#31) + regressio (2026-07-13, `BUILD SUCCEEDED`, EI committia)
+
+Kokonainen coach-peli pelattu simulaattorissa (BUF 31–10 MIA, Week 4). Screenshotit/videot/evidenssit: `/tmp/snd-screenshots/quarter-report/`.
+
+1. **NELJÄNNESRAPORTTI (#34) — PASS.** Q1 pelattu loppuun snap kerrallaan (ei Sim to End): "END OF Q1" -overlay aukesi (`15_report.png`, `16_report_bench.png`) — 2 palstaa (Offense/Defense), day-gradet fatigue-renkaissa, trendinuolet (↗/→/↘), 🔥 FEED HIM (D. Johnson 84) ja ❄ COLD (M. Reed 33), snapit (25/19 SNP) + statsirivit (CAR/YDS, TKL/SACK), penkki laajeni (OVR + fatigue-palkit, 15/14 miestä). Q3-raportti näkyi myös (`32_q3report_check.png`) — huom. skip-drive yli Q3-rajan → raportti nousi vasta seuraavan snapin vihellyksellä (1 play Q4:ää ehti kulua; pieni kauneusvirhe, kirjattu alle). Continue → peli jatkui, päätöskello toimi (punainen/keltainen countdown-rinkula READY—SNAPin vieressä käy ja auto-snappaa).
+2. **VAIHTO (pending → toteutuu) — PASS engine-polulle.** "SUB? →"-flägiä EI syntynyt tässä pelissä: kynnys fatigue ≥70 + laskeva trendi, eikä kukaan väsynyt tarpeeksi (esim. J. Allen fatigue 27 vielä Q3:n lopussa, `33_manage.png`). Sama `engine.substitute()`-jono verifioitu Coach's Boardilta: D. Gordon SUB IN → "PENDING · AT NEXT WHISTLE" + QUEUED-badge (`34_sub_queued.png`) → seuraavalla vihellyksellä feed "Sub: D. Gordon in for J. Allen" ja #11 kentällä #5:n tilalla (`35_after_sub_play.png`, `36_simtoend.png` — Gordon ottaa myös säkin eli pelaa oikeasti). Raportin SUB?-chipin oma tap-polku jäi ilman live-toistoa (vaatii väsyneen+laskevan starterin — ei realisoitunut).
+3. **HALFTIME (ei tuplaoverlayta) — PASS.** Q2:n lopussa vain HALFTIME-kortti REPORT/PLAYERS-tabeilla; Players-tab näyttää saman QuarterPlayersPanelin (50/39 SNP, FEED HIM/COLD-flägit) (`23_halftime.png`, `24_halftime_players.png`).
+4. **ROOKIE-BADGE — EI TESTATTAVISSA tässä pelissä:** BUF:n kenttäyksiköissä/penkillä ei ollut rookieita (ei R-badgeja missään raportissa; koodipolku `isRookie`/`rookieWatch` jäi ilman live-osumaa).
+5. **IDLE (#29) — PASS.** 60 s video pelin aikana (`idle_60s.mov`, 124 framea @2fps). Pre-snap-idle-jaksoissa (esim. f_028–f_041, f_063–f_077, f_100–f_113) kenttäalueen muutos 0.8–2.6 %/0.5 s — ei koskaan nollaa; liike jakautuu koko kentän leveydelle (ei UI-elementtien aiheuttamaa). Zoom-cropit 2 s välein (`idle_evidence_f066_f070.png`): kolme kaukaista/ei-osallista pelaajaa selvästi eri asennoissa (painonsiirto, käsien/pään asento) — motion_profile-pohjataso elää.
+6. **SCHEDULE (#31) — PASS.** Week 4 -näkymä (`41_schedule.png`): OVR 78 vihreä (CIN, BAL), 77/76 keltainen (warning), 75 punainen (NE) — värit erottelevat vastustajat, ei enää kaikki keltaisia. Vastaa `TeamStrength.ovrColor`-pivotointia (avg±kynnykset).
+7. **REGRESSIO — PASS.** Pelin aikana kymmeniä heittoja/juoksuja: pallo lähtee QB:ltä, kamera panoroi mukana, play-animaatiot jatkuvia (video-framejen muutosfraktiot eivät putoa ~0:aan kesken play-burstin; `play_sequence_f045_f048.png` näyttää jatkuvan liikkeen + kamera-ajon). `debugSimulate(20)` (PERF_DEBUG_SIM=20): points/team mean pre 28.7 / vision 26.8 / security 31.0 / intcredit 26.6 / **all-on 26.7** (std ~12.7, n=20 → SE ~2.8; hieman ohjearvon ~20–25 yläpuolella mutta kohinan sisällä), schedule integrity 2025–2032 OK.
+
+**Auki jäänyt / havainnot:**
+- Q3-raportti nousee skip-driven jälkeen vasta seuraavan snapin vihellyksellä → 1 play Q4:ää ehtii kulua ennen "END OF Q3" -korttia (kosmeettinen; raportti itsessään oikein).
+- SUB?-chipin tap raportin rivistä ilman live-toistoa (kynnysehto ei realisoitunut); QUEUED-tila ja substitute()-jono verifioitu Coach's Boardin kautta.
+- Rookie-badge ilman live-osumaa (rosterissa ei rookieita kentällä tässä pelissä).
+- Sim to End -nappi ei reagoi kun 4th down -päätöspaneeli odottaa valintaa (kaksi tapia meni ohi; toimi heti defense-stancessa) — pieni UX-huomio.
+
+**Build:** `BUILD SUCCEEDED` (id=049C7295). **Ei committia.**
+
+---
+
+## ✅ SIVUSTASEISOJIEN IDLE (#29) + SCHEDULE-VÄRIKYNNYKSET (#31) (2026-07-13, `BUILD SUCCEEDED`, EI committia)
+
+**A. Sivustaseisojien idle (#29) — `UI/Match/FootballFieldScene.swift`:**
+- **Bystander-sweep:** `startIdleSweep()` (käynnistyy `setupField()`:ssä, rootNode-avain `idleSweep`) ajaa ~0.7 s välein `idleSweepTick()`in: jokainen pelaaja jolla EI ole aktiivista move/gait/fall/shove/gesture-actionia (`isBystander` tarkistaa node-avaimet playMove/formationMove/walk/facing/settleFacing/pitchTurn, figure-avaimet gait/stance/fall/hop/shove/spinMove/watch/fidget, body-twistin ja käsien swingit; kaatuneet ja 3-point/under-center-asennot ohitetaan — pre-snap-linjan liikkumattomuus on oikeaa futista) saa:
+  - **(a) Fidget:** ~55 %/tick per mies (deterministinen hash-porrastus): painonsiirto = figure moveBy x ±0.08 yd + kevyt vastakierto z (0.6 s + paluu, easeInEaseOut, avain `fidget`) + kypäräkatse rotateBy y ±0.3 (avain `fidget` helmet-nodella). Amplitudi mitoitettu motion_profile-mittauksella: alle ~8 cm on subpikseliä coach-kameralla ja kenttä "jäätyy" yhä.
+  - **(b) Pallonseuranta:** hidas figure-yaw palloa kohti (rotateBy → absoluuttinen kohde, clamp ±0.5 rad, vain kun pallo etuhemisfäärissä |delta|<1.25 ja >4 yd — huddlessa selkä palloon ei korkkiruuvaa; avain `watch`).
+  - **Siivous:** `clearBystanderIdle(figure)` poistaa watch/fidget-avaimet heti kun oikea animaatio ottaa figuurin (`run`, `applyStance`, `blockEngage`, `fall`, `resetGait`) — absoluuttiset gait/stance/fall-rotaatiot pyyhkivät loputkin offsetit. Reduce Motion ohittaa koko tickin. Ei per-frame-työtä, pelkkiä SCNActioneita.
+- **(c) Post-play settle → walk:** sweep kattaa myös followThrough→postPlayWalk-raot ja ring-spotilleen jo valmiiksi ehtineet (aiemmin patsaita).
+- **VERIFIOITU (60 s video + motion_profile.py, iPad Pro 13" M5-sim):** täysviewport-profiilin "freezet" ovat play-call-vaiheita, joissa liike on idle-mittakaavaa (alle kynnyksen max/10 koko framen keskiarvona — työkalu ei konstruktionsa takia näe sitä täyskuvasta); **zoom-cropit kaikkiin kolmeen pisimpään ikkunaan (12–20 s, 30–38 s, 47.5–56.5 s) + erillinen kaukopelaajakaista: `No freezes >= 0.5s ✓` joka ikkunassa** — jatkuva elävä baseline. Frame-pinovertailu (1.5 s välein): painonsiirrot/katseet lukevat luonnollisina, ei glitchejä. Ennen fixiä sama zoom-crop näytti 5.7–8 s täysjäätymät.
+
+**B. Schedule-värikynnykset (#31) — `UI/Schedule/ScheduleView.swift`:**
+- `TeamStrength.leagueAverageStartersOVR(teams)` — liigan starters-OVR-keskiarvo, lasketaan kerran `ScheduleView`in `.onAppear`issa (`@State leagueAvgOVR`), välitetään `NextGamePill`ille ja `GameCard`ille.
+- `TeamStrength.ovrColor(ovr, leagueAverage:)` korvaa molempien alanäkymien absoluuttiset kynnykset (80+/70-79/<70 → kaikki keltaisia, koska liiga elää ~75–78-kaistalla): **vihreä ≥ avg+2, punainen ≤ avg−1, muuten keltainen** (truncated Int-keskiarvo istuu ~0.5 alle todellisen → epäsymmetriset offsetit ≈ ±1.5 todellisen keskiarvon ympärillä). Fallback-pivot 76 jos liigadataa ei ole.
+- **VERIFIOITU simissä:** viikkonäkymässä OVR 78 = vihreä (CIN, BAL), 76–77 = keltainen, 75 = punainen (NE) — väri erottelee nyt vahvat/heikot vastustajat.
+
+**Build:** `BUILD SUCCEEDED` (id=049C7295). **Ei committia.** Evidenssit: scratchpad `verify/` (coach60b.mp4, zoomB_*.mp4, sway_stack.png, 04_schedule2.png).
+
+---
+
+## ✅ NELJÄNNESRAPORTTI — pelaajatilannekuva Q1/Q3-taukoihin (2026-07-13, `BUILD SUCCEEDED`, EI committia)
+
+Joka quarterin jälkeen pelaajatilannekuva vaihtopäätöksineen (tehtävä #34). **Presentation-only: sim-tulokset, RNG-järjestys ja nil-argumentti-pariteetti (`GameSimulator.simulate`) koskemattomia.**
+
+**ENGINE (`Engine/Match/LiveGameEngine.swift`):**
+- `quarterBreakPending` (@Published) — nousee Q1→Q2- ja Q3→Q4-siirtymässä (`step()`:n mid-drive-haara; Q2→Q3 kuuluu edelleen `halftimePending`ille, ei koskaan päällekkäin). Sama kuvio kuin halftime: engine ei koskaan blokkaa, `simToEnd()` nollaa molemmat liput → AI-peli/sim-to-final ohittaa raportin. `resolveQuarterBreak()` sulkee.
+- HOT/COLD-recency: `recentMatchupForm` — per pelaaja viimeiset 5 matchup-tulosta (recency-leikkuri = painotus), tallennus samasta event-luupista kuin `matchupWins`. `formStreak(id)` → `.hot` (≥3/5 voittoa), `.cold` (≥3/5 häviötä), nil alle 3 battlella.
+- Snap-laskuri: `snapCounts` — inkrementoituu `step()`:ssä molempien kenttäyksiköiden 22 miehelle scrimmage-snapeilla (pass/run). `snapCount(id)`.
+- Rookie-odotusvertailu: `rookieDraftPicks` (initissä `yearsPro == 0` molemmilta rostereilta; `updateValue` säilyttää UDFA:n nil-arvon). `Player` EI kanna scoutattua kirjainarvosanaa draftin jälkeen (tutkittu: `convertToPlayer` pudottaa sen) → draft-slotti ON odotusankkuri: R1 (1–32) odotus 63, Day 2 (33–104) 61, Day 3 59, UDFA 57. `rookieWatch(id)` → exceeding (≥+4) / meeting / struggling (≤−4) + billing-label; nil ennen ensimmäistä snapia. `isRookie(id)`.
+- R28-kytkös: `hasElevatedInjuryRisk(id)` — lukee live-mallin `rushBackWeeksRemaining > 0` (rushed-back-ikkuna).
+
+**UI:**
+- **`UI/Match/QuarterReportView.swift` (uusi):** overlay HalftimeView'n kuvakielellä mutta kompaktimpi — "END OF Q1/Q3" + pistestrippi + iso Continue. Sisältää jaetun **`QuarterPlayersPanel`**-komponentin: 2 palstaa (Offense/Defense, pelaajan omat kenttäyksiköt), penkki laajennettavana per palsta (ryhmäjärjestys, OVR + fatigue-palkki + snapit + form-ikoni). Pelaajarivi: day-grade fatigue-renkaassa (Coach's Board -värikynnykset), nimi+#, trendinuoli, 🔥/❄-ikoni, snapit, kompakti statsirivi, ROOKIE-badge ("R · EXCEEDING/ON TRACK/BEHIND", pelkkä R ennen snapeja). Päätöstukiflägit (prioriteetti): QUEUED (jonossa) → punainen "INJURY RISK" (R28 elevated) → keltainen "SUB? → J. Cook" (fatigue ≥70 + trendi laskee + penkillä ≥10 pistettä pirteämpi mies; yksi napautus → olemassa oleva `substitute`-jono, vaihto vihellyksellä) → vihreä "FEED HIM" (kuuma RB/FB/WR/TE hyökkäyksessä) → harmaa "COLD".
+- **`UI/Match/HalftimeView.swift`:** REPORT/PLAYERS-välilehtikytkin — Players-tab näyttää saman `QuarterPlayersPanel`in (Q2:n lopussa EI kahta overlayta; halftime-kortti omistaa tauon). Kortti levennetty 620→720.
+- **`UI/Match/CoachedGameView.swift`:** `showQuarterReport`-overlay `proceed()`-ketjussa halftime-tarkistuksen jälkeen; Continue → `resolveQuarterBreak()` + `proceed(0.4)`. Päätöskello pausella overlayn ajan (`playClockPaused`). `skipDrive` pysähtyy myös quarter-rajalle (kun raportit päällä). Toggle pois → lippu vain nollataan ja peli jatkuu.
+- **`UI/MainMenu/SettingsView.swift`:** "Quarter Reports" -toggle (Gameplay-osio, `@AppStorage("quarterReportsEnabled")`, oletus ON) + footer-maininta + reset-polku.
+
+**Build:** `BUILD SUCCEEDED` (id=049C7295). **Ei committia.** Toiminnallinen verifiointi simulaattorissa tekemättä (loppuvaiheen verifiointikierros).
+
+---
+
 ## ✅ VERIFIOINTI — koreografiarealismi + hardcode-fix (2026-07-13, `BUILD SUCCEEDED`, EI committia)
 
 Verifioitu iPad Pro 13" M5 -simillä (049C7295). Build → **BUILD SUCCEEDED** (vain ennestään ollut `cbSplit`-varoitus rivillä 298, ei liity muutoksiin). Asennettu + käynnistetty (com.brewcrow.dynasty), jatkettu uraa (BUF Bills, 2027 kausi Q1→Q2, vs MIA). Coached-peli nauhoitettu, framet purettu ffmpegillä + `motion_profile.py`. Evidenssit `/tmp/snd-screenshots/choreo-hardcode/`.

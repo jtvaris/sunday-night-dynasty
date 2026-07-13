@@ -474,6 +474,7 @@ class FootballFieldScene: SCNScene {
         // Depth falloff: the far field darkens into the night like a
         // low-slung TV camera shot. Weather re-tunes this in setWeather().
         applyFog(color: Self.clearFogColor, start: 70, end: 210)
+        startIdleSweep()
         perf.finish()
     }
 
@@ -629,6 +630,120 @@ class FootballFieldScene: SCNScene {
             SCNAction.wait(duration: phase),
             SCNAction.repeatForever(cycle),
         ]), forKey: "idle")
+    }
+
+    // MARK: - Bystander Sweep (#29)
+
+    /// Sweep counter — feeds the deterministic hash so each player's fidget
+    /// beats land on different ticks instead of the whole field twitching
+    /// in sync.
+    private var idleSweepCounter = 0
+
+    /// Every ~0.7 s a cheap sweep visits all 22 players: whoever is standing
+    /// with no active move/gait/gesture gets (a) a slow, clamped upper-body
+    /// turn that follows the live ball and (b) an occasional weight-shift +
+    /// helmet-glance fidget. The torso breath loop (`startIdle`) covers the
+    /// sub-2 cm scale; this covers the visible scale — bystanders outside
+    /// the action track the play instead of standing statue-still.
+    ///
+    /// Pure scheduled SCNActions, no per-frame work. Every effect is either
+    /// naturally overwritten by the next absolute gait/stance/fall rotation
+    /// or cleared via `clearBystanderIdle` where those actions start, so it
+    /// never fights an active animation.
+    private func startIdleSweep() {
+        rootNode.removeAction(forKey: "idleSweep")
+        let tick = SCNAction.sequence([
+            SCNAction.wait(duration: 0.7),
+            SCNAction.run({ [weak self] _ in self?.idleSweepTick() }, queue: .main),
+        ])
+        rootNode.runAction(SCNAction.repeatForever(tick), forKey: "idleSweep")
+    }
+
+    private func idleSweepTick() {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        idleSweepCounter &+= 1
+        let ball = ballNode.presentation.worldPosition
+        for (index, node) in (homePlayerNodes + awayPlayerNodes).enumerated() {
+            guard let figure = node.childNode(withName: "figure", recursively: false),
+                  isBystander(node, figure: figure) else { continue }
+
+            // (b) Watch the ball: a slow figure yaw toward the live ball,
+            // clamped to a natural half-turn and only when the ball is
+            // roughly in the front hemisphere — a huddled man whose back is
+            // to the spot doesn't corkscrew after it.
+            let dx = ball.x - node.position.x
+            let dz = ball.z - node.position.z
+            let distance = (dx * dx + dz * dz).squareRoot()
+            if distance > 4 {
+                var delta = atan2(dx, dz) - node.eulerAngles.y
+                while delta > .pi { delta -= 2 * .pi }
+                while delta < -.pi { delta += 2 * .pi }
+                if abs(delta) < 1.25 {
+                    let target = max(-0.5, min(0.5, delta))
+                    let turn = target - figure.eulerAngles.y
+                    if abs(turn) > 0.12 {
+                        let watch = SCNAction.rotateBy(x: 0, y: CGFloat(turn), z: 0,
+                                                       duration: 0.6)
+                        watch.timingMode = .easeInEaseOut
+                        figure.runAction(watch, forKey: "watch")
+                    }
+                }
+            }
+
+            // (a) Weight shift + helmet glance: ~55 % of quiescent players
+            // fidget each sweep, on per-player staggered ticks. The sway has
+            // to survive the coach camera: a hip shift of ~8 cm with a light
+            // counter-roll reads as a man rocking foot-to-foot; anything
+            // smaller is sub-pixel at this distance (measured via
+            // motion_profile) and the field still reads frozen.
+            let roll = Self.hash01(index * 31 + idleSweepCounter * 7 + 11)
+            guard roll < 0.55 else { continue }
+            let side: CGFloat = roll < 0.275 ? 1 : -1
+            let sway = SCNAction.group([
+                SCNAction.moveBy(x: side * 0.08, y: 0, z: 0, duration: 0.6),
+                SCNAction.rotateBy(x: 0, y: 0, z: side * -0.05, duration: 0.6),
+            ])
+            sway.timingMode = .easeInEaseOut
+            figure.runAction(SCNAction.sequence([sway, sway.reversed()]), forKey: "fidget")
+            if let helmet = figure.childNode(withName: "helmet", recursively: false) {
+                let glance = SCNAction.rotateBy(x: 0, y: side * 0.3, z: 0, duration: 0.45)
+                glance.timingMode = .easeInEaseOut
+                helmet.runAction(SCNAction.sequence([
+                    glance, SCNAction.wait(duration: 0.35), glance.reversed(),
+                ]), forKey: "fidget")
+            }
+        }
+    }
+
+    /// True when nothing else is animating the man: no container move or
+    /// facing turn, no gait/gesture on the figure, no arm gesture mid-swing,
+    /// and he is upright-ish — a downed man in the pile and a lineman locked
+    /// into his three-point stance both hold their pose (pre-snap stillness
+    /// on the line is correct football).
+    private func isBystander(_ node: SCNNode, figure: SCNNode) -> Bool {
+        for key in ["playMove", "formationMove", "walk", "facing", "settleFacing", "pitchTurn"]
+        where node.action(forKey: key) != nil { return false }
+        for key in ["gait", "stance", "fall", "hop", "shove", "spinMove", "watch", "fidget"]
+        where figure.action(forKey: key) != nil { return false }
+        if abs(figure.eulerAngles.x) > 0.45 || abs(figure.eulerAngles.z) > 0.45 { return false }
+        if let body = figure.childNode(withName: "body", recursively: false),
+           body.action(forKey: "twist") != nil { return false }
+        for name in ["arm", "armR"] {
+            if let arm = figure.childNode(withName: name, recursively: false),
+               arm.action(forKey: "swing") != nil { return false }
+        }
+        return true
+    }
+
+    /// Kills any in-flight bystander idle the moment a real animation claims
+    /// the figure, so the watch/fidget rotations never fight a gait, stance,
+    /// fall or block. The absolute rotations those actions run also wipe the
+    /// tiny relative offsets a cut loop could leave behind.
+    private func clearBystanderIdle(_ figure: SCNNode) {
+        figure.removeAction(forKey: "watch")
+        figure.removeAction(forKey: "fidget")
+        figure.childNode(withName: "helmet", recursively: false)?
+            .removeAction(forKey: "fidget")
     }
 
     /// Moves the football to a position on the field.
@@ -825,6 +940,7 @@ class FootballFieldScene: SCNScene {
     /// figure pitch/sink runs under "stance", which `run` clears on takeoff.
     private func applyStance(_ stance: Stance, to node: SCNNode, delay: TimeInterval) {
         guard let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        clearBystanderIdle(figure)
 
         // figure pitch (forward lean) + sink toward the turf, and per-limb
         // targets: (limb name, hinge x, hinge z, joint bend x).
@@ -1744,6 +1860,7 @@ class FootballFieldScene: SCNScene {
         guard let figure = node.childNode(withName: "figure", recursively: false) else { return }
         figure.removeAction(forKey: "gait")
         figure.removeAction(forKey: "stance")  // the snap breaks the pre-snap pose
+        clearBystanderIdle(figure)             // the run owns the figure now
 
         let speed = distance / Float(duration)
         let stride = strideTime(forSpeed: speed, backpedal: backpedal)
@@ -2101,6 +2218,7 @@ class FootballFieldScene: SCNScene {
         }
 
         figure.removeAction(forKey: "shove")
+        clearBystanderIdle(figure)
 
         switch style {
         case .drive:
@@ -2387,6 +2505,7 @@ class FootballFieldScene: SCNScene {
         figure.removeAction(forKey: "gait")
         figure.removeAction(forKey: "stance")
         figure.removeAction(forKey: "shove")
+        clearBystanderIdle(figure)
         // Every man hits the turf at his own angle — a gang pile reads as a
         // heap of bodies, not a row of synchronized dominoes.
         let yaw = Float.random(in: -0.6...0.6)
@@ -2661,6 +2780,7 @@ class FootballFieldScene: SCNScene {
         figure.removeAction(forKey: "hop")
         figure.removeAction(forKey: "shove")
         figure.removeAction(forKey: "spinMove")
+        clearBystanderIdle(figure)
         figure.position = SCNVector3Zero
         figure.eulerAngles = SCNVector3Zero
         if let body = figure.childNode(withName: "body", recursively: false) {
