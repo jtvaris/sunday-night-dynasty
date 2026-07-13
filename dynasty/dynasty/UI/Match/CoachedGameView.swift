@@ -125,6 +125,16 @@ struct CoachedGameView: View {
     /// it when the replay tears down so the game flow never stalls.
     @State private var pendingProceedAfterReplay = false
     @State private var gameStarted = false
+    /// Spoiler-safe scoreboard mirror (#35). The engine books points the
+    /// instant a play resolves (well before its choreography reaches the end
+    /// zone) — binding the board straight to `engine.homeScore/awayScore`
+    /// would flash a kickoff-return TD, a long scrimmage score or a made kick
+    /// before the animation shows it. The board reads these displayed values
+    /// instead; `revealScore()` snaps them to the engine's truth only when the
+    /// play has finished on the field (or the field teleports to truth on a
+    /// skip / sim-to-end / break). The engine score stays the source of truth.
+    @State private var displayedHomeScore = 0
+    @State private var displayedAwayScore = 0
     @State private var resultBanner: String? = nil
     @State private var possessionBanner: String? = nil
     /// Gold "WIN OR GO HOME" plate flashed over the field at a playoff
@@ -146,6 +156,9 @@ struct CoachedGameView: View {
     /// Adaptive-AI intel chip ("CHI is keying on the inside run") — shown
     /// when the opponent locks onto (or shifts) a read of your tendencies.
     @State private var adaptationNote: String? = nil
+    /// Mental-game sideline note ("M. Brown wants the ball") — #36B, raised
+    /// when a starved ego star demands the ball.
+    @State private var mentalNote: String? = nil
 
     // Offense call state
     @State private var selectedCategory: String = "Run"
@@ -400,6 +413,9 @@ struct CoachedGameView: View {
         .onChange(of: engine.lastAdaptationHint) { _, hint in
             if let hint { showAdaptationNote(hint.text) }
         }
+        .onChange(of: engine.lastMentalNote) { _, note in
+            if let note { showMentalNote(note.text) }
+        }
         .onChange(of: engine.lastMilestones) { _, milestones in
             // Multiple lines can fall on the same drive end — stagger them.
             for (index, milestone) in milestones.enumerated() {
@@ -454,7 +470,7 @@ struct CoachedGameView: View {
 
     private var scoreboardBar: some View {
         HStack(spacing: 0) {
-            teamBlock(team: awayTeam, score: engine.awayScore, hasBall: !engine.homeHasPossession, leading: true)
+            teamBlock(team: awayTeam, score: displayedAwayScore, hasBall: !engine.homeHasPossession, leading: true)
             Spacer()
             VStack(spacing: 2) {
                 Text(quarterLabel)
@@ -496,7 +512,7 @@ struct CoachedGameView: View {
                 }
             }
             Spacer()
-            teamBlock(team: homeTeam, score: engine.homeScore, hasBall: engine.homeHasPossession, leading: false)
+            teamBlock(team: homeTeam, score: displayedHomeScore, hasBall: engine.homeHasPossession, leading: false)
         }
         .padding(.leading, 20)
         .padding(.trailing, 56) // keep the right team block clear of the exit button
@@ -814,6 +830,20 @@ struct CoachedGameView: View {
                         .background(Color.warning, in: Capsule())
                         .transition(.move(edge: .top).combined(with: .opacity))
                     }
+                    // Mental game (#36B): a starved star demands the ball.
+                    if let note = mentalNote {
+                        HStack(spacing: 6) {
+                            Image(systemName: "hand.raised.fill")
+                                .font(.system(size: 10, weight: .bold))
+                            Text(note)
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.accentGold, in: Capsule())
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
                 .padding(10)
             }
@@ -870,6 +900,7 @@ struct CoachedGameView: View {
             .animation(.spring(duration: 0.25), value: snapPlate)
             .animation(.spring(duration: 0.3), value: sidelineNote)
             .animation(.spring(duration: 0.3), value: adaptationNote)
+            .animation(.spring(duration: 0.3), value: mentalNote)
             .animation(.spring(duration: 0.3), value: replayOffer == nil)
             .animation(.spring(duration: 0.3), value: isReplaying)
     }
@@ -2770,6 +2801,10 @@ struct CoachedGameView: View {
         guard !gameStarted else { return }
         gameStarted = true
 
+        // Seed the spoiler-safe scoreboard mirror (#35) to whatever the engine
+        // already holds — 0-0 on a fresh game, the live tally on a resume.
+        revealScore()
+
         // R34 audio: preload every SFX voice before the first snap and bring
         // the stadium bed up under the opening kickoff.
         AudioDirector.shared.startMatch(initialIntensity: crowdIntensity())
@@ -3023,6 +3058,11 @@ struct CoachedGameView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.15) {
             fieldScene.runPlay(steps: steps) {
                 isAnimating = false
+                // #35: a housed kickoff return (the engine booked its six +
+                // the auto point-after before this boot animated) only shows
+                // on the board here, as the returner crosses the goal line and
+                // the horn sounds — never at the whistle of the prior score.
+                if event.isReturnTouchdown { revealScore() }
                 if event.isReturnTouchdown {
                     AudioDirector.shared.play(.tdHorn)
                     AudioDirector.shared.play(.crowdSwell)
@@ -3249,6 +3289,13 @@ struct CoachedGameView: View {
                             distanceBefore: Int = 99) {
         isAnimating = false
 
+        // #35: the play has reached its end on the field — now (and not when
+        // the engine booked the points, before this animation) the scoreboard
+        // catches up to the truth, in the same beat as the TD horn / crowd
+        // swell below. Covers every scrimmage score: TD, FG, XP, two-point,
+        // and safety (all carry pointsScored the engine already added).
+        revealScore()
+
         // R34 audio: the result stings — horn on six, whistle otherwise,
         // and the crowd swells for scores and takeaways. The bed then
         // re-levels to the new situation (red zone, crunch time).
@@ -3437,6 +3484,22 @@ struct CoachedGameView: View {
         // Reduce Motion: hold a static frame instead of the slow dolly.
         fieldScene.focusCamera(z: losZ, pushIn: !reduceMotion)
         updateMarkers()
+        // A teleport to truth (skip drive, sim-to-end, onside, hurry-up
+        // no-huddle, quarter/half break resume) has no animation left to
+        // wait on — the board jumps straight to the engine's score. Score
+        // reveals on a shown play happen in finishPlay / the kickoff return
+        // instead; this path is only reached when nothing is choreographing.
+        revealScore()
+    }
+
+    /// Snaps the spoiler-safe scoreboard mirror (#35) to the engine's true
+    /// score. Called only once a scoring play's choreography has reached the
+    /// end zone (finishPlay, kickoff return), or when the field teleports to
+    /// truth with no pending animation (syncFieldToSituation). Never called
+    /// from a replay, which must not disturb the live board.
+    private func revealScore() {
+        displayedHomeScore = engine.homeScore
+        displayedAwayScore = engine.awayScore
     }
 
     /// Positions the broadcast LOS/first-down stripes for the current situation.
@@ -3525,6 +3588,14 @@ struct CoachedGameView: View {
         adaptationNote = text
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) {
             if adaptationNote == text { adaptationNote = nil }
+        }
+    }
+
+    /// Mental-game sideline note (#36B) — a starved star demanding the ball.
+    private func showMentalNote(_ text: String) {
+        mentalNote = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+            if mentalNote == text { mentalNote = nil }
         }
     }
 

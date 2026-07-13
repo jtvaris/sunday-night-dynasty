@@ -18,6 +18,9 @@ struct SimPlayer {
     var mental: MentalAttributes
     let positionAttributes: PositionAttributes
     let isMoodDependent: Bool
+    /// Personality archetype (#36B mental game): drives hot/cold form
+    /// sensitivity, ego/frustration, and the temperament badge in the UI.
+    let personalityArchetype: PersonalityArchetype
     let morale: Int
     /// Precomputed `Player.overall` so the sim never re-derives it per read.
     let overall: Int
@@ -32,6 +35,7 @@ struct SimPlayer {
         mental = player.mental
         positionAttributes = player.positionAttributes
         isMoodDependent = player.personality.isMoodDependent
+        personalityArchetype = player.personality.archetype
         morale = player.morale
         overall = player.overall
         schemeFamiliarity = player.schemeFamiliarity
@@ -42,4 +46,50 @@ struct SimPlayer {
     func schemeFam(for scheme: String) -> Int {
         schemeFamiliarity[scheme] ?? 0
     }
+
+    // MARK: - Mental Game (#36B)
+
+    /// Poise under pressure (mech 3): clutch is the spine, decision making and
+    /// awareness the supporting cast. Below `60` the player's effective
+    /// accuracy sags in big moments (`PlaySimulator.composurePenalty`). The
+    /// Q4 clutch BOOST (`GameSimulator.applyMoraleModifiers`) is the up-side
+    /// complement — clutch lifts the poised, composure dings the shaky.
+    var composureRating: Double {
+        Double(mental.clutch) * 0.5
+            + Double(mental.decisionMaking) * 0.3
+            + Double(mental.awareness) * 0.2
+    }
+
+    /// Personalities that ride form hard (mech 1): a hot streak lifts them, a
+    /// cold one drags them. Steady/quiet pros are immune; the rest are neutral.
+    var isFormSensitive: Bool { personalityArchetype.isFormSensitive }
+
+    /// A high-overall, me-first star at a touch position (mech 2): starves for
+    /// the ball if he goes several offensive drives untargeted / uncarried.
+    var isEgoProne: Bool {
+        overall >= 85
+            && personalityArchetype.isEgoArchetype
+            && [Position.WR, .TE, .RB, .FB].contains(position)
+    }
+
+    /// The single temperament tag surfaced in the quarter report / Coach's
+    /// Board so the coach can lead with personalities.
+    var mentalTemperament: MentalTemperament {
+        if isEgoProne { return .egoDriven }
+        if personalityArchetype.isFormImmune { return .unflappable }
+        if personalityArchetype.isFormSensitive { return .streaky }
+        return .neutral
+    }
+}
+
+/// Static temperament tag for the mental-game UI hints (#36B).
+enum MentalTemperament {
+    /// Star ego at a touch position — wants the ball, sulks without it.
+    case egoDriven
+    /// Rides hot/cold form hard.
+    case streaky
+    /// Consistent — unaffected by streaks (ice in the veins).
+    case unflappable
+    /// No notable temperament flag.
+    case neutral
 }

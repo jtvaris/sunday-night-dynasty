@@ -383,6 +383,8 @@ final class LiveGameEngine: ObservableObject {
     private var turnoverCounts: [UUID: Int] = [:]
     private var sackTakenCounts: [UUID: Int] = [:]
     private var missedReadCounts: [UUID: Int] = [:]
+    /// R38 mech 5: catchable balls the receiver dropped — a day-grade ding.
+    private var dropCounts: [UUID: Int] = [:]
 
     /// Grade snapshots for the Board's trend arrow: `gradeSnapshots` holds
     /// the player-team grades as of the drive BEFORE last, so the trend
@@ -395,7 +397,8 @@ final class LiveGameEngine: ObservableObject {
     /// (trench work weighs heavier, pass pro most of all — OL have no
     /// counting stats) and headline stat events: TDs +6, sacks made +4,
     /// 20+ yard plays +2, INTs thrown / fumbles lost −8, sacks taken −2,
-    /// missed reads (open man unthrown on a failed dropback) −1.5.
+    /// missed reads (open man unthrown on a failed dropback) −1.5, dropped
+    /// catchable balls −3.
     /// Stats accumulate per completed drive; battles update per play.
     func playerGameGrade(_ playerID: UUID) -> Int {
         var score = 60.0
@@ -422,6 +425,7 @@ final class LiveGameEngine: ObservableObject {
         score -= Double(turnoverCounts[playerID] ?? 0) * 8
         score -= Double(sackTakenCounts[playerID] ?? 0) * 2
         score -= Double(missedReadCounts[playerID] ?? 0) * 1.5
+        score -= Double(dropCounts[playerID] ?? 0) * 3
         return max(0, min(100, Int(score.rounded())))
     }
 
@@ -1125,6 +1129,49 @@ final class LiveGameEngine: ObservableObject {
 
     private var isOvertime: Bool { quarter >= GameSimulator.overtimeQuarter }
 
+    // MARK: - Mental Game (#36B, live only)
+
+    /// A sideline note when a starved star demands the ball ("M. Brown wants
+    /// the ball"). Purely presentational — `CoachedGameView` flashes a chip;
+    /// the simulation never reads it (auto-sim parity intact).
+    struct MentalNote: Equatable, Identifiable {
+        let id = UUID()
+        let text: String
+    }
+
+    @Published private(set) var lastMentalNote: MentalNote?
+
+    /// Players who got a touch (pass target or carry) on the drive in progress.
+    private var touchedThisDrive: Set<UUID> = []
+    /// Consecutive offensive drives an ego player has gone without a touch.
+    private var egoNoTouchDrives: [UUID: Int] = [:]
+    /// Ego players currently sulking (no touch for `egoFrustrationDrives`+).
+    private var frustratedEgoIDs: Set<UUID> = []
+    /// Drive number on which each ego player's frustration was relieved by a
+    /// touch; the very next drive carries a small "fired up" boost.
+    private var egoRelievedAtDrive: [UUID: Int] = [:]
+
+    /// Effective-attribute swing a form-sensitive player gets while hot (+) or
+    /// cold (−). Small — a nudge to speed / agility / awareness / decision
+    /// making, the same mutable channel `applyMoraleModifiers` already uses.
+    private static let formStreakDelta = 2
+    /// Offensive drives without a touch before an ego star gets frustrated.
+    private static let egoFrustrationDrives = 3
+    /// Effective-attribute penalty while an ego star is frustrated.
+    private static let egoFrustrationPenalty = 2
+    /// Effective-attribute boost for the drive right after his frustration lifts.
+    private static let egoReliefBoost = 1
+
+    #if DEBUG
+    /// Test hook: skip all live mental-game modifiers (mech 1 & 2). Never set
+    /// outside a harness — mech 3 (composure) lives in `PlaySimulator`.
+    static var debugNeutralMentalGame = false
+    #endif
+
+    /// True while a starved ego star is sulking (Coach's Board / quarter
+    /// report "WANTS BALL" flag). Presentation only.
+    func isFrustrated(_ playerID: UUID) -> Bool { frustratedEgoIDs.contains(playerID) }
+
     // MARK: - Init
 
     /// - Parameters:
@@ -1309,8 +1356,17 @@ final class LiveGameEngine: ObservableObject {
         // the board: the sim picks its QB/RB/targets from the remaining
         // roster, so the replacement genuinely plays. With nobody sidelined
         // these are the full rosters — identical to GameSimulator.simulate.
-        let offense = simAvailablePlayers(isHome: homeHasPossession)
-        let defense = simAvailablePlayers(isHome: !homeHasPossession)
+        var offense = simAvailablePlayers(isHome: homeHasPossession)
+        var defense = simAvailablePlayers(isHome: !homeHasPossession)
+
+        // Mental game (#36B mech 1 & 2): apply the hot/cold form swing and any
+        // ego frustration / relief boost to TRANSIENT per-play copies — the
+        // arrays above are fresh value snapshots, so nothing compounds across
+        // plays and the persistent roster snapshot is untouched. Live-only:
+        // the quick sim tracks neither matchup form nor per-drive touches, so
+        // it never calls this — mech 1 & 2 sit off the quick-sim gate entirely.
+        applyMentalGameModifiers(to: &offense, offenseSide: true)
+        applyMentalGameModifiers(to: &defense, offenseSide: false)
 
         // Momentum is offense-relative in PlaySimulator; positive favors home.
         // Opponent-prep boosts shade momentum slightly toward the player's
@@ -1344,7 +1400,9 @@ final class LiveGameEngine: ObservableObject {
             gamePlan: playerIsOnOffense ? playerGamePlan : nil,
             weather: weather,
             // Halftime adjustment: player's team offense only, second half only.
-            adjustments: (quarter >= 3 && playerIsOnOffense) ? halftimeAdjustment?.simAdjustments : nil
+            adjustments: (quarter >= 3 && playerIsOnOffense) ? halftimeAdjustment?.simAdjustments : nil,
+            // Mech 6: the offense on the road draws more false starts (crowd).
+            offenseIsAway: !homeHasPossession
         )
 
         // Adaptive opponent AI: log the PLAYER's explicit call for tendency
@@ -1374,6 +1432,13 @@ final class LiveGameEngine: ObservableObject {
         currentDrivePlays.append(recordedPlay)
         playLog.append(recordedPlay)
         lastPlay = recordedPlay
+
+        // Mental game (#36B mech 2): note the ball's key man (pass target or
+        // ball carrier) so an ego star who keeps getting fed never sulks.
+        if result.playType == .pass || result.playType == .run,
+           let touchID = recordedPlay.keyOffensePlayerID {
+            touchedThisDrive.insert(touchID)
+        }
 
         // Attribute the play to individual matchup winners for the live view.
         if result.playType == .pass || result.playType == .run {
@@ -1445,6 +1510,10 @@ final class LiveGameEngine: ObservableObject {
             }
             if recordedPlay.outcome == .sack {
                 sackTakenCounts[offenseUnit[0].id, default: 0] += 1
+            }
+            // R38 mech 5: a dropped catchable ball dings the receiver's grade.
+            if recordedPlay.wasDrop == true, let keyID = recordedPlay.keyOffensePlayerID {
+                dropCounts[keyID, default: 0] += 1
             }
             // Missed read: a clearly open man went unthrown on a failed or
             // short dropback — small QB grade ding (presentation only; the
@@ -2433,6 +2502,76 @@ final class LiveGameEngine: ObservableObject {
         return filtered.count >= 11 ? filtered : base
     }
 
+    // MARK: - Mental Game (#36B, live only)
+
+    /// Applies the transient hot/cold form swing (mech 1) and ego frustration /
+    /// relief boost (mech 2) to fresh per-play snapshots. Both nudge the same
+    /// mutable channel `GameSimulator.applyMoraleModifiers` uses (speed,
+    /// agility, awareness, decision making), so the swing flows through
+    /// targeting, completion, YAC, breakaways, and coverage without touching
+    /// the persistent roster or the immutable position attributes. Near-zero
+    /// mean across the sensitive population, so the team aggregate holds.
+    private func applyMentalGameModifiers(to players: inout [SimPlayer], offenseSide: Bool) {
+        #if DEBUG
+        if LiveGameEngine.debugNeutralMentalGame { return }
+        #endif
+        for i in players.indices {
+            let p = players[i]
+            var delta = 0
+
+            // Mech 1: streak-sensitive personalities ride form; steady pros and
+            // everyone else are unmoved.
+            if p.isFormSensitive, let streak = formStreak(p.id) {
+                delta += (streak == .hot)
+                    ? LiveGameEngine.formStreakDelta
+                    : -LiveGameEngine.formStreakDelta
+            }
+
+            // Mech 2: a frustrated ego star presses (−); the drive right after
+            // he finally gets fed, he plays fired up (+).
+            if offenseSide {
+                if frustratedEgoIDs.contains(p.id) {
+                    delta -= LiveGameEngine.egoFrustrationPenalty
+                }
+                if let relieved = egoRelievedAtDrive[p.id], driveNumber == relieved + 1 {
+                    delta += LiveGameEngine.egoReliefBoost
+                }
+            }
+
+            guard delta != 0 else { continue }
+            func adj(_ v: Int) -> Int { max(1, min(99, v + delta)) }
+            players[i].physical.speed = adj(p.physical.speed)
+            players[i].physical.agility = adj(p.physical.agility)
+            players[i].mental.awareness = adj(p.mental.awareness)
+            players[i].mental.decisionMaking = adj(p.mental.decisionMaking)
+        }
+    }
+
+    /// End-of-drive bookkeeping for ego frustration (mech 2): evaluated for the
+    /// offense that just possessed. A star who got a touch resets (and, if he
+    /// was sulking, earns a one-drive fired-up boost); one who was shut out
+    /// climbs toward frustration and, on crossing the line, demands the ball
+    /// once via a sideline note.
+    private func evaluateEgoFrustration() {
+        let offenseRoster = homeHasPossession ? homePlayers : awayPlayers
+        for p in offenseRoster where p.isEgoProne {
+            if touchedThisDrive.contains(p.id) {
+                egoNoTouchDrives[p.id] = 0
+                if frustratedEgoIDs.remove(p.id) != nil {
+                    egoRelievedAtDrive[p.id] = driveNumber
+                }
+            } else {
+                let count = (egoNoTouchDrives[p.id] ?? 0) + 1
+                egoNoTouchDrives[p.id] = count
+                if count >= LiveGameEngine.egoFrustrationDrives,
+                   !frustratedEgoIDs.contains(p.id) {
+                    frustratedEgoIDs.insert(p.id)
+                    lastMentalNote = MentalNote(text: "\(shortName(p.fullName)) wants the ball")
+                }
+            }
+        }
+    }
+
     /// Rebuilds all four field units from the current available rosters —
     /// the same best-at-position pick used at kickoff, so an injured or
     /// resting starter is replaced by the next-best player at his spot —
@@ -2766,6 +2905,12 @@ final class LiveGameEngine: ObservableObject {
         )
         // Milestone banners ride the same per-drive stat granularity.
         publishMilestones()
+
+        // Mental game (#36B mech 2): score this offensive drive's ego stars
+        // for/against a touch while `homeHasPossession` still names the offense
+        // and `touchedThisDrive` still holds this drive's touches (both reset
+        // in beginDrive for the next possession).
+        evaluateEgoFrustration()
 
         // Day-grade trend snapshots (Coach's Board): the trend arrow compares
         // the live grade against the drive-before-last, so it reads as
@@ -3147,6 +3292,8 @@ final class LiveGameEngine: ObservableObject {
         distance = min(10, 100 - driveStartYardLine)
         currentDrivePlays = []
         moraleAppliedForCurrentDrive = false
+        // Mental game (#36B mech 2): fresh touch ledger for the new drive.
+        touchedThisDrive = []
         // Fatigue rotation is decided between drives (player's team only).
         updateRBRotation()
     }

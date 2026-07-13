@@ -45,4 +45,19 @@ struct PlayResult: Codable {
     /// Which team had the ball (stamped by the live engine only) so the
     /// feed can color defensive plays from the player's perspective.
     var offenseWasHome: Bool? = nil
+
+    // R38 attribute-gap signals (all optional so older encoded plays keep
+    // decoding; nil = pre-R38 behavior everywhere).
+    /// Mechanic 5: the receiver DROPPED a catchable ball — he got open, the
+    /// throw was on target, and the hands failed. Distinct from a coverage
+    /// breakup (`passBreakup`): this is the receiver's fault, so the live day
+    /// grade dings him and the feed reads "drops it".
+    var wasDrop: Bool? = nil
+    /// Mechanic 5: a rare CONTESTED grab won in tight coverage (spectacular
+    /// catch over the top of the DB). Feed accent only.
+    var contestedCatch: Bool? = nil
+    /// Mechanic 3 (presentation): the QB's arm-strength flight-speed
+    /// multiplier (~0.85–1.15) for the 3D throw animation. nil = league
+    /// average (pre-R38 velocity).
+    var passVelocityScale: Double? = nil
 }

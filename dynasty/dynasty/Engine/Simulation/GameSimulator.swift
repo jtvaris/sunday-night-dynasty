@@ -179,7 +179,8 @@ enum GameSimulator {
                 offensiveScheme: homeHasPossession ? homeOffScheme : awayOffScheme,
                 defensiveScheme: homeHasPossession ? awayDefScheme : homeDefScheme,
                 gamePlan: homeHasPossession ? homeGamePlan : awayGamePlan,
-                weather: weather
+                weather: weather,
+                offenseIsAway: !homeHasPossession
             )
 
             var drive = driveResult.drive
@@ -485,7 +486,7 @@ enum GameSimulator {
         /// One measurement pass over the SAME two rosters. R36 runs it twice
         /// — awareness targeting off, then on — for a paired comparison
         /// (league generation is unseeded, so separate launches don't compare).
-        func measure(label: String) {
+        func measure(label: String, fatiguePreload: Int? = nil) {
             var points: [Double] = []
             var yards: [Double] = []
             var penaltiesPerGame: [Double] = []
@@ -495,6 +496,13 @@ enum GameSimulator {
             var completions = 0
             var attempts = 0
             for _ in 0..<n {
+                // R38 fatigue gate: preload every player to a tired baseline so
+                // the fatigue mechanic (only bites above 70) actually fires —
+                // fresh generated leagues never cross the threshold in one game.
+                if let f = fatiguePreload {
+                    for p in home.players { p.fatigue = f }
+                    for p in away.players { p.fatigue = f }
+                }
                 let result = simulate(homeTeam: home, awayTeam: away)
                 points.append(Double(result.homeScore))
                 points.append(Double(result.awayScore))
@@ -580,6 +588,94 @@ enum GameSimulator {
         measurePlayAction(label: "off")
         PlaySimulator.debugNeutralPlayActionRead = false
         measurePlayAction(label: "on")
+
+        // -----------------------------------------------------------------
+        // R38 attribute-gap gate: each mechanic isolated over the SAME league
+        // (paired). R37 mechanics stay ON (shipped). Baseline "r38-pre" has
+        // every R38 mechanic neutralized; each pass toggles exactly one.
+        // -----------------------------------------------------------------
+        func setR38(fatigue: Bool, qbMob: Bool, arm: Bool, wrPress: Bool,
+                    contested: Bool, homeAway: Bool) {
+            PlaySimulator.debugNeutralFatiguePerf = fatigue
+            PlaySimulator.debugNeutralQBMobilitySack = qbMob
+            PlaySimulator.debugNeutralArmStrength = arm
+            PlaySimulator.debugNeutralWRPress = wrPress
+            PlaySimulator.debugNeutralContestedDrop = contested
+            PlaySimulator.debugNeutralHomeAwayPenalty = homeAway
+        }
+        // Keep R37 mechanics ON (shipped) throughout the R38 gate.
+        setNeutral(vision: false, security: false, intCredit: false)
+
+        setR38(fatigue: true, qbMob: true, arm: true, wrPress: true, contested: true, homeAway: true)
+        measure(label: "r38-pre")
+        setR38(fatigue: true, qbMob: false, arm: true, wrPress: true, contested: true, homeAway: true)
+        measure(label: "qbmob")          // mech 2: QB mobility → sacks
+        setR38(fatigue: true, qbMob: true, arm: false, wrPress: true, contested: true, homeAway: true)
+        measure(label: "arm")            // mech 3: arm strength → deep accuracy
+        setR38(fatigue: true, qbMob: true, arm: true, wrPress: true, contested: false, homeAway: true)
+        measure(label: "contested")      // mech 5: contested / drop
+        setR38(fatigue: true, qbMob: true, arm: true, wrPress: true, contested: true, homeAway: false)
+        measure(label: "homeaway")       // mech 6: penalties/game must match r38-pre
+
+        // Mech 1: fatigue → performance. Preload every player to 80 so the
+        // above-70 penalty actually fires; both teams tire symmetrically.
+        setR38(fatigue: true, qbMob: true, arm: true, wrPress: true, contested: true, homeAway: true)
+        measure(label: "fatigue-off", fatiguePreload: 80)
+        setR38(fatigue: false, qbMob: true, arm: true, wrPress: true, contested: true, homeAway: true)
+        measure(label: "fatigue-on", fatiguePreload: 80)
+
+        // Everything on together (realism sanity check).
+        setR38(fatigue: false, qbMob: false, arm: false, wrPress: false, contested: false, homeAway: false)
+        measure(label: "r38-all")
+
+        // -----------------------------------------------------------------
+        // #36B mental-game gate: composure is the ONLY mental mechanic on the
+        // shared quick-sim path (hot-streak (mech 1) and ego (mech 2) are
+        // live-only — they never fire in this AI-vs-AI quick sim). Paired,
+        // all R38 mechanics ON, composure OFF then ON. Gate: points ±1.5 /
+        // comp% ±2 / sacks ±1 / TO ±0.4 — the Q4/red-zone accuracy sag on
+        // low-composure QBs must not move the league aggregate.
+        // -----------------------------------------------------------------
+        PlaySimulator.debugNeutralComposure = true
+        measure(label: "composure-off")
+        PlaySimulator.debugNeutralComposure = false
+        measure(label: "composure-on")
+
+        // Mech 4: WR release vs DB press — live-only (needs a man-press
+        // package, which the quick sim never sends), so measured directly:
+        // repeated SHORT snaps vs a Man-Press look, off vs on. Near-zero mean.
+        let pressOffense = home.players.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
+        let pressDefense = away.players.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
+        let manPress = DefensiveCall.manPress.package
+        func measurePress(label: String, snaps: Int = 6000) {
+            var completions = 0
+            var attempts = 0
+            for _ in 0..<snaps {
+                let play = PlaySimulator.simulatePlay(
+                    offensePlayers: pressOffense,
+                    defensePlayers: pressDefense,
+                    down: 1, distance: 10, yardLine: 35,
+                    quarter: 2, timeRemaining: 600,
+                    momentum: 0, playNumber: 1,
+                    offensiveCall: .slant,           // short pass
+                    defensivePackage: manPress
+                )
+                switch play.outcome {
+                case .completion, .touchdown: completions += 1; attempts += 1
+                case .incompletion, .interception: attempts += 1
+                default: break
+                }
+            }
+            let compPct = attempts > 0 ? Double(completions) / Double(attempts) * 100 : 0
+            print(String(format: "DEBUG-SIM[PRESS-%@]: snaps=%d comp%%=%.1f", label, snaps, compPct))
+        }
+        setR38(fatigue: true, qbMob: true, arm: true, wrPress: true, contested: true, homeAway: true)
+        measurePress(label: "off")
+        setR38(fatigue: true, qbMob: true, arm: true, wrPress: false, contested: true, homeAway: true)
+        measurePress(label: "on")
+
+        // Restore all R38 mechanics to their shipped (active) state.
+        setR38(fatigue: false, qbMob: false, arm: false, wrPress: false, contested: false, homeAway: false)
 
         // Schedule integrity: several season years through the generator.
         var scheduleOK = true
@@ -719,7 +815,8 @@ enum GameSimulator {
                 offensiveScheme: homeHasPossession ? homeOffScheme : awayOffScheme,
                 defensiveScheme: homeHasPossession ? awayDefScheme : homeDefScheme,
                 gamePlan: homeHasPossession ? homeGamePlan : awayGamePlan,
-                weather: weather
+                weather: weather,
+                offenseIsAway: !homeHasPossession
             )
 
             let drive = driveResult.drive

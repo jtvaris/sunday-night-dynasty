@@ -41,7 +41,8 @@ enum DriveSimulator {
         offensiveScheme: OffensiveScheme? = nil,
         defensiveScheme: DefensiveScheme? = nil,
         gamePlan: GamePlan? = nil,
-        weather: GameWeather? = nil
+        weather: GameWeather? = nil,
+        offenseIsAway: Bool = false
     ) -> DriveSimulationResult {
         var plays: [PlayResult] = []
         var currentDown = 1
@@ -89,7 +90,8 @@ enum DriveSimulator {
                 offensiveScheme: offensiveScheme,
                 defensiveScheme: defensiveScheme,
                 gamePlan: gamePlan,
-                weather: weather
+                weather: weather,
+                offenseIsAway: offenseIsAway
             )
 
             // Store the play with current clock values

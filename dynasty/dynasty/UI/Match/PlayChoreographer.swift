@@ -1770,7 +1770,10 @@ struct PlayChoreographer {
         let throwDX = catchSpot.x - qbStart.x
         let throwDZ = catchSpot.z - qbDropZ
         let throwDistance = (throwDX * throwDX + throwDZ * throwDZ).squareRoot()
-        let flight = TimeInterval(min(max(throwDistance / Self.passVelocity, 0.5), 1.5))
+        // R38 mech 3 (presentation): a stronger arm drives the ball faster, so
+        // the flight is shorter; a weak arm floats it. nil = league average.
+        let velocityScale = Float(c.play.passVelocityScale ?? 1.0)
+        let flight = TimeInterval(min(max(throwDistance / (Self.passVelocity * velocityScale), 0.5), 1.5))
         let durations: [TimeInterval] = [isPA ? 1.0 : 0.65, deepDrop ? 1.6 : 1.25, flight]
         let frame = dropbackFrame(c, targetRole: receiverRole, targetPath: targetPath,
                                   durations: durations, qbDropZ: qbDropZ)

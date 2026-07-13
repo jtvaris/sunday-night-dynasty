@@ -521,6 +521,13 @@ struct CoachesBoardView: View {
                         if let archetype = engine.personalityArchetype(for: player.id) {
                             personalityChip(archetype)
                         }
+                        temperamentBadge(player)
+                    }
+                    // #36B mech 4: the player's live mental state, one line.
+                    if let mental = mentalStateLine(player) {
+                        Text(mental.text)
+                            .font(.system(size: 10.5, weight: .bold))
+                            .foregroundStyle(mental.tint)
                     }
                 }
                 Spacer()
@@ -610,6 +617,40 @@ struct CoachesBoardView: View {
     static func footballIQ(of player: SimPlayer) -> Int {
         Int((Double(player.mental.awareness) * 0.6
              + Double(player.mental.decisionMaking) * 0.4).rounded())
+    }
+
+    /// #36B mech 4: the player's static temperament tag next to his archetype.
+    @ViewBuilder
+    private func temperamentBadge(_ player: SimPlayer) -> some View {
+        switch player.mentalTemperament {
+        case .egoDriven:
+            Image(systemName: "crown.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.accentGold)
+        case .streaky:
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.warning)
+        case .unflappable:
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.accentBlue)
+        case .neutral:
+            EmptyView()
+        }
+    }
+
+    /// #36B mech 4: the player's LIVE mental state — frustration outranks a
+    /// hot/cold streak. `nil` when he is mentally neutral right now.
+    private func mentalStateLine(_ player: SimPlayer) -> (text: String, tint: Color)? {
+        if engine.isFrustrated(player.id) {
+            return ("Frustrated — wants the ball", .warning)
+        }
+        switch engine.formStreak(player.id) {
+        case .hot:  return ("Locked in — riding the hot hand", .success)
+        case .cold: return ("Pressing — cold stretch", .accentBlue)
+        case nil:   return nil
+        }
     }
 
     private func battleRecordText(_ line: LiveGameEngine.LivePlayerLine?) -> String {

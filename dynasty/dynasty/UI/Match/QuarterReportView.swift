@@ -175,6 +175,7 @@ struct QuarterPlayersPanel: View {
                         .foregroundStyle(Color.textTertiary)
                     trendArrow(trend)
                     formIcon(streak)
+                    temperamentBadge(player)
                     rookieBadge(player.id)
                 }
                 HStack(spacing: 4) {
@@ -218,6 +219,9 @@ struct QuarterPlayersPanel: View {
         } else if fatigue >= 70, trend <= -1,
                   let bench = bestBenchOption(for: player, fatigue: fatigue) {
             subSuggestionChip(bench: bench, fieldPlayer: player)
+        } else if engine.isFrustrated(player.id) {
+            // #36B mech 2: a starved ego star — feed him or he presses.
+            chip(text: "WANTS BALL", icon: "hand.raised.fill", tint: .warning)
         } else if streak == .hot, isOffense, isFeedablePosition(player.position) {
             chip(text: "FEED HIM", icon: "flame.fill", tint: .success)
         } else if streak == .cold {
@@ -368,6 +372,7 @@ struct QuarterPlayersPanel: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
             formIcon(engine.formStreak(player.id))
+            temperamentBadge(player)
             if snaps > 0 {
                 Text("\(snaps) SNP")
                     .font(.system(size: 8, weight: .black).monospacedDigit())
@@ -435,6 +440,32 @@ struct QuarterPlayersPanel: View {
                 .foregroundStyle(Color.accentBlue)
                 .accessibilityLabel(Text("Cold streak"))
         case nil:
+            EmptyView()
+        }
+    }
+
+    /// #36B mech 4: a static temperament tag so the coach can lead with
+    /// personalities — the crown demands touches, the bolt runs hot & cold,
+    /// the seal is unflappable. Distinct from `formIcon` (the live streak).
+    @ViewBuilder
+    private func temperamentBadge(_ player: SimPlayer) -> some View {
+        switch player.mentalTemperament {
+        case .egoDriven:
+            Image(systemName: "crown.fill")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(Color.accentGold)
+                .accessibilityLabel(Text("Ego-driven"))
+        case .streaky:
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(Color.warning)
+                .accessibilityLabel(Text("Streaky temperament"))
+        case .unflappable:
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(Color.accentBlue)
+                .accessibilityLabel(Text("Unflappable"))
+        case .neutral:
             EmptyView()
         }
     }

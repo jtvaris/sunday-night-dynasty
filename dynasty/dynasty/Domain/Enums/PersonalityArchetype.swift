@@ -60,6 +60,31 @@ enum PersonalityArchetype: String, Codable, CaseIterable {
         case .risky:    return -10
         }
     }
+
+    // MARK: - Mental Game (#36B)
+
+    /// Rides form hard (mech 1): competitors and free spirits catch fire on a
+    /// hot streak and press when cold.
+    var isFormSensitive: Bool {
+        switch self {
+        case .fieryCompetitor, .feelPlayer, .dramaQueen, .classClown: return true
+        default: return false
+        }
+    }
+
+    /// Immune to streaks (mech 1): the metronome pros play the same every snap.
+    var isFormImmune: Bool {
+        self == .steadyPerformer || self == .quietProfessional
+    }
+
+    /// Me-first temperaments prone to ego frustration when starved of touches
+    /// (mech 2) — the fiery star, the diva, and the lone wolf.
+    var isEgoArchetype: Bool {
+        switch self {
+        case .fieryCompetitor, .dramaQueen, .loneWolf: return true
+        default: return false
+        }
+    }
 }
 
 enum PersonalityTier {

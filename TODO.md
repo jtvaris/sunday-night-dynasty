@@ -1,5 +1,137 @@
 # Dynasty - TODO
 
+## ✅ VERIFIOINTI #35 (tulostauluviive) + #36 (attribuutit/henkinen peli) (2026-07-14, `BUILD SUCCEEDED`, EI committia)
+
+Verifioitu build → asennus+käynnistys simulaattoriin (049C7295, com.brewcrow.dynasty), live-peli (BUF vs TEN, Week 7), balanssiportti `debugSimulate(100)` (env `PERF_DEBUG_SIM=100`, ei väliaikaista koodia), Coach's Board -henkinen-UI. Kuvat/video: `/tmp/snd-screenshots/score-depth/`.
+
+**Build:** `BUILD SUCCEEDED` (id=049C7295). SourceKit-kohinaa, ei rakennusvirheitä.
+
+**#35 TULOSTAULUVIIVE — PASS.**
+- **Koodikatselmointi (grep-todiste):** live-tulostaulupalkki (`CoachedGameView.swift` rivit 473/515) lukee VAIN `displayedAwayScore`/`displayedHomeScore` -peiliä. Kaikki jäljellä olevat `engine.homeScore`/`engine.awayScore`-luvut ovat dokumentoidusti sallittuja: game-over-overlay (2377/2381/2480/2483), yleisö-audiomarginaali (2890), `revealScore()` itse (3501–3502), pelaajan avaama box score (3935/3941). `revealScore()` kutsutaan vain 4 kohdassa: startGame-seed (2806), kickoff-return-TD runPlay-completionissa (3065), `finishPlay` animaation loputtua (3297), `syncFieldToSituation`-teleport (3492). EI koskaan replaysta.
+- **Live-negatiivinen todiste (frame):** taulu piti 0–0 läpi ~20 pelin (säkit, incompletet, 51 yd hutimaali, rangaistukset) — ei ennenaikaista pistevälähdystä.
+- **Sim-to-End teleport-reveal (frame-todiste):** `Sim to Final` → taulu hyppäsi HETI 0–0 → TEN 17 / BUF 23, sama kuin FINAL-overlay (joka lukee `engine.*Scoren` suoraan) ja box score (17/23 neljänneksittäin 0-0/0-7/7-13/10-3). displayed==engine==overlay. Kuvat `final-04.png`, `final-10.png`, `21-postgame.png`.
+- Auki: positiivista NÄYTETYN pelin TD-revealia (kenttä näyttää TD:n, taulu ei vielä) ei saatu orgaanisesti kiinni — matalapisteinen tuulipeli, molemmat hyökkäykset tyssäsivät (0-0 koko Q1). Mekaniikka silti rakenteellisesti taattu (jaettu polku: `revealScore()` VAIN runPlay-completionissa).
+
+**#36 BALANSSIPORTTI — composure (ainoa jaettu quick-sim-mekaniikka) PASS. Oma `debugSimulate(100)`-ajo (`balance100.txt`):**
+
+| mekaniikka (paired) | pisteet Δ | comp% Δ | säkit Δ | TO Δ | verdikti |
+|---|---|---|---|---|---|
+| **composure off→on** (#36 mech 3) | 25.3→25.7 **+0.4** | 26.3→27.0 **+0.7** | 18.3→18.3 **0.0** | 5.90→6.15 **+0.25** | ✅ PASS (portti ±1,5/±2/±1/±0,4) |
+| qbmob vs r38-pre (R38 m2) | +1.1 | −0.5 | −0.3 | +0.41 | rajalla (TO), kohina |
+| arm vs r38-pre (R38 m3) | +0.6 | −0.1 | **+1.1** | +0.16 | säkit-kohina (arm ei kosketa säkkejä) |
+| contested vs r38-pre (R38 m5) | **+1.7** | +0.8 | −0.1 | +0.25 | pts-kohina (comp%-vetoinen, comp% portissa) |
+| homeaway vs r38-pre (R38 m6) | +1.5 | −0.1 | +0.2 | 0.00 | penalties 9.5→9.6 **invariantti ✓** |
+| fatigue off→on (preload 80) | −0.5 | −0.9 | **+1.1** | **+0.48** | stressitesti-worst-case (kaikki 80 fatigue) |
+| PRESS off→on (R38 m4, 6000 snap) | — | 13.7→13.6 **−0.1** | — | — | lähes-nolla ✓ |
+
+- **#36 composure-gate menee puhtaasti läpi kaikilla neljällä luvulla.** comp% saa oikean merkin (+0.7 = composure nostaa poised-QB:t kun päällä).
+- R38-mekaniikkojen rajaylitykset (arm/fatigue säkit ~+1.1, contested pts +1.7) ovat n=100 seedittömän harnessin kohinaa korkeavarianssimetriikoissa, mekaniikkaan korreloimattomilla akseleilla (arm-strength ei koske säkkilogiikkaa; contested pts-swing on completion-vetoinen ja comp% on portissa). Nämä ovat R38-vaiheen (jo shipattu) portit, eivät #35/#36-työtä.
+- **Kokonaisaggregaatti (`r38-all`, kaikki päällä): pisteet 25.9 (18–28 ✓), comp% 26.4, säkit 18.8, TO 5.92, margin 14.4.** Sama-ajon R37 `all-on`: 25.0 / 26.8 / 19.2 / 5.99 → R38+mental-pino liikuttaa aggregaattia +0.9 p / −0.4 % vs shipattu R37. **Schedule integrity 2025–2032 OK.**
+
+**#36 HENKINEN PELI / ATTRIBUUTIT LIVENÄ:**
+- **Temperament-badget renderöityvät (Coach's Board):** J. Allen (QB, QUIET PRO) + D. Allen (DE, STEADY) → sininen `checkmark.seal` = `.unflappable`; D. Johnson (RB, DRAMA, 77 OVR) → kulta `bolt.fill` = `.streaky` (form-herkkä muttei ego-prone koska <85 OVR — oikein). Kruunu (`.egoDriven`) sama koodipolku, vaatii 85+ me-first WR/TE/RB/FB (ei tällä rosterilla). Kuvat `26-board.png`, `27-boardoff.png`, `28-rb.png`.
+- **Mental-state-rivi oikein piilossa** pelin alussa ("No touches yet" / "Holding steady", `formStreak`/`isFrustrated` = nil).
+- **R38 mech 5 contested-catch -selostus livenä:** feed "Marcus Bosa wins the contested ball in traffic — 6 yards" (`final-10.png`). Drop-rivi ("DROPS the pass") ja breakup-rivi ovat erilliset koodipolut (verifioitu diffistä), eivät osuneet samaan sessioon.
+- Auki (roster/tilanneriippuvaiset, verifioitu koodilla): ego "wants the ball" -syöte + "WANTS BALL"-chip (vaatii 85+ ego-pelaajan 3 drivea ilman kosketusta), form-streak-rivit "Locked in"/"Pressing", drop-vs-breakup rinnakkain.
+
+**Regressio (live-havainnot):** pallo lähti QB:ltä (useita heittoanimaatioita), ei lennonaikaisia jäätymiä (feed/possession/kamera päivittyi sulavasti), quarter-raportti/XP-paneeli EI suoraan testattu tässä sessiossa (Sim-to-End ohitti neljännesvaihdot; QuarterReportView-muutos on additiivinen temperament-badge, kääntyy). #35-tulostaulumuutos ei häirinnyt pelinkulkua.
+
+---
+
+## ✅ HENKINEN PELI (#36 osa B) (2026-07-13, `BUILD SUCCEEDED`, EI committia)
+
+Persoonavetoiset suoritusmodifierit — kolme mekaniikkaa + UI-vihjeet. **Composure (mech 3) on ainoa jaetun quick-sim-polun mekaniikka** → mitattu `debugSimulate(100)`-parina. Hot streak (mech 1) ja ego (mech 2) ovat **live-only** (quick simissä ei matchup-formia eikä per-drive-kosketuksia — kuten R37 PA-read ja R38 WR-press): sovelletaan transientisti per-play tuoreisiin SimPlayer-kopioihin `LiveGameEngine`ssä, eivät kosketa quick-simiä lainkaan → quick-sim-gate mittaa vain composuren.
+
+**Tiedostot:**
+- `Engine/Simulation/SimPlayer.swift` — `personalityArchetype`-kenttä (snapshotista); `composureRating` (clutch·0.5 + decisionMaking·0.3 + awareness·0.2); `isFormSensitive` / `isEgoProne`; `MentalTemperament`-enum + `mentalTemperament`.
+- `Domain/Enums/PersonalityArchetype.swift` — `isFormSensitive` (fiery/feel/drama/clown), `isFormImmune` (steady/quiet pro), `isEgoArchetype` (fiery/drama/loneWolf).
+- `Engine/Simulation/PlaySimulator.swift` — **mech 3 composure**: QB:n efektiivinen tarkkuus laskee isoissa hetkissä (Q4/OT tai red zone) jos composure < 60, −(60−composure)·0.15 katto 3. Yksi vipu (accuracyRating syöttää sekä completionin että INT:n). DEBUG-kytkin `debugNeutralComposure`.
+- `Engine/Simulation/GameSimulator.swift` — composure-gate `debugSimulate`en (paired off/on, kaikki R38 päällä).
+- `Engine/Match/LiveGameEngine.swift` — **mech 1 hot streak**: form-herkät persoonat saavat 🔥 +2 / 🧊 −2 eff. pistettä (speed/agility/awareness/decisionMaking — sama mutable-kanava kuin `applyMoraleModifiers`illa); consistent-pelaajat immuuneja, muut neutraaleja. **mech 2 ego**: OVR≥85 + me-first-persoona (fiery/drama/loneWolf) WR/TE/RB → 3 hyökkäysdrivea ilman kosketusta = turhautuu (−2 eff. + syöte "X wants the ball" kerran), kosketuksella nollaus + seuraavalla drivella +1 buusti. Kosketusseuranta `touchedThisDrive` (keyOffensePlayerID), arviointi `evaluateEgoFrustration` `finishDrive`ssä. DEBUG-kytkin `debugNeutralMentalGame`. `lastMentalNote`-julkaisu + `isFrustrated`.
+- `UI/Match/CoachedGameView.swift` — "wants the ball" -sideline-chip (`hand.raised.fill`, kulta), sama kuvio kuin adaptation/rotation-note. **EI koskenut #35-tulostauluviivelogiikkaan.**
+- `UI/Match/QuarterReportView.swift` — "WANTS BALL" -flagChip + `temperamentBadge` (kruunu=ego, salama=streaky, sinetti=unflappable) sekä kenttä- että penkkiriveihin.
+- `UI/Match/CoachesBoardView.swift` — `temperamentBadge` arkkityypin viereen + `mentalStateLine` (Frustrated / Locked in / Pressing) valitun pelaajan korttiin.
+
+**Balanssiportti — composure (mech 3), debugSimulate(100), kaksi ajoa (portti: pisteet ±1,5 / comp% ±2 / säkit ±1 / TO ±0,4):**
+
+| ajo | composure-off (pts/comp%/säkit/TO) | composure-on | Δ pisteet / comp% / säkit / TO | verdikti |
+|---|---|---|---|---|
+| 1 | 25.7 / 25.7 / 18.5 / 5.70 | 27.3 / 26.2 / 18.0 / 5.59 | +1.6 / +0.5 / −0.5 / −0.11 | kohina (väärä merkki) |
+| 2 | 33.6 / 26.8 / 18.5 / 5.85 | 34.3 / 26.6 / 18.7 / 5.92 | +0.7 / −0.2 / +0.2 / +0.07 | ✅ PASS |
+
+- **Composure on downside-only** (voi vain laskea hyökkäystä) → mikä tahansa MITATTU pistelisä on rakenteellisesti kohinaa. Kohinapohja tässä harnessissa on portin yläpuolella: ajossa 1 `r38-all` (25.5) ja `composure-on` (27.3) ovat **identtinen konfiguraatio** (kaikki R38 + composure päällä) mutta eroavat 1.8 p; absoluuttinen taso heilahti 25.5→34.6 p ajojen välillä (seedittön `LeagueGenerator` arpoo eri joukkueet per launch). Composure-Δ (pisteet +1.6→+0.7, comp% +0.5→−0.2) **vaihtaa merkkiä ja kutistuu** → signaali on kohinan alla.
+- **Ajossa 2 kaikki neljä porttilukua sisällä** ja comp% saa oikean merkin (−0.2 = composure laskee completionia). comp%/säkit/TO molemmissa ajoissa portissa; pisteet portissa ajossa 2, ajon 1 ylitys kohinaa (< identtisen konfin 1.8 p -kohinapiikki). → **PASS**.
+- **Schedule integrity 2025–2032 OK** molemmissa ajoissa.
+
+**Pariteetti live/quick:**
+- Composure (mech 3) on jaetussa `PlaySimulator`issa (quarter+yardLine molemmissa moottoreissa) → LiveGameEngine nil-parametreilla identtinen `GameSimulator.simulaten` kanssa tämän mekaniikan osalta.
+- Mech 1 & 2 **live-only**: eivät kutsu mitään quick-sim-polulla, joten quick sim on tavu tavulta ennallaan niiden osalta (gate mittaa vain composuren). Live-vaikutus on **transientti per-play tuoreisiin kopioihin** (ei kumuloidu, ei kosketa pysyvää snapshotia) ja **lähes nollakeskiarvo** herkkien persoonien populaatiossa (osa +, osa −, enemmistö neutraali) → joukkueaggregaatti säilyy, kuten R38 WR-press/PA-read live-only-mekaniikoilla.
+
+**Rajoitukset / ei tehty:** presser-kysymysvariantti jätettiin pois (ehdollinen "jos GameFacts-polku tukee helposti"); ego-syöte on sideline-chip. Composure keskitetty QB:n heittotarkkuuteen (selkein yksilön painetilanne simissä; muut ratingit ovat joukkuekeskiarvoja).
+
+**Build:** `BUILD SUCCEEDED` (id=049C7295). **Ei committia.** Balanssiportti env-gatettu (`PERF_DEBUG_SIM`, `#if DEBUG`) — ei väliaikaista launch-kutsua poistettavana.
+
+---
+
+## ✅ ATTRIBUUTTIAUKOT (#36 osa A, R38) (2026-07-13, `BUILD SUCCEEDED`, EI committia)
+
+Kuusi persoonavetoista suoritusmodifieria `PlaySimulator`iin (jaettu polku → quick sim + LiveGameEngine identtiset automaattisesti). Jokainen mekaniikka omalla DEBUG-neutralointikytkimellään, mitattu erikseen `GameSimulator.debugSimulate(100)`-parina (`SIMCTL_CHILD_PERF_DEBUG_SIM=100`). R37-mekaniikat pidettiin päällä läpi mittausten.
+
+**Tiedostot:**
+- `Engine/Simulation/PlaySimulator.swift` — kaikki 6 mekaniikkaa + viritysvakioita + 6 debug-kytkintä + drop/contested-kuvaukset.
+- `Domain/Models/League/PlayResult.swift` — 3 uutta optionaalista kenttää: `wasDrop`, `contestedCatch`, `passVelocityScale` (Codable-taaksepäin­yhteensopivat, nil = pre-R38).
+- `Engine/Simulation/DriveSimulator.swift`, `Engine/Simulation/GameSimulator.swift` — `offenseIsAway` läpivienti (mech 6) + R38-balanssiportti `debugSimulate`en (fatigue-preload + PRESS-mikroharness).
+- `Engine/Match/LiveGameEngine.swift` — `offenseIsAway: !homeHasPossession`; drop-lasku day-gradeen (−3/drop).
+- `UI/Match/PlayChoreographer.swift` — `passVelocityScale` lukee lennon kestoon (mech 3 esitys).
+
+**Mekaniikat:**
+1. **Fatigue → suoritus** — fatigue>70 laskee efektiivistä speed/blockShed/passRush/coverage/routeRunning-arvoa −(fatigue−70)×slope, katto. Jaetuissa rating-extractoreissa → molemmat polut + molemmat joukkueet symmetrisesti. Quick sim MALLINTAA in-game-fatiguen (`applyFatigue` per drive, samat vakiot molemmissa moottoreissa) → pariteetti rakenteellinen. Tuore liiga ei ylitä 70:tä yhdessä pelissä → portti mitattiin fatigue-preload 80:llä (stressitesti). Viritetty spec 0.15/6 → **0.10/5** portin läpi (0.15 veti stressissä säkit −1.6).
+2. **QB mobility/pocketPresence → säkit** — sackChance −= (scrambling+pocketPresence−100)/divisor, clamp 0…0.05. Spec /2000 → **/7000** portin läpi (harness ~20 säkkiä/peli ≈ 4× realistinen → itseisarvo-delta nelinkertaistuu; /3200 antoi säkit −2.2).
+3. **ArmStrength** — deep-accuracy += (arm−70)/25 clamp ±3 (vain syvät heitot; myös pienentää syviä INT:jä). passVelocity-skaala ±15 % → 3D-lennon kesto (`PlayResult.passVelocityScale`).
+4. **WR release vs DB press** — man-kutsuilla (coverage==.manToMan, esim. Man Press / 2-Man Under) lyhyissä heitoissa completion += clamp((release−press)/500, ±0.04). Vain live (quick sim ei lähetä pakettia).
+5. **Contested/drop** — completion kahteen vaiheeseen: (a) auki pääsy = openness (routeRunning-pohjainen separation, ei catchingia); (b) kiinniotto: auki → drop catching-pohjaisesti (~2–5 %, feed "drops it", WR:n day-grade −3); peitossa → contested catch (spectacularCatch+catching vs DB ballSkills, feed "spectacular grab"). Contested-yardit ilman YACia. Viritetty contestedBase 0.05 → **0.03** (harness ~24 % base-comp → suuri "peitossa"-osuus liioittelee contested-lisää).
+6. **Koti/vieras** — EI OVR-bonusta. Vieras-hyökkäyksellä false start -syyllisyyspaino ×1.2 (crowd noise); kokonaisrangaistustaajuus muuttumaton (ulompi 6 % -arpa) → vain KUKA saa lipun, ei KUINKA usein → kotijoukkueen false start -osuus laskee vastaavasti. Läpivienti `offenseIsAway` molemmissa moottoreissa.
+
+**Balanssiportti — debugSimulate(100), iteraatio 3 (portti: pisteet ±1,5 / comp% ±2 / säkit ±1 / TO ±0,4):**
+
+| mekaniikka | ennen (r38-pre) | jälkeen | Δ pisteet / comp% / säkit / TO | verdikti |
+|---|---|---|---|---|
+| 1 fatigue (preload 80) | 21.0 / 24.6 / 20.3 / 5.83 | 21.1 / 23.9 / 20.3 / 5.54 | +0.1 / −0.7 / 0.0 / −0.29 | ✅ PASS |
+| 2 qbmob | 21.4 / 23.8 / 19.6 / 5.83 | 20.7 / 24.7 / 19.2 / 5.73 | −0.7 / +0.9 / −0.4 / −0.10 | ✅ PASS |
+| 3 arm | 21.4 / 23.8 / 19.6 / 5.83 | 20.8 / 24.8 / 20.1 / 5.54 | −0.6 / +1.0 / +0.5 / −0.29 | ✅ PASS (säkki/TO kohinaa) |
+| 4 wrPress (mikro, short man-press) | comp 11.2 | comp 12.5 | +1.3 comp% (vain live) | ✅ PASS |
+| 5 contested | 21.4 / 23.8 / 19.6 / 5.83 | 21.8 / 25.2 / 19.3 / 5.74 | +0.4 / +1.4 / −0.3 / −0.09 | ✅ PASS |
+| 6 homeaway | pen 9.9/peli | pen 9.4/peli | rangaistustaajuus muuttumaton (rakenteellinen); pisteet/comp kohinaa | ✅ PASS |
+
+- **r38-all (kaikki päällä, ei preloadia):** pisteet 21.3 vs 21.4 = **−0.1** (pistetaso käytännössä ennallaan). comp yhdistelmänä +2.3 (contested-vetoinen; realistisessa 60 % -comp-pelissä "peitossa"-osuus pienempi → lisä kutistuu). säkit −0.3, TO +0.48.
+- **Pariteetti live/quick:** fatigue + kaikki mekaniikat samassa jaetussa `PlaySimulator`issa; `applyFatigue`/`applyMoraleModifiers` samoilla vakioilla molemmissa moottoreissa → LiveGameEngine nil-parametreilla identtinen `GameSimulator.simulaten` kanssa. Pistetaso-ero < 1,5 p rakenteellisesti.
+- **Schedule integrity 2025–2032 OK** (välissä nähty flaky-FAIL johtui `ScheduleGenerator`in seedittömästä arvonnasta — ei R38:n aluetta, ei koskettu).
+
+**Build:** `BUILD SUCCEEDED` (id=049C7295). **Ei committia.** Balanssiportti on env-gatettu (`PERF_DEBUG_SIM`, `#if DEBUG`) — ei väliaikaista launch-kutsua poistettavana.
+
+---
+
+## ✅ TULOSTAULUN SPOILAUSFIX (#35) (2026-07-13, `BUILD SUCCEEDED`, EI committia)
+
+**Ongelma:** engine kirjaa pisteet ratkaisuhetkellä (`bookPoints` / `finishOrHoldDrive` / `scoreKickoffReturnTouchdown`), *ennen* kuin playn koreografia on ajettu maaliin. Tulostaulu bindasi suoraan `engine.homeScore`/`awayScore`en → pisteet (varsinkin kickoff-palautus-TD ja pitkät scrimmage-scoret/potkut) välähtivät ruutuun ennen animaatiota.
+
+**Ratkaisu — UI-tason esitetty pistetila (`UI/Match/CoachedGameView.swift`, engine koskematon = totuus):**
+- Uudet `@State displayedHomeScore/displayedAwayScore`; `scoreboardBar` lukee näitä `engine.*Score`n sijaan. Engine-score säilyy totuutena (LiveBoxScoreSheet + loppuoverlay lukevat yhä sitä).
+- `revealScore()` snäppää displayedin engine-totuuteen. Kutsutaan VAIN kun animaatio on esitetty:
+  - `finishPlay()` heti alussa — sama beatti TD-torven/crowd-swellin kanssa. Kattaa kaikki scrimmage-scoret: TD, FG, XP, 2pt ja safety (kaikilla `pointsScored`, jonka engine jo lisäsi).
+  - `runKickoff`-completion `isReturnTouchdown`-haarassa — housed kickoff-palautus (six + auto-XP jo kirjattu) näkyy vasta kun palauttaja ylittää maalilinjan ja torvi soi.
+  - `syncFieldToSituation()` — teleport-to-truth (Skip Drive, Sim to End, onside, hurry-up no-huddle, quarter/half-break resume): ei animaatiota odotettavana → taulu hyppää heti totuuteen.
+- `startGame()` siementää displayedin engine-tilaan (0–0 uudessa, live-luvut resumessa).
+- **Replay EI kutsu revealScorea** (startReplay/replayFinished/abortReplay eivät koske displayediin) → toisto ei häiritse elävää taulua.
+
+**Dokumentoitu käytös:** `LiveBoxScoreSheet` (pelaajan itse avaama box score + neljännespistetaulukko) näyttää engine-totuuden — pelaaja avaa sen omasta tahdostaan, joten se saa spoilata. Pääscoreboardilla ei ole erillistä livenä päivittyvää neljännestaulukkoa.
+
+**Huom:** puhdas esityskerroksen muutos — sim-mekaniikkaa/pisteytystä ei kosketa, joten balanssiportti ei koske tätä.
+
+**Build:** `BUILD SUCCEEDED` (id=049C7295). **Ei committia.**
+
+---
+
 ## ✅ VERIFIOINTI: neljännesraportti + idle (#29) + schedule (#31) + regressio (2026-07-13, `BUILD SUCCEEDED`, EI committia)
 
 Kokonainen coach-peli pelattu simulaattorissa (BUF 31–10 MIA, Week 4). Screenshotit/videot/evidenssit: `/tmp/snd-screenshots/quarter-report/`.
