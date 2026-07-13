@@ -1,270 +1,131 @@
 ---
 name: analyze-app
-description: Use when iteratively reviewing and polishing app screens one by one - takes simulator screenshots, analyzes visual design and game data completeness, tracks improvements as todos, and dispatches background agents to fix issues while continuing to the next screen.
+description: Use when reviewing, auditing, or polishing app screens — "does this look right", "is this fun/understandable", "find bugs or unimplemented features on a screen", "audit the UI", or when motion/animation feels stiff, choppy, or off and evidence is needed.
 ---
 
-# Screen Polish Loop
+# App Review Loop — personas, functional sweep, measured evidence
 
 ## Overview
 
-Unified screen-by-screen review process combining **visual design analysis** and **game design validation**. Build → Screenshot → Analyze (visual + game data) → Create todos → Dispatch fixes → Next screen.
+Screen-by-screen review with three pillars, all mandatory per screen:
 
-## Quick Start
+1. **Persona analysis** — the same evidence read through four lenses:
+   designer, casual player, hardcore player (tosipelaaja), game developer.
+   Checklists + report format: `references/personas.md`.
+2. **Functional sweep** — every interactive element on the screen is
+   exercised; dead buttons, stubs and bugs are caught, not assumed away.
+3. **Measured evidence** — numbers, not vibes. Stills prove layout; **only
+   video proves motion**; contrast, scale and freezes are computed.
 
-```
-/screen-polish-loop
-```
+**Iron rule: never judge animation, pacing or "feel" from a screenshot.**
+A static audit of an animated screen once missed all motion problems and the
+user had to report them ("tönkkö ja pätkivä"). If anything on the screen
+moves, record video and run the motion profile.
 
-Then follow the process below from Phase 1.
+## Phase 0 — Safety (before anything)
 
-## Process
+- `git status` — note uncommitted work; never revert/stash/clean it.
+- **Save protection:** flows that create/advance/delete careers mutate the
+  user's save. Anything destructive (New Career, multi-week advances) runs on
+  a **dedicated simulator**, not the user's:
+  `xcrun simctl clone <UDID> review-sim` (device must be shut down) or create
+  one with `xcrun simctl create`. Verify the app's career picker never
+  overwrites silently before touching the shared sim.
+- **Build Debug explicitly** (`-configuration Debug`): PerfLog `PERF|` lines
+  and FPS instrumentation compile to no-ops in Release — they vanish silently.
 
-```dot
-digraph screen_polish {
-    rankdir=TB;
-
-    "Phase 1: Setup" [shape=box, style=filled, fillcolor=lightblue];
-    "Build & install app" [shape=box];
-    "List all screens to review" [shape=box];
-    "Create master TaskList" [shape=box];
-
-    "Phase 2: Per-Screen Loop" [shape=box, style=filled, fillcolor=lightyellow];
-    "Ask user to navigate to screen" [shape=box];
-    "Take screenshot" [shape=box];
-    "Analyze: Visual Design" [shape=box];
-    "Analyze: Game Data" [shape=box];
-    "Present findings to user" [shape=box];
-    "User approves fixes?" [shape=diamond];
-    "Create todos for fixes" [shape=box];
-    "Dispatch background agent" [shape=box];
-    "More screens?" [shape=diamond];
-
-    "Phase 3: Verify" [shape=box, style=filled, fillcolor=lightgreen];
-    "Re-screenshot fixed screens" [shape=box];
-    "Compare before/after" [shape=box];
-    "Done" [shape=doublecircle];
-
-    "Phase 1: Setup" -> "Build & install app";
-    "Build & install app" -> "List all screens to review";
-    "List all screens to review" -> "Create master TaskList";
-    "Create master TaskList" -> "Phase 2: Per-Screen Loop";
-
-    "Phase 2: Per-Screen Loop" -> "Ask user to navigate to screen";
-    "Ask user to navigate to screen" -> "Take screenshot";
-    "Take screenshot" -> "Analyze: Visual Design";
-    "Analyze: Visual Design" -> "Analyze: Game Data";
-    "Analyze: Game Data" -> "Present findings to user";
-    "Present findings to user" -> "User approves fixes?";
-    "User approves fixes?" -> "Create todos for fixes" [label="yes"];
-    "User approves fixes?" -> "More screens?" [label="skip"];
-    "Create todos for fixes" -> "Dispatch background agent" [label="dispatch fixes"];
-    "Dispatch background agent" -> "More screens?";
-    "More screens?" -> "Ask user to navigate to screen" [label="yes"];
-    "More screens?" -> "Phase 3: Verify";
-    "Phase 3: Verify" -> "Re-screenshot fixed screens";
-    "Re-screenshot fixed screens" -> "Compare before/after";
-    "Compare before/after" -> "Done";
-}
-```
-
-## Phase 1: Setup
-
-### Build & Install
+## Phase 1 — Setup
 
 ```bash
-# Build
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project dynasty/dynasty.xcodeproj -scheme dynasty -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' build 2>&1 | tail -3
-
-# Boot + Install + Launch
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun simctl boot 'iPad Pro 13-inch (M5)' 2>/dev/null
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun simctl uninstall 'iPad Pro 13-inch (M5)' com.brewcrow.dynasty 2>/dev/null
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun simctl install 'iPad Pro 13-inch (M5)' ~/Library/Developer/Xcode/DerivedData/dynasty-arklysztnruxtvfbogjmrinmtdqt/Build/Products/Debug-iphonesimulator/dynasty.app
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun simctl launch 'iPad Pro 13-inch (M5)' com.brewcrow.dynasty
+xcodebuild -project dynasty/dynasty.xcodeproj -scheme dynasty -configuration Debug \
+  -destination 'id=<UDID>' build
+xcrun simctl install <UDID> <DerivedData>/Build/Products/Debug-iphonesimulator/dynasty.app
+xcrun simctl launch --console-pty <UDID> com.brewcrow.dynasty > /tmp/review/console.log 2>&1 &
 ```
 
-### Screen Inventory
+Keep the console log for the whole session (PERF lines, AVAudio errors,
+crashes). List target screens, create one task per screen (TaskCreate).
 
-Create a TaskList tracking all screens. Dynasty screens to review:
+**Navigation:** no accessibility identifiers — navigate with idb taps at
+*screen coordinates × 0.688*. Verify position with a fresh screenshot before
+every dependent tap (never trust remembered coordinates); Coach's Board /
+pause overlays freeze the play clock for stable frames.
 
-| # | Screen | View File | Priority |
-|---|--------|-----------|----------|
-| 1 | Main Menu | MainMenuView | High |
-| 2 | New Career | NewCareerView | High |
-| 3 | Team Selection | TeamSelectionView | High |
-| 4 | Intro Sequence (5 steps) | IntroSequenceView | High |
-| 5 | Career Dashboard | CareerDashboardView | Critical |
-| 6 | Roster | RosterView | Critical |
-| 7 | Player Detail | PlayerDetailView | High |
-| 8 | Depth Chart | DepthChartView | Medium |
-| 9 | Formation | FormationView | Medium |
-| 10 | Coaching Staff | CoachingStaffView | High |
-| 11 | Hire Coach | HireCoachView | Medium |
-| 12 | Scouting Hub | ScoutingHubView | High |
-| 13 | Prospect Detail | ProspectDetailView | Medium |
-| 14 | Draft | DraftView | High |
-| 15 | Contracts / Cap | PlayerContractView / CapOverviewView | High |
-| 16 | Free Agency | FreeAgencyView | Medium |
-| 17 | Trade Center | TradeView | Medium |
-| 18 | Schedule | ScheduleView | Medium |
-| 19 | Standings | StandingsView | Medium |
-| 20 | Press Conference | PressConferenceView | Medium |
-| 21 | Locker Room | LockerRoomView | Medium |
-| 22 | News / Inbox | NewsView / InboxView | Low |
+## Phase 2 — Per-screen loop
 
-Use `TaskCreate` to create a task for each screen, starting with Critical and High priority.
+### A. Evidence
 
-## Phase 2: Per-Screen Analysis
+- Screenshot(s): `xcrun simctl io <UDID> screenshot /tmp/review/<screen>_v1.png`, then Read.
+- **If anything moves** (3D field, transitions, particles, tickers):
+  `xcrun simctl io <UDID> recordVideo --codec h264 <file>.mp4` for 60-90 s of
+  real interaction, then `python3 tools/motion_profile.py <file>.mp4`.
+  Gates: no freeze ≥ 0.5 s in/near a play; bursts develop over 3-6 s; idle
+  baseline level ≥ 1. Step frames (0.1-0.2 s) for animation reads.
 
-### Take Screenshot
+### B. Functional sweep — find what does nothing
 
-```bash
-# Create screenshot directory if needed
-mkdir -p /tmp/snd-screenshots
+1. Inventory every control: from the screenshot AND the view file (buttons,
+   taps, menus, context menus, swipes, toggles — code shows what the shot hides).
+2. Exercise each one via idb; screenshot after each.
+3. Classify: **PASS** (visible correct reaction) / **DEAD** (no reaction) /
+   **STUB** (placeholder, "coming soon", empty sheet) / **BUG** (wrong
+   behavior or console error). Navigate back after each detour.
+4. Output a table: `control | action | result | class`. Every DEAD/STUB/BUG
+   becomes a finding. Check the console log after the sweep.
 
-# Take screenshot (use descriptive filename)
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun simctl io 'iPad Pro 13-inch (M5)' screenshot /tmp/snd-screenshots/SCREENNAME_v1.png
-```
+### C. Persona analysis
 
-Then `Read` the screenshot file to view it.
+Apply all four lenses from `references/personas.md` to the same evidence.
+With Workflow orchestration, run the four personas as parallel read-only
+agents over the evidence files and merge; inline, do them sequentially.
+Report conflicts between personas explicitly with a proposed resolution.
 
-### Visual Design Analysis (7 checks)
+### D. Findings → todos (zero tolerance)
 
-For each screenshot evaluate:
+Every finding from every persona and every sweep row becomes a TaskCreate
+todo, prefixed `Fix:` (visual) / `Game:` (design) / `Bug:` / `Stub:`.
+Count findings, count todos — if they differ, fill the gap immediately.
+User observations get todos the moment they are said.
 
-| Check | What to look for |
-|-------|-----------------|
-| **First Impression** | Professional? Clear hierarchy? Premium sports app feel? |
-| **Typography** | Readable? Consistent weights? Monospaced numbers? Min 12pt? |
-| **Spacing** | Consistent padding? Grid-aligned? Balanced whitespace? |
-| **Color & Contrast** | Dark theme consistent? Gold accents purposeful? 4.5:1 contrast? Semantic colors? |
-| **Cards & Components** | Consistent corner radius? Card backgrounds? Clear sections? Touch targets? |
-| **Information Density** | Right amount? Key info prominent? Secondary info subdued? Empty states? |
-| **Platform Feel** | iPad-native? Uses screen space well? Navigation feels right? |
+### E. Dispatch fixes
 
-### Game Design Analysis (5 checks) — EQUALLY IMPORTANT AS VISUAL
+Background agents, one per fix batch, with: exact files, acceptance criteria,
+"do NOT touch other screens", build must end BUILD SUCCEEDED. **Never two
+agents on the same file concurrently.** Classify before dispatching — bug,
+design gap, and perf problem need different agents and different prompts.
 
-**This analysis is NOT optional.** For each screen, evaluate from a **game management simulation** perspective with the same rigor as visual analysis. Every finding here MUST become a todo.
+## Phase 3 — Verify
 
-| Check | What to look for | Example findings |
-|-------|-----------------|-----------------|
-| **Essential Data** | Does the screen show ALL information a GM/HC needs to make decisions? | "Missing expiring contracts count", "No QB name/OVR on dashboard" |
-| **Decision Support** | Can the player compare options? Are trade-offs visible? Rankings? Context? | "No league ranking for OVR", "Can't compare candidates side-by-side" |
-| **Feedback** | Does the screen show consequences of past decisions? Trends? History? | "No previous season summary", "No injury history" |
-| **Immersion** | Does it feel like running an NFL franchise? Atmosphere? Narrative? | "Dashboard feels like admin panel, not GM office" |
-| **Flow** | Can the player quickly do what they came here to do? Actions available? Navigation? | "No action buttons on player detail", "Can't swap starters from roster" |
+Rebuild → re-collect the SAME evidence (`_v2` shots, new video if motion) →
+compare against v1 and against the measured gates. Motion gates re-run on
+every visual change (regression check). Mark todos done or spawn follow-ups.
 
-**Decision Support is the most important check** — if a player can't make informed decisions from the screen, the game fails at its core purpose.
+## Measured gates (quick reference)
 
-#### Essential Data Per Screen Type
+| Aspect | How to measure | Band |
+|---|---|---|
+| Motion life | `tools/motion_profile.py` | no freeze ≥0.5 s; play 3-6 s; idle ≥1 |
+| Scale | pixel-height of figure ÷ viewport (PIL crop) | vs. stated target (e.g. QB 11-14 %) |
+| Contrast | ratio from screenshot pixels | ≥4.5:1 body text |
+| FPS | `PERF\|` lines (Debug build) | relative: no −20 % vs. baseline run |
+| Audio assets | `ffprobe` duration + volumedetect | >0 s, no clipping, no missing files |
+| Balance (sim changes) | `GameSimulator.debugSimulate(50)` paired | pts ±1.5, comp% ±2, sacks ±1, TO ±0.4 |
 
-- **Roster**: OVR, age, contract status, injury, depth chart position, trend arrows
-- **Player Detail**: All attributes by category, contract details, history, comparable players
-- **Draft/Scouting**: Projected round, combine stats, position need, scout grades, bust/boom %
-- **Contracts**: Cap space, dead money, guarantees, years remaining, team-friendly indicator
-- **Dashboard**: Current week, upcoming tasks, team record, morale, cap situation, news ticker
-- **Coaching**: Scheme fit, coordinator ratings, position group grades, development bonuses
+## Common mistakes
 
-### Present Findings
-
-Format findings as a structured report:
-
-```
-## [Screen Name] - Analysis
-
-### Visual Issues
-1. [Critical] Description...
-2. [High] Description...
-3. [Medium] Description...
-
-### Game Design Issues
-1. [Missing] Data X needed for decision Y
-2. [Improve] Data Z should be more prominent
-3. [Add] Feature W would help player flow
-
-### Decision Support Issues
-1. [Missing] Cannot compare X — need Y data visible
-2. [Missing] No way to perform action Z from this screen
-3. [Improve] Trade-offs not visible for decision W
-
-### Recommendation
-Quick summary of what needs to change.
-```
-
-Ask user: **"Hyva? Aloitetaanko korjaukset?"**
-
-### Create Todos — MANDATORY
-
-**CRITICAL RULE: EVERY finding MUST become a TaskCreate todo.** Do not skip any finding from any category (Visual, Game Design, Decision Support). After presenting findings:
-
-1. **Immediately create a TaskCreate for EVERY item** in Visual Issues, Game Design Issues, and Decision Support Issues — no exceptions
-2. Prefix todo subjects with category: "Fix:" for visual, "Game:" for game design, "Bug:" for bugs
-3. After creating all todos, **verify completeness**: re-read the analysis report and confirm every numbered item has a corresponding todo
-4. If the user adds their own observations, create todos for those too — immediately, not later
-
-### Dispatch Fixes (Optional)
-
-After todos are created, optionally dispatch agents:
-
-1. **Dispatch background Agent** (subagent_type: general-purpose) with:
-   - The specific fixes to make
-   - File paths to modify
-   - Clear acceptance criteria
-   - Instruction to NOT touch other screens
-
-```
-Agent prompt template:
-"Fix the following issues in [ViewFile.swift]:
-1. [Fix description]
-2. [Fix description]
-Do NOT modify any other files. After fixing, the screen should [acceptance criteria]."
-```
-
-3. **TaskUpdate** status to in_progress
-4. Continue to next screen immediately (don't wait for agent)
-
-## Phase 3: Verify
-
-After all screens analyzed and agents have completed:
-
-1. Rebuild the app
-2. Re-screenshot each fixed screen (save as `SCREENNAME_v2.png`)
-3. Compare v1 vs v2 side by side
-4. Mark tasks as completed or create follow-up tasks
-5. Run one final iteration if needed
-
-## Fix Priority
-
-1. **Critical**: Broken layout, unreadable text, missing essential game data
-2. **High**: Poor hierarchy, missing decision-support data, inconsistent spacing
-3. **Medium**: Alignment, font tweaks, padding, secondary data improvements
-4. **Low**: Polish, micro-animations, atmosphere enhancements
-
-## Session Continuity
-
-This skill is designed to be **resumed across sessions**. At the start of any session:
-
-1. Run `TaskList` to see current progress
-2. Check which screens are done vs pending
-3. Check if background agents completed their work
-4. Continue from where you left off
+- Judging motion from stills (the original sin — use video).
+- Trusting old tap coordinates after layout changes.
+- Release build silently missing instrumentation.
+- Marking a screen "reviewed" without the functional sweep — pretty screens
+  can be full of dead buttons.
+- Only one persona: a screen that delights a designer can still starve the
+  hardcore player of data, and drown the casual one.
+- Fixing without classifying (bug vs design gap vs perf).
+- Running New Career flows on the user's simulator/save.
 
 ## Rules
 
-- Maximum 5 fix iterations per screen
-- Each iteration: fix 3-5 issues max
-- Always rebuild and re-screenshot after fixes
-- Never modify screens not currently being reviewed
-- Ask user before making game design changes (data additions)
-- Visual-only fixes can be dispatched without asking
-
-## CRITICAL: Todo Completeness Verification
-
-After analyzing each screen AND after creating todos, perform this verification:
-
-1. **Count findings**: Count every numbered item in Visual Issues + Game Design Issues + Decision Support Issues
-2. **Count todos**: Count every TaskCreate that was called for this screen
-3. **Compare**: If finding count != todo count, identify the missing ones and create them immediately
-4. **User observations**: When the user adds their own observations (at any point during the conversation), create todos for ALL of them immediately — do not wait until the next screen
-5. **End-of-session audit**: Before finishing analysis of all screens, do a final pass: re-read ALL analysis reports and verify every single finding has a corresponding todo. List any gaps and fill them.
-
-**Zero tolerance for missing todos.** Every finding, every user observation, every improvement suggestion = a todo.
+- Max 5 fix iterations per screen; 3-5 issues per batch.
+- Always rebuild + re-evidence after fixes.
+- Ask before game-design changes; visual fixes may dispatch without asking.
+- Resumable: `TaskList` shows progress; continue where the list left off.
