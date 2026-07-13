@@ -1,6 +1,27 @@
 import SwiftUI
 import SwiftData
 
+/// Shared team-strength helper for matchup display.
+///
+/// Averaging the *entire* roster (incl. deep bench / practice squad) collapses
+/// every team to ~70 OVR, so the color thresholds never fire and the badge
+/// carries no matchup signal. Averaging the projected starters (top 22 by
+/// overall ≈ 11 offense + 11 defense) restores a meaningful spread.
+enum TeamStrength {
+    /// Number of starters approximated for the OVR average.
+    private static let starterCount = 22
+
+    static func startersOVR(_ team: Team?) -> Int {
+        guard let team, !team.players.isEmpty else { return 0 }
+        let starters = team.players
+            .sorted { $0.overall > $1.overall }
+            .prefix(starterCount)
+        guard !starters.isEmpty else { return 0 }
+        let total = starters.reduce(0) { $0 + $1.overall }
+        return total / starters.count
+    }
+}
+
 struct ScheduleView: View {
 
     let career: Career
@@ -302,9 +323,7 @@ private struct NextGamePill: View {
     }
 
     private var opponentOVR: Int {
-        guard let opp = opponent, !opp.players.isEmpty else { return 0 }
-        let total = opp.players.map(\.overall).reduce(0, +)
-        return total / opp.players.count
+        TeamStrength.startersOVR(opponent)
     }
 
     var body: some View {
@@ -531,9 +550,7 @@ private struct GameCard: View {
     }
 
     private func teamOVR(_ team: Team) -> Int {
-        guard !team.players.isEmpty else { return 0 }
-        let total = team.players.map(\.overall).reduce(0, +)
-        return total / team.players.count
+        TeamStrength.startersOVR(team)
     }
 
     private func ovrColor(_ ovr: Int) -> Color {
@@ -598,9 +615,7 @@ private struct GamePreviewSheet: View {
     private var awayTeam: Team? { teams.first { $0.id == game.awayTeamID } }
 
     private func teamOVR(_ team: Team?) -> Int {
-        guard let team, !team.players.isEmpty else { return 0 }
-        let total = team.players.map(\.overall).reduce(0, +)
-        return total / team.players.count
+        TeamStrength.startersOVR(team)
     }
 
     private func recordString(for team: Team?) -> String {

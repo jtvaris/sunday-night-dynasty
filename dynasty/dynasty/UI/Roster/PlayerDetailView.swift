@@ -74,6 +74,17 @@ struct PlayerDetailView: View {
     @State private var showPositionChange = false
     @State private var showContractNegotiation = false
 
+    /// Real cap space (thousands) for this player's team, used to seed the
+    /// agent's opening demand in contract negotiation. Falls back to a nominal
+    /// value only if the team can't be resolved.
+    private var negotiationCapSpace: Int {
+        guard let teamID = player.teamID,
+              let team = allTeams.first(where: { $0.id == teamID }) else {
+            return 50_000
+        }
+        return max(0, team.availableCap)
+    }
+
     /// True when in landscape on iPad.
     private var isLandscape: Bool {
         verticalSizeClass == .compact
@@ -194,11 +205,13 @@ struct PlayerDetailView: View {
             positionChangeSheet
         }
         .fullScreenCover(isPresented: $showContractNegotiation) {
+            // ContractNegotiationView supplies its own "Close" toolbar item, so
+            // the wrapper must NOT add a second one (that produced "Close Close").
             NavigationStack {
                 ContractNegotiationView(
                     player: player,
                     negotiationType: .extend,
-                    teamCapSpace: 50_000,
+                    teamCapSpace: negotiationCapSpace,
                     onDealCompleted: { offer in
                         // Extension: ADD new years to existing contract, don't replace
                         player.contractYearsRemaining = player.contractYearsRemaining + offer.years
@@ -206,12 +219,6 @@ struct PlayerDetailView: View {
                         showContractNegotiation = false
                     }
                 )
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close") { showContractNegotiation = false }
-                            .foregroundStyle(Color.accentGold)
-                    }
-                }
             }
         }
     }

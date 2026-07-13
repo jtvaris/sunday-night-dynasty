@@ -1,5 +1,46 @@
 # Dynasty - TODO
 
+## ✅ VERIFIOINTI — persona-audit-korjauskierros (2026-07-13, `BUILD SUCCEEDED`, EI committia)
+
+Verifioitu dedikoidulla simillä (DA5637A6, iPad Pro 13" M5). Build → **BUILD SUCCEEDED**, asennettu + käynnistetty, jatkettu olemassa olevaa uraa (GB Packers, viikko 11→13, 2027). Screenshotit `/tmp/snd-screenshots/playthrough-audit/v2_*.png`, vertailtu v1:een.
+
+**v1→v2 per korjattu näkymä:**
+- **Roster (position-ryhmän trendi)** — **PASS.** v1: väärennetyt trendit (QB "→ ±0", Backfield "↗ +1", WR "↘ -4"). v2: neutraali "—" kaikilla ryhmillä, ei suuntaikonia. Rivit muuten identtiset, ei uutta rikkoa. (`v2_roster.png` vs `Roster_v1.png`)
+- **Schedule (Team OVR = startersOVR)** — **PASS (korjaus aktiivinen) + huomio.** v1: koko-rosterin ka. → kaikki ~69-71. v2: starttereiden ka. (top-22) → kaikki ~76-78; GB näyttää 77 eikä laimennettua 69:ää (Roster-sivun "Avg OVR 69" vahvistaa lähteen muutoksen). HUOMIO: `ovrColor`-kynnykset (80+ pun / 70-79 kelt / <70 vihr) osuvat tässä tallennuksessa yhä kaikki keltaiseen kaistaan (yksikään joukkue ei ≥80 tai <70 starttteritasolla) → väri-erottelu ei vielä näy. Numeerinen OVR on silti nyt mielekäs. → suositus: viritä kynnykset tiukempaan startteri-kaistaan.
+- **PlayerDetail / Contract** — **PASS.** v1: tupla "Close Close" ylävasemmalla. v2: yksi "Close", sulkee siististi (funktionaalinen re-sweep OK). Cap-seed aktiivinen: agentin avaus muuttui v1 $131.8M (kovakoodattu $50M) → v2 $162.1M (oikea $65.4M availableCap). (`v2_contract.png` vs `ContractExtension_v1.png`)
+- **CoachedGame (possession-banneri)** — **PASS.** Banneri "GB ball · 1st & 10" ja possession-vaihdon jälkeen "DET ball · 1st & 10" — lähteenä `downDistanceText` (todennettu transitiivisesti: status-pilli eteni live 1st&10 → 2nd&10 → 1st&Goal peleissä).
+
+**Regressio (coached-peli, GB vs DET viikko 13):** käynnistyy ✓; ajettu 6 pelisuoritusta (25yd syöttö, diving-PBU-katko, 40yd syöttö, 2× vaje, RB 5yd juoksu-TD) — pallo lähtee QB:ltä ✓, kamera seuraa + zoomaa red zoneen ✓, animaatiot sulavia, **console `coached_scene_fps avg=60.0 worst_frame_ms=16.7`** (ei jäätymiä). **XP/2pt-modaali EI jumittunut** (Kick XP → GB 7, siisti siirtymä DET:n hyökkäykseen — tehtävä #30 EI toistunut tässä sessiossa). Sim to End → **FINAL DET 23 – GB 41**; AI-puoli DET 23 osuu ~20-25-tavoitteeseen, GB 41 yläkanttiin mutta uskottava coached-ylivoimavoitto (yht. 64 = normaali korkea NFL-summa). Siisti paluu dashboardille, ennätys 7-2. Console-lokissa vain vaaraton järjestelmän objc duplicate-class -varoitus, ei app-kaatumisia.
+
+**Auki jäänyt:**
+- Schedule `ovrColor`-kynnysten viritys (korjaus #2 hyöty osittainen — numero mielekäs, väri ei vielä erottele 76-78-kaistalla).
+- Tehtävä #30 (XP/2pt-modaalin jumi) EI toistunut tässä verifioinnissa → mahdollisesti tilariippuvainen/ajoittainen; pidä auki ja seuraa.
+- RAJATUT kohteet ennallaan (per-pelaaja kausistatsit, idle-baseline #29 ym.).
+- **Ei committia.**
+
+---
+
+## 🔧 PERSONA-AUDIT KORJAUSKIERROS — 5 näkymäryhmää (2026-07-13, `BUILD SUCCEEDED`)
+
+Viiden persona-auditin löydökset koottu ja korjattu. **UI/copy-only — sim-tulos muuttumaton, ei uusia SwiftData-kenttiä. Ei committia.**
+
+**Korjattu per näkymä (5 tiedostoa):**
+- **Roster** (`UI/Roster/RosterView.swift`) — [High/Bug] Position-ryhmän trendinuoli oli väärennetty (`developmentTrend` deterministisestä hashista → keksitty "-4"/"+1"). Nyt neutraali placeholder "—" (textTertiary, ei suuntaa/deltaa) kunnes oikea kausi-OVR-historia on plumbattu. Accessibility-label "Development trend not yet available".
+- **Schedule** (`UI/Schedule/ScheduleView.swift`) — [High/Game] Team OVR keskiarvoisti KOKO rosterin (syväpenkki mukaan) → kaikki 32 joukkuetta ~70 OVR, väri-thresholdit eivät koskaan lauenneet. Uusi jaettu `TeamStrength.startersOVR` keskiarvoistaa top-22 (≈11 hyök + 11 puol) → mielekäs matchup-signaali. Korvasi 3× `teamOVR` + `opponentOVR`.
+- **PlayerDetail / Contract** (`UI/Roster/PlayerDetailView.swift`) — [High/Bug] Tupla-"Close Close" sopimusneuvottelussa: wrapper lisäsi oman `.cancellationAction`-Closen vaikka `ContractNegotiationView` julistaa jo omansa. Poistettu wrapperin toolbar (näkymän oma `dismiss()` jää). + [Med/Bug] Kovakoodattu `teamCapSpace: 50_000` → uusi `negotiationCapSpace` lukee joukkueen oikean `availableCap`in (allTeams + player.teamID), fallback 50_000 jos joukkuetta ei löydy.
+- **CoachedGame** (`UI/Match/CoachedGameView.swift`) — [Low/Bug] Possession-banneri kovakoodasi "· 1st & 10". Nyt käyttää olemassa olevaa `downDistanceText`-computedia (todellinen down/distance engine-tilasta).
+
+**Rajattu pois (syy → TODO/tracked):**
+- **career-core GAME-1 [High]** — Pelaajien kausistatsit puuttuvat PlayerDetailin päätösdatasta. RAJATTU: vaatii UUTTA PELIDATAA (per-pelaaja stat-tallennuksen simista + PlayerSeasonHistory-statskentät + UI). Iso mekaniikka, ei UI/copy-fix. → oma tiketti.
+- **gameday task #29 [High]** — Staattinen lepopoosi (idle-baseline 0 pelien välissä). Jo trackattu tehtävänä #29 (iso animaatio-/scene-mekaniikka, ei tämän UI-kierroksen scope).
+- **offseason-staff [Med]** — CoachingStaff "budget (-$7.0M)" punainen. TUTKITTU → HYLÄTTY: `CoachingStaffView.swift:2280` parenteesi on `budgetChange` (kausi-yli-kausi-delta), EI "käyttämätön". Punainen laskulle on semanttisesti oikein; auditoija tulkitsi luvun väärin (numeerinen sattuma remaining≈$6.7M vs delta -$7.0M). Ei väärää korjausta. Suositus jatkoon: lisää eksplisiittinen "vs last yr" -label selkeyttämään.
+- **offseason-staff [Low]** — Coordinator "Play Calling" -sarakeotsikkoa ei toisteta joka rivillä. Kosmetiikka, ei kriittinen; ei muutosta.
+- **league-team / gameday [Low]** — kortti-whitespace iPadilla, possession-banner-fade-timing. Kosmeettista viimeistelyä, ei muutosta.
+
+**Build:** `xcodebuild ... -destination id=DA5637A6-...` → **BUILD SUCCEEDED**.
+
+---
+
 ## ✅ VERIFIOINTI — animaatiovariantit + smoothness videolla (2026-07-13)
 
 **Build:** `xcodebuild ... -scheme dynasty` → **BUILD SUCCEEDED**. Asennettu + käynnistetty simulaattoriin (049C7295, iPad Pro 13" M5, iOS 26.4), Coach the Game (BUF vs MIA, viikko 4). Nauhoitettu ~7,8 min live-peli (`/tmp/snd-screenshots/animation-variety/gameplay_1.mp4`, ~25 pelisuoritusta: hyökkäys + puolustusvuoro), framet purettu ffmpegillä 12–20 fps + tiukka crop, arvioitu frame-sarjoina (montaget/stripit samassa kansiossa).

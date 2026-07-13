@@ -3521,7 +3521,7 @@ struct CoachedGameView: View {
 
     private func showPossessionBanner() {
         let abbr = engine.homeHasPossession ? homeTeam.abbreviation : awayTeam.abbreviation
-        let text = "\(abbr) ball · 1st & 10"
+        let text = "\(abbr) ball · \(downDistanceText)"
         possessionBanner = text
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
             if possessionBanner == text { possessionBanner = nil }

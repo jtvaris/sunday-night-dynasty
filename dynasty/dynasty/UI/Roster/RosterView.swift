@@ -1510,28 +1510,15 @@ struct PositionGroupHeader: View {
         players.reduce(0) { $0 + $1.annualSalary }
     }
 
-    /// Mock development trend for the position group based on a deterministic
-    /// hash of the group name + roster composition. Shows whether the group is
-    /// trending up, flat, or down compared to last season.
-    /// TODO: wire to actual season-over-season delta when development tracking is in place.
+    /// Development trend for the position group. A real season-over-season
+    /// delta requires stored group OVR history (aggregated from
+    /// `PlayerSeasonHistory.overallAtEndOfSeason` across the group's starters),
+    /// which is not yet plumbed into this row. Until that data exists we show a
+    /// neutral placeholder rather than inventing a number from a hash — a fake
+    /// "-4" that reflects nothing breaks player trust.
+    /// TODO(TODO.md): wire to actual season-over-season group OVR delta.
     private var developmentTrend: (icon: String, color: Color, label: String, delta: Int) {
-        let nameHash = group.name.unicodeScalars.reduce(0) { $0 + Int($1.value) }
-        let rosterHash = players.reduce(0) { $0 + $1.overall + $1.age }
-        let combined = (nameHash * 7 + rosterHash) % 100
-
-        switch combined {
-        case 0..<35:
-            // Trending up
-            let delta = (combined % 4) + 1
-            return ("arrow.up.right", .success, "+\(delta)", delta)
-        case 35..<70:
-            // Flat / stable
-            return ("arrow.right", .textTertiary, "±0", 0)
-        default:
-            // Trending down
-            let delta = (combined % 4) + 1
-            return ("arrow.down.right", .danger, "-\(delta)", -delta)
-        }
+        ("minus", .textTertiary, "—", 0)
     }
 
     private var formattedCap: String {
@@ -1583,20 +1570,17 @@ struct PositionGroupHeader: View {
                     .foregroundStyle(PositionGradeCalculator.gradeColorForLetter(g.depthGrade))
             }
 
-            // Development trend arrow — shows recent group trajectory
+            // Development trend — neutral placeholder until real
+            // season-over-season group history is available (see developmentTrend).
             let trend = developmentTrend
-            HStack(spacing: 2) {
-                Image(systemName: trend.icon)
-                    .font(.system(size: 10, weight: .heavy))
-                Text(trend.label)
-                    .font(.system(size: 9, weight: .bold).monospacedDigit())
-            }
-            .foregroundStyle(trend.color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(trend.color.opacity(0.12), in: Capsule())
-            .overlay(Capsule().strokeBorder(trend.color.opacity(0.3), lineWidth: 0.5))
-            .accessibilityLabel("Development trend \(trend.delta >= 0 ? "up" : "down") \(abs(trend.delta))")
+            Text(trend.label)
+                .font(.system(size: 9, weight: .bold).monospacedDigit())
+                .foregroundStyle(trend.color)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(trend.color.opacity(0.12), in: Capsule())
+                .overlay(Capsule().strokeBorder(trend.color.opacity(0.3), lineWidth: 0.5))
+                .accessibilityLabel("Development trend not yet available")
 
             // Cap allocation
             Text(formattedCap)
