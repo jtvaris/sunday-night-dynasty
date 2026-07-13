@@ -87,6 +87,15 @@ final class Player {
     /// Used by LoyaltyEngine to compute hometown-discount eligibility.
     var loyaltyYears: Int = 0
 
+    /// #33: regular-season games the player has appeared in during the current
+    /// season. Incremented by `WeekAdvancer` each week the player's team plays
+    /// and the player was AVAILABLE (active roster, healthy, not holding out,
+    /// not retired) — the only participation signal available league-wide,
+    /// since AI games are score-only. Snapshotted into
+    /// `PlayerSeasonHistory.gamesPlayed` at week 18 and reset to 0 in
+    /// `startNewSeason`. Default value → safe lightweight migration.
+    var gamesPlayedThisSeason: Int = 0
+
     /// Pair partner — when this veteran is signed, the protégé rookie may be brought in at a discount.
     var mentorOfPlayerID: UUID?
 

@@ -86,8 +86,15 @@ enum CareerArcEngine {
         )
         let history = (try? modelContext.fetch(historyFetch)) ?? []
 
-        // Update milestone counters from history
-        state.startSeasons = history.filter { $0.gamesPlayed >= 8 }.count
+        // Update milestone counters from history.
+        // #33: `gamesPlayed` is now a real per-season appearance count, so a
+        // healthy player accrues ~17 games whether he starts or rides the bench.
+        // A "start season" therefore requires BOTH availability (8+ games, ~half
+        // the season) AND starter-caliber play that year (season-end OVR ≥ 75) —
+        // otherwise every healthy backup's roster season would count as a start
+        // and inflate his True Grade. The OVR gate keeps the heuristic meaningful
+        // now that the appearance signal exists.
+        state.startSeasons = history.filter { $0.gamesPlayed >= 8 && $0.overallAtEndOfSeason >= 75 }.count
 
         // Bust event: cut by team before yearsPro 4 (rookie deal usually 4y)
         let isCut = (player.teamID == nil) && player.yearsPro <= 4

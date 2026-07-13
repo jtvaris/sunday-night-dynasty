@@ -33,6 +33,9 @@ final class DraftDayCoordinator: ObservableObject {
     @Published private(set) var availableProspects: [CollegeProspect] = []
     @Published private(set) var teamsByID: [UUID: Team] = [:]
     @Published private(set) var rosters: [UUID: [Player]] = [:]
+    /// Per-team coordinator schemes (OC offense / DC defense), resolved from the
+    /// coaching staff at load. Drives the draft-grade scheme-fit input (#33 OSA B).
+    private var schemesByTeam: [UUID: (offense: OffensiveScheme?, defense: DefensiveScheme?)] = [:]
     @Published private(set) var recentEvents: [PlannedDraftEvent] = []
     @Published private(set) var lastPickResult: PickResult?
     @Published private(set) var publicBoardRanks: [UUID: Int] = [:]
@@ -186,6 +189,20 @@ final class DraftDayCoordinator: ObservableObject {
         self.picks = draftPicks
         self.availableProspects = availablePool
         self.rosters = Dictionary(grouping: allPlayers, by: { $0.teamID ?? UUID() })
+
+        // Resolve each team's coordinator schemes once (#33 OSA B) so pick
+        // grades can score a prospect against the drafting team's actual
+        // offensive/defensive system instead of a flat placeholder.
+        let allCoaches = (try? modelContext.fetch(FetchDescriptor<Coach>())) ?? []
+        var schemeMap: [UUID: (offense: OffensiveScheme?, defense: DefensiveScheme?)] = [:]
+        for coach in allCoaches {
+            guard let teamID = coach.teamID else { continue }
+            var entry = schemeMap[teamID] ?? (offense: nil, defense: nil)
+            if let off = coach.offensiveScheme { entry.offense = off }
+            if let def = coach.defensiveScheme { entry.defense = def }
+            schemeMap[teamID] = entry
+        }
+        self.schemesByTeam = schemeMap
 
         // Compute public board ranks for the visible pool only — guarantees
         // contiguous 1..N rankings even when SwiftData carries leftover
@@ -869,8 +886,20 @@ final class DraftDayCoordinator: ObservableObject {
         let teamNeeds = DraftIntel.teamNeedScores(roster: roster)
         let needScore = teamNeeds[prospect.position] ?? 0.2
 
-        let publicOVR = prospect.trueOverall  // V1: use true overall as visible OVR
-        let schemeFit: Double = 0.6  // V1: placeholder; refined further with scheme data
+        // #33 OSA B: the public-facing OVR reflects the scouted consensus
+        // ("public opinion"), not the hidden true overall. Falls back to
+        // trueOverall only when the prospect is entirely unscouted.
+        let publicOVR = prospect.scoutedOverall ?? prospect.trueOverall
+        // #33 OSA B: score the prospect against the drafting team's coordinator
+        // schemes (OC offense / DC defense) instead of a flat 0.6 constant, so
+        // pick grades now differentiate by scheme fit. Falls back to a neutral
+        // 0.5 when the team's coordinator/scheme is unknown.
+        let schemes = schemesByTeam[pick.currentTeamID]
+        let schemeFit = ProspectSchemeFitHelper.normalizedFit(
+            prospect: prospect,
+            offensiveScheme: schemes?.offense,
+            defensiveScheme: schemes?.defense
+        )
 
         let inputs = PickGradeCalculator.Inputs(
             valueDelta: valueDelta,

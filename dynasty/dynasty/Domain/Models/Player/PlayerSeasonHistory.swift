@@ -24,8 +24,10 @@ final class PlayerSeasonHistory {
     /// offseason development/age regression has been applied.
     var overallAtEndOfSeason: Int
 
-    /// Number of games the player appeared in this season. (Currently 0 —
-    /// per-game appearances aren't tracked across the league. Reserved.)
+    /// Number of regular-season games the player appeared in this season (#33).
+    /// Snapshotted from `Player.gamesPlayedThisSeason` at week 18: a player is
+    /// credited an appearance each week his team plays and he is available
+    /// (active roster, healthy, not holding out, not retired).
     var gamesPlayed: Int
 
     /// Player's age during this season (snapshot — useful when age regression

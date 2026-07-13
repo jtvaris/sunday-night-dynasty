@@ -6,6 +6,12 @@ enum ProspectSchemeFitHelper {
 
     /// Evaluate offensive scheme fit. Returns "Good", "Fair", or "Poor".
     static func offensiveFit(prospect: CollegeProspect, scheme: OffensiveScheme) -> String {
+        label(for: offensiveFitScore(prospect: prospect, scheme: scheme))
+    }
+
+    /// Raw 0..99 offensive scheme fit score. Exposed so the draft-grade
+    /// pipeline (#33 OSA B) can consume a numeric fit rather than a label.
+    static func offensiveFitScore(prospect: CollegeProspect, scheme: OffensiveScheme) -> Int {
         var score = 0
         let physical = prospect.truePhysical
 
@@ -66,11 +72,17 @@ enum ProspectSchemeFitHelper {
         default:
             score = 65
         }
-        return label(for: score)
+        return score
     }
 
     /// Evaluate defensive scheme fit. Returns "Good", "Fair", or "Poor".
     static func defensiveFit(prospect: CollegeProspect, scheme: DefensiveScheme) -> String {
+        label(for: defensiveFitScore(prospect: prospect, scheme: scheme))
+    }
+
+    /// Raw 0..99 defensive scheme fit score. Exposed so the draft-grade
+    /// pipeline (#33 OSA B) can consume a numeric fit rather than a label.
+    static func defensiveFitScore(prospect: CollegeProspect, scheme: DefensiveScheme) -> Int {
         var score = 0
         let physical = prospect.truePhysical
 
@@ -113,7 +125,32 @@ enum ProspectSchemeFitHelper {
         default:
             score = 65
         }
-        return label(for: score)
+        return score
+    }
+
+    /// Normalized 0..1 scheme fit for the draft-grade calculator (#33 OSA B).
+    /// Picks the offensive or defensive coordinator's scheme based on which side
+    /// of the ball the prospect plays. Returns a neutral 0.5 when the relevant
+    /// coordinator/scheme is unknown, so a missing coach never biases the grade.
+    static func normalizedFit(
+        prospect: CollegeProspect,
+        offensiveScheme: OffensiveScheme?,
+        defensiveScheme: DefensiveScheme?
+    ) -> Double {
+        let isDefensive: Bool
+        switch prospect.truePositionAttributes {
+        case .defensiveBack, .linebacker, .defensiveLine:
+            isDefensive = true
+        default:
+            isDefensive = false
+        }
+        if isDefensive {
+            guard let scheme = defensiveScheme else { return 0.5 }
+            return Double(defensiveFitScore(prospect: prospect, scheme: scheme)) / 99.0
+        } else {
+            guard let scheme = offensiveScheme else { return 0.5 }
+            return Double(offensiveFitScore(prospect: prospect, scheme: scheme)) / 99.0
+        }
     }
 
     private static func label(for score: Int) -> String {

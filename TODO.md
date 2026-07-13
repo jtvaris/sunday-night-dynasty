@@ -1,5 +1,51 @@
 # Dynasty - TODO
 
+## ✅ VERIFIOINTI #33 — GAMES PLAYED + DRAFT SCHEME-FIT (2026-07-14, `BUILD SUCCEEDED`, EI committia)
+
+Verifioitu: build vihreä → asennus+käynnistys (049C7295, com.brewcrow.dynasty). Kuvat/logit: `/tmp/snd-screenshots/season-stats/`.
+
+**Build:** `BUILD SUCCEEDED` (id=049C7295), sekä väliaikaisen GP-diagnostiikan kanssa että sen poiston jälkeen. Väliaikainen tulostus poistettu (MultiSeasonSmokeTest.swift = ei diffiä).
+
+**GP — MONIKAUSISAVUTESTI (PASS).** `PERF_SMOKE_SEASONS=3` (SIMCTL_CHILD-prefiksi), laajensin MultiSeasonSmokeTestin tulostamaan PlayerSeasonHistory.gamesPlayed-jakauman per kausi, ajoin, poistin tulostuksen:
+| Kausi | rows | min | max | avg | GP=0 | GP>17 | GP 15–17 |
+|-------|------|-----|-----|-----|------|-------|----------|
+| 2027  | 1901 | 0   | 17  | 15.1| 210  | **0** | 1685 |
+| 2028  | 2068 | 0   | 17  | 13.8| 384  | **0** | 1675 |
+- Starterit (top-OVR-otos ovr 89–97) = GP **17** joka kausi; max EI KOSKAAN yli 17 (17 peliä + bye). Nollat = FA/koko kauden vammat/myöhään liittyneet. Nollautuu kausivaihteessa: otoksen `liveNow=0` kaikilla (snapshot week 18 → reset). (2026 = "NO history rows" on harness-artefakti: eka sykli osittainen, pts/team=0.0 — ei GP-bugi.)
+- Rajoite (dokumentoitu): appearance = availability, joten terve syväpenkki saa myös ~17; jako on käytännössä binäärinen (0 tai ~17), harvat väliarvot. Odotettu tällä signaalilla.
+
+**GP — UI-TODISTE (PASS, ei enää 0).** Ajoin olemassa olevan Bills-uran (2027) kautta viikot 8→18 live (advance auto-simuloi käyttäjän pelin + post-game-lehdistö), sitten PlayerDetail (Michael Green, C) → "Career Stats by Season": **2027 · Age 27 · OVR 81 · GP 11** (kuva `18_career_stats.png`). GP ei ole 0. Arvo 11 = viikot 8–18 uudella binäärillä (tämän talletuksen viikot 1–7 ennen #33:a); tuoreella kaudella → 17 (savutesti). UI (`PlayerDetailView.swift:934`) sitoo `entry.gamesPlayed`-kenttään.
+
+**TRUE-GRADE (PASS, koodikatselmointi).** `CareerArcEngine.startSeasons = history.filter { gamesPlayed>=8 && overallAtEndOfSeason>=75 }`. Ennen #33:a `gamesPlayed` oli aina 0 → startSeasons aina 0 (kuollut signaali); nyt elää. Vanha data (GP=0) pysyy 0 → ei regressiota olemassa oleviin talletuksiin. OVR-portti estää tervettä varamiestä inflatoimasta True-gradea. Veteraanin CareerArc-start-seasonit järkevät kun oikeaa dataa kertyy.
+
+**DRAFT SCHEME-FIT (PASS, erottelee).** Kaksi prospektia samoilla value/need/OVR-arvoilla mutta eri scheme-fitillä → eri grade. Esim. valueDelta=−2, need=0.4, OVR=74: fit 0.8 → **Smart A**, fit 0.4 → **Reach C** (`applySchemeNudge` nostaa/laskee keski-B/A/C-kaistaa 1 pykälän; ei ohita A+/D). Composite painottaa schemeFitiä aina 15 %. `normalizedFit` valitsee OC/DC-scheman position mukaan, neutraali 0.5 jos coordinator puuttuu (huom: Bills-uran OC/DC olivat vakansseja → sen tiimin fit putoaa neutraaliin, AI-tiimeillä joilla on coordinaattorit erottelee). Draft ei ollut ajettavissa (kausi keskellä) → pick-grade-kuvaa ei.
+
+**REGRESSIO (PASS).** (1) `debugSimulate(20)` (`PERF_DEBUG_SIM=20`): points/team mean ~22–30 kaikissa varianteissa (pre 26.1, vision 30.4, security 25.9, all-on 26.8, r38-pre 22.5) — sim-moottori ennallaan (#33 ei koske sitä). (2) Live coached/advance-sykli terve: viikot 8–18 pelattu, record 5-1→12-5, Legacy 28→75, post-game-lehdistö (2 ja 3 kysymystä) toimii, palaa dashboardiin. Kausi eteni oikein regular season → Playoffs (Wild Card).
+
+**Auki:** pick-grade-kuvaa peli-UI:sta ei saatu (draft ei tavoitettavissa keskellä kautta) — erottelu todistettu koodilla/logiikalla. GP-savutestin "deep bench < starter" -gradientti on käytännössä binäärinen (availability-signaalin rajoite, dokumentoitu).
+
+---
+
+## ✅ VAIHE #33 — KAUSITILASTOJEN PERSISTOINTI + DRAFT SCHEME-FIT (2026-07-14, `BUILD SUCCEEDED`, EI committia)
+
+Hardcode-auditin prioriteetti-1-löydös. Rakennus vihreä (id=049C7295). Ei committia.
+
+**OSA A — GAMES PLAYED (GP=0 -bugi korjattu):**
+- `Player.swift`: uusi optionaalinen `gamesPlayedThisSeason: Int = 0` (kevyt migraatio).
+- `WeekAdvancer.advanceRegularSeasonWeek`: uusi appearance-kirjanpito heti pelisimun jälkeen — jokaiselle joukkueelle, joka pelaa tällä viikolla, inkrementoidaan `gamesPlayedThisSeason` kaikille AKTIIVISILLE pelaajille (ei-vammautunut, ei holdout, ei eläkkeellä). Määritelmä dokumentoitu: "available" on ainoa liigalaajuinen signaali (AI-pelit vain tulos, box score vain käyttäjän pelistä). Uusi helper `fetchAllRegularSeasonGames` hakee KAIKKI viikon pelit (myös LiveGameEngine-live-pelin, joka on jo pelattu ennen advanceWeekiä).
+- `recordSeasonHistory` (week 18): `gamesPlayed: player.gamesPlayedThisSeason` (ei enää 0).
+- `startNewSeason`: nollaa `gamesPlayedThisSeason` KAIKILLE pelaajille (rosteri/FA/eläke) ennen uutta kautta.
+- `CareerArcEngine`-heuristiikka päivitetty: "start season" = `gamesPlayed >= 8 && overallAtEndOfSeason >= 75` — OVR-portti estää tervettä varamiestä (nyt ~17 GP) inflatoimasta True-gradea joka rosterikaudesta.
+
+**OSA B — DRAFT SCHEME-FIT (0.6-placeholder korvattu):**
+- `ProspectSchemeFitHelper`: uudet numeeriset `offensiveFitScore`/`defensiveFitScore` (0–99) + `normalizedFit(prospect:offensiveScheme:defensiveScheme:)` (0..1, valitsee OC/DC-scheman positioryhmän mukaan, neutraali 0.5 jos scheme puuttuu).
+- `DraftDayCoordinator`: uusi `schemesByTeam`-kartta (haetaan coacheista loadissa); `computePickGrade` syöttää `ProspectSchemeFitHelper.normalizedFit(...)` 0.6-vakion tilalle. `publicOVR` = `scoutedOverall ?? trueOverall` (public opinion = scoutattu konsensus).
+- `PickGradeCalculator`: uusi bounded 1-step `applySchemeNudge` — scheme-fit nostaa/laskee VAIN keski-B/A/C-kaistaa yhdellä pykälällä (ei ohita A+/D-signaaleja). Ilman tätä letter grade ei aiemmin käyttänyt schemeFitiä lainkaan (vain diagnostinen composite).
+
+**Sim-pariteetti:** GP-kirjanpito ei muuta pelien tuloksia; scheme-fit vaikuttaa vain draft-grade-esitykseen.
+
+---
+
 ## ✅ VERIFIOINTI #35 (tulostauluviive) + #36 (attribuutit/henkinen peli) (2026-07-14, `BUILD SUCCEEDED`, EI committia)
 
 Verifioitu build → asennus+käynnistys simulaattoriin (049C7295, com.brewcrow.dynasty), live-peli (BUF vs TEN, Week 7), balanssiportti `debugSimulate(100)` (env `PERF_DEBUG_SIM=100`, ei väliaikaista koodia), Coach's Board -henkinen-UI. Kuvat/video: `/tmp/snd-screenshots/score-depth/`.

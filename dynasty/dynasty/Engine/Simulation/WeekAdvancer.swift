@@ -234,6 +234,14 @@ enum WeekAdvancer {
             player.isFranchiseTagged = false
         }
 
+        // 0b-2. #33: clear the per-player games-played tally for EVERY player
+        // (rostered, free agent, retired) so the new regular season starts from
+        // zero. The prior season's value was already snapshotted into
+        // PlayerSeasonHistory at week 18.
+        for player in allPlayersForReset where player.gamesPlayedThisSeason != 0 {
+            player.gamesPlayedThisSeason = 0
+        }
+
         // 0c. R22: a new season reopens every negotiation an insulted agent
         // froze last offseason.
         NegotiationLockRegistry.reset()
@@ -461,6 +469,32 @@ enum WeekAdvancer {
             updateTeamRecords(game: game, teamsByID: teamsByID)
         }
         perf.lap("games")
+
+        // #33: per-player games-played bookkeeping. A player is credited an
+        // appearance when his team plays a regular-season game this week and he
+        // was AVAILABLE — on the active roster, healthy, not holding out, not
+        // retired. This is the only participation signal available league-wide
+        // (AI games are score-only; a real box score exists for the user's game
+        // alone), so "available" is the documented definition of "played". The
+        // running tally is snapshotted into `PlayerSeasonHistory.gamesPlayed`
+        // at week 18 and reset in `startNewSeason`. We fetch ALL of this week's
+        // regular-season games (not just `unplayedGames`) so a user game coached
+        // live via `LiveGameEngine` — already played before this method runs —
+        // still credits both rosters.
+        let weekGamesForAttendance = fetchAllRegularSeasonGames(
+            week: week,
+            seasonYear: season,
+            modelContext: modelContext
+        )
+        for game in weekGamesForAttendance {
+            for teamID in [game.homeTeamID, game.awayTeamID] {
+                for player in playersByTeam[teamID] ?? []
+                where !player.isInjured && !player.isHoldingOut && !player.isRetired {
+                    player.gamesPlayedThisSeason += 1
+                }
+            }
+        }
+        perf.lap("attendance")
 
         // Store the latest player game result for UI to access.
         //
@@ -2658,6 +2692,25 @@ enum WeekAdvancer {
         return (try? modelContext.fetch(descriptor)) ?? []
     }
 
+    /// Fetches every regular-season game scheduled for the given week,
+    /// regardless of whether it has been played yet. Used by the #33
+    /// games-played bookkeeping so a live-coached user game (already played
+    /// before `advanceWeek`) is credited alongside the AI-simmed games.
+    private static func fetchAllRegularSeasonGames(
+        week: Int,
+        seasonYear: Int,
+        modelContext: ModelContext
+    ) -> [Game] {
+        let descriptor = FetchDescriptor<Game>(
+            predicate: #Predicate { game in
+                game.week == week &&
+                game.seasonYear == seasonYear &&
+                game.isPlayoff == false
+            }
+        )
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
     /// Fetches the player team's already-played regular-season game for the
     /// given week, if any. Used to detect games coached interactively via
     /// `LiveGameEngine` (they are played before `advanceWeek` runs).
@@ -3192,6 +3245,11 @@ enum WeekAdvancer {
     /// Idempotent per (playerID, season) — re-running on the same season won't
     /// duplicate rows. Captures OVR/age before offseason development changes them.
     ///
+    /// `gamesPlayed` is snapshotted from the player's live
+    /// `gamesPlayedThisSeason` tally (#33), incremented each regular-season week
+    /// the player was available. It is captured here at week 18 before
+    /// `startNewSeason` resets the counter.
+    ///
     /// NOTE: per-season aggregated stats (`keyStat1/2/3`) are not yet populated
     /// because per-game `PlayerGameStats` aren't persisted league-wide. They
     /// remain 0 until that pipeline lands. The OVR snapshot alone is enough to
@@ -3213,7 +3271,7 @@ enum WeekAdvancer {
                 playerID: player.id,
                 season: season,
                 overallAtEndOfSeason: player.overall,
-                gamesPlayed: 0,            // TODO: wire when season stats persist
+                gamesPlayed: player.gamesPlayedThisSeason,   // #33: real per-player appearances
                 ageAtEndOfSeason: player.age,
                 teamID: player.teamID,
                 keyStat1: 0,               // TODO: position-appropriate season totals

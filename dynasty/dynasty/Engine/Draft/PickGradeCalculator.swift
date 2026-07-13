@@ -28,12 +28,34 @@ enum PickGradeCalculator {
     /// Computes the grade letter and composite score from the visible inputs.
     static func compute(_ inputs: Inputs) -> Output {
         let composite = compositeScore(inputs)
-        let grade = letterGrade(from: inputs)
+        let base = letterGrade(from: inputs)
+        let grade = applySchemeNudge(base: base, inputs: inputs)
         let isGem = inputs.valueDelta >= 6 && inputs.needScore >= 0.7
         return Output(grade: grade, compositeScore: composite, isGemCandidate: isGem)
     }
 
     // MARK: - Private
+
+    /// Applies a bounded, one-step adjustment for scheme fit (#33 OSA B). The
+    /// core letter grade follows Design §5 (value / need / OVR); scheme fit only
+    /// nudges the middle B/A/C band by a single step, so a prospect landing in
+    /// an ideal system grades out better than the same player into a poor fit —
+    /// without overriding the strong Steal (A+) or Big-Reach (D) signals. Before
+    /// #33 `schemeFit` was a flat 0.6 constant that never moved a grade; a real
+    /// per-team fit now feeds this rule.
+    private static func applySchemeNudge(base: PickGrade, inputs: Inputs) -> PickGrade {
+        let fit = clamp01(inputs.schemeFit)
+        // Strong fit: promote a Solid (B) to Smart (A) when the pick is sound.
+        if fit >= 0.75, base == .solid, inputs.publicOVR >= 72, inputs.valueDelta >= -3 {
+            return .smartA
+        }
+        // Poor fit: demote by one step within the middle band.
+        if fit <= 0.45 {
+            if base == .smartA { return .solid }
+            if base == .solid, inputs.needScore < 0.5 { return .reach }
+        }
+        return base
+    }
 
     /// Weighted composite of the four visible signals — kept internal for diagnostics.
     /// Weights: Value Δ 30%, Need 25%, Public OVR 30%, Scheme 15%.
