@@ -279,11 +279,22 @@ class FootballFieldScene: SCNScene {
     /// follow-cam must keep panning in that same framing mid-play.
     private var currentShotStyle: CameraStyle = .broadcast
 
-    /// How far the ball may outrun the focus before the follow-cam pans:
-    /// the tighter coach shot chases sooner than the wide broadcast frame.
-    private var followTriggerDistance: Float {
-        currentShotStyle == .coach ? 8 : 11
-    }
+    // MARK: Live follow-cam (continuous, per-frame)
+
+    /// While true the live-play follow rig owns the shot: per-frame
+    /// constraints glide the aim point (and the camera, at its style offset)
+    /// with the ball, replay-truck style. Runs for every live play in both
+    /// framings; kicks and replays keep their own shots.
+    private var liveFollowActive = false
+    /// The LOS framing z when the follow began — progress is measured from
+    /// here so the pre-snap composition holds through the dropback.
+    private var followAnchorZ: Float = 0
+    /// Forward ratchet (yards of progress along the play's attack direction).
+    /// Follows the ball downfield immediately; backward only with ~6 yd of
+    /// slack, so a dropback doesn't pump the frame but a kick return running
+    /// the other way still drags the camera along. Mutated on the render
+    /// thread inside the follow constraints only.
+    private var followProgress: Float = 0
 
     /// Switches the scrimmage framing and (unless a kick shot owns the
     /// camera) glides the current shot into the new style. The floating
@@ -312,6 +323,47 @@ class FootballFieldScene: SCNScene {
     /// Incremented on every runPlay/cancelPlay so stale scheduled steps become no-ops.
     private var playGeneration = 0
 
+    // MARK: - R39: Background GPU warm-up
+
+    /// Compiles the field's Metal pipelines, geometry and the player-kit
+    /// figures ONCE in the background, so the first "Coach the Game" open
+    /// doesn't pay SceneKit's first-render shader compile (the dominant part
+    /// of the measured 1.6 s tap→first-frame latency; scene construction
+    /// itself is only ~30 ms).
+    ///
+    /// Safe off-main: the throwaway scene is never attached to a view, and
+    /// SceneKit's shader/pipeline caches are process-wide, so the real
+    /// coached-game SCNView reuses everything compiled here. Runs at most
+    /// once per launch; called from the career dashboard's `.task`.
+    private static var didWarmUp = false
+
+    static func warmUp() {
+        guard !didWarmUp else { return }
+        didWarmUp = true
+        DispatchQueue.global(qos: .utility).async {
+            guard let device = MTLCreateSystemDefaultDevice() else { return }
+            let start = CFAbsoluteTimeGetCurrent()
+            let scene = FootballFieldScene()
+            // Spawn both squads (teleport path) so the kit-figure geometry
+            // and JERSEY/PANTS/HELMET/SKIN materials compile too.
+            let home = (0..<11).map { (x: Float($0) * 2 - 10, z: Float(-3), number: $0 + 1) }
+            let away = (0..<11).map { (x: Float($0) * 2 - 10, z: Float(3), number: $0 + 12) }
+            scene.movePlayersToFormation(home: home, away: away, duration: 0)
+            let renderer = SCNRenderer(device: device, options: nil)
+            renderer.scene = scene
+            // Uploads geometry + textures to the GPU. (A full offscreen
+            // render was tried too — it compiles pipeline states in ~850 ms,
+            // but SCNView does not reuse them, so the extra GPU work bought
+            // nothing; measured first-frame stayed ~1.5 s either way.)
+            renderer.prepare([scene.rootNode]) { _ in
+                #if DEBUG
+                print(String(format: "PERF|scene_warmup|%.1f",
+                             (CFAbsoluteTimeGetCurrent() - start) * 1000))
+                #endif
+            }
+        }
+    }
+
     // MARK: - Initialization
 
     override init() {
@@ -328,6 +380,7 @@ class FootballFieldScene: SCNScene {
 
     /// Builds the entire field, camera, lighting, and ball. Called automatically on init.
     func setupField() {
+        var perf = PerfLog.Lap("scene_setup")   // R39 startup breakdown
         // Clear any existing nodes
         rootNode.childNodes.forEach { $0.removeFromParentNode() }
         homePlayerNodes.removeAll()
@@ -337,21 +390,26 @@ class FootballFieldScene: SCNScene {
         buildMowingStripes()
         buildEndZones()
         buildYardLines()
+        perf.lap("surfaces_lines")
         buildNumbers()
+        perf.lap("numbers")
         buildHashMarks()
         buildSidelines()
         buildGoalposts()
         buildPylons()
         buildApronWalls()
         buildMarkers()
+        perf.lap("dressing")
         buildReferee()
         buildBall()
         buildCamera()
         buildLighting()
+        perf.lap("figures_misc")
 
         // Depth falloff: the far field darkens into the night like a
         // low-slung TV camera shot. Weather re-tunes this in setWeather().
         applyFog(color: Self.clearFogColor, start: 70, end: 210)
+        perf.finish()
     }
 
     /// Sets the home team uniform color and updates existing player nodes.
@@ -835,6 +893,41 @@ class FootballFieldScene: SCNScene {
     /// `style` overrides the user's `cameraStyle` for this shot (kickoffs
     /// keep the wide broadcast frame even in coach mode); follow-cam pans
     /// during the play inherit the override via `currentShotStyle`.
+    /// The camera rig for one shot style: where the aim point and the lens
+    /// body sit relative to the framing z. Shared by the scripted
+    /// `focusCamera` moves and the per-frame live follow, so the follow
+    /// keeps the exact scripted framing while it glides.
+    private struct ShotRig {
+        /// Aim point height and its z-lead (in +viewFacing yards).
+        let targetHeight: Float
+        let targetLead: Float
+        /// Camera height and how far it sits behind the framing z
+        /// (in -viewFacing yards).
+        let cameraHeight: Float
+        let cameraBack: Float
+    }
+
+    /// Rig numbers per style/framing.
+    ///
+    /// Coach: elevated behind the offense — R-camera-fix pulled the shot
+    /// ~14 % further out along its own aim ray (was 8.2 up / 18.6 back per
+    /// the previous 10 % pull): the backfield QB now reads ~11-12 % of the
+    /// viewport height (was ~13-14 %), so a deep catch + YAC fits in frame
+    /// while the follow rig glides. Defense keeps the same pull on its
+    /// raised variant so routes read over the OL.
+    private func shotRig(for style: CameraStyle) -> ShotRig {
+        switch style {
+        case .coach:
+            return defensiveFraming
+                ? ShotRig(targetHeight: 1.0, targetLead: 3, cameraHeight: 10.5, cameraBack: 21.5)
+                : ShotRig(targetHeight: 1.0, targetLead: 4, cameraHeight: 9.2, cameraBack: 21.8)
+        case .broadcast:
+            return defensiveFraming
+                ? ShotRig(targetHeight: 0.5, targetLead: -7, cameraHeight: 33, cameraBack: 39)
+                : ShotRig(targetHeight: 1.5, targetLead: 19, cameraHeight: 24, cameraBack: 29)
+        }
+    }
+
     func focusCamera(z: Float, animated: Bool = true, duration: TimeInterval = 0.8,
                      pushIn: Bool = false, style styleOverride: CameraStyle? = nil) {
         // A running replay owns the shot outright — scripted refocuses (and
@@ -851,41 +944,18 @@ class FootballFieldScene: SCNScene {
         // inside the spawn slab) — swap the emitter when the framing flips.
         if shotStyleChanged { retuneWeatherEmitter() }
 
+        // Mid-play style toggle: the live follow rig reads the new style's
+        // offsets every frame and glides the shot over — scripted actions
+        // would only fight the per-frame constraints.
+        if liveFollowActive { return }
+
         // The camera always sits behind the player's own unit, mirrored via
         // `viewFacing` for away games; defense swaps to its own variant so
         // the play develops INTO the frame instead of behind it.
-        let targetPosition: SCNVector3
-        let cameraPosition: SCNVector3
-        let fieldOfView: CGFloat
-        switch style {
-        case .coach:
-            // Elevated coach view: raised behind the offense (~18.6 yd behind
-            // the LOS at 8.2 up — the previous 16.5/7.5 shot pulled ~10 %
-            // further out along its own aim ray per user feedback), normal
-            // 52-degree lens. Estimated from the ray geometry: the backfield
-            // QB reads ~13-14 % of the viewport height (was ~15 %), the OL
-            // ~9-10 % (was ~11 %); the whole core formation (OL box +
-            // backfield + LB level) fits with a touch more air, and the LOS
-            // spans the frame — split-wide receivers may clip at the edges.
-            // Defense raises the same shot (9.3 vs 8.2) so the routes read
-            // over the OL instead of being walled off by it.
-            if defensiveFraming {
-                targetPosition = SCNVector3(0, 1.0, clampedZ + viewFacing * 3)
-                cameraPosition = SCNVector3(0, 9.3, clampedZ - viewFacing * 18.5)
-            } else {
-                targetPosition = SCNVector3(0, 1.0, clampedZ + viewFacing * 4)
-                cameraPosition = SCNVector3(0, 8.2, clampedZ - viewFacing * 18.6)
-            }
-            fieldOfView = 52
-        case .broadcast:
-            targetPosition = defensiveFraming
-                ? SCNVector3(0, 0.5, clampedZ - viewFacing * 7)
-                : SCNVector3(0, 1.5, clampedZ + viewFacing * 19)
-            cameraPosition = defensiveFraming
-                ? SCNVector3(0, 33, clampedZ - viewFacing * 39)
-                : SCNVector3(0, 24, clampedZ - viewFacing * 29)
-            fieldOfView = 52
-        }
+        let rig = shotRig(for: style)
+        let targetPosition = SCNVector3(0, rig.targetHeight, clampedZ + viewFacing * rig.targetLead)
+        let cameraPosition = SCNVector3(0, rig.cameraHeight, clampedZ - viewFacing * rig.cameraBack)
+        let fieldOfView: CGFloat = 52
 
         // Lens change rides the same ease as the move (zNear stays at 1;
         // the closest coach-shot player is still ~10 yd from the camera).
@@ -935,6 +1005,7 @@ class FootballFieldScene: SCNScene {
     /// direction the kick travels (positive = toward the +Z posts). The shot
     /// stays parked (no follow-cam) until the next `focusCamera` call.
     func kickCamera(towardZ: Float, duration: TimeInterval = 0.8) {
+        endLiveFollow()
         kickCameraActive = true
         cameraNode.removeAction(forKey: "pushIn")
         // The behind-the-posts shot is framed for the broadcast lens — undo
@@ -982,6 +1053,116 @@ class FootballFieldScene: SCNScene {
         cameraNode.runAction(move, forKey: "focus")
     }
 
+    // MARK: - Live follow rig
+
+    /// Installs the per-frame live follow: the aim point eases onto the ball
+    /// every rendered frame and the camera trails it at the current style's
+    /// exact rig offset — one continuous glide instead of stepwise pans, in
+    /// both framings and at any playback speed. `runPlay` starts it at the
+    /// snap; kicks and replays keep their own shots (guarded here).
+    private func beginLiveFollow() {
+        guard !kickCameraActive, !replayCameraActive, !liveFollowActive else { return }
+        liveFollowActive = true
+        followAnchorZ = focusZ
+        followProgress = 0
+        cameraNode.removeAction(forKey: "pushIn")
+        cameraNode.removeAction(forKey: "focus")
+        cameraTargetNode.removeAction(forKey: "focus")
+
+        let aim = SCNTransformConstraint.positionConstraint(inWorldSpace: true) {
+            [weak self] _, position in
+            guard let self, self.liveFollowActive else { return position }
+            let rig = self.shotRig(for: self.currentShotStyle)
+            let baseZ = self.followBaseZ()
+            let ballX = self.ballNode.presentation.worldPosition.x
+            let goal = SCNVector3(max(-14, min(14, ballX * 0.85)),
+                                  rig.targetHeight,
+                                  baseZ + self.viewFacing * rig.targetLead)
+            return SCNVector3(position.x + (goal.x - position.x) * 0.12,
+                              position.y + (goal.y - position.y) * 0.12,
+                              position.z + (goal.z - position.z) * 0.12)
+        }
+        cameraTargetNode.constraints = [aim]
+
+        let chase = SCNTransformConstraint.positionConstraint(inWorldSpace: true) {
+            [weak self] _, position in
+            guard let self, self.liveFollowActive else { return position }
+            let rig = self.shotRig(for: self.currentShotStyle)
+            let baseZ = self.followBaseZ()
+            let ballX = self.ballNode.presentation.worldPosition.x
+            let goal = SCNVector3(max(-10, min(10, ballX * 0.55)),
+                                  rig.cameraHeight,
+                                  baseZ - self.viewFacing * rig.cameraBack)
+            return SCNVector3(position.x + (goal.x - position.x) * 0.10,
+                              position.y + (goal.y - position.y) * 0.10,
+                              position.z + (goal.z - position.z) * 0.10)
+        }
+        if let lookAt = cameraLookAtConstraint {
+            cameraNode.constraints = [chase, lookAt]
+        } else {
+            cameraNode.constraints = [chase]
+        }
+    }
+
+    /// The framing z the follow rig wants this frame. A forward ratchet with
+    /// backward slack: the frame moves downfield (attack direction) with the
+    /// ball immediately, but only retreats once the ball is 6+ yards behind
+    /// the frame — so a QB dropback doesn't pump the composition while a
+    /// return running the other way still drags the camera along. Called from
+    /// the follow constraints (render thread).
+    private func followBaseZ() -> Float {
+        let attack: Float = defensiveFraming ? -viewFacing : viewFacing
+        let ballZ = ballNode.presentation.worldPosition.z
+        let progress = (ballZ - followAnchorZ) * attack
+        followProgress = max(followProgress, progress)
+        followProgress = min(followProgress, progress + 6)
+        return max(-45, min(45, followAnchorZ + attack * followProgress))
+    }
+
+    /// Hands the shot back to the scripted focus machinery without a cut:
+    /// the model transforms are frozen where the follow's presentation
+    /// ended, then the plain look-at rig is restored. `focusZ` is synced to
+    /// the final framing so the post-play pull-back and the next pre-snap
+    /// focus start from what's on screen.
+    private func endLiveFollow() {
+        guard liveFollowActive else { return }
+        liveFollowActive = false
+        cameraTargetNode.position = cameraTargetNode.presentation.position
+        cameraNode.position = cameraNode.presentation.position
+        cameraTargetNode.constraints = nil
+        if let lookAt = cameraLookAtConstraint {
+            cameraNode.constraints = [lookAt]
+        }
+        let rig = shotRig(for: currentShotStyle)
+        focusZ = max(-45, min(45, cameraTargetNode.position.z - viewFacing * rig.targetLead))
+    }
+
+    /// Keeps the precipitation slab riding with the live follow: each step
+    /// that sends the ball somewhere eases the emitter toward that spot over
+    /// the step's own duration (the per-frame rig only moves the camera).
+    private func driftWeatherEmitter(for step: PlayStep) {
+        guard liveFollowActive,
+              let node = rootNode.childNode(withName: "weatherEmitter", recursively: false)
+        else { return }
+        let destZ: Float?
+        switch step.ballMove {
+        case .arc(let to, _, _): destZ = to.z
+        case .slide(let to, _): destZ = to.z
+        case .carry(let index), .carryChest(let index):
+            destZ = step.moves.first { $0.nodeIndex == index }?.to.z
+                ?? step.paths.first { $0.nodeIndex == index }?.points.last?.z
+        case .snap, nil:
+            destZ = nil
+        }
+        guard let destZ else { return }
+        let goalZ = max(-45, min(45, destZ)) + weatherSlabZOffset
+        guard abs(goalZ - node.position.z) > 6 else { return }
+        let move = SCNAction.move(to: SCNVector3(0, Self.weatherEmitterHeight, goalZ),
+                                  duration: max(effectiveDuration(of: step), 0.4))
+        move.timingMode = .easeInEaseOut
+        node.runAction(move, forKey: "focus")
+    }
+
     // MARK: - Replay Camera (R35)
 
     /// Camera angles for the instant-replay presentation. The choreography
@@ -1014,6 +1195,7 @@ class FootballFieldScene: SCNScene {
     /// bodies slide to keep the action in frame. Call again mid-replay to
     /// cut to a different angle; the constraints simply reinstall.
     func beginReplayCamera(angle: ReplayAngle, losZ: Float, direction: Float) {
+        endLiveFollow()
         replayCameraActive = true
         kickCameraActive = false
         cameraNode.removeAction(forKey: "pushIn")
@@ -1132,6 +1314,7 @@ class FootballFieldScene: SCNScene {
         cancelPlay()
         // The snap kills the pre-snap push-in; the follow-cam owns the shot now.
         cameraNode.removeAction(forKey: "pushIn")
+        beginLiveFollow()
         pendingCatchNodes = []
         let generation = playGeneration
 
@@ -1156,6 +1339,7 @@ class FootballFieldScene: SCNScene {
             guard let self = self, self.playGeneration == generation else { return }
             self.followThrough(nodeIndexes: lastMovers)
             self.detachBallToRoot()
+            self.endLiveFollow()
             completion()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
                 guard let self = self, self.playGeneration == generation else { return }
@@ -1217,6 +1401,7 @@ class FootballFieldScene: SCNScene {
     /// and the ball is detached back to the root node at its current world position.
     func cancelPlay() {
         playGeneration += 1
+        endLiveFollow()
         for node in homePlayerNodes + awayPlayerNodes {
             node.removeAction(forKey: "playMove")
             node.removeAction(forKey: "walk")
@@ -1240,6 +1425,14 @@ class FootballFieldScene: SCNScene {
     /// `nodeIndex` 0-10 = home players, 11-21 = away players.
     func pulse(nodeIndex: Int) {
         guard let node = playerNode(at: nodeIndex) else { return }
+        // R38 Reduce Motion: the highlight stays informative but swaps the
+        // scale pop for a brief opacity dip (no size/position change).
+        if UIAccessibility.isReduceMotionEnabled {
+            let dim = SCNAction.fadeOpacity(to: 0.55, duration: 0.15)
+            let restore = SCNAction.fadeOpacity(to: 1.0, duration: 0.15)
+            node.runAction(SCNAction.sequence([dim, restore]), forKey: "pulse")
+            return
+        }
         let up = SCNAction.scale(to: 1.2, duration: 0.15)
         up.timingMode = .easeInEaseOut
         let down = SCNAction.scale(to: 1.0, duration: 0.15)
@@ -2130,38 +2323,20 @@ class FootballFieldScene: SCNScene {
             } else {
                 attachBall(toPlayerIndex: nodeIndex)
             }
-            // Follow-cam: when the carrier breaks well past the current frame,
-            // pan downfield with him so long gains don't run out of shot.
-            // (A replay's constraint-driven camera tracks the ball itself.)
-            if !kickCameraActive, !replayCameraActive,
-               let move = step.moves.first(where: { $0.nodeIndex == nodeIndex }),
-               abs(move.to.z - focusZ) > followTriggerDistance {
-                followCamera(toZ: move.to.z, stepDuration: move.duration)
-            }
         case .snap(let toNodeIndex, let shotgun):
             runSnapExchange(to: toNodeIndex, shotgun: shotgun)
         case .arc(let to, let apex, let duration):
             runBallArc(to: to, apex: apex, duration: duration)
-            if !kickCameraActive, !replayCameraActive,
-               abs(to.z - focusZ) > followTriggerDistance {
-                followCamera(toZ: to.z, stepDuration: duration)
-            }
         case .slide(let to, let duration):
             runBallSlide(to: to, duration: duration)
         case nil:
             break
         }
-    }
-
-    /// Follow-cam pan with softened timing: short hops get proportionally
-    /// longer, eased moves so successive refocuses blend instead of jerking;
-    /// only genuinely long breaks pan at full speed. The pan re-uses the
-    /// framing already on screen (`currentShotStyle`) so the tight coach
-    /// shot slides with the ball and a kickoff-return shot stays broadcast.
-    private func followCamera(toZ z: Float, stepDuration: TimeInterval) {
-        let pan = abs(z - focusZ)
-        let duration = max(stepDuration, min(1.7, 0.7 + TimeInterval(pan) * 0.03))
-        focusCamera(z: z, animated: true, duration: duration, style: currentShotStyle)
+        // The live follow rig tracks the ball per frame (no stepwise pans
+        // here anymore — carriers riding in `paths` were invisible to the
+        // old move-based trigger and parked the camera at the LOS); the
+        // precipitation slab still moves per step.
+        driftWeatherEmitter(for: step)
     }
 
     /// Parents the ball to a player so it rides along with every move.
@@ -3958,12 +4133,15 @@ class FootballFieldScene: SCNScene {
         system.particleVelocity = 24
         system.particleVelocityVariation = 6
         system.particleImage = rainStreakImage()
-        system.particleSize = coach ? 0.12 : 0.2
-        system.particleSizeVariation = coach ? 0.04 : 0.08
+        system.particleSize = coach ? 0.06 : 0.2
+        system.particleSizeVariation = coach ? 0.02 : 0.08
         system.particleColor = UIColor(red: 0.65, green: 0.72, blue: 0.85,
-                                       alpha: coach ? 0.16 : 0.22)
+                                       alpha: coach ? 0.11 : 0.22)
         system.blendMode = .additive
-        system.stretchFactor = 0.06
+        // Streak length ≈ velocity × stretch: at the low coach lens the
+        // broadcast 0.06 (≈1.4 yd) reads as glowing player-height pillars
+        // between the bodies — 0.022 keeps them at ~0.5 yd drizzle lines.
+        system.stretchFactor = coach ? 0.022 : 0.06
         system.isLightingEnabled = false
         // Pre-roll so setWeather/retuneWeatherEmitter never shows a dry sky.
         system.warmupDuration = 1

@@ -3,7 +3,9 @@ import SwiftData
 
 @main
 struct DynastyApp: App {
-    let container = DataContainer.create()
+    // R39: PerfLog.time also stamps `processStart` on first touch, so
+    // launch_to_menu measures from here (app init) to the menu's first frame.
+    let container = PerfLog.time("data_container_create") { DataContainer.create() }
 
     @Environment(\.scenePhase) private var scenePhase
 

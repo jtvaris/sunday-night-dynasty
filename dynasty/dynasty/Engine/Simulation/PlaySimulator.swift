@@ -98,6 +98,8 @@ enum PlaySimulator {
            randomChance(penaltyChance) {
             return rollPenalty(
                 playCall: playCall,
+                offensePlayers: offensePlayers,
+                defensePlayers: defensePlayers,
                 down: down,
                 distance: distance,
                 yardLine: yardLine,
@@ -367,6 +369,27 @@ enum PlaySimulator {
             defensiveScheme: defensiveScheme
         )
 
+        // --- Play-Action Read (R37, live calls only) ---
+        // The fake's value depends on the second level's football IQ: a
+        // low-awareness box bites downhill (the deep shot opens), a veteran
+        // box passes it off (the window shrinks). Rolled once per snap; the
+        // result also drives the 3D linebacker choreography via
+        // `PlayResult.defenseBitOnFake`. Nil hint (all quick sims) = never.
+        var paBite: Bool? = nil
+        var paBiteActive = hint?.isPlayAction == true
+        #if DEBUG
+        if debugNeutralPlayActionRead { paBiteActive = false }
+        #endif
+        if paBiteActive {
+            let boxAwareness = averageAttribute(
+                defensePlayers.filter { isLB($0) || $0.position == .SS || $0.position == .FS },
+                extractor: { Double($0.mental.awareness) }
+            )
+            let biteChance = clamp(0.5 + (70.0 - boxAwareness) * paBiteAwarenessSlope,
+                                   min: 0.05, max: 0.95)
+            paBite = randomChance(biteChance)
+        }
+
         // --- Pass Protection Check ---
         let olPassBlock = averageAttribute(
             offensePlayers.filter { isOL($0) },
@@ -402,9 +425,16 @@ enum PlaySimulator {
             let sackYards = -Int.random(in: 3...8)
             let newYardLine = max(0, yardLine + sackYards)
 
+            // R37: name the man who got home — the description, box score,
+            // and the 3D pocket collapse all point at the same rusher.
+            let sacker = weightedPickBy(passRushPool(defensePlayers)) {
+                let score = passRushScore($0)
+                return score * score
+            }
+
             // Check for safety
             if newYardLine <= 0 {
-                return PlayResult(
+                var play = PlayResult(
                     playNumber: playNumber,
                     quarter: quarter,
                     timeRemaining: timeRemaining,
@@ -414,16 +444,21 @@ enum PlaySimulator {
                     playType: .pass,
                     outcome: .safety,
                     yardsGained: sackYards,
-                    description: "\(qb.fullName) is sacked in the end zone for a safety!",
+                    description: sacker.map {
+                        "\(qb.fullName) is sacked in the end zone by \($0.fullName) for a safety!"
+                    } ?? "\(qb.fullName) is sacked in the end zone for a safety!",
                     isFirstDown: false,
                     isTurnover: false,
                     scoringPlay: true,
                     pointsScored: 2,
-                    keyOffensePlayerID: qb.id
+                    keyOffensePlayerID: qb.id,
+                    keyDefensePlayerID: sacker?.id
                 )
+                play.defenseBitOnFake = paBite
+                return play
             }
 
-            return PlayResult(
+            var play = PlayResult(
                 playNumber: playNumber,
                 quarter: quarter,
                 timeRemaining: timeRemaining,
@@ -433,13 +468,16 @@ enum PlaySimulator {
                 playType: .pass,
                 outcome: .sack,
                 yardsGained: sackYards,
-                description: "\(qb.fullName) is sacked for a loss of \(abs(sackYards)) yards.",
+                description: sackDescription(qb: qb, sacker: sacker, yards: abs(sackYards)),
                 isFirstDown: false,
                 isTurnover: false,
                 scoringPlay: false,
                 pointsScored: 0,
-                keyOffensePlayerID: qb.id
+                keyOffensePlayerID: qb.id,
+                keyDefensePlayerID: sacker?.id
             )
+            play.defenseBitOnFake = paBite
+            return play
         }
 
         // --- Choose Target ---
@@ -512,6 +550,15 @@ enum PlaySimulator {
             break
         }
 
+        // Play action (R37): a box that bit on the fake vacates the middle —
+        // the window opens; a box that stayed home squeezes it. Symmetric
+        // swing (±paBiteCompletionSwing) so a league-average box (bite ~50%)
+        // leaves the play's expected value unchanged.
+        if let paBite {
+            let swing = paBite ? paBiteCompletionSwing : -paBiteCompletionSwing
+            completionChance = clamp(completionChance + swing, min: 0.05, max: 0.95)
+        }
+
         // Halftime adjustment: schemed separation lifts the completion odds.
         if let adjustments, adjustments.completionBonus != 0 {
             completionChance = clamp(completionChance + adjustments.completionBonus, min: 0.05, max: 0.95)
@@ -530,11 +577,29 @@ enum PlaySimulator {
         if randomChance(intChance) {
             // Credit a ball-hawking starter, not a random 4th-string DB —
             // the live match view shows the top DBs on the field.
+            // R37: the catch-vs-knockdown call goes to the DB whose HEAD and
+            // HANDS earn it — awareness (route recognition) + ball skills
+            // weighted, so the smart safety picks it more often. The total
+            // INT rate (`intChance`, rolled above) is untouched; only the
+            // per-player credit distribution moves.
             let dbs = defensePlayers.filter { isDB($0) }
-                .sorted { dbBallSkillsRating(for: $0) > dbBallSkillsRating(for: $1) }
-            let defender = dbs.prefix(4).randomElement()
-                ?? defensePlayers.first!
-            return PlayResult(
+            let defender: SimPlayer
+            var useIQCredit = true
+            #if DEBUG
+            if debugNeutralINTCredit { useIQCredit = false }
+            #endif
+            if useIQCredit {
+                let ranked = dbs.sorted { intCreditScore($0) > intCreditScore($1) }
+                defender = weightedPickBy(Array(ranked.prefix(5))) {
+                    let score = intCreditScore($0)
+                    return score * score
+                } ?? defensePlayers.first!
+            } else {
+                defender = dbs
+                    .sorted { dbBallSkillsRating(for: $0) > dbBallSkillsRating(for: $1) }
+                    .prefix(4).randomElement() ?? defensePlayers.first!
+            }
+            var play = PlayResult(
                 playNumber: playNumber,
                 quarter: quarter,
                 timeRemaining: timeRemaining,
@@ -552,6 +617,9 @@ enum PlaySimulator {
                 keyOffensePlayerID: target.id,
                 keyDefensePlayerID: defender.id
             )
+            play.defenseBitOnFake = paBite
+            play.defensiveHighlight = true
+            return play
         }
 
         // --- Completion or Incompletion ---
@@ -572,7 +640,7 @@ enum PlaySimulator {
             let yardsToEndzone = 100 - yardLine
             if totalYards >= yardsToEndzone {
                 totalYards = yardsToEndzone
-                return PlayResult(
+                var play = PlayResult(
                     playNumber: playNumber,
                     quarter: quarter,
                     timeRemaining: timeRemaining,
@@ -589,13 +657,15 @@ enum PlaySimulator {
                     pointsScored: 6,
                     keyOffensePlayerID: target.id
                 )
+                play.defenseBitOnFake = paBite
+                return play
             }
 
             // Prevent negative total from variance
             totalYards = max(totalYards, 0)
             let gainedFirstDown = totalYards >= distance
 
-            return PlayResult(
+            var play = PlayResult(
                 playNumber: playNumber,
                 quarter: quarter,
                 timeRemaining: timeRemaining,
@@ -614,9 +684,42 @@ enum PlaySimulator {
                 pointsScored: 0,
                 keyOffensePlayerID: target.id
             )
+            play.defenseBitOnFake = paBite
+            return play
         } else {
-            // Incomplete pass
-            return PlayResult(
+            // Incomplete pass — R37 defensive commentary decides the credit:
+            // 1) a coverage win becomes a NAMED breakup (light PD stat and a
+            //    feed accent), 2) a heavy rush becomes pressure credit on the
+            //    hurried throw, 3) a plain miss draws from a variation pool.
+            // None of this touches the completion roll above — text and
+            // attribution only.
+            var text = "\(qb.fullName) throws incomplete intended for \(target.fullName)."
+            var breakupID: UUID? = nil
+            var wasBreakup = false
+            let breakupChance = clamp(0.22 + (dbCoverage - 60.0) / 250.0, min: 0.10, max: 0.40)
+            if randomChance(breakupChance) {
+                // The breakup goes to a coverage man on the field — coverage
+                // skill + awareness weighted, same IQ logic as the pick.
+                if let defender = weightedPickBy(startingDBs(defensePlayers), weight: {
+                    dbCoverageRating(for: $0) * 0.6 + Double($0.mental.awareness) * 0.4
+                }) {
+                    wasBreakup = true
+                    breakupID = defender.id
+                    text = breakupDescription(qb: qb, target: target, defender: defender)
+                }
+            } else if randomChance(min(sackChance * 1.6, 0.35)) {
+                // The rush forced the ball out early — credit the man in the
+                // QB's face (no sack, no stat, just the broadcast note).
+                if let rusher = weightedPickBy(passRushPool(defensePlayers), weight: {
+                    let score = passRushScore($0)
+                    return score * score
+                }) {
+                    text = pressureDescription(qb: qb, target: target, rusher: rusher)
+                }
+            } else if randomChance(0.35) {
+                text = incompletionVariant(qb: qb, target: target)
+            }
+            var play = PlayResult(
                 playNumber: playNumber,
                 quarter: quarter,
                 timeRemaining: timeRemaining,
@@ -626,13 +729,20 @@ enum PlaySimulator {
                 playType: .pass,
                 outcome: .incompletion,
                 yardsGained: 0,
-                description: "\(qb.fullName) throws incomplete intended for \(target.fullName).",
+                description: text,
                 isFirstDown: false,
                 isTurnover: false,
                 scoringPlay: false,
                 pointsScored: 0,
-                keyOffensePlayerID: target.id
+                keyOffensePlayerID: target.id,
+                keyDefensePlayerID: breakupID
             )
+            play.defenseBitOnFake = paBite
+            if wasBreakup {
+                play.passBreakup = true
+                play.defensiveHighlight = true
+            }
+            return play
         }
     }
 
@@ -710,12 +820,24 @@ enum PlaySimulator {
         }
 
         // --- Breakaway Run Check ---
+        // R37: the carrier's VISION finds the crease. Vision + awareness
+        // scale the breakaway odds around the 70-rated league mean, so the
+        // league-wide rushing average holds while individual backs separate.
         let rbSpeed = Double(rb.physical.speed)
         let avgDBSpeed = averageAttribute(
             defensePlayers.filter { isDB($0) },
             extractor: { Double($0.physical.speed) }
         )
+        var visionActive = true
+        #if DEBUG
+        if debugNeutralCarrierVision { visionActive = false }
+        #endif
+        let carrierSight = Double(rbAttrs.vision) * 0.6 + Double(rb.mental.awareness) * 0.4
         var breakawayChance = max(0.0, (rbSpeed - avgDBSpeed) / 200.0 + 0.03)
+        if visionActive {
+            breakawayChance *= clamp(1.0 + (carrierSight - 70.0) * carrierVisionSlope,
+                                     min: 0.6, max: 1.4)
+        }
         // Snow: nobody outruns the pursuit on a buried track.
         if weather == .snow { breakawayChance *= 0.5 }
         if randomChance(breakawayChance) {
@@ -723,8 +845,22 @@ enum PlaySimulator {
         }
 
         // --- Fumble Check ---
-        // ~1% base, slightly lower with high break-tackle (implies ball security awareness)
-        var fumbleChance = max(0.005, 0.01 - Double(rbAttrs.breakTackle) / 10000.0)
+        // R37: ball security is a skill — break-tackle (strength through
+        // contact) + awareness (knowing when to cover up) move the ~0.5%
+        // per-carry base. A 70-rated carrier reproduces the old rate exactly,
+        // so the league fumble frequency is unchanged.
+        var securityActive = true
+        #if DEBUG
+        if debugNeutralBallSecurity { securityActive = false }
+        #endif
+        var fumbleChance: Double
+        if securityActive {
+            let security = Double(rbAttrs.breakTackle) * 0.5 + Double(rb.mental.awareness) * 0.5
+            fumbleChance = clamp(0.005 - (security - 70.0) * ballSecuritySlope,
+                                 min: 0.002, max: 0.008)
+        } else {
+            fumbleChance = max(0.005, 0.01 - Double(rbAttrs.breakTackle) / 10000.0)
+        }
         // Rain/snow: the wet ball comes out more often.
         if weather == .rain || weather == .snow { fumbleChance += 0.005 }
         if randomChance(fumbleChance) {
@@ -749,7 +885,11 @@ enum PlaySimulator {
         }
 
         // --- Negative Run / Tackle for Loss ---
-        let tflChance = max(0.0, 0.08 - blockingAdvantage * 0.1)
+        // A sharp-eyed back also avoids running into the pile (R37).
+        var tflChance = max(0.0, 0.08 - blockingAdvantage * 0.1)
+        if visionActive {
+            tflChance *= clamp(1.0 - (carrierSight - 70.0) * 0.005, min: 0.65, max: 1.35)
+        }
         if totalYards <= 1 && randomChance(tflChance) {
             totalYards = -Int.random(in: 1...3)
         }
@@ -757,6 +897,7 @@ enum PlaySimulator {
         // --- Safety Check ---
         let newYardLine = yardLine + totalYards
         if newYardLine <= 0 {
+            let tackler = stuffTackler(defensePlayers)
             return PlayResult(
                 playNumber: playNumber,
                 quarter: quarter,
@@ -767,12 +908,15 @@ enum PlaySimulator {
                 playType: .run,
                 outcome: .safety,
                 yardsGained: totalYards,
-                description: "\(rb.fullName) is tackled in the end zone for a safety!",
+                description: tackler.map {
+                    "\(rb.fullName) is tackled in the end zone by \($0.fullName) for a safety!"
+                } ?? "\(rb.fullName) is tackled in the end zone for a safety!",
                 isFirstDown: false,
                 isTurnover: false,
                 scoringPlay: true,
                 pointsScored: 2,
-                keyOffensePlayerID: rb.id
+                keyOffensePlayerID: rb.id,
+                keyDefensePlayerID: tackler?.id
             )
         }
 
@@ -802,7 +946,29 @@ enum PlaySimulator {
         totalYards = max(totalYards, -(yardLine)) // Don't go past own endzone without safety
         let gainedFirstDown = totalYards >= distance
 
-        return PlayResult(
+        // --- R37: name the tackle (~half of run rows, weighted toward the
+        // plays that mean something: TFLs always, stuffs and breakaways run
+        // down from behind usually, routine gains occasionally). The named
+        // tackler also carries the box-score tackle credit.
+        var tackler: SimPlayer? = nil
+        var bigHit = false
+        if totalYards < 0 {
+            tackler = stuffTackler(defensePlayers)
+        } else if totalYards <= 1 {
+            if randomChance(0.7) { tackler = stuffTackler(defensePlayers) }
+        } else if totalYards >= 15 {
+            if randomChance(0.8) { tackler = chaseTackler(defensePlayers) }
+        } else if randomChance(0.35) {
+            tackler = pursuitTackler(defensePlayers)
+            // A thumper occasionally detonates on the carrier near the line.
+            if let hitman = tackler, totalYards <= 6,
+               Double(hitman.physical.strength) >= 80 || lbTacklingRating(for: hitman) >= 85,
+               randomChance(0.15) {
+                bigHit = true
+            }
+        }
+
+        var play = PlayResult(
             playNumber: playNumber,
             quarter: quarter,
             timeRemaining: timeRemaining,
@@ -812,13 +978,17 @@ enum PlaySimulator {
             playType: .run,
             outcome: .rush,
             yardsGained: totalYards,
-            description: rushDescription(rb: rb, yards: totalYards, firstDown: gainedFirstDown),
+            description: rushDescription(rb: rb, yards: totalYards, firstDown: gainedFirstDown,
+                                         tackler: tackler, bigHit: bigHit),
             isFirstDown: gainedFirstDown,
             isTurnover: false,
             scoringPlay: false,
             pointsScored: 0,
-            keyOffensePlayerID: rb.id
+            keyOffensePlayerID: rb.id,
+            keyDefensePlayerID: tackler?.id
         )
+        if bigHit { play.defensiveHighlight = true }
+        return play
     }
 
     // MARK: - Penalties
@@ -847,8 +1017,15 @@ enum PlaySimulator {
     /// Builds a penalty play: no down is consumed (the down is replayed with
     /// adjusted distance), except defensive flags whose yardage reaches the
     /// line to gain — those convert, and DPI is an automatic first down.
+    ///
+    /// R37: the CULPRIT is named. The overall flag frequency (~6% of snaps,
+    /// rolled by the caller) never changes — only who the laundry lands on:
+    /// low-discipline (awareness + decision making) and tired players draw
+    /// more flags, and holding skews toward linemen losing their reps.
     private static func rollPenalty(
         playCall: PlayType,
+        offensePlayers: [SimPlayer],
+        defensePlayers: [SimPlayer],
         down: Int,
         distance: Int,
         yardLine: Int,
@@ -869,26 +1046,50 @@ enum PlaySimulator {
             if roll <= 0 { kind = candidate; break }
         }
 
+        /// "#72 T. Boyd" — feed-style culprit tag.
+        func tag(_ p: SimPlayer) -> String { "#\(p.displayNumber) \(p.shortName)" }
+
         // Effective yardage is pre-clamped to the field so down-and-distance
         // bookkeeping never needs to undo an over-long walk-off.
         let yards: Int
         let description: String
         var isFirstDown = false
+        var keyOffenseID: UUID? = nil
+        var keyDefenseID: UUID? = nil
         switch kind {
         case .offensiveHolding:
+            // Holding is a losing blocker's flag: weak blocking for THIS play
+            // type, low discipline, and fatigue all raise a lineman's share.
+            let culprit = weightedPickBy(startingOL(offensePlayers)) { p in
+                let block = playCall == .pass ? olPassBlockRating(for: p) : olRunBlockRating(for: p)
+                return max(5.0, 115.0 - block * 0.6 - disciplineRating(p) * 0.4)
+                    * (1.0 + Double(p.fatigue) / 150.0)
+            }
+            keyOffenseID = culprit?.id
             yards = -min(10, yardLine - 1)
-            description = "FLAG — Holding on the offense, 10-yard penalty."
+            description = culprit.map { "FLAG — Holding on \(tag($0)), 10-yard penalty." }
+                ?? "FLAG — Holding on the offense, 10-yard penalty."
         case .falseStart:
+            let culprit = indisciplineWeightedPick(from: startingOL(offensePlayers))
+            keyOffenseID = culprit?.id
             yards = -min(5, yardLine - 1)
-            description = "FLAG — False start, 5-yard penalty."
+            description = culprit.map { "FLAG — False start on \(tag($0)), 5-yard penalty." }
+                ?? "FLAG — False start, 5-yard penalty."
         case .defensiveOffside:
+            let culprit = indisciplineWeightedPick(from: startingDL(defensePlayers))
+            keyDefenseID = culprit?.id
             yards = min(5, 99 - yardLine)
             isFirstDown = yards >= distance
-            description = "FLAG — Defensive offside, 5-yard penalty."
+            description = culprit.map { "FLAG — Offside on \(tag($0)), 5-yard penalty." }
+                ?? "FLAG — Defensive offside, 5-yard penalty."
         case .defensivePassInterference:
+            let culprit = indisciplineWeightedPick(from: startingDBs(defensePlayers))
+            keyDefenseID = culprit?.id
             yards = min(15, 99 - yardLine)
             isFirstDown = true
-            description = "FLAG — Pass interference on the defense, \(yards) yards to the spot. Automatic first down."
+            description = culprit.map {
+                "FLAG — Pass interference on \(tag($0)), \(yards) yards to the spot. Automatic first down."
+            } ?? "FLAG — Pass interference on the defense, \(yards) yards to the spot. Automatic first down."
         }
 
         return PlayResult(
@@ -905,7 +1106,9 @@ enum PlaySimulator {
             isFirstDown: isFirstDown,
             isTurnover: false,
             scoringPlay: false,
-            pointsScored: 0
+            pointsScored: 0,
+            keyOffensePlayerID: keyOffenseID,
+            keyDefensePlayerID: keyDefenseID
         )
     }
 
@@ -1521,7 +1724,144 @@ enum PlaySimulator {
     /// comparison — league generation is unseeded, so separate app launches
     /// can't be compared). Never set outside the debug harness.
     static var debugNeutralAwarenessTargeting = false
+
+    // R37 balance-harness switches — one per player-IQ mechanic so each is
+    // measured in isolation over the same league (paired comparison).
+    /// True = skip the play-action box-awareness bite roll (mechanic 2).
+    static var debugNeutralPlayActionRead = false
+    /// True = old INT credit (top-4 ball skills, uniform) (mechanic 3).
+    static var debugNeutralINTCredit = false
+    /// True = no vision scaling on breakaway/TFL odds (mechanic 4).
+    static var debugNeutralCarrierVision = false
+    /// True = old flat fumble formula (mechanic 5).
+    static var debugNeutralBallSecurity = false
     #endif
+
+    // MARK: - Player IQ Tuning (R37)
+
+    /// Bite-probability slope per awareness point below/above 70 for the
+    /// play-action read: a 40-awareness box bites ~95% of fakes, a
+    /// 99-awareness box ~5% (clamped).
+    private static let paBiteAwarenessSlope = 0.02
+    /// Completion-chance swing when the box bites (+) or stays home (−).
+    /// Symmetric, so a league-average box leaves PA expected value flat.
+    private static let paBiteCompletionSwing = 0.06
+    /// Breakaway-odds multiplier slope per point of carrier sight
+    /// (vision 60% + awareness 40%) around the 70-rated league mean.
+    private static let carrierVisionSlope = 0.008
+    /// Fumble-chance reduction per point of ball security
+    /// (break-tackle 50% + awareness 50%) above the 70-rated mean.
+    private static let ballSecuritySlope = 0.00004
+
+    // MARK: - Player IQ Helpers (R37)
+
+    /// Discipline proxy: how rarely a player beats himself. Awareness reads
+    /// the snap count and the situation; decision making avoids the dumb grab.
+    private static func disciplineRating(_ p: SimPlayer) -> Double {
+        Double(p.mental.awareness + p.mental.decisionMaking) / 2.0
+    }
+
+    /// Weighted pick where the WEIGHT GROWS as discipline falls, and tired
+    /// players jump earlier / grab more — the penalty-culprit draw.
+    private static func indisciplineWeightedPick(from players: [SimPlayer]) -> SimPlayer? {
+        weightedPickBy(players) { p in
+            max(5.0, 105.0 - disciplineRating(p)) * (1.0 + Double(p.fatigue) / 150.0)
+        }
+    }
+
+    /// Generic roulette pick over arbitrary non-negative weights.
+    private static func weightedPickBy(
+        _ players: [SimPlayer], weight: (SimPlayer) -> Double
+    ) -> SimPlayer? {
+        guard !players.isEmpty else { return nil }
+        let weights = players.map { max(0.001, weight($0)) }
+        var roll = Double.random(in: 0..<weights.reduce(0, +))
+        for (index, w) in weights.enumerated() {
+            roll -= w
+            if roll <= 0 { return players[index] }
+        }
+        return players.last
+    }
+
+    // Starter pools mirroring `FieldUnit`'s best-by-position picks, so the
+    // names the sim credits are the players the live 3D field is showing.
+
+    /// The five starting linemen (best per OL spot).
+    private static func startingOL(_ players: [SimPlayer]) -> [SimPlayer] {
+        var starters: [SimPlayer] = []
+        for position in [Position.LT, .LG, .C, .RG, .RT] {
+            if let best = players.filter({ $0.position == position })
+                .max(by: { $0.overall < $1.overall }) {
+                starters.append(best)
+            }
+        }
+        return starters.isEmpty ? players.filter { isOL($0) } : starters
+    }
+
+    /// The starting front four (top-2 DE + top-2 DT by overall).
+    private static func startingDL(_ players: [SimPlayer]) -> [SimPlayer] {
+        let ends = players.filter { $0.position == .DE }
+            .sorted { $0.overall > $1.overall }.prefix(2)
+        let tackles = players.filter { $0.position == .DT }
+            .sorted { $0.overall > $1.overall }.prefix(2)
+        let unit = Array(ends) + Array(tackles)
+        return unit.isEmpty ? players.filter { isDL($0) } : unit
+    }
+
+    /// The starting linebacker trio (top-3 by overall).
+    private static func startingLBs(_ players: [SimPlayer]) -> [SimPlayer] {
+        Array(players.filter { isLB($0) }.sorted { $0.overall > $1.overall }.prefix(3))
+    }
+
+    /// The starting secondary (top-2 CB + top-2 S by overall).
+    private static func startingDBs(_ players: [SimPlayer]) -> [SimPlayer] {
+        let corners = players.filter { $0.position == .CB }
+            .sorted { $0.overall > $1.overall }.prefix(2)
+        let safeties = players.filter { $0.position == .FS || $0.position == .SS }
+            .sorted { $0.overall > $1.overall }.prefix(2)
+        let unit = Array(corners) + Array(safeties)
+        return unit.isEmpty ? players.filter { isDB($0) } : unit
+    }
+
+    /// Everyone who can plausibly get home on a dropback: the front four
+    /// plus the blitzing backers.
+    private static func passRushPool(_ players: [SimPlayer]) -> [SimPlayer] {
+        startingDL(players) + startingLBs(players)
+    }
+
+    /// Pass-rush credit score: DL by rush moves, LB discounted (they only
+    /// come on a blitz).
+    private static func passRushScore(_ p: SimPlayer) -> Double {
+        isDL(p) ? dlPassRushRating(for: p) : lbBlitzRating(for: p) * 0.55
+    }
+
+    /// Interception-credit score: hands + head (ball skills 55%, awareness
+    /// 45%) — the smart safety picks it more often (R37, mechanic 3).
+    private static func intCreditScore(_ p: SimPlayer) -> Double {
+        dbBallSkillsRating(for: p) * 0.55 + Double(p.mental.awareness) * 0.45
+    }
+
+    /// Tackler at/behind the line: block-shedders and downhill backers.
+    private static func stuffTackler(_ players: [SimPlayer]) -> SimPlayer? {
+        weightedPickBy(startingDL(players) + startingLBs(players)) { p in
+            let score = isDL(p) ? dlBlockSheddingRating(for: p) : lbTacklingRating(for: p)
+            return score * score
+        }
+    }
+
+    /// Open-field chase-down on a breakaway: the secondary, by wheels.
+    private static func chaseTackler(_ players: [SimPlayer]) -> SimPlayer? {
+        weightedPickBy(startingDBs(players)) { Double($0.physical.speed) }
+    }
+
+    /// Routine-gain tackler: backers first, linemen in pursuit.
+    private static func pursuitTackler(_ players: [SimPlayer]) -> SimPlayer? {
+        weightedPickBy(startingLBs(players) + startingDL(players)) { p in
+            let score = isLB(p) ? lbTacklingRating(for: p)
+                : dlBlockSheddingRating(for: p) * 0.7
+            return score * score
+        }
+    }
 
     /// Selects a pass target: ~85% of throws go to the primary group (top-3
     /// WR + best TE + best RB), the rest to depth receivers. Within each
@@ -1585,18 +1925,86 @@ enum PlaySimulator {
         return "\(qb.fullName) throws \(yards) yards to \(target.fullName)\(firstDownText)."
     }
 
-    private static func rushDescription(rb: SimPlayer, yards: Int, firstDown: Bool) -> String {
+    /// Rush line. R37: when a tackler is credited he is NAMED, with the
+    /// phrasing keyed to the play's shape (TFL / stuff / chase-down / big
+    /// hit / routine gain). Nil tackler reproduces the classic lines.
+    private static func rushDescription(rb: SimPlayer, yards: Int, firstDown: Bool,
+                                        tackler: SimPlayer? = nil, bigHit: Bool = false) -> String {
         let firstDownText = firstDown ? " for a first down" : ""
         if yards < 0 {
+            if let tackler {
+                return "\(rb.fullName) is dropped for a loss of \(abs(yards)) by \(tackler.fullName)."
+            }
             return "\(rb.fullName) is stopped for a loss of \(abs(yards)) yards."
         }
         if yards == 0 {
+            if let tackler {
+                return "\(rb.fullName) is stuffed at the line by \(tackler.fullName)."
+            }
             return "\(rb.fullName) is stopped for no gain."
         }
+        if yards == 1, let tackler {
+            return "\(rb.fullName) squeezes out a yard before \(tackler.fullName) shuts the door\(firstDownText)."
+        }
         if yards >= 15 {
+            if let tackler {
+                return "\(rb.fullName) breaks free for a \(yards)-yard run\(firstDownText) — finally run down in the open field by \(tackler.fullName)!"
+            }
             return "\(rb.fullName) breaks free for a \(yards)-yard run\(firstDownText)!"
         }
+        if bigHit, let tackler {
+            return "\(tackler.fullName) lays the wood on \(rb.fullName) after a \(yards)-yard gain\(firstDownText)!"
+        }
+        if let tackler {
+            return "\(rb.fullName) rushes for \(yards) yards\(firstDownText) — brought down by \(tackler.fullName)."
+        }
         return "\(rb.fullName) rushes for \(yards) yards\(firstDownText)."
+    }
+
+    /// Sack line naming the credited rusher (nil = classic line).
+    private static func sackDescription(qb: SimPlayer, sacker: SimPlayer?, yards: Int) -> String {
+        guard let sacker else {
+            return "\(qb.fullName) is sacked for a loss of \(yards) yards."
+        }
+        let pool = [
+            "\(qb.fullName) is sacked by \(sacker.fullName) for a loss of \(yards) yards.",
+            "\(sacker.fullName) gets home and drops \(qb.fullName) for a loss of \(yards).",
+            "\(sacker.fullName) collapses the pocket and buries \(qb.fullName) — sack for -\(yards).",
+        ]
+        return pool.randomElement() ?? pool[0]
+    }
+
+    /// Named pass-breakup line (variation pool).
+    private static func breakupDescription(qb: SimPlayer, target: SimPlayer,
+                                           defender: SimPlayer) -> String {
+        let pool = [
+            "\(qb.fullName)'s pass to \(target.fullName) is broken up by \(defender.fullName).",
+            "Diving breakup by \(defender.fullName) — incomplete intended for \(target.fullName).",
+            "\(defender.fullName) gets a hand in and knocks it away from \(target.fullName).",
+            "\(defender.fullName) blankets \(target.fullName) and swats it down at the catch point.",
+        ]
+        return pool.randomElement() ?? pool[0]
+    }
+
+    /// Hurried-throw line crediting the rusher who forced it (no sack, no stat).
+    private static func pressureDescription(qb: SimPlayer, target: SimPlayer,
+                                            rusher: SimPlayer) -> String {
+        let pool = [
+            "Under pressure from \(rusher.fullName), \(qb.fullName) throws it away.",
+            "\(rusher.fullName) is in his face — \(qb.fullName)'s hurried throw falls incomplete.",
+            "Flushed by \(rusher.fullName), \(qb.fullName) fires wide of \(target.fullName).",
+        ]
+        return pool.randomElement() ?? pool[0]
+    }
+
+    /// Plain-miss variation pool (no defensive credit).
+    private static func incompletionVariant(qb: SimPlayer, target: SimPlayer) -> String {
+        let pool = [
+            "\(qb.fullName) sails it high — incomplete intended for \(target.fullName).",
+            "\(target.fullName) can't haul it in — the pass falls incomplete.",
+            "\(qb.fullName)'s throw skips off the turf in front of \(target.fullName).",
+        ]
+        return pool.randomElement() ?? pool[0]
     }
 
     // MARK: - Scheme Fit Helpers

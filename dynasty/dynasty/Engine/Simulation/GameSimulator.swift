@@ -489,6 +489,8 @@ enum GameSimulator {
             var points: [Double] = []
             var yards: [Double] = []
             var penaltiesPerGame: [Double] = []
+            var sacksPerGame: [Double] = []
+            var turnoversPerGame: [Double] = []
             var margins: [Double] = []
             var completions = 0
             var attempts = 0
@@ -499,6 +501,8 @@ enum GameSimulator {
                 yards.append(Double(result.boxScore.home.totalYards))
                 yards.append(Double(result.boxScore.away.totalYards))
                 penaltiesPerGame.append(Double(result.boxScore.home.penalties + result.boxScore.away.penalties))
+                sacksPerGame.append(Double(result.boxScore.home.sacks + result.boxScore.away.sacks))
+                turnoversPerGame.append(Double(result.boxScore.home.turnovers + result.boxScore.away.turnovers))
                 margins.append(Double(abs(result.homeScore - result.awayScore)))
                 for stats in result.playerStats {
                     completions += stats.completions
@@ -508,21 +512,74 @@ enum GameSimulator {
             let p = stats(points)
             let y = stats(yards)
             let pen = stats(penaltiesPerGame)
+            let sck = stats(sacksPerGame)
+            let tos = stats(turnoversPerGame)
             let m = stats(margins)
             print(String(format: "DEBUG-SIM[%@]: games=%d", label, n))
             print(String(format: "DEBUG-SIM[%@]: points/team mean=%.1f std=%.1f min=%.0f max=%.0f", label, p.mean, p.std, p.min, p.max))
             print(String(format: "DEBUG-SIM[%@]: yards/team  mean=%.0f std=%.0f min=%.0f max=%.0f", label, y.mean, y.std, y.min, y.max))
-            print(String(format: "DEBUG-SIM[%@]: penalties/game mean=%.1f", label, pen.mean))
+            print(String(format: "DEBUG-SIM[%@]: penalties/game mean=%.1f sacks/game mean=%.1f turnovers/game mean=%.2f", label, pen.mean, sck.mean, tos.mean))
             print(String(format: "DEBUG-SIM[%@]: score margin mean=%.1f", label, m.mean))
             let completionPct = attempts > 0 ? Double(completions) / Double(attempts) * 100 : 0
             print(String(format: "DEBUG-SIM[%@]: completion%%  %.1f (%d/%d)", label, completionPct, completions, attempts))
         }
 
-        // R36 gate: QB-awareness target weighting OFF vs ON, same league.
-        PlaySimulator.debugNeutralAwarenessTargeting = true
-        measure(label: "base")
-        PlaySimulator.debugNeutralAwarenessTargeting = false
-        measure(label: "aware")
+        // R37 gate: each player-IQ mechanic measured in isolation over the
+        // SAME league (paired). "pre" = shipped pre-R37 behavior (R36
+        // awareness targeting stays ON throughout — it shipped already).
+        func setNeutral(vision: Bool, security: Bool, intCredit: Bool) {
+            PlaySimulator.debugNeutralCarrierVision = vision
+            PlaySimulator.debugNeutralBallSecurity = security
+            PlaySimulator.debugNeutralINTCredit = intCredit
+        }
+        setNeutral(vision: true, security: true, intCredit: true)
+        measure(label: "pre")
+        setNeutral(vision: false, security: true, intCredit: true)
+        measure(label: "vision")
+        setNeutral(vision: true, security: false, intCredit: true)
+        measure(label: "security")
+        setNeutral(vision: true, security: true, intCredit: false)
+        measure(label: "intcredit")
+        setNeutral(vision: false, security: false, intCredit: false)
+        measure(label: "all-on")
+
+        // R37 play-action micro-harness: PA never occurs in the quick sim
+        // (it needs an explicit live call), so its gate is measured directly:
+        // repeated 1st-and-10 playActionDeep snaps, bite roll OFF vs ON,
+        // same two rosters. The relative effect must stay inside ±10%.
+        let paOffense = home.players.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
+        let paDefense = away.players.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
+        func measurePlayAction(label: String, snaps: Int = 4000) {
+            var totalYards = 0
+            var completions = 0
+            var attempts = 0
+            for _ in 0..<snaps {
+                let play = PlaySimulator.simulatePlay(
+                    offensePlayers: paOffense,
+                    defensePlayers: paDefense,
+                    down: 1, distance: 10, yardLine: 35,
+                    quarter: 2, timeRemaining: 600,
+                    momentum: 0, playNumber: 1,
+                    offensiveCall: .playActionDeep
+                )
+                switch play.outcome {
+                case .completion, .touchdown:
+                    completions += 1; attempts += 1; totalYards += play.yardsGained
+                case .incompletion, .interception:
+                    attempts += 1
+                default:
+                    break // sacks/penalties: not a thrown ball
+                }
+            }
+            let compPct = attempts > 0 ? Double(completions) / Double(attempts) * 100 : 0
+            let avgYards = Double(totalYards) / Double(snaps)
+            print(String(format: "DEBUG-SIM[PA-%@]: snaps=%d comp%%=%.1f yards/snap=%.2f",
+                         label, snaps, compPct, avgYards))
+        }
+        PlaySimulator.debugNeutralPlayActionRead = true
+        measurePlayAction(label: "off")
+        PlaySimulator.debugNeutralPlayActionRead = false
+        measurePlayAction(label: "on")
 
         // Schedule integrity: several season years through the generator.
         var scheduleOK = true
@@ -1153,6 +1210,13 @@ enum GameSimulator {
                 if let receiver = credited(play.keyOffensePlayerID, roster: offensePlayers, fallback: receivers) {
                     accumulator[receiver.id]?.targets += 1
                 }
+                // R37: a named breakup earns the light PD stat — the same
+                // defender the play-by-play text credits.
+                if play.passBreakup == true,
+                   let db = credited(play.keyDefensePlayerID, roster: defensePlayers, fallback: dBacks) {
+                    let current = accumulator[db.id]?.passDeflectionCount ?? 0
+                    accumulator[db.id]?.passDeflections = current + 1
+                }
 
             case .rush:
                 // keyOffensePlayerID also covers QB scrambles, so the yards
@@ -1161,8 +1225,10 @@ enum GameSimulator {
                     accumulator[rusher.id]?.rushingYards += play.yardsGained
                     accumulator[rusher.id]?.carries += 1
                 }
-                // Credit a defender with a tackle
-                if let tackler = pickWeightedPlayer(from: linebackers + dLinemen) {
+                // Credit the tackle to the defender the sim NAMED (R37) so
+                // the feed line and the box score agree; unnamed tackles
+                // fall back to the old weighted pick.
+                if let tackler = credited(play.keyDefensePlayerID, roster: defensePlayers, fallback: linebackers + dLinemen) {
                     accumulator[tackler.id]?.tackles += 1
                 }
 
@@ -1197,7 +1263,14 @@ enum GameSimulator {
                     accumulator[qb.id]?.passingYards += play.yardsGained // negative
                     accumulator[qb.id]?.attempts += 1
                 }
-                if let dLineman = pickWeightedPlayer(from: dLinemen + linebackers) {
+                // R37: the sim names the sacker (keyDefensePlayerID) — he
+                // gets the FULL sack, matching the play-by-play line. The
+                // unnamed fallback keeps the old half-sack convention.
+                if let named = play.keyDefensePlayerID,
+                   let sacker = defensePlayers.first(where: { $0.id == named }) {
+                    accumulator[sacker.id]?.sacks += 1.0
+                    accumulator[sacker.id]?.tackles += 1
+                } else if let dLineman = pickWeightedPlayer(from: dLinemen + linebackers) {
                     accumulator[dLineman.id]?.sacks += 0.5
                     accumulator[dLineman.id]?.tackles += 1
                 }

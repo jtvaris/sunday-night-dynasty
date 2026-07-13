@@ -40,6 +40,9 @@ struct NewCareerView: View {
     @State private var selectedSetup: CareerSetup = .standard
     @State private var injuryFrequency: InjuryFrequency = .normal
 
+    // R37 — "What is this?" explainer toggle for modes vs. scenarios.
+    @State private var showSetupExplainer = false
+
     @State private var viewWidth: CGFloat = 0
 
     /// iPad always reports .regular for both size classes, so use actual width
@@ -495,6 +498,55 @@ struct NewCareerView: View {
                 Text("How do you want to start? Modes change how the league is built; scenarios drop you into a hand-crafted situation.")
                     .font(.subheadline)
                     .foregroundStyle(Color.textSecondary)
+
+                // R37: collapsible primer for players seeing these cards
+                // for the first time, plus a concrete recommendation.
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { showSetupExplainer.toggle() }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "questionmark.circle")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("What is this?")
+                            .font(.caption.weight(.semibold))
+                        Image(systemName: showSetupExplainer ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundStyle(Color.accentBlue)
+                }
+                .buttonStyle(.plain)
+
+                if showSetupExplainer {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label {
+                            Text("Modes (Standard, Fantasy Draft) decide how rosters are built on day one: real depth charts, or a league-wide redraft.")
+                        } icon: {
+                            Image(systemName: "square.grid.2x2.fill")
+                                .foregroundStyle(Color.accentBlue)
+                        }
+                        Label {
+                            Text("Scenarios (Rebuild, Win Now, Cap Hell) reshape your team into a hand-crafted situation with a clear challenge to solve.")
+                        } icon: {
+                            Image(systemName: "flag.checkered")
+                                .foregroundStyle(Color.accentGold)
+                        }
+                        Label {
+                            Text("New to Dynasty? Start with Standard — it's the classic experience. Rebuild makes a great second career: low expectations, plenty of picks.")
+                        } icon: {
+                            Image(systemName: "graduationcap.fill")
+                                .foregroundStyle(Color.success)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .padding(10)
+                    .background(Color.backgroundPrimary, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
 
                 ForEach(CareerSetup.allCases, id: \.self) { setup in
                     CareerSetupCard(setup: setup, isSelected: selectedSetup == setup)

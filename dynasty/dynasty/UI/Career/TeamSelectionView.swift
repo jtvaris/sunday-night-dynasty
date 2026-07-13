@@ -294,6 +294,10 @@ struct TeamSelectionView: View {
         }
         .font(.system(size: 9, weight: .heavy))
         .tracking(1.2)
+        // R39 device coverage: "DIFFICULTY" wrapped to "DIFFICULT/Y" inside
+        // its 60 pt column on iPad mini — scale down instead of wrapping.
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
         .foregroundStyle(Color.textTertiary)
         .padding(.leading, 56) // skip past logo
     }
@@ -1207,7 +1211,7 @@ private struct TeamDetailSheet: View {
 
     private var ownerExpectationsCard: some View {
         VStack(spacing: 8) {
-            sectionLabel("Owner Expectations")
+            sectionLabel(String(localized: "Owner Expectations"))
 
             HStack(spacing: 16) {
                 HStack(spacing: 6) {
@@ -1231,7 +1235,7 @@ private struct TeamDetailSheet: View {
 
     private var marketMediaCard: some View {
         VStack(spacing: 8) {
-            sectionLabel("Market & Media")
+            sectionLabel(String(localized: "Market & Media"))
 
             Text(preview.marketDescription)
                 .font(.subheadline)
@@ -1272,7 +1276,7 @@ private struct TeamDetailSheet: View {
 
     private var startingQBCard: some View {
         VStack(spacing: 8) {
-            sectionLabel("Starting Quarterback")
+            sectionLabel(String(localized: "Starting Quarterback"))
 
             HStack(spacing: 12) {
                 Image(systemName: "figure.american.football")
@@ -1317,7 +1321,7 @@ private struct TeamDetailSheet: View {
 
     private var divisionRivalsCard: some View {
         VStack(spacing: 8) {
-            sectionLabel("Division Rivals")
+            sectionLabel(String(localized: "Division Rivals"))
 
             VStack(spacing: 6) {
                 ForEach(divisionRivals, id: \.abbreviation) { rival in
@@ -1375,7 +1379,7 @@ private struct TeamDetailSheet: View {
 
     private var coachingBudgetCard: some View {
         VStack(spacing: 8) {
-            sectionLabel("Coaching Budget")
+            sectionLabel(String(localized: "Coaching Budget"))
 
             HStack(spacing: 8) {
                 Image(systemName: "dollarsign.square.fill")

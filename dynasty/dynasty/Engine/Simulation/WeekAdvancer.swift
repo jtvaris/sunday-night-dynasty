@@ -96,13 +96,19 @@ enum WeekAdvancer {
         switch career.currentPhase {
 
         case .regularSeason:
-            advanceRegularSeasonWeek(career: career, modelContext: modelContext)
+            PerfLog.time("advance.regularSeason") {
+                advanceRegularSeasonWeek(career: career, modelContext: modelContext)
+            }
 
         case .playoffs:
-            advancePlayoffWeek(career: career, modelContext: modelContext)
+            PerfLog.time("advance.playoffs") {
+                advancePlayoffWeek(career: career, modelContext: modelContext)
+            }
 
         default:
-            advanceOffseasonPhase(career: career, modelContext: modelContext)
+            PerfLog.time("advance.offseason.\(career.currentPhase.rawValue)") {
+                advanceOffseasonPhase(career: career, modelContext: modelContext)
+            }
         }
 
         // The live-game injury exemption never outlives the advance it was
@@ -307,9 +313,46 @@ enum WeekAdvancer {
         refillAIRosters(career: career, teams: teams, modelContext: modelContext)
     }
 
+    // MARK: - Private: Per-team staff lookup (R39 perf)
+
+    /// A team's medical staff, resolved once per advance.
+    struct TeamMedicalStaff {
+        var doctor: Coach?
+        var physio: Coach?
+        var trainer: Coach?
+    }
+
+    /// One pass over `coaches` → per-team doctor/physio/trainer. Keeps the
+    /// original `allCoaches.first { … }` semantics: the FIRST coach of a role
+    /// in array order wins, so results are bit-identical to the old scans.
+    static func medicalStaffByTeam(coaches: [Coach]) -> [UUID: TeamMedicalStaff] {
+        var map: [UUID: TeamMedicalStaff] = [:]
+        for coach in coaches {
+            guard let teamID = coach.teamID else { continue }
+            switch coach.role {
+            case .teamDoctor:
+                if map[teamID, default: TeamMedicalStaff()].doctor == nil {
+                    map[teamID, default: TeamMedicalStaff()].doctor = coach
+                }
+            case .physio:
+                if map[teamID, default: TeamMedicalStaff()].physio == nil {
+                    map[teamID, default: TeamMedicalStaff()].physio = coach
+                }
+            case .headTrainer:
+                if map[teamID, default: TeamMedicalStaff()].trainer == nil {
+                    map[teamID, default: TeamMedicalStaff()].trainer = coach
+                }
+            default:
+                break
+            }
+        }
+        return map
+    }
+
     // MARK: - Private: Regular Season
 
     private static func advanceRegularSeasonWeek(career: Career, modelContext: ModelContext) {
+        var perf = PerfLog.Lap("advance_regular")   // R39 breakdown
         let week = career.currentWeek
         let season = career.currentSeason
 
@@ -334,6 +377,18 @@ enum WeekAdvancer {
         let teamsByID = fetchTeamsByID(modelContext: modelContext)
         let allPlayers = fetchAllPlayers(modelContext: modelContext)
         let allCoaches = fetchAllCoaches(modelContext: modelContext)
+
+        // R39 perf: the fatigue/injury/XP passes below used to re-scan
+        // `allCoaches`/`allPlayers` once per player (O(players × coaches) —
+        // ~850k SwiftData attribute reads, ~1 s per advance). Group both by
+        // team ONCE; every lookup keeps `.first`-scan semantics (same coach
+        // wins when a team somehow has duplicates of a role).
+        let medicalStaffByTeam = Self.medicalStaffByTeam(coaches: allCoaches)
+        let coachesByTeam = Dictionary(grouping: allCoaches.filter { $0.teamID != nil },
+                                       by: { $0.teamID! })
+        let playersByTeam = Dictionary(grouping: allPlayers.filter { $0.teamID != nil },
+                                       by: { $0.teamID! })
+        perf.lap("fetch")
 
         // Simulate every unplayed game.
         // Player's team game uses full play-by-play simulation;
@@ -404,6 +459,7 @@ enum WeekAdvancer {
 
             updateTeamRecords(game: game, teamsByID: teamsByID)
         }
+        perf.lap("games")
 
         // Store the latest player game result for UI to access.
         //
@@ -491,6 +547,7 @@ enum WeekAdvancer {
             season: season
         )
         career.leagueNarrative = narrativeUpdate.state
+        perf.lap("narrative")
 
         // 0. Generate weekly press conference questions
         if let playerTeamID = career.teamID,
@@ -607,6 +664,8 @@ enum WeekAdvancer {
             }
         }
 
+        perf.lap("news_events_inbox")
+
         // 4d. R22: active holdout drama for the user's team — weekly morale
         // drain, agent escalation, and the player caving around week 3-4.
         if let playerTeamID = career.teamID {
@@ -635,6 +694,8 @@ enum WeekAdvancer {
             )
         }
 
+        perf.lap("holdout_lockerroom")
+
         // 5. Apply fatigue changes for players who played this week
         // (R22: holdout players are away from the facility — no game fatigue).
         for player in allPlayers where player.teamID != nil && !player.isInjured && !player.isHoldingOut {
@@ -643,8 +704,9 @@ enum WeekAdvancer {
         }
 
         // 5b. Apply fatigue recovery using MedicalEngine (physio improves recovery)
-        for player in allPlayers where player.teamID != nil {
-            let teamPhysio = allCoaches.first { $0.teamID == player.teamID && $0.role == .physio }
+        for player in allPlayers {
+            guard let teamID = player.teamID else { continue }
+            let teamPhysio = medicalStaffByTeam[teamID]?.physio
             let recovery = MedicalEngine.weeklyFatigueRecovery(player: player, physio: teamPhysio)
             player.fatigue = max(0, player.fatigue - recovery)
         }
@@ -655,10 +717,12 @@ enum WeekAdvancer {
         //    rate (see LiveGameEngine.rollInjuries) — rolling here too would
         //    double the live coach's injury exposure.
         for player in allPlayers where player.teamID != nil && !player.isInjured && !player.isHoldingOut {
-            if let teamID = player.teamID, liveGameInjuryTeamIDs.contains(teamID) { continue }
-            let teamDoctor = allCoaches.first { $0.teamID == player.teamID && $0.role == .teamDoctor }
-            let teamPhysio = allCoaches.first { $0.teamID == player.teamID && $0.role == .physio }
-            let teamTrainer = allCoaches.first { $0.teamID == player.teamID && $0.role == .headTrainer }
+            guard let teamID = player.teamID else { continue }
+            if liveGameInjuryTeamIDs.contains(teamID) { continue }
+            let staff = medicalStaffByTeam[teamID]
+            let teamDoctor = staff?.doctor
+            let teamPhysio = staff?.physio
+            let teamTrainer = staff?.trainer
 
             // Use MedicalEngine for injury check with medical staff awareness.
             // R40: the career's injury-frequency league setting scales (or
@@ -721,6 +785,8 @@ enum WeekAdvancer {
             }
         }
 
+        perf.lap("fatigue_injury_xp")
+
         // 7b. R26: weekly training-focus micro-development. Every team runs
         // the same tick; AI teams auto-focus their best young players so the
         // user gains no free edge. Gains are +1 attribute bumps capped by the
@@ -728,13 +794,13 @@ enum WeekAdvancer {
         var userFocusGains: [TrainingFocusEngine.FocusGain] = []
         var userBreakout: (player: Player, pointsGained: Int)?
         for team in teams {
-            let roster = allPlayers.filter { $0.teamID == team.id }
+            let roster = playersByTeam[team.id] ?? []
             guard !roster.isEmpty else { continue }
 
             if team.id != career.teamID {
                 TrainingFocusEngine.autoAssignFocus(roster: roster)
             }
-            let teamCoaches = allCoaches.filter { $0.teamID == team.id }
+            let teamCoaches = coachesByTeam[team.id] ?? []
             let gains = TrainingFocusEngine.applyWeeklyFocusTick(roster: roster, coaches: teamCoaches)
 
             // Rare breakout leap for a high-potential youngster (max 2/season/team).
@@ -762,7 +828,7 @@ enum WeekAdvancer {
         // (focus gains, R25 mentor pairs, breakouts, stalled players) and
         // drop a digest in the inbox. The report screen keeps the last 10.
         if let playerTeamID = career.teamID {
-            let userRoster = allPlayers.filter { $0.teamID == playerTeamID }
+            let userRoster = playersByTeam[playerTeamID] ?? []
             let report = DevelopmentReportBuilder.buildWeeklyReport(
                 roster: userRoster,
                 focusGains: userFocusGains,
@@ -779,13 +845,15 @@ enum WeekAdvancer {
             }
         }
 
+        perf.lap("training_focus")
+
         // 8. Process existing injuries — R28 rehab with variance: the weekly
         // roll can land ahead of schedule, on track, or on a setback. Head
         // trainer skill shifts the odds (no trainer = neutral averages, so
         // quick-sim time-missed parity holds).
         var pendingDecisions = career.pendingReturnDecisions
         for player in allPlayers where player.isInjured {
-            let teamTrainer = allCoaches.first { $0.teamID == player.teamID && $0.role == .headTrainer }
+            let teamTrainer = player.teamID.flatMap { medicalStaffByTeam[$0]?.trainer }
             let result = MedicalEngine.processWeeklyRehab(player: player, trainer: teamTrainer)
 
             guard player.teamID == career.teamID else { continue }
@@ -839,10 +907,12 @@ enum WeekAdvancer {
         }
         career.pendingReturnDecisions = pendingDecisions
 
+        perf.lap("rehab")
+
         // 8b. Weekly scheme learning and position training (during season, reduced intensity)
         for team in teams {
-            let teamPlayers = allPlayers.filter { $0.teamID == team.id }
-            let teamCoaches = allCoaches.filter { $0.teamID == team.id }
+            let teamPlayers = playersByTeam[team.id] ?? []
+            let teamCoaches = coachesByTeam[team.id] ?? []
             let oc = teamCoaches.first { $0.role == .offensiveCoordinator }
             let dc = teamCoaches.first { $0.role == .defensiveCoordinator }
 
@@ -911,6 +981,8 @@ enum WeekAdvancer {
             }
         }
 
+        perf.lap("scheme_learning")
+
         // 8c. Generate weekly scout reports for the player's team's scouting staff
         if let playerTeamID = career.teamID, !currentDraftClass.isEmpty {
             let scouts = fetchAllScouts(modelContext: modelContext).filter {
@@ -925,6 +997,8 @@ enum WeekAdvancer {
                 ScoutingEngine.applyWeeklyReports(reports, to: &currentDraftClass)
             }
         }
+
+        perf.lap("scouting")
 
         // Advance the week counter.
         career.currentWeek += 1
@@ -1063,6 +1137,9 @@ enum WeekAdvancer {
                 }
             }
         }
+
+        perf.lap("transitions")
+        perf.finish()
     }
 
     // MARK: - Private: Locker Room Pulse (R25)

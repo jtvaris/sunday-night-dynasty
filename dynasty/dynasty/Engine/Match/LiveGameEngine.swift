@@ -728,14 +728,16 @@ final class LiveGameEngine: ObservableObject {
             if s.receivingTDs > 0 { line += " · \(s.receivingTDs) TD" }
             parts.append(line)
         }
-        if s.tackles > 0 || s.sacks > 0 {
-            var line = "\(s.tackles) TKL"
+        if s.tackles > 0 || s.sacks > 0 || s.passDeflectionCount > 0 {
+            var defenseBits: [String] = []
+            if s.tackles > 0 { defenseBits.append("\(s.tackles) TKL") }
             if s.sacks > 0 {
                 let count = s.sacks.truncatingRemainder(dividingBy: 1) == 0
                     ? String(Int(s.sacks)) : String(format: "%.1f", s.sacks)
-                line += " · \(count) SACK\(s.sacks == 1 ? "" : "S")"
+                defenseBits.append("\(count) SACK\(s.sacks == 1 ? "" : "S")")
             }
-            parts.append(line)
+            if s.passDeflectionCount > 0 { defenseBits.append("\(s.passDeflectionCount) PD") }
+            parts.append(defenseBits.joined(separator: " · "))
         }
         return parts.joined(separator: " | ")
     }
@@ -1212,6 +1214,9 @@ final class LiveGameEngine: ObservableObject {
         var recordedPlay = result
         recordedPlay.quarter = quarter
         recordedPlay.timeRemaining = timeRemaining
+        // R37: stamp possession so the feed can color defensive plays from
+        // the player's perspective (a sack BY his defense reads positive).
+        recordedPlay.offenseWasHome = homeHasPossession
         currentDrivePlays.append(recordedPlay)
         playLog.append(recordedPlay)
         lastPlay = recordedPlay

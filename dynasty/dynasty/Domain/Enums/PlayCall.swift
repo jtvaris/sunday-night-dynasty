@@ -267,6 +267,9 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
         var runGapBonus: Double
         var blitzPickupBonus: Double
         var yacMultiplier: Double
+        /// True for run-fake passes: the sim rolls whether the box bites on
+        /// the fake (awareness-driven, R37) and shades the completion odds.
+        var isPlayAction: Bool = false
 
         static let neutral = SimulatorHint(
             passDepth: nil,
@@ -358,7 +361,8 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
             return SimulatorHint(passDepth: .deep, runGapBonus: 0, blitzPickupBonus: -0.2, yacMultiplier: 1.0)
         case .playActionDeep:
             // The fake holds the second level; the long drop invites the rush.
-            return SimulatorHint(passDepth: .deep, runGapBonus: 0, blitzPickupBonus: -0.15, yacMultiplier: 1.15)
+            return SimulatorHint(passDepth: .deep, runGapBonus: 0, blitzPickupBonus: -0.15,
+                                 yacMultiplier: 1.15, isPlayAction: true)
 
         // --- Special ---
         case .qbSneak:

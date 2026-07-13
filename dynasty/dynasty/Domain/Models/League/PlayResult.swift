@@ -27,6 +27,22 @@ struct PlayResult: Codable {
     // pass target, intercepting defender). Absent in older saved data.
     /// The offensive player the play ran through: rusher, scramble QB, or pass target.
     var keyOffensePlayerID: UUID? = nil
-    /// The defensive player who decided the play (e.g. the intercepting DB).
+    /// The defensive player who decided the play: intercepting DB, named
+    /// sacker, breakup DB, credited tackler, or penalty culprit.
     var keyDefensePlayerID: UUID? = nil
+
+    // R37 player-IQ / defensive-commentary signals (all optional so older
+    // encoded plays keep decoding; nil = pre-R37 behavior everywhere).
+    /// Play action only: did the second level bite on the run fake? Drives
+    /// the 3D linebacker choreography (they only step downhill when true).
+    var defenseBitOnFake: Bool? = nil
+    /// True when an incompletion was a named pass breakup — the credited
+    /// defender (``keyDefensePlayerID``) earns a light PD stat.
+    var passBreakup: Bool? = nil
+    /// True for showcase defensive plays (big hit, breakup): the live feed
+    /// paints the row from the defense's perspective.
+    var defensiveHighlight: Bool? = nil
+    /// Which team had the ball (stamped by the live engine only) so the
+    /// feed can color defensive plays from the player's perspective.
+    var offenseWasHome: Bool? = nil
 }

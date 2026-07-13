@@ -8,9 +8,9 @@ enum GameSpeed: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .fast:   return "Fast"
-        case .normal: return "Normal"
-        case .slow:   return "Slow"
+        case .fast:   return String(localized: "Fast")
+        case .normal: return String(localized: "Normal")
+        case .slow:   return String(localized: "Slow")
         }
     }
 }
@@ -21,9 +21,9 @@ enum ThemePreference: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .dark:   return "Dark"
-        case .auto:   return "Auto"
-        case .system: return "System"
+        case .dark:   return String(localized: "Dark")
+        case .auto:   return String(localized: "Auto")
+        case .system: return String(localized: "System")
         }
     }
 }
@@ -41,7 +41,7 @@ enum PlayClockSetting: String, CaseIterable, Identifiable {
         switch self {
         case .ten:     return "10 s"
         case .fifteen: return "15 s"
-        case .off:     return "Off"
+        case .off:     return String(localized: "Off")
         }
     }
 }
@@ -52,18 +52,18 @@ enum Difficulty: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .easy:      return "Easy"
-        case .normal:    return "Normal"
-        case .hard:      return "Hard"
-        case .realistic: return "Realistic"
+        case .easy:      return String(localized: "Easy")
+        case .normal:    return String(localized: "Normal")
+        case .hard:      return String(localized: "Hard")
+        case .realistic: return String(localized: "Realistic")
         }
     }
     var subtitle: String {
         switch self {
-        case .easy:      return "Forgiving CPU rivals"
-        case .normal:    return "Balanced league"
-        case .hard:      return "Sharper opponents"
-        case .realistic: return "Unforgiving simulation"
+        case .easy:      return String(localized: "Forgiving CPU rivals")
+        case .normal:    return String(localized: "Balanced league")
+        case .hard:      return String(localized: "Sharper opponents")
+        case .realistic: return String(localized: "Unforgiving simulation")
         }
     }
 }
@@ -102,6 +102,8 @@ struct SettingsView: View {
     @State private var showResetConfirm = false
     @State private var showResetSuccess = false
     @State private var showChangelog = false
+    /// R37: confirmation that first-run tips were re-armed.
+    @State private var showTipsResetSuccess = false
 
     private var appVersion: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "–"
@@ -172,6 +174,11 @@ struct SettingsView: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text("All Dynasty data has been removed from this device.")
+            }
+            .alert("Tips reset", isPresented: $showTipsResetSuccess) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("One-time hints will show again: the dashboard tour, the first-snap walkthrough, and the in-game hint banners.")
             }
             .sheet(isPresented: $showChangelog) {
                 ChangelogSheet()
@@ -342,10 +349,23 @@ struct SettingsView: View {
                 }
             }
             .listRowBackground(Color.backgroundSecondary)
+
+            // R37: re-arm every one-time coach mark and hint banner.
+            Button {
+                FirstRunTip.resetAll()
+                showTipsResetSuccess = true
+            } label: {
+                HStack {
+                    Label("Reset Tips", systemImage: "lightbulb.fill")
+                        .foregroundStyle(Color.textPrimary)
+                    Spacer()
+                }
+            }
+            .listRowBackground(Color.backgroundSecondary)
         } header: {
             sectionHeader("Tutorial")
         } footer: {
-            Text("Walks through the major systems of the game from the main menu.")
+            Text("Replay Tutorial walks through the major systems from the main menu. Reset Tips shows the one-time hints (dashboard tour, first-snap walkthrough, in-game banners) again.")
                 .foregroundStyle(Color.textTertiary)
         }
     }
@@ -419,7 +439,7 @@ struct SettingsView: View {
 
     // MARK: - Helpers
 
-    private func sectionHeader(_ title: String) -> some View {
+    private func sectionHeader(_ title: LocalizedStringKey) -> some View {
         Text(title)
             .foregroundStyle(Color.accentGold)
     }

@@ -350,6 +350,55 @@ enum FreeAgencyEngine {
 
     // MARK: - AI Free Agency Simulation
 
+    /// R39 perf: per-team position-group counts + best OVR, built ONCE from a
+    /// roster snapshot and updated incrementally as signings land.
+    ///
+    /// `assessPositionNeed` re-filters `allPlayers` (~1,700 SwiftData models)
+    /// on every call; the bulk FA skip evaluated it per agent × team, which
+    /// added up to ~20M attribute reads (~30 s per FreeAgency advance in the
+    /// multi-season harness). This index answers the same question from a
+    /// dictionary and returns bit-identical need levels.
+    struct RosterNeedIndex {
+        /// team → position → (count, best overall) for that exact position.
+        private var byTeam: [UUID: [Position: (count: Int, best: Int)]] = [:]
+
+        init(allPlayers: [Player]) {
+            for player in allPlayers {
+                guard let teamID = player.teamID else { continue }
+                add(position: player.position, overall: player.overall, to: teamID)
+            }
+        }
+
+        /// Registers a signing so later need checks see the roster change,
+        /// exactly like re-filtering `allPlayers` used to.
+        mutating func add(position: Position, overall: Int, to teamID: UUID) {
+            var teamMap = byTeam[teamID] ?? [:]
+            let current = teamMap[position] ?? (count: 0, best: 0)
+            teamMap[position] = (count: current.count + 1, best: max(current.best, overall))
+            byTeam[teamID] = teamMap
+        }
+
+        /// Same decision table as `assessPositionNeed(team:position:allPlayers:)`.
+        func need(teamID: UUID, position: Position) -> PositionNeedLevel {
+            let (groupPositions, idealCount) = FreeAgencyEngine.positionGroupInfo(for: position)
+            var count = 0
+            var bestOVR = 0
+            if let teamMap = byTeam[teamID] {
+                for groupPosition in groupPositions {
+                    if let entry = teamMap[groupPosition] {
+                        count += entry.count
+                        bestOVR = max(bestOVR, entry.best)
+                    }
+                }
+            }
+            if count == 0 || bestOVR < 60 { return .critical }
+            let deficit = idealCount - count
+            if deficit >= 2 || (deficit >= 1 && bestOVR < 70) { return .high }
+            if deficit >= 1 || bestOVR < 75 { return .moderate }
+            return .none
+        }
+    }
+
     /// Let AI-controlled teams sign available free agents based on need and cap room.
     /// In sandbox cap mode the cap-room filter is dropped so any team can sign anyone.
     /// R23: when `allPlayers` is provided, teams that actually NEED the position
@@ -364,6 +413,12 @@ enum FreeAgencyEngine {
     ) {
         // Sort free agents by overall (best first) so elite players go first
         let sortedAgents = freeAgents.sorted { $0.player.overall > $1.player.overall }
+
+        // R39 perf: one roster snapshot for every need lookup below.
+        var needIndex: RosterNeedIndex?
+        if let rosterPlayers = allPlayers, !rosterPlayers.isEmpty {
+            needIndex = RosterNeedIndex(allPlayers: rosterPlayers)
+        }
 
         for agent in sortedAgents {
             // Skip players who were already signed this cycle
@@ -381,9 +436,10 @@ enum FreeAgencyEngine {
             }
 
             // R23: need-first ordering when roster data is available.
-            if let rosterPlayers = allPlayers, !rosterPlayers.isEmpty {
+            let agentPosition = agent.player.position
+            if let needIndex {
                 func needRank(_ team: Team) -> Int {
-                    switch assessPositionNeed(team: team, position: agent.player.position, allPlayers: rosterPlayers) {
+                    switch needIndex.need(teamID: team.id, position: agentPosition) {
                     case .critical: return 3
                     case .high:     return 2
                     case .moderate: return 1
@@ -420,6 +476,10 @@ enum FreeAgencyEngine {
                 team: winningTeam,
                 capMode: capMode
             )
+
+            // Keep the need index in sync with the roster change (the old
+            // per-call filter saw the new teamID on the next agent too).
+            needIndex?.add(position: agentPosition, overall: agent.player.overall, to: winningTeam.id)
         }
     }
 
@@ -524,8 +584,11 @@ enum FreeAgencyEngine {
         }()
 
         let aiTeams = allTeams.filter { $0.id != playerTeamID }
-        // All players for need assessment; fall back to empty if not provided
+        // All players for need assessment; fall back to empty if not provided.
+        // R39 perf: one snapshot index instead of re-filtering ~1,700 players
+        // per agent × team (same fix as simulateAIFreeAgency).
         let rosterPlayers = allPlayers ?? []
+        let needIndex = rosterPlayers.isEmpty ? nil : RosterNeedIndex(allPlayers: rosterPlayers)
 
         for fa in freeAgents {
             guard fa.player.teamID == nil else { continue }
@@ -541,14 +604,14 @@ enum FreeAgencyEngine {
 
                 // Assess this team's need for the player's position
                 let need: PositionNeedLevel
-                if rosterPlayers.isEmpty {
+                if let needIndex {
+                    need = needIndex.need(teamID: team.id, position: fa.player.position)
+                } else {
                     // Fallback: use old quality-based approach when roster data unavailable
                     let qualityFactor = Double(fa.player.overall - 60) / 40.0
                     if qualityFactor > 0.5 { need = .high }
                     else if qualityFactor > 0.25 { need = .moderate }
                     else { need = .none }
-                } else {
-                    need = assessPositionNeed(team: team, position: fa.player.position, allPlayers: rosterPlayers)
                 }
 
                 // Teams with no need don't bid on that position

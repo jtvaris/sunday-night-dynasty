@@ -227,9 +227,27 @@ enum MatchupResolver {
     // MARK: Sack
 
     private static func resolveSack(_ m: inout PlayMatchups, offense: FieldUnit, defense: FieldUnit) {
-        // Who got home? Rating-weighted among the four rushers, so elite
-        // edges/tackles collect the wins.
-        let rusherRole = weightedPick(roles: [0, 1, 2, 3], weight: { passRush(defense[$0]) })
+        // R37: the sim NAMES the sacker (keyDefensePlayerID → pickDefRole
+        // when he's on the field), so the feed line, box score, and pocket
+        // visual all point at the same man. A blitzing backer gets his own
+        // line; the pocket still caves from a rating-weighted DL side.
+        if let role = m.pickDefRole, (4...6).contains(role) {
+            let rusher = defense[role]
+            m.rushWinnerDefRole = weightedPick(roles: [0, 1, 2, 3], weight: { passRush(defense[$0]) })
+            m.pocketCollapse = 0.9
+            m.separation = 0.8
+            m.events.append(Event(
+                kind: .pressure,
+                text: "\(rusher.shortName) times the blitz and gets home",
+                offenseWon: false, offRole: nil, defRole: role, magnitude: 0.85
+            ))
+            return
+        }
+        // Who got home? The sim's named DL when he's on the field, else
+        // rating-weighted among the four rushers, so elite edges/tackles
+        // collect the wins.
+        let rusherRole = m.pickDefRole.flatMap { (0...3).contains($0) ? $0 : nil }
+            ?? weightedPick(roles: [0, 1, 2, 3], weight: { passRush(defense[$0]) })
         let blockerRole = blockerFacing(defRole: rusherRole)
         let rusher = defense[rusherRole]
         let blocker = offense[blockerRole]
@@ -312,6 +330,19 @@ enum MatchupResolver {
             return
         }
 
+        // R37: the sim named a pass breakup — the field callout credits the
+        // SAME defender the feed line and the PD stat do.
+        if play.passBreakup == true, let dbRole = m.pickDefRole {
+            let db = defense[dbRole]
+            m.separation = 0.5
+            m.events.append(Event(
+                kind: .coverage,
+                text: "\(db.shortName) closes and breaks it up at the catch point",
+                offenseWon: false, offRole: targetRole, defRole: dbRole, magnitude: 0.7
+            ))
+            return
+        }
+
         if coverage(corner) - catchRating(receiver) > 5 {
             m.events.append(Event(
                 kind: .coverage,
@@ -387,6 +418,16 @@ enum MatchupResolver {
         let carrierRole = m.targetOffRole ?? 1
         let carrier = offense[carrierRole]
 
+        // R37: a named big hit gets its field callout — same tackler as the
+        // feed line ("lays the wood").
+        if play.defensiveHighlight == true, let hitRole = m.pickDefRole {
+            m.events.append(Event(
+                kind: .trench,
+                text: "\(defense[hitRole].shortName) lays the wood on \(carrier.shortName)",
+                offenseWon: false, offRole: carrierRole, defRole: hitRole, magnitude: 0.9
+            ))
+        }
+
         if yards >= 8 {
             let blockerRole = weightedPick(roles: poaBlockers, weight: { runBlock(offense[$0]) })
             m.events.append(Event(
@@ -406,9 +447,12 @@ enum MatchupResolver {
                 ))
                 return
             }
-            let stufferRole = weightedPick(roles: poaDefenders, weight: {
-                $0 <= 3 ? blockShed(defense[$0]) : tackling(defense[$0])
-            })
+            // Prefer the tackler the sim NAMED when he's at the point of
+            // attack (R37) — feed, stats and field pulse stay in agreement.
+            let stufferRole = m.pickDefRole.flatMap { poaDefenders.contains($0) ? $0 : nil }
+                ?? weightedPick(roles: poaDefenders, weight: {
+                    $0 <= 3 ? blockShed(defense[$0]) : tackling(defense[$0])
+                })
             let blockerRole = poaBlockers.min {
                 runBlock(offense[$0]) < runBlock(offense[$1])
             } ?? poaBlockers[0]

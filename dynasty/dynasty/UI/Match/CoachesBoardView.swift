@@ -159,7 +159,9 @@ struct CoachesBoardView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "clock.fill")
                         .font(.system(size: 10, weight: .bold))
-                    Text("\(engine.pendingSubstitutions.count) sub\(engine.pendingSubstitutions.count == 1 ? "" : "s") at next whistle")
+                    Text(engine.pendingSubstitutions.count == 1
+                         ? "1 sub at next whistle"
+                         : "\(engine.pendingSubstitutions.count) subs at next whistle")
                         .font(.system(size: 12, weight: .bold))
                 }
                 .foregroundStyle(Color.warning)
@@ -178,6 +180,7 @@ struct CoachesBoardView: View {
                     .background(Color.backgroundTertiary, in: Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(Text("Close"))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -350,6 +353,27 @@ struct CoachesBoardView: View {
             .shadow(color: isSelected ? Color.accentGold.opacity(0.35) : .clear, radius: 7)
         }
         .buttonStyle(.plain)
+        // R38 VoiceOver: name + grade + fatigue (+ injury/sub status) per card.
+        .accessibilityLabel(Text(boardCardAccessibilityText(
+            player: player, grade: grade, fatigue: fatigue,
+            isOut: isOut, hasPendingSub: hasPendingSub
+        )))
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+
+    /// VoiceOver summary for a board card — localized frame, football
+    /// terms (position abbreviations) stay English.
+    private func boardCardAccessibilityText(
+        player: SimPlayer, grade: Int, fatigue: Int,
+        isOut: Bool, hasPendingSub: Bool
+    ) -> String {
+        var text = String(localized: "\(player.shortName), \(player.position.rawValue), day grade \(grade), fatigue \(fatigue) percent")
+        if isOut {
+            text += ", " + String(localized: "out injured")
+        } else if hasPendingSub {
+            text += ", " + String(localized: "substitution queued")
+        }
+        return text
     }
 
     private func statusBadge(icon: String, tint: Color) -> some View {
@@ -431,7 +455,7 @@ struct CoachesBoardView: View {
     /// Queued swaps waiting for the whistle, each cancellable.
     private var pendingCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("PENDING · AT NEXT WHISTLE", icon: "clock.fill", tint: .warning)
+            sectionTitle(String(localized: "PENDING · AT NEXT WHISTLE"), icon: "clock.fill", tint: .warning)
             ForEach(engine.pendingSubstitutions) { sub in
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.triangle.2.circlepath")
@@ -470,7 +494,9 @@ struct CoachesBoardView: View {
     /// Placeholder for an empty live stat line: skill players accumulate
     /// "touches", defenders don't — their empty line says "No stats yet".
     private var emptyStatLineText: String {
-        selectedPlayer.position.side == .defense ? "No stats yet" : "No touches yet"
+        selectedPlayer.position.side == .defense
+            ? String(localized: "No stats yet")
+            : String(localized: "No touches yet")
     }
 
     private var selectedPlayerCard: some View {
@@ -550,24 +576,40 @@ struct CoachesBoardView: View {
                 }
             }
 
-            // Condition meters.
+            // Condition meters + Football IQ (R37): the awareness-driven
+            // rating behind penalties, fakes, picks, vision, and ball
+            // security — so the coach knows whose decisions to trust.
+            let footballIQ = CoachesBoardView.footballIQ(of: player)
             HStack(spacing: 14) {
                 conditionMeter(
-                    label: "FATIGUE",
+                    label: String(localized: "FATIGUE"),
                     value: line?.fatigue ?? player.fatigue,
                     color: (line?.fatigue ?? player.fatigue) >= 70 ? .danger
                         : ((line?.fatigue ?? player.fatigue) >= 40 ? .warning : .success)
                 )
                 conditionMeter(
-                    label: "MORALE",
+                    label: String(localized: "MORALE"),
                     value: line?.morale ?? player.morale,
                     color: (line?.morale ?? player.morale) >= 65 ? .success
                         : ((line?.morale ?? player.morale) >= 40 ? .warning : .danger)
+                )
+                conditionMeter(
+                    label: String(localized: "FOOTBALL IQ"),
+                    value: footballIQ,
+                    color: Color.forRating(footballIQ)
                 )
             }
         }
         .padding(14)
         .cardBackground()
+    }
+
+    /// Football IQ (R37): the awareness-weighted decision rating the sim
+    /// actually plays with — awareness 60% (reads, discipline, ball
+    /// security, fake recognition) + decision making 40%.
+    static func footballIQ(of player: SimPlayer) -> Int {
+        Int((Double(player.mental.awareness) * 0.6
+             + Double(player.mental.decisionMaking) * 0.4).rounded())
     }
 
     private func battleRecordText(_ line: LiveGameEngine.LivePlayerLine?) -> String {
@@ -602,7 +644,8 @@ struct CoachesBoardView: View {
     }
 
     private func trendLabel(_ trend: Int) -> String {
-        trend >= 2 ? "Trending up" : (trend <= -2 ? "Trending down" : "Holding steady")
+        trend >= 2 ? String(localized: "Trending up")
+            : (trend <= -2 ? String(localized: "Trending down") : String(localized: "Holding steady"))
     }
 
     /// One category's W–L split bar: green wins vs red losses, grey when unfought.
@@ -677,7 +720,7 @@ struct CoachesBoardView: View {
         let groupHoldouts = holdouts.filter { LineupGroup(of: $0.position) == group }
 
         return VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("BENCH · \(group.sectionTitle)", icon: "chair.lounge.fill", tint: .accentGold)
+            sectionTitle(String(localized: "BENCH · \(group.sectionTitle)"), icon: "chair.lounge.fill", tint: .accentGold)
 
             if candidates.isEmpty && out.isEmpty && groupHoldouts.isEmpty {
                 Text("No substitutes in this group.")
@@ -775,6 +818,7 @@ struct CoachesBoardView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(subsDisabled)
+                .accessibilityLabel(Text("Sub in \(candidate.shortName) for \(fieldPlayer.shortName)"))
             }
         }
         .padding(.horizontal, 8)

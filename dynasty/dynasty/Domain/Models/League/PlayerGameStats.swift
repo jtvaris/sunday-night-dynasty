@@ -30,6 +30,12 @@ struct PlayerGameStats: Codable, Identifiable {
     var sacks: Double
     var forcedFumbles: Int
     var interceptionsCaught: Int
+    /// Passes broken up in coverage (R37). Optional so any previously
+    /// encoded stat lines keep decoding; read through ``passDeflectionCount``.
+    var passDeflections: Int? = nil
+
+    /// Convenience accessor for the optional PD tally.
+    var passDeflectionCount: Int { passDeflections ?? 0 }
 
     // MARK: - Kicking
     var fieldGoalsMade: Int

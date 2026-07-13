@@ -1077,7 +1077,11 @@ struct PlayChoreographer {
             scripted.append((c.rb, player(rbStart.x * 0.7, c.losZ - c.direction * 3.4), d))
         }
         var zone = zoneMoves(c, plan: frame.plan, p: 0.45, d: d)
-        if isPA {
+        // R37: the linebackers step downhill ONLY when the sim says they bit
+        // on the fake (`defenseBitOnFake`). A veteran box that read it plays
+        // its zones like any other dropback; nil (older data) keeps the old
+        // always-bite look.
+        if isPA, c.play.defenseBitOnFake ?? true {
             zone = zone.map { move in
                 let role = move.nodeIndex - c.dBase
                 guard [4, 5, 6].contains(role) else { return move }
@@ -1355,7 +1359,11 @@ struct PlayChoreographer {
         // 3. Run: the carrier finishes his track downfield; the credited
         //    defender leads the converge, the rest rally to the spot.
         let runDuration = runDur
-        let tackler = c.defenseWinnerRole.map { c.dBase + $0 } ?? c.lb(1)
+        // R37: converge on the tackler the sim NAMED (feed/stat parity);
+        // fall back to the matchup winner, then the middle backer.
+        let tackler = c.matchups?.pickDefRole.map { c.dBase + $0 }
+            ?? c.defenseWinnerRole.map { c.dBase + $0 }
+            ?? c.lb(1)
         var runPaths: [PathMove] = clears(2)
         if let slice = carrierSlices[2] { runPaths.append(slice) }
         let runTaken = Set(runPaths.map(\.nodeIndex))

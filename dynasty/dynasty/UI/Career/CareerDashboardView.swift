@@ -96,6 +96,35 @@ struct CareerDashboardView: View {
         let urgent: Bool
     }
 
+    /// R37: step index of the one-time dashboard tour overlay (nil = hidden).
+    /// Shown on the very first dashboard open; "Got it"/Skip flips the
+    /// UserDefaults flag so it never returns (Settings → Reset Tips does).
+    @State private var dashboardTourStep: Int? = nil
+
+    /// R37: the four dashboard tour cards — weekly flow, game plan, inbox, tiles.
+    private static let dashboardTourSteps: [CoachMarkStep] = [
+        CoachMarkStep(
+            icon: "checklist",
+            title: "Your week lives on the left",
+            text: "The tasks panel lists everything this week needs from you. Finish the required tasks, then press Advance Week at the bottom of the panel to move the season forward."
+        ),
+        CoachMarkStep(
+            icon: "list.clipboard.fill",
+            title: "Set your game plan",
+            text: "During the season, the \u{201C}Set game plan\u{201D} task opens your weekly plan: run/pass lean, tempo, and matchup answers for Sunday. A good plan gives your play-caller better options."
+        ),
+        CoachMarkStep(
+            icon: "envelope.fill",
+            title: "Watch your inbox",
+            text: "The messages panel collects word from the owner, your staff, and the press. Filters at the top narrow it down — owner mail is worth reading before you advance."
+        ),
+        CoachMarkStep(
+            icon: "square.grid.2x2.fill",
+            title: "Tiles are shortcuts",
+            text: "The dashboard tiles jump straight to your roster, salary cap, scouting, staff, and more. Standings and the schedule live on the right. That's the tour — good luck, coach."
+        )
+    ]
+
     // MARK: - Derived
 
     /// Coaching budget overage in thousands. Returns 0 when within budget,
@@ -161,7 +190,9 @@ struct CareerDashboardView: View {
             // Capture the player's game BEFORE the advance plays it, so the
             // summary can show the same deterministic weather the sim used.
             let playedGame = currentWeekPlayerGame
-            WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+            PerfLog.time("advance_week") {
+                WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+            }
             if let result = WeekAdvancer.lastPlayerGameResult,
                let home = teamsByID[result.boxScore.home.teamID],
                let away = teamsByID[result.boxScore.away.teamID] {
@@ -184,6 +215,7 @@ struct CareerDashboardView: View {
 
     /// Gathers teams, staffs and prep boosts, then presents the live match.
     private func startCoachedGame() {
+        PerfLog.mark("coached_scene")   // R39 (c): Coach the Game tap
         guard let teamID = career.teamID,
               let playerTeam = allTeamsByID[teamID],
               let game = currentWeekPlayerGame else { return }
@@ -289,7 +321,18 @@ struct CareerDashboardView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .task { loadAllData() }
+        .task {
+            loadAllData()
+            // R39 (b): Continue Career tap → dashboard data ready.
+            PerfLog.measure("career_open_to_dashboard", sinceMark: "career_open")
+            // R39: pre-compile the 3D field's GPU pipelines in the background
+            // so the first Coach-the-Game open skips the shader-compile stall.
+            FootballFieldScene.warmUp()
+            // R37: one-time dashboard tour on the very first open.
+            if !FirstRunTip.dashboardTour.isDone && dashboardTourStep == nil {
+                withAnimation(.easeInOut(duration: 0.25)) { dashboardTourStep = 0 }
+            }
+        }
         .sheet(isPresented: $showGameSummary) {
             if let result = lastGameResult, let home = lastHomeTeam, let away = lastAwayTeam {
                 NavigationStack {
@@ -353,6 +396,18 @@ struct CareerDashboardView: View {
                 }
                 .padding(.bottom, DSSpacing.lg)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .overlay {
+            // R37: first-run dashboard tour — the card floats over the center
+            // of the dashboard; everything behind it stays fully interactive.
+            if dashboardTourStep != nil {
+                CoachMarkOverlay(
+                    steps: Self.dashboardTourSteps,
+                    step: $dashboardTourStep,
+                    onComplete: { FirstRunTip.dashboardTour.markDone() }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
         }
     }
@@ -563,24 +618,24 @@ struct CareerDashboardView: View {
 
     private var timelineNodes: [(label: String, month: String, phase: SeasonPhase?, weekNum: Int?)] {
         var nodes: [(String, String, SeasonPhase?, Int?)] = [
-            ("Coaching", "Feb", .coachingChanges, nil),
-            ("Review", "Feb", .reviewRoster, nil),
-            ("Combine", "Mar", .combine, nil),
-            ("Free Agency", "Mar", .freeAgency, nil),
-            ("Draft", "Apr", .draft, nil),
-            ("OTAs", "May", .otas, nil),
-            ("Camp", "Jun", .trainingCamp, nil),
-            ("Preseason", "Aug", .preseason, nil),
-            ("Cuts", "Aug", .rosterCuts, nil),
+            (String(localized: "Coaching"), "Feb", .coachingChanges, nil),
+            (String(localized: "Review"), "Feb", .reviewRoster, nil),
+            (String(localized: "Combine"), "Mar", .combine, nil),
+            (String(localized: "Free Agency"), "Mar", .freeAgency, nil),
+            (String(localized: "Draft"), "Apr", .draft, nil),
+            (String(localized: "OTAs"), "May", .otas, nil),
+            (String(localized: "Camp"), "Jun", .trainingCamp, nil),
+            (String(localized: "Preseason"), "Aug", .preseason, nil),
+            (String(localized: "Cuts"), "Aug", .rosterCuts, nil),
         ]
         // Regular season weeks
         let weekMonths = ["Sep","Sep","Sep","Sep","Oct","Oct","Oct","Oct","Nov","Nov","Nov","Nov","Dec","Dec","Dec","Dec","Jan","Jan"]
         for w in 1...18 {
             let month = w <= weekMonths.count ? weekMonths[w - 1] : "Jan"
-            nodes.append(("Wk \(w)", month, .regularSeason, w))
+            nodes.append((String(localized: "Wk \(w)"), month, .regularSeason, w))
         }
-        nodes.append(("Playoffs", "Jan", .playoffs, nil))
-        nodes.append(("Super Bowl", "Feb", .superBowl, nil))
+        nodes.append((String(localized: "Playoffs"), "Jan", .playoffs, nil))
+        nodes.append((String(localized: "Super Bowl"), "Feb", .superBowl, nil))
         return nodes
     }
 
@@ -2121,6 +2176,11 @@ struct CareerDashboardView: View {
             if isWeakest {
                 Text("NEED")
                     .font(.system(size: 7, weight: .heavy))
+                    // R39 device coverage: on iPad mini the grid column runs
+                    // out of width and this badge wrapped into a vertical
+                    // letter stack — shrink instead of wrapping.
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
                     .foregroundStyle(Color.danger)
                     .padding(.horizontal, 3)
                     .padding(.vertical, 1)
@@ -2438,7 +2498,7 @@ struct CareerDashboardView: View {
         DashboardTile(icon: "clock.arrow.circlepath", title: "Last Season") {
             VStack(alignment: .leading, spacing: 6) {
                 if let record = previousSeasonRecord, let year = previousSeasonYear {
-                    Text("Season \(year)")
+                    Text("Season \(String(year))")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(Color.textPrimary)
 
@@ -2621,7 +2681,6 @@ struct CareerDashboardView: View {
             }
             .buttonStyle(.plain)
             .disabled(debugSkipRunning
-                      || career.currentPhase == .freeAgency
                       || career.currentPhase == .regularSeason)
         }
         .padding(.horizontal, 12)
@@ -2635,7 +2694,7 @@ struct CareerDashboardView: View {
     /// play-by-play sim on the main actor (frozen "Skipping…" UI).
     private var debugSkipTargetLabel: String {
         switch career.currentPhase {
-        case .otas, .trainingCamp, .preseason, .rosterCuts:
+        case .freeAgency, .proDays, .draft, .otas, .trainingCamp, .preseason, .rosterCuts:
             return "Reg. Season"
         default:
             return "FA"
@@ -2651,16 +2710,28 @@ struct CareerDashboardView: View {
         debugSkipRunning = true
         defer { debugSkipRunning = false }
 
+        // First tap stops at FA (so the FA flow itself stays testable);
+        // tapping again from FA onward fast-forwards to the regular season,
+        // auto-running the AI draft exactly like the smoke-test harness (R39).
+        let faOnwards: [SeasonPhase] = [
+            .freeAgency, .proDays, .draft, .otas, .trainingCamp, .preseason, .rosterCuts,
+        ]
+        let stopAtFA = !faOnwards.contains(career.currentPhase)
+
         var safety = 0
-        while career.currentPhase != .freeAgency
-                && career.currentPhase != .regularSeason
+        while career.currentPhase != .regularSeason
+                && !(stopAtFA && career.currentPhase == .freeAgency)
                 && safety < 60 {
             // CoachingChanges normally requires a user-confirmed sheet; bypass it
             // for the debug skip by mirroring what the confirm-sheet does.
             if career.currentPhase == .coachingChanges {
                 career.currentPhase = .reviewRoster
             } else {
+                let phaseBefore = career.currentPhase
                 WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+                if career.currentPhase == .draft && phaseBefore != .draft {
+                    MultiSeasonSmokeTest.runAIDraft(career: career, context: modelContext)
+                }
             }
             try? modelContext.save()
             safety += 1
@@ -3077,6 +3148,10 @@ struct CareerDashboardView: View {
     }
 
     private func loadAllData() {
+        PerfLog.time("dashboard_loadAllData") { loadAllDataBody() }
+    }
+
+    private func loadAllDataBody() {
         guard let teamID = career.teamID else { return }
 
         // All teams

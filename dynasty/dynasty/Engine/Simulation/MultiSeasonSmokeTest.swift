@@ -88,11 +88,22 @@ enum MultiSeasonSmokeTest {
         var hcSnapshot = headCoachByTeam(context: context)
         let maxAdvances = seasons * 60 + 60   // watchdog: infinite-loop guard
 
+        // R39: wall-clock timing — total run + slowest single advance.
+        let runStart = CFAbsoluteTimeGetCurrent()
+        var slowestAdvanceMs = 0.0
+        var slowestAdvanceLabel = ""
+
         while seasonsCompleted < seasons && advances < maxAdvances {
             let phaseBefore = career.currentPhase
             let seasonBefore = career.currentSeason
 
+            let advStart = CFAbsoluteTimeGetCurrent()
             WeekAdvancer.advanceWeek(career: career, modelContext: context)
+            let advMs = (CFAbsoluteTimeGetCurrent() - advStart) * 1000
+            if advMs > slowestAdvanceMs {
+                slowestAdvanceMs = advMs
+                slowestAdvanceLabel = "\(phaseBefore) wk\(career.currentWeek) s\(seasonBefore)"
+            }
             advances += 1
 
             if WeekAdvancer.wasFired {
@@ -153,6 +164,15 @@ enum MultiSeasonSmokeTest {
         let finalOVR = leagueAverageOVR(context: context)
         print(String(format: "SMOKE: ===== done: %d seasons, %d advances, firedNotes=%d, final avgOVR=%.2f (baseline %.2f) =====",
                      seasonsCompleted, advances, firedNotes, finalOVR, baselineOVR))
+
+        // R39: wall-clock summary.
+        let totalS = CFAbsoluteTimeGetCurrent() - runStart
+        print(String(
+            format: "PERF|multiseason_%dseasons|%.1f  (avg advance %.1f ms, slowest %.1f ms @ %@)",
+            seasonsCompleted, totalS * 1000,
+            advances > 0 ? totalS * 1000 / Double(advances) : 0,
+            slowestAdvanceMs, slowestAdvanceLabel
+        ))
     }
 
     // MARK: - Fantasy draft bootstrap (R40)
@@ -217,7 +237,10 @@ enum MultiSeasonSmokeTest {
 
     // MARK: - AI draft (mirrors DraftDayCoordinator's AI path)
 
-    private static func runAIDraft(career: Career, context: ModelContext) -> Int {
+    /// Internal (not private) so the DEBUG dashboard skip can reuse it when
+    /// fast-forwarding a real career through the draft phase (R39).
+    @discardableResult
+    static func runAIDraft(career: Career, context: ModelContext) -> Int {
         let season = career.currentSeason
         var descriptor = FetchDescriptor<DraftPick>(
             predicate: #Predicate<DraftPick> { $0.seasonYear == season && !$0.isComplete },

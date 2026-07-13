@@ -16,6 +16,21 @@ private enum NewsFilter: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// R38: localized chip label — the raw value stays the stable identifier.
+    var label: String {
+        switch self {
+        case .all:       return String(localized: "All")
+        case .trending:  return String(localized: "Trending")
+        case .myTeam:    return String(localized: "My Team")
+        case .trades:    return String(localized: "Trades")
+        case .awards:    return String(localized: "Awards")
+        case .injuries:  return String(localized: "Injuries")
+        case .statLines: return String(localized: "Stat Lines")
+        case .league:    return String(localized: "League")
+        case .draft:     return String(localized: "Draft")
+        }
+    }
+
     var iconName: String {
         switch self {
         case .all:       return "newspaper"
@@ -164,7 +179,7 @@ struct NewsView: View {
             HStack(spacing: 6) {
                 Image(systemName: filter.iconName)
                     .font(.system(size: 11, weight: .semibold))
-                Text(filter.rawValue)
+                Text(filter.label)
                     .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
                 if count > 0 {
                     Text("\(count)")
@@ -297,7 +312,7 @@ struct NewsView: View {
                 Spacer()
             }
             if showSubLabels {
-                newsSubLabel("Your Team", icon: "star.fill", color: Color.accentGold)
+                newsSubLabel(String(localized: "Your Team"), icon: "star.fill", color: Color.accentGold)
             }
             VStack(spacing: 12) {
                 ForEach(myTeamItems) { item in
@@ -312,7 +327,7 @@ struct NewsView: View {
                 }
             }
             if showSubLabels {
-                newsSubLabel("League News", icon: "sportscourt.fill", color: Color.textTertiary)
+                newsSubLabel(String(localized: "League News"), icon: "sportscourt.fill", color: Color.textTertiary)
             }
             VStack(spacing: 12) {
                 ForEach(leagueItems) { item in

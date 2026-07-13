@@ -83,6 +83,10 @@ struct MainMenuView: View {
         }
         .ignoresSafeArea()
         .toolbar(.hidden, for: .navigationBar)
+        .onAppear {
+            // R39 (a): app start → main menu visible. Emitted once per process.
+            PerfLog.measureLaunch("launch_to_menu")
+        }
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
@@ -96,6 +100,7 @@ struct MainMenuView: View {
                     // Defer presentation of the full-screen cover until the sheet
                     // has dismissed to avoid a presentation conflict.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        PerfLog.mark("career_open")   // R39 (b): slot-picker path
                         continueCareer = career
                     }
                 }
@@ -180,34 +185,38 @@ struct MainMenuView: View {
             teamName = career.playerName
         }
 
-        // Build a friendly progress fragment.
+        // Build a friendly progress fragment. The season year interpolates as
+        // a String so locale digit grouping never renders "2 026".
+        let seasonText = String(career.currentSeason)
         let progressFragment: String
         if career.currentPhase == .regularSeason && career.currentWeek > 0 {
-            progressFragment = "Week \(career.currentWeek), \(career.currentSeason) season"
+            progressFragment = String(localized: "Week \(career.currentWeek), \(seasonText) season")
         } else {
-            progressFragment = "\(phaseLabel(career.currentPhase)) — \(career.currentSeason) season"
+            progressFragment = "\(phaseLabel(career.currentPhase)) — \(String(localized: "\(seasonText) season"))"
         }
 
-        return "CONTINUE: \(teamName.uppercased())  -  \(progressFragment.uppercased())"
+        return String(localized: "CONTINUE: \(teamName)  -  \(progressFragment)").uppercased()
     }
 
     private func phaseLabel(_ phase: SeasonPhase) -> String {
+        // Football terms (Draft, Combine, Free Agency, …) stay in English by
+        // design; only UI-frame phases carry a translation in the catalog.
         switch phase {
-        case .proBowl: return "Pro Bowl"
-        case .superBowl: return "Super Bowl"
-        case .coachingChanges: return "Coaching Changes"
-        case .reviewRoster: return "Review Roster"
-        case .combine: return "Combine"
-        case .freeAgency: return "Free Agency"
-        case .proDays: return "Pro Days"
-        case .draft: return "Draft"
-        case .otas: return "OTAs"
-        case .trainingCamp: return "Training Camp"
-        case .preseason: return "Preseason"
-        case .rosterCuts: return "Roster Cuts"
-        case .regularSeason: return "Regular Season"
-        case .tradeDeadline: return "Trade Deadline"
-        case .playoffs: return "Playoffs"
+        case .proBowl: return String(localized: "Pro Bowl")
+        case .superBowl: return String(localized: "Super Bowl")
+        case .coachingChanges: return String(localized: "Coaching Changes")
+        case .reviewRoster: return String(localized: "Review Roster")
+        case .combine: return String(localized: "Combine")
+        case .freeAgency: return String(localized: "Free Agency")
+        case .proDays: return String(localized: "Pro Days")
+        case .draft: return String(localized: "Draft")
+        case .otas: return String(localized: "OTAs")
+        case .trainingCamp: return String(localized: "Training Camp")
+        case .preseason: return String(localized: "Preseason")
+        case .rosterCuts: return String(localized: "Roster Cuts")
+        case .regularSeason: return String(localized: "Regular Season")
+        case .tradeDeadline: return String(localized: "Trade Deadline")
+        case .playoffs: return String(localized: "Playoffs")
         }
     }
 
@@ -229,6 +238,7 @@ struct MainMenuView: View {
             } else if let mostRecentCareer = careers.first {
                 // Exactly one saved career — keep simple Continue behavior
                 Button {
+                    PerfLog.mark("career_open")   // R39 (b): Continue tap
                     continueCareer = mostRecentCareer
                 } label: {
                     MenuButton(title: "Continue Career", icon: "play.circle.fill", isPrimary: true)
@@ -298,7 +308,7 @@ struct MainMenuView: View {
 // MARK: - Menu Button Style
 
 private struct MenuButton: View {
-    let title: String
+    let title: LocalizedStringKey
     let icon: String
     let isPrimary: Bool
 
@@ -548,7 +558,58 @@ private struct TutorialPage: Identifiable {
             ]
         ),
 
-        // 7. Tips & FAQ
+        // 7. Coach Mode (R37)
+        TutorialPage(
+            id: "coachMode",
+            icon: "football.fill",
+            iconTint: .accentGold,
+            title: "Coach Mode: Call the Game",
+            subtitle: "Live play-calling on a 3D field",
+            body: "Coach your team's games play by play. Pick from the call sheet, snap when ready, and manage the clock. A decision clock keeps the pace — if it runs out, your QB just checks into a safe call, never a penalty. You can hand any game (or the rest of one) to the AI at any time.",
+            points: [
+                ("book.fill", "Call sheet — plays grouped Run to Deep"),
+                ("timer", "Decision clock — safe check-down at zero"),
+                ("megaphone.fill", "Audibles — 2 per half, same formation"),
+                ("person.2.fill", "Manage — substitutions and hot hands"),
+                ("forward.end.fill", "Sim to End whenever you're done")
+            ]
+        ),
+
+        // 8. Development & Training (R37)
+        TutorialPage(
+            id: "development",
+            icon: "chart.line.uptrend.xyaxis",
+            iconTint: .accentBlue,
+            title: "Development & Training",
+            subtitle: "Rosters are grown, not bought",
+            body: "Players develop through training focus, snaps, mentoring, and scheme fit. Weekly practice installs new plays for your call sheet, training camp settles position battles, and young players grow fastest — veterans plateau, then decline. Watch workload: overworked players get hurt.",
+            points: [
+                ("figure.strengthtraining.functional", "Set a training focus each week"),
+                ("person.2.wave.2.fill", "Mentors accelerate young teammates"),
+                ("list.clipboard.fill", "Practice a play 2 weeks to install it"),
+                ("bolt.heart.fill", "Manage workload to avoid injuries"),
+                ("arrow.up.right.circle.fill", "Development peaks in years 2-3")
+            ]
+        ),
+
+        // 9. Offseason (R37)
+        TutorialPage(
+            id: "offseason",
+            icon: "arrow.triangle.2.circlepath",
+            iconTint: .accentGold,
+            title: "The Offseason Loop",
+            subtitle: "Championships are built in spring",
+            body: "After the Super Bowl the calendar resets: coaching changes, roster review, the Combine, free agency, the draft, OTAs, training camp, and roster cuts — then a new season kicks off. Each phase has its own tasks, and every year compounds the last one's decisions.",
+            points: [
+                ("person.crop.square.filled.and.at.rectangle.fill", "Feb — hire and re-sign your staff"),
+                ("stopwatch.fill", "Mar — Combine and free agency"),
+                ("rectangle.stack.person.crop.fill", "Apr — the draft"),
+                ("sun.max.fill", "Summer — OTAs, camp, preseason"),
+                ("scissors", "Aug — cut down to the final 53")
+            ]
+        ),
+
+        // 10. Tips & FAQ
         TutorialPage(
             id: "tips",
             icon: "lightbulb.fill",
@@ -757,7 +818,7 @@ private struct SaveSlotCard: View {
             // Stats row
             HStack(alignment: .top, spacing: 12) {
                 statBlock(
-                    title: "Season",
+                    title: String(localized: "Season"),
                     value: "\(career.currentSeason)",
                     detail: weekDetail
                 )
@@ -765,7 +826,7 @@ private struct SaveSlotCard: View {
                     .background(Color.white.opacity(0.1))
                     .frame(height: 36)
                 statBlock(
-                    title: "Phase",
+                    title: String(localized: "Phase"),
                     value: phaseLabel(career.currentPhase),
                     detail: nil
                 )
@@ -773,15 +834,15 @@ private struct SaveSlotCard: View {
                     .background(Color.white.opacity(0.1))
                     .frame(height: 36)
                 statBlock(
-                    title: "Wins",
+                    title: String(localized: "Wins"),
                     value: "\(career.totalWins)",
-                    detail: "\(career.totalLosses) L"
+                    detail: String(localized: "\(career.totalLosses) L")
                 )
                 Divider()
                     .background(Color.white.opacity(0.1))
                     .frame(height: 36)
                 statBlock(
-                    title: "Rings",
+                    title: String(localized: "Rings"),
                     value: "\(career.championships)",
                     detail: nil
                 )
@@ -838,7 +899,7 @@ private struct SaveSlotCard: View {
     }
 
     private var weekDetail: String? {
-        career.currentWeek > 0 ? "Wk \(career.currentWeek)" : nil
+        career.currentWeek > 0 ? String(localized: "Wk \(career.currentWeek)") : nil
     }
 
     private func statBlock(title: String, value: String, detail: String?) -> some View {
@@ -863,21 +924,21 @@ private struct SaveSlotCard: View {
 
     private func phaseLabel(_ phase: SeasonPhase) -> String {
         switch phase {
-        case .proBowl: return "Pro Bowl"
-        case .superBowl: return "Super Bowl"
-        case .coachingChanges: return "Coaching"
-        case .reviewRoster: return "Review"
-        case .combine: return "Combine"
-        case .freeAgency: return "Free Agency"
-        case .proDays: return "Pro Days"
-        case .draft: return "Draft"
-        case .otas: return "OTAs"
-        case .trainingCamp: return "Camp"
-        case .preseason: return "Preseason"
-        case .rosterCuts: return "Cuts"
-        case .regularSeason: return "Regular"
-        case .tradeDeadline: return "Trade DL"
-        case .playoffs: return "Playoffs"
+        case .proBowl: return String(localized: "Pro Bowl")
+        case .superBowl: return String(localized: "Super Bowl")
+        case .coachingChanges: return String(localized: "Coaching")
+        case .reviewRoster: return String(localized: "Review")
+        case .combine: return String(localized: "Combine")
+        case .freeAgency: return String(localized: "Free Agency")
+        case .proDays: return String(localized: "Pro Days")
+        case .draft: return String(localized: "Draft")
+        case .otas: return String(localized: "OTAs")
+        case .trainingCamp: return String(localized: "Camp")
+        case .preseason: return String(localized: "Preseason")
+        case .rosterCuts: return String(localized: "Cuts")
+        case .regularSeason: return String(localized: "Regular")
+        case .tradeDeadline: return String(localized: "Trade DL")
+        case .playoffs: return String(localized: "Playoffs")
         }
     }
 }

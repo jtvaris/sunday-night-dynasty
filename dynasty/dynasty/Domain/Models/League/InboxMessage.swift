@@ -155,6 +155,15 @@ enum InboxFilter: String, CaseIterable {
     case actionRequired  = "Action Required"
     case unread          = "Unread"
 
+    /// R38: localized chip label — the raw value stays the stable identifier.
+    var label: String {
+        switch self {
+        case .all:            return String(localized: "All")
+        case .actionRequired: return String(localized: "Action Required")
+        case .unread:         return String(localized: "Unread")
+        }
+    }
+
     func matches(_ message: InboxMessage) -> Bool {
         switch self {
         case .all:

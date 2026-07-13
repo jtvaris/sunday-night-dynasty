@@ -1,0 +1,3438 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "%@ in for %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ kentälle, %2$@ penkille"
+          }
+        }
+      }
+    },
+    "%@ offense on the field…": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@:n hyökkäys kentällä…"
+          }
+        }
+      }
+    },
+    "%@ queued as this week's practice play.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ lisätty tämän viikon harjoituspeliksi."
+          }
+        }
+      }
+    },
+    "%@ season": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "kausi %@"
+          }
+        }
+      }
+    },
+    "%@, %@, day grade %lld, fatigue %lld percent": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@, %2$@, päivän arvosana %3$lld, väsymys %4$lld prosenttia"
+          }
+        }
+      }
+    },
+    "%lld ACTIVE DYNASTIES": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld AKTIIVISTA DYNASTIAA"
+          }
+        }
+      }
+    },
+    "%lld L": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld T"
+          }
+        }
+      }
+    },
+    "%lld subs at next whistle": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld vaihtoa seuraavalla vihellyksellä"
+          }
+        }
+      }
+    },
+    "%lld unread": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld lukematta"
+          }
+        }
+      }
+    },
+    "%lld yd attempt": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld jaardin yritys"
+          }
+        }
+      }
+    },
+    "%lld-%lld battles": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld-%lld kaksinkamppailua"
+          }
+        }
+      }
+    },
+    "%lld-%lld battles · %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld-%lld kaksinkamppailua · %@"
+          }
+        }
+      }
+    },
+    "1 sub at next whistle": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 vaihto seuraavalla vihellyksellä"
+          }
+        }
+      }
+    },
+    "3 exhibition games": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3 harjoitusottelua"
+          }
+        }
+      }
+    },
+    "4th & %lld — your call, coach": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "4th & %lld — sinun kutsusi, coach"
+          }
+        }
+      }
+    },
+    "ACTION": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TOIMI"
+          }
+        }
+      }
+    },
+    "ACTIVE": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AKTIIVINEN"
+          }
+        }
+      }
+    },
+    "AUDIBLE flips your call to a same-formation check at the line — you get 2 per half. A ✓ marks checks that attack the shell your QB is reading.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AUDIBLE vaihtaa kutsusi saman muodostelman vaihtopeliin linjalla — käytössäsi on 2 per puoliaika. ✓ merkitsee pelit, jotka iskevät QB:n lukemaa shelliä vastaan."
+          }
+        }
+      }
+    },
+    "AWAY": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "VIERAS"
+          }
+        }
+      }
+    },
+    "Abandon Game": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hylkää ottelu"
+          }
+        }
+      }
+    },
+    "About": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tietoja"
+          }
+        }
+      }
+    },
+    "Action Required": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vaatii toimia"
+          }
+        }
+      }
+    },
+    "All": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kaikki"
+          }
+        }
+      }
+    },
+    "All Dynasty data has been removed from this device.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kaikki Dynasty-tiedot on poistettu tältä laitteelta."
+          }
+        }
+      }
+    },
+    "All tasks complete!": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kaikki tehtävät tehty!"
+          }
+        }
+      }
+    },
+    "Appearance": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ulkoasu"
+          }
+        }
+      }
+    },
+    "Available": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vapaana"
+          }
+        }
+      }
+    },
+    "Available Cap": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vapaa cap"
+          }
+        }
+      }
+    },
+    "Average OVR: %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keskimääräinen OVR: %lld"
+          }
+        }
+      }
+    },
+    "Awards": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Palkinnot"
+          }
+        }
+      }
+    },
+    "BENCH · %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PENKKI · %@"
+          }
+        }
+      }
+    },
+    "Back": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Takaisin"
+          }
+        }
+      }
+    },
+    "Balanced league": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tasapainoinen liiga"
+          }
+        }
+      }
+    },
+    "Budget": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Budjetti"
+          }
+        }
+      }
+    },
+    "CAP / STAFF": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CAP / VALMENNUS"
+          }
+        }
+      }
+    },
+    "CAP TIGHT": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CAP TIUKALLA"
+          }
+        }
+      }
+    },
+    "CAREER DIFFICULTY": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URAN VAIKEUSTASO"
+          }
+        }
+      }
+    },
+    "COACH'S BOARD · %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "VALMENTAJAN TAULU · %@"
+          }
+        }
+      }
+    },
+    "CONTINUE: %@  -  %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "JATKA: %@  -  %@"
+          }
+        }
+      }
+    },
+    "Call timeout, %lld remaining": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Käytä aikalisä, %lld jäljellä"
+          }
+        }
+      }
+    },
+    "Camp": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leiri"
+          }
+        }
+      }
+    },
+    "Camp competitions": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leirin paikkakilpailut"
+          }
+        }
+      }
+    },
+    "Cancel": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Peruuta"
+          }
+        }
+      }
+    },
+    "Cap Space": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cap-tilaa"
+          }
+        }
+      }
+    },
+    "Cap Warnings": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cap-varoitukset"
+          }
+        }
+      }
+    },
+    "Career: %lld-%lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ura: %lld-%lld"
+          }
+        }
+      }
+    },
+    "Changelog": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Muutosloki"
+          }
+        }
+      }
+    },
+    "Chemistry": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kemia"
+          }
+        }
+      }
+    },
+    "Choose Your Team": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valitse joukkueesi"
+          }
+        }
+      }
+    },
+    "Close": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sulje"
+          }
+        }
+      }
+    },
+    "Coach the Game": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valmenna ottelu"
+          }
+        }
+      }
+    },
+    "Coaching": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valmennus"
+          }
+        }
+      }
+    },
+    "Coaching Budget": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valmennusbudjetti"
+          }
+        }
+      }
+    },
+    "Coaching Changes": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valmentajamuutokset"
+          }
+        }
+      }
+    },
+    "Compare (%lld)": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vertaa (%lld)"
+          }
+        }
+      }
+    },
+    "Compare Teams": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vertaa joukkueita"
+          }
+        }
+      }
+    },
+    "Compare to Big Board": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vertaa Big Boardiin"
+          }
+        }
+      }
+    },
+    "Complete one full season to unlock this team": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pelaa yksi kokonainen kausi avataksesi tämän joukkueen"
+          }
+        }
+      }
+    },
+    "Continue": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jatka"
+          }
+        }
+      }
+    },
+    "Continue / Load": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jatka / Lataa"
+          }
+        }
+      }
+    },
+    "Continue Career": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jatka uraa"
+          }
+        }
+      }
+    },
+    "Continue or Load Career": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jatka tai lataa ura"
+          }
+        }
+      }
+    },
+    "Contract Expirations": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Päättyvät sopimukset"
+          }
+        }
+      }
+    },
+    "Cosmetic only — does not affect gameplay": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vain kosmeettinen — ei vaikuta pelattavuuteen"
+          }
+        }
+      }
+    },
+    "Credits": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tekijät"
+          }
+        }
+      }
+    },
+    "Currently: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nyt: %@"
+          }
+        }
+      }
+    },
+    "Custom League": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mukautettu liiga"
+          }
+        }
+      }
+    },
+    "Cuts": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leikkaukset"
+          }
+        }
+      }
+    },
+    "DAY GRADE": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PÄIVÄN ARVOSANA"
+          }
+        }
+      }
+    },
+    "DIFFICULTY": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "VAIKEUS"
+          }
+        }
+      }
+    },
+    "DIVISION": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "DIVISIOONA"
+          }
+        }
+      }
+    },
+    "Dark": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tumma"
+          }
+        }
+      }
+    },
+    "Data": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiedot"
+          }
+        }
+      }
+    },
+    "Deadline approaching": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Takaraja lähestyy"
+          }
+        }
+      }
+    },
+    "Delete": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poista"
+          }
+        }
+      }
+    },
+    "Delete All Save Data": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poista kaikki tallennustiedot"
+          }
+        }
+      }
+    },
+    "Delete Career?": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poistetaanko ura?"
+          }
+        }
+      }
+    },
+    "Delete Save Data": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poista tallennustiedot"
+          }
+        }
+      }
+    },
+    "Developer": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kehittäjä"
+          }
+        }
+      }
+    },
+    "Difficulty": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vaikeustaso"
+          }
+        }
+      }
+    },
+    "Difficulty affects AI roster construction, trade valuation, and free-agent competition. Play Clock limits live-game decision time — when it runs out, the QB or defense checks into a simple base call (never a penalty).": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vaikeustaso vaikuttaa tekoälyn rosterinrakennukseen, vaihtokauppojen arvostukseen ja free agent -kilpailuun. Play clock rajaa päätösajan ottelussa — ajan loppuessa QB tai puolustus vaihtaa yksinkertaiseen peruspeliin (ei koskaan rangaistusta)."
+          }
+        }
+      }
+    },
+    "Difficulty weighs roster talent, cap room, and draft capital.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vaikeus punnitsee rosterin lahjakkuuden, cap-tilan ja draft-pääoman."
+          }
+        }
+      }
+    },
+    "Division Rivals": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Divisioonavastustajat"
+          }
+        }
+      }
+    },
+    "Done": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valmis"
+          }
+        }
+      }
+    },
+    "Down %lld spots": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Laskenut %lld sijaa"
+          }
+        }
+      }
+    },
+    "Draft Picks": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Draft-valinnat"
+          }
+        }
+      }
+    },
+    "Drive: %lld plays, %lld yds": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drive: %lld peliä, %lld jaardia"
+          }
+        }
+      }
+    },
+    "Drive: 1 play, %lld yds": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drive: 1 peli, %lld jaardia"
+          }
+        }
+      }
+    },
+    "Easy": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Helppo"
+          }
+        }
+      }
+    },
+    "Enable Notifications": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salli ilmoitukset"
+          }
+        }
+      }
+    },
+    "FATIGUE": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "VÄSYMYS"
+          }
+        }
+      }
+    },
+    "FINAL": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LOPPUTULOS"
+          }
+        }
+      }
+    },
+    "Fast": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nopea"
+          }
+        }
+      }
+    },
+    "Field Goal (%lld yds)": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Field Goal (%lld jaardia)"
+          }
+        }
+      }
+    },
+    "Final standings & summary": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lopputaulukko ja yhteenveto"
+          }
+        }
+      }
+    },
+    "Flip the field": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Käännä kenttäasema"
+          }
+        }
+      }
+    },
+    "Focus on roster building and let your head coach handle game day.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keskity rosterin rakentamiseen ja anna päävalmentajan hoitaa ottelupäivä."
+          }
+        }
+      }
+    },
+    "Forgiving CPU rivals": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Armollisemmat tekoälyvastustajat"
+          }
+        }
+      }
+    },
+    "Full NFL cap rules. Every dollar and bonus structure matters.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Täydet NFL-cap-säännöt. Jokainen dollari ja bonusrakenne merkitsee."
+          }
+        }
+      }
+    },
+    "Game Plan": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pelisuunnitelma"
+          }
+        }
+      }
+    },
+    "Game stats — open the live box score": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ottelutilastot — avaa live-tilasto"
+          }
+        }
+      }
+    },
+    "Gameplay": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pelattavuus"
+          }
+        }
+      }
+    },
+    "General": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yleiset"
+          }
+        }
+      }
+    },
+    "General vs opponent focus": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yleinen vai vastustajakohtainen fokus"
+          }
+        }
+      }
+    },
+    "Generating League...": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Luodaan liigaa..."
+          }
+        }
+      }
+    },
+    "Get Started": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aloita"
+          }
+        }
+      }
+    },
+    "Grades update weekly": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arvosanat päivittyvät viikoittain"
+          }
+        }
+      }
+    },
+    "Great for new players. Straightforward salaries, no hidden penalties.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sopii uusille pelaajille. Suoraviivaiset palkat, ei piilosakkoja."
+          }
+        }
+      }
+    },
+    "HIGH PRIORITY": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "KORKEA PRIORITEETTI"
+          }
+        }
+      }
+    },
+    "HOME": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "KOTI"
+          }
+        }
+      }
+    },
+    "Haptics": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Värinäpalaute"
+          }
+        }
+      }
+    },
+    "Hard": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vaikea"
+          }
+        }
+      }
+    },
+    "Hire scouts to begin scouting": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Palkkaa skautteja aloittaaksesi seurannan"
+          }
+        }
+      }
+    },
+    "Holding steady": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tasaista"
+          }
+        }
+      }
+    },
+    "How do you want to start? Modes change how the league is built; scenarios drop you into a hand-crafted situation.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Miten haluat aloittaa? Pelimuodot muuttavat liigan rakentamista; skenaariot pudottavat sinut käsin rakennettuun tilanteeseen."
+          }
+        }
+      }
+    },
+    "How to Play": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Näin pelaat"
+          }
+        }
+      }
+    },
+    "Inbox": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saapuneet"
+          }
+        }
+      }
+    },
+    "Injuries": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loukkaantumiset"
+          }
+        }
+      }
+    },
+    "Injury & burnout risk": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loukkaantumis- ja ylikuormitusriski"
+          }
+        }
+      }
+    },
+    "Injury Frequency": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loukkaantumistiheys"
+          }
+        }
+      }
+    },
+    "Job Security": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Työpaikan varmuus"
+          }
+        }
+      }
+    },
+    "Keep Coaching": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jatka valmentamista"
+          }
+        }
+      }
+    },
+    "Kick Deep": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Potkaise syvälle"
+          }
+        }
+      }
+    },
+    "Kickoff — deep or onside?": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kickoff — syvä vai onside?"
+          }
+        }
+      }
+    },
+    "Kickoff — the game is about to start.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kickoff — ottelu alkaa hetken kuluttua."
+          }
+        }
+      }
+    },
+    "Last Season: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Viime kausi: %@"
+          }
+        }
+      }
+    },
+    "Last chance for deals": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Viimeinen tilaisuus kauppoihin"
+          }
+        }
+      }
+    },
+    "League": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Liiga"
+          }
+        }
+      }
+    },
+    "League News": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Liigauutiset"
+          }
+        }
+      }
+    },
+    "League average: $%lldM": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Liigan keskiarvo: $%lldM"
+          }
+        }
+      }
+    },
+    "Leave the game": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poistu ottelusta"
+          }
+        }
+      }
+    },
+    "Leave the game?": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poistutaanko ottelusta?"
+          }
+        }
+      }
+    },
+    "Load Career": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lataa ura"
+          }
+        }
+      }
+    },
+    "Loading...": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ladataan..."
+          }
+        }
+      }
+    },
+    "MORALE": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MORAALI"
+          }
+        }
+      }
+    },
+    "MVP Race": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MVP-kisa"
+          }
+        }
+      }
+    },
+    "MY TEAM": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OMA JOUKKUE"
+          }
+        }
+      }
+    },
+    "Manage": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hallinta"
+          }
+        }
+      }
+    },
+    "Manage players — open the Coach's Board": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hallitse pelaajia — avaa valmentajan taulu"
+          }
+        }
+      }
+    },
+    "Market & Media": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Markkina ja media"
+          }
+        }
+      }
+    },
+    "Meet the owner": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tapaa omistaja"
+          }
+        }
+      }
+    },
+    "Messages": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Viestit"
+          }
+        }
+      }
+    },
+    "Messages from your staff, owner, scouts, and media will appear here.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Henkilökunnan, omistajan, skauttien ja median viestit näkyvät täällä."
+          }
+        }
+      }
+    },
+    "Met": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Täytetty"
+          }
+        }
+      }
+    },
+    "Modes (Standard, Fantasy Draft) decide how rosters are built on day one: real depth charts, or a league-wide redraft.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pelimuodot (Standard, Fantasy Draft) määrittävät, miten rosterit rakennetaan ensimmäisenä päivänä: aidot syvyyskaaviot tai koko liigan uusjako."
+          }
+        }
+      }
+    },
+    "Monitor camp load": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seuraa leirin kuormaa"
+          }
+        }
+      }
+    },
+    "My Team": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oma joukkue"
+          }
+        }
+      }
+    },
+    "NEED": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TARVE"
+          }
+        }
+      }
+    },
+    "NEXT": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SEURAAVA"
+          }
+        }
+      }
+    },
+    "NOW": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "NYT"
+          }
+        }
+      }
+    },
+    "Names need to be at least 2 characters.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nimessä on oltava vähintään 2 merkkiä."
+          }
+        }
+      }
+    },
+    "Near-automatic +1": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lähes varma +1"
+          }
+        }
+      }
+    },
+    "New Career": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uusi ura"
+          }
+        }
+      }
+    },
+    "New to Dynasty? Start with Standard — it's the classic experience. Rebuild makes a great second career: low expectations, plenty of picks.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uusi Dynastyssa? Aloita Standardilla — se on klassinen kokemus. Rebuild sopii toiseksi uraksi: matalat odotukset, paljon varauksia."
+          }
+        }
+      }
+    },
+    "News": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uutiset"
+          }
+        }
+      }
+    },
+    "Next": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seuraava"
+          }
+        }
+      }
+    },
+    "No cap data": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei cap-tietoja"
+          }
+        }
+      }
+    },
+    "No expiring contracts": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei päättyviä sopimuksia"
+          }
+        }
+      }
+    },
+    "No head coach": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei päävalmentajaa"
+          }
+        }
+      }
+    },
+    "No messages": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei viestejä"
+          }
+        }
+      }
+    },
+    "No movement": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei muutosta"
+          }
+        }
+      }
+    },
+    "No owner data": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei omistajatietoja"
+          }
+        }
+      }
+    },
+    "No roster data": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei rosteritietoja"
+          }
+        }
+      }
+    },
+    "No salary cap restrictions. Sign whoever you want, however you want.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei palkkakattorajoituksia. Kiinnitä kenet haluat, miten haluat."
+          }
+        }
+      }
+    },
+    "No saved careers.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei tallennettuja uria."
+          }
+        }
+      }
+    },
+    "No starting QB": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei aloittavaa QB:tä"
+          }
+        }
+      }
+    },
+    "No stats yet": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei vielä tilastoja"
+          }
+        }
+      }
+    },
+    "No substitutes in this group.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei vaihtopelaajia tässä ryhmässä."
+          }
+        }
+      }
+    },
+    "No touches yet": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei vielä kosketuksia"
+          }
+        }
+      }
+    },
+    "None selected": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei valintaa"
+          }
+        }
+      }
+    },
+    "Normal": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Normaali"
+          }
+        }
+      }
+    },
+    "Not installed": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ei pelikirjassa"
+          }
+        }
+      }
+    },
+    "Nothing snaps until you commit: pick Punt or Field Goal and press SNAP — or Go For It to open the playbook (a Back chevron returns here).": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mikään ei käynnisty ennen vahvistusta: valitse Punt tai Field Goal ja paina SNAP — tai Go For It avataksesi pelikirjan (Takaisin-nuoli palauttaa tänne)."
+          }
+        }
+      }
+    },
+    "Notifications": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ilmoitukset"
+          }
+        }
+      }
+    },
+    "OWNER": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OMISTAJA"
+          }
+        }
+      }
+    },
+    "Off": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pois"
+          }
+        }
+      }
+    },
+    "Offseason news": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Offseason-uutiset"
+          }
+        }
+      }
+    },
+    "One snap from the 2 — +2 or nothing": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yksi snap 2 jaardista — +2 tai ei mitään"
+          }
+        }
+      }
+    },
+    "One-time hints will show again: the dashboard tour, the first-snap walkthrough, and the in-game hint banners.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kertaluontoiset vihjeet näytetään uudelleen: hallintanäkymän esittely, ensimmäisen snapin opastus ja pelinaikaiset vihjepalkit."
+          }
+        }
+      }
+    },
+    "Open the playbook": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avaa pelikirja"
+          }
+        }
+      }
+    },
+    "Owner Expectations": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Omistajan odotukset"
+          }
+        }
+      }
+    },
+    "Owner mandates": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Omistajan vaatimukset"
+          }
+        }
+      }
+    },
+    "PENDING · AT NEXT WHISTLE": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "JONOSSA · SEURAAVA VIHELLYS"
+          }
+        }
+      }
+    },
+    "PLAYOFFS": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PUDOTUSPELIT"
+          }
+        }
+      }
+    },
+    "Page %lld of %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sivu %lld / %lld"
+          }
+        }
+      }
+    },
+    "Phase": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vaihe"
+          }
+        }
+      }
+    },
+    "Pick #%lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Varaus #%lld"
+          }
+        }
+      }
+    },
+    "Play clock: %lld seconds": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play clock: %lld sekuntia"
+          }
+        }
+      }
+    },
+    "Play is live — subs unlock at the whistle": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Peli käynnissä — vaihdot aukeavat vihellykseen"
+          }
+        }
+      }
+    },
+    "Play is live…": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Peli on käynnissä…"
+          }
+        }
+      }
+    },
+    "Play the field position": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pelaa kenttäasemaa"
+          }
+        }
+      }
+    },
+    "Players": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pelaajat"
+          }
+        }
+      }
+    },
+    "Playoffs": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pudotuspelit"
+          }
+        }
+      }
+    },
+    "Please enter at least 2 characters to continue.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Syötä vähintään 2 merkkiä jatkaaksesi."
+          }
+        }
+      }
+    },
+    "Postseason path": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pudotuspelipolku"
+          }
+        }
+      }
+    },
+    "Practice this week": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Harjoittele tällä viikolla"
+          }
+        }
+      }
+    },
+    "Projection across 3 seasons": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ennuste 3 kaudelle"
+          }
+        }
+      }
+    },
+    "QUEUED": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "JONOSSA"
+          }
+        }
+      }
+    },
+    "Quick Start": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pika-aloitus"
+          }
+        }
+      }
+    },
+    "REPLAY": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "UUSINTA"
+          }
+        }
+      }
+    },
+    "Ready to advance": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valmis etenemään"
+          }
+        }
+      }
+    },
+    "Realistic": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Realistinen"
+          }
+        }
+      }
+    },
+    "Recommended": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suositeltu"
+          }
+        }
+      }
+    },
+    "Recommended for first-time players: easier learning curve.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suositus ensikertalaisille: loivempi oppimiskäyrä."
+          }
+        }
+      }
+    },
+    "Regular": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runkosarja"
+          }
+        }
+      }
+    },
+    "Regular Season": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runkosarja"
+          }
+        }
+      }
+    },
+    "Removes every career, roster note, watchlist entry, and preference from this device. This cannot be undone.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poistaa kaikki urat, rosterimuistiinpanot, seurantalistat ja asetukset tältä laitteelta. Toimintoa ei voi perua."
+          }
+        }
+      }
+    },
+    "Replay Tutorial": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Katso opastus uudelleen"
+          }
+        }
+      }
+    },
+    "Replay Tutorial walks through the major systems from the main menu. Reset Tips shows the one-time hints (dashboard tour, first-snap walkthrough, in-game banners) again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Katso opastus uudelleen käy pelin pääjärjestelmät läpi päävalikosta. Palauta vinkit näyttää kertaluontoiset vihjeet uudelleen (hallintanäkymän esittely, ensimmäisen snapin opastus, pelinaikaiset palkit)."
+          }
+        }
+      }
+    },
+    "Reset Tips": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Palauta vinkit"
+          }
+        }
+      }
+    },
+    "Reset all save data?": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nollataanko kaikki tallennustiedot?"
+          }
+        }
+      }
+    },
+    "Resolve coaching budget overage first": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ratkaise valmennusbudjetin ylitys ensin"
+          }
+        }
+      }
+    },
+    "Review": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Katsaus"
+          }
+        }
+      }
+    },
+    "Review Roster": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rosterikatsaus"
+          }
+        }
+      }
+    },
+    "Review potential deals": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tarkastele mahdollisia kauppoja"
+          }
+        }
+      }
+    },
+    "Rings": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mestaruudet"
+          }
+        }
+      }
+    },
+    "Roster Cuts": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rosterileikkaukset"
+          }
+        }
+      }
+    },
+    "SUB IN": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "VAIHDA"
+          }
+        }
+      }
+    },
+    "Salary cap rules are set in Step 1 (%@).": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Palkkakattosäännöt asetetaan vaiheessa 1 (%@)."
+          }
+        }
+      }
+    },
+    "Sandbox": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hiekkalaatikko"
+          }
+        }
+      }
+    },
+    "Satisfaction": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tyytyväisyys"
+          }
+        }
+      }
+    },
+    "Save data cleared": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tallennustiedot poistettu"
+          }
+        }
+      }
+    },
+    "Scenarios (Rebuild, Win Now, Cap Hell) reshape your team into a hand-crafted situation with a clear challenge to solve.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skenaariot (Rebuild, Win Now, Cap Hell) muokkaavat joukkueesi käsin rakennettuun tilanteeseen, jossa on selkeä haaste."
+          }
+        }
+      }
+    },
+    "Schedule visits": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sovi vierailut"
+          }
+        }
+      }
+    },
+    "Season": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kausi"
+          }
+        }
+      }
+    },
+    "Season %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kausi %@"
+          }
+        }
+      }
+    },
+    "Season %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kausi %lld"
+          }
+        }
+      }
+    },
+    "Season grade pending": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kauden arvosana tulossa"
+          }
+        }
+      }
+    },
+    "Season length is fixed at 17 games (18 weeks).": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kauden pituus on kiinteä: 17 ottelua (18 viikkoa)."
+          }
+        }
+      }
+    },
+    "Season starts soon": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kausi alkaa pian"
+          }
+        }
+      }
+    },
+    "Selected": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valittu"
+          }
+        }
+      }
+    },
+    "Set focus": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aseta fokus"
+          }
+        }
+      }
+    },
+    "Settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Asetukset"
+          }
+        }
+      }
+    },
+    "Sharper opponents": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terävämmät vastustajat"
+          }
+        }
+      }
+    },
+    "Sim rest of the game?": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Simuloidaanko peli loppuun?"
+          }
+        }
+      }
+    },
+    "Sim to End": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Simuloi loppuun"
+          }
+        }
+      }
+    },
+    "Sim to Final": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Simuloi loppuun"
+          }
+        }
+      }
+    },
+    "Sim to Final & Leave": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Simuloi loppuun ja poistu"
+          }
+        }
+      }
+    },
+    "Simple": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yksinkertainen"
+          }
+        }
+      }
+    },
+    "Simulate the rest of the game": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Simuloi ottelun loppuosa"
+          }
+        }
+      }
+    },
+    "Simulation Speed": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Simulaation nopeus"
+          }
+        }
+      }
+    },
+    "Skip": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ohita"
+          }
+        }
+      }
+    },
+    "Skip Drive": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ohita drive"
+          }
+        }
+      }
+    },
+    "Skip Tutorial": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ohita opastus"
+          }
+        }
+      }
+    },
+    "Skip all": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ohita kaikki"
+          }
+        }
+      }
+    },
+    "Slow": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hidas"
+          }
+        }
+      }
+    },
+    "Snap the ball — run %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Snap — pelataan %@"
+          }
+        }
+      }
+    },
+    "Snap the ball — select a play first": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Snap — valitse ensin peli"
+          }
+        }
+      }
+    },
+    "Sound": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Äänet"
+          }
+        }
+      }
+    },
+    "Sound covers the live-game stadium — crowd, whistles, hits, and horns. It respects the mute switch and never interrupts your own music.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Äänet kattavat ottelun stadionäänet — yleisön, pillit, taklaukset ja torvet. Mykistyskytkintä kunnioitetaan, eikä omaa musiikkiasi keskeytetä."
+          }
+        }
+      }
+    },
+    "Staff": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valmennus"
+          }
+        }
+      }
+    },
+    "Starters & backups": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avaus ja varamiehet"
+          }
+        }
+      }
+    },
+    "Starting Quarterback": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aloittava pelinrakentaja"
+          }
+        }
+      }
+    },
+    "Stat Lines": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tilastorivit"
+          }
+        }
+      }
+    },
+    "Stats": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tilastot"
+          }
+        }
+      }
+    },
+    "Status updates weekly": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tila päivittyy viikoittain"
+          }
+        }
+      }
+    },
+    "Step %lld of %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vaihe %lld / %lld"
+          }
+        }
+      }
+    },
+    "Strengths & weaknesses": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vahvuudet ja heikkoudet"
+          }
+        }
+      }
+    },
+    "Sub at next whistle": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vaihto seuraavalla vihellyksellä"
+          }
+        }
+      }
+    },
+    "Sub in %@ for %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vaihda %1$@ kentälle pelaajan %2$@ tilalle"
+          }
+        }
+      }
+    },
+    "System": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Järjestelmä"
+          }
+        }
+      }
+    },
+    "TEAM": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "JOUKKUE"
+          }
+        }
+      }
+    },
+    "TOP PERFORMERS": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OTTELUN PARHAAT"
+          }
+        }
+      }
+    },
+    "TRENDING": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PINNALLA"
+          }
+        }
+      }
+    },
+    "Tap a grade for details": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Napauta arvosanaa nähdäksesi tiedot"
+          }
+        }
+      }
+    },
+    "Tap to start — %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aloita napauttamalla — %@"
+          }
+        }
+      }
+    },
+    "Team": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Joukkue"
+          }
+        }
+      }
+    },
+    "Team Morale": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Joukkueen moraali"
+          }
+        }
+      }
+    },
+    "The XP kick is near-automatic (+1). Going for two runs one real play from the 2-yard line — +2 or nothing. Late-game math sometimes demands it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "XP-potku on lähes varma (+1). Kahden pisteen yritys pelaa yhden oikean pelin 2 jaardin viivalta — +2 tai ei mitään. Loppuhetkien matematiikka vaatii sitä joskus."
+          }
+        }
+      }
+    },
+    "The engine finishes the game with AI play-calling on both sides.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pelimoottori pelaa ottelun loppuun tekoälyn pelinvalinnoilla molemmin puolin."
+          }
+        }
+      }
+    },
+    "Theme": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Teema"
+          }
+        }
+      }
+    },
+    "This is how you'll be known around the league.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tällä nimellä sinut tunnetaan liigassa."
+          }
+        }
+      }
+    },
+    "This permanently clears every career, roster note, watchlist entry, and preference. This cannot be undone.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tämä poistaa pysyvästi kaikki urat, rosterimuistiinpanot, seurantalistat ja asetukset. Toimintoa ei voi perua."
+          }
+        }
+      }
+    },
+    "This permanently removes %@'s dynasty. This cannot be undone.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tämä poistaa pysyvästi pelaajan %@ dynastian. Toimintoa ei voi perua."
+          }
+        }
+      }
+    },
+    "Tips reset": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vinkit palautettu"
+          }
+        }
+      }
+    },
+    "Top draft priorities": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Draftin kärkitarpeet"
+          }
+        }
+      }
+    },
+    "Total Cap": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Koko cap"
+          }
+        }
+      }
+    },
+    "Total control over every decision, from the roster to the play sheet.": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Täysi kontrolli jokaiseen päätökseen rosterista pelivalintoihin."
+          }
+        }
+      }
+    },
+    "Touchdown! Kick the point or go for two?": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Touchdown! Potkaisetko lisäpisteen vai haetko kaksi?"
+          }
+        }
+      }
+    },
+    "Trade window open": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vaihtoikkuna auki"
+          }
+        }
+      }
+    },
+    "Trades": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vaihtokaupat"
+          }
+        }
+      }
+    },
+    "Training Camp": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Harjoitusleiri"
+          }
+        }
+      }
+    },
+    "Trending": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pinnalla"
+          }
+        }
+      }
+    },
+    "Trending down": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Laskussa"
+          }
+        }
+      }
+    },
+    "Trending up": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nousussa"
+          }
+        }
+      }
+    },
+    "Try Options": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yritysvaihtoehdot"
+          }
+        }
+      }
+    },
+    "Tutorial": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opastus"
+          }
+        }
+      }
+    },
+    "UPCOMING": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TULOSSA"
+          }
+        }
+      }
+    },
+    "Unforgiving simulation": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Armoton simulaatio"
+          }
+        }
+      }
+    },
+    "Unread": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lukemattomat"
+          }
+        }
+      }
+    },
+    "Up %lld spots": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Noussut %lld sijaa"
+          }
+        }
+      }
+    },
+    "Used": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Käytetty"
+          }
+        }
+      }
+    },
+    "Version": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versio"
+          }
+        }
+      }
+    },
+    "View": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avaa"
+          }
+        }
+      }
+    },
+    "View All": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Näytä kaikki"
+          }
+        }
+      }
+    },
+    "W-L": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "V-T"
+          }
+        }
+      }
+    },
+    "Watch Highlights": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Katso kohokohdat"
+          }
+        }
+      }
+    },
+    "Week %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Viikko %lld"
+          }
+        }
+      }
+    },
+    "Week %lld prep": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Viikon %lld valmistelu"
+          }
+        }
+      }
+    },
+    "Week %lld, %@ season": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Viikko %lld, kausi %@"
+          }
+        }
+      }
+    },
+    "What is this?": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mikä tämä on?"
+          }
+        }
+      }
+    },
+    "Wins": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voitot"
+          }
+        }
+      }
+    },
+    "Wk %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vko %lld"
+          }
+        }
+      }
+    },
+    "Workouts & interviews": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Testit ja haastattelut"
+          }
+        }
+      }
+    },
+    "You": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sinä"
+          }
+        }
+      }
+    },
+    "You can sim the remaining plays or abandon (nothing is saved).": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voit simuloida jäljellä olevat pelit tai hylätä ottelun (mitään ei tallenneta)."
+          }
+        }
+      }
+    },
+    "Your Team": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oma joukkue"
+          }
+        }
+      }
+    },
+    "for coaching & scouting staff": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "valmennus- ja skauttihenkilöstölle"
+          }
+        }
+      }
+    },
+    "out injured": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "loukkaantunut, pois pelistä"
+          }
+        }
+      }
+    },
+    "substitution queued": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vaihto jonossa"
+          }
+        }
+      }
+    },
+    "~12% to steal it — short field if it fails": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "~12 % onnistuu — lyhyt kenttä jos epäonnistuu"
+          }
+        }
+      }
+    },
+    "· ring = fatigue": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· rengas = väsymys"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

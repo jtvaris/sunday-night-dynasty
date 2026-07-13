@@ -58,17 +58,19 @@ struct CoachedGameView: View {
         self.isPlayoff = isPlayoff
         self.onFinish = onFinish
         self.onPracticeRequest = onPracticeRequest
-        _engine = StateObject(wrappedValue: LiveGameEngine(
-            homeTeam: homeTeam,
-            awayTeam: awayTeam,
-            homeCoaches: homeCoaches,
-            awayCoaches: awayCoaches,
-            playerTeamIsHome: playerTeamIsHome,
-            audibleBoost: audibleBoost,
-            defReadBoost: defReadBoost,
-            weather: weather,
-            playerBonusPlays: bonusPlays
-        ))
+        _engine = StateObject(wrappedValue: PerfLog.time("live_engine_init") {
+            LiveGameEngine(
+                homeTeam: homeTeam,
+                awayTeam: awayTeam,
+                homeCoaches: homeCoaches,
+                awayCoaches: awayCoaches,
+                playerTeamIsHome: playerTeamIsHome,
+                audibleBoost: audibleBoost,
+                defReadBoost: defReadBoost,
+                weather: weather,
+                playerBonusPlays: bonusPlays
+            )
+        })
     }
 
     // MARK: Scene & Flow State
@@ -218,6 +220,39 @@ struct CoachedGameView: View {
     /// Transient "2-MINUTE WARNING" chip in the situation strip.
     @State private var showTwoMinuteChip = false
 
+    // MARK: First-run tips (R37)
+
+    /// Step index of the one-time first-snap walkthrough (nil = hidden).
+    /// While a card is up the decision clock pauses, but the whole screen
+    /// stays interactive — the tour never blocks a snap.
+    @State private var firstSnapTipStep: Int? = nil
+    /// The walkthrough triggers at most once per game session.
+    @State private var firstSnapTipTriggered = false
+    /// Session-side dismissal mirrors for the one-line hint banners, so a
+    /// "Got it" hides the banner immediately without re-reading defaults.
+    @State private var fourthDownTipDismissed = false
+    @State private var twoPointTipDismissed = false
+    @State private var audibleTipDismissed = false
+
+    /// R37: the three first-snap walkthrough cards.
+    private static let firstSnapTipSteps: [CoachMarkStep] = [
+        CoachMarkStep(
+            icon: "book.fill",
+            title: "Call your play",
+            text: "Browse the call sheet by category \u{2014} Run, Short, Medium, Deep, Special \u{2014} and tap a card to select it. The brain icon marks your coordinator's suggestion; it's pre-selected for you."
+        ),
+        CoachMarkStep(
+            icon: "arrow.up.circle.fill",
+            title: "Snap when ready",
+            text: "SNAP runs the selected play. The gold ring around it is your decision clock \u{2014} if it hits zero, your QB simply checks into a safe call. Never a penalty. On defense, READY does the same job."
+        ),
+        CoachMarkStep(
+            icon: "person.2.fill",
+            title: "Manage and watch",
+            text: "In the top strip: Manage opens substitutions and player grades, Stats shows the live box score, and Sim to End lets the AI finish the game whenever you've seen enough."
+        )
+    ]
+
     // MARK: Play clock (decision countdown)
 
     /// Default decision-clock length: the coach gets this long to pick a
@@ -253,6 +288,9 @@ struct CoachedGameView: View {
     private let playClockTicker = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     @Environment(\.dismiss) private var dismiss
+    /// R38: honor Reduce Motion — camera push-in, clock pulses, and player
+    /// pulse highlights are disabled or softened when the user asks for less.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // MARK: - Body
 
@@ -291,6 +329,22 @@ struct CoachedGameView: View {
 
             if showFinal {
                 finalOverlay
+            }
+
+            // R37: one-time first-snap walkthrough — floats over the field,
+            // never blocks the call sheet, and freezes the decision clock
+            // (playClockPaused) while a card is up.
+            if firstSnapTipStep != nil {
+                VStack {
+                    CoachMarkOverlay(
+                        steps: Self.firstSnapTipSteps,
+                        step: $firstSnapTipStep,
+                        onComplete: { FirstRunTip.coachFirstSnap.markDone() }
+                    )
+                    .padding(.top, 120)
+                    Spacer()
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
         }
         .statusBarHidden()
@@ -442,7 +496,10 @@ struct CoachedGameView: View {
     private var clockDisplay: some View {
         let clockText = Text(engine.formattedClock)
             .font(.system(size: 27, weight: .heavy).monospacedDigit())
-        if isTwoMinuteDrill {
+        if isTwoMinuteDrill && reduceMotion {
+            // Reduce Motion: crunch time stays red but does not pulse.
+            clockText.foregroundStyle(Color.danger)
+        } else if isTwoMinuteDrill {
             clockText
                 .foregroundStyle(Color.danger)
                 .phaseAnimator([false, true]) { view, dimmed in
@@ -510,24 +567,33 @@ struct CoachedGameView: View {
                 .background(Color.backgroundTertiary, in: Circle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(Text("Leave the game"))
     }
 
     // MARK: - Situation Strip
 
     private var situationStrip: some View {
         HStack(spacing: 10) {
-            chip(downDistanceText, color: .accentGold)
-            chip(fieldPositionText, color: .accentBlue)
-            chip(possessionText, color: engine.playerIsOnOffense ? .success : .danger)
-            if !engine.currentDrivePlays.isEmpty {
-                chip(driveChipText, color: .textSecondary)
-            }
-            if showTwoMinuteChip {
-                chip("2-MINUTE WARNING", color: .danger)
-                    .transition(.scale.combined(with: .opacity))
-            }
-            if !engine.pendingSubstitutions.isEmpty {
-                chip("Sub at next whistle", color: .warning)
+            // R39 device coverage: on narrow iPads (mini) the fixed-size
+            // action buttons squeezed these chips into "2nd…/OW…" ellipses.
+            // A scroll container lets every chip keep its full text — on wide
+            // screens the content fits and nothing changes visually.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    chip(downDistanceText, color: .accentGold)
+                    chip(fieldPositionText, color: .accentBlue)
+                    chip(possessionText, color: engine.playerIsOnOffense ? .success : .danger)
+                    if !engine.currentDrivePlays.isEmpty {
+                        chip(driveChipText, color: .textSecondary)
+                    }
+                    if showTwoMinuteChip {
+                        chip("2-MINUTE WARNING", color: .danger)
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                    if !engine.pendingSubstitutions.isEmpty {
+                        chip(String(localized: "Sub at next whistle"), color: .warning)
+                    }
+                }
             }
             Spacer(minLength: 12)
             // Action buttons: visually heavier than the info chips on the left —
@@ -547,6 +613,7 @@ struct CoachedGameView: View {
                     .buttonStyle(.plain)
                     .disabled(isAnimating)
                     .opacity(isAnimating ? 0.45 : 1)
+                    .accessibilityLabel(Text("Call timeout, \(engine.playerTimeoutsRemaining) remaining"))
                 }
                 Button {
                     showManageSheet = true
@@ -554,12 +621,14 @@ struct CoachedGameView: View {
                     actionButtonLabel("Manage", icon: "person.2.fill", tint: .textPrimary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(Text("Manage players — open the Coach's Board"))
                 Button {
                     showStatsSheet = true
                 } label: {
                     actionButtonLabel("Stats", icon: "chart.bar.fill", tint: .textPrimary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(Text("Game stats — open the live box score"))
                 if !engine.isGameOver {
                     Button {
                         showSimToEndConfirm = true
@@ -569,6 +638,7 @@ struct CoachedGameView: View {
                     .buttonStyle(.plain)
                     .disabled(isAnimating)
                     .opacity(isAnimating ? 0.45 : 1)
+                    .accessibilityLabel(Text("Simulate the rest of the game"))
                 }
             }
         }
@@ -582,7 +652,7 @@ struct CoachedGameView: View {
     /// bordered background so they read as controls, not status chips.
     /// `prominent` swaps the neutral plate for the tint's own accent wash.
     private func actionButtonLabel(
-        _ title: String, icon: String, tint: Color, prominent: Bool = false
+        _ title: LocalizedStringKey, icon: String, tint: Color, prominent: Bool = false
     ) -> some View {
         HStack(spacing: 7) {
             Image(systemName: icon)
@@ -590,6 +660,7 @@ struct CoachedGameView: View {
             Text(title)
                 .font(.system(size: 14, weight: .bold))
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
         .fixedSize(horizontal: true, vertical: false)
         .foregroundStyle(tint)
@@ -613,12 +684,16 @@ struct CoachedGameView: View {
         let yards = plays
             .filter { ($0.playType == .pass || $0.playType == .run) && $0.outcome != .penalty }
             .reduce(0) { $0 + $1.yardsGained }
-        return "Drive: \(plays.count) \(plays.count == 1 ? "play" : "plays"), \(yards) yds"
+        return plays.count == 1
+            ? String(localized: "Drive: 1 play, \(yards) yds")
+            : String(localized: "Drive: \(plays.count) plays, \(yards) yds")
     }
 
     private func chip(_ text: String, color: Color) -> some View {
         Text(text)
             .font(.system(size: 13, weight: .bold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
             .foregroundStyle(color)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
@@ -652,7 +727,7 @@ struct CoachedGameView: View {
         // framing owns the shot, and a stray touch on the field must not
         // hand the camera to SceneKit's free-orbit gestures (which would
         // freeze every scripted focus/follow move off-screen for good).
-        SceneKitFieldView(scene: fieldScene, allowsCameraControl: false)
+        SceneKitFieldView(scene: fieldScene, allowsCameraControl: false, perfTag: "coached_scene")
             .frame(height: height)
             .overlay(alignment: .topLeading) {
                 if let text = possessionBanner {
@@ -1003,11 +1078,19 @@ struct CoachedGameView: View {
         .opacity(isLatest ? 1.0 : (age == 1 ? 0.65 : 0.4))
     }
 
-    /// Event accent for the ticker: touchdown/score gold, turnover or sack
-    /// red, first down blue, routine play neutral (nil).
+    /// Event accent for the ticker: touchdown/score gold, first down blue,
+    /// routine play neutral (nil). Defensive plays (turnover, sack, breakup,
+    /// big hit) are colored FROM THE PLAYER'S PERSPECTIVE (R37): a stop by
+    /// his defense reads positive, one made against his offense reads
+    /// negative. Plays without possession info keep the old red.
     private func feedAccentColor(_ play: PlayResult) -> Color? {
         if play.scoringPlay { return .accentGold }
-        if play.isTurnover || play.outcome == .sack { return .danger }
+        let isDefensivePlay = play.isTurnover || play.outcome == .sack
+            || play.defensiveHighlight == true || play.passBreakup == true
+        if isDefensivePlay {
+            let playerWasDefending = play.offenseWasHome.map { $0 != engine.playerTeamIsHome }
+            return playerWasDefending == true ? .success : .danger
+        }
         if play.isFirstDown { return .accentBlue }
         return nil
     }
@@ -1168,6 +1251,18 @@ struct CoachedGameView: View {
 
             Spacer(minLength: 0)
 
+            // R37: one-time hint the first time an audible is on the table.
+            if offenseAudibleAvailable && !audibleTipDismissed && !FirstRunTip.audible.isDone {
+                TipBanner(
+                    icon: "megaphone.fill",
+                    text: "AUDIBLE flips your call to a same-formation check at the line — you get 2 per half. A \u{2713} marks checks that attack the shell your QB is reading."
+                ) {
+                    FirstRunTip.audible.markDone()
+                    withAnimation(.easeInOut(duration: 0.2)) { audibleTipDismissed = true }
+                }
+                .padding(.horizontal, 14)
+            }
+
             // R36: the audible strip — same-formation installed checks the
             // QB can flip to at the line. A ✓ marks plays that attack the
             // shell HE believes he's reading (a misread poisons the tags).
@@ -1244,6 +1339,10 @@ struct CoachedGameView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(selectedCall == nil)
+                    .accessibilityLabel(
+                        selectedCall.map { Text("Snap the ball — run \($0.rawValue)") }
+                            ?? Text("Snap the ball — select a play first")
+                    )
                 }
             }
             .padding(.horizontal, 14)
@@ -1350,13 +1449,18 @@ struct CoachedGameView: View {
             )
         }
         .buttonStyle(.plain)
+        // R38: the call-sheet card reads as "play name. description" with
+        // installed/selected state — play names stay English (football terms).
+        .accessibilityLabel(Text(verbatim: "\(play.rawValue). \(play.blurb)"))
+        .accessibilityValue(installed ? Text(verbatim: "") : Text("Not installed"))
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         // R36: a dimmed card can be queued as the week's practice play —
         // two weeks of reps (one with an expert OC) installs it for the season.
         .contextMenu {
             if !installed, let onPracticeRequest {
                 Button {
                     onPracticeRequest(play)
-                    showBanner("\(play.rawValue) queued as this week's practice play.")
+                    showBanner(String(localized: "\(play.rawValue) queued as this week's practice play."))
                 } label: {
                     Label("Practice this week", systemImage: "figure.strengthtraining.functional")
                 }
@@ -1471,6 +1575,18 @@ struct CoachedGameView: View {
             }
             .padding(.top, 14)
 
+            // R37: one-time hint on the very first 4th-down decision.
+            if !fourthDownTipDismissed && !FirstRunTip.fourthDown.isDone {
+                TipBanner(
+                    icon: "lightbulb.fill",
+                    text: "Nothing snaps until you commit: pick Punt or Field Goal and press SNAP — or Go For It to open the playbook (a Back chevron returns here)."
+                ) {
+                    FirstRunTip.fourthDown.markDone()
+                    withAnimation(.easeInOut(duration: 0.2)) { fourthDownTipDismissed = true }
+                }
+                .padding(.horizontal, 14)
+            }
+
             HStack(spacing: 10) {
                 fourthDownButton(
                     title: "Punt",
@@ -1540,14 +1656,14 @@ struct CoachedGameView: View {
     private var fourthDownChoiceLabel: String {
         switch fourthDownChoice {
         case .punt:      return "Punt"
-        case .fieldGoal: return "Field Goal (\(engine.fieldGoalDistance) yds)"
-        default:         return "None selected"
+        case .fieldGoal: return String(localized: "Field Goal (\(engine.fieldGoalDistance) yds)")
+        default:         return String(localized: "None selected")
         }
     }
 
     private func fourthDownButton(
-        title: String,
-        subtitle: String,
+        title: LocalizedStringKey,
+        subtitle: LocalizedStringKey,
         icon: String,
         selected: Bool,
         action: @escaping () -> Void
@@ -1576,6 +1692,7 @@ struct CoachedGameView: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
     // MARK: Kickoff choice panel (onside window)
@@ -1663,6 +1780,18 @@ struct CoachedGameView: View {
                     .foregroundStyle(Color.textPrimary)
             }
             .padding(.top, 14)
+
+            // R37: one-time hint on the very first XP / two-point choice.
+            if !twoPointTipDismissed && !FirstRunTip.twoPointTry.isDone {
+                TipBanner(
+                    icon: "lightbulb.fill",
+                    text: "The XP kick is near-automatic (+1). Going for two runs one real play from the 2-yard line — +2 or nothing. Late-game math sometimes demands it."
+                ) {
+                    FirstRunTip.twoPointTry.markDone()
+                    withAnimation(.easeInOut(duration: 0.2)) { twoPointTipDismissed = true }
+                }
+                .padding(.horizontal, 14)
+            }
 
             HStack(spacing: 10) {
                 fourthDownButton(
@@ -2180,6 +2309,7 @@ struct CoachedGameView: View {
     private var playClockPaused: Bool {
         isAnimating || isReplaying || showHalftime || showFinal || showStatsSheet
             || showManageSheet || showSimToEndConfirm || showExitConfirm
+            || firstSnapTipStep != nil // R37: reading the walkthrough costs nothing
     }
 
     /// Opens a fresh decision window: full clock, touch flags cleared.
@@ -2196,6 +2326,7 @@ struct CoachedGameView: View {
         showAudibleStrip = false
         showShellStrip = false
         rollCoverageRead()
+        maybeShowFirstSnapTip()
         guard let duration = playClockDuration, !engine.isGameOver else {
             playClockArmed = false
             return
@@ -2203,6 +2334,21 @@ struct CoachedGameView: View {
         playClockTotal = duration
         playClockRemaining = duration
         playClockArmed = true
+    }
+
+    /// R37: raises the one-time first-snap walkthrough the first time an
+    /// offensive call window opens (not a kickoff/conversion choice panel).
+    /// The decision clock pauses while it's up, so reading costs nothing.
+    private func maybeShowFirstSnapTip() {
+        guard !firstSnapTipTriggered,
+              !FirstRunTip.coachFirstSnap.isDone,
+              engine.playerIsOnOffense,
+              !awaitingKickoffDecision,
+              !awaitingConversionDecision,
+              !goingForTwo,
+              !engine.isGameOver else { return }
+        firstSnapTipTriggered = true
+        withAnimation(.easeInOut(duration: 0.25)) { firstSnapTipStep = 0 }
     }
 
     // MARK: - QB Coverage Read (R36)
@@ -2429,8 +2575,9 @@ struct CoachedGameView: View {
                     .frame(width: 38, height: 38)
                     .background(playClockColor.opacity(0.14), in: Circle())
                     .overlay(Circle().strokeBorder(playClockColor, lineWidth: 2))
-                    .modifier(PlayClockPulse(active: playClockRemaining <= 3))
+                    .modifier(PlayClockPulse(active: playClockRemaining <= 3 && !reduceMotion))
                     .transition(.scale.combined(with: .opacity))
+                    .accessibilityLabel(Text("Play clock: \(Int(playClockRemaining.rounded(.up))) seconds"))
             }
             content()
                 .overlay {
@@ -2441,7 +2588,7 @@ struct CoachedGameView: View {
                                     style: StrokeStyle(lineWidth: 3, lineCap: .round))
                             .padding(-4.5)
                             .animation(.linear(duration: 0.1), value: playClockFraction)
-                            .modifier(PlayClockPulse(active: playClockRemaining <= 3))
+                            .modifier(PlayClockPulse(active: playClockRemaining <= 3 && !reduceMotion))
                             .allowsHitTesting(false)
                     }
                 }
@@ -2860,7 +3007,8 @@ struct CoachedGameView: View {
             fieldScene.kickCamera(towardZ: playDir)
         } else {
             // Pre-snap push-in toward the LOS; the snap cuts it off.
-            fieldScene.focusCamera(z: playLosZ, pushIn: true)
+            // Reduce Motion: skip the creeping dolly, cut straight to the frame.
+            fieldScene.focusCamera(z: playLosZ, pushIn: !reduceMotion)
         }
         let playGoalToGo = 100 - losYard <= distanceBefore
         fieldScene.updateMarkers(
@@ -3086,7 +3234,8 @@ struct CoachedGameView: View {
         fieldScene.moveBall(to: SCNVector3(0, 0.26, losZ))
         // Broadcast push-in: a slow 2-yard dolly toward the line while the
         // coach considers the call; the snap (runPlay) interrupts it.
-        fieldScene.focusCamera(z: losZ, pushIn: true)
+        // Reduce Motion: hold a static frame instead of the slow dolly.
+        fieldScene.focusCamera(z: losZ, pushIn: !reduceMotion)
         updateMarkers()
     }
 

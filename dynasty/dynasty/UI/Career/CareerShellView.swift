@@ -322,12 +322,14 @@ struct CareerShellView: View {
 
     /// Performs the week/phase advance from the TimelineTasksPanel.
     private func performShellAdvance() {
-        WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+        PerfLog.time("advance_week") {
+            WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
+        }
         // WeekAdvancer never saves (caller's responsibility) — persist the
         // phase/week change immediately so a force-quit can't lose it.
-        try? modelContext.save()
+        PerfLog.time("advance_save") { try? modelContext.save() }
         // Reload data so the dashboard picks up the new state
-        loadShellData()
+        PerfLog.time("shell_reload") { loadShellData() }
 
         // R31: the owner fired the coach (weekly collapse or end-of-season
         // review) — the career is over. Show the summary and stop here.

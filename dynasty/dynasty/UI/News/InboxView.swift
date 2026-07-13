@@ -114,7 +114,7 @@ struct InboxView: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Text(filter.rawValue)
+                Text(filter.label)
                     .font(.system(size: 14, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
 

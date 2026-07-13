@@ -13,10 +13,19 @@ struct SceneKitFieldView: UIViewRepresentable {
 
     let scene: FootballFieldScene
     var allowsCameraControl: Bool = true
+    /// R39: non-nil enables DEBUG-only render instrumentation — first-frame
+    /// latency (measured from the PerfLog mark of the same name) and a
+    /// 5-second rolling FPS report. No-op in Release.
+    var perfTag: String? = nil
 
     // MARK: UIViewRepresentable
 
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeUIView(context: Context) -> SCNView {
+        #if DEBUG
+        if let perfTag { PerfLog.lap("\(perfTag)_to_makeview", sinceMark: perfTag) }
+        #endif
         let scnView = SCNView()
         scnView.scene = scene
         scnView.allowsCameraControl = allowsCameraControl
@@ -24,6 +33,13 @@ struct SceneKitFieldView: UIViewRepresentable {
         scnView.antialiasingMode = .multisampling4X
         scnView.autoenablesDefaultLighting = false
         scnView.showsStatistics = false
+        #if DEBUG
+        if let perfTag {
+            context.coordinator.tag = perfTag
+            scnView.delegate = context.coordinator
+            PerfLog.lap("\(perfTag)_makeview_done", sinceMark: perfTag)
+        }
+        #endif
         return scnView
     }
 
@@ -31,5 +47,45 @@ struct SceneKitFieldView: UIViewRepresentable {
         // Scene updates are driven by FootballFieldScene directly;
         // no per-SwiftUI-update work needed here.
         uiView.allowsCameraControl = allowsCameraControl
+    }
+
+    // MARK: Coordinator (R39 DEBUG render instrumentation)
+
+    final class Coordinator: NSObject, SCNSceneRendererDelegate {
+        #if DEBUG
+        var tag: String = "scene"
+        private var firstFrameReported = false
+        private var windowStart: TimeInterval = 0
+        private var frameCount = 0
+        private var worstFrame: TimeInterval = 0
+        private var lastFrameTime: TimeInterval = 0
+
+        func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
+            if !firstFrameReported {
+                firstFrameReported = true
+                DispatchQueue.main.async { [tag] in
+                    PerfLog.measure("\(tag)_first_frame", sinceMark: tag)
+                }
+                windowStart = time
+                lastFrameTime = time
+                return
+            }
+
+            frameCount += 1
+            worstFrame = max(worstFrame, time - lastFrameTime)
+            lastFrameTime = time
+
+            // One rolling report every 5 s: average FPS + worst frame gap.
+            let elapsed = time - windowStart
+            if elapsed >= 5.0 {
+                let fps = Double(frameCount) / elapsed
+                let worstMs = worstFrame * 1000
+                print(String(format: "PERF|%@_fps|avg=%.1f worst_frame_ms=%.1f", tag, fps, worstMs))
+                windowStart = time
+                frameCount = 0
+                worstFrame = 0
+            }
+        }
+        #endif
     }
 }
