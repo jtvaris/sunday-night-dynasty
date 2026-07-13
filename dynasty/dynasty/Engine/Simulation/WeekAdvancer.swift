@@ -445,8 +445,9 @@ enum WeekAdvancer {
                     homeGamePlan: homeTeam.id == userTeamID ? userPlan : nil,
                     awayGamePlan: awayTeam.id == userTeamID ? userPlan : nil,
                     // Deterministic per-game weather — the live coached game
-                    // derives the identical value from the same game id/week.
-                    weather: GameWeather.forGame(id: game.id, week: game.week)
+                    // derives the identical value from the same game id/week/
+                    // home venue (dome home teams always play indoors/clear).
+                    weather: GameWeather.forGame(id: game.id, week: game.week, homeTeamAbbreviation: homeTeam.abbreviation)
                 )
                 game.homeScore = result.homeScore
                 game.awayScore = result.awayScore

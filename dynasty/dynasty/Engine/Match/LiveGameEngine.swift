@@ -925,6 +925,25 @@ final class LiveGameEngine: ObservableObject {
     /// OC-persona signature play pre-rolled for the NEXT AI offensive snap.
     private var pendingSignatureCall: OffensivePlayCall?
 
+    // MARK: - Player Coordinators (#26, live only, presentation)
+
+    /// The PLAYER's own coordinators — they make the pre-snap recommendation
+    /// shown in the call sheet. Deterministic from the same scheme + Coach-id
+    /// derivation the opponent personas use, so a given staff always advises
+    /// the same way. A vacant seat falls back to `.balanced` / grade 50.
+    private let playerOCPersona: OCPersona
+    private let playerDCPersona: DCPersona
+    private let playerOCGrade: Int
+    private let playerDCGrade: Int
+    /// Coordinator display names for the recommendation bubble ("S. McVay").
+    let playerOCName: String
+    let playerDCName: String
+
+    /// Rolling window of the opponent offense's recent scrimmage play types
+    /// (run/pass), newest last — feeds the DC recommendation's reasoning. Only
+    /// grows while the player is on defense; see `opponentRunLean`.
+    private var opponentPlayTypes: [PlayType] = []
+
     // MARK: - Immutable Setup
 
     let homeTeamID: UUID
@@ -1077,6 +1096,19 @@ final class LiveGameEngine: ObservableObject {
         opponentOCPersona = opponentCoaches.first { $0.role == .offensiveCoordinator }
             .map(OCPersona.derive(for:)) ?? .balanced
 
+        // #26: the PLAYER's own coordinators drive the pre-snap recommendation.
+        // Same derivation as the opponent personas; grade blends play-calling
+        // with adaptability (a sharper coordinator gives a more specific read).
+        let playerCoaches = playerTeamIsHome ? homeCoaches : awayCoaches
+        let playerOC = playerCoaches.first { $0.role == .offensiveCoordinator }
+        let playerDC = playerCoaches.first { $0.role == .defensiveCoordinator }
+        playerOCPersona = playerOC.map(OCPersona.derive(for:)) ?? .balanced
+        playerDCPersona = playerDC.map(DCPersona.derive(for:)) ?? .balanced
+        playerOCGrade = playerOC.map { ($0.playCalling + $0.adaptability) / 2 } ?? 50
+        playerDCGrade = playerDC.map { ($0.playCalling + $0.adaptability) / 2 } ?? 50
+        playerOCName = playerOC.map(LiveGameEngine.coordShortName) ?? "OC"
+        playerDCName = playerDC.map(LiveGameEngine.coordShortName) ?? "DC"
+
         // Medical staff for live injury risk/recovery (mirrors WeekAdvancer's
         // per-team doctor/physio lookup for the weekly roll).
         homeDoctor = homeCoaches.first { $0.role == .teamDoctor }
@@ -1205,8 +1237,14 @@ final class LiveGameEngine: ObservableObject {
         if result.playType == .pass || result.playType == .run {
             if playerIsOnOffense {
                 if let call = offensiveCall { tendencyTracker.recordOffense(call) }
-            } else if let package = defensivePackage {
-                tendencyTracker.recordDefense(package)
+            } else {
+                if let package = defensivePackage { tendencyTracker.recordDefense(package) }
+                // #26: opponent-offense run/pass window, feeding the DC
+                // recommendation bubble ("they've leaned on the run — load the
+                // box"). Presentation-only: records a value already resolved,
+                // rolls no RNG, and never changes a result — parity intact.
+                opponentPlayTypes.append(result.playType)
+                if opponentPlayTypes.count > 8 { opponentPlayTypes.removeFirst() }
             }
         }
 
@@ -1614,6 +1652,481 @@ final class LiveGameEngine: ObservableObject {
             postFeedNote(text)
             return text
         }
+    }
+
+    // MARK: - Coordinator Recommendations (#26, live only, presentation)
+    //
+    // The PLAYER's own OC/DC pre-select a call on the sheet and explain it in
+    // a speech bubble. The recommendation reuses the SAME situational logic
+    // the auto-sim leans on (run/pass by down & distance + scheme + game plan
+    // + weather, mirroring `PlaySimulator.decidePlayCall`; the defense mirrors
+    // `baseDefensivePackage`), resolved DETERMINISTICALLY — no live RNG — so a
+    // given situation always yields the same call and the bubble text always
+    // matches the highlighted card. Coordinator quality shades the read:
+    // a sharp (high grade / scheme-fit persona) coordinator gives a specific,
+    // film-room reason and higher confidence; a weak one stays generic. The
+    // player's own play-calling is never forced — this only pre-selects.
+
+    /// How strongly the coordinator backs his pick — drives the small pip in
+    /// the bubble. `.high` reads on a clear spot with a sharp coordinator.
+    enum RecommendationConfidence: Int, Comparable {
+        case low = 1, medium = 2, high = 3
+        static func < (l: RecommendationConfidence, r: RecommendationConfidence) -> Bool {
+            l.rawValue < r.rawValue
+        }
+        /// Filled pips out of three.
+        var pips: Int { rawValue }
+    }
+
+    /// The offensive coordinator's pre-snap recommendation. `reason` is
+    /// English-only by design (coach-speak); the UI chrome around it localizes.
+    struct OffensiveRecommendation: Equatable {
+        let call: OffensivePlayCall
+        let reason: String
+        let coordinatorName: String
+        let confidence: RecommendationConfidence
+    }
+
+    /// The defensive coordinator's pre-snap recommendation (English `reason`).
+    struct DefensiveRecommendation: Equatable {
+        let call: DefensiveCall
+        let reason: String
+        let coordinatorName: String
+        let confidence: RecommendationConfidence
+    }
+
+    /// Immutable snapshot of the decision context a recommendation reasons
+    /// over. Built from live state by ``currentSituation`` so the recommend
+    /// methods stay deterministic and unit-testable.
+    struct CoordinatorSituation: Equatable {
+        let down: Int
+        let distance: Int
+        /// Yards from the possessing team's own goal line (0–100).
+        let yardLine: Int
+        let quarter: Int
+        let timeRemaining: Int
+        /// Score margin from the PLAYER's perspective (+ = leading).
+        let scoreMargin: Int
+        let weather: GameWeather?
+
+        var yardsToEndzone: Int { 100 - yardLine }
+        var isGoalToGo: Bool { yardsToEndzone <= distance }
+        var isRedZone: Bool { yardsToEndzone <= 20 }
+        var isBackedUp: Bool { yardLine <= 12 }
+        var isShortYardage: Bool { distance <= 2 }
+        var isLongYardage: Bool { distance >= 8 }
+        var isFourthDown: Bool { down == 4 }
+        /// Final two minutes of a half.
+        var isTwoMinute: Bool { (quarter == 2 || quarter >= 4) && timeRemaining <= 120 }
+        var isLate: Bool { quarter >= 4 && timeRemaining <= 300 }
+        var trailing: Bool { scoreMargin < 0 }
+        var leading: Bool { scoreMargin > 0 }
+    }
+
+    /// Live decision context for the recommendation engine.
+    var currentSituation: CoordinatorSituation {
+        CoordinatorSituation(
+            down: down, distance: distance, yardLine: yardLine,
+            quarter: quarter, timeRemaining: timeRemaining,
+            scoreMargin: playerScoreMargin, weather: weather
+        )
+    }
+
+    /// Player-team score minus opponent score.
+    var playerScoreMargin: Int {
+        (playerTeamIsHome ? homeScore : awayScore) - (playerTeamIsHome ? awayScore : homeScore)
+    }
+
+    /// The opponent offense's recent run/pass lean, or `nil` until it has
+    /// shown a few snaps. `true` = run-leaning, `false` = pass-leaning.
+    private var opponentRunLean: Bool? {
+        let recent = Array(opponentPlayTypes.suffix(4))
+        guard recent.count >= 3 else { return nil }
+        let runs = recent.filter { $0 == .run }.count
+        if runs >= 3 { return true }
+        if recent.count - runs >= 3 { return false }
+        return nil
+    }
+
+    // MARK: Offensive recommendation
+
+    /// The offensive coordinator's deterministic pre-snap recommendation. See
+    /// the section header for the reuse/determinism contract.
+    func recommendedOffensiveCall(_ s: CoordinatorSituation) -> OffensiveRecommendation {
+        let persona = playerOCPersona
+        let grade = playerOCGrade
+
+        // --- Run vs pass lean (mirrors decidePlayCall, resolved at 0.5) ---
+        var passLean: Double
+        if s.isTwoMinute && (s.trailing || s.scoreMargin == 0) {
+            passLean = 0.88
+        } else {
+            switch s.down {
+            case 1: passLean = 0.52
+            case 2: passLean = s.distance >= 7 ? 0.66 : 0.48
+            case 3, 4:
+                if s.distance <= 2 { passLean = 0.42 }
+                else if s.distance >= 7 { passLean = 0.82 }
+                else { passLean = 0.64 }
+            default: passLean = 0.5
+            }
+        }
+        passLean += offensiveSchemePassBias(playerOffensiveScheme)
+        passLean += ((playerGamePlan?.runPassRatio ?? 0.5) - 0.5) * 0.3   // R12 game plan
+        switch s.weather {
+        case .snow: passLean -= 0.08
+        case .wind: passLean -= 0.05
+        case .rain: passLean -= 0.03
+        default: break
+        }
+        // Protecting a late lead on a manageable down: bleed clock on the run.
+        if s.isLate && s.leading && !s.isLongYardage { passLean -= 0.12 }
+        // Backed up against our own goal: favor the safe, ball-secure call.
+        if s.isBackedUp && !s.isTwoMinute { passLean -= 0.10 }
+        var wantsPass = passLean >= 0.5
+
+        // --- Counter the AI defense's read (a sharp OC earns this) ---
+        var counteredRead: AdaptiveOpponentAI.OffenseTendency? = nil
+        var preferPlayAction = false
+        if grade >= 62, let read = activeDefenseRead {
+            counteredRead = read
+            switch read {
+            case .insideRun, .outsideRun:
+                wantsPass = true; preferPlayAction = true       // shot off the run key
+            case .screen:
+                wantsPass = true                                 // go over the top
+            case .shortPass, .mediumPass, .deepPass, .playAction:
+                wantsPass = false                                // they sit on the pass — run it
+            }
+        }
+
+        let call: OffensivePlayCall = wantsPass
+            ? recommendedPassCall(s, persona: persona, playAction: preferPlayAction)
+            : recommendedRunCall(s, persona: persona)
+
+        // Clarity of the spot governs the confidence pip.
+        let clear = s.isFourthDown || (s.down == 3 && s.isLongYardage)
+            || s.isShortYardage || s.isTwoMinute || s.isRedZone || s.isBackedUp
+            || (s.isLate && s.leading)
+        let confidence: RecommendationConfidence
+        if grade < 50 { confidence = .low }
+        else if clear || counteredRead != nil { confidence = grade >= 62 ? .high : .medium }
+        else { confidence = grade >= 60 ? .medium : .low }
+
+        return OffensiveRecommendation(
+            call: call,
+            reason: offenseReason(s, persona: persona, wantsPass: wantsPass,
+                                  counteredRead: counteredRead, grade: grade),
+            coordinatorName: playerOCName,
+            confidence: confidence
+        )
+    }
+
+    /// Pass-probability bias per scheme — same weights as `decidePlayCall`.
+    private func offensiveSchemePassBias(_ scheme: OffensiveScheme?) -> Double {
+        switch scheme {
+        case .airRaid:    return 0.15
+        case .proPassing: return 0.10
+        case .westCoast:  return 0.08
+        case .spread:     return 0.05
+        case .rpo:        return 0.0
+        case .shanahan:   return -0.10
+        case .option:     return -0.12
+        case .powerRun:   return -0.15
+        case nil:         return 0.0
+        }
+    }
+
+    /// Deterministic run pick: first installed play off the persona's ordered
+    /// preference for the situation (short yardage / goal line come first).
+    private func recommendedRunCall(_ s: CoordinatorSituation, persona: OCPersona) -> OffensivePlayCall {
+        if s.distance <= 1 || (s.isGoalToGo && s.yardsToEndzone <= 2) {
+            for c: OffensivePlayCall in [.qbSneak, .dive, .insideRun] where playerHasInstalled(c) { return c }
+        }
+        let order: [OffensivePlayCall]
+        switch persona {
+        case .groundAndPound: order = [.insideRun, .counter, .toss, .outsideRun, .dive, .draw]
+        case .airRaid:        order = [.draw, .screen, .insideRun, .toss]
+        case .westCoast:      order = [.outsideRun, .toss, .insideRun, .screen, .counter]
+        case .balanced:       order = [.insideRun, .outsideRun, .counter, .toss, .draw]
+        }
+        for c in order where playerHasInstalled(c) { return c }
+        return firstInstalledOffense(category: "Run") ?? .insideRun
+    }
+
+    /// Deterministic pass pick: depth from distance/field, persona-ordered.
+    /// Never a deep shot inside the red zone (collapses to a timing throw).
+    private func recommendedPassCall(_ s: CoordinatorSituation, persona: OCPersona, playAction: Bool) -> OffensivePlayCall {
+        if playAction, s.yardsToEndzone >= 22, playerHasInstalled(.playActionDeep) {
+            return .playActionDeep
+        }
+        var depth: Int  // 0 short, 1 medium, 2 deep
+        if s.distance <= 4 { depth = 0 } else if s.distance <= 9 { depth = 1 } else { depth = 2 }
+        if s.isRedZone { depth = 0 }                       // no verticals near the goal
+        if s.isBackedUp { depth = 0 }                      // protect the ball in our own end
+        if s.isTwoMinute { depth = min(depth, 1) }         // move the ball, not a bomb
+        let order: [OffensivePlayCall]
+        switch (persona, depth) {
+        case (.airRaid, 0):        order = [.slant, .mesh, .stick, .quickOut]
+        case (.airRaid, 1):        order = [.seam, .dig, .cross, .curl]
+        case (.airRaid, _):        order = [.post, .corner, .goRoute, .flood]
+        case (.westCoast, 0):      order = [.slant, .quickOut, .drag, .stick, .flat, .hitch]
+        case (.westCoast, 1):      order = [.curl, .drag, .dig, .stick]
+        case (.westCoast, _):      order = [.corner, .post, .flood, .goRoute]
+        case (.groundAndPound, 0): order = [.slant, .stick, .flat, .quickOut]
+        case (.groundAndPound, 1): order = [.dig, .curl, .drag]
+        case (.groundAndPound, _): order = [.post, .corner, .goRoute]
+        case (_, 0):               order = [.slant, .quickOut, .hitch, .stick]
+        case (_, 1):               order = [.curl, .dig, .comeback, .seam]
+        default:                   order = [.post, .corner, .goRoute, .flood]
+        }
+        for c in order where playerHasInstalled(c) { return c }
+        let cat = depth == 0 ? "Short Pass" : (depth == 1 ? "Medium Pass" : "Deep Pass")
+        return firstInstalledOffense(category: cat)
+            ?? OffensivePlayCall.allCases.first { $0.isPass && $0 != .spike && playerHasInstalled($0) }
+            ?? .slant
+    }
+
+    private func firstInstalledOffense(category: String) -> OffensivePlayCall? {
+        OffensivePlayCall.allCases.first { $0.category == category && playerHasInstalled($0) }
+    }
+
+    private func downLabel(_ d: Int) -> String {
+        switch d { case 1: return "1st"; case 2: return "2nd"; case 3: return "3rd"; default: return "4th" }
+    }
+
+    /// One-line OC reasoning, sharpening with coordinator grade.
+    private func offenseReason(
+        _ s: CoordinatorSituation, persona: OCPersona,
+        wantsPass: Bool, counteredRead: AdaptiveOpponentAI.OffenseTendency?, grade: Int
+    ) -> String {
+        // Weak staff: gist only, no film-room detail.
+        guard grade >= 52 else {
+            return wantsPass ? "Let's throw it here and move the chains."
+                             : "Keep it on the ground and stay on schedule."
+        }
+        let sharp = grade >= 68
+
+        // 1) Countering the AI defense's read (the sharpest read there is).
+        if let read = counteredRead {
+            switch read {
+            case .insideRun, .outsideRun:
+                return "They've loaded the box on our run — hit them with play-action off it."
+            case .screen:
+                return "They're jumping our screens — take the top off with a shot downfield."
+            case .shortPass, .mediumPass, .deepPass, .playAction:
+                return "They're sitting on the pass — hand it off and make them tackle."
+            }
+        }
+
+        // 2) Situation lines.
+        if s.isFourthDown {
+            return wantsPass
+                ? "4th & \(s.distance) — we're going for it, take the sure completion at the sticks."
+                : "4th & \(s.distance) — lean on the big people and go get it."
+        }
+        if s.isTwoMinute && (s.trailing || s.scoreMargin == 0) {
+            return "Two-minute drill — quick game to move the chains and manage the clock."
+        }
+        if s.isLate && s.leading && !wantsPass {
+            return "We're ahead late — bleed the clock, keep it on the ground and make them use timeouts."
+        }
+        if s.down == 3 && s.isLongYardage {
+            let tail = sharp && persona == .airRaid ? " Let it rip."
+                : (sharp ? " Get it out before their rush gets home." : "")
+            return "3rd & long — protect the QB and throw past the sticks.\(tail)"
+        }
+        if (s.down == 3 || s.down == 2) && s.isShortYardage {
+            return "\(downLabel(s.down)) & \(s.distance) — short yardage, lean on them and move the chains."
+        }
+        if s.isRedZone {
+            return wantsPass
+                ? "Red zone — tight windows, take the high-percentage throw and live for the next down."
+                : "Red zone — pound it in behind our front, no wasted motion."
+        }
+        if s.isBackedUp {
+            return "Backed up on our own goal — safe call, protect the football, no short field for them."
+        }
+        if let w = s.weather, (w == .snow || w == .wind), !wantsPass {
+            return "\(w == .snow ? "Snow's" : "Wind's") a factor — keep it on the ground and stay sound."
+        }
+
+        // 3) Persona-flavored default.
+        if sharp {
+            switch persona {
+            case .airRaid:
+                return wantsPass ? "Let's push the ball down the field and stress their coverage."
+                                 : "Even the Air Raid runs it here to keep them honest."
+            case .westCoast:
+                return wantsPass ? "Rhythm throw on time — take the easy completion, stay on schedule."
+                                 : "Get the back to the edge and let him work in space."
+            case .groundAndPound:
+                return wantsPass ? "Play off the run — they're crowding the box, make them pay over the top."
+                                 : "Downhill run — this is our football, wear them down."
+            case .balanced:
+                return wantsPass ? "Take what the coverage gives — clean throw, stay ahead of the chains."
+                                 : "Sound run to stay on schedule."
+            }
+        }
+        return wantsPass ? "Good down to throw — stay on schedule."
+                         : "Run it here and keep us on schedule."
+    }
+
+    // MARK: Defensive recommendation
+
+    /// The defensive coordinator's deterministic pre-snap recommendation.
+    /// Mirrors `baseDefensivePackage`'s situational branches as a NAMED call,
+    /// shaded by the DC persona and the opponent's recent run/pass lean.
+    func recommendedDefensiveCall(_ s: CoordinatorSituation) -> DefensiveRecommendation {
+        let persona = playerDCPersona
+        let grade = playerDCGrade
+        var call = baseDefensiveRecommendation(s)
+        call = shadeDefensiveRecommendation(call, s: s, persona: persona, grade: grade)
+        call = installedDefensiveEquivalent(call)
+
+        let clear = s.yardsToEndzone <= 10 || (s.down == 3 && s.distance >= 7)
+            || s.distance <= 2 || call == .prevent
+            || (grade >= 60 && opponentRunLean != nil)
+        let confidence: RecommendationConfidence
+        if grade < 50 { confidence = .low }
+        else if clear { confidence = grade >= 62 ? .high : .medium }
+        else { confidence = grade >= 60 ? .medium : .low }
+
+        return DefensiveRecommendation(
+            call: call,
+            reason: defenseReason(s, persona: persona, call: call, grade: grade),
+            coordinatorName: playerDCName,
+            confidence: confidence
+        )
+    }
+
+    /// Situational base call (mirrors `baseDefensivePackage`'s branch order).
+    private func baseDefensiveRecommendation(_ s: CoordinatorSituation) -> DefensiveCall {
+        if s.yardsToEndzone <= 10 { return .goalLineD }
+        if s.isLate && s.leading && s.scoreMargin <= 16 && s.yardsToEndzone > 25 { return .prevent }
+        if s.down == 3 && s.distance >= 7 { return .dimePackage }
+        if s.distance <= 2 { return .bearFront }
+        return .cover3Base
+    }
+
+    /// Persona + opponent-tendency shading (deterministic — no live RNG).
+    /// Never overrides the goal-line sellout or the late-lead prevent shell.
+    private func shadeDefensiveRecommendation(
+        _ base: DefensiveCall, s: CoordinatorSituation, persona: DCPersona, grade: Int
+    ) -> DefensiveCall {
+        if base == .goalLineD || base == .prevent { return base }
+        // A sharp DC that has read the opponent's lean adjusts the front.
+        if grade >= 60, let runLean = opponentRunLean {
+            if runLean, s.distance <= 6, base != .bearFront {
+                return persona == .aggressive ? .doubleAGap : .bearFront
+            }
+            if !runLean, s.distance >= 5 {
+                return persona == .conservative ? .cover2Shell
+                    : (persona == .aggressive ? .cornerBlitz : .nickelPackage)
+            }
+        }
+        switch persona {
+        case .aggressive:
+            if base == .dimePackage { return .cornerBlitz }
+            if base == .cover3Base  { return s.distance >= 5 ? .lbFire : .manPress }
+            if base == .bearFront   { return .doubleAGap }
+            return base
+        case .conservative:
+            if base == .dimePackage { return .quarters }
+            if base == .cover3Base  { return .cover2Shell }
+            return base
+        case .exotic:
+            if base == .dimePackage { return .zoneBlitz }
+            if base == .cover3Base  { return s.distance >= 5 ? .zoneBlitz : .cover3Base }
+            if base == .bearFront   { return .doubleAGap }
+            return base
+        case .balanced:
+            return base
+        }
+    }
+
+    /// Keep the recommended call inside the coached team's playbook, preserving
+    /// its INTENT: a scheme that lacks the ideal call still gets a sound one of
+    /// the same character (a run-stop for a run-stop, extra DBs for extra DBs)
+    /// rather than a generic zone. Cover 3 is installed by every scheme, so the
+    /// chain always resolves.
+    private func installedDefensiveEquivalent(_ call: DefensiveCall) -> DefensiveCall {
+        for candidate in defensiveFallbackChain(for: call)
+        where candidate.isInPlaybook(of: playerDefensiveScheme) {
+            return candidate
+        }
+        return .cover3Base
+    }
+
+    /// Intent-preserving fallback order (most-preferred first, always ending at
+    /// the universally installed Cover 3).
+    private func defensiveFallbackChain(for call: DefensiveCall) -> [DefensiveCall] {
+        switch call {
+        case .bearFront:     return [.bearFront, .goalLineD, .cover1, .cover3Base]
+        case .goalLineD:     return [.goalLineD, .bearFront, .cover1, .cover3Base]
+        case .doubleAGap:    return [.doubleAGap, .lbFire, .cornerBlitz, .safetyBlitz, .cover1, .cover3Base]
+        case .lbFire:        return [.lbFire, .zoneBlitz, .doubleAGap, .cornerBlitz, .cover3Base]
+        case .cornerBlitz:   return [.cornerBlitz, .safetyBlitz, .lbFire, .manPress, .cover3Base]
+        case .zoneBlitz:     return [.zoneBlitz, .lbFire, .cover2Shell, .cover3Base]
+        case .manPress:      return [.manPress, .manFree, .cover1, .cover3Base]
+        case .cover2Shell:   return [.cover2Shell, .quarters, .cover3Base]
+        case .quarters:      return [.quarters, .cover4Match, .cover2Shell, .dimePackage, .cover3Base]
+        case .dimePackage:   return [.dimePackage, .nickelPackage, .quarters, .cover4Match, .cover3Base]
+        case .nickelPackage: return [.nickelPackage, .dimePackage, .cover3Base]
+        case .prevent:       return [.prevent, .quarters, .cover4Match, .cover2Shell, .cover3Base]
+        default:             return [call, .cover3Base]
+        }
+    }
+
+    /// One-line DC reasoning, sharpening with coordinator grade.
+    private func defenseReason(
+        _ s: CoordinatorSituation, persona: DCPersona, call: DefensiveCall, grade: Int
+    ) -> String {
+        guard grade >= 52 else {
+            return "Line up sound and rally to the ball."
+        }
+        let sharp = grade >= 68
+
+        // Read the opponent's tendency first (a sharp DC earns this).
+        if grade >= 60, let runLean = opponentRunLean {
+            if runLean, s.distance <= 6 {
+                return "They've leaned on the run — load the box and make them throw it."
+            }
+            if !runLean, s.distance >= 5 {
+                return persona == .aggressive
+                    ? "They've been throwing it — bring pressure and make the QB uncomfortable."
+                    : "They've been throwing it — drop an extra DB and take away the windows."
+            }
+        }
+        if call == .goalLineD || s.yardsToEndzone <= 10 {
+            return "Goal line — stack the front, sell out to stop the run, no easy walk-in."
+        }
+        if call == .prevent {
+            return "Protecting the lead — keep everything in front, never give up the big one."
+        }
+        if s.down == 3 && s.distance >= 7 {
+            let tail = sharp && persona == .aggressive ? " Send the house."
+                : (sharp ? " Get after the passer." : "")
+            return "3rd & long — they have to throw, squeeze the sticks and rally up.\(tail)"
+        }
+        if s.distance <= 2 {
+            return "Short yardage — crowd the line, this is where we stone the run."
+        }
+        if sharp {
+            switch persona {
+            case .aggressive:   return "Bring the heat — put their protection on its heels."
+            case .conservative: return "Play it sound — keep it in front and tackle well."
+            case .exotic:       return "Give them a look they haven't seen — disguise it, rotate late."
+            case .balanced:     return "Sound call for the down — force them to earn it."
+            }
+        }
+        return "Sound defense for the down — make them drive the length of the field."
+    }
+
+    /// "S. McVay" — coordinator name for the recommendation bubble.
+    private static func coordShortName(_ coach: Coach) -> String {
+        let initial = coach.firstName.first.map { "\($0). " } ?? ""
+        return initial + coach.lastName
     }
 
     /// Publishes an adaptation intel line (overlay + mini feed), at most one

@@ -158,6 +158,12 @@ struct CoachedGameView: View {
     /// so recomputing it on every body render would make the brain icon jump.
     @State private var cachedSuggestion: OffensivePlayCall? = nil
 
+    /// #26: the coordinator's pre-snap recommendation for the current window
+    /// (the pre-selected card + the speech-bubble reasoning). Computed once
+    /// when the call window opens (deterministic), cleared between windows.
+    @State private var offRecommendation: LiveGameEngine.OffensiveRecommendation? = nil
+    @State private var defRecommendation: LiveGameEngine.DefensiveRecommendation? = nil
+
     // Defense call state
     @State private var defCall: DefensiveCall = .cover3Base
     @State private var defCategory: String = "Coverage"
@@ -1225,6 +1231,28 @@ struct CoachedGameView: View {
             .padding(.horizontal, 14)
             .padding(.top, 10)
 
+            // #26: the OC's speech bubble — expanded while his pick stands,
+            // a small "Coach's pick" pill once the coach browses elsewhere.
+            if let rec = offRecommendation {
+                coordinatorBubble(
+                    name: rec.coordinatorName,
+                    role: String(localized: "OC"),
+                    icon: "brain.head.profile",
+                    reason: rec.reason,
+                    confidence: rec.confidence,
+                    callName: rec.call.rawValue,
+                    accent: Color.accentBlue,
+                    expanded: selectedCall == rec.call,
+                    onReselect: {
+                        withAnimation(.spring(duration: 0.2)) {
+                            selectedCall = rec.call
+                            selectedCategory = rec.call.category
+                        }
+                    }
+                )
+                .animation(.spring(duration: 0.25), value: selectedCall == rec.call)
+            }
+
             HStack(spacing: 6) {
                 ForEach(categories, id: \.self) { cat in
                     categoryTab(cat)
@@ -1536,27 +1564,113 @@ struct CoachedGameView: View {
         (engine.quarter == 2 || engine.quarter >= 4) && engine.timeRemaining <= 150
     }
 
-    /// Maps the engine's situational PlayType hint to a concrete play call,
-    /// keeping the suggestion inside the team's installed playbook.
-    private var aiSuggestion: OffensivePlayCall? {
-        let raw: OffensivePlayCall?
-        switch engine.aiOffensiveCallHint() {
-        case .run:
-            raw = engine.distance <= 1 ? .qbSneak : (engine.distance <= 5 ? .insideRun : .outsideRun)
-        case .pass:
-            if engine.distance <= 4 { raw = .slant }
-            else if engine.distance <= 8 { raw = .curl }
-            else { raw = .dig }
-        case .kneel: raw = .kneel
-        case .spike: raw = .spike
-        default: raw = nil
+    // MARK: Coordinator recommendation bubble (#26)
+
+    /// The pre-snap speech bubble: coordinator name + role icon + one-line
+    /// reasoning + a confidence pip, tinted with the dark card language. It
+    /// flows above the category tabs (never covers the call sheet) and
+    /// collapses to a small "Coach's pick" pill the moment the player browses
+    /// to another card — tapping the pill re-selects the recommended call.
+    private func coordinatorBubble(
+        name: String, role: String, icon: String,
+        reason: String, confidence: LiveGameEngine.RecommendationConfidence,
+        callName: String, accent: Color,
+        expanded: Bool, onReselect: @escaping () -> Void
+    ) -> some View {
+        Group {
+            if expanded {
+                HStack(alignment: .top, spacing: 10) {
+                    ZStack {
+                        Circle().fill(accent.opacity(0.18)).frame(width: 34, height: 34)
+                        Image(systemName: icon)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(accent)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(name)
+                                .font(.system(size: 12, weight: .heavy))
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
+                            Text(role)
+                                .font(.system(size: 9, weight: .black))
+                                .foregroundStyle(accent)
+                                .tracking(0.8)
+                            Spacer(minLength: 4)
+                            confidencePips(confidence, accent: accent)
+                        }
+                        Text(verbatim: reason)   // en-only coach-speak (documented)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(Color.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 4) {
+                            Image(systemName: "hand.point.right.fill")
+                                .font(.system(size: 8))
+                            Text("\(String(localized: "Coach's pick")): \(callName)")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundStyle(accent)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(accent.opacity(0.35), lineWidth: 1)
+                )
+                .padding(.horizontal, 14)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(Text("\(name), \(role). \(reason). Recommends \(callName)."))
+            } else {
+                Button(action: onReselect) {
+                    HStack(spacing: 6) {
+                        Image(systemName: icon)
+                            .font(.system(size: 11, weight: .bold))
+                        Text("\(String(localized: "Coach's pick")): \(callName)")
+                            .font(.system(size: 11, weight: .bold))
+                        Image(systemName: "arrow.uturn.left")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    .foregroundStyle(accent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(accent.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .transition(.opacity)
+                .accessibilityHint(Text("Re-selects the coordinator's recommended call"))
+            }
         }
-        guard let pick = raw else { return nil }
-        if engine.playerHasInstalled(pick) { return pick }
-        // Substitute the closest installed play from the same category.
-        return OffensivePlayCall.allCases.first {
-            $0.category == pick.category && engine.playerHasInstalled($0)
-        } ?? pick
+    }
+
+    /// Small filled-pip confidence meter (SURE / LEAN / HUNCH).
+    private func confidencePips(
+        _ c: LiveGameEngine.RecommendationConfidence, accent: Color
+    ) -> some View {
+        HStack(spacing: 3) {
+            Text(confidenceLabel(c))
+                .font(.system(size: 8, weight: .black))
+                .foregroundStyle(Color.textTertiary)
+                .tracking(0.6)
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(i < c.pips ? accent : Color.surfaceBorder)
+                    .frame(width: 5, height: 5)
+            }
+        }
+    }
+
+    private func confidenceLabel(_ c: LiveGameEngine.RecommendationConfidence) -> String {
+        switch c {
+        case .high:   return String(localized: "SURE")
+        case .medium: return String(localized: "LEAN")
+        case .low:    return String(localized: "HUNCH")
+        }
     }
 
     // MARK: 4th down panel
@@ -1886,6 +2000,28 @@ struct CoachedGameView: View {
             .padding(.horizontal, 14)
             .padding(.top, 12)
 
+            // #26: the DC's speech bubble — mirrors the offensive one, tuned
+            // for the coverage/pressure sheet.
+            if let rec = defRecommendation {
+                coordinatorBubble(
+                    name: rec.coordinatorName,
+                    role: String(localized: "DC"),
+                    icon: "shield.lefthalf.filled",
+                    reason: rec.reason,
+                    confidence: rec.confidence,
+                    callName: rec.call.rawValue,
+                    accent: Color.accentBlue,
+                    expanded: defCall == rec.call,
+                    onReselect: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            defCall = rec.call
+                            defCategory = rec.call.category
+                        }
+                    }
+                )
+                .animation(.spring(duration: 0.25), value: defCall == rec.call)
+            }
+
             // Same clipboard category tabs as the offensive call sheet.
             HStack(spacing: 6) {
                 ForEach(defensiveCategories, id: \.self) { cat in
@@ -2005,6 +2141,7 @@ struct CoachedGameView: View {
     /// Clipboard-style defensive call card: mini X&O art, name, one-line blurb.
     private func defenseCallCard(_ call: DefensiveCall) -> some View {
         let isSelected = defCall == call
+        let isSuggested = defRecommendation?.call == call
         let installed = call.isInPlaybook(of: engine.playerDefensiveScheme)
         return Button {
             defCallDirtied = true // the coach's own pick — a delay snaps it
@@ -2027,6 +2164,16 @@ struct CoachedGameView: View {
                         Image(systemName: "book.closed")
                             .font(.system(size: 9))
                             .foregroundStyle(Color.textTertiary)
+                    }
+                    if isSuggested {
+                        Image(systemName: "shield.lefthalf.filled")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.accentBlue)
+                    }
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.accentGold)
                     }
                 }
                 Text(call.blurb)
@@ -2722,6 +2869,7 @@ struct CoachedGameView: View {
             } else if engine.chartCallsForTwo {
                 // The AI goes for two: the coach calls the stop — decision clock on.
                 syncFieldToSituation()
+                prepareDefensiveRecommendation()
                 armPlayClock()
             } else {
                 runPlay(offCall: nil, forcedType: nil)
@@ -2744,20 +2892,26 @@ struct CoachedGameView: View {
         }
         if engine.playerIsOnOffense {
             // Huddle up, then line the teams up at the new scrimmage spot
-            // while the user considers the call, and pre-select the AI pick.
+            // while the user considers the call. #26: the OC's deterministic
+            // recommendation pre-selects its card and opens its bubble.
             lineUpWithHuddle()
-            cachedSuggestion = aiSuggestion
-            selectedCall = cachedSuggestion
-            if let suggestion = selectedCall { selectedCategory = suggestion.category }
+            let rec = engine.recommendedOffensiveCall(engine.currentSituation)
+            offRecommendation = rec
+            defRecommendation = nil
+            cachedSuggestion = rec.call
+            selectedCall = rec.call
+            selectedCategory = rec.call.category
             wentForIt = false
             fourthDownChoice = engine.isFourthDown
                 ? (engine.canAttemptFieldGoal ? .fieldGoal : .punt)
                 : nil
             armPlayClock()
         } else {
-            // Opponent possession: their offense huddles and lines up —
-            // the snap comes from the READY button or the decision clock.
+            // Opponent possession: their offense huddles and lines up — the
+            // snap comes from the READY button or the decision clock. #26: the
+            // DC's recommendation pre-selects the coverage/pressure call.
             lineUpWithHuddle()
+            prepareDefensiveRecommendation()
             armPlayClock()
         }
     }
@@ -2786,6 +2940,18 @@ struct CoachedGameView: View {
             guard !isAnimating, !isReplaying, !engine.isGameOver else { return }
             syncFieldToSituation()
         }
+    }
+
+    /// #26: computes the DC's recommendation for the opponent's snap and
+    /// pre-selects its call. Deterministic — a repeated open never flickers.
+    private func prepareDefensiveRecommendation() {
+        guard !engine.isGameOver else { return }
+        let rec = engine.recommendedDefensiveCall(engine.currentSituation)
+        defRecommendation = rec
+        offRecommendation = nil
+        defCategory = rec.call.category
+        defCall = rec.call
+        defShellOverride = nil
     }
 
     private func snap(call: OffensivePlayCall) {

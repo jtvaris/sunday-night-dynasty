@@ -1,5 +1,82 @@
 # Dynasty - TODO
 
+## ✅ VERIFIOINTI 2026-07-13 — 4 korjausta (pallon lähtö / vaihdot / dome / koordinaattorisuositus)
+
+**Build:** `BUILD SUCCEEDED` (Debug, iPad Pro 13" M5 -sim `049C7295`, DerivedData `dynasty-arklysztnruxtvfbogjmrinmtdqt`). Asennettu + käynnistetty `com.brewcrow.dynasty`. Coach the Game pelattu (BUF koti vs MIA). idb-tap-kalibrointi: screenshot 2064×2752 px = 2× → idb-pisteet = px/2.
+
+Todisteet: `/tmp/snd-screenshots/play-call-fixes/` (screenshotit + videot + montaasit + `debugsim.log`).
+
+- **[PASS] #26 Koordinaattorisuositus + puhekupla (hyökkäys & puolustus)** — live-verifioitu.
+  - OC-kupla laajennettuna, esivalittu kortti + kategoria, "Coach's pick: X" + luottamuspipit. Kaksi eri tilannetta → eri suositus: **2nd&12 (long) → Post (deep) / HUNCH** "Let's throw it here and move the chains" (`off_bubble_expanded.png`); **2nd&1 (short) → QB Sneak / LEAN** "Keep it on the ground and stay on schedule" (`off_bubble_shortyardage.png`).
+  - DC-kupla laajennettuna: **Cover 3 / HUNCH** "Line up sound and rally to the ball", kortissa shield-badge + valinnan checkmark (`off_pass_result.png`, `state_now.png`).
+  - Collapsed "Coach's pick: Post ↩" -pilleri kun selaa muualle (`callsheet_off1.png`); pillerin napautus valitsee suosituksen uudelleen ja laajentaa kuplan.
+  - HUOM: pelin ura on 0/21 staff (ei koordinaattoreita) → OC/DC grade 50 fallback → reason on geneerinen (grade<52-haara) ja luottamus cappaa LEANiin. Film-room-perustelu + SURE vaatii palkatun koordinaattorin (grade≥62/68) — sitä ei tässä urassa voitu näyttää.
+
+- **[PASS koodi / OSITTAIN visuaalinen] #27 Pallon lento lähtee QB:n kädestä** — koodikorjaus todennettu diffistä (`ballReleasePoint` = heittäjän presentation-rintapiste, `ballHandoffToken`-race-vahti, `snapDuration/currentPlaybackRate`-skaalaus, `.arc(from:)`). Videoita ≥4 heitosta (hyökkäys + puolustus, 1×): BUF-completion (J. Allen → D. Johnson), BUF-pass broken up (Joe Clark), MIA-incompletion (Micah Howard, Andre White diving breakup), MIA-completion (DeAndre Martin 21 yd) + sackit/puntit. **Yksikään heitto ei lähtenyt LOS-edestä.** Puolustaessa vajaaksi jäänyt pallo laskeutuu kaukana kentällä KAUKA-QB:n viereen (MIA 20), EI kameran puoleiseen LOS-etuun (`def_release_hi.png`, `def_clean_throw.png`). RAJAUS: matalatarkkuuksinen 3D + pieni pallo + nopea irtoaminen + pitkä/vaihteleva pre-snap + päätöskellon auto-advance → yksittäistä terävää "pallo kädessä→ilmassa"-framea ei saatu talteen; todiste on kokonaisvaltainen (lentorata/laskeutuminen QB:n lähelle), ei yksittäisframe.
+- **[PASS koodi / EI live] #25 Pallonvaihtojen ele (toss-pitch/handoff)** — `pitchMotion` (glance + alakautta-flip, apex≤2.0) + `handoffGesture` (antajan ojennus + carry-poosin riisunta) + `.arc(from: c.qb/script.carrier)` todennettu diffistä. Live-kaappaus EI onnistunut: päätöskello auto-advance ehti ajaa oman pelin (Toss Sweep -kutsu meni ohi → auto-pass+punt). Kohtaa ei voitu visuaalisesti todentaa tässä ympäristössä.
+- **[PASS koodikatselmointi / EI live] #24 Dome** — ei osunut domejoukkueen kotipeliin (BUF koti vs MIA, kumpikaan ei dome). Kaikki 4 `GameWeather.forGame`-kutsupaikkaa (`WeekAdvancer` + `CareerDashboardView`×3) välittävät `homeTeamAbbreviation`. `.dome` = no-op kaikissa säähaaroissa (clear-pariteetti); DOME-chip renderöityy ehdolla `weather != .clear`; 3D-kenttä liittää `.dome` `case .clear,.wind`-oksaan (ei precipiä). Live-DOME-chip jäi näyttämättä (ei dome-kotipeliä saatavilla).
+- **[PASS] #6 Regressio** — `debugSimulate(20)`: points/team mean **pre 24.4, vision 22.8, security 22.1, intcredit 26.1, all-on 22.8** → ~20–25-kaistalla, ennallaan (schedule-integriteetti 2025–2032 OK). Kaikki 4 korjausta presentation-only → tulospariteetti. Motion-profiili (60 s, `motion60.mp4`): pelisyklit kehittyvät sulavasti useassa sekunnissa (ei <2 s 0→9→0-piikkejä); pitkät zero-diff-jaksot = call sheet / pre-snap -idle (clear-sää, ei partikkelibaselinea) — ei pelianimaation jäätymä.
+
+## Koordinaattorin suosituspeli + puhekupla (#26) — hyökkäys & puolustus (2026-07-13)
+
+### Suositusmoottori (Engine/Match/LiveGameEngine.swift)
+- [x] **`recommendedOffensiveCall(_:)` / `recommendedDefensiveCall(_:)`** palauttavat `OffensiveRecommendation` / `DefensiveRecommendation` (call, reason, coordinatorName, confidence). **DETERMINISTINEN** samalle tilanteelle — EI live-RNG:tä, joten kupla ja esivalittu kortti eivät koskaan välky.
+- [x] **Käyttää OLEMASSA OLEVAA logiikkaa:** hyökkäys peilaa `PlaySimulator.decidePlayCall`in run/pass-painot (down&distance + scheme-bias + R12 game plan `runPassRatio` + sää), resolvoituna 0.5-rajalla (ei kolikonheittoa). Puolustus peilaa `baseDefensivePackage`in tilannehaarat (RZ→goalLine, myöhäisjohto→prevent, 3rd&long→dime, short→bear, muu→cover3) nimettynä kutsuna.
+- [x] **`CoordinatorSituation`** (down/distance/kenttäasema/kello/pistetilanne/sää + johdetut) + `currentSituation`/`playerScoreMargin` engineen. Persoona/arvosana/nimi PELAAJAN omista koordinaattoreista (`playerOCPersona/DCPersona`, `playerOCGrade/DCGrade`, `playerOCName/DCName`) — johdettu init:ssä samalla `CoordinatorPersona`-derivaatiolla kuin vastustaja.
+- [x] **Persoona muokkaa valintaa:** Air Raid OC suosii pystyreittejä, West Coast ajoitusheittoja, Ground&Pound juoksua; Aggressive DC lisää painetta (blitz/man press), Conservative pehmeät shellit, Exotic zone-blitz/double-A. Deterministinen: ensimmäinen asennettu peli persoona-järjestetystä listasta.
+- [x] **Adaptiivinen kytkös:** hyvä OC (grade≥62) kääntää suosituksen `activeDefenseRead`ia vastaan (juoksukeying → play-action; pass-keying → juoksu). Hyvä DC (grade≥60) lukee vastustajan run/pass-lean:in (uusi `opponentPlayTypes`-ikkuna, presentation-only, ei RNG/tulosmuutosta) → "load the box".
+- [x] **Koordinaattorin taso:** hyvä (grade≥68) → terävä, film-room-perustelu + korkea luottamus; heikko (grade<52) → geneerinen ("Line up sound and rally to the ball") + matala. Ei koordinaattoria (0/21 staff) → grade 50, balanced, geneerinen + HUNCH.
+- [x] **Intent-preserving fallback** (`defensiveFallbackChain`): jos ihannekutsua ei ole asennettu skeemaan, sama luonne (run-stop→run-stop, extra-DB→extra-DB), ei geneeristä zonea. Cover 3 asennettu joka skeemaan → aina resolvoituu.
+
+### UI: esivalinta + puhekupla (UI/Match/CoachedGameView.swift)
+- [x] **Esivalinta:** call sheet avautuu suosituspeli VALITTUNA (`selectedCall`/`defCall` = rec.call, oikea kategoria auki). `prepareDefensiveRecommendation()` per vastustajan alanäkymä (proceed opponent-branch + AI:n 2-pisteen stop). Pelaaja voi vaihtaa vapaasti; päätöskello/audible/back-nav ennallaan.
+- [x] **Puhekupla:** koordinaattorin nimi + rooli-ikoni (OC brain / DC shield) + reasonText + luottamuspipit (SURE/LEAN/HUNCH) + "Coach's pick: X" -merkki, tumma korttikieli/tokenit, virtaa kategoriatabien yläpuolella — EI peitä call sheetia.
+- [x] **Minimointi:** kupla kutistuu pieneksi "Coach's pick"-pilleriksi kun pelaaja selaa muuta korttia (`expanded = selectedCall/defCall == rec.call`); pilleristä napautus valitsee suosituksen uudelleen. "Coach's pick" -merkki (brain/shield) jää suosituskorttiin.
+- [x] **R36-kytkös:** QB coverage-read-chip ("Reads: Cover 3 shell") näkyy OC-kuplan vieressä; game plan -sliderit (`runPassRatio`) vaikuttavat OC-suositukseen decidePlayCall-painojen kautta.
+
+### Rajaukset & verifiointi
+- [x] **BUILD SUCCEEDED** (simulaattori 049C7295), ei uusia varoituksia. Poistettu vanha `aiSuggestion`-computed (korvattu suosituksella).
+- [x] **Tulospariteetti:** koko suositusmoottori on presentation/UI — sim-tulokset ennallaan. `opponentPlayTypes`-kirjaus `step`issä on pelkkä jo lasketun arvon talletus (ei RNG, capattu 8), joten quick-sim-pariteetti säilyy.
+- [x] **Live-verifioitu simulaattorissa:** OC-kupla renderöityy oikein (1st&10 mid → Post/HUNCH; 1st&30 own-10 backed up → Inside Run/LEAN + "keep it on the ground"); DC-kupla renderöityy (Cover 3 + shield-badge + pipit); kategoria/kortti esivalitaan; reason en-only (dokumentoitu, UI-krominen String(localized:)).
+- [ ] Reason-tekstit vain englanniksi (coach-speak, tarkoituksellinen); UI-labelit (OC/DC/SURE/LEAN/HUNCH/Coach's pick) lokalisoitu String(localized:).
+
+## Dome-stadionit (#24) — sisähalleissa ei säätä kotipeleissä (2026-07-13)
+
+### Venue-lookup + deterministinen sää (Domain/Enums/GameWeather.swift)
+- [x] **Uusi `case dome`** GameWeather-enumiin: sisäpeli (kiinteä katto TAI suljettu avattava katto). Simun kannalta IDENTTINEN `.clear`in kanssa — kaikki säähaarat (`PlaySimulator` completion/breakaway/fumble/FG/run-pass-bias) ovat joko `== .snow/.rain/.wind` -vertailuja tai `switch weather { … default: break }`, joten `.dome` putoaa aina no-op-oksalle. Ei tulosmuutosta vs. clear.
+- [x] **Staattinen venue-lookup, EI SwiftData-migraatiota:** `fixedDomeTeams` = ATL, NO, DET, MIN, LV, LAR, LAC (aina sisällä); `retractableRoofTeams` = DAL, HOU, IND, ARI (katto sulkeutuu vain huonolla säällä). Sää on edelleen puhtaasti johdettu (UUID+viikko), ei tallennettua kenttää. `isDomeVenue(_:)`-apufunktio molempien joukkojen unioni.
+- [x] **`forGame(id:week:homeTeamAbbreviation:)`** — uusi valinnainen kotijoukkue-parametri. Kiinteä dome → `.dome` aina; avattava katto → `.dome` vain kun pohja-arvonta olisi ollut rain/snow/wind (katto kiinni), kirkkaana päivänä auki = `.clear`. `nil` säilyttää vanhan ulkoilma-arvonnan. Determinismi: sama peli+kotikenttä → sama tulos quick simissä JA live-coached-pelissä.
+
+### Kaikki forGame-kutsupaikat päivitetty (pariteetti molemmissa poluissa)
+- [x] `WeekAdvancer.swift` quick sim → `homeTeamAbbreviation: homeTeam.abbreviation`
+- [x] `CareerDashboardView.swift` ×3: advance-summary (`teamsByID[$0.homeTeamID]`), `finishCoachedGame` (`allTeamsByID[game.homeTeamID]`), CoachedGameView-cover (`session.homeTeam.abbreviation`)
+
+### UI + 3D
+- [x] **Sää-chip → "DOME"-chip** ilman uutta koodia: sekä `GameSummaryView` että `CoachedGameView` renderöivät chipin ehdolla `weather != .clear`, joten `.dome` näyttää automaattisesti `label`="Dome" + `symbolName`="building.columns.fill" -chipin (kirkkaassa ulkopelissä ei chipiä ennallaan).
+- [x] **3D-kenttä:** `FootballFieldScene.setWeather`/`retuneWeatherEmitter` — `.dome` liitetty `case .clear, .wind` -oksaan → ei sadetta/lunta/tuuli-visuaalia, sisäpeli renderöityy kirkkaana (setWeather(.dome)-polku).
+
+### Rajaukset
+- [x] BUILD SUCCEEDED (simulaattori 049C7295). Tulospariteetti: dome-peli pelaa bit-identtisesti kuin clear (kaikki säähaarat no-op `.dome`lle) — ainoa tarkoituksellinen muutos on, ettei dome-kotipelissä koskaan tule huonoa säätä. Molemmat polut laskevat saman deterministisen arvon samasta id+viikko+kotikenttä-kolmikosta.
+- [ ] Live-verifiointi simulaattorissa (esim. @ MIN/DET myöhäiskausi → DOME-chip + kirkas kenttä; ulkopeli ennallaan) tekemättä tässä vaiheessa — koodipolku katettu.
+
+## Pallomekaniikka — heitto lähtee QB:n kädestä + toss-pitch-ele (2026-07-13)
+
+### BUGI A (#27): heiton lähtö LOS-keskeltä eikä QB:n kädestä (korostui puolustaessa)
+- [x] **JUURISYY: snap→heitto -race + skaalaamaton snapDuration.** `runSnapExchange` kiinnitti pallon QB:hen ASYNKRONISESTI (`asyncAfter(now + snapDuration)`), ja `snapDuration` (0.42/0.2) oli SKAALAAMATON, kun stepit skaalataan `playbackSpeed`-ratella. Nopeutetulla toistolla `.arc`-step ehti ennen async-attachia → `carryingIndex == nil` → `thrower == nil` → lento lähti pallon vanhasta positiosta (snap-lennon keskeltä). Osui pahiten toss-sweepissä (ei väliin `.carryChest`-steppiä), näkyvin puolustuskamerasta (`viewFacing = -1`).
+- [x] **Token-vahti (`ballHandoffToken`):** jokainen pallonsiirto (snap/carry/arc/slide) bumppaa tokenin; snapin async-attach kaappaa tokenin ja no-oppaa jos myöhempi liike jo otti pallon → pallo EI koskaan nykäisty takaisin QB:hen kesken heiton. Race poistettu juuresta.
+- [x] **snapDuration skaalataan samalla ratella** (`currentPlaybackRate`) sekä lennossa (`runSnapExchange`) että aikataulussa (`effectiveDuration`) → snap-lento päättyy steppien tahdissa myös nopealla toistolla. rate=1 → ei muutosta oletusnopeuteen.
+- [x] **Invariantti: heitto lähtee AINA heittäjän noden nykyisestä world-positiosta.** `.arc` sai `from: Int?` -kentän (heittäjä/pitcher). `runBallArc` resolvoi heittäjän `carryingIndex ?? passerIndex` ja kaappaa lähtöpisteen `ballReleasePoint(for:)`illa = heittäjän ANIMOITU (presentation) rintakannun world-piste — ei koskaan vanha malli-transform tai LOS-spotti. Potkut (`from: nil`) lähtevät edelleen maasta.
+
+### BUGI B (#25): Toss-sweepissä QB seisoo eikä heitä + vaihtojen ele-audit
+- [x] **Toss-pitch-ele (`pitchMotion`):** QB kääntyy hiukan kantajaa kohti (glance, 45 % osittaiskäännös kohti pitch-pistettä) ja tekee kevyen alakautta-sivulle-flipin oikealla kädellä — matalampi/pehmeämpi kuin `throwMotion`. `runBallArc` valitsee eleen apexin mukaan: matala flip (apex ≤ 2.0 = toss 1.4 / screen-shovel 1.6–1.8) → `pitchMotion`, oikea kaari → `throwMotion`, potku (ei heittäjää) → ei kättä.
+- [x] **Kaaren origo = QB:n kädet** samalla invariantilla kuin A (release = QB:n presentation-rintapiste, myös race-tilassa kun ballia ei ehditty kiinnittää).
+- [x] **Yleinen vaihto-ele kaikille käsi→käsi-siirroille (`handoffGesture`):** `attachBall` antaa antajalle (edellinen `carryingIndex`) lyhyen ojennus-eleen kohti kantajaa JA riisuu carry-poosin — pallo ei enää "teleporttaa" jäätyneeltä antajalta. Kattaa handoffit (Inside/Outside Run, Counter, Dive), Draw'n (myöhäinen ojennus), lateraalit. Sääntö täyttyy: pallo liikkuu vain käsi→käsi tai käsi→kaari→käsi, antajalla aina ele.
+- [x] Punt/FG/kickoff: `.slide`(long-snap/tee) → `.arc(from: nil)` ennallaan (ei "antajan kättä" — pallo lähtee maasta, erikoisjoukkuekonventio). QB sneak/kneel/spike: pallo pysyy kantajalla, spike heittona kantajan kädestä (`from: script.carrier`).
+
+### Rajaukset
+- [x] BUILD SUCCEEDED (iPad Pro 13" M5 -simulaattori). Tulospariteetti säilyy: mikään sim-tulos (kohde/jaardit/outcome/kello/pisteet) ei muutu — vain koreografia/esitys. Videoverifiointi erillisessä loppuvaiheessa.
+- [ ] Ele-eleiden kulmat (`pitchMotion`/`handoffGesture`) ovat visuaalista viilausta; hienosäätö videoprofiililla loppuvaiheessa.
+
 ## R39 Suorituskyky & laitekattavuus — advance-viikko 4×, FA-simu 43×, iPad mini -leiska (2026-07-11)
 
 ### Mittausinfra (PerfLog.swift, DEBUG-only, kääntyy pois Releasesta — 0 kustannus tuotannossa)

@@ -144,7 +144,10 @@ class FootballFieldScene: SCNScene {
         /// the chest carry on arrival.
         case snap(toNodeIndex: Int, shotgun: Bool)
         /// Ball flies a parabolic arc to the target with the given apex height.
-        case arc(to: SCNVector3, apex: Float, duration: TimeInterval)
+        /// `from` names the passer/pitcher so the flight can always launch
+        /// from his hands even if a snap→throw race left the carry briefly
+        /// unassigned; nil for a kick (the ball leaves the spot it sits on).
+        case arc(to: SCNVector3, apex: Float, duration: TimeInterval, from: Int?)
         /// Ball moves flat along the ground (snaps, rolls, dead balls).
         case slide(to: SCNVector3, duration: TimeInterval)
     }
@@ -237,6 +240,11 @@ class FootballFieldScene: SCNScene {
     /// True while the current carrier holds the ball at his chest in both
     /// hands (QB dropback) instead of the under-arm tuck.
     private var carryingChest = false
+    /// Bumped by every ball transition (snap, carry, arc, slide). A snap's
+    /// asynchronous carry-attach captures the token and no-ops if a later
+    /// move already claimed the ball — this kills the snap→throw race that
+    /// otherwise launched a pass before the carry was assigned.
+    private var ballHandoffToken = 0
 
     /// How a moving player's arms handle the ball, for the gait cycle.
     private enum CarryStyle {
@@ -1146,7 +1154,7 @@ class FootballFieldScene: SCNScene {
         else { return }
         let destZ: Float?
         switch step.ballMove {
-        case .arc(let to, _, _): destZ = to.z
+        case .arc(let to, _, _, _): destZ = to.z
         case .slide(let to, _): destZ = to.z
         case .carry(let index), .carryChest(let index):
             destZ = step.moves.first { $0.nodeIndex == index }?.to.z
@@ -1280,6 +1288,11 @@ class FootballFieldScene: SCNScene {
     /// the sim result and the game clock are untouched.
     var playbackSpeed: Double = 1
 
+    /// The clamped rate the running timeline is scaled by. The snap flight
+    /// and its carry-attach ride this same clock so the carry is always
+    /// assigned before the following throw fires.
+    private var currentPlaybackRate: Double = 1
+
     /// One step re-timed by a duration factor (playback speed).
     private func scaledStep(_ step: PlayStep, by factor: Double) -> PlayStep {
         var out = step
@@ -1291,8 +1304,8 @@ class FootballFieldScene: SCNScene {
             OpenFieldMove(nodeIndex: $0.nodeIndex, kind: $0.kind, delay: $0.delay * factor)
         }
         switch step.ballMove {
-        case .arc(let to, let apex, let duration):
-            out.ballMove = .arc(to: to, apex: apex, duration: duration * factor)
+        case .arc(let to, let apex, let duration, let from):
+            out.ballMove = .arc(to: to, apex: apex, duration: duration * factor, from: from)
         case .slide(let to, let duration):
             out.ballMove = .slide(to: to, duration: duration * factor)
         default:
@@ -1319,6 +1332,7 @@ class FootballFieldScene: SCNScene {
         let generation = playGeneration
 
         let rate = min(max(playbackSpeed, 0.5), 4)
+        currentPlaybackRate = rate
         let timed = rate == 1 ? steps : steps.map { scaledStep($0, by: 1 / rate) }
 
         var startTime: TimeInterval = 0
@@ -2189,10 +2203,12 @@ class FootballFieldScene: SCNScene {
             duration = max(duration, path.duration)
         }
         switch step.ballMove {
-        case .arc(_, _, let ballDuration), .slide(_, let ballDuration):
+        case .arc(_, _, let ballDuration, _), .slide(_, let ballDuration):
             duration = max(duration, ballDuration)
         case .snap(_, let shotgun):
-            duration = max(duration, Self.snapDuration(shotgun: shotgun))
+            // The snap flight is re-timed on the same clock as the steps
+            // (see `runSnapExchange`), so its budget scales too.
+            duration = max(duration, Self.snapDuration(shotgun: shotgun) / currentPlaybackRate)
         default:
             break
         }
@@ -2325,8 +2341,8 @@ class FootballFieldScene: SCNScene {
             }
         case .snap(let toNodeIndex, let shotgun):
             runSnapExchange(to: toNodeIndex, shotgun: shotgun)
-        case .arc(let to, let apex, let duration):
-            runBallArc(to: to, apex: apex, duration: duration)
+        case .arc(let to, let apex, let duration, let from):
+            runBallArc(to: to, apex: apex, duration: duration, from: from)
         case .slide(let to, let duration):
             runBallSlide(to: to, duration: duration)
         case nil:
@@ -2344,9 +2360,19 @@ class FootballFieldScene: SCNScene {
     /// the under-arm tuck.
     private func attachBall(toPlayerIndex index: Int, chest: Bool = false) {
         guard let node = playerNode(at: index) else { return }
+        // Any attach claims the ball for the token guard (see runSnapExchange).
+        ballHandoffToken += 1
         guard ballNode.parent !== node || carryingChest != chest else { return }
+        // A hand-to-hand exchange (handoff, pitch reception, lateral): the
+        // giver punches the ball out toward the taker and sheds his carry
+        // pose — the ball never teleports off a frozen giver.
+        let giverIndex = carryingIndex
+        let giverChest = carryingChest
         carryingIndex = index
         carryingChest = chest
+        if let giverIndex, giverIndex != index {
+            handoffGesture(giverIndex: giverIndex, chest: giverChest, toward: node)
+        }
         ballNode.removeAllActions()
         ballNode.eulerAngles = SCNVector3Zero
         ballNode.removeFromParentNode()
@@ -2408,6 +2434,7 @@ class FootballFieldScene: SCNScene {
     /// QB (stale spot) just attaches without the visual.
     private func runSnapExchange(to index: Int, shotgun: Bool) {
         guard let node = playerNode(at: index) else { return }
+        ballHandoffToken += 1
         detachBallToRoot()
         ballNode.removeAllActions()
         let start = ballNode.position
@@ -2417,7 +2444,9 @@ class FootballFieldScene: SCNScene {
             attachBall(toPlayerIndex: index, chest: true)
             return
         }
-        let duration = Self.snapDuration(shotgun: shotgun)
+        // The flight rides the playback clock so it finishes in step with the
+        // scaled timeline instead of overrunning it at fast speeds.
+        let duration = Self.snapDuration(shotgun: shotgun) / currentPlaybackRate
         let apex: Float = shotgun ? 0.8 : 0
         let arc = SCNAction.customAction(duration: duration) { [weak node] ball, elapsed in
             guard let node else { return }
@@ -2435,27 +2464,46 @@ class FootballFieldScene: SCNScene {
                                forKey: "ballSpin")
         }
         let generation = playGeneration
+        let token = ballHandoffToken
         DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-            guard let self, self.playGeneration == generation else { return }
+            // Skip if a later ball move (e.g. the throw on a toss) already
+            // claimed the ball — never snatch it back mid-flight.
+            guard let self, self.playGeneration == generation,
+                  self.ballHandoffToken == token else { return }
             self.ballNode.eulerAngles = SCNVector3Zero
             self.attachBall(toPlayerIndex: index, chest: true)
         }
     }
 
-    /// Flies the ball along a parabola from its current position to `target`.
-    private func runBallArc(to target: SCNVector3, apex: Float, duration: TimeInterval) {
-        // Whoever carried the ball into this flight is the passer — capture
-        // him before the detach clears the carry, then whip his arm through.
-        let thrower = playerNode(at: carryingIndex ?? -1)
+    /// Flies the ball along a parabola. The launch point is always the
+    /// passer's hands: `from` (or the live carry) resolves the thrower and
+    /// the flight starts at his ANIMATED chest position — never a stale spot.
+    private func runBallArc(to target: SCNVector3, apex: Float, duration: TimeInterval,
+                            from passerIndex: Int? = nil) {
+        // Claim the ball so any pending snap-attach for this play no-ops.
+        ballHandoffToken += 1
+        // Whoever carries the ball is the passer; a snap→throw race can leave
+        // the carry unassigned, so fall back to the passer the call named.
+        let thrower = playerNode(at: carryingIndex ?? passerIndex ?? -1)
+        // Invariant: capture the hand release point BEFORE the detach clears
+        // the carry, from the thrower's presentation (his on-screen spot).
+        let release = thrower.map { ballReleasePoint(for: $0) }
         detachBallToRoot()
         ballNode.removeAllActions()
         guard duration > 0 else {
-            ballNode.position = target
+            ballNode.position = release ?? target
             return
         }
-        if let thrower { throwMotion(of: thrower) }
+        // A short low flip is a pitch (toss / screen shovel) with a light
+        // lateral scoop; a real arc is an overhead throw. Kicks (no passer)
+        // get no arm at all.
+        if let thrower {
+            if apex <= 2.0 { pitchMotion(of: thrower, toward: target) }
+            else { throwMotion(of: thrower) }
+        }
 
-        let start = ballNode.position
+        let start = release ?? ballNode.position
+        ballNode.position = start
         let arc = SCNAction.customAction(duration: duration) { node, elapsed in
             let t = max(0, min(Float(elapsed) / Float(duration), 1))
             node.position = SCNVector3(
@@ -2539,8 +2587,78 @@ class FootballFieldScene: SCNScene {
         }
     }
 
+    /// The world point a throw or pitch leaves from: the passer's ANIMATED
+    /// (presentation) chest-carry position, so the ball always launches from
+    /// his hands — never a stale model transform or the snap's LOS spot.
+    private func ballReleasePoint(for node: SCNNode) -> SCNVector3 {
+        let carry = SCNVector3(0, 0.34, 0.33)  // the chest-carry local offset
+        return node.presentation.convertPosition(carry, to: nil)
+    }
+
+    /// A pitch out of the QB's hands (toss sweep, screen shovel): a quick
+    /// glance/turn toward the pitch man, then a light underhand flip of the
+    /// right arm out to that side — lower and softer than `throwMotion`.
+    private func pitchMotion(of node: SCNNode, toward target: SCNVector3) {
+        // Turn a fraction toward the pitch man before the flip (a glance, not
+        // a spin) so the release faces the ball's direction.
+        let here = node.presentation.worldPosition
+        let desired = atan2(target.x - here.x, target.z - here.z)
+        let current = node.eulerAngles.y
+        let delta = atan2(sin(desired - current), cos(desired - current))
+        let turn = SCNAction.rotateTo(x: 0, y: CGFloat(current + delta * 0.45), z: 0,
+                                      duration: 0.14, usesShortestUnitArc: true)
+        node.runAction(turn, forKey: "pitchTurn")
+
+        guard let figure = node.childNode(withName: "figure", recursively: false),
+              let arm = figure.childNode(withName: "armR", recursively: false) else { return }
+        arm.removeAction(forKey: "swing")
+        // Underhand scoop: cock low and out, flip across, settle to neutral.
+        let load = SCNAction.rotateTo(x: -0.7, y: 0, z: -0.85, duration: 0.12)
+        load.timingMode = .easeOut
+        let flip = SCNAction.rotateTo(x: 0.4, y: 0, z: -0.15, duration: 0.16)
+        flip.timingMode = .easeIn
+        let neutral = SCNAction.rotateTo(x: 0, y: 0, z: -0.25, duration: 0.3)
+        neutral.timingMode = .easeInEaseOut
+        arm.runAction(SCNAction.sequence([load, flip, SCNAction.wait(duration: 0.12), neutral]),
+                      forKey: "swing")
+        arm.childNode(withName: "forearm", recursively: false)?
+            .runAction(SCNAction.sequence([
+                SCNAction.rotateTo(x: -0.6, y: 0, z: 0, duration: 0.12),
+                SCNAction.rotateTo(x: -0.1, y: 0, z: 0, duration: 0.32),
+            ]), forKey: "bend")
+    }
+
+    /// The ball leaving the giver's hands into the next carrier's: his near
+    /// arms punch out toward the taker for a beat, then fall back to neutral —
+    /// the giver never freezes in a stale carry pose after a handoff.
+    private func handoffGesture(giverIndex: Int, chest: Bool, toward taker: SCNNode) {
+        guard let giver = playerNode(at: giverIndex),
+              let figure = giver.childNode(withName: "figure", recursively: false) else { return }
+        // Chest carry extends both hands (a mesh handoff); a tuck extends the
+        // ball hand only. Rest angles match the carry-release poses.
+        let arms = chest ? ["arm", "armR"] : ["arm"]
+        for name in arms {
+            guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
+            let rest: CGFloat = name == "arm" ? 0.25 : -0.25
+            arm.removeAction(forKey: "swing")
+            let extend = SCNAction.rotateTo(x: -1.15, y: 0, z: rest * 0.4, duration: 0.14)
+            extend.timingMode = .easeOut
+            let relax = SCNAction.rotateTo(x: 0, y: 0, z: rest, duration: 0.28)
+            relax.timingMode = .easeInEaseOut
+            arm.runAction(SCNAction.sequence([extend, SCNAction.wait(duration: 0.08), relax]),
+                          forKey: "swing")
+            arm.childNode(withName: "forearm", recursively: false)?
+                .runAction(SCNAction.sequence([
+                    SCNAction.rotateTo(x: -0.9, y: 0, z: 0, duration: 0.14),
+                    SCNAction.wait(duration: 0.08),
+                    SCNAction.rotateTo(x: -0.15, y: 0, z: 0, duration: 0.28),
+                ]), forKey: "bend")
+        }
+    }
+
     /// Slides the ball flat along the ground (snaps, rolling punts, dead balls).
     private func runBallSlide(to target: SCNVector3, duration: TimeInterval) {
+        ballHandoffToken += 1
         detachBallToRoot()
         ballNode.removeAllActions()
         let action = SCNAction.move(to: target, duration: duration)
@@ -3976,7 +4094,8 @@ class FootballFieldScene: SCNScene {
         applyFog(color: Self.clearFogColor, start: 70, end: 210)
 
         switch weather {
-        case .clear, .wind:
+        case .clear, .wind, .dome:
+            // Dome: indoor game, no precipitation and no gust visuals.
             break
         case .rain:
             addWeatherEmitter(Self.rainSystem(coach: currentShotStyle == .coach))
@@ -4070,7 +4189,7 @@ class FootballFieldScene: SCNScene {
         switch activeWeather {
         case .rain: addWeatherEmitter(Self.rainSystem(coach: currentShotStyle == .coach))
         case .snow: addWeatherEmitter(Self.snowSystem(coach: currentShotStyle == .coach))
-        case .clear, .wind: break
+        case .clear, .wind, .dome: break
         }
     }
 

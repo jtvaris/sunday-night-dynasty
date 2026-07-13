@@ -1338,7 +1338,7 @@ struct PlayChoreographer {
         let meshTaken = Set(meshPaths.map(\.nodeIndex))
         let meshBall: FootballFieldScene.BallMove = isToss
             ? .arc(to: air(track.point(at: f2).x, track.point(at: f2).z),
-                   apex: 1.4, duration: meshDur * 0.85)
+                   apex: 1.4, duration: meshDur * 0.85, from: c.qb)
             : .carry(nodeIndex: carrier)
         steps.append(Step(
             moves: merge(
@@ -1607,7 +1607,7 @@ struct PlayChoreographer {
         steps.append(Step(
             moves: flightMoves.filter { !flightTaken.contains($0.nodeIndex) },
             paths: flightPaths,
-            ballMove: .arc(to: air(catchSpot.x, catchSpot.z), apex: apex, duration: flight),
+            ballMove: .arc(to: air(catchSpot.x, catchSpot.z), apex: apex, duration: flight, from: c.qb),
             duration: flight,
             reaches: [receiver],
             catchStyles: [receiver: catchStyle]
@@ -1805,7 +1805,7 @@ struct PlayChoreographer {
             // Throw into the turf at his feet — dead ball, everyone pulls up.
             steps.append(Step(
                 moves: [],
-                ballMove: .arc(to: ground(screenSpot.x, screenSpot.z), apex: 1.6, duration: 0.5),
+                ballMove: .arc(to: ground(screenSpot.x, screenSpot.z), apex: 1.6, duration: 0.5, from: c.qb),
                 duration: 0.6,
                 reaches: [screenIdx]
             ))
@@ -1819,7 +1819,7 @@ struct PlayChoreographer {
         }
         steps.append(Step(
             moves: [],
-            ballMove: .arc(to: air(screenSpot.x, screenSpot.z), apex: 1.8, duration: 0.5),
+            ballMove: .arc(to: air(screenSpot.x, screenSpot.z), apex: 1.8, duration: 0.5, from: c.qb),
             duration: 0.5,
             reaches: [screenIdx]
         ))
@@ -1914,7 +1914,7 @@ struct PlayChoreographer {
             moves: zoneMoves(c, plan: frame.plan, p: 1, d: flight)
                 .filter { !flightTaken.contains($0.nodeIndex) },
             paths: flightPaths,
-            ballMove: .arc(to: miss, apex: 4, duration: flight),
+            ballMove: .arc(to: miss, apex: 4, duration: flight, from: c.qb),
             duration: flight,
             reaches: [receiver]
         ))
@@ -2050,7 +2050,7 @@ struct PlayChoreographer {
                 zoneMoves(c, plan: frame.plan, p: 1, exclude: [db], d: flight)
             ).filter { !flightTaken.contains($0.nodeIndex) },
             paths: flightPaths,
-            ballMove: .arc(to: air(pick.x, pick.z), apex: 4.5, duration: flight),
+            ballMove: .arc(to: air(pick.x, pick.z), apex: 4.5, duration: flight, from: c.qb),
             duration: flight,
             reaches: [db, receiver]
         ))
@@ -2142,7 +2142,8 @@ struct PlayChoreographer {
         // …then spikes the ball into the turf — up ~3yd and straight down.
         steps.append(Step(
             moves: [],
-            ballMove: .arc(to: ground(script.end.x, script.end.z), apex: 3, duration: 0.6),
+            ballMove: .arc(to: ground(script.end.x, script.end.z), apex: 3, duration: 0.6,
+                           from: script.carrier),
             duration: 0.7
         ))
 
@@ -2195,7 +2196,7 @@ struct PlayChoreographer {
             Step(
                 moves: merge([(nodeIndex: returner, to: player(0, landZ), duration: hang)],
                              coverage + wall),
-                ballMove: .arc(to: air(0, landZ), apex: 12, duration: hang),
+                ballMove: .arc(to: air(0, landZ), apex: 12, duration: hang, from: nil),
                 duration: hang,
                 sound: .kickThump
             ),
@@ -2238,7 +2239,7 @@ struct PlayChoreographer {
             // The kick: both lines surge into the pile as it goes up.
             Step(
                 moves: lineSurgeMoves(c, p: 0.8, d: 0.5),
-                ballMove: .arc(to: SCNVector3(clampX(targetX), targetY, postZ), apex: 8, duration: 1.6),
+                ballMove: .arc(to: SCNVector3(clampX(targetX), targetY, postZ), apex: 8, duration: 1.6, from: nil),
                 duration: 1.7,
                 sound: .kickThump
             ),
@@ -2339,7 +2340,7 @@ struct PlayChoreographer {
         bootMoves.append((rBase + 9, player(-2, clampZ(ownYard(6))), hang))
         steps.append(Step(
             moves: bootMoves,
-            ballMove: .arc(to: air(0, catchZ), apex: 16, duration: hang),
+            ballMove: .arc(to: air(0, catchZ), apex: 16, duration: hang, from: nil),
             duration: hang,
             reaches: [returner],
             sound: .kickThump

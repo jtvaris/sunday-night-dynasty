@@ -199,7 +199,7 @@ struct CareerDashboardView: View {
                 lastGameResult = result
                 lastHomeTeam = home
                 lastAwayTeam = away
-                lastGameWeather = playedGame.map { GameWeather.forGame(id: $0.id, week: $0.week) }
+                lastGameWeather = playedGame.map { GameWeather.forGame(id: $0.id, week: $0.week, homeTeamAbbreviation: teamsByID[$0.homeTeamID]?.abbreviation) }
                 showGameSummary = true
             }
             loadAllData()
@@ -268,7 +268,7 @@ struct CareerDashboardView: View {
         lastGameResult = WeekAdvancer.lastPlayerGameResult
         lastHomeTeam = allTeamsByID[game.homeTeamID]
         lastAwayTeam = allTeamsByID[game.awayTeamID]
-        lastGameWeather = GameWeather.forGame(id: game.id, week: game.week)
+        lastGameWeather = GameWeather.forGame(id: game.id, week: game.week, homeTeamAbbreviation: allTeamsByID[game.homeTeamID]?.abbreviation)
 
         coachedSession = nil
         loadAllData()
@@ -355,8 +355,9 @@ struct CareerDashboardView: View {
                 playerTeamIsHome: session.playerTeamIsHome,
                 audibleBoost: session.audibleBoost,
                 defReadBoost: session.defReadBoost,
-                // Same deterministic draw the quick sim uses for this game.
-                weather: GameWeather.forGame(id: session.game.id, week: session.game.week),
+                // Same deterministic draw the quick sim uses for this game
+                // (home venue included so dome teams read indoors/clear).
+                weather: GameWeather.forGame(id: session.game.id, week: session.game.week, homeTeamAbbreviation: session.homeTeam.abbreviation),
                 // R19: playoff framing (PLAYOFFS badge, win-or-go-home copy).
                 isPlayoff: session.game.isPlayoff,
                 // R36: plays installed through weekly practice widen the sheet.
