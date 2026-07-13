@@ -1,5 +1,44 @@
 # Dynasty - TODO
 
+## ✅ VERIFIOINTI — koreografiarealismi + hardcode-fix (2026-07-13, `BUILD SUCCEEDED`, EI committia)
+
+Verifioitu iPad Pro 13" M5 -simillä (049C7295). Build → **BUILD SUCCEEDED** (vain ennestään ollut `cbSplit`-varoitus rivillä 298, ei liity muutoksiin). Asennettu + käynnistetty (com.brewcrow.dynasty), jatkettu uraa (BUF Bills, 2027 kausi Q1→Q2, vs MIA). Coached-peli nauhoitettu, framet purettu ffmpegillä + `motion_profile.py`. Evidenssit `/tmp/snd-screenshots/choreo-hardcode/`.
+
+**KOREOGRAFIA per kohta (katsottu itse frame-todistein):**
+- **(a) Ei paikallaan seisojia pallon lennon aikana — PASS.** `motion_profile.py` (deep-syöttö + MIA-drive): pelinaikaiset purskeet nousevat tasolle 8–9, EI mid-flight-jäätymää (ainoat freezet ovat pre-snap-settle ja play-jälkeinen idle-paneeli, ei lennon aikana). Dropback-lähikuvissa (`incompl_zoom.png`, `kking_breakup.png`) OL/DL/vastaanottajat/puolustajat kaikki eri poosissa peräkkäisissä frameissa (jalat/kädet liikkuvat), ei nollatasoa. Koodi: uusi `flightSupportMoves` täyttää jokaiselle nodelle jatkoliikkeen lennon steppiin (trench-grind, reitin lopettaneet kääntyvät palloon, coverage breakaa) — `covered`-setti estää päällekkäisyyden scripted-poluille.
+- **(b) Vastaanottaja kääntyy palloon kiinniotossa — PASS (koodi + osittainen frame-näyttö).** `catchBodyTurn`/`catchTurnYaw` renderöi torso-yaw:n palloa/heittäjää kohti KAIKILLE `reaches`-indekseille (myös pick/incomplete). Frame-näyttö: incomplete-vastaanottaja (`kking_breakup.png` frame 025, DeAndre Baker) kädet ylhäällä, vartalo kääntyneenä tulevaan palloon. Puhdas completion-catch jäi resoluutiorajalle: completionit lentävät alavirtaan lähikamerasta poispäin (~60px hahmot), joten 0.5s torso-twistiä ei saanut pikselitarkkana talteen — mekaniikka silti todennettu koodissa + reach-poosissa.
+- **(c) Taklaaja ajaa eteenpäin + wrap-ote (ei pysty-lysähdys) — PASS (vahva frame-näyttö).** Juoksu (DeAndre Martin, lähikamera, `tackle_finish.png` framet 050–056): pallonkantaja + taklaaja menevät maahan **vaakatasossa juoksun momentin suuntaan** wrapissa — ei pystysuora lysähdys. `tackle_seq.png` frame 048 näyttää kantajan kaatumassa vaakaan taklaukseen. Koodi: contact-step ajaa taklaajan `+c.direction*0.25` (eteenpäin kantajan läpi) `pulses:[tackler]` + `wraps:[tackler]`, momentum kantaa kasan alavirtaan (30% drive-back taakse).
+- **(d) Incomplete-syötössä puolustaja kontestoi catch-pisteessä — PASS (vahva frame-näyttö).** "Diving breakup by Khalil King — incomplete intended for DeAndre Baker" (`kking_breakup.png` framet 025–029): puolustaja #80 (Khalil King) **sukeltaa/lonkaa kädet ylhäällä suoraan vastaanottajan päälle** catch-pisteessä, molemmat aktiivisesti kontaktissa, kukaan ei seiso. Myös deep-incomplete (`incompl_zoom.png`) näyttää tiukat coverage-parit vastaanottajien päällä + pallon kuolleena sivuun. Koodi: `contester = manOnTarget ?? nearestZoneDefender(missPoint)` breakaa palloon kädet ylhäällä samalla ajoituksella kuin completionin breaker.
+
+**HARDCODE-KORJAUS — PASS (koodilla; live-tile ei tavoitettavissa tästä tallennuksesta).** `CareerDashboardView.swift:1339` `Text("0-0 record")`→`Text("Evaluate roster")` (accentGold/medium, ei enää monospaced-tilastona). Tile on gate:tetty `career.currentPhase == .preseason` (rivi 1006) — tämä ura on regular-season Q2, joten tileä ei renderöidä live ilman uuden uran ajamista preseason-vaiheeseen (scope-out). Literaali-muutos + tyyli varmennettu koodista; alaotsikko "3 exhibition games" säilyi.
+
+**Regressio — PASS.** ~15+ pelisuoritusta ajettu (deep/short-syöttöjä, juoksuja, incompletet, INT:t, punt, FG-decision): pallo lähtee QB:ltä ✓ (näkyi ilmassa useassa framessa), kamera seuraa + panoroi alavirtaan ✓, XP/2pt-modaali EI jumittunut (sujuvat possession-vaihdot, tehtävä #30 ei toistunut), MIA teki 10 pistettä (normaali skoraus). Ei kaatumisia. `motion_profile` idle-baseline elää (ei nollaa paneelivaiheessakaan pelin aikana).
+
+**Auki jäänyt:**
+- (b) puhdas completion-catch-käännös jäi frame-tasolla resoluutiorajalle (kamera-arkkitehtuuri: completionit karkaavat lähikamerasta) — mekaniikka koodivarmennettu, suositus jatkoon: dedikoitu lähikamera-catch-kuvakulma tai replay-zoom evidenssiä varten.
+- Preseason-tile-fixin live-screenshot vaatii uuden uran preseason-vaiheeseen (ei ajettu).
+- **Ei committia.**
+
+---
+
+## 🔧 HARDCODE-AUDIT — luokka (a) aidot bugit (2026-07-13, `BUILD SUCCEEDED`, EI committia)
+
+Kovakoodattujen arvojen audit, luokka (a) = pelaajalle näkyvä väärä data. **UI/copy-only, ei uusia SwiftData-kenttiä, ei sim-tulosmuutosta. Ei committia.**
+
+**KORJATUT (1 tiedosto):**
+- **CareerDashboard / Preseason-tile** (`UI/Career/CareerDashboardView.swift:1336`) — kovakoodattu `Text("0-0 record")` (bold, monospacedDigit → näytti aidolta W-L-tilastolta). Preseasonia ei pelata scored-otteluina vaan camp/evaluaatio-vaiheena (`WeekAdvancer.applyCampWeeklyTick` phase `.preseason`); missään ei trackata preseason-ennätystä (grep: ei W-L-kenttää). Vakio näytti aina "0-0" vaikka harjoituspelit "pelattu". **Korvattu** rehellisellä toiminto-labelilla `Text("Evaluate roster")` (accentGold, ei-monospaced → ei enää esiinny tilastona), sama kuvio kuin sisar-tiloissa (depthChart "View", campGrades "Top: —"). Alaotsikko "3 exhibition games" jäi (aito rakenne-vakio: 3 preseason-viikkoa).
+
+**RAJATUT (scope-out, syyt):**
+- **WeekAdvancer.swift:3216 `gamesPlayed: 0`** PlayerSeasonHistory-riviin — EI korjattu tässä kierroksessa. Syy: ei ole olemassa per-pelaaja games-played -kenttää josta lukea (audit-luokitus "Iso — vaatii kausitilaston persistoinnin", vahvistettu: `Player`-mallissa ei snaps/gamesPlayed/weeksPlayed-kenttää). Ainoa olemassaolevasta datasta johdettava arvo (joukkueen pelaamat ottelut) olisi **semanttisesti väärä toiselle kuluttajalle**: `CareerArcEngine.swift:90` laskee `startSeasons = history.filter { $0.gamesPlayed >= 8 }.count` → jos gamesPlayed = joukkueen ~17 ottelua, JOKAINEN rosteri-kausi (syväpenkki mukaan) laskettaisiin "start season" -kaudeksi → **uusi väärä data pelaajalle näkyvään True-grade-badgeen** (PlayerDetailView:345) + flashback-uutisiin. Oikea korjaus vaatii uuden persistoidun per-pelaaja appearances/starts-laskurin (viikkoluupin inkrementti + kauden reset + mahd. `gamesStarted`-kenttä historiaan) + CareerArcEngine-kuluttajan semantiikan — yli tämän UI/copy-korjauskierroksen ja koskee sim-viereistä käyttäytymistä (True-grade-evaluaatio). Kuluttajat kirjattu: (1) `PlayerDetailView.swift:934` GP-sarake (näyttää aina 0), (2) `CareerArcEngine.swift:90` startSeasons (aina 0 → True-grade aliarvioi urapelaajia). **Ehdotus:** lisää `Player.seasonGamesPlayed: Int?` (+ `seasonGamesStarted: Int?`), inkrementoi viikkoluupin olemassaolevassa "pelasi tällä viikolla" -ehdossa (`WeekAdvancer.swift:775`), resetoi week==18 recordSeasonHistoryn jälkeen.
+
+**Luokka (c) / muut (aiemmin kirjatut, ennallaan):**
+- `DraftDayCoordinator.swift:872-873` — `publicOVR = trueOverall` (ohittaa scouting-epävarmuuden) + `schemeFit = 0.6` placeholder → draft-pick-grade ei erottele. "V1: placeholder".
+- `CoachingStaffView.swift:2230` — `leagueAverageCoachingBudget = 35_000` kovakoodattu; "League avg (~$35M)" -indikaattori valehtelee jos LeagueGenerator vaihtelee budjetteja.
+
+**Build:** `BUILD SUCCEEDED` (id=049C7295). **Ei committia.**
+
+---
+
 ## ✅ VERIFIOINTI — persona-audit-korjauskierros (2026-07-13, `BUILD SUCCEEDED`, EI committia)
 
 Verifioitu dedikoidulla simillä (DA5637A6, iPad Pro 13" M5). Build → **BUILD SUCCEEDED**, asennettu + käynnistetty, jatkettu olemassa olevaa uraa (GB Packers, viikko 11→13, 2027). Screenshotit `/tmp/snd-screenshots/playthrough-audit/v2_*.png`, vertailtu v1:een.

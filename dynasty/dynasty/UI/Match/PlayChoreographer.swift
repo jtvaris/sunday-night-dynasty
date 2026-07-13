@@ -1102,6 +1102,83 @@ struct PlayChoreographer {
         return out
     }
 
+    /// A defender's field position at the START of the flight step (after the
+    /// drop): the end of his most recent route/blitz slice, else his zone
+    /// landmark, else his pre-snap spot. Used to keep late-arriving men moving
+    /// FROM where they actually are (never a teleport back to alignment).
+    private static func defenseCurrent(_ role: Int, frame: DropbackFrame,
+                                       c: Context) -> (x: Float, z: Float) {
+        if let slices = frame.defenseSlices[role] {
+            let upto = min(1, slices.count - 1)
+            for step in stride(from: upto, through: 0, by: -1) {
+                if let move = slices[step], let last = move.points.last {
+                    return (last.x, last.z)
+                }
+            }
+        }
+        if let landmark = frame.plan.zones[role] {
+            return (landmark.x, c.losZ + c.direction * landmark.depth)
+        }
+        return (c.defense[role].x, c.defense[role].z)
+    }
+
+    /// Keeps EVERY node moving through the ball's flight so nobody freezes when
+    /// the throw leaves the QB's hand. `covered` is every node the step's
+    /// route/coverage/zone paths already animate; this fills in the rest with
+    /// role-appropriate continuation: the trenches keep grinding (OL hold their
+    /// sets, the front four presses), receivers whose routes are done turn
+    /// upfield toward the ball, and any coverage defender whose assignment
+    /// finished (a run-off man mirror, a blitzer arriving late) breaks toward
+    /// the ball — capped so nobody flies across the field. The QB is left to
+    /// his `throwMotion` follow-through (a positional move would read as jogging
+    /// mid-throw). Pure presentation: positions only, the sim is untouched.
+    private static func flightSupportMoves(_ c: Context, frame: DropbackFrame,
+                                           ballSpot: (x: Float, z: Float),
+                                           covered: Set<Int>, d: TimeInterval) -> [Move] {
+        var moves: [Move] = []
+        // Trenches keep battling: OL hold their pass sets, the DL keeps pressing
+        // (the `blocks` list on the step adds the punch-and-shove pose on top).
+        for move in pocketMoves(c, p: 1, d: d) where !covered.contains(move.nodeIndex) {
+            moves.append(move)
+        }
+        // Eligibles whose route already finished turn upfield and work back
+        // toward the ball instead of standing at their route end.
+        for role in [1, 7, 8, 9, 10] {
+            let idx = c.oBase + role
+            guard !covered.contains(idx), let from = frame.routeEnds[role] else { continue }
+            moves.append((idx,
+                          player(clampX(lerp(from.x, ballSpot.x, 0.2)),
+                                 clampZ(from.z + c.direction * 2)), d))
+        }
+        // Coverage men whose assignment is done break on the ball from where
+        // they actually are — a controlled close, capped at 5 yd.
+        for role in 4..<11 {
+            let idx = c.dBase + role
+            guard !covered.contains(idx) else { continue }
+            let from = defenseCurrent(role, frame: frame, c: c)
+            var tx = lerp(from.x, ballSpot.x, 0.3)
+            var tz = lerp(from.z, ballSpot.z, 0.3)
+            let dx = tx - from.x, dz = tz - from.z
+            let dist = (dx * dx + dz * dz).squareRoot()
+            if dist > 5 { tx = from.x + dx / dist * 5; tz = from.z + dz / dist * 5 }
+            moves.append((idx, player(clampX(tx), clampZ(tz)), d))
+        }
+        return moves
+    }
+
+    /// The block lists for a flight step: both lines grind on, and a back who
+    /// stayed in to protect churns in his pass set too.
+    private static func flightBlocks(_ c: Context, frame: DropbackFrame)
+        -> (nodes: [Int], styles: [Int: FootballFieldScene.BlockStyle]) {
+        var nodes = lineBlockNodes(c)
+        var styles = blockStyleMap(c, run: false)
+        if frame.rbBlocks {
+            nodes.append(c.rb)
+            styles[c.rb] = .anchor
+        }
+        return (nodes, styles)
+    }
+
     /// Frame step 0: the snap — pocket sets, all routes release, zones sink,
     /// blitzers show. Play action first sells the dive: the QB rides the
     /// fake, the back plunges into the line empty, and the linebackers bite
@@ -1594,29 +1671,36 @@ struct PlayChoreographer {
             )]
         }
 
-        // WRAP-UP (default): stand-up wrap, an occasional short drive-back,
-        // gang chasers piling on staggered.
+        // WRAP-UP (default): the tackler DRIVES into the carrier and wraps him
+        // up — the arms cinch BEFORE the pile hits the turf — then both go down
+        // in the carrier's momentum direction; a harder rep (≈30%) first drives
+        // him back half a yard. Gang chasers pile on staggered.
         var steps: [Step] = []
-        var pileZ = z
         let driveBack = hash01(seed &+ 313) < 0.3
-        if driveBack {
-            pileZ = clampZ(z - c.direction * (0.5 + hash01(seed &+ 99) * 0.5))
-            steps.append(Step(
-                moves: [
-                    (nodeIndex: carrier, to: player(x, pileZ), duration: 0.4),
-                    (nodeIndex: tackler, to: player(x + 0.7, pileZ + c.direction * 0.6), duration: 0.4),
-                ],
-                ballMove: .carry(nodeIndex: carrier),
-                duration: 0.4,
-                wraps: [tackler]
-            ))
-        }
+        // Forward momentum carries the pile a touch downfield; a drive-back
+        // shoves it back toward the LOS instead.
+        let momentum: Float = driveBack
+            ? -(0.5 + hash01(seed &+ 99) * 0.5)
+            : (0.3 + hash01(seed &+ 99) * 0.4)
+        let pileZ = clampZ(z + c.direction * momentum)
+        // Contact: the tackler closes the last yard THROUGH the carrier from
+        // his pursuit angle (a forward drive), arms wrapping as they collide,
+        // instead of collapsing to a standstill beside him.
+        steps.append(Step(
+            moves: [
+                (nodeIndex: carrier, to: player(x, pileZ), duration: 0.34),
+                (nodeIndex: tackler, to: player(x + 0.3, pileZ + c.direction * 0.25), duration: 0.3),
+            ],
+            ballMove: .carry(nodeIndex: carrier),
+            duration: 0.36,
+            pulses: [tackler],
+            wraps: [tackler]
+        ))
         let gang = gangTacklers(c, x: x, z: pileZ, excluding: [tackler])
         steps.append(Step(moves: pileOnMoves(c, gang: gang, x: x, z: pileZ),
-                          ballMove: .carry(nodeIndex: carrier), duration: 1.3,
-                          pulses: [tackler],
+                          ballMove: .carry(nodeIndex: carrier), duration: 1.2,
                           falls: [carrier, tackler] + gang,
-                          wraps: driveBack ? gang : [tackler] + gang,
+                          wraps: [tackler] + gang,
                           lunges: markerLunge))
         return steps
     }
@@ -1706,6 +1790,7 @@ struct PlayChoreographer {
         let breaker = nearestZoneDefender(frame.plan, to: catchSpot, c: c)
         let apex = 3 + min(max(catchDepth, 0), 25) / 25 * 3
         let flightPaths = framePaths(frame, step: 2)
+        let flightTaken = Set(flightPaths.map(\.nodeIndex))
         var flightMoves = zoneMoves(c, plan: frame.plan, p: 1,
                                     exclude: breaker.map { Set([c.dBase + $0]) } ?? [],
                                     d: flight)
@@ -1715,6 +1800,11 @@ struct PlayChoreographer {
                                 player(catchSpot.x + side * 0.9, catchSpot.z + c.direction * 0.4),
                                 flight))
         }
+        // Nobody freezes while the ball is in the air: fill in continuation
+        // moves for every node the paths/zones above didn't already cover.
+        let flightCovered = flightTaken.union(flightMoves.map(\.nodeIndex))
+        flightMoves += flightSupportMoves(c, frame: frame, ballSpot: (catchSpot.x, catchSpot.z),
+                                          covered: flightCovered, d: flight)
         let tacklerRole = frame.manOnTarget ?? breaker ?? (catchSpot.x < 0 ? 7 : 8)
         let db = c.dBase + tacklerRole
         let yacDistance = abs(endZ - catchSpot.z)
@@ -1731,15 +1821,17 @@ struct PlayChoreographer {
         } else {
             catchStyle = .reach
         }
-        let flightTaken = Set(flightPaths.map(\.nodeIndex))
+        let (blockNodes, blockStyles) = flightBlocks(c, frame: frame)
         steps.append(Step(
             moves: flightMoves.filter { !flightTaken.contains($0.nodeIndex) },
             paths: flightPaths,
             ballMove: .arc(to: air(catchSpot.x, catchSpot.z), apex: apex, duration: flight, from: c.qb),
             duration: flight,
             reaches: [receiver],
+            blocks: blockNodes,
             throwStyle: throwStyle(c, depth: catchDepth, tight: tightCoverage),
-            catchStyles: [receiver: catchStyle]
+            catchStyles: [receiver: catchStyle],
+            blockStyles: blockStyles
         ))
 
         let openHands: [Int] = c.matchups?.openNonTargetOffRole
@@ -2039,20 +2131,42 @@ struct PlayChoreographer {
 
         // Overthrown ball; the target finishes his route and lunges after it
         // while every other pattern and coverage path plays out.
-        var flightPaths = framePaths(frame, step: 2, excludeNodes: [receiver])
+        // The covering man contests the throw: the man on the target (else the
+        // nearest zone defender to the miss point) breaks to the ball with a
+        // hand up — same timing as a completion's breaker, but to the dead ball.
+        let contester = frame.manOnTarget
+            ?? nearestZoneDefender(frame.plan, to: (miss.x, miss.z), c: c)
+        var flightPaths = framePaths(frame, step: 2,
+            excludeNodes: Set([receiver] + (contester.map { [c.dBase + $0] } ?? [])))
         var lungePoints = frame.routeSlices[receiverRole]?[2]?.points ?? []
         lungePoints.append(player(endPt.x + legDX / legLen * 1.0,
                                   endPt.z + legDZ / legLen * 1.0))
         flightPaths.append((receiver, lungePoints, flight))
         let flightTaken = Set(flightPaths.map(\.nodeIndex))
+        var flightMoves = zoneMoves(c, plan: frame.plan, p: 1,
+            exclude: contester.map { Set([c.dBase + $0]) } ?? [], d: flight)
+        var contestReaches = [receiver]
+        if let contester {
+            let side: Float = c.defense[contester].x > miss.x ? 1 : -1
+            flightMoves.append((c.dBase + contester,
+                                player(clampX(miss.x + side * 0.8),
+                                       clampZ(miss.z + c.direction * 0.3)), flight))
+            contestReaches.append(c.dBase + contester)
+        }
+        // Nobody freezes while the ball is in the air.
+        let flightCovered = flightTaken.union(flightMoves.map(\.nodeIndex))
+        flightMoves += flightSupportMoves(c, frame: frame, ballSpot: (miss.x, miss.z),
+                                          covered: flightCovered, d: flight)
+        let (blockNodes, blockStyles) = flightBlocks(c, frame: frame)
         steps.append(Step(
-            moves: zoneMoves(c, plan: frame.plan, p: 1, d: flight)
-                .filter { !flightTaken.contains($0.nodeIndex) },
+            moves: flightMoves.filter { !flightTaken.contains($0.nodeIndex) },
             paths: flightPaths,
             ballMove: .arc(to: miss, apex: 4, duration: flight, from: c.qb),
             duration: flight,
-            reaches: [receiver],
-            throwStyle: throwStyle(c, depth: routeDepth, forced: deepDrop)
+            reaches: contestReaches,
+            blocks: blockNodes,
+            throwStyle: throwStyle(c, depth: routeDepth, forced: deepDrop),
+            blockStyles: blockStyles
         ))
 
         // Ball skips dead along the turf. No advance — but a clearly open
@@ -2181,16 +2295,24 @@ struct PlayChoreographer {
         // target finishes his break a step deep.
         let flightPaths = framePaths(frame, step: 2, excludeNodes: [db])
         let flightTaken = Set(flightPaths.map(\.nodeIndex))
+        var flightMoves = merge(
+            [(nodeIndex: db, to: pick, duration: flight)],
+            zoneMoves(c, plan: frame.plan, p: 1, exclude: [db], d: flight)
+        )
+        // Nobody freezes while the ball is in the air.
+        let flightCovered = flightTaken.union(flightMoves.map(\.nodeIndex))
+        flightMoves += flightSupportMoves(c, frame: frame, ballSpot: (pick.x, pick.z),
+                                          covered: flightCovered, d: flight)
+        let (blockNodes, blockStyles) = flightBlocks(c, frame: frame)
         steps.append(Step(
-            moves: merge(
-                [(nodeIndex: db, to: pick, duration: flight)],
-                zoneMoves(c, plan: frame.plan, p: 1, exclude: [db], d: flight)
-            ).filter { !flightTaken.contains($0.nodeIndex) },
+            moves: flightMoves.filter { !flightTaken.contains($0.nodeIndex) },
             paths: flightPaths,
             ballMove: .arc(to: air(pick.x, pick.z), apex: 4.5, duration: flight, from: c.qb),
             duration: flight,
             reaches: [db, receiver],
-            throwStyle: throwStyle(c, depth: routeDepth, forced: true)
+            blocks: blockNodes,
+            throwStyle: throwStyle(c, depth: routeDepth, forced: true),
+            blockStyles: blockStyles
         ))
 
         // Return: DB takes it back the other way ~5yd while the offense

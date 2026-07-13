@@ -1333,9 +1333,12 @@ struct CareerDashboardView: View {
         } label: {
             DashboardTile(icon: "sportscourt", title: "Preseason") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("0-0 record")
-                        .font(.system(size: 12, weight: .bold).monospacedDigit())
-                        .foregroundStyle(Color.textPrimary)
+                    // Preseason is a camp/evaluation phase in this build — no
+                    // scored W-L record is tracked, so show the tile's purpose
+                    // instead of a fabricated "0-0 record" stat.
+                    Text("Evaluate roster")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.accentGold)
                     Text("3 exhibition games")
                         .font(.system(size: 10))
                         .foregroundStyle(Color.textSecondary)

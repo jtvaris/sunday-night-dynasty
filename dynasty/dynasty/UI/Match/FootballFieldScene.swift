@@ -1912,11 +1912,64 @@ class FootballFieldScene: SCNScene {
         }
     }
 
+    /// A momentary upper-body turn toward the ball at the catch: the torso
+    /// (and with it the head and shoulders) rotates to `yaw` in the figure's
+    /// local frame, holds through the grab, then releases so the next stride's
+    /// swing resumes facing the run. Runs on the "twist" channel — the light
+    /// counter-rotation `swingLimbs` uses — so it rides on top of the leg gait
+    /// without fighting the node's movement facing; the YAC leg's next
+    /// `swingLimbs` overwrites it, snapping the receiver back to his run.
+    private func catchBodyTurn(_ figure: SCNNode, yaw: CGFloat, hold: TimeInterval = 0.5) {
+        guard abs(yaw) > 0.05,
+              let body = figure.childNode(withName: "body", recursively: false) else { return }
+        body.removeAction(forKey: "twist")
+        let turn = SCNAction.rotateTo(x: 0, y: yaw, z: 0, duration: 0.16, usesShortestUnitArc: true)
+        turn.timingMode = .easeOut
+        let back = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.22, usesShortestUnitArc: true)
+        back.timingMode = .easeInEaseOut
+        body.runAction(SCNAction.sequence([turn, SCNAction.wait(duration: hold), back]),
+                       forKey: "twist")
+    }
+
+    /// The torso yaw a catch should turn to, in the receiver's local frame:
+    /// toward the incoming ball for a hands / over-shoulder / diving grab,
+    /// toward the near sideline for a toe-tap. Capped so it reads as a turn of
+    /// the head and shoulders, never a full spin off the run.
+    private func catchTurnYaw(nodeIndex: Int, style: CatchStyle, passer: SCNNode?) -> CGFloat {
+        guard let node = playerNode(at: nodeIndex) else { return 0 }
+        let pos = node.presentation.position
+        let facing = CGFloat(node.presentation.eulerAngles.y)
+        func yawTo(_ x: Float, _ z: Float) -> CGFloat {
+            let dx = x - pos.x, dz = z - pos.z
+            guard dx * dx + dz * dz > 0.05 else { return 0 }
+            var t = CGFloat(atan2(dx, dz)) - facing
+            while t > .pi { t -= 2 * .pi }
+            while t < -.pi { t += 2 * .pi }
+            return t
+        }
+        switch style {
+        case .toeTap:
+            let sideX: Float = pos.x >= 0 ? 30 : -30
+            return max(-1.2, min(1.2, yawTo(sideX, pos.z)))
+        case .reach:
+            guard let p = passer?.presentation.position else { return 0 }
+            return max(-1.3, min(1.3, yawTo(p.x, p.z)))
+        case .overShoulder:
+            guard let p = passer?.presentation.position else { return 0 }
+            return max(-0.8, min(0.8, yawTo(p.x, p.z)))
+        case .dive:
+            guard let p = passer?.presentation.position else { return 0 }
+            return max(-0.7, min(0.7, yawTo(p.x, p.z)))
+        }
+    }
+
     /// Both arms shoot up for a beat — catch attempts and pick attempts —
-    /// with a small leap at the ball while the arms are up.
-    private func reach(nodeIndex: Int) {
+    /// with a small leap at the ball while the arms are up. `turnYaw` turns the
+    /// torso toward the incoming ball at the grab (0 = stay square).
+    private func reach(nodeIndex: Int, turnYaw: CGFloat = 0) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        catchBodyTurn(figure, yaw: turnYaw)
         figure.removeAction(forKey: "hop")
         let hopUp = SCNAction.moveBy(x: 0, y: 0.25, z: 0, duration: 0.22)
         hopUp.timingMode = .easeOut
@@ -1948,9 +2001,10 @@ class FootballFieldScene: SCNScene {
 
     /// Deep-ball catch: both arms extend up and FORWARD along the run — the
     /// over-the-shoulder basket look — while the stride keeps going.
-    private func overShoulderReach(nodeIndex: Int) {
+    private func overShoulderReach(nodeIndex: Int, turnYaw: CGFloat = 0) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        catchBodyTurn(figure, yaw: turnYaw, hold: 0.6)
         for name in ["arm", "armR"] {
             guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
             arm.removeAction(forKey: "swing")
@@ -1972,12 +2026,13 @@ class FootballFieldScene: SCNScene {
     /// Full-extension diving catch: the figure launches flat with the arms
     /// out, hits the turf with the ball, and stays stretched out until the
     /// pile forms before climbing up.
-    private func divingCatch(nodeIndex: Int) {
+    private func divingCatch(nodeIndex: Int, turnYaw: CGFloat = 0) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         figure.removeAction(forKey: "gait")
         figure.removeAction(forKey: "hop")
         figure.removeAction(forKey: "stance")
+        catchBodyTurn(figure, yaw: turnYaw, hold: 1.4)
         for name in ["arm", "armR"] {
             guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
             arm.removeAction(forKey: "swing")
@@ -2006,8 +2061,8 @@ class FootballFieldScene: SCNScene {
 
     /// Sideline grab: the basic reach plus quick alternating toe taps —
     /// both feet down in bounds at the boundary.
-    private func toeTapReach(nodeIndex: Int) {
-        reach(nodeIndex: nodeIndex)
+    private func toeTapReach(nodeIndex: Int, turnYaw: CGFloat = 0) {
+        reach(nodeIndex: nodeIndex, turnYaw: turnYaw)
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         for (offset, name) in ["leg", "legR"].enumerated() {
@@ -2733,12 +2788,21 @@ class FootballFieldScene: SCNScene {
             pumpFake(nodeIndex: index, delay: max(stepDuration - 0.65, 0.15),
                      quick: step.pumpFakeQuick)
         }
+        // The ball's origin this step (the passer) — receivers turn back to it.
+        let passer: SCNNode? = {
+            if case let .arc(_, _, _, from) = step.ballMove, let from {
+                return playerNode(at: from)
+            }
+            return nil
+        }()
         for index in step.reaches {
-            switch step.catchStyles[index] ?? .reach {
-            case .reach: reach(nodeIndex: index)
-            case .overShoulder: overShoulderReach(nodeIndex: index)
-            case .dive: divingCatch(nodeIndex: index)
-            case .toeTap: toeTapReach(nodeIndex: index)
+            let style = step.catchStyles[index] ?? .reach
+            let yaw = catchTurnYaw(nodeIndex: index, style: style, passer: passer)
+            switch style {
+            case .reach: reach(nodeIndex: index, turnYaw: yaw)
+            case .overShoulder: overShoulderReach(nodeIndex: index, turnYaw: yaw)
+            case .dive: divingCatch(nodeIndex: index, turnYaw: yaw)
+            case .toeTap: toeTapReach(nodeIndex: index, turnYaw: yaw)
             }
         }
         for index in step.celebrates { celebrationJump(nodeIndex: index) }
