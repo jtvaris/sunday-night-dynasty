@@ -19,6 +19,11 @@ struct CareerShellView: View {
     /// Navigation path for bookmark quick-nav.
     @State private var navigationPath = NavigationPath()
 
+    /// #37: set true when the Game Plan screen's "Start Game" button asks us to
+    /// pop back to the dashboard and launch the coached game. The dashboard
+    /// observes this and consumes it (see `launchCoachedGame`).
+    @State private var requestCoachedLaunch = false
+
     /// The current list of tasks for the active phase, persisted across view
     /// updates. Regenerated when the phase changes.
     @State var currentTasks: [GameTask] = []
@@ -32,6 +37,13 @@ struct CareerShellView: View {
     /// Pending weekly press conference questions (shown after advancing a regular-season week).
     @State private var pendingPressQuestions: [PressQuestion]?
     @State private var showWeeklyPressConference = false
+
+    /// #38 — Post-game round recap (this week's scores + power ranking + MVP
+    /// race + storylines), assembled after each regular-season advance from
+    /// existing state. Presented once per week, after any press conference,
+    /// and always dismisses straight back to the dashboard.
+    @State private var pendingRoundResults: RoundResultsView.Data?
+    @State private var showRoundResults = false
 
     /// Camp Phase 1 wire-up: surface the VoluntaryWorkoutPrompt sheet when the
     /// player advances into an OTAs / Training Camp week.
@@ -71,7 +83,8 @@ struct CareerShellView: View {
                     },
                     onAdvance: {
                         performShellAdvance()
-                    }
+                    },
+                    launchCoachedGame: $requestCoachedLaunch
                 )
                     .onAppear {
                         // Refresh task completion when returning to the dashboard
@@ -145,6 +158,36 @@ struct CareerShellView: View {
                     onComplete: { result in
                         applyPressConferenceEffects(result)
                         showWeeklyPressConference = false
+                        // #38: chain the round recap once the presser is done.
+                        presentRoundResultsIfReady()
+                    }
+                )
+            }
+        }
+        // #38: post-game round recap — dismisses straight to the dashboard.
+        .fullScreenCover(isPresented: $showRoundResults) {
+            if let data = pendingRoundResults {
+                RoundResultsView(
+                    data: data,
+                    onSeeStandings: {
+                        showRoundResults = false
+                        pendingRoundResults = nil
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            navigationPath = NavigationPath()
+                            navigationPath.append(ShellDestination.standings)
+                        }
+                    },
+                    onSeeNews: {
+                        showRoundResults = false
+                        pendingRoundResults = nil
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            navigationPath = NavigationPath()
+                            navigationPath.append(ShellDestination.news)
+                        }
+                    },
+                    onDismiss: {
+                        showRoundResults = false
+                        pendingRoundResults = nil
                     }
                 )
             }
@@ -322,6 +365,10 @@ struct CareerShellView: View {
 
     /// Performs the week/phase advance from the TimelineTasksPanel.
     private func performShellAdvance() {
+        // #38: remember whether this was a regular-season game week — the round
+        // recap only makes sense after one (power rankings are regular-season).
+        let wasRegularSeason = career.currentPhase == .regularSeason
+
         PerfLog.time("advance_week") {
             WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
         }
@@ -350,11 +397,22 @@ struct CareerShellView: View {
             pendingOwnerReview = review
         }
 
+        // #38: assemble the post-game round recap (regular-season weeks only).
+        // Built now from the fresh narrative/game state; presented after any
+        // press conference so the flow reads game → presser → league recap.
+        pendingRoundResults = wasRegularSeason ? buildRoundResults() : nil
+
         // Check for pending press conference
         if let questions = WeekAdvancer.pendingPressConference {
             pendingPressQuestions = questions
             showWeeklyPressConference = true
             WeekAdvancer.pendingPressConference = nil
+        }
+
+        // #38: no press conference intercepting the flow → show the recap now
+        // (otherwise it is chained from the press conference's onComplete).
+        if !showWeeklyPressConference {
+            presentRoundResultsIfReady()
         }
 
         // Camp Phase 1 wire-up: surface the per-week voluntary workout prompt
@@ -372,6 +430,104 @@ struct CareerShellView: View {
         if career.currentPhase == .otas && pendingHoldout == nil {
             detectAndShowHoldout()
         }
+    }
+
+    // MARK: - Round Recap (#38)
+
+    /// Presents the assembled round recap shortly after the current advance's
+    /// transitions settle. Safe to call when nothing is pending — it no-ops.
+    private func presentRoundResultsIfReady() {
+        guard pendingRoundResults != nil, !showRoundResults else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            if pendingRoundResults != nil {
+                showRoundResults = true
+            }
+        }
+    }
+
+    /// Assembles the post-game round recap purely from existing state: this
+    /// week's played league games (`Game` rows), the freshly computed power
+    /// rankings and MVP race (`LeagueNarrativeState`), and this week's storyline
+    /// headlines (`Career.newsLog`). Returns `nil` when there's nothing to show.
+    private func buildRoundResults() -> RoundResultsView.Data? {
+        guard let narrative = career.leagueNarrative, !narrative.rankings.isEmpty else { return nil }
+        let week = narrative.week
+        let season = narrative.season
+        guard week > 0 else { return nil }
+
+        // This week's played, non-playoff league games.
+        let descriptor = FetchDescriptor<Game>(
+            predicate: #Predicate<Game> {
+                $0.seasonYear == season && $0.week == week && $0.isPlayoff == false
+            }
+        )
+        let games = ((try? modelContext.fetch(descriptor)) ?? []).filter { $0.isPlayed }
+        guard !games.isEmpty else { return nil }
+
+        // Current power-rank lookup drives upset tagging.
+        let rankByTeam = Dictionary(
+            uniqueKeysWithValues: narrative.rankings.map { ($0.teamID, $0.rank) }
+        )
+
+        let lines: [RoundResultsView.GameLine] = games.compactMap { game in
+            guard let home = game.homeScore, let away = game.awayScore,
+                  let homeTeam = allTeamsByID[game.homeTeamID],
+                  let awayTeam = allTeamsByID[game.awayTeamID] else { return nil }
+            let isUser = game.homeTeamID == career.teamID || game.awayTeamID == career.teamID
+            let margin = abs(home - away)
+            var tag: RoundResultsView.GameLine.Tag?
+            if let winnerID = game.winnerID, let loserID = game.loserID,
+               let wRank = rankByTeam[winnerID], let lRank = rankByTeam[loserID],
+               wRank - lRank >= 8, margin >= 3 {
+                // A meaningfully lower-ranked team won — an upset.
+                tag = .upset
+            } else if margin >= 21 {
+                tag = .blowout
+            }
+            return RoundResultsView.GameLine(
+                id: game.id,
+                awayAbbr: awayTeam.abbreviation,
+                awayName: awayTeam.name,
+                awayScore: away,
+                homeAbbr: homeTeam.abbreviation,
+                homeName: homeTeam.name,
+                homeScore: home,
+                isUserGame: isUser,
+                tag: tag
+            )
+        }
+
+        // User game first, then tagged games, then the rest (stable within groups).
+        let ordered = lines.enumerated().sorted { a, b in
+            func priority(_ g: RoundResultsView.GameLine) -> Int {
+                if g.isUserGame { return 0 }
+                if g.tag != nil { return 1 }
+                return 2
+            }
+            let pa = priority(a.element), pb = priority(b.element)
+            if pa != pb { return pa < pb }
+            return a.offset < b.offset
+        }.map { $0.element }
+
+        // This week's storyline headlines — skip the redundant Power Rankings
+        // recap item since the ranking section already covers it.
+        let storylines = career.newsLog
+            .filter { $0.season == season && $0.week == week }
+            .filter { !$0.headline.localizedCaseInsensitiveContains("Power Rankings") }
+            .prefix(3)
+
+        // The MVP race only reads as meaningful once there's a body of work.
+        let mvpRace = week >= 6 ? narrative.mvpRace : []
+
+        return RoundResultsView.Data(
+            week: week,
+            season: season,
+            games: ordered,
+            rankings: narrative.rankings,
+            mvpRace: mvpRace,
+            storylines: Array(storylines),
+            userTeamID: career.teamID
+        )
     }
 
     // MARK: - Press Conference Effects
@@ -463,6 +619,9 @@ struct CareerShellView: View {
             GamePlanView(
                 gamePlan: gamePlanBinding,
                 context: gamePlanContext,
+                // #37: forward path into the game — only when there's actually
+                // an unplayed player game this week to coach.
+                onStartGame: canCoachThisWeek ? { launchCoachedGameFromPlan() } : nil,
                 practice: gamePlanPracticeContext
             )
                 .onAppear {
@@ -609,6 +768,28 @@ struct CareerShellView: View {
     }
 
     // MARK: - Game Plan Helpers
+
+    /// #37: true when the player has an unplayed game this week that can be
+    /// coached live — mirrors the dashboard's Coach-the-Game availability so
+    /// the Game Plan screen only offers "Start Game" when it will actually work.
+    private var canCoachThisWeek: Bool {
+        switch career.currentPhase {
+        case .regularSeason, .tradeDeadline, .playoffs:
+            return upcomingGames.contains { $0.week == career.currentWeek && !$0.isPlayed }
+        default:
+            return false
+        }
+    }
+
+    /// #37: pop the Game Plan screen back to the dashboard, then ask the
+    /// dashboard (owner of the coached-game cover) to launch the game. The
+    /// plan auto-saves on every edit, so nothing else needs to persist here.
+    private func launchCoachedGameFromPlan() {
+        navigationPath = NavigationPath()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            requestCoachedLaunch = true
+        }
+    }
 
     /// Live binding between the Game Plan screen and the persisted career.
     /// Every slider drag / preset tap encodes to `career.gamePlanData`, saves

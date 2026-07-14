@@ -1,5 +1,66 @@
 # Dynasty - TODO
 
+## ✅ VERIFIOINTI #37 + #38 (2026-07-14, `BUILD SUCCEEDED`, EI committia)
+
+Ajettu runtimessa iPad Pro 13" M5 (049C7295). Talletus oli Super Bowl / offseason -tilassa (`canCoachThisWeek=false`), joten pääsin coachable-regular-season-tilaan DEBUG "Skip →" -napilla (1. tap → Free Agency, 2. tap → auto-AI-draft → Regular Season Week 1). **Huom:** DEBUG-skip päivittää vain dashboardin oman datan, EI shellin `upcomingGames`-tilaa → ekalla yrityksellä Game Plan -näytön Start Game -nappi puuttui ja opponent-konteksti oli tyhjä. Sovelluksen uudelleenkäynnistys (`loadShellData` `.task`issa) korjasi → Week 1 vs PIT, konteksti täysi. Kuvat: `/tmp/snd-screenshots/roundresults/`.
+
+**#37 NAVIGOINTI — PASS (molemmat polut, runtime).**
+- Polku (b) Game Plan -näyttö: kultainen **"Start Game →"** (headset) renderöityy headerin alle kun `canCoachThisWeek=true`; scouting-raportti täynnä (PIT, Pass D Weak, DC Conservative/OC Balanced). Tap → **live coached game käynnistyi suoraan** (Q1 BUF@PIT, lumisää, defensive stance + coverage/pressure). Ei umpikujaa. (`06_gameplan_startbtn.png`, `07_after_startgame.png`)
+- Polku (a) "Coach the Game" -hero: tap → coached game käynnistyi suoraan (Week 2 BUF@NE). (`17_coachthegame_hero.png`)
+- Molemmat vievät samaan live-peliin. Vahvistettu myös koodista: `onStartGame: canCoachThisWeek ? {...} : nil` (rivi 624), `launchCoachedGameFromPlan()` poppaa navin + `requestCoachedLaunch`.
+
+**#38 KIERROSDIALOGI — PASS (runtime, luotettava tuoreessa sessiossa).**
+- Advance week → **presser → Week N Recap** -dialogi. Näyttää: "This Week's Results" (16 ottelua, OMA peli kullalla kärjessä, voittajat lihavoitu, `BLOWOUT`-pillit), "Power Rankings" Top 10 liikesuunnilla (▲ vihreä / — ei muutosta, blurbit + recordit), storyline-uutiset. **Continue** → dashboard puhtaasti (ei jumita). (`21_after_return_diag.png` wk3, `23_wk4recap.png` wk4)
+- Diagnostiikkabuild vahvisti ketjun: `pendingRoundResults=SET(16 games, week N)` → `presentIfReady pending=true` → `showRoundResults=true` → `RoundResultsView APPEARED`. Toistui wk3 JA wk4 → luotettava. Diagnostiikka poistettu, `grep DIAG38` = clean, rebuild `BUILD SUCCEEDED`.
+- MVP-race näkyy vasta wk ≥6 (koodiportti) — ei testattu wk3/4:ssä, odotettu tyhjä.
+- "Once per week": dialogi sidottu discrete advance-toimintoon; Continuen jälkeen ei toistu dashboard-refreshissä.
+
+**AUKI JÄÄNEET / HAVAINNOT:**
+1. **(pieni, kosmeettinen)** Recap-otsikko: "Season **2 028**" — vuosiluku formatoituu ryhmittelyerottimella (pitäisi "2028"). Todennäköisesti `Text(season)` Int→String ilman `.grouping(.never)`-formatteria RoundResultsView-headerissa.
+2. **(latentti, kaksois-modaali)** Kun SAMALLA advancella on kilpaileva modaali (R31 owner season review `.sheet`), round-recap `.fullScreenCover` voi jäädä näyttämättä (havaittu wk1→2:ssa DEBUG-skip-sessiossa jossa vanhentunut 2027 owner review laukesi). Normaalipelissä owner review laukeaa offseason-vaiheissa, EI regular-season-viikoilla → ei törmää regular-season-only-recapin kanssa; tämä oli DEBUG-skip-artefakti. Silti: kahden peräkkäisen fullScreenCoverin (presser→recap) ketjutus 0.4 s viiveellä on SwiftUI:ssa hauras kuvio — tuoreessa sessiossa toimi 2/2, mutta owner-review-kontaminaatiosessiossa 0/2.
+
+**REGRESSIO — PASS.** Coached game käynnistyy molemmista sisäänkäynneistä; post-game FINAL-kortti (BUF 14–30 PIT, top performers) + Game Summary Q1–Q4-tulostaulu + team stats toimivat (`10_postgame.png`); advance week tuottaa kehityksen/uutiset/power rankingit (liikesuunnat päivittyvät viikoittain, storylinet recapissa). Sim-to-End confirm-dialogi toimii.
+
+**Build:** `BUILD SUCCEEDED` (id=049C7295) sekä diagnostiikan kanssa että sen poiston jälkeen. EI committia.
+
+## ✅ #38 — POST-GAME KIERROSTULOKSET + POWER RANKING -DIALOGI (2026-07-14, `BUILD SUCCEEDED`, EI committia)
+
+**Tavoite:** Advance Weekin jälkeen näytetään kerran/viikko ohitettava dialogi, jossa (a) viikon liigatulokset, (b) power ranking top-10 liikesuunta-nuolin, (c) MVP-race + storyline-uutiset. Rakentuu R29-dataan — EI rinnakkaista järjestelmää.
+
+**Datalähteet (kaikki jo olemassa):**
+- `career.leagueNarrative` (`LeagueNarrativeState`) → `rankings: [PowerRankingEntry]` (rank/previousRank→movement, abbr/nimi/record/blurb) + `mvpRace: [MVPCandidate]`.
+- `Game`-rivit (SwiftData) → viikon ottelut koti-vieras + loppupisteet.
+- `career.newsLog` (`[NewsItem]`) → viikon storyline-otsikot (streakit, upsetit, hot seat, division race, season arc).
+
+**Uusi tiedosto `UI/News/RoundResultsView.swift`:** itsenäinen dialogi (fullScreenCover). Osiot: (1) **This Week's Results** — kaikki viikon ei-playoff-ottelut, oma peli kullalla korostettuna, voittaja lihavoitu, `BLOWOUT` (margin ≥21) / `UPSET` (voittaja ≥8 sijaa alempana power rankingissa & margin ≥3) -pillit; oma peli listan kärkeen, sitten tagatut, sitten loput. (2) **Power Rankings** — top-10 (+ oma joukkue erikseen jos alle viivan), ▲▼— movement-badget, blurb. (3) **MVP Race** — top-3 case-strength-palkein (näkyy vasta wk ≥6). (4) **Storylines** — 2–3 viikon uutista (Power Rankings -recap-otsikko suodatettu pois päällekkäisyyden takia). Footer: **Continue** (kulta, dismiss→dashboard) + **Full Standings** / **League News** -linkit. Design-tokenit, iPad max-width 720, tumma korttikieli, `String(localized:)`.
+
+**Integrointi `CareerShellView.swift`:**
+- `performShellAdvance()`: talletetaan `wasRegularSeason` ennen advancea; sen jälkeen `pendingRoundResults = wasRegularSeason ? buildRoundResults() : nil`.
+- **Sekvenssi (huomioi #37:n navigointioppi):** peli → lehdistötilaisuus → kierrosrecap → dashboard. Recap näytetään lehdistötilaisuuden `onComplete`-ketjusta; jos presseriä ei ole, heti advancen jälkeen. Kaksi erillistä fullScreenCoveria, ei koskaan yhtä aikaa (gate `showWeeklyPressConference`).
+- Dismiss/Continue/linkit nollaavat `pendingRoundResults` → EI umpikujaa. "Once per week" tulee luonnostaan: rakennus on sidottu discrete Advance-toimintoon (ei view-refreshiin), kuten presserikin.
+- `buildRoundResults()`: hakee viikon pelatut ei-playoff-`Game`-rivit, mappaa `allTeamsByID`-lookupilla, laskee tagit, järjestää, kokoaa `RoundResultsView.Data`. Regular season -viikot 1–18 (myös wk18→playoffs-siirtymä näyttää wk18-recapin). Playoffit/offseason ohitettu (narrative on regular-season-dataa; ei collisionia owner review/holdout/otas-sheettien kanssa).
+
+**Muutetut/uudet tiedostot:**
+- `dynasty/dynasty/UI/News/RoundResultsView.swift` (uusi, ~430 riviä)
+- `dynasty/dynasty/UI/Career/CareerShellView.swift` (state + 2 fullScreenCover + `performShellAdvance` + `buildRoundResults()` + `presentRoundResultsIfReady()`)
+
+**Build:** `BUILD SUCCEEDED` (id=049C7295). EI committia.
+
+## ✅ #37 — SET GAME PLAN -NAVIGOINTIUMPIKUJA KORJATTU (2026-07-14, `BUILD SUCCEEDED`, EI committia)
+
+**Oire (käyttäjä):** ruudun ylhäällä "Set game plan", mutta MISTÄÄN ei päässyt siirtymään itse peliin.
+
+**Juurisyy (vaihtoehto a, vahvistettu koodista):** `.gamePlan`-destinaatio avaa `GamePlanView`:n, joka on pelkkä liukusäädin/preset-asetusnäkymä ILMAN yhtään eteenpäin-polkua — vain Back. Kun pelaaja tökkää dashboardin "Set game plan" -tehtävää / NEXT-heroa / "Game Plan"-nappia, hän jää tälle näytölle umpikujaan. (Pelin aloitus EI ollut koskaan pakotettu: regular-season game plan -tehtävät `isRequired: false`, ja `career.gamePlan` fallbackaa `.balanced`iin — joten estoa ei ollut, vain puuttuva eteenpäin-nappi.) Lisäksi kaksi eri "Game Plan"-nimistä chippiä vei väärin Week Prepiin (`.gameWeekPrep`).
+
+**Korjaus:**
+- `GamePlanView.swift`: uusi valinnainen `onStartGame: (() -> Void)?`. Kun ei-nil, näyttää headerin alla ison kultaisen "Start Game →" -napin (headset-ikoni). Plan tallentuu autom. joka muutoksella → nappi vain käynnistää coached-pelin.
+- `CareerShellView.swift`: `requestCoachedLaunch`-state + `launchCoachedGame: $requestCoachedLaunch` dashboardille. `.gamePlan`-destinaatio antaa `onStartGame` vain kun `canCoachThisWeek` (regularSeason/tradeDeadline/playoffs JA pelaajalla pelaamaton peli tällä viikolla). `launchCoachedGameFromPlan()` poppaa navin dashboardille ja pyytää käynnistyksen.
+- `CareerDashboardView.swift`: uusi `launchCoachedGame`-binding + `.onChange` joka kutsuu `startCoachedGame()` (fullScreenCover omistetaan täällä). Korjattu chipit: quick action "Game Plan" `.gameWeekPrep`→`.gamePlan`; week-prep-tile uudelleennimetty "Game Plan"→"Week Prep" (ei enää päällekkäistä nimeä).
+
+**Lopputulos:** Game Plan -näyttö ei ole enää umpikuja — siitä pääsee AINA suoraan coached-peliin kun peli on pelattavissa. "Coach the Game" -hero-nappi (jo aiemmin) toimii rinnalla; molemmat vievät samaan `startCoachedGame()`:iin.
+
+**Build:** `BUILD SUCCEEDED` (id=049C7295). Asennus+käynnistys → dashboard renderöi ilman regressiota (nykyinen talletus Super Bowl -vaiheessa, jossa `canCoachThisWeek=false` → Start Game -nappi ei näy, mikä on oikea käytös). In-season-polku varmennettu koodilogiikalla + vihreä build. EI committia.
+
 ## ✅ VERIFIOINTI #33 — GAMES PLAYED + DRAFT SCHEME-FIT (2026-07-14, `BUILD SUCCEEDED`, EI committia)
 
 Verifioitu: build vihreä → asennus+käynnistys (049C7295, com.brewcrow.dynasty). Kuvat/logit: `/tmp/snd-screenshots/season-stats/`.

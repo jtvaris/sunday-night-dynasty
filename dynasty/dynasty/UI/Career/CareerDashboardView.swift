@@ -8,6 +8,10 @@ struct CareerDashboardView: View {
     @Binding var inboxMessages: [InboxMessage]
     var onTaskSelected: (TaskDestination) -> Void
     var onAdvance: (() -> Void)? = nil
+    /// #37: flipped true by the Game Plan screen's "Start Game" button after it
+    /// pops back to the dashboard, so the coached game launches from here (the
+    /// owner of `coachedSession` / the fullScreenCover). Reset on consumption.
+    var launchCoachedGame: Binding<Bool> = .constant(false)
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -372,6 +376,12 @@ struct CareerDashboardView: View {
                     finishCoachedGame(engine: engine, game: session.game)
                 }
             )
+        }
+        .onChange(of: launchCoachedGame.wrappedValue) { _, shouldLaunch in
+            // #37: the Game Plan screen popped back and asked us to launch.
+            guard shouldLaunch else { return }
+            launchCoachedGame.wrappedValue = false
+            startCoachedGame()
         }
         .sheet(isPresented: $showCoachingStaffReview) {
             CoachingStaffReviewSheet(
@@ -1053,7 +1063,7 @@ struct CareerDashboardView: View {
             ]
         case .regularSeason:
             return [
-                QuickAction(icon: "scope", label: "Game Plan", destination: .gameWeekPrep),
+                QuickAction(icon: "scope", label: "Game Plan", destination: .gamePlan),
                 QuickAction(icon: "list.number", label: "Depth Chart", destination: .depthChart),
                 QuickAction(icon: "chart.line.uptrend.xyaxis", label: "Development", destination: .developmentReport),
                 QuickAction(icon: "cross.case.fill", label: "Injuries", destination: .roster)
@@ -1505,7 +1515,7 @@ struct CareerDashboardView: View {
 
     private var gameWeekPrepTile: some View {
         NavigationLink(value: CareerShellView.ShellDestination.gameWeekPrep) {
-            DashboardTile(icon: "scope", title: "Game Plan") {
+            DashboardTile(icon: "scope", title: "Week Prep") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Week \(career.currentWeek) prep")
                         .font(.system(size: 11, weight: .medium))

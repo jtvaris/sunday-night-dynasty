@@ -11,6 +11,11 @@ struct GamePlanView: View {
 
     @Binding var gamePlan: GamePlan
     var context: Context?
+    /// #37: forward path into the game. When non-nil (regular season / playoffs
+    /// with an unplayed player game this week) a prominent "Start Game" button
+    /// is shown so the plan screen is never a navigation dead-end — the plan
+    /// auto-saves, so this jumps straight into the coached game.
+    var onStartGame: (() -> Void)? = nil
     /// R36: weekly practice play — pick one not-installed play to drill;
     /// it installs into the call sheet for the season after enough weeks.
     /// `nil` hides the card (entry points without a career).
@@ -102,6 +107,10 @@ struct GamePlanView: View {
                 VStack(spacing: DSSpacing.md) {
                     headerBar
 
+                    if let onStartGame {
+                        startGameButton(action: onStartGame)
+                    }
+
                     if horizontalSizeClass == .regular {
                         HStack(alignment: .top, spacing: DSSpacing.md) {
                             VStack(spacing: DSSpacing.md) {
@@ -183,6 +192,35 @@ struct GamePlanView: View {
             .accessibilityHidden(!showSavedIndicator)
         }
         .padding(.horizontal, 4)
+    }
+
+    // MARK: - Start Game CTA (#37)
+
+    /// Prominent forward path into the coached game. The plan auto-saves on
+    /// every change, so no confirmation is needed — this simply launches.
+    private func startGameButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "headset")
+                    .font(.headline.weight(.bold))
+                Text("Start Game")
+                    .font(.headline.weight(.bold))
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.right")
+                    .font(.headline.weight(.bold))
+            }
+            .foregroundStyle(Color.backgroundPrimary)
+            .padding(.horizontal, DSSpacing.lg)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity)
+            .background(
+                Color.accentGold,
+                in: RoundedRectangle(cornerRadius: DSCornerRadius.card)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Start the game with this plan")
+        .accessibilityHint("Your game plan is saved automatically")
     }
 
     private var situationLine: String? {
