@@ -21,7 +21,9 @@ struct SimPlayer {
     /// Personality archetype (#36B mental game): drives hot/cold form
     /// sensitivity, ego/frustration, and the temperament badge in the UI.
     let personalityArchetype: PersonalityArchetype
-    let morale: Int
+    /// Mutable so a one-time pre-game coaching morale bump (R40) can be applied
+    /// to the snapshot without touching the live @Model player.
+    var morale: Int
     /// Precomputed `Player.overall` so the sim never re-derives it per read.
     let overall: Int
     let schemeFamiliarity: [String: Int]

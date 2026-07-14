@@ -42,7 +42,8 @@ enum DriveSimulator {
         defensiveScheme: DefensiveScheme? = nil,
         gamePlan: GamePlan? = nil,
         weather: GameWeather? = nil,
-        offenseIsAway: Bool = false
+        offenseIsAway: Bool = false,
+        adjustments: PlaySimulator.Adjustments? = nil
     ) -> DriveSimulationResult {
         var plays: [PlayResult] = []
         var currentDown = 1
@@ -91,6 +92,7 @@ enum DriveSimulator {
                 defensiveScheme: defensiveScheme,
                 gamePlan: gamePlan,
                 weather: weather,
+                adjustments: adjustments,
                 offenseIsAway: offenseIsAway
             )
 

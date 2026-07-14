@@ -17,6 +17,12 @@ enum PlaySimulator {
         var completionBonus: Double = 0
         /// Added to expected rushing yards before the roll is rounded.
         var runYardageBonus: Double = 0
+        /// Multiplies the pre-snap penalty-flag chance for this offense
+        /// (R40 discipline). `1.0` = today's exact behavior.
+        var penaltyChanceScale: Double = 1.0
+        /// Multiplies the ball-carrier fumble chance for this offense
+        /// (R40 discipline). `1.0` = today's exact behavior.
+        var fumbleChanceScale: Double = 1.0
     }
 
     // MARK: - Public API
@@ -94,9 +100,11 @@ enum PlaySimulator {
         // --- Penalty check (scrimmage plays only, ~6% of snaps) ---
         // Rolled BEFORE the play resolves: a flag wipes the down out entirely.
         // Special teams (punt/FG) and clock plays are exempt to keep their
-        // flows simple.
+        // flows simple. R40: a disciplined coaching staff scales this offense's
+        // flag frequency down (scale 1.0 = today's exact behavior).
+        let scaledPenaltyChance = penaltyChance * (adjustments?.penaltyChanceScale ?? 1.0)
         if playCall == .pass || playCall == .run,
-           randomChance(penaltyChance) {
+           randomChance(scaledPenaltyChance) {
             return rollPenalty(
                 playCall: playCall,
                 offensePlayers: offensePlayers,
@@ -416,6 +424,23 @@ enum PlaySimulator {
         // live engine get it identically.
         sackChance = max(0.02, sackChance - qbMobilitySackReduction(qbAttrs))
 
+        // R39 trench matchup (mech 2a strength + mech 1a acceleration): a
+        // stronger OL holds the pocket (−sack); a quicker DL first step off the
+        // snap gets home faster (+sack). Both differentials are near-zero mean
+        // league-wide (OL/DL attribute means are equal), so the league sack rate
+        // holds while the individual trench matchup separates. Shared path →
+        // quick sim and the live engine get it identically.
+        let olLinemen = offensePlayers.filter { isOL($0) }
+        let dlLinemen = defensePlayers.filter { isDL($0) }
+        let olStrength = averageAttribute(olLinemen, extractor: { Double($0.physical.strength) })
+        let dlStrength = averageAttribute(dlLinemen, extractor: { Double($0.physical.strength) })
+        let olAccel = averageAttribute(olLinemen, extractor: { Double($0.physical.acceleration) })
+        let dlAccel = averageAttribute(dlLinemen, extractor: { Double($0.physical.acceleration) })
+        sackChance = clamp(sackChance
+                           - strengthTrenchSackReduction(olStrength: olStrength, dlStrength: dlStrength)
+                           + accelPassRushBonus(dlAccel: dlAccel, olAccel: olAccel),
+                           min: 0.02, max: 0.60)
+
         // Live play-call adjustments (nil hint + nil package = identical to today):
         // quick-timing throws pick up the blitz; blitz packages add pressure.
         if hint != nil || defensivePackage != nil {
@@ -541,17 +566,24 @@ enum PlaySimulator {
         #if DEBUG
         if debugNeutralContestedDrop { useSeparationOpenness = false }
         #endif
-        let opennessAttr = useSeparationOpenness
+        var opennessAttr = useSeparationOpenness
             ? receiverSeparationRating(for: target)
             : receiverCatchRating(for: target)
+        // R39 mech 3 (agility): a receiver's change-of-direction wins a step of
+        // separation on his route (WR/TE). Centered at the 70 mean → comp% holds.
+        opennessAttr += agilitySeparationBonus(for: target)
         let dbCoverage = averageAttribute(
             defensePlayers.filter { isDB($0) },
             extractor: { dbCoverageRating(for: $0) }
         )
 
+        // R39 mech 4 (de-overlap): the "reading the coverage" contribution to
+        // completion belongs to AWARENESS (recognition / target selection).
+        // decisionMaking is reassigned to turnover risk (interceptionChance), so
+        // awareness and decisionMaking no longer double-count.
         let completionBase = (accuracyRating * 0.4
                               + opennessAttr * 0.35
-                              + Double(qb.mental.decisionMaking) * 0.1) / 100.0
+                              + completionReadingAttr(for: qb) * 0.1) / 100.0
         let coveragePenalty = Double(dbCoverage) / 200.0
         var completionChance = clamp(completionBase - coveragePenalty + momentumBoost, min: 0.15, max: 0.85)
 
@@ -577,19 +609,41 @@ enum PlaySimulator {
         // who beats the jam gets a cleaner window; a good press corner erases
         // it. Near-zero mean (release ≈ press league-wide) so it never shifts
         // the completion rate — it only rewards the individual matchup.
-        var wrPressActive = true
-        #if DEBUG
-        if debugNeutralWRPress { wrPressActive = false }
-        #endif
-        if wrPressActive, let package = defensivePackage,
+        if let package = defensivePackage,
            package.coverage == .manToMan, passDistance == .short {
-            let press = averageAttribute(
-                defensePlayers.filter { isDB($0) },
-                extractor: { dbPressRating(for: $0) }
+            let dbs = defensePlayers.filter { isDB($0) }
+            let press = averageAttribute(dbs, extractor: { dbPressRating(for: $0) })
+
+            // R38 mech 4: release TECHNIQUE vs press technique.
+            var wrPressActive = true
+            #if DEBUG
+            if debugNeutralWRPress { wrPressActive = false }
+            #endif
+            if wrPressActive {
+                let release = receiverReleaseRating(for: target)
+                let mod = clamp((release - press) / wrPressDivisor, min: -wrPressCap, max: wrPressCap)
+                completionChance = clamp(completionChance + mod, min: 0.05, max: 0.95)
+            }
+
+            // R39 mech 1b: the WR's BURST off the jam (acceleration) vs the
+            // corner's burst. Near-zero mean — rewards the individual matchup.
+            let releaseBurst = accelReleaseBonus(
+                wrAccel: Double(target.physical.acceleration),
+                cbAccel: averageAttribute(dbs, extractor: { Double($0.physical.acceleration) })
             )
-            let release = receiverReleaseRating(for: target)
-            let mod = clamp((release - press) / wrPressDivisor, min: -wrPressCap, max: wrPressCap)
-            completionChance = clamp(completionChance + mod, min: 0.05, max: 0.95)
+            if releaseBurst != 0 {
+                completionChance = clamp(completionChance + releaseBurst, min: 0.05, max: 0.95)
+            }
+
+            // R39 mech 2c: the corner's physical JAM (strength) disrupts the
+            // release. Near-zero mean.
+            let jam = strengthPressDisruption(
+                cbStrength: averageAttribute(dbs, extractor: { Double($0.physical.strength) }),
+                wrStrength: Double(target.physical.strength)
+            )
+            if jam != 0 {
+                completionChance = clamp(completionChance - jam, min: 0.05, max: 0.95)
+            }
         }
 
         // Weather: a wet ball slips through hands (rain/snow), and gusts
@@ -624,7 +678,9 @@ enum PlaySimulator {
                 defensePlayers.filter { isDB($0) },
                 extractor: { dbBallSkillsRating(for: $0) }
             ),
-            passDistance: passDistance
+            passDistance: passDistance,
+            decisionMaking: qb.mental.decisionMaking,
+            pressure: sackChance
         )
 
         if randomChance(intChance) {
@@ -919,13 +975,31 @@ enum PlaySimulator {
             blockingAdvantage += hint.runGapBonus
         }
 
+        // R39 mech 2a (strength trench, run side): a stronger OL moves the DL
+        // off the ball. Near-zero mean → the league rushing average holds.
+        blockingAdvantage += strengthTrenchRunBonus(
+            olStrength: averageAttribute(offensePlayers.filter { isOL($0) },
+                                         extractor: { Double($0.physical.strength) }),
+            dlStrength: averageAttribute(defensePlayers.filter { isDL($0) },
+                                         extractor: { Double($0.physical.strength) })
+        )
+
         // --- Base Yards ---
         let baseYards = Double.random(in: 2.0...5.0)
         let visionBonus = Double(rbAttrs.vision) / 100.0 * 2.0
         let elusivenessBonus = Double(rbAttrs.elusiveness) / 100.0 * 1.5
+        // R39 carrier bursts — three distinct, non-overlapping athletic traits,
+        // each centered at the 70-rated mean so the league rushing average holds
+        // while athletic backs separate from plodders:
+        //   mech 1c — acceleration: the BURST through the hole (straight-line)
+        //   mech 2b — strength + break-tackle: yards THROUGH contact
+        //   mech 3  — agility: the open-field JUKE (change of direction)
+        let carrierBurst = accelBurstBonus(for: rb)
+            + breakTackleBonus(for: rb, attrs: rbAttrs)
+            + agilityJukeBonus(for: rb)
         // Halftime adjustment: a run-first commitment adds expected yardage.
         let adjustmentYards = adjustments?.runYardageBonus ?? 0
-        var totalYards = Int((baseYards + visionBonus + elusivenessBonus + blockingAdvantage * 3.0 + momentumBoost * 2.0 + adjustmentYards).rounded())
+        var totalYards = Int((baseYards + visionBonus + elusivenessBonus + carrierBurst + blockingAdvantage * 3.0 + momentumBoost * 2.0 + adjustmentYards).rounded())
 
         // Apply scheme fit modifiers: offense fit boosts yards, defense fit reduces them
         let schemeYardAdjustment = Double(totalYards) * (offSchemeFit - defSchemeFit)
@@ -981,6 +1055,9 @@ enum PlaySimulator {
         }
         // Rain/snow: the wet ball comes out more often.
         if weather == .rain || weather == .snow { fumbleChance += 0.005 }
+        // R40: a disciplined coaching staff scales this offense's fumble
+        // frequency down (scale 1.0 = today's exact behavior).
+        fumbleChance *= (adjustments?.fumbleChanceScale ?? 1.0)
         if randomChance(fumbleChance) {
             let fumbleLost = coinFlip(0.5)
             return PlayResult(
@@ -1802,7 +1879,9 @@ enum PlaySimulator {
     private static func interceptionChance(
         accuracyRating: Double,
         dbBallSkills: Double,
-        passDistance: PassDistance
+        passDistance: PassDistance,
+        decisionMaking: Int,
+        pressure: Double
     ) -> Double {
         let baseRate: Double
         switch passDistance {
@@ -1812,7 +1891,11 @@ enum PlaySimulator {
         }
         let accuracyMod = (70.0 - accuracyRating) / 1000.0
         let dbMod = (dbBallSkills - 50.0) / 500.0
-        return clamp(baseRate + accuracyMod + dbMod, min: 0.005, max: 0.08)
+        // Mech 4: decision-making risk, amplified by pass-rush pressure. Widens
+        // the clamp ceiling slightly so a reckless QB flushed from the pocket
+        // can actually reach the higher risk; centered at 70 → mean-neutral.
+        let riskMod = decisionRiskBonus(decisionMaking: decisionMaking, pressure: pressure)
+        return clamp(baseRate + accuracyMod + dbMod + riskMod, min: 0.005, max: 0.10)
     }
 
     private static func yardsAfterCatch(for player: SimPlayer, momentum: Double) -> Int {
@@ -1895,6 +1978,29 @@ enum PlaySimulator {
     // see LiveGameEngine), so it is the only one the quick-sim gate measures.
     /// True = no composure pressure penalty on QB accuracy (mental mech 3).
     static var debugNeutralComposure = false
+
+    // R39 attribute-gap balance-harness switches — one per ATTRIBUTE (each
+    // bundles that attribute's sub-connections) so it is measured in isolation
+    // over the SAME league (paired comparison).
+    /// True = neutralize ACCELERATION: DL first-step pass rush (1a), WR release
+    /// burst vs press (1b, live), RB burst through the hole (1c).
+    static var debugNeutralAcceleration = false
+    /// True = neutralize STRENGTH: OL/DL trench win (2a), break-tackle through
+    /// contact (2b), CB press-jam (2c, live).
+    static var debugNeutralStrength = false
+    /// True = neutralize AGILITY: RB open-field juke (3) + WR route separation.
+    static var debugNeutralAgility = false
+    /// True = neutralize DECISIONMAKING risk role: restores the pre-R39
+    /// decisionMaking→completion term and drops the turnover-risk term (4).
+    static var debugNeutralDecision = false
+
+    // R41 scheme-familiarity balance-harness switch. Neutralizes ONLY the new
+    // DIRECT familiarity term (the fit-scaled multiplier that shipped earlier
+    // stays active). Measured asymmetrically: a high-familiarity squad vs a
+    // low-familiarity squad — the well-drilled team should out-gain the one
+    // still learning the playbook, while the aggregate holds.
+    /// True = drop the fit-independent familiarity yardage term (R41).
+    static var debugNeutralSchemeFamiliarity = false
     #endif
 
     // MARK: - Player IQ Tuning (R37)
@@ -1964,6 +2070,61 @@ enum PlaySimulator {
     private static let contestedDivisor = 700.0
     private static let contestedMin = 0.01
     private static let contestedMax = 0.14
+
+    // MARK: - Attribute-Gap Tuning (R39)
+
+    // Mech 1a — DL first step (acceleration) vs OL kick-slide closing the
+    // pocket. (avgDLAccel − avgOLAccel)/divisor ADDED to sack chance, ±cap.
+    // League accel means are equal, so the mean edge ≈ 0 and the sack rate holds.
+    private static let accelPassRushDivisor = 900.0
+    private static let accelPassRushCap = 0.02
+    // Mech 1b — WR burst off the jam vs the corner's burst, man-press SHORT
+    // throws only (live). (wrAccel − cbAccel)/divisor, ±cap. Near-zero mean.
+    private static let accelReleaseDivisor = 700.0
+    private static let accelReleaseCap = 0.03
+    // Mech 1c — RB burst through the hole (straight-line). (accel−70)/100·scale
+    // added to run yards; centered → the league rushing average holds.
+    private static let accelBurstScale = 1.2
+
+    // Mech 2a — trench STRENGTH. Pass pro: (olStr−dlStr)/divisor SUBTRACTED from
+    // sack chance, ±cap. Run: (olStr−dlStr)/100·weight added to blockingAdvantage.
+    private static let strengthTrenchSackDivisor = 1100.0
+    private static let strengthTrenchSackCap = 0.02
+    // Trimmed 0.35 → 0.22 by the gate: at n=100 the strength attribute's
+    // isolated points delta hit +1.7 (>±1.5) because starters rate above the
+    // 70 center, so the run-side bonuses add net yards; the lighter weight lands
+    // it inside ±1.5.
+    private static let strengthTrenchRunWeight = 0.22
+    // Mech 2b — break-tackle through contact: (breakPower−70)/100·scale added to
+    // run yards, breakPower = strength·0.5 + breakTackle·0.5. Centered.
+    // Trimmed 1.3 → 0.9 with the trench weight for the same gate breach.
+    private static let breakTackleContactScale = 0.9
+    // Mech 2c — the corner's physical jam (strength) disrupts the release,
+    // man-press SHORT throws only (live). (cbStr − wrStr)/divisor SUBTRACTED
+    // from completion, ±cap. Near-zero mean.
+    private static let strengthPressDivisor = 800.0
+    private static let strengthPressCap = 0.025
+
+    // Mech 3 — AGILITY (change of direction, distinct from acceleration's
+    // straight-line burst). RB open-field juke: (agility−70)/100·scale added to
+    // run yards (centered). WR route separation: (agility−70)·slope added to the
+    // openness rating (centered → comp% holds).
+    private static let agilityJukeScale = 1.2
+    private static let agilitySeparationSlope = 0.12
+
+    // Mech 4 — DECISIONMAKING as turnover RISK (awareness owns coverage
+    // reading; see completionReadingAttr). (70 − decisionMaking)·slope, amplified
+    // by pass-rush pressure, added to the interception chance. Centered at 70 →
+    // the league turnover rate holds; the reckless force picks under duress, the
+    // careful protect the ball.
+    // Trimmed 0.00035/2.0 → 0.00016/1.0 by the gate: the Q4 clutch boost
+    // (applyMoraleModifiers) inflates decisionMaking toward 99 in the fourth
+    // quarter, so a 70-centered risk term skews strongly negative there and
+    // dropped league turnovers −0.67/game (>±0.4). The lighter slope/gain keep
+    // a reckless passer forcing picks under pressure while landing the aggregate
+    // inside ±0.4.
+    private static let decisionIntSlope = 0.00016
+    private static let decisionPressureGain = 1.0
 
     // MARK: - Mental-Game Tuning (#36B)
 
@@ -2075,6 +2236,118 @@ enum PlaySimulator {
             return Swift.max(1.0, Double(attrs.press) - fatiguePenalty(player.fatigue))
         }
         return 50.0
+    }
+
+    // MARK: - Attribute-Gap Helpers (R39)
+
+    /// Sack-chance INCREASE from a quicker DL first step (acceleration) beating
+    /// the OL off the snap (mech 1a). Near-zero mean → league sack rate holds.
+    private static func accelPassRushBonus(dlAccel: Double, olAccel: Double) -> Double {
+        #if DEBUG
+        if debugNeutralAcceleration { return 0 }
+        #endif
+        return clamp((dlAccel - olAccel) / accelPassRushDivisor,
+                     min: -accelPassRushCap, max: accelPassRushCap)
+    }
+
+    /// Completion swing from the WR's burst off the jam vs the corner's burst,
+    /// man-press short throws only (mech 1b, live). Near-zero mean.
+    private static func accelReleaseBonus(wrAccel: Double, cbAccel: Double) -> Double {
+        #if DEBUG
+        if debugNeutralAcceleration { return 0 }
+        #endif
+        return clamp((wrAccel - cbAccel) / accelReleaseDivisor,
+                     min: -accelReleaseCap, max: accelReleaseCap)
+    }
+
+    /// Run-yardage burst through the hole from acceleration (mech 1c), centered.
+    private static func accelBurstBonus(for rb: SimPlayer) -> Double {
+        #if DEBUG
+        if debugNeutralAcceleration { return 0 }
+        #endif
+        return (Double(rb.physical.acceleration) - 70.0) / 100.0 * accelBurstScale
+    }
+
+    /// Sack-chance REDUCTION from a stronger OL holding the pocket (mech 2a).
+    private static func strengthTrenchSackReduction(olStrength: Double, dlStrength: Double) -> Double {
+        #if DEBUG
+        if debugNeutralStrength { return 0 }
+        #endif
+        return clamp((olStrength - dlStrength) / strengthTrenchSackDivisor,
+                     min: -strengthTrenchSackCap, max: strengthTrenchSackCap)
+    }
+
+    /// Run blocking-advantage bump from OL strength moving the DL (mech 2a, run).
+    private static func strengthTrenchRunBonus(olStrength: Double, dlStrength: Double) -> Double {
+        #if DEBUG
+        if debugNeutralStrength { return 0 }
+        #endif
+        return (olStrength - dlStrength) / 100.0 * strengthTrenchRunWeight
+    }
+
+    /// Run-yardage bump from breaking arm tackles through contact (mech 2b),
+    /// breakPower = physical strength 50% + break-tackle 50%. Centered.
+    private static func breakTackleBonus(for rb: SimPlayer, attrs: RBAttributes) -> Double {
+        #if DEBUG
+        if debugNeutralStrength { return 0 }
+        #endif
+        let breakPower = Double(rb.physical.strength) * 0.5 + Double(attrs.breakTackle) * 0.5
+        return (breakPower - 70.0) / 100.0 * breakTackleContactScale
+    }
+
+    /// Completion REDUCTION from the corner's physical jam (strength) disrupting
+    /// the release, man-press short throws only (mech 2c, live). Near-zero mean.
+    private static func strengthPressDisruption(cbStrength: Double, wrStrength: Double) -> Double {
+        #if DEBUG
+        if debugNeutralStrength { return 0 }
+        #endif
+        return clamp((cbStrength - wrStrength) / strengthPressDivisor,
+                     min: -strengthPressCap, max: strengthPressCap)
+    }
+
+    /// Run-yardage bump from the open-field juke (agility, change of direction —
+    /// distinct from acceleration's straight-line burst) (mech 3). Centered.
+    private static func agilityJukeBonus(for rb: SimPlayer) -> Double {
+        #if DEBUG
+        if debugNeutralAgility { return 0 }
+        #endif
+        return (Double(rb.physical.agility) - 70.0) / 100.0 * agilityJukeScale
+    }
+
+    /// Openness bump from a receiver's change-of-direction winning a step of
+    /// route separation (mech 3, WR/TE only). Centered at 70 → comp% holds.
+    private static func agilitySeparationBonus(for player: SimPlayer) -> Double {
+        #if DEBUG
+        if debugNeutralAgility { return 0 }
+        #endif
+        switch player.positionAttributes {
+        case .wideReceiver, .tightEnd:
+            return (Double(player.physical.agility) - 70.0) * agilitySeparationSlope
+        default:
+            return 0
+        }
+    }
+
+    /// The QB attribute that drives the "reading the coverage" contribution to
+    /// completion (mech 4 de-overlap): AWARENESS when the decision mechanic is
+    /// active (awareness owns recognition, decisionMaking owns risk), the legacy
+    /// decisionMaking when neutralized — for the paired balance gate.
+    private static func completionReadingAttr(for qb: SimPlayer) -> Double {
+        #if DEBUG
+        if debugNeutralDecision { return Double(qb.mental.decisionMaking) }
+        #endif
+        return Double(qb.mental.awareness)
+    }
+
+    /// Interception-chance ADD from throwing risk (mech 4): a reckless
+    /// decision-maker forces picks, amplified by pass-rush pressure; the careful
+    /// protect the ball. Centered at 70 → league turnover rate holds.
+    private static func decisionRiskBonus(decisionMaking: Int, pressure: Double) -> Double {
+        #if DEBUG
+        if debugNeutralDecision { return 0 }
+        #endif
+        return (70.0 - Double(decisionMaking)) * decisionIntSlope
+            * (1.0 + pressure * decisionPressureGain)
     }
 
     /// Effective-accuracy sag from low composure in a pressure moment
@@ -2402,24 +2675,63 @@ enum PlaySimulator {
             )
         } / Double(players.count)
 
-        // Apply scheme familiarity modifier: players who haven't learned the scheme perform worse
+        // Scheme familiarity, resolved once per player into the raw 0-100
+        // "% learned" and the 0.70-1.0 performance multiplier.
+        func schemeName(for player: SimPlayer) -> String? {
+            player.position.side == .offense ? offensiveScheme?.rawValue
+                                             : defensiveScheme?.rawValue
+        }
+
+        // Fit-scaled multiplier (shipped): players who haven't learned the
+        // scheme convert their scheme FIT into yards less fully.
         let avgSchemeModifier = players.reduce(0.0) { sum, player in
-            let schemeName: String?
-            if player.position.side == .offense {
-                schemeName = offensiveScheme?.rawValue
-            } else {
-                schemeName = defensiveScheme?.rawValue
-            }
-            let modifier = schemeName.map {
+            let modifier = schemeName(for: player).map {
                 VersatilityDevelopmentEngine.schemePerformanceModifier(player: player, scheme: $0)
             } ?? 1.0
             return sum + modifier
         } / Double(players.count)
 
-        // Map 0.0-1.0 fit to a -0.05 to +0.10 modifier, then scale by scheme familiarity
-        // 0.5 fit = 0.0 modifier (neutral), 1.0 fit = +0.10, 0.0 fit = -0.05
-        return (avgFit - 0.5) * 0.2 * avgSchemeModifier
+        // Raw average "% learned" for the DIRECT term below.
+        let avgFamiliarity = players.reduce(0.0) { sum, player in
+            let fam = schemeName(for: player)
+                .map { Double(player.schemeFam(for: $0)) } ?? familiarityNeutralPivot
+            return sum + fam
+        } / Double(players.count)
+
+        // R41 — DIRECT familiarity effect, INDEPENDENT of scheme fit. A squad
+        // still learning the playbook (low % learned) plays a beat slow / a
+        // step off and loses a little yardage regardless of how well it fits
+        // the scheme on paper; a well-drilled squad (high %) gets a small edge.
+        // This is what makes "% LEARNED" matter at a neutral 0.5 fit, where the
+        // multiplier term above collapses to zero.
+        var directFamiliarity = 0.0
+        #if DEBUG
+        if !debugNeutralSchemeFamiliarity {
+            directFamiliarity = clamp(
+                (avgFamiliarity - familiarityNeutralPivot) * familiarityDirectGain,
+                min: -familiarityDirectCap, max: familiarityDirectCap
+            )
+        }
+        #else
+        directFamiliarity = clamp(
+            (avgFamiliarity - familiarityNeutralPivot) * familiarityDirectGain,
+            min: -familiarityDirectCap, max: familiarityDirectCap
+        )
+        #endif
+
+        // Map 0.0-1.0 fit to a -0.05 to +0.10 modifier, scale by scheme
+        // familiarity, then add the fit-independent familiarity term.
+        // 0.5 fit = 0.0 (multiplier part neutral), 1.0 fit = +0.10, 0.0 = -0.05.
+        return (avgFit - 0.5) * 0.2 * avgSchemeModifier + directFamiliarity
     }
+
+    // R41 direct-familiarity tuning. Pivot 70 matches the league-seeded scheme
+    // familiarity mean (starters seed 55-85), so an average squad is neutral;
+    // below → a small yardage penalty, above → a small bonus. Gain/cap keep the
+    // total swing tangible (~±4% at the extremes) but inside the balance gates.
+    private static let familiarityNeutralPivot = 70.0
+    private static let familiarityDirectGain = 0.0016
+    private static let familiarityDirectCap = 0.04
 
     // MARK: - Utility Functions
 

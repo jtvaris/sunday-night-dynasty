@@ -122,6 +122,23 @@ enum GameSimulator {
         let awayOffScheme = awayOC?.offensiveScheme
         let awayDefScheme = awayDC?.defensiveScheme
 
+        // R40: coaching staffs turn into small, bounded efficiency nudges via
+        // the shared `CoachingModifiers` helper — the identical path the live
+        // engine uses, so quick sim and the 3D game never diverge. A team with
+        // no coordinators produces neutral ratings, preserving the pre-R40
+        // (coach-blind) behavior exactly. Computed once per game.
+        let homeRatings = CoachingModifiers.ratings(from: homeCoaches)
+        let awayRatings = CoachingModifiers.ratings(from: awayCoaches)
+        // Per-possession offense edge (offense OC/plan/scheme vs the defending
+        // DC/plan/scheme; discipline scales the offense's own flags/fumbles).
+        let homeOffenseAdj = CoachingModifiers.offenseAdjustments(offense: homeRatings, defense: awayRatings)
+        let awayOffenseAdj = CoachingModifiers.offenseAdjustments(offense: awayRatings, defense: homeRatings)
+        // Pre-game morale: a strong staff (morale-influence + HC motivation)
+        // lifts the room so fewer mood-dependent players dip under the penalty
+        // line. Snapshot-only — the live @Model players are never touched.
+        applyCoachMoraleBump(players: &homePlayers, bump: CoachingModifiers.moraleBump(homeRatings))
+        applyCoachMoraleBump(players: &awayPlayers, bump: CoachingModifiers.moraleBump(awayRatings))
+
         var momentum: Double = homeFieldMomentum // slight home advantage
         var quarter = 1
         var timeRemaining = quarterDuration
@@ -180,7 +197,8 @@ enum GameSimulator {
                 defensiveScheme: homeHasPossession ? awayDefScheme : homeDefScheme,
                 gamePlan: homeHasPossession ? homeGamePlan : awayGamePlan,
                 weather: weather,
-                offenseIsAway: !homeHasPossession
+                offenseIsAway: !homeHasPossession,
+                adjustments: homeHasPossession ? homeOffenseAdj : awayOffenseAdj
             )
 
             var drive = driveResult.drive
@@ -407,7 +425,9 @@ enum GameSimulator {
                 awayDefScheme: awayDefScheme,
                 homeGamePlan: homeGamePlan,
                 awayGamePlan: awayGamePlan,
-                weather: weather
+                weather: weather,
+                homeOffenseAdj: homeOffenseAdj,
+                awayOffenseAdj: awayOffenseAdj
             )
             homeScore += otResult.homeOTPoints
             awayScore += otResult.awayOTPoints
@@ -677,6 +697,207 @@ enum GameSimulator {
         // Restore all R38 mechanics to their shipped (active) state.
         setR38(fatigue: false, qbMob: false, arm: false, wrPress: false, contested: false, homeAway: false)
 
+        // -----------------------------------------------------------------
+        // R39 attribute-gap gate: each ATTRIBUTE isolated over the SAME league
+        // (paired). All R37/R38/#36B mechanics stay ON (shipped). Baseline
+        // "r39-pre" neutralizes every R39 attribute; each pass activates one.
+        // Gate: points ±1.5 / comp% ±2 / sacks ±1 / TO ±0.4. The live-only
+        // sub-connections (accel release 1b, strength press-jam 2c) fire only
+        // vs a man-press package, so they are measured with the PRESS
+        // micro-harness below, not the AI-vs-AI quick sim.
+        // -----------------------------------------------------------------
+        func setR39(accel: Bool, strength: Bool, agility: Bool, decision: Bool) {
+            PlaySimulator.debugNeutralAcceleration = accel
+            PlaySimulator.debugNeutralStrength = strength
+            PlaySimulator.debugNeutralAgility = agility
+            PlaySimulator.debugNeutralDecision = decision
+        }
+        setR39(accel: true, strength: true, agility: true, decision: true)
+        measure(label: "r39-pre")
+        setR39(accel: false, strength: true, agility: true, decision: true)
+        measure(label: "r39-accel")    // mech 1a DL pass rush + 1c RB run burst
+        setR39(accel: true, strength: false, agility: true, decision: true)
+        measure(label: "r39-strength") // mech 2a trench + 2b break-tackle
+        setR39(accel: true, strength: true, agility: false, decision: true)
+        measure(label: "r39-agility")  // mech 3 RB juke + WR separation
+        setR39(accel: true, strength: true, agility: true, decision: false)
+        measure(label: "r39-decision") // mech 4 turnover risk + reading swap
+        setR39(accel: false, strength: false, agility: false, decision: false)
+        measure(label: "r39-all")
+
+        // R39 live-only press micro-harness: accel release (1b) + strength
+        // press-jam (2c) fire only vs man-press. Paired off vs on; near-zero
+        // mean, so comp% must barely move. R38 wrPress stays active throughout.
+        setR39(accel: true, strength: true, agility: true, decision: true)
+        measurePress(label: "r39off")
+        setR39(accel: false, strength: true, agility: true, decision: true)
+        measurePress(label: "r39accelrel")  // mech 1b
+        setR39(accel: true, strength: false, agility: true, decision: true)
+        measurePress(label: "r39strjam")    // mech 2c
+
+        // Restore R39 to shipped (active) state.
+        setR39(accel: false, strength: false, agility: false, decision: false)
+
+        // -----------------------------------------------------------------
+        // R40 coaching-gap gate: each COACH mechanic isolated over the SAME
+        // league (paired), all prior mechanics ON (shipped). Unlike the player
+        // gates, coach effects need coaches — so a STRONG home staff plays a
+        // WEAK away staff. That asymmetry is intentional: the aggregate points/
+        // comp%/sacks/TO (over BOTH teams) must hold (roughly zero-sum), while
+        // the home win% and signed margin RISE — the "better-coached team wins
+        // a little more" signal. Baseline "r40-pre" neutralizes all six coach
+        // mechanics (identical to today's coach-blind sim); each pass turns on
+        // exactly one. Gate: points ±1.5 / comp% ±2 / sacks ±1 / TO ±0.4.
+        // -----------------------------------------------------------------
+        func makeStaff(strong: Bool) -> [Coach] {
+            let g = strong
+            let hc = Coach(firstName: "H", lastName: g ? "Strong" : "Weak", age: 50,
+                           role: .headCoach,
+                           gamePlanning: g ? 88 : 55,
+                           motivation: g ? 90 : 55,
+                           discipline: g ? 90 : 55,
+                           moraleInfluence: g ? 88 : 55)
+            let oc = Coach(firstName: "O", lastName: g ? "Strong" : "Weak", age: 45,
+                           role: .offensiveCoordinator,
+                           offensiveScheme: .westCoast,
+                           playCalling: g ? 90 : 56,
+                           adaptability: g ? 84 : 58,
+                           gamePlanning: g ? 84 : 55)
+            oc.schemeExpertise = [OffensiveScheme.westCoast.rawValue: g ? 94 : 55]
+            let dc = Coach(firstName: "D", lastName: g ? "Strong" : "Weak", age: 45,
+                           role: .defensiveCoordinator,
+                           defensiveScheme: .pressMan,
+                           playCalling: g ? 88 : 56,
+                           adaptability: g ? 82 : 58,
+                           gamePlanning: g ? 82 : 55)
+            dc.schemeExpertise = [DefensiveScheme.pressMan.rawValue: g ? 92 : 55]
+            return [hc, oc, dc]
+        }
+        let strongStaff = makeStaff(strong: true)
+        let weakStaff = makeStaff(strong: false)
+
+        func setR40(coord: Bool, plan: Bool, scheme: Bool, disc: Bool, morale: Bool, motiv: Bool) {
+            CoachingModifiers.debugNeutralCoordinator = coord
+            CoachingModifiers.debugNeutralGamePlanning = plan
+            CoachingModifiers.debugNeutralSchemeExpertise = scheme
+            CoachingModifiers.debugNeutralDiscipline = disc
+            CoachingModifiers.debugNeutralMoraleInfluence = morale
+            CoachingModifiers.debugNeutralMotivation = motiv
+        }
+
+        func measureCoach(label: String) {
+            var points: [Double] = []
+            var penaltiesPerGame: [Double] = []
+            var sacksPerGame: [Double] = []
+            var turnoversPerGame: [Double] = []
+            var completions = 0
+            var attempts = 0
+            var homeWins = 0
+            var signedMargin = 0.0
+            for _ in 0..<n {
+                let result = simulate(homeTeam: home, awayTeam: away,
+                                      homeCoaches: strongStaff, awayCoaches: weakStaff)
+                points.append(Double(result.homeScore))
+                points.append(Double(result.awayScore))
+                penaltiesPerGame.append(Double(result.boxScore.home.penalties + result.boxScore.away.penalties))
+                sacksPerGame.append(Double(result.boxScore.home.sacks + result.boxScore.away.sacks))
+                turnoversPerGame.append(Double(result.boxScore.home.turnovers + result.boxScore.away.turnovers))
+                if result.homeScore > result.awayScore { homeWins += 1 }
+                signedMargin += Double(result.homeScore - result.awayScore)
+                for s in result.playerStats { completions += s.completions; attempts += s.attempts }
+            }
+            let p = stats(points)
+            let pen = stats(penaltiesPerGame)
+            let sck = stats(sacksPerGame)
+            let tos = stats(turnoversPerGame)
+            let compPct = attempts > 0 ? Double(completions) / Double(attempts) * 100 : 0
+            print(String(format: "DEBUG-SIM[%@]: points/team mean=%.1f | comp%%=%.1f | sacks/g=%.1f | TO/g=%.2f | pen/g=%.1f | HOMEwin%%=%.0f margin=%+.1f",
+                         label, p.mean, compPct, sck.mean, tos.mean, pen.mean,
+                         Double(homeWins) / Double(n) * 100, signedMargin / Double(n)))
+        }
+
+        setR40(coord: true, plan: true, scheme: true, disc: true, morale: true, motiv: true)
+        measureCoach(label: "r40-pre")
+        setR40(coord: false, plan: true, scheme: true, disc: true, morale: true, motiv: true)
+        measureCoach(label: "r40-coord")   // mech 1 OC/DC completion+run
+        setR40(coord: true, plan: false, scheme: true, disc: true, morale: true, motiv: true)
+        measureCoach(label: "r40-plan")    // mech 2 game planning
+        setR40(coord: true, plan: true, scheme: false, disc: true, morale: true, motiv: true)
+        measureCoach(label: "r40-scheme")  // mech 6 scheme expertise
+        setR40(coord: true, plan: true, scheme: true, disc: false, morale: true, motiv: true)
+        measureCoach(label: "r40-disc")    // mech 4 discipline penalties/fumbles
+        setR40(coord: true, plan: true, scheme: true, disc: true, morale: false, motiv: true)
+        measureCoach(label: "r40-morale")  // mech 3 morale influence
+        setR40(coord: true, plan: true, scheme: true, disc: true, morale: true, motiv: false)
+        measureCoach(label: "r40-motiv")   // mech 5 HC motivation
+        setR40(coord: false, plan: false, scheme: false, disc: false, morale: false, motiv: false)
+        measureCoach(label: "r40-all")
+
+        // Restore R40 to shipped (active) state.
+        setR40(coord: false, plan: false, scheme: false, disc: false, morale: false, motiv: false)
+
+        // -----------------------------------------------------------------
+        // R41 scheme-familiarity gate: the DIRECT (fit-independent) "% learned"
+        // term. Both teams run identical mid staff (westCoast/pressMan) with
+        // ALL coach mechanics neutralized, so the ONLY difference is how well
+        // each squad has learned the playbook: HOME = well-drilled (95%),
+        // AWAY = still learning (40%). Turning the term ON must let the drilled
+        // team out-gain / out-score the learners (HOMEwin% & margin RISE) while
+        // the AGGREGATE over both teams holds (points ±1.5 / comp% ±2 /
+        // sacks ±1 / TO ±0.4). This also proves familiarity now bites at a
+        // neutral scheme fit, not only through the fit deviation.
+        setR40(coord: true, plan: true, scheme: true, disc: true, morale: true, motiv: true)
+        let midStaff = makeStaff(strong: false)
+        func setSchemeFam(_ team: Team, off: Int, def: Int) {
+            for p in team.players {
+                p.schemeFamiliarity[OffensiveScheme.westCoast.rawValue] = off
+                p.schemeFamiliarity[DefensiveScheme.pressMan.rawValue] = def
+            }
+        }
+        setSchemeFam(home, off: 95, def: 95)
+        setSchemeFam(away, off: 40, def: 40)
+
+        func measureFam(label: String) {
+            var homePts: [Double] = []
+            var awayPts: [Double] = []
+            var allPts: [Double] = []
+            var homeYds: [Double] = []
+            var awayYds: [Double] = []
+            var sacksPerGame: [Double] = []
+            var turnoversPerGame: [Double] = []
+            var completions = 0
+            var attempts = 0
+            var homeWins = 0
+            var signedMargin = 0.0
+            for _ in 0..<n {
+                let r = simulate(homeTeam: home, awayTeam: away,
+                                 homeCoaches: midStaff, awayCoaches: midStaff)
+                homePts.append(Double(r.homeScore)); awayPts.append(Double(r.awayScore))
+                allPts.append(Double(r.homeScore)); allPts.append(Double(r.awayScore))
+                homeYds.append(Double(r.boxScore.home.totalYards))
+                awayYds.append(Double(r.boxScore.away.totalYards))
+                sacksPerGame.append(Double(r.boxScore.home.sacks + r.boxScore.away.sacks))
+                turnoversPerGame.append(Double(r.boxScore.home.turnovers + r.boxScore.away.turnovers))
+                if r.homeScore > r.awayScore { homeWins += 1 }
+                signedMargin += Double(r.homeScore - r.awayScore)
+                for s in r.playerStats { completions += s.completions; attempts += s.attempts }
+            }
+            let compPct = attempts > 0 ? Double(completions) / Double(attempts) * 100 : 0
+            print(String(format: "DEBUG-SIM[%@]: HI-pts=%.1f LO-pts=%.1f AGG-pts=%.1f | HI-yds=%.0f LO-yds=%.0f | comp%%=%.1f | sacks/g=%.1f | TO/g=%.2f | HOMEwin%%=%.0f margin=%+.1f",
+                         label,
+                         stats(homePts).mean, stats(awayPts).mean, stats(allPts).mean,
+                         stats(homeYds).mean, stats(awayYds).mean,
+                         compPct, stats(sacksPerGame).mean, stats(turnoversPerGame).mean,
+                         Double(homeWins) / Double(n) * 100, signedMargin / Double(n)))
+        }
+        PlaySimulator.debugNeutralSchemeFamiliarity = true
+        measureFam(label: "r41-off")
+        PlaySimulator.debugNeutralSchemeFamiliarity = false
+        measureFam(label: "r41-on")
+        // Restore shipped state + coach mechanics.
+        PlaySimulator.debugNeutralSchemeFamiliarity = false
+        setR40(coord: false, plan: false, scheme: false, disc: false, morale: false, motiv: false)
+
         // Schedule integrity: several season years through the generator.
         var scheduleOK = true
         for year in 2025...2032 {
@@ -786,7 +1007,9 @@ enum GameSimulator {
         awayDefScheme: DefensiveScheme? = nil,
         homeGamePlan: GamePlan? = nil,
         awayGamePlan: GamePlan? = nil,
-        weather: GameWeather? = nil
+        weather: GameWeather? = nil,
+        homeOffenseAdj: PlaySimulator.Adjustments? = nil,
+        awayOffenseAdj: PlaySimulator.Adjustments? = nil
     ) -> OvertimeResult {
         var homeOTPoints = 0
         var awayOTPoints = 0
@@ -816,7 +1039,8 @@ enum GameSimulator {
                 defensiveScheme: homeHasPossession ? awayDefScheme : homeDefScheme,
                 gamePlan: homeHasPossession ? homeGamePlan : awayGamePlan,
                 weather: weather,
-                offenseIsAway: !homeHasPossession
+                offenseIsAway: !homeHasPossession,
+                adjustments: homeHasPossession ? homeOffenseAdj : awayOffenseAdj
             )
 
             let drive = driveResult.drive
@@ -1202,6 +1426,17 @@ enum GameSimulator {
                 )
                 players[i].mental.decisionMaking = min(99, players[i].mental.decisionMaking + clutchBonus)
             }
+        }
+    }
+
+    /// R40: applies a one-time pre-game morale delta to the snapshot roster
+    /// (a strong coaching staff lifts the room, a weak one drags it). Mutates
+    /// the `SimPlayer` snapshots only — never the live @Model players. Shared
+    /// with `LiveGameEngine` so both paths get the identical bump.
+    static func applyCoachMoraleBump(players: inout [SimPlayer], bump: Int) {
+        guard bump != 0 else { return }
+        for i in players.indices {
+            players[i].morale = Swift.max(0, Swift.min(100, players[i].morale + bump))
         }
     }
 

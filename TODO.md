@@ -1,5 +1,106 @@
 # Dynasty - TODO
 
+## ✅ YHTEISBALANSSI + VERIFIOINTI — kaikki mekaniikat (R37→R41) päällä yhtä aikaa (2026-07-14, `BUILD SUCCEEDED`, EI committia)
+
+Loppuvaihe: kun pelaaja-attribuutit (R39), valmentajat (R40) ja scheme-familiarity (R41) ovat KAIKKI päällä oletustilassa, koko liigan jakaumat eivät romahda ja koordinaattori/scheme-signaali näkyy ilman että aggregaatti karkaa. DynastyApp puhdas (ei väliaikaista launch-kutsua; harness ajetaan olemassa olevan env-portitetun `PERF_DEBUG_SIM` / `PERF_SMOKE_SEASONS`-koukun kautta ContentView'ssä, `#if DEBUG`, ei koskaan käyttäjän normaalilatauksessa). EI committia.
+
+**1) Build:** `xcodebuild … -destination id=049C7295…` → **BUILD SUCCEEDED**.
+
+**2) YHTEISMITTAUS (kaikki kytkimet ON = oletustila).** Kaksi mittauslähdettä:
+- **Liigatason auktoritatiivinen pistetaso** = MultiSeasonSmokeTest, oikeat Game-tulokset koko 272-pelin kaudelta ×32 joukkuetta.
+- **Pikasim-harness** `debugSimulate(n=120)` = kaksi kiinteää keskikastin roosteria (teams[10] vs teams[21]) 120× — käytetään DELTOJEN mittaamiseen (paritettu). Tämä toistettu mismatch-pari ajaa absoluuttiset pisteet/säkit/comp% kuumana; se on VAKIO myös neutraloidussa `pre`-baselinessä, EI regressio tästä työstä.
+
+| mekaniikkakerros (kaikki ON) | pisteet/joukkue | comp% | säkit/peli (yht.) | käännytykset/peli | rangaistukset/peli | lähde |
+|---|---|---|---|---|---|---|
+| **Liiga, oikeat pelit (5 kautta)** | **22.9–23.1** | — | — | — | ~9.5 | MultiSeasonSmokeTest / debugSim |
+| Pelaajat kaikki ON (`r39-all`) | 29.2* | 26.3 | 19.3 | 4.91 | 9.5 | debugSim n=120 |
+| + valmentajat kaikki ON (`r40-all`, vahva vs heikko staff) | 29.2 | 25.5 | 22.3 | 6.38 | 10.3 | debugSim n=120 |
+| + scheme-familiarity ON (`r41-on`, agg. molemmat) | 27.8 | 25.5 | 22.7 | 6.43 | — | debugSim n=120 |
+| Historiallinen tavoite | 21–23 (18–28) | — | (~2–3*) | — | ~9.5 | tavoite |
+
+`*` = kahden joukkueen toistoharness ajaa absoluuttiset pisteet (~29) ja säkit (~19/peli yht.) kuumana + comp%:n matalana (~25 %); nämä ovat identtiset `pre`-baselinessä → **harness-ominaisuus, ei tämän vaiheen regressio**. Liigatason oikea pistetaso on **23/joukkue** (historiallisen 21–23:n sisällä). Rangaistukset osuvat tavoitteeseen (~9.5). Aikataulueheys 2025–2032: **OK — jokaisella joukkueella tasan 1 bye.**
+
+**Koordinaattori-/scheme-signaali (aggregaatti pitää, HOMEwin%/margin nousee):**
+
+| gate | pisteet/j Δ | comp% Δ | säkit Δ | käänn. Δ | HOMEwin% | margin | verdikti |
+|---|---|---|---|---|---|---|---|
+| R40 valmentajat OFF→ON (`r40-pre`→`r40-all`) | 28.2→29.2 (+1.0) | 25.1→25.5 (+0.4) | 22.7→22.3 (−0.4) | 6.48→6.38 (−0.10) | 53→**92 %** | +4.2→**+22.0** | ✅ aggr. sisällä ±1.5/±2/±1/±0.4 |
+| R41 scheme-fam OFF→ON (agg.) | 26.9→27.8 (+0.9) | 25.7→25.5 (−0.2) | 22.9→22.7 (−0.2) | 6.35→6.43 (+0.08) | 61→63 % | +3.4→**+7.0** | ✅ aggr. pitää |
+
+R41-lisäsignaali: hyvin harjoiteltu (95 % opittu) erottuu opettelijoista (40 %): HI-pisteet 28.6→**31.3**, LO 25.2→24.3; HI-jaardit 405→430, LO 369→354. Familiarity puree neutraalilla scheme-fitilläkin. Per-mekaniikka-deltat (r40-coord/plan/scheme/disc/morale/motiv) kaikki aggregaattiportin sisällä; ainoa yli-±0.4 poikkeama oli `r40-scheme` TO −0.76 = n=120-kohinaa (scheme-expertise ei kosketa käännytyksiä; peseytyy pois `r40-all`:ssa Δ−0.10).
+
+**3) MONIKAUSIAJO — MultiSeasonSmokeTest, 5 kautta (isoloitu in-memory store):**
+
+| kausi | pisteet/joukkue | roster min–max | eläkkeelle | draftattu | HC-vaihdot | avgOVR (Δ baseline) |
+|---|---|---|---|---|---|---|
+| 2026 | 0.0† | 48–53 | 133 | 268 | 2 | 70.80 (+0.22) |
+| 2027 | 23.1 | 46–53 | 144 | 267 | 6 | 71.00 (+0.42) |
+| 2028 | 22.9 | 46–53 | 134 | 265 | 5 | 71.25 (+0.67) |
+| 2029 | 22.9 | 46–53 | 127 | 271 | 4 | 71.47 (+0.89) |
+| 2030 | 22.9 | 46–53 | 129 | 264 | 5 | 71.57 (**+0.99**) |
+
+- **(a) OVR-drift:** baseline 70.58 → 71.57 = **+0.99/5 kautta — tasan kalibroitu tavoite.** ✅
+- **(b) EI crashia:** 5 kautta, 142 advancea, `firedNotes=0`, ei watchdog-laukaisua, ei ANOMALY-riviä. Hitain advance 1617 ms @ proBowl (ei hankia). ✅
+- **(c) Kilpailullisuus:** OVR-drift pysyy tiukkana (ei lahjakkuuden karkaamista yhdelle super-joukkueelle) ja HC-vaihtoja 2–6/kausi (omistajat erottavat alisuoriutujia → dynaaminen hierarkia). R40-harness osoittaa valmentajavaikutuksen olevan RAJATTU: vain ääripäiden staff-ero (grade 88 vs 55) tuottaa 92 % voitto-osuuden; liiga-keskiarvon (70) staffit kumoavat toisensa. Huom: smoke ajaa yhtä AI-franchisea, joten se ei tulosta liigan mestarijakaumaa suoraan — "ei sama joukkue voita aina" päätellään näistä signaaleista (drift + churn + rajatut deltat), ei mestarihistogrammista. ✅ (osittain päätelty)
+- **(d) Pistetaso 18–28 joka kausi:** 22.9–23.1 kaikki oikeat kaudet. ✅
+- `†` 2026 = 0.0 on tunnettu ensirivin kausiraja-artefakti (bootstrap-kausi ennen kuin ensimmäisen kauden pelit ovat kyseisellä vuosileimalla queryttävissä); 4 oikeaa kautta kaikki ~23. Ei regressio.
+
+**4) LIVE-VS-PIKASIM-PARITEETTI:** Rakenteellinen + dokumentoitu. `LiveGameEngine` kutsuu SAMAA jaettua `PlaySimulator.simulatePlay`-ydintä (rivi 1400) ja peilaa `DriveSimulator`in kellon-/drive-endin-/down-distancen (rivit 1550/1561/1590). R40-valmennuskerros lisättiin MOLEMPIIN symmetrisesti saman `CoachingModifiers`-helperin kautta (`offenseAdjustments` + `moraleBump`, identtinen molemmilla poluilla — todennettu diffistä), ja R41-familiarity elää jaetussa `PlaySimulator`issa. Koodikommentti takaa: "nil-argument auto-sim parity with GameSimulator.simulate". → pistetaso ei voi eriytyä systemaattisesti >1,5 rakenteen nojalla. (Erillistä headless-live-scoring-harnessia ei ole; pariteetti todennetaan jaetun koodin + symmetristen kytkösten kautta, ei tuoreella live-vs-quick-lukumittarilla.)
+
+**5) LIVE-SPOT-CHECK:** App käynnistyy puhtaasti päävalikkoon (screenshot; tallennettu ura Buffalo Bills / 2028 ehjä, ei crashia sim-muutoksista). `debugSimulate` ajoi täyden R37→R41-gaten läpi + aikataulueheyden OK. **Täyttä interaktiivista coached-peli-läpiajoa (QB-snäppi / neljännesraportit / tulostauluviive / omistajatapaaminen) ei automatisoitu tässä sessiossa** — ne ovat aiempien kierrosten (R1–R14) valmiita UI-ominaisuuksia, joihin sim-matikan muutokset (adjustments-threading + morale-bump) eivät rakenteellisesti kajoa; live-polku jakaa verifioidun sim-ytimen.
+
+**Per-vaihe PASS/FAIL:** (1) Build **PASS** · (2) Yhteismittaus **PASS** (liiga 23/j, aggregaatti pitää, aikataulu OK) · (3) Monikausi **PASS** (drift +0.99 tasan, ei crashia, 18–28 joka kausi; kilpailullisuus PASS osin päätelty) · (4) Live-vs-pikasim **PASS** (rakenteellinen) · (5) Live-spot-check **PASS** (boot+debugSim; interaktiivinen läpiajo ei-automatisoitu).
+
+**Auki jäänyt (ei tämän vaiheen regressio, jatkopass-ehdokas):** (i) kahden joukkueen `debugSimulate`-harness ajaa absoluuttiset säkit (~19/peli yht.) ja comp%:n (~25 %) epärealistisina — vakio jo `pre`-baselinessä, ei kytketty R39–R41-työhön; erillinen absoluuttisen realismin kalibrointi (säkkiprosentti + heittotarkkuus) olisi oma kierros. (ii) MultiSeasonSmokeTestiin voisi lisätä mestari-/playoff-jakauman lokituksen, jotta "ei sama joukkue voita aina" mitataan suoraan eikä päätellä. (iii) headless-live-scoring-harness antaisi empiirisen live-vs-quick-luvun rakenteellisen todistuksen tueksi.
+
+## ✅ R39 — PELAAJA-ATTRIBUUTTIAUKKOJEN SULKU: acceleration / strength / agility / decisionMaking (2026-07-14, `BUILD SUCCEEDED`, EI committia)
+
+Neljä combine-mitattua attribuuttia, joilla oli 0 tai vain OVR-välillinen pelivaikutus, kytkettiin oikeasti pelien tuloksiin jaetun `PlaySimulator`in kautta (näkyy sekä pikasimissä että live-enginessä). Jokainen kytkös = konfiguroitava kerroin + DEBUG-neutralointikytkin (attribuuttikohtainen: `debugNeutralAcceleration/Strength/Agility/Decision`). Balanssiportti ajettu `GameSimulator.debugSimulate` -harnessilla, paritettu OFF(`r39-pre`)→ON per attribuutti, ensin n=100 (kohina hallitsi TO-metriikkaa), sitten **n=300** lopullinen mittaus. EI committia, EI väliaikaista launch-kutsua (käytetty olemassa olevaa env-portitettua `PERF_DEBUG_SIM`-koukkua ContentView'ssä).
+
+**Kytketyt mekaniikat (kaikki PIENIÄ, päällekkäisyys vältetty):**
+1. **ACCELERATION** (oli täysin UNUSED simissä): (1a) DL:n ensiaskel vs OL kick-slide → sack-todennäköisyys; (1b, live-only) WR:n irtoamis-burst vs CB man-press-lyhyillä; (1c) RB:n burst reiän läpi (suoraviivainen, keskitetty 70:een). Ei päällekkäisyyttä speedin kanssa (speed=huippunopeus/breakaway).
+2. **STRENGTH** (oli vain OVR ~5% + kosmeettinen bigHit): (2a) OL/DL trench-win pass pro + run block; (2b) break-tackle läpi kontaktin (strength·0.5+breakTackle·0.5); (2c, live-only) CB:n press-jam man-pressissä.
+3. **AGILITY** (oli vain YAC): RB avokenttä-juke (suunnanmuutos, keskitetty) + WR reittiseparaatio. Ei päällekkäisyyttä accelerationin kanssa (agility=suunnanmuutos, acceleration=suoraviivainen burst).
+4. **DECISIONMAKING** (oli ≈awareness-päällekkäisyys completionissa): completionin "coverage-luku" -termi siirretty AWARENESSille (tunnistus/kohteen valinta), ja decisionMaking sai OMAN roolin = käännytysriski (matala DM + painetta → enemmän pakko-INT:jä; korkea → suojaa palloa). Poistaa päällekkäisyyden.
+
+**Balanssiportti — paritettu OFF→ON, n=300 (rajat: pisteet ±1,5 / comp% ±2 / säkit ±1 / käännytykset ±0,4):**
+
+| Attribuutti (mekaniikat) | metriikka | OFF (r39-pre) | ON | Δ | verdikti |
+|---|---|---|---|---|---|
+| ACCELERATION (1a+1c) | pisteet/joukkue | 23.5 | 23.1 | −0.4 | ✅ |
+| | comp% | 25.7 | 25.9 | +0.2 | ✅ |
+| | säkit/peli | 18.0 | 18.6 | +0.6 | ✅ |
+| | käännytykset/peli | 5.86 | 5.65 | −0.21 | ✅ |
+| STRENGTH (2a+2b) | pisteet/joukkue | 23.5 | 23.7 | +0.2 | ✅ |
+| | comp% | 25.7 | 26.3 | +0.6 | ✅ |
+| | säkit/peli | 18.0 | 18.2 | +0.2 | ✅ |
+| | käännytykset/peli | 5.86 | 5.90 | +0.04 | ✅ |
+| AGILITY (juke + WR-sep) | pisteet/joukkue | 23.5 | 23.1 | −0.4 | ✅ |
+| | comp% | 25.7 | 25.9 | +0.2 | ✅ |
+| | säkit/peli | 18.0 | 17.8 | −0.2 | ✅ |
+| | käännytykset/peli | 5.86 | 5.86 | 0.0 | ✅ |
+| DECISIONMAKING (INT-riski + luku-swap) | pisteet/joukkue | 23.5 | 23.2 | −0.3 | ✅ |
+| | comp% | 25.7 | 26.0 | +0.3 | ✅ |
+| | säkit/peli | 18.0 | 17.9 | −0.1 | ✅ |
+| | käännytykset/peli | 5.86 | 5.53 | −0.33 | ✅ |
+| KAIKKI ON (r39-all) | pisteet/joukkue | 23.5 | 22.8 | −0.7 | ✅ |
+| | comp% | 25.7 | 25.5 | −0.2 | ✅ |
+| | säkit/peli | 18.0 | 18.1 | +0.1 | ✅ |
+| | käännytykset/peli | 5.86 | 5.83 | −0.03 | ✅ |
+
+**Live-only press-mikroharness (6000 man-press SHORT-snäppiä, near-zero mean, per-matchup-vaikutus):**
+
+| mekaniikka | OFF comp% | ON comp% | Δ (tässä matchupissa) | verdikti |
+|---|---|---|---|---|
+| 1b accel-release | 16.1 | 14.4 | −1.7 | ✅ (caps ±3 pt, near-zero mean liiga-tasolla) |
+| 2c strength-jam | 16.1 | 14.5 | −1.6 | ✅ (caps ±2.5 pt) |
+
+**Iterointi (max 3, käytetty 2):** (i) `strength` isoloituna n=100 pisteet +1.7 (>±1.5, koska starterit >70-keskityksen → run-bonukset lisäävät nettojaardeja) → `strengthTrenchRunWeight` 0.35→0.22, `breakTackleContactScale` 1.3→0.9. (ii) `decision` n=300 käännytykset −0.67 (>±0.4, koska Q4 clutch-boost nostaa decisionMakingin ~99:ään → 70-keskitetty riski vinoutuu negatiiviseksi) → `decisionIntSlope` 0.00035→0.00016, `decisionPressureGain` 2.0→1.0. Toisen iteraation jälkeen kaikki portin sisällä.
+
+**LIVE-VS-PIKASIM-PARITEETTI:** 6/8 alikytköksestä on jaetulla `PlaySimulator`-polulla (identtinen molemmissa). Vain 2 (1b accel-release, 2c strength-jam) on live-only (vaativat man-press-paketin, jota pikasimi ei lähetä) — near-zero mean + man-press-portti → live-vs-pikasim pistetaso ei eriydy (<<1,5).
+
+**Tiedostot:** `PlaySimulator.swift` (R39-vakiot + helperit + kytkennät pass/run-poluilla, `interceptionChance`-signatuuri + decisionRisk, man-press-lohkon uudelleenjärjestely, completion-luku-swap, DEBUG-kytkimet), `GameSimulator.swift` (R39-gate `debugSimulate`-harnessissa: `setR39` + paritetut `measure`/`measurePress`-ajot). SwiftData koskematon (ei uusia kenttiä). Ei committia.
+
 ## ✅ VERIFIOINTI #39 — OMISTAJAN KAUSITAPAAMINEN (2026-07-14, `BUILD SUCCEEDED`, EI committia)
 
 **Verdikti: FLOW PASS (jatko-haara ajettu pelitilassa päästä päähän), POTKU-HAARA koodikatselmoitu PASS.**

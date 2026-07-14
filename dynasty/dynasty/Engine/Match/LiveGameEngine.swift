@@ -1062,6 +1062,11 @@ final class LiveGameEngine: ObservableObject {
     private let homeDefScheme: DefensiveScheme?
     private let awayOffScheme: OffensiveScheme?
     private let awayDefScheme: DefensiveScheme?
+    /// R40: per-possession coaching efficiency edge (offense OC/plan/scheme vs
+    /// the defending DC + own discipline). Same `CoachingModifiers` path the
+    /// quick sim uses, so live and quick sim never diverge.
+    private let homeOffenseAdj: PlaySimulator.Adjustments?
+    private let awayOffenseAdj: PlaySimulator.Adjustments?
     private let audibleBoost: Double
     private let defReadBoost: Double
     /// Game weather, applied identically to both teams on every play (same
@@ -1212,6 +1217,16 @@ final class LiveGameEngine: ObservableObject {
         let awayRoster = awayTeam.players.filter { !$0.isHoldingOut }
         homePlayers = homeRoster.map(SimPlayer.init(from:))
         awayPlayers = awayRoster.map(SimPlayer.init(from:))
+        // R40: pre-game coaching morale bump on the snapshots (same shared
+        // helper the quick sim calls) — a strong staff lifts the room so fewer
+        // mood-dependent players dip under the low-morale penalty line. The
+        // live @Model players are never touched.
+        let homeCoachRatings = CoachingModifiers.ratings(from: homeCoaches)
+        let awayCoachRatings = CoachingModifiers.ratings(from: awayCoaches)
+        GameSimulator.applyCoachMoraleBump(players: &homePlayers, bump: CoachingModifiers.moraleBump(homeCoachRatings))
+        GameSimulator.applyCoachMoraleBump(players: &awayPlayers, bump: CoachingModifiers.moraleBump(awayCoachRatings))
+        homeOffenseAdj = CoachingModifiers.offenseAdjustments(offense: homeCoachRatings, defense: awayCoachRatings)
+        awayOffenseAdj = CoachingModifiers.offenseAdjustments(offense: awayCoachRatings, defense: homeCoachRatings)
         homeOffenseUnit = FieldUnit.offense(from: homePlayers)
         homeDefenseUnit = FieldUnit.defense(from: homePlayers)
         awayOffenseUnit = FieldUnit.offense(from: awayPlayers)
@@ -1399,8 +1414,11 @@ final class LiveGameEngine: ObservableObject {
             defensivePackage: defensivePackage,
             gamePlan: playerIsOnOffense ? playerGamePlan : nil,
             weather: weather,
-            // Halftime adjustment: player's team offense only, second half only.
-            adjustments: (quarter >= 3 && playerIsOnOffense) ? halftimeAdjustment?.simAdjustments : nil,
+            // R40 coaching edge (both teams, every play) combined with the
+            // halftime adjustment (player's team offense only, second half only).
+            adjustments: CoachingModifiers.combine(
+                homeHasPossession ? homeOffenseAdj : awayOffenseAdj,
+                (quarter >= 3 && playerIsOnOffense) ? halftimeAdjustment?.simAdjustments : nil),
             // Mech 6: the offense on the road draws more false starts (crowd).
             offenseIsAway: !homeHasPossession
         )
