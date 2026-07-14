@@ -565,6 +565,8 @@ struct CareerShellView: View {
         case developmentReport
         // R32: League History & Hall of Fame
         case history
+        // #40: Draft Report Card (hindsight draft-class grades)
+        case draftReportCard
         // Camp destinations
         case trainingPlan, workloadDashboard, rosterCuts, gameWeekPrep
     }
@@ -751,6 +753,8 @@ struct CareerShellView: View {
                 }
         case .history:
             LeagueHistoryView(career: career)
+        case .draftReportCard:
+            DraftClassReportView(career: career)
         case .trainingPlan:
             TrainingPlanView(career: career, roster: teamRoster)
                 .onAppear {
@@ -1006,6 +1010,7 @@ struct CareerShellView: View {
         case .personalWorkouts:   shellDest = .scouting
         case .developmentReport:  shellDest = .developmentReport
         case .history:            shellDest = .history
+        case .draftReportCard:    shellDest = .draftReportCard
         case .trainingPlan:        shellDest = .trainingPlan
         case .workloadDashboard:   shellDest = .workloadDashboard
         case .rosterCuts:          shellDest = .rosterCuts

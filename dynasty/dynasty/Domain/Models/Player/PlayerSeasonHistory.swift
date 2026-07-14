@@ -30,6 +30,14 @@ final class PlayerSeasonHistory {
     /// (active roster, healthy, not holding out, not retired).
     var gamesPlayed: Int
 
+    /// Number of regular-season games the player STARTED this season (#40).
+    /// Snapshotted from `Player.gamesStartedThisSeason` at week 18: a player is
+    /// credited a start each week he is in his team's projected starting lineup
+    /// (top of the depth chart at his position among available teammates).
+    /// Always ≤ `gamesPlayed`. 0 for legacy rows written before #40.
+    /// Optional stored property with a default → safe lightweight migration.
+    var gamesStarted: Int = 0
+
     /// Player's age during this season (snapshot — useful when age regression
     /// later modifies the live `Player.age`).
     var ageAtEndOfSeason: Int
@@ -55,6 +63,7 @@ final class PlayerSeasonHistory {
         season: Int,
         overallAtEndOfSeason: Int,
         gamesPlayed: Int = 0,
+        gamesStarted: Int = 0,
         ageAtEndOfSeason: Int,
         teamID: UUID? = nil,
         keyStat1: Int = 0,
@@ -66,6 +75,7 @@ final class PlayerSeasonHistory {
         self.season = season
         self.overallAtEndOfSeason = overallAtEndOfSeason
         self.gamesPlayed = gamesPlayed
+        self.gamesStarted = gamesStarted
         self.ageAtEndOfSeason = ageAtEndOfSeason
         self.teamID = teamID
         self.keyStat1 = keyStat1

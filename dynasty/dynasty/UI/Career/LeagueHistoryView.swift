@@ -20,6 +20,7 @@ struct LeagueHistoryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DSSpacing.lg) {
                 careerTotalsCard
+                draftReportLink
 
                 VStack(alignment: .leading, spacing: DSSpacing.sm) {
                     SectionHeaderText(title: "Season History")
@@ -58,6 +59,37 @@ struct LeagueHistoryView: View {
         .background(Color.backgroundPrimary)
         .navigationTitle("League History")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    // MARK: - Draft Report Card link
+
+    /// #40 — entry point into the hindsight Draft Report Card. Placed here so
+    /// the History screen (reachable from both the postseason and offseason
+    /// quick-action bars) is a home for looking back at past draft classes.
+    private var draftReportLink: some View {
+        NavigationLink(value: CareerShellView.ShellDestination.draftReportCard) {
+            HStack(spacing: DSSpacing.sm) {
+                Image(systemName: "checklist")
+                    .font(.title3)
+                    .foregroundStyle(Color.accentGold)
+                    .frame(width: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Draft Report Card")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text("Hindsight grades for every past draft class")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .padding(DSSpacing.sm)
+            .cardBackground()
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Career Totals

@@ -73,6 +73,8 @@ enum TaskDestination: String, Codable, CaseIterable {
     case developmentReport
     /// R32: League History & Hall of Fame screen.
     case history
+    /// #40: Draft Report Card — hindsight draft-class grades.
+    case draftReportCard
     // Camp destinations
     case trainingPlan
     case workloadDashboard

@@ -164,12 +164,15 @@ enum DraftEngine {
     ///   - prospect: The college prospect being drafted.
     ///   - teamID: The UUID of the team drafting the player.
     ///   - pickNumber: The overall draft pick number (1-224).
+    ///   - draftSeason: The calendar year of this draft, stamped onto the player
+    ///     as draft provenance (#40). `nil` leaves the season unrecorded.
     ///   - salaryCap: The current salary cap (in thousands). Defaults to 265_000.
     /// - Returns: A fully initialized `Player` ready to be inserted into the data store.
     static func convertToPlayer(
         prospect: CollegeProspect,
         teamID: UUID,
         pickNumber: Int,
+        draftSeason: Int? = nil,
         salaryCap: Int = 265_000
     ) -> Player {
         let contract = rookieContract(pickNumber: pickNumber, salaryCap: salaryCap)
@@ -196,8 +199,17 @@ enum DraftEngine {
             teamID: teamID,
             contractYearsRemaining: contract.years,
             annualSalary: contract.salary,
-            draftPickNumber: pickNumber
+            draftPickNumber: pickNumber,
+            draftedByTeamID: teamID,
+            draftSeason: draftSeason,
+            draftRound: roundForPick(pickNumber)
         )
+    }
+
+    /// Draft round (1-7) for an overall pick number, matching the 32-pick round
+    /// layout used by `generateDraftOrder`. Clamped to 1...7.
+    static func roundForPick(_ pickNumber: Int) -> Int {
+        min(7, max(1, ((pickNumber - 1) / 32) + 1))
     }
 
     /// R24: Creates a `Player` from an UNDRAFTED prospect on a cheap 1-2 year

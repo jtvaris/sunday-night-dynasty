@@ -213,6 +213,7 @@ extension TaskDestination {
         case .personalWorkouts:     return "Personal Workouts"
         case .developmentReport:    return "Development Report"
         case .history:              return "League History"
+        case .draftReportCard:      return "Draft Report Card"
         case .trainingPlan:         return "Training Plan"
         case .workloadDashboard:    return "Workload"
         case .rosterCuts:           return "Roster Cuts"

@@ -279,7 +279,8 @@ enum MultiSeasonSmokeTest {
             let player = DraftEngine.convertToPlayer(
                 prospect: chosen,
                 teamID: pick.currentTeamID,
-                pickNumber: pick.pickNumber
+                pickNumber: pick.pickNumber,
+                draftSeason: pick.seasonYear
             )
             draftedOVRSum += player.overall
             draftedPotSum += player.truePotential

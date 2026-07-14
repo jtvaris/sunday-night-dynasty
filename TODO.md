@@ -1,5 +1,66 @@
 # Dynasty - TODO
 
+## ✅ #40 VERIFIOINTI — Draft Report Card + provenienssi/arvosanat (2026-07-14, `BUILD SUCCEEDED`, EI committia)
+
+Verifioitu koko #40-ketju (data-provenienssi → `DraftGradeEngine` → `DraftClassReportView`). Väliaikainen `DRAFT40`-tulostus lisättiin `MultiSeasonSmokeTest`iin data-ajoa varten ja **poistettiin** jälkeenpäin (working tree = vain aiemman vaiheen #40-koodi, ei verifiointijälkiä). Ei committia.
+
+**1) BUILD** — `xcodebuild … -destination id=049C7295…` → **BUILD SUCCEEDED** (kolmesti: baseline, instrumentoitu, siivottu). Asennettu + käynnistetty `com.brewcrow.dynasty` iPad Pro 13" M5:llä.
+
+**2) DATA (4 kauden monikausisavutesti, `PERF_SMOKE_SEASONS=4`)** — käyttäjäjoukkue draftasi 44 pelaajaa (11/luokka × 4).
+- **Provenienssi**: `withDraftRound=44/44`, `withDraftSeason=44/44` — jokainen draftattu pelaaja saa `draftedByTeamID` + `draftRound` + `draftSeason` (`DraftEngine.convertToPlayer` stämppää; `draftSeason=pick.seasonYear`). UDFA/legacy → nil (kevyt migraatio OK).
+- **GP/starts kertyy loogisesti draft-iän mukaan** (monotoninen): luokka 2026 (3 pelattua kautta) GP≈51, luokka 2027 GP=34, luokka 2028 GP=17, luokka 2029 (juuri draftattu) GP=0. Startit ≤ GP; startterit (esim. R5 C Robert Wright GS=49/49) erottuvat penkkimiehistä.
+- **Arvosanat suunnaltaan järkeviä**: 1. kierroksen alisuoriutuja merkitään luokan Biggest Miss (R1 DE 68 OVR, 17 starttia → C, ratio 0.52); aito bust tunnistetaan (R3 CB 0 starttia → D, BUST); myöhäiskierroksen startteri = korkea arvosana; tuore luokka 2029 = kaikki **TBD/provisional** (0 GP). Luokkataso pickValue-painotettu (2026=B, 2027–2028=A).
+
+**3) UI** — navigointi `Continue Career (Buffalo Bills, 2028 offseason) → History → "Draft Report Card"` → **DraftClassReportView** renderöityy (otsikko "Draft Report Card", takaisin-nappi, ei umpikuja). Ao. save on legacy-ura (2026/2027-pickit luotu ennen #40-kenttiä → `draftedByTeamID=nil`) joten näkymä näyttää **oikein empty-staten** ("No draft classes yet"). DEBUG "Skip → FA" -ajolla draftattiin 2029-luokka provenienssilla (runAIDraft) — populoitu render on todistettu datatasolla (DRAFT40 tuottaa identtiset `ClassGrade`-oliot joita view lukee). Screenshotit `/tmp/snd-screenshots/draft-class/`.
+
+**4) REGRESSIO** — `debugSimulate(20)` (`PERF_DEBUG_SIM=20`): points/team-keskiarvot **20.1–25.2** kaikissa attribuutti-toggleissa (#41 ehjä: vision/security/intcredit/all-on/qbmob/arm/contested/homeaway/fatigue/composure) — tavoitehaarukka OK. 4 kautta simuloitui watchdogiin osumatta (109 advancea), aikataulueheys OK, avgOVR vakaa ~71 (Δ+0.62), roster 46–53. Coached-flow (coordinaattorien palkkaus, offseason-vaiheet, owner-verdict) toimi skip-ajossa.
+
+**5) AUKI JÄÄNYT (ei blokkeri):**
+- **Arvosanainflaatio nuorilla ylisuoriutujilla**: `maturity`-skaalaus jakaa odotuksen alas (1 kausi → ×0.25), joten yhden kauden 7. kierroksen startteri (esim. RT Darnell Clark GS=17, peakOVR 62) saa `ratio` 4–6 → A+. Kirjain kattoutuu A+:aan mutta lukema on epäuskottavan korkea myöhäispickeille. Harjoitusharnessin karkea roster-management ajaa rookiet starttaamaan yliedustetusti; oikeassa coached-pelissä syvyyskaavio realistisempi. Harkitse startsPerSeasonin cappaamista tai maturity-alarajaa.
+- **Saavutettavuus**: Draft Report Card avautuu vain offseason/postseason-pikatoiminnoista (Draft Grades = postseason; History-linkki = offseason/postseason). Regular seasonissa näkymä ei ole saavutettavissa. Todennäköisesti tarkoituksellista (luokkia katsotaan jälkiviisaana offseasonilla), mutta populoidun näkymän live-screenshot vaatisi tuoreen uran simuloimista 2+ draftin läpi seuraavaan offseasoniin.
+
+## ✅ #40 NÄKYMÄ — DraftClassReportView (Draft Report Card) (2026-07-14, `BUILD SUCCEEDED`, EI committia)
+
+Edellisen vaiheen datapohjan (provenienssikentät + `gamesStarted` + `DraftGradeEngine`) päälle rakennettu **UI**: jälkiviisaus-raportti käyttäjän joukkueen menneistä draft-luokista. Puhtaasti analyysi/UI — **ei sim-vaikutusta, ei persistointia, ei committia**.
+
+**1) UUSI NÄKYMÄ** `dynasty/dynasty/UI/Draft/DraftClassReportView.swift` (`DraftClassReportView(career:)`).
+- **Vuosivalitsin**: vaakascrollattavat vuosichipit (kaikki menneet luokat, uusin ensin). Oletus = uusin. Kerätty käyttäjän joukkueen `draftedByTeamID`-pelaajien distinct `draftSeason`-arvoista.
+- **Luokan kokonaisarvosana -kortti**: iso värikoodattu kirjainmerkki (`DraftGradeEngine.ClassGrade.letter`, pickValue-painotettu), "Class of YYYY", pickien määrä + "Preliminary — class still developing" -merkki jos KAIKKI pickit provisional.
+- **Best Pick / Biggest Miss -kortit** vierekkäin (`bestPickID` / `biggestMissID`; Miss piilotetaan jos sama kuin best) — nimi, positio, kierros+overall, engine-summary, semanttinen reunusväri (vihreä/punainen).
+- **Every Pick -lista**: per rivi `R{kierros}` / `#{overall}`, nimi + positiolätkä, statspillit (peak OVR / GS startit / GP / +DEV OVR-kasvu), verdict-chip (HIT/BUST/TBD) ja värikoodattu kirjainarvosana-badge.
+- **Kypsyys-alaviite**: 1. vuoden luokka = "preliminary, letters will move"; vanhemmat = "grades relative to draft round". Dokumentoi että arvosana kypsyy.
+- **Empty state**: ei draftattuja pelaajia → selittävä kortti (ei umpikuja).
+- Tumma korttikieli, tokenit (`DSSpacing`/`DSCornerRadius`/`Color.*`/`SectionHeaderText`/`cardBackground()`), iPad-leiska (`maxWidth: 900`). Data ladataan kerran `onAppear`issa (`loadIfNeeded`), gradaus `DraftGradeEngine.classGrade(season:teamID:modelContext:)`.
+
+**2) NAVIGOINTI (aina paluu, ei umpikujaa — #37:n oppi).** Kaksi luontevaa reittiä samaan `ShellDestination.draftReportCard`-kohteeseen (value-based NavigationLink → shellin `navigationDestination` antaa automaattisen back-napin):
+- **League History -näkymä** (`LeagueHistoryView`): uusi "Draft Report Card" -linkkikortti heti career-totalsien alla. History löytyy sekä postseason- että offseason-pikatoimintopalkista → kattaa kauden lopun offseason-flown.
+- **Postseason-pikatoiminto**: uusi "Draft Grades" -QuickAction (`checklist`) dashboardin postseason-ryhmässä = suora sisäänkäynti heti kauden päätyttyä (best pick / biggest miss -paljastushetki).
+- Kytketty läpi: `TaskDestination.draftReportCard` (+ `handleTaskNavigation`-mappaus + `InboxMessage.inboxDisplayName`), `ShellDestination.draftReportCard` (+ `destinationView`).
+
+**3) KYTKÖS DATAAN.** Käyttää edellisen vaiheen `DraftGradeEngine`ä + `PlayerSeasonHistory`a + provenienssikenttiä (odotus vs toteuma kierrosperustaisesti). Ei uusia SwiftData-kenttiä. Ei sim-vaikutusta.
+
+**4) Build vihreä** (`BUILD SUCCEEDED`). EI committia.
+
+Muutetut/luodut tiedostot: `UI/Draft/DraftClassReportView.swift` (uusi), `UI/Career/CareerShellView.swift`, `UI/Career/CareerDashboardView.swift`, `UI/Career/LeagueHistoryView.swift`, `Engine/Simulation/TaskGenerator.swift`, `Domain/Models/League/InboxMessage.swift`.
+
+---
+
+## ✅ #40 DRAFT-DATA + ARVOSANAKAAVA — provenienssi, startit, kausistat, DraftGradeEngine (2026-07-14, `BUILD SUCCEEDED`, EI committia)
+
+Pohjatyö draftin jälkiviisaus-arvosanalle: kirjataan mistä pelaaja draftattiin, kuinka monta ottelua hän ALOITTI (ei vain pelannut), ja lasketaan per-pelaaja + per-luokka arvosana suhteutettuna draft-kierrokseen. Puhtaasti data + analyysi — **ei sim-vaikutusta**. Näkymä seuraavassa vaiheessa.
+
+**1) DRAFT-KIRJANPITO (uudet optionaalikentät, kevyt migraatio).** `Player`-mallista puuttui provenienssi (oli vain `draftPickNumber`). Lisätty `Player.draftedByTeamID: UUID?`, `draftSeason: Int?`, `draftRound: Int?` (kaikki `= nil`). Kirjataan **draft-hetkellä** `DraftEngine.convertToPlayer`issa: `draftedByTeamID = teamID`, `draftSeason` (annettu parametri = `pick.seasonYear`), `draftRound = roundForPick(pickNumber)`. UDFA:t (`convertUDFAToPlayer`) ja legacy-pelaajat → kentät jäävät niliksi = "undrafted/legacy", eivät päädy arvosanaan. Molemmat `convertToPlayer`-kutsupaikat (DraftDayCoordinator, MultiSeasonSmokeTest) päivitetty.
+
+**2) START-LASKURI (`Player.gamesStartedThisSeason: Int = 0`, kevyt migraatio).** #33 lisäsi vain GP:n. "Aloitti"-määritelmä (dokumentoitu): pelaaja saa startin joka viikko, jona hänen joukkueensa pelaa ja hän on joukkueensa **projisoidussa avauskokoonpanossa** = sijoittuu paikkansa starttipaikkojen määrään käytettävissä olevien (terveet, ei holdout, ei eläkkeellä) joukkuetovereiden joukossa. Peilaa `MatchupResolver.FieldUnit`in parhaan-käytettävissä-olevan valintaa (11 hyökkäys + 11 puolustus + K + P). Toteutus: `WeekAdvancer.startingLineupIDs(available:)` samassa attendance-silmukassa kuin GP; startti aina ≤ GP. Ainoa liigatason starttisignaali (AI-pelit ovat pelkkä tulos). Nollaus `startNewSeason`issa #33:n GP-nollauksen vieressä (R32-auditointipolku, step 0b-2).
+
+**3) KAUSISTAT-AGGREGAATTI.** `PlayerSeasonHistory.gamesStarted: Int = 0` snapshotataan viikolla 18 GP:n rinnalle (`recordSeasonHistory`). **Statsirajaus (dokumentoitu):** per-positio-statsit (jaardit/TD/säkit/INT) EIVÄT ole liigatasolla saatavilla — `keyStat1/2/3` pysyvät 0:na koska per-peli-box-scoret eivät persistoidu 31 AI-joukkueelle. Arvosanan tuotantopohja on siksi **startit + GP + OVR-kehitys**, kuten #40:n fallback sallii.
+
+**4) ARVOSANAKAAVA (`DraftGradeEngine`, uusi, puhdas funktio).** Per draftattu pelaaja: `careerValue = ovrPoints(peakOVR−55) + startPoints(startit/kausi × 1.6) + developmentPoints(OVR-kasvu × 0.4)`, suhteutettuna **kierrosodotukseen** (R1=42 … R7=7 pistettä), skaalattuna kypsyydellä (rookiet arvostellaan lempeästi, `isProvisional` < 2 kautta). `ratio = value/expectation` → kirjain **A+…F** + `isHit`/`isBust`-liput (7. kierroksen startteri = A+, 1.–3. kierroksen matured-flop = bust). Luokan kokonaisarvosana = pickien **pickValue-painotettu** ka (aikaiset picks painavat), + `bestPickID` / `biggestMissID`. `classGrade(season:teamID:modelContext:)`-convenience hakee luokan storesta.
+
+**5) Build vihreä** (BUILD SUCCEEDED). CareerArcEngine.startSeasons-heuristiikkaa (`gamesPlayed≥8 && OVR≥75`) EI muutettu — voisi jatkossa käyttää uutta `gamesStarted`-dataa (legacy-fallback tarpeen). Näkymä (draftluokka-review kauden lopussa) seuraavassa vaiheessa. EI committia.
+
+---
+
 ## ✅ YHTEISBALANSSI + VERIFIOINTI — kaikki mekaniikat (R37→R41) päällä yhtä aikaa (2026-07-14, `BUILD SUCCEEDED`, EI committia)
 
 Loppuvaihe: kun pelaaja-attribuutit (R39), valmentajat (R40) ja scheme-familiarity (R41) ovat KAIKKI päällä oletustilassa, koko liigan jakaumat eivät romahda ja koordinaattori/scheme-signaali näkyy ilman että aggregaatti karkaa. DynastyApp puhdas (ei väliaikaista launch-kutsua; harness ajetaan olemassa olevan env-portitetun `PERF_DEBUG_SIM` / `PERF_SMOKE_SEASONS`-koukun kautta ContentView'ssä, `#if DEBUG`, ei koskaan käyttäjän normaalilatauksessa). EI committia.

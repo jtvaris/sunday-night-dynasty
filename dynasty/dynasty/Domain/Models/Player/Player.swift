@@ -63,7 +63,23 @@ final class Player {
     var isRetired: Bool = false
 
     /// The overall draft pick number (1-224) if this player was drafted, nil for UDFAs/veterans.
+    /// Doubles as the "draft pick overall" of record.
     var draftPickNumber: Int?
+
+    /// #40 Draft provenance. Written once at draft time (`DraftEngine.convertToPlayer`)
+    /// and never mutated afterward. All three stay nil for UDFAs, generated
+    /// veterans, and legacy players created before this field existed — such
+    /// players are treated as "undrafted/legacy" by the draft-grade pipeline.
+    /// Optional stored properties with a nil default → safe lightweight migration.
+    ///
+    /// The team that drafted this player (the pick's owning team at selection).
+    var draftedByTeamID: UUID? = nil
+
+    /// The season (calendar year) in which this player was drafted.
+    var draftSeason: Int? = nil
+
+    /// The draft round (1-7) derived from the overall pick number at draft time.
+    var draftRound: Int? = nil
 
     /// Coaching staff's verbal assessment of this player's development ceiling.
     /// Stored as PotentialLabel.rawValue. Accuracy depends on coach quality and time with team.
@@ -95,6 +111,19 @@ final class Player {
     /// `PlayerSeasonHistory.gamesPlayed` at week 18 and reset to 0 in
     /// `startNewSeason`. Default value → safe lightweight migration.
     var gamesPlayedThisSeason: Int = 0
+
+    /// #40: regular-season games the player STARTED during the current season.
+    /// A "start" is credited by `WeekAdvancer` each week the player's team plays
+    /// and the player is in his team's projected starting lineup — i.e. he ranks
+    /// within the starter-slot count at his position among AVAILABLE teammates
+    /// (healthy, not holding out, not retired), mirroring the best-available
+    /// `MatchupResolver.FieldUnit` selection that puts 11 offense + 11 defense +
+    /// K + P on the field. This is the only starter signal available league-wide
+    /// (AI games are score-only). Snapshotted into
+    /// `PlayerSeasonHistory.gamesStarted` at week 18 and reset to 0 in
+    /// `startNewSeason`. Always ≤ `gamesPlayedThisSeason`. Default value →
+    /// safe lightweight migration.
+    var gamesStartedThisSeason: Int = 0
 
     /// Pair partner — when this veteran is signed, the protégé rookie may be brought in at a discount.
     var mentorOfPlayerID: UUID?
@@ -237,6 +266,9 @@ final class Player {
         annualSalary: Int = 750,
         isFranchiseTagged: Bool = false,
         draftPickNumber: Int? = nil,
+        draftedByTeamID: UUID? = nil,
+        draftSeason: Int? = nil,
+        draftRound: Int? = nil,
         assessedPotential: String? = nil
     ) {
         self.id = id
@@ -261,6 +293,9 @@ final class Player {
         self.annualSalary = annualSalary
         self.isFranchiseTagged = isFranchiseTagged
         self.draftPickNumber = draftPickNumber
+        self.draftedByTeamID = draftedByTeamID
+        self.draftSeason = draftSeason
+        self.draftRound = draftRound
         self.assessedPotential = assessedPotential
     }
 }

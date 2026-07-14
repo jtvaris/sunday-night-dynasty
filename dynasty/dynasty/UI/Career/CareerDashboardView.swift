@@ -1040,6 +1040,7 @@ struct CareerDashboardView: View {
             return [
                 QuickAction(icon: "trophy.fill", label: "Awards", destination: .roster),
                 QuickAction(icon: "person.fill", label: "Coach Renewals", destination: .coachingStaff),
+                QuickAction(icon: "checklist", label: "Draft Grades", destination: .draftReportCard),
                 QuickAction(icon: "building.columns.fill", label: "History", destination: .history)
             ]
         case .offseason:

@@ -241,6 +241,10 @@ enum WeekAdvancer {
         for player in allPlayersForReset where player.gamesPlayedThisSeason != 0 {
             player.gamesPlayedThisSeason = 0
         }
+        // #40: clear the per-player starts tally too (snapshotted at week 18).
+        for player in allPlayersForReset where player.gamesStartedThisSeason != 0 {
+            player.gamesStartedThisSeason = 0
+        }
 
         // 0c. R22: a new season reopens every negotiation an insulted agent
         // froze last offseason.
@@ -488,9 +492,16 @@ enum WeekAdvancer {
         )
         for game in weekGamesForAttendance {
             for teamID in [game.homeTeamID, game.awayTeamID] {
-                for player in playersByTeam[teamID] ?? []
-                where !player.isInjured && !player.isHoldingOut && !player.isRetired {
+                let roster = playersByTeam[teamID] ?? []
+                let available = roster.filter { !$0.isInjured && !$0.isHoldingOut && !$0.isRetired }
+                // #40: derive this week's starters from the available roster,
+                // mirroring the best-available lineup the sim would field.
+                let starterIDs = startingLineupIDs(available: available)
+                for player in available {
                     player.gamesPlayedThisSeason += 1
+                    if starterIDs.contains(player.id) {
+                        player.gamesStartedThisSeason += 1
+                    }
                 }
             }
         }
@@ -3239,6 +3250,54 @@ enum WeekAdvancer {
         }
     }
 
+    // MARK: - Private: Starting Lineup (#40)
+
+    /// Returns the set of player IDs that make up a team's projected starting
+    /// lineup for a week, given its AVAILABLE roster. Mirrors the best-available
+    /// role selection used by `MatchupResolver.FieldUnit` (11 offense + 11
+    /// defense) plus a kicker and punter, so the "started" tally matches who the
+    /// simulator would actually field. Each slot picks the highest-overall
+    /// available player at that position who has not already been slotted; a slot
+    /// with no eligible player is simply left empty (unlike the 3D `FieldUnit`,
+    /// which back-fills with an arbitrary body — we never credit a bogus start).
+    ///
+    /// This is the league-wide starter signal (AI games are score-only, so no
+    /// real box score exists for 31 of 32 teams).
+    static func startingLineupIDs(available: [Player]) -> Set<UUID> {
+        var picked = Set<UUID>()
+
+        /// Slots the best unused player from the first non-empty preference list.
+        func fill(_ preferences: [Position]) {
+            var choice: Player?
+            for position in preferences {
+                for player in available
+                where player.position == position && !picked.contains(player.id) {
+                    if choice == nil || player.overall > choice!.overall { choice = player }
+                }
+                if choice != nil { break }   // honor preference order (RB before FB, etc.)
+            }
+            if let choice { picked.insert(choice.id) }
+        }
+
+        // Offense — 11 starters.
+        fill([.QB])
+        fill([.RB, .FB])          // RB starts; FB only if no RB available
+        fill([.LT]); fill([.LG]); fill([.C]); fill([.RG]); fill([.RT])
+        fill([.WR]); fill([.WR]); fill([.WR])
+        fill([.TE])
+
+        // Defense — 11 starters.
+        fill([.DE]); fill([.DT]); fill([.DT]); fill([.DE])
+        fill([.OLB]); fill([.MLB, .OLB]); fill([.OLB, .MLB])
+        fill([.CB]); fill([.CB])
+        fill([.FS, .SS]); fill([.SS, .FS])
+
+        // Specialists.
+        fill([.K]); fill([.P])
+
+        return picked
+    }
+
     // MARK: - Private: Season History Recording
 
     /// Inserts a `PlayerSeasonHistory` snapshot for every player at season's end.
@@ -3272,6 +3331,7 @@ enum WeekAdvancer {
                 season: season,
                 overallAtEndOfSeason: player.overall,
                 gamesPlayed: player.gamesPlayedThisSeason,   // #33: real per-player appearances
+                gamesStarted: player.gamesStartedThisSeason, // #40: real per-player starts
                 ageAtEndOfSeason: player.age,
                 teamID: player.teamID,
                 keyStat1: 0,               // TODO: position-appropriate season totals

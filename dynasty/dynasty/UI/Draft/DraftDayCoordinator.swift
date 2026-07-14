@@ -546,7 +546,8 @@ final class DraftDayCoordinator: ObservableObject {
         let player = DraftEngine.convertToPlayer(
             prospect: prospect,
             teamID: pick.currentTeamID,
-            pickNumber: pick.pickNumber
+            pickNumber: pick.pickNumber,
+            draftSeason: pick.seasonYear
         )
         modelContext.insert(player)
 
