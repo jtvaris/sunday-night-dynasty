@@ -1,5 +1,46 @@
 # Dynasty - TODO
 
+## ✅ VERIFIOINTI #39 — OMISTAJAN KAUSITAPAAMINEN (2026-07-14, `BUILD SUCCEEDED`, EI committia)
+
+**Verdikti: FLOW PASS (jatko-haara ajettu pelitilassa päästä päähän), POTKU-HAARA koodikatselmoitu PASS.**
+
+**Build:** `BUILD SUCCEEDED` (id=049C7295…). Asennettu+käynnistetty com.brewcrow.dynasty.
+
+**Runtime- flow (Buffalo Bills, kausi 2028, Kenneth Kraft = Meddler):** Ajettu ura viikosta 5 → SB idb-accessibility-driverilla (viikkoadvancet + lehdistötilaisuudet + round-recapit auto-dismissattu). SB-advance ("Advance to Coaching Changes") laukaisi omistajatapaamisen ENNEN coaching changesia — sheetin takana dashboard oli jo COACHING CHANGES -vaiheessa mutta modaali blokkasi sen. Todennettu koko kaari:
+- (a) OMISTAJATAPAAMINEN ilmestyy SB:n jälkeen, ennen coaching changesia. ✓
+- (b) Recap (10-7, REACHED THE PLAYOFFS -pilli) + AROUND THE LEAGUE (power rank + job security + media-otsikko) + GOALS SCORECARD (kaikki 4 tavoitetta ✓/✗ per tavoite: Make the Playoffs ✓, Win 9+ ✓ 10/9, Win the Division ✗, Win 3 Straight ✓) + FROM THE OWNER'S OFFICE -sitaatti + verdikti OUTSTANDING + CONSEQUENCES (+10% budjetti, luottamus kasvoi). ✓
+- (c) Jatko → NEXT SEASON'S MANDATE (4 uutta tavoitetta) + "Accept the Challenge" -kuittaus → sheet dismissasi → offseason jatkui coaching changesiin: "Hire Offensive/Defensive Coordinator (Required)", "Advance to Review Roster", Black Monday -inbox ("League Office" + "Kenneth Kraft — Offseason - Coaching Changes, 2028") + "Season Review: …" -viesti. Satisfaction 52%→100%, Job Security Pressure→Secure. Sheet EI pompannut uudelleen (acknowledged toimii). ✓
+- Screenshotit: `/tmp/snd-screenshots/owner-meeting/` (01-launch, 02-dashboard, 03-owner-review-top, 04-owner-review-mid, 05-after-accept-coaching-changes).
+
+**Potku-haara (koodikatselmus — ei voitu pakottaa: tiimi nyt 100% satisfaction):** `evaluateSeason` → `verdict=.fired` kun `satisfaction < criticalThreshold(=max(10,20-patience))` (tai pehmeä danger-haara + huono record + 50% roll), pl. ensimmäinen kausi (`isFirstCompletedSeason`, ≤18 pel.). WeekAdvancer ~1678 `wasFired=true`. `performShellAdvance` (CareerShellView ~388): `isGameOver=true`, `yearsFired+=1`, `showFiredScreen=true`, `return` → `FiredSummaryView` (fullScreenCover) omistajan statementilla; coaching changes EI aja (return ennen). `OwnerSeasonReviewSheet` näytetään vain `verdict != .fired` (~401). Uudelleenavaus: `career.isGameOver` → showFiredScreen (task ~120). Toinen potkupolku: viikoittainen `OwnerSatisfactionEngine.checkFiring` (WeekAdvancer ~653, grace ensimmäinen kausi) → sama wasFired-käsittely. HAARA KYTKETTY OIKEIN. ✓
+
+**Regressio:**
+- Coaching changes (R30): toimii reviewn JÄLKEEN — vaihe aktivoitui heti kuittauksen jälkeen (Hire OC/DC -taskit + Advance to Review Roster + Black Monday -uutiset). ✓
+- startNewSeason (R32): koodikatselmus — budjettibonus (`review.budgetBonusPct=0.10`) kulutetaan kerran ensi kaudella (WeekAdvancer ~206, ehto `seasonYear == currentSeason-1`), goalsit regeneroituvat, kickoff-viesti. recordSeasonSummary päivitti career-laskurit (ura 22-12, 2 playoffs). Ei rikkoutunut. ✓
+- Round Results (#38): round-recap-dialogi ilmestyi & sulkeutui JOKA regular-season-viikko driverin ajossa (13×). ✓
+- Game Plan (#37): "Game Plan"/"Coach the Game" -napit + "Week N · @ OPP" + "Advance to Week N+1" -otsikot renderöityivät oikein joka viikko. ✓
+
+**Auki jäänyt:** Potku-haaraa ei ajettu pelitilassa (ei realistisesti pakotettavissa nykytallennuksesta; katsottu koodista). FiredSummaryView vahvistettu vain koodilla + previewillä.
+
+## ✅ #39 — OMISTAJAN KAUSITAPAAMINEN (Super Bowlin jälkeen, ennen coaching changesia) (2026-07-14, `BUILD SUCCEEDED`, EI committia)
+
+Käyttäjän pyyntö: SB:n jälkeen ENNEN coaching changesia oma vaihe — omistajan arvio kaudesta (miten meni, media/muut, saavutettiinko tavoitteet, jatko vai potkut; jos jatkaa → ensi vuoden tavoitteet).
+
+**AJOITUS — jo oikein, ei muutosta WeekAdvancerissa.** `OwnerPersonaEngine.evaluateSeason` laukeaa `advanceOffseasonPhase`in `.superBowl`-casessa (WeekAdvancer.swift ~1668), joka on TÄSMÄLLEEN `.superBowl → .coachingChanges` -rajalla (`phase(after:)`: proBowl→superBowl→coachingChanges). Review + `wasFired` asetetaan ENNEN kuin `.coachingChanges`-enginelogiikka ajetaan (se ajetaan vasta seuraavalla advancella). `CareerShellView.performShellAdvance` näyttää heti: potkut → `FiredSummaryView`, muuten `OwnerSeasonReviewSheet`. Kausivaihtoauditti (`startNewSeason` rosterCuts→regularSeason) koskematon.
+
+**TÄYDENNETTY `OwnerSeasonReviewSheet` kattamaan KOKO KAARI** (aiemmin vain verdikti + record + goals-count + omistajan sitaatti + consequences). Lisätty presentation-only `Context` (rakennetaan call-sitessä livestä career/team-tilasta, ei SwiftData-migraatiota):
+- (a) **Kausirecap omistajan näkökulmasta**: playoff-tulos-pilli (Super Bowl Champions / Reached the Playoffs / Missed the Playoffs) johdettu `career.seasonSummaries`-kauden yhteenvedosta + Final Record.
+- (b) **Media/muut**: "AROUND THE LEAGUE" -kortti — power ranking (#N/32, `career.leagueNarrative.rankings`), job security -taso+väri (`OwnerPersonaEngine.jobSecurity`), rankiin/verdiktiin sidottu media-otsikko.
+- (c) **Tavoitteet per tavoite kyllä/ei**: "GOALS SCORECARD" — jokainen `career.ownerSeasonGoals` check/x + priority-tag + edistymä-detail (esim. "6 / 9 wins", "Won the division").
+- (d) **Verdikti**: säilyi (badge + consequences).
+- (e) **Jatko → ensi vuoden tavoitteet**: "NEXT SEASON'S MANDATE" — `OwnerGoalsEngine.generateSeasonGoals` (archetype-säädetty) esikatseluna, näytetään vain kun verdict != .fired; nappi vaihtuu "Accept the Challenge". Potkut → sheet ei näy (FiredSummaryView hoitaa).
+
+Ei tuplaowner-dialogia: kauden ALUN kickoff on erillinen inbox-viesti (`seasonKickoffMessage`, regularSeason-start, budjettikuori) — tämä on kauden LOPUN review. Mandate esitetään "watching for next year" -esikatseluna, ei tuplaa kickoffia.
+
+**Tiedostot:** `OwnerSeasonReviewSheet.swift` (Context + 3 uutta korttia + playoff-pilli), `CareerShellView.swift` (call-site: `context: .build(review:career:team:)`).
+
+---
+
 ## ✅ VERIFIOINTI #37 + #38 (2026-07-14, `BUILD SUCCEEDED`, EI committia)
 
 Ajettu runtimessa iPad Pro 13" M5 (049C7295). Talletus oli Super Bowl / offseason -tilassa (`canCoachThisWeek=false`), joten pääsin coachable-regular-season-tilaan DEBUG "Skip →" -napilla (1. tap → Free Agency, 2. tap → auto-AI-draft → Regular Season Week 1). **Huom:** DEBUG-skip päivittää vain dashboardin oman datan, EI shellin `upcomingGames`-tilaa → ekalla yrityksellä Game Plan -näytön Start Game -nappi puuttui ja opponent-konteksti oli tyhjä. Sovelluksen uudelleenkäynnistys (`loadShellData` `.task`issa) korjasi → Week 1 vs PIT, konteksti täysi. Kuvat: `/tmp/snd-screenshots/roundresults/`.

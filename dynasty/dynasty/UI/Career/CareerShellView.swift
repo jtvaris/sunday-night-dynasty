@@ -207,7 +207,12 @@ struct CareerShellView: View {
             OwnerSeasonReviewSheet(
                 review: review,
                 ownerName: team?.owner?.name ?? "The Owner",
-                teamName: team?.fullName ?? "your team"
+                teamName: team?.fullName ?? "your team",
+                context: OwnerSeasonReviewSheet.Context.build(
+                    review: review,
+                    career: career,
+                    team: team
+                )
             )
         }
         // R31: the owner pulled the trigger — career-over summary screen.
