@@ -59,11 +59,19 @@ clip library, driver, integration — is validated in the running simulator.
   everyone the wrong way vs offense/defense — no flip. (c) Studio Ochi loco is
   already ~in-place (root drift ≈0.02u), no root-motion bake needed.
 
-**Remaining polish (open):** team-color variation (all players share one Studio
-Ochi texture — teams read the same; use the pack's other Athletes textures per
-team or a tint), wire throw/kick/catch to the QB/ST beats, per-position model
-variants (the pack has Man A/B/C + Woman A/B/C), and remove the procedural kit
-fallback once every beat maps.
+**Polish DONE (2026-07-17):** (a) TEAM COLORS — the pack's 6 uniform textures
+(one UV atlas) are bundled (`uniform_0..5.png`); SkeletalFigure picks the one
+nearest each team's jersey color at load, so teams read distinct + roughly match.
+(b) ACTION CLIPS — throw/catch/tackle mocap wired (throwMotion→throw,
+reach/overShoulder/diving→catch, wrapArms→tackle); `PlayerClip_catch` + `_kick`
+exported. (c) SIZE VARIETY — scale by build (linemen bigger, skill leaner) + a
+per-player jitter. Note: the pack's Man A/B/C are the SAME body (887 verts, only
+different textures) — no true body-type meshes, so variety is scale-only.
+
+**Still open:** exact per-NFL-team colors (only 6 generic uniforms exist — a real
+match needs 32 team textures or a recolor), a kick/punt player beat (no kicker
+gesture in the choreographer yet), and retiring the procedural kit fallback once
+every beat maps.
 
 ---
 
