@@ -34,8 +34,9 @@ final class SkeletalFigure {
     private static var cachedRigURL: URL?? = nil
     private static var clipCache: [String: CAAnimation] = [:]
 
-    /// The clip names shipped in Resources (PlayerClip_<name>.usdc).
-    static let clipNames = ["run", "idle", "sprint", "juke", "tackle"]
+    /// The clip names shipped in Resources (PlayerClip_<name>.usdc). juke has no
+    /// Studio Ochi equivalent (no-op); the rest map to the pack's football mocap.
+    static let clipNames = ["run", "idle", "sprint", "tackle", "throw", "catch", "kick"]
 
     /// Whether the rig asset is present — the scene uses this to decide if the
     /// skeletal path is even available before flipping figures over.
@@ -80,15 +81,18 @@ final class SkeletalFigure {
     private let cadenceJitter: Float
 
     /// Builds one skinned player. `variantSeed` (e.g. jersey number) gives each
-    /// player a stable, distinct gait phase + cadence. Returns nil if the rig
-    /// asset is missing, so callers can fall back to the kit/procedural figure.
+    /// player a stable, distinct gait phase, cadence + a touch of size variation;
+    /// `bodyScale` sizes by position (linemen bigger, skill players leaner).
+    /// Returns nil if the rig asset is missing, so callers can fall back.
     init?(jersey: UIColor, pants: UIColor, helmet: UIColor, skin: UIColor, mask: UIColor,
-          variantSeed: Int = 0) {
+          variantSeed: Int = 0, bodyScale: CGFloat = 1.0) {
         // Deterministic 0..1 hashes from the seed (no RNG — stable per player).
         let h1 = (variantSeed &* 2654435761) & 0xffff
         let h2 = (variantSeed &* 40503 &+ 12345) & 0xffff
+        let h3 = (variantSeed &* 2246822519 &+ 374761) & 0xffff
         self.phase01 = CGFloat(h1) / 65535.0
         self.cadenceJitter = 0.92 + Float(h2) / 65535.0 * 0.16   // 0.92–1.08
+        let sizeJitter = 0.97 + CGFloat(h3) / 65535.0 * 0.06     // 0.97–1.03
         guard let url = Self.rigURL,
               let scene = try? SCNScene(url: url, options: [.convertToYUp: false]),
               let skinnerNode = Self.firstNode(in: scene.rootNode, where: { $0.skinner != nil }),
@@ -111,27 +115,56 @@ final class SkeletalFigure {
         face.addChildNode(standup)
         let wrapper = SCNNode()
         wrapper.name = "skeletal"
-        wrapper.scale = SCNVector3(Self.scale, Self.scale, Self.scale)
+        let s = Self.scale * bodyScale * sizeJitter
+        wrapper.scale = SCNVector3(s, s, s)
         wrapper.position = SCNVector3(0, Self.yOffset, 0)
         wrapper.addChildNode(face)
 
         self.content = wrapper
         self.skeleton = skel
-        tint(jersey: jersey, pants: pants, helmet: helmet, skin: skin, mask: mask)
+        applyUniform(jersey: jersey)
         setMoving(false, speed: 0)   // idle by default
     }
 
-    /// Re-tint by material slot name. The clone shares no geometry (each figure
-    /// loads its own scene), so we can tint materials in place.
-    func tint(jersey: UIColor, pants: UIColor, helmet: UIColor, skin: UIColor, mask: UIColor) {
-        let colors: [String: UIColor] = [
-            "JERSEY": jersey, "PANTS": pants, "HELMET": helmet, "SKIN": skin, "MASK": mask,
-        ]
+    // MARK: Team uniforms
+    // The Studio Ochi pack ships 6 uniform textures (one UV atlas, different
+    // colors). Pick the one nearest the team's jersey color so the two teams on
+    // the field read as distinct and roughly match their real colors.
+    private static let uniformColors: [(r: CGFloat, g: CGFloat, b: CGFloat)] = [
+        (0.13, 0.32, 0.72),  // 0  blue      (Athletes 01)
+        (0.00, 0.70, 0.70),  // 1  teal      (Athletes 02)
+        (0.05, 0.42, 0.16),  // 2  green     (Athletes 03)
+        (0.18, 0.18, 0.20),  // 3  graphite  (Athletes 04)
+        (0.72, 0.12, 0.20),  // 4  red       (Athletes 05)
+        (0.42, 0.68, 0.08),  // 5  lime      (Athletes 06)
+    ]
+    private static var uniformImageCache: [Int: UIImage] = [:]
+
+    private static func nearestUniformIndex(to color: UIColor) -> Int {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        var best = 0, bestD = CGFloat.greatestFiniteMagnitude
+        for (i, c) in uniformColors.enumerated() {
+            let d = (r - c.r) * (r - c.r) + (g - c.g) * (g - c.g) + (b - c.b) * (b - c.b)
+            if d < bestD { bestD = d; best = i }
+        }
+        return best
+    }
+    private static func uniformImage(_ idx: Int) -> UIImage? {
+        if let img = uniformImageCache[idx] { return img }
+        guard let url = Bundle.main.url(forResource: "uniform_\(idx)", withExtension: "png"),
+              let img = UIImage(contentsOfFile: url.path) else { return nil }
+        uniformImageCache[idx] = img
+        return img
+    }
+
+    /// Dress the player in the team uniform whose color is nearest the jersey.
+    /// Swaps the whole textured atlas, so helmet/pads/pants/number all change.
+    func applyUniform(jersey: UIColor) {
+        guard let img = Self.uniformImage(Self.nearestUniformIndex(to: jersey)) else { return }
         Self.forEachGeometry(in: content) { geometry in
             for material in geometry.materials {
-                if let name = material.name, let color = colors[name] {
-                    material.diffuse.contents = color
-                }
+                material.diffuse.contents = img
             }
         }
     }

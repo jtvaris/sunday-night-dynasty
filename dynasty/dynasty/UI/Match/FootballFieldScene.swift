@@ -2105,6 +2105,7 @@ class FootballFieldScene: SCNScene {
     private func reach(nodeIndex: Int, turnYaw: CGFloat = 0) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        if let skel = skeletalDriver(for: figure) { skel.play(action: "catch"); return }
         catchBodyTurn(figure, yaw: turnYaw)
         figure.removeAction(forKey: "hop")
         let hopUp = SCNAction.moveBy(x: 0, y: 0.25, z: 0, duration: 0.22)
@@ -2140,6 +2141,7 @@ class FootballFieldScene: SCNScene {
     private func overShoulderReach(nodeIndex: Int, turnYaw: CGFloat = 0) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        if let skel = skeletalDriver(for: figure) { skel.play(action: "catch"); return }
         catchBodyTurn(figure, yaw: turnYaw, hold: 0.6)
         for name in ["arm", "armR"] {
             guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
@@ -2165,6 +2167,7 @@ class FootballFieldScene: SCNScene {
     private func divingCatch(nodeIndex: Int, turnYaw: CGFloat = 0) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        if let skel = skeletalDriver(for: figure) { skel.play(action: "catch"); return }
         figure.removeAction(forKey: "gait")
         figure.removeAction(forKey: "hop")
         figure.removeAction(forKey: "stance")
@@ -3266,8 +3269,9 @@ class FootballFieldScene: SCNScene {
     /// shapes the whole motion — a soft deep lob, a driven bullet, a quick
     /// 3/4 sidearm out, or an unbalanced off-the-back-foot heave.
     private func throwMotion(of node: SCNNode, style: ThrowStyle = .overhand) {
-        guard let figure = node.childNode(withName: "figure", recursively: false),
-              let arm = figure.childNode(withName: "armR", recursively: false) else { return }
+        guard let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        if let skel = skeletalDriver(for: figure) { skel.play(action: "throw"); return }
+        guard let arm = figure.childNode(withName: "armR", recursively: false) else { return }
         let s = throwShape(style)
         arm.removeAction(forKey: "swing")
         let windup = SCNAction.rotateTo(x: s.windupX, y: 0, z: s.armZ, duration: s.windupDur)
@@ -4576,11 +4580,18 @@ class FootballFieldScene: SCNScene {
         container.addChildNode(shadow)
 
         let skin = Self.skinTones[number % Self.skinTones.count]
+        // Size by build so linemen read bigger than skill players.
+        let bodyScale: CGFloat
+        switch bodyType {
+        case .heavy:  bodyScale = 1.07
+        case .medium: bodyScale = 1.0
+        case .lean:   bodyScale = 0.95
+        }
         if FieldConstants.useSkeletalFigures,
            let skel = SkeletalFigure(jersey: uniform.jersey, pants: uniform.pants,
                                      helmet: uniform.helmet, skin: skin,
                                      mask: uniform.facemask ?? Self.facemaskGray,
-                                     variantSeed: number) {
+                                     variantSeed: number, bodyScale: bodyScale) {
             // Skinned-mesh path: the rig is pre-proportioned, so drop the kit
             // figure's stocky non-uniform scale and let the driver pose it.
             figure.scale = SCNVector3(1, 1, 1)
