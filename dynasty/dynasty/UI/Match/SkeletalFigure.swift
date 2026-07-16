@@ -155,8 +155,16 @@ final class SkeletalFigure {
         base.repeatCount = .infinity
         base.fadeInDuration = 0.22
         base.fadeOutDuration = 0.22
-        base.timeOffset = phase01 * base.duration   // desync the squad's gait
-        if moving { base.speed = runSpeedFactor(speed) }
+        if moving {
+            base.timeOffset = phase01 * base.duration   // desync the squad's gait
+            base.speed = runSpeedFactor(speed)
+        } else {
+            // Idle: the Studio Ochi "Hold" clip is a crouch-DOWN cycle — looping
+            // it makes the whole squad squat up and down while waiting. Freeze it
+            // on the upright first frame so they just stand at the ready.
+            base.speed = 0
+            base.timeOffset = 0
+        }
         skeleton.addAnimation(base, forKey: "loco_\(want)")
     }
 
