@@ -28,6 +28,11 @@ class FootballFieldScene: SCNScene {
         static let fieldThickness: Float = 0.2
         static let playerHeight: Float = 1.0
         static let playerRadius: Float = 0.4
+        /// Animation Overhaul (Option A): drive players with skinned skeletal
+        /// clips instead of the procedural joint-rotation figure, when the rig
+        /// asset is present. Falls back to the kit/procedural figure otherwise.
+        /// See docs/ANIMATION_OVERHAUL_PLAN.md.
+        static var useSkeletalFigures: Bool { SkeletalFigure.isAvailable }
         static let ballLength: Float = 0.7
         static let ballRadius: Float = 0.22
     }
@@ -1858,6 +1863,20 @@ class FootballFieldScene: SCNScene {
         }
 
         guard let figure = node.childNode(withName: "figure", recursively: false) else { return }
+
+        // Animation Overhaul path: the container move + facing above already run.
+        // Drive locomotion by skeletal clip instead of the procedural gait, and
+        // return the figure to idle when this move ends.
+        if let skel = skeletalDriver(for: figure) {
+            skel.setMoving(true, speed: distance / Float(duration))
+            figure.removeAction(forKey: "skelIdleReset")
+            figure.runAction(.sequence([
+                .wait(duration: duration),
+                .run { [weak skel] _ in skel?.setMoving(false, speed: 0) },
+            ]), forKey: "skelIdleReset")
+            return
+        }
+
         figure.removeAction(forKey: "gait")
         figure.removeAction(forKey: "stance")  // the snap breaks the pre-snap pose
         clearBystanderIdle(figure)             // the run owns the figure now
@@ -2384,6 +2403,11 @@ class FootballFieldScene: SCNScene {
     private func performOpenFieldMove(nodeIndex: Int, kind: OpenFieldMove.Kind) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        // Skeletal path: a mocap evasive move over the locomotion, then return.
+        if let skel = skeletalDriver(for: figure) {
+            skel.play(action: "juke")
+            return
+        }
         switch kind {
         case .spin:
             // Full 360° turn that dips and rises out of the spin.
@@ -2599,6 +2623,11 @@ class FootballFieldScene: SCNScene {
     private func wrapArms(nodeIndex: Int) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        // Skeletal path: a mocap tackle over the locomotion, then return.
+        if let skel = skeletalDriver(for: figure) {
+            skel.play(action: "tackle")
+            return
+        }
         for (name, inward) in [("arm", CGFloat(0.7)), ("armR", CGFloat(-0.7))] {
             guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
             arm.removeAction(forKey: "swing")
@@ -4509,6 +4538,17 @@ class FootballFieldScene: SCNScene {
     /// loads; otherwise the original procedural geometry is built. Both
     /// paths produce identical node names, joint positions and hinge
     /// origins, so all animation code works on either figure.
+    /// Skeletal drivers for the Animation Overhaul path, keyed by the player's
+    /// "figure" node (the same node every posing lookup already uses). Present
+    /// only when `FieldConstants.useSkeletalFigures` is on.
+    private var skeletalFigures: [ObjectIdentifier: SkeletalFigure] = [:]
+
+    /// The skeletal driver behind a "figure" node, if this scene runs the
+    /// skinned-mesh path for that player.
+    private func skeletalDriver(for figure: SCNNode) -> SkeletalFigure? {
+        skeletalFigures[ObjectIdentifier(figure)]
+    }
+
     private func makePlayerNode(uniform: Uniform, number: Int,
                                 bodyType: BodyType = .medium) -> SCNNode {
         let container = SCNNode()
@@ -4535,12 +4575,24 @@ class FootballFieldScene: SCNScene {
         shadow.castsShadow = false
         container.addChildNode(shadow)
 
-        if let kit = Self.playerKit {
+        let skin = Self.skinTones[number % Self.skinTones.count]
+        if FieldConstants.useSkeletalFigures,
+           let skel = SkeletalFigure(jersey: uniform.jersey, pants: uniform.pants,
+                                     helmet: uniform.helmet, skin: skin,
+                                     mask: uniform.facemask ?? Self.facemaskGray,
+                                     variantSeed: number) {
+            // Skinned-mesh path: the rig is pre-proportioned, so drop the kit
+            // figure's stocky non-uniform scale and let the driver pose it.
+            figure.scale = SCNVector3(1, 1, 1)
+            figure.addChildNode(skel.content)
+            skeletalFigures[ObjectIdentifier(figure)] = skel
+        } else if let kit = Self.playerKit {
             buildKitFigure(kit: kit, in: figure, uniform: uniform, number: number)
+            applyBodyType(bodyType, to: container)
         } else {
             buildProceduralFigure(in: figure, uniform: uniform, number: number)
+            applyBodyType(bodyType, to: container)
         }
-        applyBodyType(bodyType, to: container)
 
         // Numbers printed on the jersey itself, chest and back (Madden-2000).
         if let body = figure.childNode(withName: "body", recursively: false) {

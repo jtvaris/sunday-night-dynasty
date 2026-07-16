@@ -1,8 +1,79 @@
 # Animation Overhaul Plan — Madden 05-style skeletal animation
 
-**Status:** Planned. Start after the in-flight sim/feature work is committed
-(see "Prerequisites"). Written to survive a context clear — this doc is
-self-sufficient for a cold start.
+**Status:** Phase 0 (feasibility spike) DONE 2026-07-14 — the decision gate is
+PASSED, the pipeline is proven end-to-end, and a compiling in-app integration
+exists behind a flag. Now iterating on clip quality + wiring the gesture library
+(Phase 1→2→3). Written to survive a context clear — self-sufficient for a cold
+start.
+
+## Phase 0 RESULT (2026-07-14) — decision gate PASSED, proceed with Option A
+The single biggest risk (SceneKit skinned-animation export fidelity) is RETIRED
+with headless evidence; no RealityKit fallback needed. What shipped this session:
+- **Pipeline proven** (all headless via `swift <script>` + SceneKit on macOS):
+  Blender 5.1.2 `wm.usd_export(export_armatures, export_animation)` → USD loads in
+  SceneKit with a real `SCNSkinner` + a playable skeletal clip that deforms the
+  mesh; clips **retarget onto any character by bone name** (load character once,
+  attach clip CAAnimation to the character's `skinner.skeleton`); `clone()`
+  re-skins per instance so 22 players each animate independently.
+- **Assets** (`dynasty/dynasty/Resources/`): `PlayerRig.usdc` (skinned humanoid,
+  19-bone standard armature, JERSEY/PANTS/SKIN/HELMET/MASK slots) +
+  `PlayerClip_{run,idle,juke,tackle}.usdc`. Generator: `tools/asset-pipeline/
+  player_rig.py` (`--clip <name>`; character = no --clip). The run cycle reads
+  clearly as sprinting on the coach camera.
+- **Integration** (compiles for iOS sim, procedural path kept as fallback):
+  `UI/Match/SkeletalFigure.swift` (loader + clip library + tint + locomotion/
+  action driver) wired into `FootballFieldScene` behind
+  `FieldConstants.useSkeletalFigures` (auto-on when the rig asset is present):
+  makePlayerNode builds the skeletal figure into the existing "figure" node;
+  `run()` drives `setMoving(speed:)` instead of `swingLimbs`; idle by default.
+- **Gotchas that cost time — encoded in code comments + the
+  reference_scenekit_skeletal_pipeline memory:** (1) load USD Z-up (no
+  `.convertToYUp`) because the option rotates the bind pose but NOT the animation
+  channels → 90° pitch; stand the figure up with a wrapper. (2) standup rotation
+  must nest INSIDE the facing rotation or the figure hangs below the turf. (3)
+  attach clips to `skinner.skeleton`, not the armature object node (two nodes
+  share the name). (4) use system time base. (5) Blender bone `Foo.L` → USD
+  `Foo_L`.
+
+## Phases 1–3 RESULT (2026-07-16) — MOCAP + hero model, live in-game
+The spike graduated to a shipped-quality result. The whole path — skinned rig,
+clip library, driver, integration — is validated in the running simulator.
+- **Mocap, not procedural.** User feedback: hand-keyed clips read as cheap
+  ([[feedback-animation-quality-bar]]). Switched to motion capture. Two sources
+  were driven end-to-end (browser-automated Mixamo, then a bought pro pack):
+  the procedural clips are gone.
+- **Hero model = Studio Ochi "American Football" pack** (bought). Professional
+  low-poly TEXTURED player (helmet+facemask, striped pads, numbered jersey,
+  cleats) with its own football mocap (Run Fast, Hold, Catch&Fall, Kick, Throw)
+  on a Rigify "Metarig". Converted by `tools/asset-pipeline/ochi_to_usd.py`:
+  character → `PlayerRig.usdz` (texture packaged), each action → `PlayerClip_*.usdc`.
+  Clips transplant onto the character by bone name (same rig). Deployed to
+  `Resources/`, live in coach mode: textured players run/idle with mocab motion.
+- **Pipeline is source-agnostic.** `SkeletalFigure` now finds the skinner by
+  presence (not the node name "Armature"), loads `.usdz`→`.usdc`, and reparents
+  all content — so Mixamo, Studio Ochi, or any rigged USD drops in. The mesh is a
+  plug-in asset; swapping it reuses the driver + integration untouched.
+- **Gotchas (this round):** (a) FBX imports tiny (cm) + at source scale —
+  normalize to ~1.9 units in the converter. (b) FACING: the rig faces +Z (kit
+  convention = downfield) after JUST the −90°X standup; a 180°Y flip pointed
+  everyone the wrong way vs offense/defense — no flip. (c) Studio Ochi loco is
+  already ~in-place (root drift ≈0.02u), no root-motion bake needed.
+
+**Remaining polish (open):** team-color variation (all players share one Studio
+Ochi texture — teams read the same; use the pack's other Athletes textures per
+team or a tint), wire throw/kick/catch to the QB/ST beats, per-position model
+variants (the pack has Man A/B/C + Woman A/B/C), and remove the procedural kit
+fallback once every beat maps.
+
+---
+
+**Original "immediate next" (Phase 0, now largely done):** validate in sim ✓,
+tune foot-plant/skin weights (moot — pro mesh), map the gesture library
+(juke→openField ✓, tackle→wrapArms ✓; catch/block/throw/stances open).
+
+---
+
+**Original plan (below) preserved for the full phased roadmap.**
 
 **Goal (user's words):** "Paremmat animaatiot" — Madden 2005-style player
 movement, jukes, tackles, catches: smooth, blended, momentum-based motion
