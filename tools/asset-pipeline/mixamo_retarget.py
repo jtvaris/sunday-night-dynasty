@@ -50,7 +50,13 @@ ochi.animation_data_clear()
 # --- import source (Mixamo) ---
 before = set(bpy.data.objects)
 bpy.ops.import_scene.fbx(filepath=MIXAMO)
-mix = next(o for o in (set(bpy.data.objects) - before) if o.type == 'ARMATURE')
+new_objs = set(bpy.data.objects) - before
+mix = next(o for o in new_objs if o.type == 'ARMATURE')
+# Drop any mesh that rode in with the Mixamo import ("With Skin" downloads include
+# the character mesh) so it can't corrupt the height-normalize below — we only
+# want the Ochi mesh + the two skeletons.
+for o in [o for o in new_objs if o.type == 'MESH']:
+    bpy.data.objects.remove(o, do_unlink=True)
 act = mix.animation_data.action
 fs, fe = int(act.frame_range[0]), int(act.frame_range[1])
 print(f"retarget: source frames {fs}..{fe}")
