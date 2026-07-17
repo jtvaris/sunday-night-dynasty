@@ -468,6 +468,7 @@ class FootballFieldScene: SCNScene {
         buildGoalposts()
         buildPylons()
         buildApronWalls()
+        buildStadium()
         buildMarkers()
         perf.lap("dressing")
         buildReferee()
@@ -4019,6 +4020,146 @@ class FootballFieldScene: SCNScene {
         rootNode.childNode(withName: "endWallNeg", recursively: false)?.isHidden = true
     }
 
+    // MARK: - Stadium (night bowl + crowd + floodlights)
+
+    /// Wraps the field in a raked night-crowd bowl with floodlight pylons,
+    /// turning the surrounding void into a lit stadium — the "Sunday Night"
+    /// look. Static geometry, built once. The crowd is self-lit (emissive) so
+    /// it reads as a night crowd under floodlights instead of collapsing into
+    /// shadow. Rises just behind the apron boards (buildApronWalls) so there is
+    /// no dark moat between the field and the stands.
+    private func buildStadium() {
+        let stadium = SCNNode()
+        stadium.name = "stadium"
+
+        let halfW = FieldConstants.fieldWidth / 2
+        let halfL = FieldConstants.totalLength / 2
+        let ax = halfW + 7, az = halfL + 7
+        let r: Float = 22   // corner radius → rounded-rectangle stadium ends
+
+        // A closed loop of inner-base anchors (rounded rectangle) with an
+        // outward horizontal normal per vertex; each tier is lofted by pushing
+        // these anchors out along their normal and up.
+        typealias Anchor = (x: Float, z: Float, nx: Float, nz: Float)
+        var pts: [(Float, Float)] = []
+        let centers: [(Float, Float)] = [(ax - r, az - r), (-(ax - r), az - r),
+                                         (-(ax - r), -(az - r)), (ax - r, -(az - r))]
+        let starts: [Float] = [0, .pi / 2, .pi, 3 * .pi / 2]
+        let cornerSteps = 6
+        for (i, c) in centers.enumerated() {
+            for s in 0...cornerSteps {
+                let a = starts[i] + (Float(s) / Float(cornerSteps)) * (.pi / 2)
+                pts.append((c.0 + r * cos(a), c.1 + r * sin(a)))
+            }
+        }
+        let n = pts.count
+        var anchors: [Anchor] = []
+        for i in 0..<n {
+            let p = pts[i], pn = pts[(i + 1) % n], pp = pts[(i - 1 + n) % n]
+            var tx = pn.0 - pp.0, tz = pn.1 - pp.1
+            let tl = max(1e-4, (tx * tx + tz * tz).squareRoot()); tx /= tl; tz /= tl
+            anchors.append((p.0, p.1, tz, -tx))   // rotate tangent −90° → outward normal
+        }
+
+        func tier(_ a: [Anchor], yInner: Float, yTop: Float, depth: Float,
+                  uvRepeat: Float, tex: UIImage, emissive: CGFloat) -> SCNNode {
+            var verts: [SCNVector3] = []; var uvs: [CGPoint] = []; var idx: [Int32] = []
+            let cnt = a.count
+            for i in 0..<cnt {
+                let v = a[i]
+                verts.append(SCNVector3(v.x, yInner, v.z))
+                verts.append(SCNVector3(v.x + v.nx * depth, yTop, v.z + v.nz * depth))
+                let u = CGFloat(Float(i) / Float(cnt)) * CGFloat(uvRepeat)
+                uvs.append(CGPoint(x: u, y: 0)); uvs.append(CGPoint(x: u, y: 1))
+            }
+            for i in 0..<cnt {
+                let p0 = Int32((i * 2) % (cnt * 2)), p1 = Int32((i * 2 + 1) % (cnt * 2))
+                let p2 = Int32(((i + 1) * 2) % (cnt * 2)), p3 = Int32(((i + 1) * 2 + 1) % (cnt * 2))
+                idx += [p0, p2, p1, p1, p2, p3]   // winding faces inward toward the field
+            }
+            let geo = SCNGeometry(sources: [SCNGeometrySource(vertices: verts),
+                                            SCNGeometrySource(textureCoordinates: uvs)],
+                                  elements: [SCNGeometryElement(indices: idx, primitiveType: .triangles)])
+            let m = SCNMaterial()
+            m.diffuse.contents = tex; m.diffuse.wrapS = .repeat; m.diffuse.wrapT = .repeat
+            m.isDoubleSided = true; m.roughness.contents = 0.95; m.lightingModel = .physicallyBased
+            if emissive > 0 {
+                m.emission.contents = tex; m.emission.wrapS = .repeat; m.emission.wrapT = .repeat
+                m.emission.intensity = emissive
+            }
+            geo.materials = [m]
+            let node = SCNNode(geometry: geo); node.castsShadow = false
+            return node
+        }
+
+        // lower bowl → upper deck → facade cap, each lofted from the previous
+        // deck's outer edge so the bowl reads continuous.
+        let lower = Self.crowdTexture(tint: UIColor(red: 0.20, green: 0.21, blue: 0.28, alpha: 1))
+        let upper = Self.crowdTexture(tint: UIColor(red: 0.17, green: 0.18, blue: 0.25, alpha: 1))
+        stadium.addChildNode(tier(anchors, yInner: 1.3, yTop: 9, depth: 20,
+                                  uvRepeat: 46, tex: lower, emissive: 0.6))
+        let upperA = anchors.map { Anchor(x: $0.x + $0.nx * 20, z: $0.z + $0.nz * 20, nx: $0.nx, nz: $0.nz) }
+        stadium.addChildNode(tier(upperA, yInner: 9, yTop: 18, depth: 22,
+                                  uvRepeat: 46, tex: upper, emissive: 0.5))
+        let facadeA = upperA.map { Anchor(x: $0.x + $0.nx * 22, z: $0.z + $0.nz * 22, nx: $0.nx, nz: $0.nz) }
+        let facadeTex = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { ctx in
+            UIColor(red: 0.07, green: 0.075, blue: 0.095, alpha: 1).setFill()
+            ctx.cgContext.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+        }
+        stadium.addChildNode(tier(facadeA, yInner: 18, yTop: 21, depth: 6,
+                                  uvRepeat: 1, tex: facadeTex, emissive: 0))
+
+        // Floodlight pylons at the four corners: dark pole + a bright emissive
+        // bank aimed at the field. HDR bloom gives them a night-lights halo.
+        for (sx, sz): (Float, Float) in [(1, 1), (-1, 1), (-1, -1), (1, -1)] {
+            let px = (ax + 5) * sx, pz = (az + 5) * sz
+            let pole = SCNNode(geometry: SCNCylinder(radius: 0.5, height: 30))
+            pole.geometry?.firstMaterial?.diffuse.contents = UIColor(white: 0.10, alpha: 1)
+            pole.position = SCNVector3(px, 15, pz); pole.castsShadow = false
+            stadium.addChildNode(pole)
+
+            let bank = SCNNode(geometry: SCNBox(width: 9, height: 3.4, length: 0.6, chamferRadius: 0.2))
+            let bm = SCNMaterial()
+            bm.diffuse.contents = UIColor(white: 0.9, alpha: 1)
+            bm.emission.contents = UIColor(red: 1.0, green: 0.98, blue: 0.9, alpha: 1)
+            bm.emission.intensity = 1.0
+            bank.geometry?.firstMaterial = bm
+            bank.position = SCNVector3(px * 0.9, 29, pz * 0.9)
+            bank.look(at: SCNVector3(0, 0, 0)); bank.castsShadow = false
+            stadium.addChildNode(bank)
+        }
+
+        rootNode.addChildNode(stadium)
+    }
+
+    /// Procedural distant-crowd texture: a mottled low-contrast speckle over a
+    /// dark tint, with sparse bright points (phone screens / white shirts under
+    /// lights). Tiled around each stadium tier. Built once at scene setup.
+    private static func crowdTexture(tint: UIColor) -> UIImage {
+        let size = CGSize(width: 512, height: 128)
+        return UIGraphicsImageRenderer(size: size).image { ctx in
+            let c = ctx.cgContext
+            tint.setFill(); c.fill(CGRect(origin: .zero, size: size))
+            UIColor(white: 0, alpha: 0.12).setFill()   // faint horizontal seat rows
+            var y: CGFloat = 0
+            while y < size.height { c.fill(CGRect(x: 0, y: y, width: size.width, height: 2)); y += 5 }
+            // 2px speckle so the crowd survives at distance/through fog
+            let dots = Int(size.width * size.height) / 9
+            for _ in 0..<dots {
+                let x = CGFloat(Int.random(in: 0..<256) * 2), yy = CGFloat(Int.random(in: 0..<64) * 2)
+                let v = CGFloat.random(in: 0.30...0.85)
+                let col = Bool.random()
+                    ? UIColor(red: v, green: v * 0.88, blue: v * 0.72, alpha: 0.7)
+                    : UIColor(red: v * 0.74, green: v * 0.84, blue: v, alpha: 0.7)
+                col.setFill(); c.fill(CGRect(x: x, y: yy, width: 2, height: 2))
+            }
+            for _ in 0..<(dots / 55) {   // bright points: phone screens / white shirts under lights
+                let x = CGFloat(Int.random(in: 0..<256) * 2), yy = CGFloat(Int.random(in: 0..<64) * 2)
+                UIColor(white: 1.0, alpha: 0.9).setFill(); c.fill(CGRect(x: x, y: yy, width: 2, height: 2))
+            }
+        }
+    }
+
     private func buildPylons() {
         let orange = SCNMaterial()
         orange.diffuse.contents = UIColor(red: 1.0, green: 0.45, blue: 0.05, alpha: 1)
@@ -4805,6 +4946,22 @@ class FootballFieldScene: SCNScene {
         camera.zFar = 300
         camera.wantsHDR = true
 
+        // Broadcast post-processing: HDR bloom gives the floodlights and painted
+        // white lines a night-lights glow; SSAO grounds the players with contact
+        // shadow; a gentle vignette + saturation/contrast lift pushes the flat
+        // daylight look toward a Sunday-night broadcast.
+        camera.bloomThreshold = 0.75
+        camera.bloomIntensity = 1.0
+        camera.bloomBlurRadius = 12
+        camera.saturation = 1.08
+        camera.contrast = 0.10
+        camera.vignettingIntensity = 0.20
+        camera.vignettingPower = 1.5
+        camera.screenSpaceAmbientOcclusionIntensity = 1.1
+        camera.screenSpaceAmbientOcclusionRadius = 1.0
+        camera.screenSpaceAmbientOcclusionBias = 0.03
+        camera.wantsExposureAdaptation = false
+
         cameraNode = SCNNode()
         cameraNode.name = "mainCamera"
         cameraNode.camera = camera
@@ -4838,8 +4995,9 @@ class FootballFieldScene: SCNScene {
         mainLight.intensity = 1200
         mainLight.castsShadow = true
         mainLight.shadowMode = .deferred
-        mainLight.shadowColor = UIColor(white: 0, alpha: 0.35)
-        mainLight.shadowRadius = 4
+        mainLight.shadowColor = UIColor(white: 0, alpha: 0.45)
+        mainLight.shadowRadius = 3
+        mainLight.shadowSampleCount = 16   // crisper contact shadows under floodlights
         mainLight.shadowMapSize = CGSize(width: 2048, height: 2048)
 
         let mainLightNode = SCNNode()
@@ -4852,7 +5010,7 @@ class FootballFieldScene: SCNScene {
         // Fill light from opposite side (softer)
         let fillLight = SCNLight()
         fillLight.type = .directional
-        fillLight.color = UIColor(white: 0.85, alpha: 1.0)
+        fillLight.color = UIColor(red: 0.82, green: 0.86, blue: 1.0, alpha: 1.0)  // cool night fill
         fillLight.intensity = 400
         fillLight.castsShadow = false
 
@@ -4865,7 +5023,7 @@ class FootballFieldScene: SCNScene {
         // Ambient fill so nothing is pure black
         let ambientLight = SCNLight()
         ambientLight.type = .ambient
-        ambientLight.color = UIColor(white: 0.25, alpha: 1.0)
+        ambientLight.color = UIColor(red: 0.20, green: 0.22, blue: 0.30, alpha: 1.0)  // cool night ambient
         ambientLight.intensity = 500
 
         let ambientLightNode = SCNNode()
