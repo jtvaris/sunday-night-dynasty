@@ -75,6 +75,7 @@ final class SkeletalFigure {
     /// The skinner.skeleton node — clips attach here to drive the bones.
     private let skeleton: SCNNode
     private var currentLoco: String = ""
+    private var currentBackpedal = false
     /// Per-player signature so a squad never moves in lockstep: a phase offset
     /// into the loco cycle and a small cadence multiplier, both deterministic.
     private let phase01: CGFloat
@@ -99,8 +100,11 @@ final class SkeletalFigure {
         let sizeJitter = 0.97 + CGFloat(h3) / 65535.0 * 0.06     // 0.97–1.03
         // Stance (0 upright → 1 crouched) sets the frozen idle frame; a small
         // per-player jitter keeps a whole line from holding an identical pose.
-        let stanceJitter = (CGFloat(h4) / 65535.0 - 0.5) * 0.10
-        self.idleFraction = max(0, min(0.48, stance * 0.42 + stanceJitter))
+        let stanceJitter = (CGFloat(h4) / 65535.0 - 0.5) * 0.05
+        // Keep the frozen frame in the SHALLOW part of the "Hold" clip (0 =
+        // upright, ~0.16 = a light athletic crouch). The deeper frames are a
+        // bent-double reach — reads as picking the ball up, not a stance.
+        self.idleFraction = max(0, min(0.17, stance * 0.16 + stanceJitter))
         // A few degrees of facing jitter so the line isn't robotically parallel.
         let facingYaw = Float(CGFloat(h2) / 65535.0 - 0.5) * 0.14   // ±~4°
         guard let url = Self.rigURL,
@@ -183,30 +187,34 @@ final class SkeletalFigure {
     // MARK: Driving
     /// Locomotion: run loop while moving, idle loop at rest. `speed` (yd/s)
     /// scales the run cadence so sprinters cycle faster than joggers.
-    func setMoving(_ moving: Bool, speed: Float) {
-        // Three locomotion tiers: idle at rest, run at pace, sprint when flying.
-        let want = moving ? (speed > 7.2 ? "sprint" : "run") : "idle"
-        if want == currentLoco {
+    /// Locomotion: run/sprint while moving, idle at rest. `backpedal` plays the
+    /// run clip in REVERSE so a QB dropback moves the legs backward instead of
+    /// running forward while sliding back.
+    func setMoving(_ moving: Bool, speed: Float, backpedal: Bool = false) {
+        // A tackled figure holds the ground pose (key "fall"); moving clears it.
+        skeleton.removeAnimation(forKey: "fall", blendOutDuration: 0.15)
+        let want = moving ? (!backpedal && speed > 7.2 ? "sprint" : "run") : "idle"
+        if want == currentLoco, backpedal == currentBackpedal {
             if moving { setRunSpeed(speed) }
             return
         }
         let prev = currentLoco
         currentLoco = want
+        currentBackpedal = backpedal
         // cross into the new loco with a real blend; remove the previous so they
         // don't stack (its fade-out overlaps this one's fade-in = a transition).
-        if !prev.isEmpty { skeleton.removeAnimation(forKey: "loco_\(prev)", blendOutDuration: 0.22) }
+        if !prev.isEmpty { skeleton.removeAnimation(forKey: "loco_\(prev)", blendOutDuration: 0.2) }
         guard let base = Self.clip(want)?.copy() as? CAAnimation else { return }
         base.repeatCount = .infinity
-        base.fadeInDuration = 0.22
-        base.fadeOutDuration = 0.22
+        base.fadeInDuration = 0.2
+        base.fadeOutDuration = 0.2
         if moving {
             base.timeOffset = phase01 * base.duration   // desync the squad's gait
-            base.speed = runSpeedFactor(speed)
+            base.speed = runSpeedFactor(speed) * (backpedal ? -1 : 1)
         } else {
-            // Idle: the Studio Ochi "Hold" clip is a crouch-DOWN cycle — looping
-            // it makes the whole squad squat up and down while waiting. Freeze it
-            // on a per-player frame (idleFraction) so builds/players hold varied
-            // stances — linemen low, skill players upright — instead of one pose.
+            // Idle: the Studio Ochi "Hold" clip is a crouch cycle — looping it
+            // makes the squad squat up and down. Freeze it on a per-player frame
+            // (idleFraction) so builds hold varied stances instead of one pose.
             base.speed = 0
             base.timeOffset = idleFraction * base.duration
         }
@@ -215,23 +223,28 @@ final class SkeletalFigure {
 
     private func setRunSpeed(_ speed: Float) {
         if let anim = skeleton.animationPlayer(forKey: "loco_\(currentLoco)") {
-            anim.speed = CGFloat(runSpeedFactor(speed))
+            anim.speed = CGFloat(runSpeedFactor(speed)) * (currentBackpedal ? -1 : 1)
         }
     }
     private func runSpeedFactor(_ speed: Float) -> Float {
-        // Cadence tracks ground speed (a ~4-yd stride at 0.96s/cycle) so the
-        // feet plant closer to in-place; per-player jitter breaks up lockstep.
-        max(0.65, min(1.9, speed * 0.24)) * cadenceJitter
+        // Cadence tracks ground speed so the feet keep up (less foot-slide) —
+        // a wider cap than before lets fast catch-up runs cycle their legs
+        // instead of gliding. Per-player jitter breaks up lockstep.
+        max(0.7, min(2.4, speed * 0.28)) * cadenceJitter
     }
 
-    /// Fire a one-shot action clip (juke/tackle/...) layered over locomotion.
-    func play(action name: String) {
+    /// Fire a one-shot action clip (catch/tackle/throw…) over the locomotion.
+    /// `delay` starts it later (sync a catch to the ball's arrival); `hold`
+    /// keeps the final frame (a tackled man stays on the turf until he moves).
+    func play(action name: String, delay: TimeInterval = 0, hold: Bool = false) {
         guard let base = Self.clip(name)?.copy() as? CAAnimation else { return }
         base.repeatCount = 1
         base.fadeInDuration = 0.1
-        base.fadeOutDuration = 0.2
-        base.isRemovedOnCompletion = true
-        skeleton.addAnimation(base, forKey: "action")
+        base.fadeOutDuration = hold ? 0 : 0.2
+        base.isRemovedOnCompletion = !hold
+        if hold { base.fillMode = .forwards }
+        if delay > 0 { base.beginTime = CACurrentMediaTime() + delay }
+        skeleton.addAnimation(base, forKey: hold ? "fall" : "action")
     }
 
     // MARK: Helpers

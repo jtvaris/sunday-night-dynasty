@@ -1868,7 +1868,7 @@ class FootballFieldScene: SCNScene {
         // Drive locomotion by skeletal clip instead of the procedural gait, and
         // return the figure to idle when this move ends.
         if let skel = skeletalDriver(for: figure) {
-            skel.setMoving(true, speed: distance / Float(duration))
+            skel.setMoving(true, speed: distance / Float(duration), backpedal: backpedal)
             figure.removeAction(forKey: "skelIdleReset")
             figure.runAction(.sequence([
                 .wait(duration: duration),
@@ -2102,10 +2102,13 @@ class FootballFieldScene: SCNScene {
     /// Both arms shoot up for a beat — catch attempts and pick attempts —
     /// with a small leap at the ball while the arms are up. `turnYaw` turns the
     /// torso toward the incoming ball at the grab (0 = stay square).
-    private func reach(nodeIndex: Int, turnYaw: CGFloat = 0) {
+    private func reach(nodeIndex: Int, turnYaw: CGFloat = 0, arriveIn: TimeInterval = 0) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
-        if let skel = skeletalDriver(for: figure) { skel.play(action: "catch"); return }
+        if let skel = skeletalDriver(for: figure) {
+            skel.play(action: "catch", delay: max(0, arriveIn - 0.4))   // hands up as the ball lands
+            return
+        }
         catchBodyTurn(figure, yaw: turnYaw)
         figure.removeAction(forKey: "hop")
         let hopUp = SCNAction.moveBy(x: 0, y: 0.25, z: 0, duration: 0.22)
@@ -2138,10 +2141,13 @@ class FootballFieldScene: SCNScene {
 
     /// Deep-ball catch: both arms extend up and FORWARD along the run — the
     /// over-the-shoulder basket look — while the stride keeps going.
-    private func overShoulderReach(nodeIndex: Int, turnYaw: CGFloat = 0) {
+    private func overShoulderReach(nodeIndex: Int, turnYaw: CGFloat = 0, arriveIn: TimeInterval = 0) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
-        if let skel = skeletalDriver(for: figure) { skel.play(action: "catch"); return }
+        if let skel = skeletalDriver(for: figure) {
+            skel.play(action: "catch", delay: max(0, arriveIn - 0.4))
+            return
+        }
         catchBodyTurn(figure, yaw: turnYaw, hold: 0.6)
         for name in ["arm", "armR"] {
             guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
@@ -2164,10 +2170,13 @@ class FootballFieldScene: SCNScene {
     /// Full-extension diving catch: the figure launches flat with the arms
     /// out, hits the turf with the ball, and stays stretched out until the
     /// pile forms before climbing up.
-    private func divingCatch(nodeIndex: Int, turnYaw: CGFloat = 0) {
+    private func divingCatch(nodeIndex: Int, turnYaw: CGFloat = 0, arriveIn: TimeInterval = 0) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
-        if let skel = skeletalDriver(for: figure) { skel.play(action: "catch"); return }
+        if let skel = skeletalDriver(for: figure) {
+            skel.play(action: "catch", delay: max(0, arriveIn - 0.4), hold: true)   // lay out + stay down
+            return
+        }
         figure.removeAction(forKey: "gait")
         figure.removeAction(forKey: "hop")
         figure.removeAction(forKey: "stance")
@@ -2200,8 +2209,8 @@ class FootballFieldScene: SCNScene {
 
     /// Sideline grab: the basic reach plus quick alternating toe taps —
     /// both feet down in bounds at the boundary.
-    private func toeTapReach(nodeIndex: Int, turnYaw: CGFloat = 0) {
-        reach(nodeIndex: nodeIndex, turnYaw: turnYaw)
+    private func toeTapReach(nodeIndex: Int, turnYaw: CGFloat = 0, arriveIn: TimeInterval = 0) {
+        reach(nodeIndex: nodeIndex, turnYaw: turnYaw, arriveIn: arriveIn)
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         for (offset, name) in ["leg", "legR"].enumerated() {
@@ -2529,6 +2538,12 @@ class FootballFieldScene: SCNScene {
                       getUpDelay: TimeInterval = 0, style: FallStyle = .forward) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        // Skeletal: the man plays the mocap fall and holds the ground pose until
+        // the next move stands him back up (setMoving clears the "fall" key).
+        if let skel = skeletalDriver(for: figure) {
+            skel.play(action: "tackle", delay: delay, hold: true)
+            return
+        }
         figure.removeAction(forKey: "gait")
         figure.removeAction(forKey: "stance")
         figure.removeAction(forKey: "shove")
@@ -2947,14 +2962,20 @@ class FootballFieldScene: SCNScene {
             }
             return nil
         }()
+        // When the ball is in the air this step, sync the catch to its arrival
+        // (skeletal catch clips fire on a delay so the hands go up as it lands).
+        let arriveIn: TimeInterval = {
+            if case let .arc(_, _, d, _) = step.ballMove { return d }
+            return 0
+        }()
         for index in step.reaches {
             let style = step.catchStyles[index] ?? .reach
             let yaw = catchTurnYaw(nodeIndex: index, style: style, passer: passer)
             switch style {
-            case .reach: reach(nodeIndex: index, turnYaw: yaw)
-            case .overShoulder: overShoulderReach(nodeIndex: index, turnYaw: yaw)
-            case .dive: divingCatch(nodeIndex: index, turnYaw: yaw)
-            case .toeTap: toeTapReach(nodeIndex: index, turnYaw: yaw)
+            case .reach: reach(nodeIndex: index, turnYaw: yaw, arriveIn: arriveIn)
+            case .overShoulder: overShoulderReach(nodeIndex: index, turnYaw: yaw, arriveIn: arriveIn)
+            case .dive: divingCatch(nodeIndex: index, turnYaw: yaw, arriveIn: arriveIn)
+            case .toeTap: toeTapReach(nodeIndex: index, turnYaw: yaw, arriveIn: arriveIn)
             }
         }
         for index in step.celebrates { celebrationJump(nodeIndex: index) }
