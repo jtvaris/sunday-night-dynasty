@@ -4580,18 +4580,19 @@ class FootballFieldScene: SCNScene {
         container.addChildNode(shadow)
 
         let skin = Self.skinTones[number % Self.skinTones.count]
-        // Size by build so linemen read bigger than skill players.
-        let bodyScale: CGFloat
+        // Size + pre-snap stance by build: linemen bigger and crouched low,
+        // skill players leaner and more upright.
+        let bodyScale: CGFloat, stance: CGFloat
         switch bodyType {
-        case .heavy:  bodyScale = 1.07
-        case .medium: bodyScale = 1.0
-        case .lean:   bodyScale = 0.95
+        case .heavy:  bodyScale = 1.07; stance = 0.95
+        case .medium: bodyScale = 1.0;  stance = 0.40
+        case .lean:   bodyScale = 0.95; stance = 0.0
         }
         if FieldConstants.useSkeletalFigures,
            let skel = SkeletalFigure(jersey: uniform.jersey, pants: uniform.pants,
                                      helmet: uniform.helmet, skin: skin,
                                      mask: uniform.facemask ?? Self.facemaskGray,
-                                     variantSeed: number, bodyScale: bodyScale) {
+                                     variantSeed: number, bodyScale: bodyScale, stance: stance) {
             // Skinned-mesh path: the rig is pre-proportioned, so drop the kit
             // figure's stocky non-uniform scale and let the driver pose it.
             figure.scale = SCNVector3(1, 1, 1)

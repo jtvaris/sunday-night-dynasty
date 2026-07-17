@@ -79,20 +79,30 @@ final class SkeletalFigure {
     /// into the loco cycle and a small cadence multiplier, both deterministic.
     private let phase01: CGFloat
     private let cadenceJitter: Float
+    /// Which frame of the "Hold" clip to freeze on for the pre-snap idle
+    /// (0 = upright, ~0.45 = deep crouch) — varies the stance by build + player.
+    private let idleFraction: CGFloat
 
     /// Builds one skinned player. `variantSeed` (e.g. jersey number) gives each
     /// player a stable, distinct gait phase, cadence + a touch of size variation;
     /// `bodyScale` sizes by position (linemen bigger, skill players leaner).
     /// Returns nil if the rig asset is missing, so callers can fall back.
     init?(jersey: UIColor, pants: UIColor, helmet: UIColor, skin: UIColor, mask: UIColor,
-          variantSeed: Int = 0, bodyScale: CGFloat = 1.0) {
+          variantSeed: Int = 0, bodyScale: CGFloat = 1.0, stance: CGFloat = 0) {
         // Deterministic 0..1 hashes from the seed (no RNG — stable per player).
         let h1 = (variantSeed &* 2654435761) & 0xffff
         let h2 = (variantSeed &* 40503 &+ 12345) & 0xffff
         let h3 = (variantSeed &* 2246822519 &+ 374761) & 0xffff
+        let h4 = (variantSeed &* 3266489917 &+ 668265263) & 0xffff
         self.phase01 = CGFloat(h1) / 65535.0
         self.cadenceJitter = 0.92 + Float(h2) / 65535.0 * 0.16   // 0.92–1.08
         let sizeJitter = 0.97 + CGFloat(h3) / 65535.0 * 0.06     // 0.97–1.03
+        // Stance (0 upright → 1 crouched) sets the frozen idle frame; a small
+        // per-player jitter keeps a whole line from holding an identical pose.
+        let stanceJitter = (CGFloat(h4) / 65535.0 - 0.5) * 0.10
+        self.idleFraction = max(0, min(0.48, stance * 0.42 + stanceJitter))
+        // A few degrees of facing jitter so the line isn't robotically parallel.
+        let facingYaw = Float(CGFloat(h2) / 65535.0 - 0.5) * 0.14   // ±~4°
         guard let url = Self.rigURL,
               let scene = try? SCNScene(url: url, options: [.convertToYUp: false]),
               let skinnerNode = Self.firstNode(in: scene.rootNode, where: { $0.skinner != nil }),
@@ -118,6 +128,7 @@ final class SkeletalFigure {
         let s = Self.scale * bodyScale * sizeJitter
         wrapper.scale = SCNVector3(s, s, s)
         wrapper.position = SCNVector3(0, Self.yOffset, 0)
+        wrapper.eulerAngles = SCNVector3(0, facingYaw, 0)   // slight per-player facing
         wrapper.addChildNode(face)
 
         self.content = wrapper
@@ -194,9 +205,10 @@ final class SkeletalFigure {
         } else {
             // Idle: the Studio Ochi "Hold" clip is a crouch-DOWN cycle — looping
             // it makes the whole squad squat up and down while waiting. Freeze it
-            // on the upright first frame so they just stand at the ready.
+            // on a per-player frame (idleFraction) so builds/players hold varied
+            // stances — linemen low, skill players upright — instead of one pose.
             base.speed = 0
-            base.timeOffset = 0
+            base.timeOffset = idleFraction * base.duration
         }
         skeleton.addAnimation(base, forKey: "loco_\(want)")
     }
