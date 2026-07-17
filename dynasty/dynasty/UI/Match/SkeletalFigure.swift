@@ -34,9 +34,10 @@ final class SkeletalFigure {
     private static var cachedRigURL: URL?? = nil
     private static var clipCache: [String: CAAnimation] = [:]
 
-    /// The clip names shipped in Resources (PlayerClip_<name>.usdc). juke has no
-    /// Studio Ochi equivalent (no-op); the rest map to the pack's football mocap.
-    static let clipNames = ["run", "idle", "sprint", "tackle", "throw", "catch", "kick"]
+    /// The clip names shipped in Resources (PlayerClip_<name>.usdc). Most map to
+    /// the Studio Ochi football mocap; `juke` is a Mixamo dodge retargeted onto
+    /// the same Metarig (tools/asset-pipeline/mixamo_retarget.py).
+    static let clipNames = ["run", "idle", "sprint", "tackle", "throw", "catch", "kick", "juke"]
 
     /// Whether the rig asset is present — the scene uses this to decide if the
     /// skeletal path is even available before flipping figures over.
