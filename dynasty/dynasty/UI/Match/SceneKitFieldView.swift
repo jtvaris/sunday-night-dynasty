@@ -33,10 +33,13 @@ struct SceneKitFieldView: UIViewRepresentable {
         scnView.antialiasingMode = .multisampling4X
         scnView.autoenablesDefaultLighting = false
         scnView.showsStatistics = false
+        // The render delegate drives the per-frame foot-lock IK (and, in DEBUG,
+        // perf instrumentation). Always installed so foot-lock runs in Release.
+        context.coordinator.scene = scene
+        scnView.delegate = context.coordinator
         #if DEBUG
         if let perfTag {
             context.coordinator.tag = perfTag
-            scnView.delegate = context.coordinator
             PerfLog.lap("\(perfTag)_makeview_done", sinceMark: perfTag)
         }
         #endif
@@ -52,6 +55,17 @@ struct SceneKitFieldView: UIViewRepresentable {
     // MARK: Coordinator (R39 DEBUG render instrumentation)
 
     final class Coordinator: NSObject, SCNSceneRendererDelegate {
+        /// The live scene, so the render loop can drive per-frame foot-lock IK.
+        weak var scene: FootballFieldScene?
+
+        /// After the clip poses the skeleton (animations applied) but before
+        /// constraints resolve, pin each running figure's planted foot to the
+        /// turf. This is the hook where the animated foot height reads clean for
+        /// plant detection.
+        func renderer(_ renderer: SCNSceneRenderer, didApplyAnimationsAtTime time: TimeInterval) {
+            scene?.updateFootLocks(atTime: time)
+        }
+
         #if DEBUG
         var tag: String = "scene"
         private var firstFrameReported = false

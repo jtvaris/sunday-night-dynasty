@@ -74,15 +74,54 @@ final class SkeletalFigure {
     let content: SCNNode
     /// The skinner.skeleton node — clips attach here to drive the bones.
     private let skeleton: SCNNode
-    private var currentLoco: String = ""
-    private var currentBackpedal = false
-    /// Per-player signature so a squad never moves in lockstep: a phase offset
-    /// into the loco cycle and a small cadence multiplier, both deterministic.
+
+    /// Locomotion state machine. A single "run" clip covers every forward speed
+    /// via stride-sync (playback matched to ground travel); backpedal reverse-
+    /// plays it; idle freezes it. `nil` until the first setMoving so the initial
+    /// idle is always applied.
+    private enum Loco: Equatable { case idle, run, backpedal }
+    private var loco: Loco? = nil
+
+    /// Per-player phase offset into the loco cycle so a squad never steps in
+    /// lockstep. NOTE: we deliberately do NOT jitter the cadence (speed) — that
+    /// would desync the feet from ground travel and reintroduce foot-slide.
+    /// Only the phase is jittered; the cadence is exact.
     private let phase01: CGFloat
-    private let cadenceJitter: Float
+    /// Total on-screen scale of the rig (Self.scale · bodyScale · sizeJitter).
+    /// Converts the clip's native stride speed to world units so playback can be
+    /// matched to ground speed. See `locoClipSpeed`.
+    private let figureScale: CGFloat
     /// Which frame of the "Hold" clip to freeze on for the pre-snap idle
     /// (0 = upright, ~0.45 = deep crouch) — varies the stance by build + player.
     private let idleFraction: CGFloat
+
+    /// The run clip's measured "treadmill speed": native units/sec of ground the
+    /// planted-foot stride covers at clip speed 1.0. Measured headless with
+    /// scratchpad/rig_inspect.swift (integrate the planted foot's backward travel
+    /// over the clip ÷ duration → 3.716 u/s over ~8 cycles). worldStrideSpeed =
+    /// runV0 · figureScale; clipSpeed = groundSpeed / worldStrideSpeed.
+    private static let runV0: Float = 3.716
+
+    // MARK: Foot-lock IK
+    /// Clip-speed matching alone leaves a ~44% residual foot-slide (a run has
+    /// flight phases, so the planted foot's backward speed ≠ the cycle average —
+    /// measured in scratchpad/slide_test.swift). True foot-lock pins each planted
+    /// foot to its contact point in world space with an `SCNIKConstraint` while
+    /// the body moves over it, then releases for the swing. Driven per-frame from
+    /// the scene's `didApplyAnimationsAtTime` hook (pose is animated, constraints
+    /// not yet applied — so the animated foot height reads clean for plant
+    /// detection). Verified in scratchpad/ik_test.swift: foot holds within ~1 cm.
+    private struct FootLock {
+        let bone: SCNNode          // ankle (IK effector)
+        let ik: SCNIKConstraint
+        var planted = false
+        var lockPos = SCNVector3Zero
+        var influence: Float = 0
+        var minY: Float = .greatestFiniteMagnitude   // adaptive contact band
+        var maxY: Float = -.greatestFiniteMagnitude
+    }
+    private var feet: [FootLock] = []
+    private var lastLockTime: TimeInterval = 0
 
     /// Builds one skinned player. `variantSeed` (e.g. jersey number) gives each
     /// player a stable, distinct gait phase, cadence + a touch of size variation;
@@ -96,7 +135,6 @@ final class SkeletalFigure {
         let h3 = (variantSeed &* 2246822519 &+ 374761) & 0xffff
         let h4 = (variantSeed &* 3266489917 &+ 668265263) & 0xffff
         self.phase01 = CGFloat(h1) / 65535.0
-        self.cadenceJitter = 0.92 + Float(h2) / 65535.0 * 0.16   // 0.92–1.08
         let sizeJitter = 0.97 + CGFloat(h3) / 65535.0 * 0.06     // 0.97–1.03
         // Stance (0 upright → 1 crouched) sets the frozen idle frame; a small
         // per-player jitter keeps a whole line from holding an identical pose.
@@ -137,7 +175,9 @@ final class SkeletalFigure {
 
         self.content = wrapper
         self.skeleton = skel
+        self.figureScale = s
         applyUniform(jersey: jersey)
+        setupFootLocks()
         setMoving(false, speed: 0)   // idle by default
     }
 
@@ -185,32 +225,33 @@ final class SkeletalFigure {
     }
 
     // MARK: Driving
-    /// Locomotion: run loop while moving, idle loop at rest. `speed` (yd/s)
-    /// scales the run cadence so sprinters cycle faster than joggers.
-    /// Locomotion: run/sprint while moving, idle at rest. `backpedal` plays the
-    /// run clip in REVERSE so a QB dropback moves the legs backward instead of
-    /// running forward while sliding back.
+    private func clipName(for l: Loco) -> String { l == .idle ? "idle" : "run" }
+    private func animKey(for l: Loco) -> String { "loco_\(l)" }
+
+    /// Locomotion state machine. Forward motion (`run`) and backpedal both use the
+    /// one run clip; idle freezes the "Hold" pose. Playback is stride-synced to
+    /// ground speed so the feet track the turf instead of sliding, and state
+    /// changes cross-fade. `speed` is world yd/s (the container's ground speed).
     func setMoving(_ moving: Bool, speed: Float, backpedal: Bool = false) {
         // A tackled figure holds the ground pose (key "fall"); moving clears it.
         skeleton.removeAnimation(forKey: "fall", blendOutDuration: 0.15)
-        let want = moving ? (!backpedal && speed > 7.2 ? "sprint" : "run") : "idle"
-        if want == currentLoco, backpedal == currentBackpedal {
-            if moving { setRunSpeed(speed) }
+        let want: Loco = moving ? (backpedal ? .backpedal : .run) : .idle
+        if let cur = loco, cur == want {
+            if moving { setLocoSpeed(speed) }
             return
         }
-        let prev = currentLoco
-        currentLoco = want
-        currentBackpedal = backpedal
-        // cross into the new loco with a real blend; remove the previous so they
+        let prev = loco
+        loco = want
+        // Cross into the new state with a real blend; remove the previous so they
         // don't stack (its fade-out overlaps this one's fade-in = a transition).
-        if !prev.isEmpty { skeleton.removeAnimation(forKey: "loco_\(prev)", blendOutDuration: 0.2) }
-        guard let base = Self.clip(want)?.copy() as? CAAnimation else { return }
+        if let prev = prev { skeleton.removeAnimation(forKey: animKey(for: prev), blendOutDuration: 0.2) }
+        guard let base = Self.clip(clipName(for: want))?.copy() as? CAAnimation else { return }
         base.repeatCount = .infinity
         base.fadeInDuration = 0.2
         base.fadeOutDuration = 0.2
         if moving {
-            base.timeOffset = phase01 * base.duration   // desync the squad's gait
-            base.speed = runSpeedFactor(speed) * (backpedal ? -1 : 1)
+            base.timeOffset = phase01 * base.duration   // desync the squad's gait phase
+            base.speed = locoClipSpeed(speed, backpedal: backpedal)
         } else {
             // Idle: the Studio Ochi "Hold" clip is a crouch cycle — looping it
             // makes the squad squat up and down. Freeze it on a per-player frame
@@ -218,19 +259,100 @@ final class SkeletalFigure {
             base.speed = 0
             base.timeOffset = idleFraction * base.duration
         }
-        skeleton.addAnimation(base, forKey: "loco_\(want)")
+        skeleton.addAnimation(base, forKey: animKey(for: want))
     }
 
-    private func setRunSpeed(_ speed: Float) {
-        if let anim = skeleton.animationPlayer(forKey: "loco_\(currentLoco)") {
-            anim.speed = CGFloat(runSpeedFactor(speed)) * (currentBackpedal ? -1 : 1)
+    private func setLocoSpeed(_ speed: Float) {
+        guard let cur = loco, let anim = skeleton.animationPlayer(forKey: animKey(for: cur)) else { return }
+        anim.speed = CGFloat(locoClipSpeed(speed, backpedal: cur == .backpedal))
+    }
+
+    /// Playback rate that matches the planted-foot cadence to ground travel, so
+    /// the feet plant on the turf instead of skating: clipSpeed = groundSpeed ÷
+    /// worldStrideSpeed, where worldStrideSpeed = runV0 · figureScale. This is the
+    /// core foot-slide fix — one exact ratio holds at every speed (the old
+    /// `speed·0.28` guess plus a [0.7,2.4] clamp both mismatched and skated).
+    /// Backpedal reverse-plays the clip (negative) so the legs drive backward.
+    private func locoClipSpeed(_ groundSpeed: Float, backpedal: Bool) -> Float {
+        let worldStride = Self.runV0 * Float(figureScale)
+        let k = max(0.35, min(3.0, groundSpeed / max(0.01, worldStride)))
+        return backpedal ? -k : k
+    }
+
+    // MARK: Foot-lock IK
+    /// Attach an `SCNIKConstraint` to each ankle (chain root = thigh → a 2-bone
+    /// thigh/shin chain). Influence starts at 0; `updateFootLock` ramps it while a
+    /// foot is planted.
+    private func setupFootLocks() {
+        func bone(_ n: String) -> SCNNode? {
+            Self.firstNode(in: skeleton, where: { ($0.name ?? "").lowercased() == n })
+        }
+        for (t, ft) in [("thigh_l", "foot_l"), ("thigh_r", "foot_r")] {
+            guard let thigh = bone(t), let foot = bone(ft) else { continue }
+            let ik = SCNIKConstraint(chainRootNode: thigh)   // 2-bone chain: thigh → shin → foot
+            ik.influenceFactor = 0
+            foot.constraints = [ik]
+            feet.append(FootLock(bone: foot, ik: ik))
         }
     }
-    private func runSpeedFactor(_ speed: Float) -> Float {
-        // Cadence tracks ground speed so the feet keep up (less foot-slide) —
-        // a wider cap than before lets fast catch-up runs cycle their legs
-        // instead of gliding. Per-player jitter breaks up lockstep.
-        max(0.7, min(2.4, speed * 0.28)) * cadenceJitter
+
+    /// Per-frame foot-lock. Call from the renderer's `didApplyAnimationsAtTime`
+    /// so the animated (pre-constraint) foot height reads clean. Only engages
+    /// while running/backpedaling; idle and one-shot actions keep the feet free.
+    ///
+    /// Proximity-damped design (pop-free by construction): on contact the foot
+    /// pins to its landing point at full strength; as the body carries the
+    /// animated foot away from that point, the lock strength fades with the
+    /// divergence and is fully released before the foot has drifted far. So the
+    /// IK cancels the slide over the first, most-visible part of the stance and
+    /// then hands smoothly back to the swing — it can only ever *reduce* motion,
+    /// never yank the foot to a far target (which is what would read as a pop).
+    func updateFootLock(atTime time: TimeInterval) {
+        guard !feet.isEmpty else { return }
+        let dt: Float = lastLockTime > 0 ? Float(min(0.1, max(0.001, time - lastLockTime))) : 1.0 / 60
+        lastLockTime = time
+        let active = (loco == .run || loco == .backpedal)
+        let ampGate = 0.06 * Float(figureScale)      // need real gait amplitude before locking
+        let maxDrift = 0.34 * Float(figureScale)     // lock strength reaches 0 by this divergence
+
+        for i in feet.indices {
+            var f = feet[i]
+            let p = f.bone.presentation.worldPosition
+            let y = p.y
+            // adaptive contact band: chase the observed min/max, relaxing slowly
+            f.minY = min(f.minY, y) + (y > f.minY ? (y - f.minY) * 0.003 : 0)
+            f.maxY = max(f.maxY, y) + (y < f.maxY ? (y - f.maxY) * 0.003 : 0)
+            let range = f.maxY - f.minY
+            let plantThresh = f.minY + 0.20 * range
+            let releaseThresh = f.minY + 0.48 * range
+
+            var target: Float = 0
+            if active && range > ampGate {
+                if !f.planted {
+                    if y < plantThresh { f.planted = true; f.lockPos = p }   // landing point
+                } else if y > releaseThresh {
+                    f.planted = false                                        // foot has lifted
+                }
+                if f.planted {
+                    // strength fades with how far the animated foot has diverged
+                    // from the landing point — full lock at contact, smooth handoff.
+                    let dx = p.x - f.lockPos.x, dy = p.y - f.lockPos.y, dz = p.z - f.lockPos.z
+                    let drift = (dx * dx + dy * dy + dz * dz).squareRoot()
+                    target = max(0, 1 - drift / maxDrift)
+                }
+            } else {
+                f.planted = false
+            }
+
+            // ramp toward the target strength (smooths engage + the last handoff)
+            let rate: Float = 20
+            if f.influence < target { f.influence = min(target, f.influence + rate * dt) }
+            else { f.influence = max(target, f.influence - rate * dt) }
+
+            if f.influence > 0.001 { f.ik.targetPosition = f.lockPos }
+            f.ik.influenceFactor = CGFloat(f.influence)
+            feet[i] = f
+        }
     }
 
     /// Fire a one-shot action clip (catch/tackle/throw…) over the locomotion.

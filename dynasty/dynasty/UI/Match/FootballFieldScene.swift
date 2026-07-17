@@ -4715,6 +4715,16 @@ class FootballFieldScene: SCNScene {
         skeletalFigures[ObjectIdentifier(figure)]
     }
 
+    /// Per-frame foot-lock IK tick, called from the SCNView's render delegate
+    /// (`didApplyAnimationsAtTime`) so each running figure's planted foot pins to
+    /// the turf instead of sliding. Cheap: two short IK chains per skeletal
+    /// figure, only engaged while a foot is in contact. Runs on the main thread
+    /// (SCNView drives its render loop there), so iterating the dict is safe.
+    func updateFootLocks(atTime time: TimeInterval) {
+        guard !skeletalFigures.isEmpty else { return }
+        for fig in skeletalFigures.values { fig.updateFootLock(atTime: time) }
+    }
+
     private func makePlayerNode(uniform: Uniform, number: Int,
                                 bodyType: BodyType = .medium) -> SCNNode {
         let container = SCNNode()
