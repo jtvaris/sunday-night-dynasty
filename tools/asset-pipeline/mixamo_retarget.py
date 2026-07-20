@@ -96,8 +96,14 @@ for f in range(fs, fe + 1):
         loc = tb.matrix.to_translation()                    # keep translation (follows parent)
         desired_w4 = Matrix.Translation(ochi.matrix_world @ loc) @ desired_w3.to_4x4()
         tb.matrix = ochi_wi @ desired_w4
-        bpy.context.view_layer.update()                     # children read updated parent
+        # Keyframe BEFORE the depsgraph update. Updating first re-evaluates the
+        # armature from the keyframes inserted so far; a bone not yet keyframed at
+        # this frame would snap back to frame 1's value and that stale value would
+        # be captured — which silently made every retarget static. Keyframe first
+        # so the update sees this frame's key and keeps it (and children still read
+        # the updated parent, since the parent was keyframed earlier this pass).
         tb.keyframe_insert('rotation_quaternion', frame=f)
+        bpy.context.view_layer.update()                     # children read updated parent
     if WITH_ROOT:
         hips_w = (mix.matrix_world @ mix.pose.bones["mixamorig:Hips"].matrix).to_translation()
         root = ochi.pose.bones["spine"]
@@ -105,8 +111,18 @@ for f in range(fs, fe + 1):
         disp = (hips_w - hips_rest_w)
         target_w = spine_rest_w + disp
         root.matrix = ochi_wi @ (Matrix.Translation(target_w) @ root.matrix.to_3x3().to_4x4())
+        root.keyframe_insert('location', frame=f)           # keyframe before update (see above)
         bpy.context.view_layer.update()
-        root.keyframe_insert('location', frame=f)
+
+# CRITICAL: drop the Mixamo source armature before export. It still carries its
+# original animation on the mixamorig skeleton; if it ships in the USD, the
+# loader (and the game) pick up the FIRST animated node — the Mixamo one — whose
+# bone names don't match PlayerRig's Metarig, so nothing drives and the clip
+# reads as static. Export only the Ochi Metarig (with the baked animation) + mesh.
+mix_data = mix.data
+bpy.data.objects.remove(mix, do_unlink=True)
+if mix_data.users == 0:
+    bpy.data.armatures.remove(mix_data)
 
 # --- normalize height to game size, name the action, export USDC ---
 zs = []
