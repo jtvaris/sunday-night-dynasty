@@ -37,7 +37,7 @@ final class SkeletalFigure {
     /// The clip names shipped in Resources (PlayerClip_<name>.usdc). Most map to
     /// the Studio Ochi football mocap; `juke` is a Mixamo dodge retargeted onto
     /// the same Metarig (tools/asset-pipeline/mixamo_retarget.py).
-    static let clipNames = ["run", "idle", "sprint", "tackle", "throw", "catch", "kick", "juke"]
+    static let clipNames = ["run", "idle", "sprint", "tackle", "throw", "catch", "kick", "juke", "backpedal"]
 
     /// Whether the rig asset is present — the scene uses this to decide if the
     /// skeletal path is even available before flipping figures over.
@@ -102,6 +102,10 @@ final class SkeletalFigure {
     /// over the clip ÷ duration → 3.716 u/s over ~8 cycles). worldStrideSpeed =
     /// runV0 · figureScale; clipSpeed = groundSpeed / worldStrideSpeed.
     private static let runV0: Float = 3.716
+    /// The dedicated backpedal clip's treadmill speed (native units/sec), measured
+    /// the same way (scratchpad/measure_v0.swift). Slower than the run — backpedal
+    /// steps are short and choppy — so it needs its own stride-sync factor.
+    private static let backpedalV0: Float = 1.249
 
     // MARK: Foot-lock IK
     /// Clip-speed matching alone leaves a ~44% residual foot-slide (a run has
@@ -226,7 +230,13 @@ final class SkeletalFigure {
     }
 
     // MARK: Driving
-    private func clipName(for l: Loco) -> String { l == .idle ? "idle" : "run" }
+    private func clipName(for l: Loco) -> String {
+        switch l {
+        case .idle: return "idle"
+        case .run: return "run"
+        case .backpedal: return "backpedal"   // real Mixamo backpedal (Rokoko-retargeted)
+        }
+    }
     private func animKey(for l: Loco) -> String { "loco_\(l)" }
 
     /// Locomotion state machine. Forward motion (`run`) and backpedal both use the
@@ -270,14 +280,16 @@ final class SkeletalFigure {
 
     /// Playback rate that matches the planted-foot cadence to ground travel, so
     /// the feet plant on the turf instead of skating: clipSpeed = groundSpeed ÷
-    /// worldStrideSpeed, where worldStrideSpeed = runV0 · figureScale. This is the
+    /// worldStrideSpeed, where worldStrideSpeed = V0 · figureScale. This is the
     /// core foot-slide fix — one exact ratio holds at every speed (the old
     /// `speed·0.28` guess plus a [0.7,2.4] clamp both mismatched and skated).
-    /// Backpedal reverse-plays the clip (negative) so the legs drive backward.
+    /// Both run and the dedicated backpedal clip already carry the legs in their
+    /// travel direction, so both play FORWARD (positive) — the container supplies
+    /// the world movement; foot-lock IK absorbs any residual cadence mismatch.
     private func locoClipSpeed(_ groundSpeed: Float, backpedal: Bool) -> Float {
-        let worldStride = Self.runV0 * Float(figureScale)
-        let k = max(0.35, min(3.0, groundSpeed / max(0.01, worldStride)))
-        return backpedal ? -k : k
+        let v0 = backpedal ? Self.backpedalV0 : Self.runV0
+        let worldStride = v0 * Float(figureScale)
+        return max(0.35, min(3.0, groundSpeed / max(0.01, worldStride)))
     }
 
     // MARK: Foot-lock IK
