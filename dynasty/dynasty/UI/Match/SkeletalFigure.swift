@@ -37,7 +37,16 @@ final class SkeletalFigure {
     /// The clip names shipped in Resources (PlayerClip_<name>.usdc). Most map to
     /// the Studio Ochi football mocap; `juke` is a Mixamo dodge retargeted onto
     /// the same Metarig (tools/asset-pipeline/mixamo_retarget.py).
-    static let clipNames = ["run", "idle", "sprint", "tackle", "throw", "catch", "kick", "juke", "backpedal"]
+    static let clipNames = ["run", "idle", "sprint", "tackle", "throw", "catch", "kick", "juke", "backpedal", "celebrate"]
+
+    /// One-shot action clips retargeted from Mixamo carry a long lead-in/hold
+    /// (throw 7.7s, tackle 5s, celebrate 4.5s) around a brief action beat; played
+    /// at natural speed they drag. Compress each to a target on-screen duration so
+    /// the beat lands in a football-appropriate window. Clips not listed play at
+    /// natural speed (e.g. the Ochi kick).
+    private static let actionTargetDuration: [String: TimeInterval] = [
+        "throw": 2.2, "catch": 1.6, "tackle": 2.2, "juke": 0.75, "celebrate": 3.0,
+    ]
 
     /// Whether the rig asset is present — the scene uses this to decide if the
     /// skeletal path is even available before flipping figures over.
@@ -374,6 +383,10 @@ final class SkeletalFigure {
     func play(action name: String, delay: TimeInterval = 0, hold: Bool = false) {
         guard let base = Self.clip(name)?.copy() as? CAAnimation else { return }
         base.repeatCount = 1
+        // Compress long retargeted clips to a football-appropriate beat length.
+        if let target = Self.actionTargetDuration[name], base.duration > 0.01 {
+            base.speed = Float(base.duration / target)
+        }
         base.fadeInDuration = 0.1
         base.fadeOutDuration = hold ? 0 : 0.2
         base.isRemovedOnCompletion = !hold

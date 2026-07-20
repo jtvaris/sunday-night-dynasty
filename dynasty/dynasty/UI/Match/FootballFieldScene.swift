@@ -2673,6 +2673,12 @@ class FootballFieldScene: SCNScene {
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         figure.removeAction(forKey: "gait")
         figure.removeAction(forKey: "hop")
+        // Skeletal path: play the retargeted Victory celebration clip.
+        if let skel = skeletalDriver(for: figure) {
+            skel.setMoving(false, speed: 0)
+            skel.play(action: "celebrate")
+            return
+        }
         let up = SCNAction.moveBy(x: 0, y: 0.85, z: 0, duration: 0.3)
         up.timingMode = .easeOut
         let down = SCNAction.moveBy(x: 0, y: -0.85, z: 0, duration: 0.32)
