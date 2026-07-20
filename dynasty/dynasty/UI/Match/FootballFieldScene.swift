@@ -2107,7 +2107,7 @@ class FootballFieldScene: SCNScene {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         if let skel = skeletalDriver(for: figure) {
-            skel.play(action: "catch", delay: max(0, arriveIn - 0.4))   // hands up as the ball lands
+            skel.play(action: "catch", delay: max(0, arriveIn - 0.59))   // hands up as the ball lands
             return
         }
         catchBodyTurn(figure, yaw: turnYaw)
@@ -2146,7 +2146,7 @@ class FootballFieldScene: SCNScene {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         if let skel = skeletalDriver(for: figure) {
-            skel.play(action: "catch", delay: max(0, arriveIn - 0.4))
+            skel.play(action: "catch", delay: max(0, arriveIn - 0.59))
             return
         }
         catchBodyTurn(figure, yaw: turnYaw, hold: 0.6)
@@ -2175,7 +2175,7 @@ class FootballFieldScene: SCNScene {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         if let skel = skeletalDriver(for: figure) {
-            skel.play(action: "catch", delay: max(0, arriveIn - 0.4), hold: true)   // lay out + stay down
+            skel.play(action: "catch", delay: max(0, arriveIn - 0.59), hold: true)   // lay out + stay down
             return
         }
         figure.removeAction(forKey: "gait")
