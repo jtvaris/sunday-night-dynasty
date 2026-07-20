@@ -91,8 +91,17 @@ for f in range(fs, fe + 1):
     scene.frame_set(f)
     for sb, tb, src_rest_w, tgt_rest_w, _ in pairs:
         src_cur_w = (mix.matrix_world @ sb.matrix).to_3x3()
-        delta = src_cur_w @ src_rest_w.inverted()          # world rotation delta from rest
-        desired_w3 = delta @ tgt_rest_w                     # apply to target's rest orientation
+        # World rotation delta from rest, applied to the target's rest orientation.
+        # Correct for bones whose rest matches across the two rigs (legs, spine,
+        # hips) — which covers the clips this pipeline is actually used for
+        # (backpedal, juke, jog). It DAMPS arm motion where the rests differ a lot
+        # (Mixamo T-pose arms vs Ochi A-pose arms): a source arm swinging up from
+        # horizontal becomes the target arm swinging up from down and only reaches
+        # chest. Arm-driven clips (throw, catch) come from the Ochi pack instead;
+        # a proper T-pose→A-pose arm retarget would need per-bone roll alignment
+        # (a real retargeting addon), tracked as future work.
+        delta = src_cur_w @ src_rest_w.inverted()
+        desired_w3 = delta @ tgt_rest_w
         loc = tb.matrix.to_translation()                    # keep translation (follows parent)
         desired_w4 = Matrix.Translation(ochi.matrix_world @ loc) @ desired_w3.to_4x4()
         tb.matrix = ochi_wi @ desired_w4
