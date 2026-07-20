@@ -684,8 +684,13 @@ class FootballFieldScene: SCNScene {
                 var delta = atan2(dx, dz) - node.eulerAngles.y
                 while delta > .pi { delta -= 2 * .pi }
                 while delta < -.pi { delta += 2 * .pi }
-                if abs(delta) < 1.25 {
-                    let target = max(-0.5, min(0.5, delta))
+                // Only a small glance, and only when the ball is already close to
+                // straight ahead. A wider turn made wide players (esp. offense
+                // receivers) square up to the ball at the center instead of
+                // holding their assignment down the field — which read as facing
+                // the wrong way.
+                if abs(delta) < 0.8 {
+                    let target = max(-0.2, min(0.2, delta))
                     let turn = target - figure.eulerAngles.y
                     if abs(turn) > 0.12 {
                         let watch = SCNAction.rotateBy(x: 0, y: CGFloat(turn), z: 0,
