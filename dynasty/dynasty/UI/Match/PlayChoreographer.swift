@@ -800,7 +800,7 @@ struct PlayChoreographer {
                                     x: Float, z: Float) -> [Move] {
         gang.enumerated().map { offset, idx in
             (nodeIndex: idx,
-             to: player(x + (offset == 0 ? 0.9 : -0.9), z - c.direction * 0.6),
+             to: player(x + (offset == 0 ? 0.5 : -0.5), z - c.direction * 0.25),
              duration: 0.45)
         }
     }
@@ -1606,7 +1606,7 @@ struct PlayChoreographer {
             return [Step(
                 moves: [
                     (nodeIndex: carrier, to: player(x, backZ), duration: 0.3),
-                    (nodeIndex: tackler, to: player(x + 0.3, backZ + c.direction * 0.7), duration: 0.3),
+                    (nodeIndex: tackler, to: player(x + 0.3, backZ + c.direction * 0.3), duration: 0.3),
                 ] + pileOnMoves(c, gang: gang, x: x, z: backZ),
                 ballMove: .carry(nodeIndex: carrier),
                 duration: 1.4,
@@ -1616,15 +1616,16 @@ struct PlayChoreographer {
             )]
         }
 
-        // DRAG-DOWN from behind on a breakaway: both slide forward together.
+        // DRAG-DOWN from behind on a breakaway: the tackler hauls the carrier
+        // DOWN at the spot. The carrier is ARRESTED here (no forward slide — an
+        // in-place hold-pose that slid forward read as "he keeps running through
+        // the tackle"); the tackler drives in onto him from behind.
         if gain >= 12, roll < 0.6 {
-            let slideZ = clampZ(z + c.direction * 0.9)
-            let gang = gangTacklers(c, x: x, z: slideZ, excluding: [tackler])
+            let gang = gangTacklers(c, x: x, z: z, excluding: [tackler])
             return [Step(
                 moves: [
-                    (nodeIndex: carrier, to: player(x, slideZ), duration: 0.45),
-                    (nodeIndex: tackler, to: player(x + 0.25, slideZ - c.direction * 0.6), duration: 0.45),
-                ] + pileOnMoves(c, gang: gang, x: x, z: slideZ),
+                    (nodeIndex: tackler, to: player(x + 0.25, z - c.direction * 0.2), duration: 0.4),
+                ] + pileOnMoves(c, gang: gang, x: x, z: z),
                 ballMove: .carry(nodeIndex: carrier),
                 duration: 1.4,
                 pulses: [tackler],
@@ -1640,7 +1641,7 @@ struct PlayChoreographer {
             let gang = gangTacklers(c, x: x, z: z, excluding: [tackler])
             return [Step(
                 moves: [(nodeIndex: tackler,
-                         to: player(x + 0.3, z - c.direction * 0.4), duration: 0.25)]
+                         to: player(x + 0.2, z), duration: 0.25)]
                     + pileOnMoves(c, gang: gang, x: x, z: z),
                 ballMove: .carry(nodeIndex: carrier),
                 duration: 1.3,
@@ -1655,13 +1656,11 @@ struct PlayChoreographer {
         // carrier's legs are cut out and he stumbles forward onto the turf.
         // Quicker, smaller defenders throw it more than heavy linemen do.
         if gain <= 8, approach <= 12, roll2 < 0.24 + (1 - size) * 0.18 {
-            let tripZ = clampZ(z + c.direction * 0.3)
-            let gang = gangTacklers(c, x: x, z: tripZ, excluding: [tackler])
+            let gang = gangTacklers(c, x: x, z: z, excluding: [tackler])
             return [Step(
                 moves: [
-                    (nodeIndex: carrier, to: player(x, tripZ), duration: 0.32),
-                    (nodeIndex: tackler, to: player(x - 0.3, z - c.direction * 0.3), duration: 0.22),
-                ] + pileOnMoves(c, gang: gang, x: x, z: tripZ),
+                    (nodeIndex: tackler, to: player(x - 0.3, z - c.direction * 0.2), duration: 0.22),
+                ] + pileOnMoves(c, gang: gang, x: x, z: z),
                 ballMove: .carry(nodeIndex: carrier),
                 duration: 1.3,
                 pulses: [tackler],
@@ -1679,9 +1678,12 @@ struct PlayChoreographer {
         let driveBack = hash01(seed &+ 313) < 0.3
         // Forward momentum carries the pile a touch downfield; a drive-back
         // shoves it back toward the LOS instead.
+        // The common wrap goes DOWN at the spot (an in-place hold-pose that slid
+        // forward read as the carrier "running through" the tackle); only a
+        // drive-back shoves the pile back toward the LOS.
         let momentum: Float = driveBack
             ? -(0.5 + hash01(seed &+ 99) * 0.5)
-            : (0.3 + hash01(seed &+ 99) * 0.4)
+            : 0
         let pileZ = clampZ(z + c.direction * momentum)
         // Contact: the tackler closes the last yard THROUGH the carrier from
         // his pursuit angle (a forward drive), arms wrapping as they collide,
@@ -2469,6 +2471,7 @@ struct PlayChoreographer {
                              coverage + wall),
                 ballMove: .arc(to: air(0, landZ), apex: 12, duration: hang, from: nil),
                 duration: hang,
+                kicker: c.oBase,   // the punter boots it
                 sound: .kickThump
             ),
             // Catch and a short ~3yd return; the coverage rallies to the ball.
@@ -2614,6 +2617,7 @@ struct PlayChoreographer {
             ballMove: .arc(to: air(0, catchZ), apex: 16, duration: hang, from: nil),
             duration: hang,
             reaches: [returner],
+            kicker: kBase,   // the kickoff specialist swings through the tee
             sound: .kickThump
         ))
 

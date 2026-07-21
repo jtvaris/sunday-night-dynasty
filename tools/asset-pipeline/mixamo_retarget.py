@@ -61,6 +61,11 @@ act = mix.animation_data.action
 fs, fe = int(act.frame_range[0]), int(act.frame_range[1])
 print(f"retarget: source frames {fs}..{fe}")
 
+# The Mixamo skeleton prefixes bones "mixamorig:"; some packs (Reallusion exports)
+# use "mixamorig_" instead. Detect whichever this source uses.
+PREFIX = next((p for p in ("mixamorig:", "mixamorig_", "mixamorig") if mix.pose.bones.get(p + "Hips")), "mixamorig:")
+print(f"retarget: source bone prefix '{PREFIX}'")
+
 # --- build bone pairs, sorted parent-first by target depth ---
 def depth(bone):
     d = 0
@@ -70,11 +75,11 @@ def depth(bone):
 
 pairs = []
 for src, tgt in MAP.items():
-    sb = mix.pose.bones.get("mixamorig:" + src)
+    sb = mix.pose.bones.get(PREFIX + src)
     tb = ochi.pose.bones.get(tgt)
     if not sb or not tb:
         print(f"  skip {src}->{tgt} (missing {'src' if not sb else 'tgt'})"); continue
-    src_rest_w = (mix.matrix_world @ mix.data.bones["mixamorig:" + src].matrix_local).to_3x3()
+    src_rest_w = (mix.matrix_world @ mix.data.bones[PREFIX + src].matrix_local).to_3x3()
     tgt_rest_w = (ochi.matrix_world @ ochi.data.bones[tgt].matrix_local).to_3x3()
     pairs.append((sb, tb, src_rest_w, tgt_rest_w, depth(ochi.data.bones[tgt])))
 pairs.sort(key=lambda p: p[4])
@@ -83,7 +88,7 @@ for tb in ochi.pose.bones:
     tb.rotation_mode = 'QUATERNION'
 
 ochi_wi = ochi.matrix_world.inverted()
-hips_rest_w = (mix.matrix_world @ mix.data.bones["mixamorig:Hips"].matrix_local).to_translation()
+hips_rest_w = (mix.matrix_world @ mix.data.bones[PREFIX + "Hips"].matrix_local).to_translation()
 spine_rest_w = (ochi.matrix_world @ ochi.data.bones["spine"].matrix_local).to_translation()
 
 scene.frame_start, scene.frame_end = fs, fe
@@ -114,7 +119,7 @@ for f in range(fs, fe + 1):
         tb.keyframe_insert('rotation_quaternion', frame=f)
         bpy.context.view_layer.update()                     # children read updated parent
     if WITH_ROOT:
-        hips_w = (mix.matrix_world @ mix.pose.bones["mixamorig:Hips"].matrix).to_translation()
+        hips_w = (mix.matrix_world @ mix.pose.bones[PREFIX + "Hips"].matrix).to_translation()
         root = ochi.pose.bones["spine"]
         # transfer hip displacement from rest, in the target's space
         disp = (hips_w - hips_rest_w)
@@ -122,6 +127,16 @@ for f in range(fs, fe + 1):
         root.matrix = ochi_wi @ (Matrix.Translation(target_w) @ root.matrix.to_3x3().to_4x4())
         root.keyframe_insert('location', frame=f)           # keyframe before update (see above)
         bpy.context.view_layer.update()
+
+if "--diag" in argv:
+    for f in (fs, (fs + fe) // 2, fe - 3):
+        scene.frame_set(f); bpy.context.view_layer.update()
+        for bn in ("spine", "spine.003"):
+            pb = ochi.pose.bones.get(bn)
+            if pb:
+                m = ochi.matrix_world @ pb.matrix
+                v = ((m @ mathutils.Vector((0, pb.length, 0))) - m.to_translation()).normalized()
+                print("retarget: TGTDIR %s f%d" % (bn, f), (round(v.x, 2), round(v.y, 2), round(v.z, 2)))
 
 # CRITICAL: drop the Mixamo source armature before export. It still carries its
 # original animation on the mixamorig skeleton; if it ships in the USD, the

@@ -1,5 +1,28 @@
 # Dynasty - TODO
 
+## 🐛 ANIMAATIOBUGIT — sessio 2c (2026-07-21, `BUILD SUCCEEDED`, EI committia) — JUURISYYT löydetty instrumentoinnilla
+
+Aiemmat arvaukset (idle-reset race grace 0.12, followThrough/postPlayWalk) EIVÄT korjanneet käyttäjän havaitsemia bugeja. Lisäsin väliaikaisen animaatiologituksen (`🏃` loco-vaihdot + `🎬` play-actionit, sittemmin poistettu) ja ajoin pelin `simctl launch --console-pty`:llä → mittasin tarkat juurisyyt:
+
+- **✅ "Pelaajat kaatuilevat salamannopeasti kesken pelin" — KORJATTU (empiirisesti todennettu).** Juurisyy: skeletaalifiguurit vaihtoivat run→idle→run **jäätyneeseen idle-"Hold"-kyykkyyn** koreografian move-steppien VÄLISSÄ. Loki: 114 idle-vaihtoa/peli, joista 8 oli "brief" (idle 0.1-0.2s = välke, gap ~0.55-0.65s). Grace 0.12 oli liian pieni. Jakauma oli PUHTAASTI erottunut: välkkeet gapissa 0.55-0.65s, aidot seisonnat >1.0s, EI mitään välissä. **Fix: `idleGrace` 0.12→0.75s** (`FootballFieldScene.run` skeletal-haara + uusi vakio) → silloittaa step-gapit niin ettei juokseva pelaaja koskaan välähdä idleen; aidot seisonnat (>1s) idlaavat yhä normaalisti. **Uusintamittaus: 8→0 välkettä** kahdessa pelissä.
+- **✅ "Taklaajat kaatuvat pois päin pelaajasta" — KORJATTU.** Juurisyy: `variantPools["tackle"]` sekoitti `tackle_a` (diving tackle) + `tackle_b` (getting hit) ja käytti SAMAA poolia SEKÄ taklaajalle (`wrapArms`/`diveFalls`) ETTÄ kaatuvalle (`falls`) → roolit menivät **sekaisin** (kantaja sai diving-tacklen = syöksyi eteenpäin, taklaaja sai getting-hitin = kaatui taakse). Lisäksi `wrapArms` soitti **ei-heldin** tackle-syöksyn joka tappeli oman `fall()`:n kanssa (dive+pomppaa-takaisin). **Fix:** pool-jako `tackle`=[tackle_a] (syöksyvä taklaaja) / `tackled`=[tackle_b] (alas menevä); `fall()` valitsee style==.dive → "tackle", muuten "tackled"; `wrapArms` skeletaali = no-op. Loki vahvisti: alas menevät → `tackled→tackle_b`, syöksyvä taklaaja → `tackle→tackle_a`.
+- **✅ Skeletaali-kaadon audit (sessio 2b, edelleen mukana):** `followThrough`/`postPlayWalk`/`isBystander`/`resetGait` tarkistivat vain proseduraalisen fall-actionin ja missasivat skeletaalikaadon → kaatunut pelaaja nostettiin ylös/animoitiin. Lisätty `isFallen`/`isGrounded`/`clearPose`. Kattaa kaikki pelipaikat.
+
+⏳ VAATII on-device 120fps-tarkistuksen käyttäjältä (välke poissa + taklaus konvergoi). Muutokset: `SkeletalFigure.swift` + `FootballFieldScene.swift`. EI committia.
+
+## 🐛 PLAYTEST-BUGIT (2026-07-21 sessio 2) — 4 bugin diagnoosi + korjaus (`BUILD SUCCEEDED`, boots clean, EI committia)
+
+Rinnakkainen diagnoosi+verify+reconcile-workflow (9 Opus-agenttia, adversariaalinen) + käsin ristiintarkastus. Nettotulos: **vain #10 vaati uutta koodia**; muut 3 ovat false-alarm / jo korjattu. Yksityiskohdat: `docs/playtest_2026-07-21/PLAYTEST_BUGS.md` (RESOLUTION-osio).
+
+- **✅ #10 — Tackle uppoaa maahan: KORJATTU.** Per-frame ground clamp `SkeletalFigure.updateFootLock`iin (4 edittiä): `groundBones`-cache, `posing`-gate (clip-avain `"fall"`/`"action"`) joka (a) sammuttaa foot-lockin one-shot-poosin ajaksi ja (b) nostaa rigin ylös alimman luun turf-alituksen verran, easaa takaisin `yOffset`iin poosin jälkeen. Verifier korjasi CGFloat→Float compile-blokkerin. Koordinaattimatikka käsin varmennettu. **Buildaa + boottaa puhtaasti.** Varmuus keskitaso — high-water-mark-clamp voi vaihtaa turf-clipin lieväksi **leijunnaksi** (catch_c/dive riskialttiimmat). ⏳ VAATII on-device silmämääräisen tarkistuksen (diving catch + syvä tackle).
+- **✅ #9 — Deep-pass: TOTEUTETTU (sessio 2b, käyttäjän frame-by-frame-havainnoista).** (d) tackle-after-catch oli jo korjattu. Loput kolme nyt:
+  - **(a) teleport/"nykiminen"** = **skeletal idle-reset race**: `run()` ajastaa `setMoving(false)` täsmälleen `duration`-kohtaan, törmää seuraavan ketjutetun stepin `setMoving(true)`:n kanssa samalla hetkellä → ~puolet ajasta figuuri välkähtää jäätyneeseen idle/kyykkyyn 1-2 framea. KORJAUS: grace `duration → duration + 0.12` (`FootballFieldScene.run` skeletal-haara).
+  - **(c) pallo ei QB:n kädessä** = `attachBall` kiinnittää pallon kiinteään container-offsetiin (proseduraali-kitin `arm`-nodeille, joita skinnattu rigi ei omaa). KORJAUS: per-frame pin pallon **animoituun käteen** (chest → `hand_l`/`hand_r` keskipiste) `updateFootLocks`-hookissa.
+  - **(2) haamu-fumble taklauksessa** (käyttäjän 2. havainto) = `fall()` lunges kroppaa clip-root-motionilla mutta container jää paikalleen → container-pinnattu pallo jää taklauskohtaan (näyttää fumblelta). KORJAUS: poosin aikana (`isPosing`) pin tucked pallo **alaselän luuhun** (`spine_001`) niin että se seuraa kroppaa ALAS; normaali juoksu pitää vakaan lonkka-offsetin.
+  - `BUILD SUCCEEDED`, app pyörii + pelit animoituvat puhtaasti (spot-check; poosit ehjät). ⏳ 1-2 framen välke + pallo-taklauksessa vaatii on-device 120fps frame-stepin (sim-recording ei resolvoi).
+- **✗ #8 — "Go for 2" puolustuksesta: FALSE ALARM.** Todistettu: `pendingConversion` asetetaan VAIN offensiivisesta scrimmage-TD:stä jossa `homeHasPossession == scorer`. Ei defensiivistä/return-scrimmage-TD:tä mallissa; kickoff-return-TD auto-resolvaa PAT:n eikä aseta `pendingConversion`ia. Oire ei ole tuotettavissa enginellä. Todennäk. testaaja näki **defensive stop -call-sheetin** (AI teki TD:n + meni kahdelle) ja luki sen go-for-2-tarjouksena. ⏳ VAATII repron (mikä paneeli + edeltävä TD-tyyppi).
+- **✗ #7 — Pre-snap facing "vasemmalle": EI facing-bugi (kumottu).** Yaw oikein joka tasolla (container-yaw vain 0/π = LOS:n yli). Oikea erillinen ongelma: `applyStance`-limb-loop on **no-op skeletal-figuureille** (ei `arm`/`leg`-lapsinodeja `figure`n alla) → jokainen pelaaja pitää yhtä jäätynyttä "Hold"-idlea + jäykkää etukallistusta (ei 3-point-asentoa). Feature-kokoinen korjaus. ⏳ VAATII screenshotin testaajan tarkasta kamerasta (perspektiivi vs poose-fidelity).
+
 ## ✅ #40 VERIFIOINTI — Draft Report Card + provenienssi/arvosanat (2026-07-14, `BUILD SUCCEEDED`, EI committia)
 
 Verifioitu koko #40-ketju (data-provenienssi → `DraftGradeEngine` → `DraftClassReportView`). Väliaikainen `DRAFT40`-tulostus lisättiin `MultiSeasonSmokeTest`iin data-ajoa varten ja **poistettiin** jälkeenpäin (working tree = vain aiemman vaiheen #40-koodi, ei verifiointijälkiä). Ei committia.
@@ -3137,3 +3160,67 @@ Skeleton is FM-like and GOOD: 100-point Tactical/Physical/Technical team split +
 - [x] Iter 2: end zones deepened further (darken 0.45 — no more neon vs muted turf); floating jersey numbers 0.75→0.62 + calmer emission (no more label collisions in line traffic); helmets shaded 20% darker than jerseys (heads read as gear, NFL look); broadcast plate / result toast vertical separation
 - [x] Away-game camera verified in the same pass: view from behind the player's unit, field text re-oriented, kickoff + Stats button + drive chip (R13/R14) all confirmed live
 - Quality: ~8/10 for the Madden-98 retro target. Remaining candidates: horizon glow behind far end zone, number decluttering in pile-ups (fade overlapping), goalpost neck anchoring.
+
+## Football mocap pack (21 clips) — retarget onto Ochi Metarig (2026-07-20)
+
+Decision (user 2026-07-20): keep Ochi model/rig (UE model integration ON HOLD), combine Ochi + this new pack's animations. Mixamo clips set aside for now.
+
+### Done
+- [x] Extracted "21 football motion capture animations for blender3d" (22 FBX takes) — genuine football mocap: QB throws ×5, catches ×4 (incl. diving+roll), tackles ×2 (getting-hit + diving), kicks ×3, hikes, punt, holder poses ×3, zig-zag run, spike/celebrate.
+- [x] Source = Reallusion "Y Bot": mixamorig_ (underscore) + 26 RL_/RootNode helper bones, 19s multi-action TAKES.
+- [x] rokoko_retarget.py extended: rename mixamorig_→mixamorig:, strip RL_ bones, spine-chain override (auto scrambles Hips→pelvis.L), dedup, monkeypatch save_retargeting_to_list. Rokoko retargets FAITHFULLY (body + arms, no damping) — verified in Blender.
+- [x] mixamo_retarget.py made prefix-agnostic (world-delta fallback; damps arms).
+- [x] Batch: all 22 clips retargeted onto Ochi Metarig → scratchpad/retarget_out/batch/PackClip_*.usdc. Full-range Blender filmstrips in scratchpad/rig_out/grids/{throws,catches,tack_kick,other}.png.
+- [x] KEY PITFALL logged: render_strip.swift misleads for root-motion clips (figure drifts in fixed camera → looks hunched). Ground truth = Blender per-frame-tracked render.
+
+### Next (fix round)
+- [ ] Strip horizontal root translation from clips (in-place for game).
+- [ ] Trim each 19s take to its ~2s action window (per-clip windows).
+- [ ] Map best clips → game actions (throw/catch/tackle/kick/hike/celebrate/run) + wire SkeletalFigure.
+- [ ] Validate in-sim (in-motion video — the real quality bar).
+- [ ] Brighter preview lighting in diag render (current Eevee previews are dark).
+
+### Pack retarget — pipeline complete + segment tooling (2026-07-20 cont.)
+- [x] Bright/dense (14-frame) filmstrips for all 22, grids in scratchpad/rig_out/grids/{throws2,catches2,tackkick2,other2}.png. (tackled/tackle/qbthrow3 strips rendered short — cosmetic, re-render later.)
+- [x] Segment catalog: tools/asset-pipeline/pack_segments.json — ~40 reusable segments across 22 clips (stance/hike/throw/qb_idle/catch/catch_jump/catch_dive/roll/run/juke/tackle_make/tackle_hit/fall/getup/punt/kick/spike/celebrate/react/holder).
+- [x] rokoko_retarget.py: added --trimstart/--trimend (window as fraction, rebased to frame 0) + --inplace (REBASE root translation to origin — keeps in-window dynamism, removes the take's net walk). Proven end-to-end: Seg_throw_rebase renders upright + in-place in SceneKit convention.
+- FINDING: catches/tackles/dives/punt/spike = excellent & dynamic; THROWS = realistic-subtle (not exaggerated Madden windups; the actor throws modestly). Root motion carries much of a throw's "power", rebased out for in-place.
+
+### Remaining (game integration)
+- [ ] Batch-trim all ~40 segments from pack_segments.json → Seg_<clip>_<seg>.usdc (windows are estimates — validate in-game).
+- [ ] Game variety system: situation → clip POOL, pick with variety (SkeletalFigure clip catalog + FootballFieldScene action routing).
+- [ ] Copy chosen clips into Resources, wire, build, validate in-sim video.
+
+### Pack animations WIRED INTO GAME (2026-07-20) — BUILD SUCCEEDED + launches clean
+- [x] 46-segment in-place library trimmed (scratchpad/retarget_out/segments/Seg_<cat>__<clip>_<seg>.usdc).
+- [x] Curated 11 variants copied to Resources/PlayerClip_{catch_a,catch_b,catch_c,tackle_a,tackle_b,throw_a,throw_b,kick_a,celeb_a,celeb_b,juke_a}.usdc (Xcode 16 synchronized folders — auto-bundled).
+- [x] SkeletalFigure: `variantPools` (catch→secure/jump/dive, tackle→dive/hit, throw→a/b, celebrate→spike/armsup, juke) + `pickVariant` (per-figure no-immediate-repeat) + play(action:) resolves variant; compression now only speeds up (never slow-mo's a trimmed clip).
+- [x] BUILD SUCCEEDED; app installs + launches clean (no crash) with 21 bundled clips.
+- PENDING: in-motion validation — play a match to watch catch/tackle/throw variety in the 3D view (user's real quality bar). Throws are realistic-subtle; kicks weak (used punt for kick_a).
+- Old Mixamo PlayerClip_{catch,throw,tackle,celebrate,juke}.usdc now unused (pools point to pack variants) — left in Resources, harmless.
+
+### Timing fix + Ochi/pack animation mix (2026-07-20)
+- [x] Measured each variant's "beat" fraction headless (scratchpad/measure_hit.swift): catch=hands peak, throw=throw-hand, tackle=forward reach. Table in SkeletalFigure.actionHitFraction.
+- [x] Variant-aware timing: play(action:landAfter:) delays the clip so hitFraction·playedDur lands at the event. All 3 catch sites now `landAfter: arriveIn` (was fixed `arriveIn - 0.59`, which only fit the old clip — broke once catch resolved to variants peaking at 0.66/0.70/0.35).
+- [x] Combined BOTH sources into pools: extracted Ochi's own Catch-and-Fall (catch_d) + Throw 01 (throw_c) via tools/asset-pipeline/export_ochi_action.py (native, in-place rebased, no retarget). catch pool = pack ×3 + Ochi; throw pool = pack ×2 + Ochi.
+- [x] BUILD SUCCEEDED, 23 clips bundled.
+- NOTE: UE-model task (#5) is about the character MESH only (on hold, user kept Ochi) — NOT animations. Animations are combined.
+- Throw release vs ball-launch sync: pre-existing (throwMotion just plays; long pass arc masks it). Not event-synced like the catch. Follow-up if the QB's release needs to align with the ball leaving.
+
+### Throw release synced to ball launch (2026-07-20)
+- [x] Root cause: runBallArc launched the ball at throw-clip START, but the release beat is ~0.9s in → ball left before the arm released.
+- [x] SkeletalFigure.play(action:beatAt:) — compresses the throw clip so its release beat lands exactly at `beatAt` sec, regardless of variant.
+- [x] throwMotion(releaseAt:) passes it; runBallArc(launchDelay:) holds the ball in the QB's hand that long (wait on ball arc/spin/shadow + shifted timers), then launches at release.
+- [x] execute(step:) adds FootballFieldScene.throwWindup (0.42s) to the catch's arriveIn AND effectiveDuration for real throws (apex>2.0) so catch still meets the ball and the step sequence stays synced. Guarded: no effect on pitches/kicks/handoffs.
+- [x] BUILD SUCCEEDED + launches clean.
+- Tunable: throwWindup 0.42s. Pack throws (4.9s loose trims) compress fairly fast to hit it; if they read rushed, either raise throwWindup or re-trim the pack throw windows tighter. Ochi throw_c compresses least.
+
+### Filled all skeletal animation gaps (2026-07-20)
+- [x] KICK: wired kick pool [kick_a=pack punt, kick_b=Ochi kickoff]. Added PlayStep.kicker; set on punt (c.oBase) + kickoff (kBase) boot steps; execute(step:) plays "kick" (beatAt: throwWindup) so foot-contact lands as the ball launches (apex>2.0 arcs already delay the ball + catch). FG left as-is (role 0 = holder, no clean place-kicker node).
+- [x] PITCH: pitchMotion skeletal path → play("throw", beatAt:0.22) — quick lateral toss.
+- [x] HANDOFF: handoffGesture skeletal path → play("throw", beatAt:0.18) — brief ball-extension.
+- [x] PUMP-FAKE: pumpFake skeletal path → play("throw", beatAt: quick?0.16:0.26) — a pump fake IS an aborted throw (no ball leaves).
+- [x] PYLON-DIVE: pylonDive skeletal path → play("dive", hold:true) (PlayerClip_dive = catch_c runcatch1 dive).
+- [x] SkeletalFigure: added "kick" pool + kick_a/b + dive hit-fractions + kick/dive target durations.
+- [x] BUILD SUCCEEDED + launches clean, 25 clips bundled.
+- Approximations to refine: pitch/handoff reuse the throw clip (overhead-ish, not a true underhand toss / low handoff); kick foot-contact fraction estimated (0.5 — measure_hit measures hands not feet).

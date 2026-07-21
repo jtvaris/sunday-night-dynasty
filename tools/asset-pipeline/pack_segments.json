@@ -1,0 +1,28 @@
+{
+  "_doc": "Segment catalog for the 21-clip football mocap pack. Each 19s take is sliced into reusable segments. lo/hi = fraction of the source take. category = game situation pool the segment feeds. Windows are review estimates (14-frame bright grids); refine per-segment by rendering the window. Source clips in scratchpad/retarget_out/batch/PackClip_<clip>.usdc.",
+  "categories": ["stance","hike","throw","qb_idle","catch","catch_jump","catch_dive","roll","run","juke","tackle_make","tackle_hit","fall","getup","punt","kick","spike","celebrate","react","holder"],
+  "clips": {
+    "qbthrow1":   [{"seg":"stance","lo":0.00,"hi":0.18,"cat":"hike"},{"seg":"throw","lo":0.25,"hi":0.52,"cat":"throw"},{"seg":"settle","lo":0.55,"hi":0.85,"cat":"qb_idle"}],
+    "qbthrow2":   [{"seg":"ready","lo":0.00,"hi":0.15,"cat":"stance"},{"seg":"throw","lo":0.26,"hi":0.52,"cat":"throw"},{"seg":"angry","lo":0.55,"hi":0.92,"cat":"react"}],
+    "qbthrow3":   [{"seg":"stance","lo":0.00,"hi":0.20,"cat":"hike"},{"seg":"throw","lo":0.30,"hi":0.58,"cat":"throw"}],
+    "qbpractice": [{"seg":"idle","lo":0.10,"hi":0.48,"cat":"qb_idle"},{"seg":"throw","lo":0.50,"hi":0.78,"cat":"throw"}],
+    "qbpractice2":[{"seg":"idle","lo":0.08,"hi":0.50,"cat":"qb_idle"},{"seg":"throw","lo":0.55,"hi":0.82,"cat":"throw"}],
+    "throw1":     [{"seg":"stance","lo":0.00,"hi":0.15,"cat":"hike"},{"seg":"throw","lo":0.35,"hi":0.62,"cat":"throw"}],
+    "throw2":     [{"seg":"ready","lo":0.00,"hi":0.20,"cat":"stance"},{"seg":"throw","lo":0.30,"hi":0.58,"cat":"throw"}],
+    "catchpunt":  [{"seg":"catch","lo":0.32,"hi":0.56,"cat":"catch"},{"seg":"punt","lo":0.58,"hi":0.96,"cat":"punt"}],
+    "catchroll":  [{"seg":"jumpcatch","lo":0.28,"hi":0.55,"cat":"catch_jump"},{"seg":"roll","lo":0.55,"hi":0.80,"cat":"roll"},{"seg":"getup","lo":0.80,"hi":1.00,"cat":"getup"}],
+    "runcatch":   [{"seg":"run","lo":0.00,"hi":0.30,"cat":"run"},{"seg":"catch","lo":0.40,"hi":0.60,"cat":"catch"},{"seg":"divedown","lo":0.60,"hi":0.88,"cat":"catch_dive"}],
+    "runcatch1":  [{"seg":"run","lo":0.00,"hi":0.25,"cat":"run"},{"seg":"divecatch","lo":0.28,"hi":0.55,"cat":"catch_dive"},{"seg":"down","lo":0.55,"hi":0.72,"cat":"fall"},{"seg":"getup","lo":0.75,"hi":1.00,"cat":"getup"}],
+    "spike":      [{"seg":"runcatch","lo":0.00,"hi":0.55,"cat":"catch"},{"seg":"spike","lo":0.58,"hi":0.80,"cat":"spike"},{"seg":"celebrate","lo":0.80,"hi":1.00,"cat":"celebrate"}],
+    "tackled":    [{"seg":"run","lo":0.00,"hi":0.35,"cat":"run"},{"seg":"hit","lo":0.40,"hi":0.75,"cat":"tackle_hit"}],
+    "tackle":     [{"seg":"run","lo":0.00,"hi":0.35,"cat":"run"},{"seg":"dive","lo":0.40,"hi":0.75,"cat":"tackle_make"}],
+    "kickshort":  [{"seg":"kick","lo":0.25,"hi":0.70,"cat":"kick"}],
+    "kickmed":    [{"seg":"kick","lo":0.25,"hi":0.70,"cat":"kick"}],
+    "kickgoal":   [{"seg":"kick","lo":0.25,"hi":0.70,"cat":"kick"},{"seg":"celebrate","lo":0.85,"hi":1.00,"cat":"celebrate"}],
+    "hike":       [{"seg":"snap","lo":0.15,"hi":0.50,"cat":"hike"}],
+    "zigzag":     [{"seg":"run","lo":0.00,"hi":0.45,"cat":"run"},{"seg":"juke","lo":0.40,"hi":0.72,"cat":"juke"}],
+    "holder1":    [{"seg":"hold","lo":0.20,"hi":0.80,"cat":"holder"}],
+    "holder2":    [{"seg":"hold","lo":0.20,"hi":0.80,"cat":"holder"}],
+    "holder3":    [{"seg":"hold","lo":0.20,"hi":0.70,"cat":"holder"},{"seg":"getup","lo":0.70,"hi":1.00,"cat":"getup"}]
+  }
+}

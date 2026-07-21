@@ -85,6 +85,9 @@ class FootballFieldScene: SCNScene {
         var blocks: [Int] = []
         /// QB nodes selling a pump fake late in this step (deep shots).
         var pumpFakes: [Int] = []
+        /// The kicker/punter node swinging through the ball this step (FG / punt /
+        /// kickoff). The ball's launch waits a kick windup so his foot meets it.
+        var kicker: Int? = nil
         /// When true, the pump fake is a quick shoulder shrug rather than a
         /// full wind-up double-clutch (mobile QBs flash the short version).
         var pumpFakeQuick: Bool = false
@@ -732,6 +735,11 @@ class FootballFieldScene: SCNScene {
     /// into his three-point stance both hold their pose (pre-snap stillness
     /// on the line is correct football).
     private func isBystander(_ node: SCNNode, figure: SCNNode) -> Bool {
+        // A skeletal fall/action lives on the SKELETON, not as an SCNAction on
+        // `figure` (and a skeletal fall doesn't pitch figure.eulerAngles either),
+        // so the checks below miss it — a downed or mid-action skinned man is NOT
+        // idle and must never get a bystander glance/fidget layered on top.
+        if skeletalDriver(for: figure)?.isPosing == true { return false }
         for key in ["playMove", "formationMove", "walk", "facing", "settleFacing", "pitchTurn"]
         where node.action(forKey: key) != nil { return false }
         for key in ["gait", "stance", "fall", "hop", "shove", "spinMove", "watch", "fidget"]
@@ -1546,6 +1554,17 @@ class FootballFieldScene: SCNScene {
         }
     }
 
+    /// Is this figure down on the turf? Checks BOTH the procedural fall action
+    /// (kit figures) AND the skeletal held ground pose (`isGrounded`, key "fall").
+    /// The skeletal fall lives on the SKELETON, not as an SCNAction on `figure`,
+    /// so a plain `figure.action(forKey:"fall")` misses it — which let a tackled
+    /// skeletal man be stood back up and walked/drifted off by the post-play
+    /// movers (he'd pop up mid-tackle and "keep running"). Both movers gate on this.
+    private func isFallen(_ figure: SCNNode) -> Bool {
+        if figure.action(forKey: "fall") != nil { return true }
+        return skeletalDriver(for: figure)?.isGrounded ?? false
+    }
+
     /// Post-whistle momentum: each node that was still moving when the play
     /// ended drifts 0.4-0.8 s further along its facing, easing out — players
     /// decelerate through the whistle instead of stopping dead. Fallen men
@@ -1554,7 +1573,7 @@ class FootballFieldScene: SCNScene {
         for index in nodeIndexes {
             guard let node = playerNode(at: index),
                   let figure = node.childNode(withName: "figure", recursively: false),
-                  figure.action(forKey: "fall") == nil else { continue }
+                  !isFallen(figure) else { continue }
             let yaw = node.eulerAngles.y
             let reach = Float.random(in: 0.6...1.1)
             let duration = TimeInterval.random(in: 0.4...0.8)
@@ -1574,7 +1593,7 @@ class FootballFieldScene: SCNScene {
         let ball = ballNode.worldPosition
         for (index, node) in (homePlayerNodes + awayPlayerNodes).enumerated() {
             guard let figure = node.childNode(withName: "figure", recursively: false),
-                  figure.action(forKey: "fall") == nil,
+                  !isFallen(figure),
                   node.action(forKey: "playMove") == nil,
                   node.action(forKey: "formationMove") == nil else { continue }
             // A deterministic ring spot per node: staggered angles + radii.
@@ -1876,8 +1895,17 @@ class FootballFieldScene: SCNScene {
         if let skel = skeletalDriver(for: figure) {
             skel.setMoving(true, speed: distance / Float(duration), backpedal: backpedal)
             figure.removeAction(forKey: "skelIdleReset")
+            // Return to idle only after a real gap. The choreography issues a running
+            // player's moves as back-to-back ~0.3s steps; between them he briefly has
+            // no move, and without this grace he snaps to the frozen idle "Hold" pose
+            // (a crouch) for 1-2 frames every step boundary — that flicker is the
+            // "player collapses mid-run" bug. A generous grace bridges the inter-step
+            // gaps so he keeps running continuously through the play; only a genuine
+            // stop (no new move for `idleGrace`) drops him to idle, which is then
+            // invisible under the smooth run loop. The next step's setMoving(true)
+            // cancels a pending reset, so a still-moving man never idles.
             figure.runAction(.sequence([
-                .wait(duration: duration),
+                .wait(duration: duration + Self.idleGrace),
                 .run { [weak skel] _ in skel?.setMoving(false, speed: 0) },
             ]), forKey: "skelIdleReset")
             return
@@ -2112,7 +2140,7 @@ class FootballFieldScene: SCNScene {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         if let skel = skeletalDriver(for: figure) {
-            skel.play(action: "catch", delay: max(0, arriveIn - 0.59))   // hands up as the ball lands
+            skel.play(action: "catch", landAfter: arriveIn)   // beat lands as the ball arrives (variant-aware)
             return
         }
         catchBodyTurn(figure, yaw: turnYaw)
@@ -2151,7 +2179,7 @@ class FootballFieldScene: SCNScene {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         if let skel = skeletalDriver(for: figure) {
-            skel.play(action: "catch", delay: max(0, arriveIn - 0.59))
+            skel.play(action: "catch", landAfter: arriveIn)
             return
         }
         catchBodyTurn(figure, yaw: turnYaw, hold: 0.6)
@@ -2180,7 +2208,7 @@ class FootballFieldScene: SCNScene {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         if let skel = skeletalDriver(for: figure) {
-            skel.play(action: "catch", delay: max(0, arriveIn - 0.59), hold: true)   // lay out + stay down
+            skel.play(action: "catch", landAfter: arriveIn, hold: true)   // lay out + stay down (variant-aware)
             return
         }
         figure.removeAction(forKey: "gait")
@@ -2386,8 +2414,13 @@ class FootballFieldScene: SCNScene {
     /// shoulder shrug that jerks the torso without cocking the arm all the way.
     private func pumpFake(nodeIndex: Int, delay: TimeInterval, quick: Bool = false) {
         guard let node = playerNode(at: nodeIndex),
-              let figure = node.childNode(withName: "figure", recursively: false),
-              let arm = figure.childNode(withName: "armR", recursively: false) else { return }
+              let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        // Skeletal path: a pump fake IS a throwing motion the QB aborts — play the throw
+        // clip (no ball leaves), on a fast release so it reads as a quick fake.
+        if let skel = skeletalDriver(for: figure) {
+            skel.play(action: "throw", delay: delay, beatAt: quick ? 0.16 : 0.26); return
+        }
+        guard let arm = figure.childNode(withName: "armR", recursively: false) else { return }
         let windupX: CGFloat = quick ? 1.0 : 1.7
         let windupDur: TimeInterval = quick ? 0.1 : 0.13
         let flickX: CGFloat = quick ? -0.5 : -1.2
@@ -2540,6 +2573,19 @@ class FootballFieldScene: SCNScene {
     /// collapses and stays on the turf (injury presentation) — the next
     /// formation move stands him back up, by which point the node already
     /// wears the replacement's number.
+    /// Snap a tackler to face the ball carrier so his forward lay-out / go-down clip
+    /// drives INTO the ball, not off to the side (which read as "diving away from the
+    /// ball"). Instant, because the tackle fires the same beat — a rotate would lag it.
+    private func faceTowardCarrier(_ index: Int) {
+        guard let node = playerNode(at: index),
+              let carrier = playerNode(at: carryingIndex ?? -1), carrier !== node else { return }
+        let dx = carrier.presentation.position.x - node.presentation.position.x
+        let dz = carrier.presentation.position.z - node.presentation.position.z
+        guard dx * dx + dz * dz > 0.04 else { return }
+        node.removeAction(forKey: "facing")
+        node.eulerAngles.y = atan2(dx, dz)
+    }
+
     private func fall(nodeIndex: Int, delay: TimeInterval = 0, stayDown: Bool = false,
                       getUpDelay: TimeInterval = 0, style: FallStyle = .forward) {
         guard let node = playerNode(at: nodeIndex),
@@ -2547,7 +2593,15 @@ class FootballFieldScene: SCNScene {
         // Skeletal: the man plays the mocap fall and holds the ground pose until
         // the next move stands him back up (setMoving clears the "fall" key).
         if let skel = skeletalDriver(for: figure) {
-            skel.play(action: "tackle", delay: delay, hold: true)
+            // The ball CARRIER is brought down in place — stop his run so he doesn't
+            // moonwalk downfield under the held pose. Tacklers keep their converge
+            // move (their container slides into the pile while the pose plays).
+            // `delay` staggers the gang so a pile unstacks raggedly, via the clip's
+            // own start; it never keeps him running. Only the explicit DIVING tackler
+            // (style .dive) lays out (tackle_a); everyone else plays tackle_b.
+            if nodeIndex == carryingIndex { node.removeAction(forKey: "playMove") }
+            skel.setMoving(false, speed: 0)
+            skel.play(action: style == .dive ? "tackle" : "tackled", delay: delay, hold: true)
             return
         }
         figure.removeAction(forKey: "gait")
@@ -2647,11 +2701,11 @@ class FootballFieldScene: SCNScene {
     private func wrapArms(nodeIndex: Int) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
-        // Skeletal path: a mocap tackle over the locomotion, then return.
-        if let skel = skeletalDriver(for: figure) {
-            skel.play(action: "tackle")
-            return
-        }
+        // Skeletal path: the tackler gets his lay-out / go-down motion from fall()
+        // (or diveFall) in the SAME tackle step, so a second non-held "tackle" here
+        // just fought it — he dove, then popped straight back up mid-play. The mocap
+        // fall already carries the wrap, so there's nothing to add; skip it.
+        if skeletalDriver(for: figure) != nil { return }
         for (name, inward) in [("arm", CGFloat(0.7)), ("armR", CGFloat(-0.7))] {
             guard let arm = figure.childNode(withName: name, recursively: false) else { continue }
             arm.removeAction(forKey: "swing")
@@ -2706,6 +2760,11 @@ class FootballFieldScene: SCNScene {
     private func pylonDive(nodeIndex: Int) {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        // Skeletal path: lay out over the pylon (the mocap dive clip) and hold the
+        // stretched-out ground pose until the next move stands him up.
+        if let skel = skeletalDriver(for: figure) {
+            skel.setMoving(false, speed: 0); skel.play(action: "dive", hold: true); return
+        }
         figure.removeAction(forKey: "gait")
         figure.removeAction(forKey: "hop")
         figure.removeAction(forKey: "stance")
@@ -2840,6 +2899,11 @@ class FootballFieldScene: SCNScene {
         figure.removeAction(forKey: "shove")
         figure.removeAction(forKey: "spinMove")
         clearBystanderIdle(figure)
+        // Hard-reset the skeletal rig: a figure holds its pose + accumulates spent
+        // animation players ON THE SKELETON (not as figure SCNActions), and that
+        // residue blends into the next play's run as brief mid-run collapses. A full
+        // wipe each snap keeps every play starting from a clean rig.
+        skeletalDriver(for: figure)?.fullReset()
         figure.position = SCNVector3Zero
         figure.eulerAngles = SCNVector3Zero
         if let body = figure.childNode(withName: "body", recursively: false) {
@@ -2872,7 +2936,10 @@ class FootballFieldScene: SCNScene {
             duration = max(duration, path.duration)
         }
         switch step.ballMove {
-        case .arc(_, _, let ballDuration, _), .slide(_, let ballDuration):
+        case .arc(_, let apex, let ballDuration, _):
+            // A thrown ball launches a windup later (see runBallArc); budget for it.
+            duration = max(duration, ballDuration + (apex > 2.0 ? Self.throwWindup : 0))
+        case .slide(_, let ballDuration):
             duration = max(duration, ballDuration)
         case .snap(_, let shotgun):
             // The snap flight is re-timed on the same clock as the steps
@@ -2977,7 +3044,8 @@ class FootballFieldScene: SCNScene {
         // When the ball is in the air this step, sync the catch to its arrival
         // (skeletal catch clips fire on a delay so the hands go up as it lands).
         let arriveIn: TimeInterval = {
-            if case let .arc(_, _, d, _) = step.ballMove { return d }
+            // On a real throw the ball launches a windup later, so the catch waits too.
+            if case let .arc(_, apex, d, _) = step.ballMove { return d + (apex > 2.0 ? Self.throwWindup : 0) }
             return 0
         }()
         for index in step.reaches {
@@ -2991,6 +3059,15 @@ class FootballFieldScene: SCNScene {
             }
         }
         for index in step.celebrates { celebrationJump(nodeIndex: index) }
+        // The kicker swings through the ball: play the kick clip so foot-contact lands
+        // at the same windup the ball's launch waits (apex>2.0 arcs already delay it).
+        if let kicker = step.kicker,
+           let node = playerNode(at: kicker),
+           let figure = node.childNode(withName: "figure", recursively: false),
+           let skel = skeletalDriver(for: figure) {
+            skel.setMoving(false, speed: 0)
+            skel.play(action: "kick", beatAt: Self.throwWindup)
+        }
         // Falls stagger DOWN in list order; the pile unstacks in reverse at
         // ragged 0.3-0.7s beats — the last man on (top of the pile) is the
         // first back on his feet, and nobody pops up in lockstep.
@@ -3001,13 +3078,17 @@ class FootballFieldScene: SCNScene {
             riseDelays[offset] = riseDelay
         }
         for (offset, index) in step.falls.enumerated() {
-            fall(nodeIndex: index, delay: Double(offset) * 0.12,
-                 getUpDelay: riseDelays[offset])
+            // Face the ball as they go down so the pose reads INTO the pile; the
+            // carrier keeps his run facing (he goes down forward). The gang's
+            // converge move (choreography) slides them into the pile under the pose.
+            if index != carryingIndex { faceTowardCarrier(index) }
+            fall(nodeIndex: index, delay: Double(offset) * 0.12, getUpDelay: riseDelays[offset])
         }
         // Big hits: the carrier flies onto his back and the camera pumps.
         for index in step.bigHits { fall(nodeIndex: index, style: .backward) }
         if !step.bigHits.isEmpty { cameraBump() }
-        for index in step.diveFalls { fall(nodeIndex: index, style: .dive) }
+        // The diving tackler lays out at the carrier.
+        for index in step.diveFalls { faceTowardCarrier(index); fall(nodeIndex: index, style: .dive) }
         // Shoestring trips, goal-line pylon dives, QB slides, marker lunges.
         for index in step.trips { fall(nodeIndex: index, style: .trip) }
         for index in step.pylonDives { pylonDive(nodeIndex: index) }
@@ -3035,7 +3116,8 @@ class FootballFieldScene: SCNScene {
         case .snap(let toNodeIndex, let shotgun):
             runSnapExchange(to: toNodeIndex, shotgun: shotgun)
         case .arc(let to, let apex, let duration, let from):
-            runBallArc(to: to, apex: apex, duration: duration, from: from, style: step.throwStyle)
+            runBallArc(to: to, apex: apex, duration: duration, from: from, style: step.throwStyle,
+                       launchDelay: apex > 2.0 ? Self.throwWindup : 0)
         case .slide(let to, let duration):
             runBallSlide(to: to, duration: duration)
         case nil:
@@ -3168,11 +3250,23 @@ class FootballFieldScene: SCNScene {
         }
     }
 
+    /// How long a skeletal runner keeps his run clip after a move ends before he
+    /// drops to idle. Sized to comfortably bridge the gaps between the choreography's
+    /// back-to-back ~0.3s move steps so a still-running player never flickers into the
+    /// idle "Hold" crouch mid-play; only a genuine stop lasts longer than this.
+    static let idleGrace: TimeInterval = 0.75
+
+    /// A real overhead throw (apex > 2.0) holds the ball this long while the QB winds
+    /// up, so it leaves his hand as the release beat lands. Added to the ball's launch,
+    /// the receiver's `arriveIn`, and the step budget so the whole pass stays in sync.
+    static let throwWindup: TimeInterval = 0.42
+
     /// Flies the ball along a parabola. The launch point is always the
     /// passer's hands: `from` (or the live carry) resolves the thrower and
     /// the flight starts at his ANIMATED chest position — never a stale spot.
     private func runBallArc(to target: SCNVector3, apex: Float, duration: TimeInterval,
-                            from passerIndex: Int? = nil, style: ThrowStyle? = nil) {
+                            from passerIndex: Int? = nil, style: ThrowStyle? = nil,
+                            launchDelay: TimeInterval = 0) {
         // Claim the ball so any pending snap-attach for this play no-ops.
         ballHandoffToken += 1
         // Whoever carries the ball is the passer; a snap→throw race can leave
@@ -3192,7 +3286,7 @@ class FootballFieldScene: SCNScene {
         // get no arm at all.
         if let thrower {
             if apex <= 2.0 { pitchMotion(of: thrower, toward: target) }
-            else { throwMotion(of: thrower, style: style ?? .overhand) }
+            else { throwMotion(of: thrower, style: style ?? .overhand, releaseAt: launchDelay) }
         }
 
         let start = release ?? ballNode.position
@@ -3205,17 +3299,20 @@ class FootballFieldScene: SCNScene {
                 start.z + (target.z - start.z) * t
             )
         }
-        // Snap exactly onto the target in case the last frame lands short.
+        // Snap exactly onto the target in case the last frame lands short. On a throw,
+        // `launchDelay` holds the ball in the passer's hand while his arm winds up, so
+        // it leaves exactly as the release beat lands (synced in throwMotion via beatAt).
         let settle = SCNAction.move(to: target, duration: 0)
-        ballNode.runAction(SCNAction.sequence([arc, settle]), forKey: "ballMove")
+        let hold = SCNAction.wait(duration: launchDelay)
+        ballNode.runAction(SCNAction.sequence([hold, arc, settle]), forKey: "ballMove")
 
         // Passes spiral around the long axis; kicks/punts (high apex) tumble
         // end over end. Reset the orientation when the flight lands.
         let spin: SCNAction = apex >= 8
             ? SCNAction.repeatForever(SCNAction.rotateBy(x: -2 * .pi, y: 0, z: 0, duration: 0.7))
             : SCNAction.repeatForever(SCNAction.rotateBy(x: 0, y: 0, z: 2 * .pi, duration: 0.35))
-        ballNode.runAction(spin, forKey: "ballSpin")
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+        ballNode.runAction(SCNAction.sequence([hold, spin]), forKey: "ballSpin")
+        DispatchQueue.main.asyncAfter(deadline: .now() + launchDelay + duration) { [weak self] in
             self?.ballNode.removeAction(forKey: "ballSpin")
             self?.ballNode.eulerAngles = SCNVector3Zero
         }
@@ -3241,7 +3338,7 @@ class FootballFieldScene: SCNScene {
                 start.z + (target.z - start.z) * t
             )
         }
-        shadow.runAction(SCNAction.sequence([track, SCNAction.removeFromParentNode()]))
+        shadow.runAction(SCNAction.sequence([hold, track, SCNAction.removeFromParentNode()]))
     }
 
     /// Per-style shaping of the throwing motion. Amplitudes and durations
@@ -3301,9 +3398,11 @@ class FootballFieldScene: SCNScene {
     /// release; the off hand releases the chest carry to neutral. `style`
     /// shapes the whole motion — a soft deep lob, a driven bullet, a quick
     /// 3/4 sidearm out, or an unbalanced off-the-back-foot heave.
-    private func throwMotion(of node: SCNNode, style: ThrowStyle = .overhand) {
+    private func throwMotion(of node: SCNNode, style: ThrowStyle = .overhand, releaseAt: TimeInterval = 0) {
         guard let figure = node.childNode(withName: "figure", recursively: false) else { return }
-        if let skel = skeletalDriver(for: figure) { skel.play(action: "throw"); return }
+        if let skel = skeletalDriver(for: figure) {
+            skel.play(action: "throw", beatAt: releaseAt > 0 ? releaseAt : nil); return
+        }
         guard let arm = figure.childNode(withName: "armR", recursively: false) else { return }
         let s = throwShape(style)
         arm.removeAction(forKey: "swing")
@@ -3387,8 +3486,10 @@ class FootballFieldScene: SCNScene {
                                       duration: 0.14, usesShortestUnitArc: true)
         node.runAction(turn, forKey: "pitchTurn")
 
-        guard let figure = node.childNode(withName: "figure", recursively: false),
-              let arm = figure.childNode(withName: "armR", recursively: false) else { return }
+        guard let figure = node.childNode(withName: "figure", recursively: false) else { return }
+        // Skeletal path: a quick toss (the throw clip on a fast release), then return.
+        if let skel = skeletalDriver(for: figure) { skel.play(action: "throw", beatAt: 0.22); return }
+        guard let arm = figure.childNode(withName: "armR", recursively: false) else { return }
         arm.removeAction(forKey: "swing")
         // Underhand scoop: cock low and out, flip across, settle to neutral.
         let load = SCNAction.rotateTo(x: -0.7, y: 0, z: -0.85, duration: 0.12)
@@ -3412,6 +3513,9 @@ class FootballFieldScene: SCNScene {
     private func handoffGesture(giverIndex: Int, chest: Bool, toward taker: SCNNode) {
         guard let giver = playerNode(at: giverIndex),
               let figure = giver.childNode(withName: "figure", recursively: false) else { return }
+        // Skeletal path: a brief ball-extension toward the taker (throw clip, very quick
+        // release so the arm just punches out and back), then return.
+        if let skel = skeletalDriver(for: figure) { skel.play(action: "throw", beatAt: 0.18); return }
         // Chest carry extends both hands (a mesh handoff); a tuck extends the
         // ball hand only. Rest angles match the carry-release poses.
         let arms = chest ? ["arm", "armR"] : ["arm"]
@@ -4734,6 +4838,30 @@ class FootballFieldScene: SCNScene {
     func updateFootLocks(atTime time: TimeInterval) {
         guard !skeletalFigures.isEmpty else { return }
         for fig in skeletalFigures.values { fig.updateFootLock(atTime: time) }
+        pinCarriedBallToBody()
+    }
+
+    /// Keep a ball carried by a SKELETAL figure on his animated body. `attachBall`
+    /// pins the ball to a fixed container offset calibrated for the procedural-kit
+    /// arm nodes; the skinned rig lacks those nodes and animates the body out from
+    /// under that offset, so the ball detaches visually. Two cases:
+    ///   • Two-hand chest carry (QB dropback): ALWAYS ride the hands, else the ball
+    ///     floats at the belt while the dropback clip lifts the hands to the chest.
+    ///   • Under-arm tuck: ride the torso ONLY while a tackle/fall pose plays, so
+    ///     the ball goes to the turf WITH the carrier (the fall lunges the body
+    ///     forward off the container-pinned ball, which reads as a phantom fumble);
+    ///     a normal upright run keeps `attachBall`'s stable hip offset (no change),
+    ///     and the one small reposition at contact is masked by the tackle.
+    /// Runs each frame for the single carrier only; kit figures keep the offset.
+    /// `presentation` conversion keeps it correct while the carrier is mid-move.
+    private func pinCarriedBallToBody() {
+        guard let index = carryingIndex,
+              let node = playerNode(at: index), ballNode.parent === node,
+              let figure = node.childNode(withName: "figure", recursively: false),
+              let skel = skeletalDriver(for: figure) else { return }
+        guard carryingChest || skel.isGrounded else { return }
+        guard let anchorWorld = skel.ballCarryWorldPosition(chest: carryingChest) else { return }
+        ballNode.position = node.presentation.convertPosition(anchorWorld, from: nil)
     }
 
     private func makePlayerNode(uniform: Uniform, number: Int,
