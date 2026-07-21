@@ -1,5 +1,11 @@
 # Dynasty - TODO
 
+## 🏈 TAKLAUKSEN ROOT-MOTION — sessio 2d (2026-07-21 ilta, COMMITTOITU `aab6cce`)
+
+- **✅ Taklauspino jää sim-kohtaan — KORJATTU + TODISTETTU.** Juurisyy: `PlayerClip_tackle_a/tackle_b/dive.usdc` on leikattu run-into-tackle-mocapista → dive/hit-segmentti kantoi juoksun eteenpäin-momentumin (spine-root käveli ~5.5 yksikköä) ja veti koko meshin taklauskohdan ohi. **Fix:** uusi `tools/asset-pipeline/strip_root.py` litistää VAAKA-rootin (spine.location X/Z) alkuarvoon, säilyttää pysty-Y:n (pudotus). Re-stripattu 3 leikettä. Committit `8fae58d` (Swift/tool/clip) + `aab6cce` (strip + leikkeet).
+- **✅ TODISTETTU mittaamalla (TACKLE-DBG-instrumentointi, lisätty+poistettu):** kantaja menee alas TÄSMÄLLEEN `endZ = losZ + yardsGained`-kohtaan, `driftFromTarget ≈ 0.00yd` ~8 juoksupelissä. Käyttäjän "5 jaardin pystyliuku" EI ole koodivirhe — se on juoksun loppuveto silmän tulkitsemana. Forward-progress-logiikka on jo NFL-sääntöjen mukainen (eteenpäin: pino pysyy kohdassa `momentum=0`; drive-back: pino työntyy LOS:ää kohti mutta pallo jää kontaktikohtaan `endZ`). **Älä jahtaa "5 jaardin liukua" enää.**
+- **⏳ JATKA HUOMENNA: pino "nousee ilmaan ja lentää kasassa kauemmaksi".** Hypoteesi: `strip_root.py` säilytti pysty-Y:n, mutta dive-leikkeiden Y sisältää **ylöshypyn** ennen pudotusta (strip-loki "Y span 1.67 kept" = ~0.7 ylös + ~0.9 alas) → held-fall-poose ampuu kropan ylös; vaaka-konvergenssi (`pileOnMoves`, by-design) + Y-hyppy = "lentää kasassa". **Fix-suunta:** rajaa pysty-Y ettei se koskaan nouse alkuarvon YLI (vain alaspudotus sallittu). **TARKISTA ENSIN Y-käyrän merkki/alue Blenderissä** — väärä leikkaus tappaa pudotuksen (pelaajat jäävät seisomaan). Runtime-ground-clamp (`SkeletalFigure.updateFootLock`) EI kata tätä (luutason nosto, ei container). Muisti: `project_tackle_rootmotion_2026_07_21`.
+
 ## 🐛 ANIMAATIOBUGIT — sessio 2c (2026-07-21, `BUILD SUCCEEDED`, EI committia) — JUURISYYT löydetty instrumentoinnilla
 
 Aiemmat arvaukset (idle-reset race grace 0.12, followThrough/postPlayWalk) EIVÄT korjanneet käyttäjän havaitsemia bugeja. Lisäsin väliaikaisen animaatiologituksen (`🏃` loco-vaihdot + `🎬` play-actionit, sittemmin poistettu) ja ajoin pelin `simctl launch --console-pty`:llä → mittasin tarkat juurisyyt:
