@@ -961,6 +961,26 @@ class FootballFieldScene: SCNScene {
         guard let figure = node.childNode(withName: "figure", recursively: false) else { return }
         clearBystanderIdle(figure)
 
+        // Skeletal figures hold a real per-position STANCE clip — the down hand on
+        // the turf for a lineman, hands on the knees for a back, a receiver split,
+        // the QB reaching under center. The clip carries the whole pose, so the
+        // procedural figure-pitch/limb posing below is skipped: that path only
+        // rotates the OLD procedural kit's `arm`/`leg` child nodes, which the
+        // skinned rig doesn't have — a no-op that left every skeletal player frozen
+        // in one generic idle crouch (read as "everyone leaning the same way").
+        if let skel = skeletalDriver(for: figure) {
+            let clip: String
+            switch stance {
+            case .threePoint:  clip = "stance3"
+            case .twoPoint:    clip = "stance2"
+            case .split:       clip = "stanceSplit"
+            case .underCenter: clip = "stanceUC"
+            case .upright:     clip = "stanceUpright"
+            }
+            skel.playStance(clip, delay: delay)
+            return
+        }
+
         // figure pitch (forward lean) + sink toward the turf, and per-limb
         // targets: (limb name, hinge x, hinge z, joint bend x).
         let pitch: CGFloat
@@ -1895,17 +1915,18 @@ class FootballFieldScene: SCNScene {
         if let skel = skeletalDriver(for: figure) {
             skel.setMoving(true, speed: distance / Float(duration), backpedal: backpedal)
             figure.removeAction(forKey: "skelIdleReset")
-            // Return to idle only after a real gap. The choreography issues a running
-            // player's moves as back-to-back ~0.3s steps; between them he briefly has
-            // no move, and without this grace he snaps to the frozen idle "Hold" pose
-            // (a crouch) for 1-2 frames every step boundary — that flicker is the
-            // "player collapses mid-run" bug. A generous grace bridges the inter-step
-            // gaps so he keeps running continuously through the play; only a genuine
-            // stop (no new move for `idleGrace`) drops him to idle, which is then
-            // invisible under the smooth run loop. The next step's setMoving(true)
-            // cancels a pending reset, so a still-moving man never idles.
+            // Return to idle only after a real gap. In-play moves ("playMove") are issued
+            // as back-to-back ~0.3s steps; between them the player briefly has no move, and
+            // without a grace he snaps to the frozen idle "Hold" pose (a crouch) for 1-2
+            // frames every step boundary — the "player collapses mid-run" bug. `idleGrace`
+            // bridges those inter-step gaps so he runs continuously; the next step's
+            // setMoving(true) cancels the pending reset, so a still-moving man never idles.
+            // A formation/lineup or post-play walk, though, is a SINGLE move with nothing
+            // chained after it — there the long grace just makes him jog in place at his
+            // spot for 0.75s before settling, so those keys stop promptly (`settleGrace`).
+            let grace = key == "playMove" ? Self.idleGrace : Self.settleGrace
             figure.runAction(.sequence([
-                .wait(duration: duration + Self.idleGrace),
+                .wait(duration: duration + grace),
                 .run { [weak skel] _ in skel?.setMoving(false, speed: 0) },
             ]), forKey: "skelIdleReset")
             return
@@ -3254,7 +3275,11 @@ class FootballFieldScene: SCNScene {
     /// drops to idle. Sized to comfortably bridge the gaps between the choreography's
     /// back-to-back ~0.3s move steps so a still-running player never flickers into the
     /// idle "Hold" crouch mid-play; only a genuine stop lasts longer than this.
+    /// ONLY in-play moves ("playMove") chain like that; a formation/lineup or post-play
+    /// walk is a single move with nothing after it, so it uses `settleGrace` instead —
+    /// otherwise the player jogs in place for 0.75 s after reaching his pre-snap spot.
     static let idleGrace: TimeInterval = 0.75
+    static let settleGrace: TimeInterval = 0.1
 
     /// A real overhead throw (apex > 2.0) holds the ball this long while the QB winds
     /// up, so it leaves his hand as the release beat lands. Added to the ball's launch,

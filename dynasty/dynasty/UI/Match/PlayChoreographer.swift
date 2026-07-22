@@ -1686,22 +1686,29 @@ struct PlayChoreographer {
             : 0
         let pileZ = clampZ(z + c.direction * momentum)
         // Contact: the tackler closes the last yard THROUGH the carrier from
-        // his pursuit angle (a forward drive), arms wrapping as they collide,
-        // instead of collapsing to a standstill beside him.
+        // his pursuit angle (a forward drive), arms wrapping as they collide —
+        // and the carrier goes DOWN on THIS beat, the moment he's reached the
+        // spot, exactly as every other hit in the library does. Falling him a
+        // beat later (at the pile step) left his run clip looping in place at
+        // the spot for 0.36s — his own contact move here is ~0 distance (pileZ
+        // == his run destination on a non-drive-back rep) so it hit the
+        // sub-0.4yd skip guard and never cleared `setMoving`, leaving him
+        // jogging until the pile landed.
         steps.append(Step(
             moves: [
-                (nodeIndex: carrier, to: player(x, pileZ), duration: 0.34),
                 (nodeIndex: tackler, to: player(x + 0.3, pileZ + c.direction * 0.25), duration: 0.3),
             ],
             ballMove: .carry(nodeIndex: carrier),
             duration: 0.36,
             pulses: [tackler],
+            falls: [carrier],
             wraps: [tackler]
         ))
         let gang = gangTacklers(c, x: x, z: pileZ, excluding: [tackler])
+        // The tackler and chasers pile onto the already-downed carrier a beat later.
         steps.append(Step(moves: pileOnMoves(c, gang: gang, x: x, z: pileZ),
                           ballMove: .carry(nodeIndex: carrier), duration: 1.2,
-                          falls: [carrier, tackler] + gang,
+                          falls: [tackler] + gang,
                           wraps: [tackler] + gang,
                           lunges: markerLunge))
         return steps

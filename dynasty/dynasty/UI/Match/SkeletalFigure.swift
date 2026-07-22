@@ -37,7 +37,9 @@ final class SkeletalFigure {
     /// The clip names shipped in Resources (PlayerClip_<name>.usdc). Most map to
     /// the Studio Ochi football mocap; `juke` is a Mixamo dodge retargeted onto
     /// the same Metarig (tools/asset-pipeline/mixamo_retarget.py).
-    static let clipNames = ["run", "idle", "sprint", "tackle", "throw", "catch", "kick", "juke", "celebrate"]
+    static let clipNames = ["run", "idle", "sprint", "tackle", "throw", "catch", "kick", "juke", "celebrate",
+                            // per-position pre-snap stances (held; played by applyStance)
+                            "stance3", "stance2", "stanceSplit", "stanceUC", "stanceUpright"]
 
     /// One-shot action clips retargeted from Mixamo carry a long lead-in/hold
     /// (throw 7.7s, tackle 5s, celebrate 4.5s) around a brief action beat; played
@@ -301,7 +303,10 @@ final class SkeletalFigure {
         // tackled man up — otherwise a tackle beat that also slides the carrier
         // (drag-down / big-hit / shoestring) pops him back to his feet when that
         // slide's trailing idle-reset fires ~0.3-0.45s later.
-        if moving { skeleton.removeAnimation(forKey: "fall", blendOutDuration: 0.15) }
+        if moving {
+            skeleton.removeAnimation(forKey: "fall", blendOutDuration: 0.15)
+            skeleton.removeAnimation(forKey: "stance", blendOutDuration: 0.12)  // the snap breaks the pre-snap pose
+        }
         let want: Loco = moving ? (backpedal ? .backpedal : .run) : .idle
         if let cur = loco, cur == want {
             if moving { setLocoSpeed(speed) }
@@ -465,6 +470,7 @@ final class SkeletalFigure {
     /// action (juke / standing catch / throw / kick, key "action").
     var isPosing: Bool {
         isGrounded || skeleton.animationPlayer(forKey: "action") != nil
+            || skeleton.animationPlayer(forKey: "stance") != nil
     }
 
     /// Immediately drop a held ground pose / action clip and fall back to the
@@ -474,6 +480,7 @@ final class SkeletalFigure {
     func clearPose() {
         skeleton.removeAnimation(forKey: "fall", blendOutDuration: 0.1)
         skeleton.removeAnimation(forKey: "action", blendOutDuration: 0.1)
+        skeleton.removeAnimation(forKey: "stance", blendOutDuration: 0.1)
     }
 
     /// Wipe ALL animation/clamp/foot-lock state and re-establish a clean idle. The
@@ -553,6 +560,28 @@ final class SkeletalFigure {
         if hold { base.fillMode = .forwards }
         if startDelay > 0 { base.beginTime = CACurrentMediaTime() + startDelay }
         skeleton.addAnimation(base, forKey: hold ? "fall" : "action")
+    }
+
+    /// Ease into a held pre-snap STANCE clip (three-point / two-point / receiver
+    /// split / QB under-center / upright) and hold the final frame until the snap.
+    /// Unlike a fall this does NOT count as grounded — no ground clamp fires (the
+    /// pose keeps the down hand just above the turf), but it IS `isPosing`, so
+    /// foot-lock is suspended (the pose plants the feet). `setMoving(true)` clears
+    /// it on takeoff. Loads PlayerClip_<clip>.usdc; a missing clip no-ops cleanly.
+    func playStance(_ clip: String, delay: TimeInterval = 0) {
+        guard let base = Self.clip(clip)?.copy() as? CAAnimation else { return }
+        base.repeatCount = 1
+        base.fadeInDuration = 0.25    // ease in from the idle/run underneath
+        base.fadeOutDuration = 0.2
+        base.isRemovedOnCompletion = false
+        base.fillMode = .forwards     // hold the stance's final frame
+        if delay > 0 { base.beginTime = CACurrentMediaTime() + delay }
+        skeleton.addAnimation(base, forKey: "stance")
+    }
+
+    /// Drop the held pre-snap stance (the snap breaks it; also on a full reset).
+    func clearStance() {
+        skeleton.removeAnimation(forKey: "stance", blendOutDuration: 0.1)
     }
 
     /// Resolve an action to a concrete clip name: pick a pool variant (avoiding an
