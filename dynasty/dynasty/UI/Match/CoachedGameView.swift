@@ -3226,9 +3226,12 @@ struct CoachedGameView: View {
         let presnapStances = PlayChoreographer.stances(offenseIsHome: offenseIsHome,
                                                        call: animatedCall)
         let presnapBuilds = PlayChoreographer.bodyTypes(offenseIsHome: offenseIsHome)
+        // Hold everyone in their pre-snap stance through this shift — players slide
+        // to the play's alignment without standing up; only the snap breaks the pose.
         fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.7,
                                           stancesHome: presnapStances.home, stancesAway: presnapStances.away,
-                                          bodyTypesHome: presnapBuilds.home, bodyTypesAway: presnapBuilds.away)
+                                          bodyTypesHome: presnapBuilds.home, bodyTypesAway: presnapBuilds.away,
+                                          holdStance: true)
 
         // Markers stay on THIS play's line/1st-down through the animation.
         let playLosZ = PlayChoreographer.losZ(yardLine: losYard, offenseIsHome: offenseIsHome)
@@ -3257,6 +3260,23 @@ struct CoachedGameView: View {
         // 1.15 s pre-snap window: the 0.7 s formation move plus the 0-0.4 s
         // staggered departures finish before the ball moves.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.15) {
+            // FALSE START: one lineman jumps early — the flinch IS the play. The
+            // engine already walked off 5 and kept the down; here we only stage the
+            // visual: the guilty man rises out of his stance, whistle, flag — then
+            // finish (replayed down). No snap choreography, no replay recording.
+            if play.outcome == .penalty, play.description.contains("False start") {
+                let culpritRole = offUnit.role(of: play.keyOffensePlayerID) ?? 3   // LG fallback
+                let flinchNode = (offenseIsHome ? 0 : 11) + max(2, min(6, culpritRole))
+                fieldScene.falseStartFlinch(nodeIndex: flinchNode, offenseDirection: playDir)
+                AudioDirector.shared.play(.whistle)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    fieldScene.throwFlag(atZ: playLosZ)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    finishPlay(play, possessionBefore: possessionBefore, distanceBefore: distanceBefore)
+                }
+                return
+            }
             let steps = PlayChoreographer.steps(for: play, losYardLine: losYard,
                                                 offenseIsHome: offenseIsHome, matchups: matchups,
                                                 call: animatedCall, defensivePackage: defPackage,
@@ -3457,7 +3477,7 @@ struct CoachedGameView: View {
 
     /// Teleports the formation/camera to the engine's current situation,
     /// aligned to whatever calls are currently on the table.
-    private func syncFieldToSituation() {
+    private func syncFieldToSituation(holdStance: Bool = false) {
         let losZ = PlayChoreographer.losZ(yardLine: engine.yardLine, offenseIsHome: engine.homeHasPossession)
         let formation = PlayChoreographer.formation(
             for: .run,
@@ -3474,7 +3494,8 @@ struct CoachedGameView: View {
         let builds = PlayChoreographer.bodyTypes(offenseIsHome: engine.homeHasPossession)
         fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.3,
                                           stancesHome: stances.home, stancesAway: stances.away,
-                                          bodyTypesHome: builds.home, bodyTypesAway: builds.away)
+                                          bodyTypesHome: builds.home, bodyTypesAway: builds.away,
+                                          holdStance: holdStance)
         fieldScene.setDefensiveFraming(engine.homeHasPossession != playerTeamIsHome)
         // Stage the ball at the new spot so the snap exchange starts at the
         // center's feet, not wherever the last play left it.
@@ -3523,7 +3544,10 @@ struct CoachedGameView: View {
     private func previewFormation() {
         guard gameStarted, !isAnimating, !isReplaying, !engine.isGameOver else { return }
         if let breakTime = huddleBreakTime, breakTime > Date() { return }
-        syncFieldToSituation()
+        // Players are already lined up in their stance — a play/defense re-preview
+        // (browsing calls, or the AI checking its coverage pre-snap) must slide them
+        // to the new look WITHOUT standing them up out of the stance.
+        syncFieldToSituation(holdStance: true)
     }
 
     /// Fires the "2-MINUTE WARNING" chip once per half when the clock first

@@ -1,5 +1,19 @@
 # Dynasty - TODO
 
+## 🏈 ANIMAATIO-SESSIO 2026-07-22 (ilta) — iso playtest-korjausrupeama (committoitu)
+
+Shipattu + varmennettu simulaattorissa (haara `feat/skeletal-mocap-players`):
+- **Juoksee-paikallaan poistettu:** juoksuklipin tahti ajetaan nyt kontainerin TODELLISESTA per-frame-vauhdista (`SkeletalFigure.updateFootLock`), min-clamp 0.35→0.0 → pysähtynyt keho ei jauha paikallaan.
+- **Asento säilyy snappiin asti + pehmeä nousu:** `holdStance` `previewFormation`+SNAP-shiftissä (ei nousta asennosta play/def-valinnan uudelleenlatauksessa); `applyStance` EI soita asentoa uudelleen holdStancessa (poisti ylös→alas→ylös-välkkeen); `fullReset(blendOut:0.25)` häivyttää asennon → nousee pehmeästi kun pallo lähtee (ei ponnahda).
+- **Taklaus:** WRAP yhdeksi kontaktibeatiksi (kantaja+taklaaja+gang kaatuvat yhtäjaksoisesti), gang lähempänä (pursuit 0.75, pileOnMoves 0.28). **Käsin authorroidut PUHTAAT maahanmeno-clipit:** `fall_forward` (etukumollaan romahdus, korvaa tackle_a/b) + `fall_back` (iso osuma selälleen) — EI enää ilmalento/sinkoilu. Verifioitu renderillä (monotoninen korkeuslasku).
+- **Koppi:** deterministinen pallon mukaan — rutiini = varma `catch_a` + kääntyy palloa kohti (ei random-hyppyä); kiistelty korkea = `.jump` (`catch_b`) + korkeampi kaari.
+- **False start:** engine tuottaa jo rangaistuksen — presentaatio: syyllinen linjamies (`keyOffensePlayerID`) liikahtaa ennen palloa → pilli + lippu → down uusitaan (ei koko peliä).
+
+**⏳ AUKI seuraavaksi:**
+- **Play-suunta peilikuvassa:** `RouteSpec.resolve` kääntää syvyyden `direction`illa mutta EI lateraalia (rivi 65-66); kortti käyttää aina `direction:1`, kenttä `c.direction`ia → away-hyökkäyksen sweep/outside-run näkyy peilikuvana. Korjaus = käännä koko kentän lateraali-X suunnalla away-puolelle, testaa home+away (puolustuksen linjaus ei saa rikkoutua). RISKIALTIS.
+- **Feature:** vastapuolen juoksut (sweep/outside kumpaankin suuntaan) + reverse-nappi.
+- **tackle_a diving-tackler** käyttää nyt fall_forwardia (sama kuin kaatuja) — harkitse oma dive-clip jos halutaan eroa.
+
 ## 🏈 ANIMAATIO-SESSIO 2026-07-22 (jatko) — 3 havaintoa
 
 - **✅ Huddlesta asettuminen: juoksu paikallaan 1-2s — KORJATTU (buildattu).** Juurisyy: `run()` soittaa `idleGrace 0.75s` joka siirron jälkeen ennen idleä. Se on peliaikaisten ketjuaskelten (`playMove`) silloittamiseen — mutta huddle→linja on yksittäinen `formationMove` → 0.75s = juoksua paikallaan. **Fix:** grace portitettu avaimella (`FootballFieldScene.run`): `playMove`=0.75s (säilyy), `formationMove`/`walk`=`settleGrace` 0.1s. Uusi vakio `settleGrace`.

@@ -801,7 +801,7 @@ struct PlayChoreographer {
         gang.enumerated().map { offset, idx in
             (nodeIndex: idx,
              to: player(x + (offset == 0 ? 0.5 : -0.5), z - c.direction * 0.25),
-             duration: 0.45)
+             duration: 0.28)   // snap onto the pile fast so each man falls AS he arrives
         }
     }
 
@@ -1528,7 +1528,7 @@ struct PlayChoreographer {
                      to: player(endX, end.z + c.direction * 1.4), duration: runDuration),
                 ],
                 routeMoves(c, p: 1, depthScale: 0.45, exclude: stalkExclude, d: runDuration)
-                    + pursuitMoves(c, toX: endX, toZ: end.z, fraction: 0.55, d: runDuration)
+                    + pursuitMoves(c, toX: endX, toZ: end.z, fraction: 0.75, d: runDuration)
                     + (isScramble ? [] : trailMoves(c, toX: endX, toZ: end.z, roles: [0], fraction: 0.3, d: runDuration))
             ).filter { !runTaken.contains($0.nodeIndex) },
             paths: runPaths,
@@ -1694,23 +1694,22 @@ struct PlayChoreographer {
         // == his run destination on a non-drive-back rep) so it hit the
         // sub-0.4yd skip guard and never cleared `setMoving`, leaving him
         // jogging until the pile landed.
-        steps.append(Step(
-            moves: [
-                (nodeIndex: tackler, to: player(x + 0.3, pileZ + c.direction * 0.25), duration: 0.3),
-            ],
-            ballMove: .carry(nodeIndex: carrier),
-            duration: 0.36,
-            pulses: [tackler],
-            falls: [carrier],
-            wraps: [tackler]
-        ))
+        // ONE continuous contact beat: the tackler drives THROUGH the carrier and
+        // both go DOWN together, while the gang converges onto the same pile and each
+        // man falls AS he lands (fall stagger by list order — carrier first, then the
+        // tackler, then the chasers). No separate pile step a beat later, so there is
+        // no window of men standing frozen over the carrier before a synchronized drop.
         let gang = gangTacklers(c, x: x, z: pileZ, excluding: [tackler])
-        // The tackler and chasers pile onto the already-downed carrier a beat later.
-        steps.append(Step(moves: pileOnMoves(c, gang: gang, x: x, z: pileZ),
-                          ballMove: .carry(nodeIndex: carrier), duration: 1.2,
-                          falls: [tackler] + gang,
-                          wraps: [tackler] + gang,
-                          lunges: markerLunge))
+        steps.append(Step(
+            moves: [(nodeIndex: tackler, to: player(x + 0.3, pileZ + c.direction * 0.25), duration: 0.3)]
+                + pileOnMoves(c, gang: gang, x: x, z: pileZ),
+            ballMove: .carry(nodeIndex: carrier),
+            duration: 0.6,
+            pulses: [tackler],
+            falls: [carrier, tackler] + gang,
+            wraps: [tackler] + gang,
+            lunges: markerLunge
+        ))
         return steps
     }
 
@@ -1830,14 +1829,21 @@ struct PlayChoreographer {
             catchStyle = .dive
         } else if catchDepth >= 16 {
             catchStyle = .overShoulder
+        } else if tightCoverage && catchDepth >= 8 {
+            catchStyle = .jump          // contested ball up the field — go UP and get it
         } else {
-            catchStyle = .reach
+            catchStyle = .reach         // routine ball to the numbers — hands catch, turn to it
         }
+        // A jump ball arrives HIGH (above the leaping receiver) on a steeper arc;
+        // routine catches come in at chest height.
+        let ballApex = catchStyle == .jump ? apex + 3 : apex
+        let catchAir = catchStyle == .jump ? air(catchSpot.x, catchSpot.z, ballCarryY + 1.3)
+                                           : air(catchSpot.x, catchSpot.z)
         let (blockNodes, blockStyles) = flightBlocks(c, frame: frame)
         steps.append(Step(
             moves: flightMoves.filter { !flightTaken.contains($0.nodeIndex) },
             paths: flightPaths,
-            ballMove: .arc(to: air(catchSpot.x, catchSpot.z), apex: apex, duration: flight, from: c.qb),
+            ballMove: .arc(to: catchAir, apex: ballApex, duration: flight, from: c.qb),
             duration: flight,
             reaches: [receiver],
             blocks: blockNodes,

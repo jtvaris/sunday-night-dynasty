@@ -139,6 +139,9 @@ class FootballFieldScene: SCNScene {
         case dive
         /// Sideline grab with quick toe taps to get the feet down in bounds.
         case toeTap
+        /// High ball at/above the receiver — he leaps to bring it down (the jump
+        /// clip). Only for balls thrown high to the man, not routine chest catches.
+        case jump
     }
 
     /// How an OL/DL figure plays out a blocking engagement. Chosen from the
@@ -848,7 +851,8 @@ class FootballFieldScene: SCNScene {
                                 stancesHome: [Int: Stance] = [:],
                                 stancesAway: [Int: Stance] = [:],
                                 bodyTypesHome: [Int: BodyType] = [:],
-                                bodyTypesAway: [Int: BodyType] = [:]) {
+                                bodyTypesAway: [Int: BodyType] = [:],
+                                holdStance: Bool = false) {
         guard homePlayerNodes.count == home.count,
               awayPlayerNodes.count == away.count,
               !home.isEmpty || !away.isEmpty else {
@@ -886,7 +890,8 @@ class FootballFieldScene: SCNScene {
 
             let start = { [weak self, weak node] in
                 guard let self, let node, self.playGeneration == generation else { return }
-                self.run(node: node, to: target, duration: duration, key: "formationMove")
+                self.run(node: node, to: target, duration: duration, key: "formationMove",
+                         holdStance: holdStance)
                 let settle = SCNAction.sequence([
                     SCNAction.wait(duration: duration),
                     SCNAction.rotateTo(x: 0, y: CGFloat(settleYaw), z: 0, duration: 0.25,
@@ -894,8 +899,16 @@ class FootballFieldScene: SCNScene {
                 ])
                 node.runAction(settle, forKey: "settleFacing")
                 // Everyone drops into his stance once he arrives at the line
-                // (upright is applied too — it resets any previous stance).
-                self.applyStance(stance, to: node, delay: duration + 0.2)
+                // (upright is applied too — it resets any previous stance). But NOT
+                // on a hold-stance re-align (the SNAP shift / a pre-snap re-preview):
+                // the man is already holding his stance, and re-applying it here would
+                // replace the held "stance" clip with a new one that only begins after
+                // `delay` — leaving a gap where he stands up, then drops back down when
+                // the new clip finally starts. Holding means: leave the pose untouched
+                // until the snap itself breaks it.
+                if !holdStance {
+                    self.applyStance(stance, to: node, delay: duration + 0.2)
+                }
             }
 
             // Staggered break to the line: 0-0.4 s per man, deterministic by
@@ -1872,7 +1885,7 @@ class FootballFieldScene: SCNScene {
     /// Tiny shuffles (sub-0.4yd) skip the gait so linemen don't sprint
     /// through half-yard adjustments.
     private func run(node: SCNNode, to target: SCNVector3, duration: TimeInterval, key: String,
-                     backpedal: Bool = false) {
+                     backpedal: Bool = false, holdStance: Bool = false) {
         // One mover at a time: a snap cancels a late formation shift or the
         // post-play walk, a formation move cancels the walk, and so on —
         // concurrent move(to:) actions under different keys would fight.
@@ -1885,6 +1898,13 @@ class FootballFieldScene: SCNScene {
         // velocity continuous across steps; only formation moves ease.
         move.timingMode = key == "playMove" ? .linear : .easeInEaseOut
         node.runAction(move, forKey: key)
+
+        // Pre-snap re-align (the SNAP shift to the play's alignment): slide the
+        // container to its aligned spot but keep the man IN his held stance — no
+        // gait, no setMoving, no stand-up. Only the snap itself (the play's first
+        // move) breaks the stance. Without this every player who shifted more than
+        // 0.4 yd stood up out of his stance the instant SNAP was pressed.
+        if holdStance { return }
 
         let dx = target.x - node.position.x
         let dz = target.z - node.position.z
@@ -2151,17 +2171,30 @@ class FootballFieldScene: SCNScene {
         case .dive:
             guard let p = passer?.presentation.position else { return 0 }
             return max(-0.7, min(0.7, yawTo(p.x, p.z)))
+        case .jump:
+            guard let p = passer?.presentation.position else { return 0 }
+            return max(-1.0, min(1.0, yawTo(p.x, p.z)))
         }
     }
 
     /// Both arms shoot up for a beat — catch attempts and pick attempts —
     /// with a small leap at the ball while the arms are up. `turnYaw` turns the
     /// torso toward the incoming ball at the grab (0 = stay square).
-    private func reach(nodeIndex: Int, turnYaw: CGFloat = 0, arriveIn: TimeInterval = 0) {
+    private func reach(nodeIndex: Int, turnYaw: CGFloat = 0, arriveIn: TimeInterval = 0,
+                       catchClip: String = "catch_a") {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         if let skel = skeletalDriver(for: figure) {
-            skel.play(action: "catch", landAfter: arriveIn)   // beat lands as the ball arrives (variant-aware)
+            // Turn toward the incoming ball and secure it at the body — a hands
+            // catch, NOT a leap. (The old random "catch" pool could pick the JUMP
+            // variant on a ball thrown right to the numbers, which read as silly.
+            // High/jump balls use the dedicated .jump style → catch_b.)
+            if abs(turnYaw) > 0.05 {
+                let turn = SCNAction.rotateBy(x: 0, y: turnYaw, z: 0, duration: min(0.22, max(0.08, arriveIn)))
+                turn.timingMode = .easeOut
+                node.runAction(turn, forKey: "catchTurn")
+            }
+            skel.play(action: catchClip, landAfter: arriveIn)   // beat lands as the ball arrives
             return
         }
         catchBodyTurn(figure, yaw: turnYaw)
@@ -2200,7 +2233,7 @@ class FootballFieldScene: SCNScene {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         if let skel = skeletalDriver(for: figure) {
-            skel.play(action: "catch", landAfter: arriveIn)
+            skel.play(action: "catch_a", landAfter: arriveIn)   // deep tracking catch on the run (no jump)
             return
         }
         catchBodyTurn(figure, yaw: turnYaw, hold: 0.6)
@@ -2229,7 +2262,7 @@ class FootballFieldScene: SCNScene {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         if let skel = skeletalDriver(for: figure) {
-            skel.play(action: "catch", landAfter: arriveIn, hold: true)   // lay out + stay down (variant-aware)
+            skel.play(action: "catch_c", landAfter: arriveIn, hold: true)   // dive-catch clip: lay out + stay down
             return
         }
         figure.removeAction(forKey: "gait")
@@ -2622,7 +2655,17 @@ class FootballFieldScene: SCNScene {
             // (style .dive) lays out (tackle_a); everyone else plays tackle_b.
             if nodeIndex == carryingIndex { node.removeAction(forKey: "playMove") }
             skel.setMoving(false, speed: 0)
-            skel.play(action: style == .dive ? "tackle" : "tackled", delay: delay, hold: true)
+            // Clean, GROUNDED hand-authored collapses (fall_forward/fall_back) — no
+            // airborne launch, no sideways fling, already ~0.5s, so they play at
+            // natural speed (no beat compression). A knocked-back man (big hit) sits
+            // down onto his back; everyone else pitches forward and lays out prone.
+            let clip: String
+            switch style {
+            case .backward: clip = "fall_back"       // hit high, knocked onto his back
+            case .dive:     clip = "tackle"          // diving tackler lays out forward
+            default:        clip = "tackled"         // brought down, forward collapse
+            }
+            skel.play(action: clip, delay: delay, hold: true)
             return
         }
         figure.removeAction(forKey: "gait")
@@ -2903,6 +2946,20 @@ class FootballFieldScene: SCNScene {
             .runAction(SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.18), forKey: "bend")
     }
 
+    /// False-start presentation: one offensive lineman breaks his stance a beat
+    /// EARLY — a short downhill lurch that rises him out of his three-point, then
+    /// he settles standing (caught in the act). No play follows; the caller blows
+    /// the whistle and throws the flag. `nodeIndex` 0-10 = home, 11-21 = away;
+    /// `offenseDirection` is the +z/-z the offense is driving.
+    func falseStartFlinch(nodeIndex: Int, offenseDirection: Float) {
+        guard let node = playerNode(at: nodeIndex) else { return }
+        // > 0.4yd and > 0.15s so run() doesn't skip it: setMoving(true) blends the
+        // held stance out (the early jump) and its trailing idle-reset stands him up.
+        let target = SCNVector3(node.position.x, node.position.y,
+                                node.position.z + offenseDirection * 0.5)
+        run(node: node, to: target, duration: 0.3, key: "formationMove")
+    }
+
     /// Injury presentation: the player drops and stays on the turf until the
     /// next formation move. `nodeIndex` 0-10 = home players, 11-21 = away.
     func stayDown(nodeIndex: Int) {
@@ -2924,7 +2981,7 @@ class FootballFieldScene: SCNScene {
         // animation players ON THE SKELETON (not as figure SCNActions), and that
         // residue blends into the next play's run as brief mid-run collapses. A full
         // wipe each snap keeps every play starting from a clean rig.
-        skeletalDriver(for: figure)?.fullReset()
+        skeletalDriver(for: figure)?.fullReset(blendOut: 0.25)   // rise out of the stance, don't pop
         figure.position = SCNVector3Zero
         figure.eulerAngles = SCNVector3Zero
         if let body = figure.childNode(withName: "body", recursively: false) {
@@ -3077,6 +3134,7 @@ class FootballFieldScene: SCNScene {
             case .overShoulder: overShoulderReach(nodeIndex: index, turnYaw: yaw, arriveIn: arriveIn)
             case .dive: divingCatch(nodeIndex: index, turnYaw: yaw, arriveIn: arriveIn)
             case .toeTap: toeTapReach(nodeIndex: index, turnYaw: yaw, arriveIn: arriveIn)
+            case .jump: reach(nodeIndex: index, turnYaw: yaw, arriveIn: arriveIn, catchClip: "catch_b")
             }
         }
         for index in step.celebrates { celebrationJump(nodeIndex: index) }

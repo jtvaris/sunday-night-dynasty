@@ -39,7 +39,8 @@ final class SkeletalFigure {
     /// the same Metarig (tools/asset-pipeline/mixamo_retarget.py).
     static let clipNames = ["run", "idle", "sprint", "tackle", "throw", "catch", "kick", "juke", "celebrate",
                             // per-position pre-snap stances (held; played by applyStance)
-                            "stance3", "stance2", "stanceSplit", "stanceUC", "stanceUpright"]
+                            "stance3", "stance2", "stanceSplit", "stanceUC", "stanceUpright",
+                            "fall_back"]   // big-hit backward knockdown (forward falls reuse tackle_a/b)
 
     /// One-shot action clips retargeted from Mixamo carry a long lead-in/hold
     /// (throw 7.7s, tackle 5s, celebrate 4.5s) around a brief action beat; played
@@ -47,7 +48,9 @@ final class SkeletalFigure {
     /// the beat lands in a football-appropriate window. Clips not listed play at
     /// natural speed (e.g. the Ochi kick).
     private static let actionTargetDuration: [String: TimeInterval] = [
-        "throw": 2.2, "catch": 1.6, "tackle": 2.2, "tackled": 2.2, "juke": 0.75, "celebrate": 3.0,
+        // tackle clips play FAST — a football hit drops the man in ~0.5-0.8s, not a
+        // 2.2s slow-motion flop (the old target left everyone standing then sinking).
+        "throw": 2.2, "catch": 1.6, "tackle": 1.0, "tackled": 0.85, "juke": 0.75, "celebrate": 3.0,
         "kick": 1.5, "dive": 1.6,
     ]
 
@@ -169,6 +172,12 @@ final class SkeletalFigure {
     }
     private var feet: [FootLock] = []
     private var lastLockTime: TimeInterval = 0
+    /// The container's horizontal position last frame + a smoothed ground speed,
+    /// so the run cadence tracks how fast the body ACTUALLY travels (not the fixed
+    /// average set at `setMoving`). A stopped container → the legs settle instead
+    /// of churning in place.
+    private var lastContainerXZ: (x: Float, z: Float)?
+    private var groundSpeedEMA: Float = 0
     /// Every bone node in the rig, cached once. The ground clamp in
     /// `updateFootLock` scans these to find the lowest joint while a fall/dive/
     /// tackle pose plays — the part that pokes through the turf is usually a leaf
@@ -305,7 +314,10 @@ final class SkeletalFigure {
         // slide's trailing idle-reset fires ~0.3-0.45s later.
         if moving {
             skeleton.removeAnimation(forKey: "fall", blendOutDuration: 0.15)
-            skeleton.removeAnimation(forKey: "stance", blendOutDuration: 0.12)  // the snap breaks the pre-snap pose
+            // The snap breaks the pre-snap pose: blend the held stance OUT over a
+            // beat so the man RISES smoothly out of his crouch into the run rather
+            // than snapping upright (a "jump" to standing).
+            skeleton.removeAnimation(forKey: "stance", blendOutDuration: 0.3)
         }
         let want: Loco = moving ? (backpedal ? .backpedal : .run) : .idle
         if let cur = loco, cur == want {
@@ -350,7 +362,10 @@ final class SkeletalFigure {
     /// Backpedal reverse-plays the run clip (negative) so the legs drive backward.
     private func locoClipSpeed(_ groundSpeed: Float, backpedal: Bool) -> Float {
         let worldStride = Self.runV0 * Float(figureScale)
-        let k = max(0.35, min(3.0, groundSpeed / max(0.01, worldStride)))
+        // No hard floor: a stopped container drives the cadence to ~0 so the legs
+        // come to rest instead of churning in place (the per-frame ground speed in
+        // updateFootLock feeds this). Still capped so a sprint never over-spins.
+        let k = max(0.0, min(3.0, groundSpeed / max(0.01, worldStride)))
         return backpedal ? -k : k
     }
 
@@ -392,6 +407,26 @@ final class SkeletalFigure {
         guard !feet.isEmpty else { return }
         let dt: Float = lastLockTime > 0 ? Float(min(0.1, max(0.001, time - lastLockTime))) : 1.0 / 60
         lastLockTime = time
+
+        // Drive the run cadence from the container's ACTUAL per-frame ground speed
+        // instead of the fixed average set once at `setMoving`. When the body has
+        // stopped — arrived at its spot, or bridging a gap between chained steps
+        // under the idle grace — the legs settle to a near-stop rather than churning
+        // in place; a slow move no longer over-strides into a skate either. Only
+        // while genuinely in a run/backpedal loco (not a held pose).
+        if loco == .run || loco == .backpedal {
+            let wp = content.presentation.worldPosition
+            if let last = lastContainerXZ {
+                let inst = hypotf(Float(wp.x) - last.x, Float(wp.z) - last.z) / dt   // world units / s
+                groundSpeedEMA += (inst - groundSpeedEMA) * min(1, 14 * dt)          // low-pass
+                setLocoSpeed(groundSpeedEMA)
+            }
+            lastContainerXZ = (Float(wp.x), Float(wp.z))
+        } else {
+            lastContainerXZ = nil
+            groundSpeedEMA = 0
+        }
+
         // Foot-lock is off during ANY one-shot clip (the feet leave the turf); the
         // ground clamp below fires only for a HELD ground pose (isGrounded), never an
         // upright action (juke / standing catch / throw) — clamping those would pop
@@ -491,8 +526,16 @@ final class SkeletalFigure {
     /// from `resetGait` at each snap (`cancelPlay`), so every play starts from a
     /// known-clean rig. A soft `clearPose` is not enough — the residue is whole
     /// animation players, so we `removeAllAnimations` and rebuild the idle.
-    func fullReset() {
-        skeleton.removeAllAnimations()
+    func fullReset(blendOut: TimeInterval = 0) {
+        // `blendOut > 0` fades the current pose out over a beat instead of snapping
+        // to the rest rig — at the snap this is what makes a lineman RISE out of his
+        // held stance into the play rather than popping upright with no animation.
+        // Spent players are still removed (just faded), so no residue accumulates.
+        if blendOut > 0 {
+            skeleton.removeAllAnimations(withBlendOutDuration: CGFloat(blendOut))
+        } else {
+            skeleton.removeAllAnimations()
+        }
         loco = nil
         content.position = SCNVector3(0, Float(Self.yOffset), 0)
         for i in feet.indices {
