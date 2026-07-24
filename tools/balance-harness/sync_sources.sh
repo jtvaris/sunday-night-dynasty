@@ -5,7 +5,7 @@
 # Populates build/src/ with the CANONICAL engine sources needed to compile the
 # balance harness against the SHIPPED simulation math:
 #
-#   • 10 files copied VERBATIM from the repo (byte-identical; sha-verified).
+#   • 11 files copied VERBATIM from the repo (byte-identical; sha-verified).
 #   • AdaptiveOpponentAIExtract.swift REGENERATED mechanically from the shipped
 #     Engine/Match/AdaptiveOpponentAI.swift by awk-stripping only the 4
 #     persona-hint functions (which need DCPersona/OCPersona and carry ZERO
@@ -46,7 +46,7 @@ cleanup() { rm -f "$SLICE" "$STORAGE" "$COMPUTED"; }
 trap cleanup EXIT
 
 # --- Canonical repo sources (relative to $ENGINE) --------------------------
-# 10 files copied verbatim.
+# 11 files copied verbatim.
 VERBATIM_SOURCES=(
   "Domain/Enums/PlayCall.swift"
   "Domain/Enums/PlayType.swift"
@@ -58,6 +58,7 @@ VERBATIM_SOURCES=(
   "Domain/Models/Player/PlayerAttributes.swift"
   "Domain/Models/Team/GamePlan.swift"
   "Engine/Simulation/PlaySimulator.swift"
+  "Engine/Match/HeatState.swift"
 )
 AI_SOURCE="$ENGINE/Engine/Match/AdaptiveOpponentAI.swift"
 SIM_SOURCE="$ENGINE/Engine/Simulation/SimPlayer.swift"

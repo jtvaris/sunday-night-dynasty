@@ -1,6 +1,17 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%@ has gone cold": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ jäähtyi"
+          }
+        }
+      }
+    },
     "%@ in for %@": {
       "extractionState": "manual",
       "localizations": {
@@ -8,6 +19,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$@ kentälle, %2$@ penkille"
+          }
+        }
+      }
+    },
+    "%@ is heating up": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ kuumenee"
           }
         }
       }
@@ -980,6 +1002,17 @@
         }
       }
     },
+    "Ego-Driven": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Egokeskeinen"
+          }
+        }
+      }
+    },
     "Enable Notifications": {
       "extractionState": "manual",
       "localizations": {
@@ -1163,6 +1196,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Aloita"
+          }
+        }
+      }
+    },
+    "Get him the ball early": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Syötä hänelle heti alussa"
           }
         }
       }
@@ -2817,6 +2861,17 @@
         }
       }
     },
+    "Steady": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tasainen"
+          }
+        }
+      }
+    },
     "Step %lld of %lld": {
       "extractionState": "manual",
       "localizations": {
@@ -2824,6 +2879,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Vaihe %lld / %lld"
+          }
+        }
+      }
+    },
+    "Streaky": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ailahteleva"
           }
         }
       }
@@ -3165,6 +3231,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "TULOSSA"
+          }
+        }
+      }
+    },
+    "Unflappable": {
+      "extractionState": "manual",
+      "localizations": {
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Järkkymätön"
           }
         }
       }

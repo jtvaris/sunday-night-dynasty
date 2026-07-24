@@ -59,6 +59,10 @@ enum GameSimulator {
     private static let clutchQ4Multiplier: Double = 1.5
     private static let lowMoraleThreshold: Int = 40
 
+    // Round 4 (mental states): drives an ego-prone star may go untouched before
+    // his pressing folds into heat (§4). Mirrors the live engine's threshold.
+    private static let egoFrustrationDrives = 3
+
     // MARK: - Simulate
 
     /// Runs a full game simulation between the home and away teams.
@@ -173,6 +177,17 @@ enum GameSimulator {
         var homeOffenseRunKey = AdaptiveOpponentAI.RunKeyState()
         var awayOffenseRunKey = AdaptiveOpponentAI.RunKeyState()
 
+        // Round 4 (mental states): per-game hot/cold FORM, the SAME `HeatState`
+        // component the live engine runs — here fed coarsely, once per drive,
+        // from the returned `PlayResult` stream (§1b). Threaded across the whole
+        // game so a streak builds and decays, then written back to morale at the
+        // whistle (§5). Empty ⇒ every stamped heat is 0 ⇒ parity.
+        var gameHeat = HeatState()
+        // Round 4 (§4): the cheap SIM ego analogue — drives since an ego-prone
+        // star last had a touch. At the frustration threshold his pressing is
+        // folded through the heat channel (no separate attribute path, no UI).
+        var simEgoNoTouch: [UUID: Int] = [:]
+
         // -----------------------------------------------------------------
         // 2. Game Loop — Regulation
         // -----------------------------------------------------------------
@@ -185,6 +200,12 @@ enum GameSimulator {
             // modifiers permanently degraded the live models across games.
             applyMoraleModifiers(players: &homePlayers, quarter: quarter)
             applyMoraleModifiers(players: &awayPlayers, quarter: quarter)
+
+            // Round 4 (mental states): STAMP the per-drive heat onto the snapshots
+            // (absolute set, so it never compounds with the in-place morale
+            // mutation above). The stamped copy rides into DriveSimulator by value.
+            stampHeat(&homePlayers, from: gameHeat)
+            stampHeat(&awayPlayers, from: gameHeat)
 
             let offensePlayers = homeHasPossession ? homePlayers : awayPlayers
             let defensePlayers = homeHasPossession ? awayPlayers : homePlayers
@@ -210,6 +231,9 @@ enum GameSimulator {
                 weather: weather,
                 offenseIsAway: !homeHasPossession,
                 adjustments: homeHasPossession ? homeOffenseAdj : awayOffenseAdj,
+                // Round 4: offense-relative margin at drive start (running score,
+                // before this drive's points) for the leverage index.
+                scoreDifferential: homeHasPossession ? homeScore - awayScore : awayScore - homeScore,
                 runKeyState: &driveRunKey
             )
             if homeHasPossession { homeOffenseRunKey = driveRunKey }
@@ -239,6 +263,29 @@ enum GameSimulator {
             }
 
             allDrives.append(drive)
+
+            // Round 4 (mental states): fold this drive's PlayResult stream into
+            // the shared HeatState (coarse per-drive sim feed, §1b), run the cheap
+            // ego analogue for the offense that just possessed (§4), then decay
+            // every player toward neutral at the drive boundary.
+            feedDriveHeat(from: drive, offense: offensePlayers, defense: defensePlayers,
+                          into: &gameHeat)
+            let touchedThisDrive = Set(drive.plays.compactMap { $0.keyOffensePlayerID })
+            for p in offensePlayers where p.isEgoProne {
+                let eligible = !p.personalityArchetype.isFormImmune
+                if touchedThisDrive.contains(p.id) {
+                    let wasFrustrated = (simEgoNoTouch[p.id] ?? 0) >= egoFrustrationDrives
+                    simEgoNoTouch[p.id] = 0
+                    if wasFrustrated { gameHeat.reward(p.id, HeatState.winStep, scaleEligible: eligible) }
+                } else {
+                    let count = (simEgoNoTouch[p.id] ?? 0) + 1
+                    simEgoNoTouch[p.id] = count
+                    if count >= egoFrustrationDrives {
+                        gameHeat.reward(p.id, -HeatState.egoFrustrationHeat, scaleEligible: eligible)
+                    }
+                }
+            }
+            gameHeat.decayAll(HeatState.decayPerDrive)
 
             // Accumulate player stats from the drive's plays
             accumulateStats(
@@ -467,6 +514,26 @@ enum GameSimulator {
             } else if boostedID == awayTeam.id {
                 awayScore = Int((Double(awayScore) * audibleMult).rounded())
                 homeScore = max(0, Int((Double(homeScore) * defReadMult).rounded()))
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // 6c. Round 4 (§5): end-of-game heat → morale write-back
+        // -----------------------------------------------------------------
+        // Reuses the exact `livePlayerByID` seam the fatigue write-back uses
+        // (both teams). A hot game (heat ≥ +0.5) nudges morale +2, a cold one
+        // (≤ −0.5) −2, clamped 1…100. No schema change — `Player.morale` is
+        // already persisted. Mostly a no-op (heat sits near 0), a small,
+        // thematically-correct streak echo when a player ran hot or cold.
+        for roster in [homePlayers, awayPlayers] {
+            for sp in roster {
+                guard let live = livePlayerByID[sp.id] else { continue }
+                let h = gameHeat.value(sp.id)
+                if h >= HeatState.hotThreshold {
+                    live.morale = max(1, min(100, live.morale + HeatState.moraleNudge))
+                } else if h <= HeatState.coldThreshold {
+                    live.morale = max(1, min(100, live.morale - HeatState.moraleNudge))
+                }
             }
         }
 
@@ -1459,6 +1526,94 @@ enum GameSimulator {
         guard bump != 0 else { return }
         for i in players.indices {
             players[i].morale = Swift.max(0, Swift.min(100, players[i].morale + bump))
+        }
+    }
+
+    // MARK: - Mental Game (round 4 — hot/cold FORM)
+
+    /// Absolute-sets each snapshot's `heat` from the tracker — never an
+    /// increment, so it is safe to call every drive on top of the in-place
+    /// morale mutation `applyMoraleModifiers` performs. Empty tracker ⇒ heat 0
+    /// everywhere ⇒ parity.
+    static func stampHeat(_ players: inout [SimPlayer], from heat: HeatState) {
+        for i in players.indices {
+            players[i].heat = heat.value(players[i].id)
+        }
+    }
+
+    /// Coarse per-drive SIM heat feed (§1b): maps the drive's `PlayResult`
+    /// stream onto the shared `HeatState` via the SAME step constants the live
+    /// battle feed uses (so an identical signal ⇒ identical heat). The
+    /// `keyOffensePlayerID` / `keyDefensePlayerID` attribution the sim already
+    /// stamped is the input. Documented asymmetry: the sim credits the DEFENSE
+    /// mostly on its WINS (breakup / INT / sack), rarely the beaten cover DB on a
+    /// completion, so sim DB cool-down is signal-limited — the live
+    /// MatchupResolver, which resolves both sides of every battle, carries fully
+    /// bidirectional DB heat. Same component, intentionally richer live feed.
+    static func feedDriveHeat(from drive: DriveResult, offense: [SimPlayer],
+                              defense: [SimPlayer], into heat: inout HeatState) {
+        var eligible: [UUID: Bool] = [:]
+        for p in offense { eligible[p.id] = !p.personalityArchetype.isFormImmune }
+        for p in defense { eligible[p.id] = !p.personalityArchetype.isFormImmune }
+        func elig(_ id: UUID) -> Bool { eligible[id] ?? true }
+
+        for play in drive.plays {
+            let big = play.yardsGained >= 20
+            switch play.outcome {
+            case .touchdown:
+                if let id = play.keyOffensePlayerID {
+                    heat.reward(id, HeatState.bigStep, scaleEligible: elig(id))
+                }
+            case .completion:
+                if let id = play.keyOffensePlayerID {
+                    heat.reward(id, big ? HeatState.bigStep : HeatState.winStep, scaleEligible: elig(id))
+                }
+            case .rush:
+                // BIDIRECTIONAL so sim run heat is ~0-mean in aggregate (mirrors
+                // the live path's per-battle win/loss, and keeps a productive back
+                // from PINNING hot): a chunk carry (≥4, at/above the league mean)
+                // heats him, a stuffed one (≤1, the stuff line) cools him, 2-3 is
+                // a push. Without the cool-down the back only ever warms and the
+                // aggregate rushing drifts up.
+                if let id = play.keyOffensePlayerID {
+                    if big {
+                        heat.reward(id, HeatState.bigStep, scaleEligible: elig(id))
+                    } else if play.yardsGained >= 4 {
+                        heat.reward(id, HeatState.winStep, scaleEligible: elig(id))
+                    } else if play.yardsGained <= 1 {
+                        heat.reward(id, -HeatState.lossStep, scaleEligible: elig(id))
+                    }
+                }
+            case .incompletion:
+                // A DROP is the receiver's fault (cools him); a coverage BREAKUP
+                // credits the defender (heats him). Distinct signals.
+                if play.wasDrop == true, let id = play.keyOffensePlayerID {
+                    heat.reward(id, -HeatState.lossStep, scaleEligible: elig(id))
+                }
+                if play.passBreakup == true, let did = play.keyDefensePlayerID {
+                    heat.reward(did, HeatState.winStep, scaleEligible: elig(did))
+                }
+            case .sack:
+                if let id = play.keyOffensePlayerID {
+                    heat.reward(id, -HeatState.lossStep, scaleEligible: elig(id))
+                }
+                if let did = play.keyDefensePlayerID {
+                    heat.reward(did, HeatState.bigStep, scaleEligible: elig(did))
+                }
+            case .interception:
+                if let id = play.keyOffensePlayerID {
+                    heat.reward(id, -HeatState.turnoverStep, scaleEligible: elig(id))
+                }
+                if let did = play.keyDefensePlayerID {
+                    heat.reward(did, HeatState.bigStep, scaleEligible: elig(did))
+                }
+            case .fumbleLost:
+                if let id = play.keyOffensePlayerID {
+                    heat.reward(id, -HeatState.turnoverStep, scaleEligible: elig(id))
+                }
+            default:
+                break
+            }
         }
     }
 

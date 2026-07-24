@@ -44,6 +44,11 @@ enum DriveSimulator {
         weather: GameWeather? = nil,
         offenseIsAway: Bool = false,
         adjustments: PlaySimulator.Adjustments? = nil,
+        // Round 4 (mental states): the OFFENSE-RELATIVE score margin at drive
+        // start, forwarded to every snap so `leverageIndex` can add the
+        // trailing-big pressure. Default 0 → parity (every existing call-site and
+        // the all-70 harness are byte-identical).
+        scoreDifferential: Int = 0,
         // Layer A: the ball-carrier team's per-game run-key EWMA, owned by
         // `GameSimulator` and threaded across all of its drives so the defense's
         // read persists snap-to-snap and drive-to-drive (the same component the
@@ -104,7 +109,8 @@ enum DriveSimulator {
                 weather: weather,
                 adjustments: adjustments,
                 offenseIsAway: offenseIsAway,
-                runKeyIntensity: currentKeyIntensity
+                runKeyIntensity: currentKeyIntensity,
+                scoreDifferential: scoreDifferential
             )
 
             // Store the play with current clock values

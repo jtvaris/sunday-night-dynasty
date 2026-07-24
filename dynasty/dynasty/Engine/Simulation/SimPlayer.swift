@@ -27,6 +27,17 @@ struct SimPlayer {
     /// Precomputed `Player.overall` so the sim never re-derives it per read.
     let overall: Int
     let schemeFamiliarity: [String: Int]
+    /// Hot/cold FORM (round 4 mental game): `[-1, +1]`, 0 = neutral. Purely an
+    /// in-memory, per-snapshot field like `morale`/`fatigue` — it is NEVER read
+    /// from or written back to the persisted `@Model Player` (streaks are a
+    /// per-game state), so adding it is a ZERO save-schema change. The engines
+    /// STAMP it each drive from their `HeatState` tracker (absolute set, so it
+    /// never compounds with the in-place `applyMoraleModifiers` mutation); the
+    /// composites read it through `heatEffectScale`. Its inline default of 0 is
+    /// load-bearing: every existing call-site and the balance harness's
+    /// memberwise init leave it 0, which makes every mental term exactly 0 →
+    /// byte-for-byte parity with pre-round-4 behavior.
+    var heat: Double = 0
     var fatigue: Int
 
     init(from player: Player) {
@@ -52,10 +63,11 @@ struct SimPlayer {
     // MARK: - Mental Game (#36B)
 
     /// Poise under pressure (mech 3): clutch is the spine, decision making and
-    /// awareness the supporting cast. Below `60` the player's effective
-    /// accuracy sags in big moments (`PlaySimulator.composurePenalty`). The
-    /// Q4 clutch BOOST (`GameSimulator.applyMoraleModifiers`) is the up-side
-    /// complement — clutch lifts the poised, composure dings the shaky.
+    /// awareness the supporting cast. Round 4 feeds this into the two-sided,
+    /// leverage-scaled `PlaySimulator.composureSwing` — a shaky player (below 70)
+    /// sags in high-leverage moments, a poised one (above 70) rises. The Q4
+    /// clutch BOOST (`GameSimulator.applyMoraleModifiers`) stays the separate
+    /// baseline modulator underneath.
     var composureRating: Double {
         Double(mental.clutch) * 0.5
             + Double(mental.decisionMaking) * 0.3
@@ -65,6 +77,18 @@ struct SimPlayer {
     /// Personalities that ride form hard (mech 1): a hot streak lifts them, a
     /// cold one drags them. Steady/quiet pros are immune; the rest are neutral.
     var isFormSensitive: Bool { personalityArchetype.isFormSensitive }
+
+    /// Round 4 mental game: how hard this player's stamped `heat` bites in the
+    /// composites. Immune metronome pros feel nothing (0.0 — belt-and-suspenders
+    /// with the feeder's `scaleEligible` gate, which never lets them accumulate
+    /// in the first place); form-sensitive fire-riders feel the full swing (1.0);
+    /// everyone else feels a muted share (0.60). Multiplies every heat term, so
+    /// heat 0 or an immune archetype ⇒ 0 contribution (parity).
+    var heatEffectScale: Double {
+        if personalityArchetype.isFormImmune { return 0.0 }
+        if personalityArchetype.isFormSensitive { return 1.0 }
+        return 0.60
+    }
 
     /// A high-overall, me-first star at a touch position (mech 2): starves for
     /// the ball if he goes several offensive drives untargeted / uncarried.

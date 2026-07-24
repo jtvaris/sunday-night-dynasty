@@ -865,6 +865,36 @@ struct CareerShellView: View {
             }
         }
 
+        // Round 4 (§6a): pre-game mental readiness for the user's key skill
+        // players — one QB, one RB, the top three WRs, and the top TE by
+        // overall. Derived through the very same `SimPlayer` the engine reads,
+        // so the temperament and ego flags never drift from the live model, and
+        // nothing new is persisted (morale/personality already live on Player).
+        if let roster = team?.players {
+            let skillSlots: [(Position, Int)] = [(.QB, 1), (.RB, 1), (.WR, 3), (.TE, 1)]
+            var readouts: [GamePlanView.MentalReadout] = []
+            for (position, count) in skillSlots {
+                let top = roster
+                    .filter { $0.position == position }
+                    .sorted { $0.overall > $1.overall }
+                    .prefix(count)
+                for player in top {
+                    let snapshot = SimPlayer(from: player)
+                    readouts.append(
+                        GamePlanView.MentalReadout(
+                            id: player.id,
+                            name: player.fullName,
+                            position: position,
+                            temperament: snapshot.mentalTemperament,
+                            morale: player.morale,
+                            isEgoStar: snapshot.isEgoProne
+                        )
+                    )
+                }
+            }
+            ctx.keyPlayerMentals = readouts
+        }
+
         return ctx
     }
 

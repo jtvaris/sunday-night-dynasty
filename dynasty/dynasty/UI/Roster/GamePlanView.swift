@@ -43,6 +43,14 @@ struct GamePlanView: View {
         var opponentDCPersona: DCPersona?
         var opponentOCPersona: OCPersona?
 
+        /// Round 4 (§6a): the user team's key skill players' pre-game mental
+        /// lines for the "Mental Readiness" panel — temperament tag, morale,
+        /// and (for ego stars) a feed-the-star reminder. Defaults empty so
+        /// entry points without a career simply hide the panel; the career
+        /// shell fills it. No new persisted data — every field is derived
+        /// live from the roster.
+        var keyPlayerMentals: [MentalReadout] = []
+
         init(
             weekLabel: String? = nil,
             opponentName: String? = nil,
@@ -62,6 +70,21 @@ struct GamePlanView: View {
             self.opponentDCPersona = opponentDCPersona
             self.opponentOCPersona = opponentOCPersona
         }
+    }
+
+    /// Round 4 (§6a): one key skill player's pre-game mental line. The career
+    /// shell derives `temperament`/`isEgoStar` through the very same
+    /// `SimPlayer` the engine reads (zero drift), so the panel needs no roster
+    /// access or duplicated thresholds of its own.
+    struct MentalReadout: Identifiable {
+        let id: UUID
+        let name: String
+        let position: Position
+        let temperament: MentalTemperament
+        /// Locker-room morale, 1…100 (same scale as `Player.morale`).
+        let morale: Int
+        /// A me-first star at a touch position — earns the feed-him hint.
+        let isEgoStar: Bool
     }
 
     /// R36: everything the practice-play card needs. Plain values + a
@@ -118,6 +141,7 @@ struct GamePlanView: View {
                                 presetsCard
                                 if practice != nil { practiceCard }
                                 if hasOpponentData { opponentCard }
+                                if hasMentalData { mentalReadinessCard }
                             }
                             .frame(width: 340)
 
@@ -132,6 +156,7 @@ struct GamePlanView: View {
                         presetsCard
                         if practice != nil { practiceCard }
                         if hasOpponentData { opponentCard }
+                        if hasMentalData { mentalReadinessCard }
                         offensiveSection
                         defensiveSection
                     }
@@ -633,6 +658,108 @@ struct GamePlanView: View {
         default:
             return nil
         }
+    }
+
+    // MARK: - Mental Readiness Panel (Round 4 §6a)
+
+    private var hasMentalData: Bool {
+        !(context?.keyPlayerMentals.isEmpty ?? true)
+    }
+
+    /// Pre-game read on the key skill players' heads — temperament tag, morale
+    /// bar, and a feed-the-star nudge for ego-driven stars — sitting beside the
+    /// scouting report so the coach walks in knowing who is dialed in and who
+    /// needs managing. Every value is derived live from the roster through the
+    /// same `SimPlayer` the engine reads, so it stays in lockstep with the
+    /// hot/cold model and adds no persisted state.
+    private var mentalReadinessCard: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.sm) {
+            SectionHeaderText(title: "Mental Readiness")
+
+            ForEach(context?.keyPlayerMentals ?? []) { readout in
+                mentalRow(readout)
+            }
+        }
+        .padding(DSSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
+    private func mentalRow(_ readout: MentalReadout) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(readout.position.rawValue)
+                    .font(.caption2.monospaced().weight(.bold))
+                    .foregroundStyle(Color.textTertiary)
+                    .frame(width: 26, alignment: .leading)
+                Text(readout.name)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 6)
+                temperamentChip(readout.temperament)
+            }
+            moraleBar(readout.morale)
+            if readout.isEgoStar {
+                HStack(spacing: 4) {
+                    Image(systemName: "hand.raised.fill")
+                        .font(.system(size: 8, weight: .bold))
+                    Text("Get him the ball early")
+                        .font(.caption2.weight(.semibold))
+                }
+                .foregroundStyle(Color.accentGold)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The static temperament tag chip — crown for the ego star, bolt for the
+    /// streaky rider, seal for the unflappable pro, a muted mark for steady.
+    /// Mirrors the icon language of the in-game Coach's Board badge.
+    private func temperamentChip(_ temperament: MentalTemperament) -> some View {
+        let label: LocalizedStringKey
+        let icon: String
+        let color: Color
+        switch temperament {
+        case .egoDriven:   (label, icon, color) = ("Ego-Driven", "crown.fill", .accentGold)
+        case .streaky:     (label, icon, color) = ("Streaky", "bolt.fill", .warning)
+        case .unflappable: (label, icon, color) = ("Unflappable", "checkmark.seal.fill", .accentBlue)
+        case .neutral:     (label, icon, color) = ("Steady", "equal.circle", .textTertiary)
+        }
+        return HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 8, weight: .bold))
+            Text(label)
+                .font(.system(size: 9, weight: .bold))
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(color.opacity(0.12)))
+    }
+
+    /// A thin morale bar reusing the locker-room colour buckets (75+ green,
+    /// 45+ amber, else red) with the numeric value trailing.
+    private func moraleBar(_ morale: Int) -> some View {
+        let fraction = min(1.0, max(0.0, Double(morale) / 100.0))
+        let color: Color = morale >= 75 ? .success : (morale >= 45 ? .warning : .danger)
+        return HStack(spacing: 6) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.backgroundTertiary)
+                    Capsule().fill(color)
+                        .frame(width: max(3, geo.size.width * fraction))
+                }
+            }
+            .frame(height: 5)
+            Text("\(morale)")
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 24, alignment: .trailing)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Morale \(morale) of 100")
     }
 
     // MARK: - Offensive Section

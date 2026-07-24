@@ -510,9 +510,518 @@ func scenarioSpam() {
 }
 
 // ============================================================================
+// Round 4 (mental states) — builders + scenarios
+// ============================================================================
+
+/// MentalAttributes with awareness/DM/clutch all = c, so composureRating
+/// (clutch·0.5 + DM·0.3 + awareness·0.2) collapses to exactly `c`.
+func mentC(_ c: Int) -> MentalAttributes {
+    MentalAttributes(awareness: c, decisionMaking: c, clutch: c, workEthic: 70, coachability: 70, leadership: 70)
+}
+/// SimPlayer with an explicit archetype / heat / composure (all attrs 70).
+func mkM(_ n: String, _ p: Position, _ pa: PositionAttributes,
+         arch: PersonalityArchetype = .steadyPerformer, heat: Double = 0, composure: Int = 70) -> SimPlayer {
+    var sp = SimPlayer(fullName: n, position: p, physical: phys(70), mental: mentC(composure),
+                       positionAttributes: pa, overall: 70, personalityArchetype: arch)
+    sp.heat = heat
+    return sp
+}
+/// 70-baseline offense with mental knobs. Receivers (WR/TE) share `recvArch`/
+/// `recvHeat`; the RB and QB have their own. OL are neutral. `composure` applies
+/// to every skill player. All attributes stay 70, so at heat 0 / composure 70
+/// this is attribute-identical to `o70` (parity).
+func offenseMental(recvArch: PersonalityArchetype = .fieryCompetitor, recvHeat: Double = 0,
+                   qbArch: PersonalityArchetype = .steadyPerformer, qbHeat: Double = 0,
+                   rbArch: PersonalityArchetype = .fieryCompetitor, rbHeat: Double = 0,
+                   composure: Int = 70) -> [SimPlayer] {
+    [ mkM("QB1", .QB, .quarterback(QBAttributes(armStrength:70,accuracyShort:70,accuracyMid:70,accuracyDeep:70,pocketPresence:70,scrambling:70)), arch: qbArch, heat: qbHeat, composure: composure),
+      mkM("RB1", .RB, .runningBack(RBAttributes(vision:70,elusiveness:70,breakTackle:70,receiving:70)), arch: rbArch, heat: rbHeat, composure: composure),
+      mkM("WR1", .WR, .wideReceiver(WRAttributes(routeRunning:70,catching:70,release:70,spectacularCatch:70)), arch: recvArch, heat: recvHeat, composure: composure),
+      mkM("WR2", .WR, .wideReceiver(WRAttributes(routeRunning:70,catching:70,release:70,spectacularCatch:70)), arch: recvArch, heat: recvHeat, composure: composure),
+      mkM("WR3", .WR, .wideReceiver(WRAttributes(routeRunning:70,catching:70,release:70,spectacularCatch:70)), arch: recvArch, heat: recvHeat, composure: composure),
+      mkM("TE1", .TE, .tightEnd(TEAttributes(blocking:70,catching:70,routeRunning:70,speed:70)), arch: recvArch, heat: recvHeat, composure: composure),
+      mkM("LT1", .LT, .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))),
+      mkM("LG1", .LG, .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))),
+      mkM("C1",  .C,  .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))),
+      mkM("RG1", .RG, .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))),
+      mkM("RT1", .RT, .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))) ]
+}
+
+/// Completion% for a fully-specified situation (so leverage can be dialed).
+func measurePassLev(_ call: OffensivePlayCall, off: [SimPlayer], def: [SimPlayer],
+                    down: Int, dist: Int, q: Int, time: Int, yl: Int, scoreDiff: Int, n: Int) -> Double {
+    var att = 0, comps = 0, i = 0
+    while i < n { i += 1
+        let r = PlaySimulator.simulatePlay(offensePlayers: off, defensePlayers: def, down: down, distance: dist,
+            yardLine: yl, quarter: q, timeRemaining: time, momentum: 0, playNumber: 5, offensiveCall: call,
+            defensivePackage: rp(), scoreDifferential: scoreDiff)
+        switch r.outcome {
+        case .completion, .touchdown: comps += 1; att += 1
+        case .incompletion, .interception: att += 1
+        default: break
+        }
+    }
+    return pctf(comps, att)
+}
+
+// ---- heat-traj: HeatState trajectories per archetype class + feeder parity --
+func scenarioHeatTraj() {
+    print("===== SCENARIO heat-traj: HeatState trajectories per archetype class + feeder parity =====")
+    let idS = UUID(), idN = UUID(), idI = UUID()
+    let seq: [Double] = [HeatState.winStep, HeatState.winStep, HeatState.bigStep, -HeatState.lossStep,
+                         -HeatState.turnoverStep, HeatState.winStep, HeatState.winStep, HeatState.bigStep]
+    var hs = HeatState(), hn = HeatState(), hi = HeatState()
+    var trajS: [Double] = [], trajI: [Double] = []
+    for s in seq {
+        hs.reward(idS, s, scaleEligible: true)   // form-sensitive → accumulates
+        hn.reward(idN, s, scaleEligible: true)   // neutral        → accumulates identically
+        hi.reward(idI, s, scaleEligible: false)  // form-immune    → never accumulates
+        trajS.append(hs.value(idS)); trajI.append(hi.value(idI))
+    }
+    print("  sensitive traj: " + trajS.map { String(format: "%+.2f", $0) }.joined(separator: " "))
+    print(String(format: "  sensitive == neutral (identical accumulation): %@  |Δ|=%.1e",
+        abs(hs.value(idS) - hn.value(idN)) < 1e-12 ? "YES" : "NO", abs(hs.value(idS) - hn.value(idN))))
+    print(String(format: "  immune stays FLAT 0.0: %@  (final immune heat=%.2f)",
+        trajI.allSatisfy { $0 == 0 } ? "YES" : "NO", hi.value(idI)))
+    var hc = HeatState(); for _ in 0..<10 { hc.reward(idS, HeatState.winStep, scaleEligible: true) }
+    print(String(format: "  clamp: 10×winStep=%.2f (clamped to +1.00: %@)",
+        hc.value(idS), hc.value(idS) <= 1.0 + 1e-9 ? "YES" : "NO"))
+    var hd = HeatState(); hd.reward(idS, 0.90, scaleEligible: true)
+    var decaySeq: [Double] = []
+    for _ in 0..<6 { hd.decayAll(HeatState.decayPerDrive); decaySeq.append(hd.value(idS)) }
+    print("  decay 0.90→ (×0.80/drive, snaps to 0 <0.02): " + decaySeq.map { String(format: "%.3f", $0) }.joined(separator: " "))
+    // Feeder parity: LIVE and SIM feeders map each abstract battle outcome to the
+    // SAME step (both reference HeatState.*), so an identical script → identical
+    // heat, |Δ|=0 by construction.
+    enum Ev { case won, lost, big, turnover }
+    func step(_ e: Ev) -> Double {
+        switch e { case .won: return HeatState.winStep; case .lost: return -HeatState.lossStep
+                   case .big: return HeatState.bigStep; case .turnover: return -HeatState.turnoverStep } }
+    let script: [Ev] = [.won,.lost,.big,.won,.turnover,.won,.big,.lost,.won,.won]
+    let idL = UUID(), idM = UUID()
+    var live = HeatState(), simh = HeatState()
+    for e in script { live.reward(idL, step(e), scaleEligible: true); simh.reward(idM, step(e), scaleEligible: true) }
+    print(String(format: "  FEEDER PARITY (same abstract script): live=%.4f sim=%.4f |Δ|=%.1e (must be 0)",
+        live.value(idL), simh.value(idM), abs(live.value(idL) - simh.value(idM))))
+}
+
+// ---- heat-mag: modifier magnitudes at heat extremes -------------------------
+func scenarioHeatMag() {
+    print("===== SCENARIO heat-mag: mental modifier magnitudes at extremes (leverage 0) =====")
+    // All receivers form-sensitive (whoever is targeted carries the heat); QB
+    // immune (heatEffectScale 0) isolates the WR term. Own-25 early-down Q2 →
+    // leverage 0 and composure 70 → composure contributes exactly 0.
+    let base = measurePass(.slant, off: offenseMental(recvHeat: 0),    def: defense70, yl: 25, n: N)
+    let hot  = measurePass(.slant, off: offenseMental(recvHeat: 1.0),  def: defense70, yl: 25, n: N)
+    let cold = measurePass(.slant, off: offenseMental(recvHeat: -1.0), def: defense70, yl: 25, n: N)
+    print(String(format: "  SHORT comp%%  cold(-1)=%.1f  neutral(0)=%.1f  hot(+1)=%.1f   Δhot=%+.1fpp Δcold=%+.1fpp  [hot band +4..+5, ~symmetric]",
+        cold.comp, base.comp, hot.comp, hot.comp - base.comp, cold.comp - base.comp))
+    let rBase = measureRun(.insideRun, off: offenseMental(rbHeat: 0),    def: defense70, yl: 25, n: N)
+    let rHot  = measureRun(.insideRun, off: offenseMental(rbHeat: 1.0),  def: defense70, yl: 25, n: N)
+    let rCold = measureRun(.insideRun, off: offenseMental(rbHeat: -1.0), def: defense70, yl: 25, n: N)
+    print(String(format: "  RUN ypc      cold(-1)=%.2f  neutral(0)=%.2f  hot(+1)=%.2f   Δhot=%+.2f Δcold=%+.2f  [|Δ|<=~0.35]",
+        rCold.ypc, rBase.ypc, rHot.ypc, rHot.ypc - rBase.ypc, rCold.ypc - rBase.ypc))
+    // Immune archetype at full hot: heatEffectScale 0 → ZERO effect.
+    let immHot = measurePass(.slant, off: offenseMental(recvArch: .steadyPerformer, recvHeat: 1.0), def: defense70, yl: 25, n: N)
+    print(String(format: "  IMMUNE WR hot(+1) comp%%=%.1f vs neutral %.1f  Δ=%+.1fpp (must be ~0 — effectScale 0)",
+        immHot.comp, base.comp, immHot.comp - base.comp))
+}
+
+// ---- composure-lev: composure × leverage grid + parity ----------------------
+func scenarioComposureLev() {
+    print("===== SCENARIO composure-lev: composure {45,70,90} × leverage {0,0.3,0.6,1.0} + parity =====")
+    // Pure-function proof: leverageIndex buckets + composureSwing 70→0.
+    let buckets: [(name: String, down: Int, dist: Int, q: Int, time: Int, yl: Int, sd: Int)] = [
+        ("~0.0", 1, 10, 2, 450, 25,   0),   // neutral early down
+        ("~0.3", 1, 10, 2, 450, 85,   0),   // red zone only
+        ("~0.6", 1, 10, 2, 450, 85, -10),   // red zone + trailing 9+
+        ("~1.0", 3,  8, 4, 450, 85,   0)]   // Q4 + red zone + 3rd&medium
+    print("  leverageIndex per bucket:")
+    for b in buckets {
+        let L = PlaySimulator.leverageIndex(down: b.down, distance: b.dist, quarter: b.q,
+                                            timeRemaining: b.time, yardLine: b.yl, scoreDifferential: b.sd)
+        print(String(format: "    %@  down=%d dist=%d Q%d yl=%d sd=%d → L=%.2f", b.name, b.down, b.dist, b.q, b.yl, b.sd, L))
+    }
+    let probe45 = mkM("p", .WR, .wideReceiver(WRAttributes(routeRunning:70,catching:70,release:70,spectacularCatch:70)), composure: 45)
+    let probe70 = mkM("p", .WR, .wideReceiver(WRAttributes(routeRunning:70,catching:70,release:70,spectacularCatch:70)), composure: 70)
+    let probe90 = mkM("p", .WR, .wideReceiver(WRAttributes(routeRunning:70,catching:70,release:70,spectacularCatch:70)), composure: 90)
+    print(String(format: "  composureSwing @L=1.0: comp45=%+.1f comp70=%+.1f comp90=%+.1f  (70→0 parity: %@)",
+        PlaySimulator.composureSwing(probe45, 1.0), PlaySimulator.composureSwing(probe70, 1.0),
+        PlaySimulator.composureSwing(probe90, 1.0), PlaySimulator.composureSwing(probe70, 1.0) == 0 ? "YES" : "NO"))
+    // Measured completion% grid comp[45/70/90] × leverage bucket. NOTE: a
+    // composure-45 roster also carries lower awareness/DM (composureRating is
+    // derived from them), which depresses the WHOLE column via the pre-existing
+    // reading terms — a realistic entanglement, but it means the clean composure
+    // signal is the CROSS-LEVERAGE trend within a fixed composure row, not the
+    // vertical spread. The parity claim ("composure 70 → swing 0 at EVERY
+    // leverage") reads off the comp70 row being FLAT across leverage.
+    let comps = [45, 70, 90]
+    var grid: [[Double]] = []
+    for c in comps {
+        var row: [Double] = []
+        for b in buckets {
+            row.append(measurePassLev(.slant, off: offenseMental(recvHeat: 0, composure: c), def: defense70,
+                       down: b.down, dist: b.dist, q: b.q, time: b.time, yl: b.yl, scoreDiff: b.sd, n: N))
+        }
+        grid.append(row)
+    }
+    print("  SHORT comp% grid — rows = composure, cols = leverage bucket:")
+    for (ci, c) in comps.enumerated() {
+        print(String(format: "    comp%2d: ", c) + buckets.enumerated().map { (bi, b) in
+            String(format: "L%@=%.1f", b.name, grid[ci][bi]) }.joined(separator: "  "))
+    }
+    // Parity: the comp70 row is flat across leverage (swing 0 everywhere). The
+    // pure composureSwing(comp70)=+0.0 check above is the EXACT proof; this is a
+    // measured confirmation, so the threshold tolerates per-cell sampling noise
+    // (each cell ~±0.35pp SE → a ~1.5pp range across 4 cells is pure noise, and
+    // it is dwarfed by the comp45/comp90 leverage trends below).
+    let row70 = grid[1]
+    let spread70 = row70.max()! - row70.min()!
+    let flat70 = spread70 <= 2.0
+    print(String(format: "  PARITY comp70 flat across leverage: %@  (spread=%.1fpp, ≤2.0 noise-tolerant; exact proof = swing 0.0 above)",
+        flat70 ? "YES" : "NO", spread70))
+    // Direction: as leverage rises, the shaky (comp45) SAGS, the poised (comp90)
+    // RISES — each monotone in leverage, bounded by the caps.
+    let row45 = grid[0], row90 = grid[2]
+    let sags = row45.last! < row45.first! - 2.0
+    let rises = row90.last! > row90.first! + 2.0
+    print(String(format: "  DIRECTION comp45 L0→L1 %+.1fpp (sags: %@)   comp90 L0→L1 %+.1fpp (rises: %@)",
+        row45.last! - row45.first!, sags ? "YES" : "NO",
+        row90.last! - row90.first!, rises ? "YES" : "NO"))
+}
+
+// ---- mental-regression: round-4 PARITY GATE (subsumes regression) -----------
+func scenarioMentalRegression() {
+    print("===== SCENARIO mental-regression: round-4 PARITY GATE (heat=0, composure=70) =====")
+    print("  Every player is heat=0 & composure=70, so every round-4 term is exactly 0.")
+    // Neutral-parity spot check: default o70 vs a form-SENSITIVE roster with heat 0
+    // & composure 70 — the archetype/heat machinery must contribute nothing.
+    let a  = measurePass(.slant,    off: o70, def: defense70, yl: 25, n: N)
+    let b  = measurePass(.slant,    off: offenseMental(recvHeat: 0, composure: 70), def: defense70, yl: 25, n: N)
+    let ra = measureRun(.insideRun, off: o70, def: defense70, yl: 25, n: N)
+    let rb = measureRun(.insideRun, off: offenseMental(rbHeat: 0, composure: 70), def: defense70, yl: 25, n: N)
+    print(String(format: "  NEUTRAL PARITY  short comp%% default=%.1f sensitive-heat0=%.1f Δ=%+.2fpp (~0)  |  run ypc %.2f vs %.2f Δ=%+.2f (~0)",
+        a.comp, b.comp, b.comp - a.comp, ra.ypc, rb.ypc, rb.ypc - ra.ypc))
+    print("")
+    scenarioRegression()
+}
+
+// ---- heat-dist: heat LIVE across drives — aggregate must not inflate --------
+func scenarioHeatDist() {
+    print("===== SCENARIO heat-dist: heat LIVE across drives (aggregate must not inflate) =====")
+    // Mixed-archetype population, heat fed/stamped/decayed across a game's drives.
+    // Heat is ~0-mean, so aggregate comp%/ypc must match the heat-OFF baseline
+    // (an all-70 random-archetype roster with heat 0 is attribute-identical to o70).
+    let archMix: [PersonalityArchetype] = [.fieryCompetitor, .feelPlayer, .dramaQueen, .classClown,
+        .steadyPerformer, .quietProfessional, .teamLeader, .loneWolf, .mentor]
+    func randOff() -> [SimPlayer] {
+        func a() -> PersonalityArchetype { archMix.randomElement()! }
+        return [ mkM("QB1", .QB, .quarterback(QBAttributes(armStrength:70,accuracyShort:70,accuracyMid:70,accuracyDeep:70,pocketPresence:70,scrambling:70)), arch: a()),
+                 mkM("RB1", .RB, .runningBack(RBAttributes(vision:70,elusiveness:70,breakTackle:70,receiving:70)), arch: a()),
+                 mkM("WR1", .WR, .wideReceiver(WRAttributes(routeRunning:70,catching:70,release:70,spectacularCatch:70)), arch: a()),
+                 mkM("WR2", .WR, .wideReceiver(WRAttributes(routeRunning:70,catching:70,release:70,spectacularCatch:70)), arch: a()),
+                 mkM("WR3", .WR, .wideReceiver(WRAttributes(routeRunning:70,catching:70,release:70,spectacularCatch:70)), arch: a()),
+                 mkM("TE1", .TE, .tightEnd(TEAttributes(blocking:70,catching:70,routeRunning:70,speed:70)), arch: a()),
+                 mkM("LT1", .LT, .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))),
+                 mkM("LG1", .LG, .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))),
+                 mkM("C1",  .C,  .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))),
+                 mkM("RG1", .RG, .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))),
+                 mkM("RT1", .RT, .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))) ]
+    }
+    // A short mixed drive script (call, down, dist, yardLine).
+    let script: [(OffensivePlayCall, Int, Int, Int)] = [
+        (.insideRun,1,10,25),(.slant,2,7,32),(.outsideRun,1,10,40),(.dig,2,6,48),
+        (.goRoute,3,7,52),(.counter,1,10,60),(.curl,2,5,66),(.toss,1,10,72)]
+    func feed(_ r: PlayResult, into hs: inout HeatState, elig: (UUID) -> Bool) {
+        let big = r.yardsGained >= 20
+        switch r.outcome {
+        case .touchdown: if let id = r.keyOffensePlayerID { hs.reward(id, HeatState.bigStep, scaleEligible: elig(id)) }
+        case .completion: if let id = r.keyOffensePlayerID { hs.reward(id, big ? HeatState.bigStep : HeatState.winStep, scaleEligible: elig(id)) }
+        case .rush: if let id = r.keyOffensePlayerID {   // bidirectional (mirrors GameSimulator.feedDriveHeat)
+            if big { hs.reward(id, HeatState.bigStep, scaleEligible: elig(id)) }
+            else if r.yardsGained >= 4 { hs.reward(id, HeatState.winStep, scaleEligible: elig(id)) }
+            else if r.yardsGained <= 1 { hs.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) } }
+        case .incompletion:
+            if r.wasDrop == true, let id = r.keyOffensePlayerID { hs.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) }
+            if r.passBreakup == true, let did = r.keyDefensePlayerID { hs.reward(did, HeatState.winStep, scaleEligible: elig(did)) }
+        case .sack:
+            if let id = r.keyOffensePlayerID { hs.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) }
+            if let did = r.keyDefensePlayerID { hs.reward(did, HeatState.bigStep, scaleEligible: elig(did)) }
+        case .interception:
+            if let id = r.keyOffensePlayerID { hs.reward(id, -HeatState.turnoverStep, scaleEligible: elig(id)) }
+            if let did = r.keyDefensePlayerID { hs.reward(did, HeatState.bigStep, scaleEligible: elig(did)) }
+        case .fumbleLost: if let id = r.keyOffensePlayerID { hs.reward(id, -HeatState.turnoverStep, scaleEligible: elig(id)) }
+        default: break
+        }
+    }
+    // Heat is per-GAME correlated (it accumulates across a game's drives), so the
+    // drift-estimate variance scales with the number of independent GAMES, not
+    // plays — use many games to stabilize the aggregate.
+    let games = max(400, N / 40)
+    let drivesPerGame = 12
+    var onComp = 0, onAtt = 0, onRunY = 0, onRunN = 0
+    for _ in 0..<games {
+        let off0 = randOff()
+        var hs = HeatState()
+        var elig: [UUID: Bool] = [:]
+        for p in off0 + defense70 { elig[p.id] = !p.personalityArchetype.isFormImmune }
+        for _ in 0..<drivesPerGame {
+            var off = off0
+            for i in off.indices { off[i].heat = hs.value(off[i].id) }   // stamp
+            for (call, dn, dist, yl) in script {
+                let r = PlaySimulator.simulatePlay(offensePlayers: off, defensePlayers: defense70, down: dn,
+                    distance: dist, yardLine: yl, quarter: 2, timeRemaining: 450, momentum: 0, playNumber: 5,
+                    offensiveCall: call, defensivePackage: rp())
+                if r.outcome == .penalty { continue }
+                switch r.outcome {
+                case .completion, .touchdown: onComp += 1; onAtt += 1
+                case .incompletion, .interception: onAtt += 1
+                default: break
+                }
+                if r.playType == .run { onRunY += r.yardsGained; onRunN += 1 }
+                feed(r, into: &hs, elig: { elig[$0] ?? true })
+            }
+            hs.decayAll(HeatState.decayPerDrive)
+        }
+    }
+    // Heat-OFF baseline over the identical script/volume (o70, heat always 0).
+    var offComp = 0, offAtt = 0, offRunY = 0, offRunN = 0
+    let totalDrives = games * drivesPerGame
+    for _ in 0..<totalDrives {
+        for (call, dn, dist, yl) in script {
+            let r = PlaySimulator.simulatePlay(offensePlayers: o70, defensePlayers: defense70, down: dn,
+                distance: dist, yardLine: yl, quarter: 2, timeRemaining: 450, momentum: 0, playNumber: 5,
+                offensiveCall: call, defensivePackage: rp())
+            if r.outcome == .penalty { continue }
+            switch r.outcome {
+            case .completion, .touchdown: offComp += 1; offAtt += 1
+            case .incompletion, .interception: offAtt += 1
+            default: break
+            }
+            if r.playType == .run { offRunY += r.yardsGained; offRunN += 1 }
+        }
+    }
+    let onCompPct = pctf(onComp, onAtt), offCompPct = pctf(offComp, offAtt)
+    let onYpc = Double(onRunY) / Double(max(1, onRunN)), offYpc = Double(offRunY) / Double(max(1, offRunN))
+    print(String(format: "  games=%d drives=%d  HEAT-LIVE comp%%=%.2f ypc=%.2f  |  HEAT-OFF comp%%=%.2f ypc=%.2f",
+        games, totalDrives, onCompPct, onYpc, offCompPct, offYpc))
+    print(String(format: "  Δcomp%%=%+.2f (|Δ|<=~0.6)   Δypc=%+.2f (|Δ|<=~0.10)   — heat must NOT inflate aggregate",
+        onCompPct - offCompPct, onYpc - offYpc))
+}
+
+// ============================================================================
+// INDEPENDENT VERIFIER additions (round-4 audit) — new scenarios only; every
+// pre-existing scenario above is untouched. These read the SAME synced,
+// SHA-verified engine sources.
+// ============================================================================
+
+// ---- heat-ratio: form-sensitive vs neutral vs immune magnitude ratio --------
+// Design: completion bump at full hot ∝ heatEffectScale (sensitive 1.0, neutral
+// 0.60, immune 0.0). Archetype touches the pass composite ONLY through
+// heatEffectScale, so same attrs + same heat, varying archetype, isolates the
+// ratio. High N to resolve the small (few-pp) deltas cleanly.
+func scenarioHeatRatio() {
+    print("===== SCENARIO heat-ratio: sensitive vs NEUTRAL vs immune magnitude ratio =====")
+    let bigN = max(N, 120000)
+    func bump(_ arch: PersonalityArchetype) -> Double {
+        let base = measurePass(.slant, off: offenseMental(recvArch: arch, recvHeat: 0),   def: defense70, yl: 25, n: bigN)
+        let hot  = measurePass(.slant, off: offenseMental(recvArch: arch, recvHeat: 1.0), def: defense70, yl: 25, n: bigN)
+        return hot.comp - base.comp
+    }
+    let dS = bump(.fieryCompetitor)   // form-sensitive → scale 1.0
+    let dU = bump(.mentor)            // neutral        → scale 0.60
+    let dI = bump(.steadyPerformer)   // form-immune    → scale 0.0
+    print(String(format: "  Δcomp @hot(+1): sensitive=%+.2fpp  neutral=%+.2fpp  immune=%+.2fpp   (N=%d each cell)", dS, dU, dI, bigN))
+    print(String(format: "  design scale: sensitive 1.0 / neutral 0.60 / immune 0.0 → expected +4.5 / +2.7 / +0.0 pp"))
+    print(String(format: "  measured neutral/sensitive ratio=%.2f (design 0.60)  immune ~0: %@",
+        dS != 0 ? dU / dS : 0, abs(dI) < 0.6 ? "YES" : "NO"))
+}
+
+// ---- macro: 200+ full-ish game sims — scoring distribution, heat-live vs off -
+// A possession-model game engine over PlaySimulator.simulatePlay (the only
+// resolvable path in the harness): realistic pass/run mix, first downs, FG range,
+// punts, turnovers, TD=7 / FG=3. Two conditions over the identical volume:
+//   • HEAT-LIVE  — per-game HeatState, stamped each drive, fed by the SIM feeder
+//                  mapping (mirrors GameSimulator.feedDriveHeat), decayed.
+//   • HEAT-OFF   — heat always 0 (attribute-identical rosters).
+// Reports points/team/game mean + spread + NFL-plausible-band share, and the
+// live-vs-off gap (must be ~0 → no heat-driven scoring inflation).
+func scenarioMacro() {
+    print("===== SCENARIO macro: 200+ full-ish game sims — scoring dist + heat-live vs off =====")
+    let games = max(200, N / 100)
+    let drivesPerGame = 22           // ~11 possessions/team
+    let passMix: [OffensivePlayCall] = [.slant,.dig,.curl,.drag,.hitch,.quickOut,.stick,.goRoute,.post,.seam,.comeback,.screen]
+    let runMix:  [OffensivePlayCall] = [.insideRun,.insideRun,.outsideRun,.counter,.draw,.toss,.dive]
+    let archMix: [PersonalityArchetype] = [.fieryCompetitor, .feelPlayer, .dramaQueen, .classClown,
+        .steadyPerformer, .quietProfessional, .teamLeader, .loneWolf, .mentor]
+    func a() -> PersonalityArchetype { archMix.randomElement()! }
+    func randOff() -> [SimPlayer] {
+        [ mkM("QB1", .QB, .quarterback(QBAttributes(armStrength:70,accuracyShort:70,accuracyMid:70,accuracyDeep:70,pocketPresence:70,scrambling:70)), arch: a()),
+          mkM("RB1", .RB, .runningBack(RBAttributes(vision:70,elusiveness:70,breakTackle:70,receiving:70)), arch: a()),
+          mkM("WR1", .WR, .wideReceiver(WRAttributes(routeRunning:70,catching:70,release:70,spectacularCatch:70)), arch: a()),
+          mkM("WR2", .WR, .wideReceiver(WRAttributes(routeRunning:70,catching:70,release:70,spectacularCatch:70)), arch: a()),
+          mkM("WR3", .WR, .wideReceiver(WRAttributes(routeRunning:70,catching:70,release:70,spectacularCatch:70)), arch: a()),
+          mkM("TE1", .TE, .tightEnd(TEAttributes(blocking:70,catching:70,routeRunning:70,speed:70)), arch: a()),
+          mkM("LT1", .LT, .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))),
+          mkM("LG1", .LG, .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))),
+          mkM("C1",  .C,  .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))),
+          mkM("RG1", .RG, .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))),
+          mkM("RT1", .RT, .offensiveLine(OLAttributes(runBlock:70,passBlock:70,pull:70,anchor:70))) ]
+    }
+    func randDef() -> [SimPlayer] {
+        [ mkM("DE1", .DE, .defensiveLine(DLAttributes(passRush:70,blockShedding:70,powerMoves:70,finesseMoves:70)), arch: a()),
+          mkM("DE2", .DE, .defensiveLine(DLAttributes(passRush:70,blockShedding:70,powerMoves:70,finesseMoves:70)), arch: a()),
+          mkM("DT1", .DT, .defensiveLine(DLAttributes(passRush:70,blockShedding:70,powerMoves:70,finesseMoves:70)), arch: a()),
+          mkM("DT2", .DT, .defensiveLine(DLAttributes(passRush:70,blockShedding:70,powerMoves:70,finesseMoves:70)), arch: a()),
+          mkM("OLB1", .OLB, .linebacker(LBAttributes(tackling:70,zoneCoverage:70,manCoverage:70,blitzing:70)), arch: a()),
+          mkM("OLB2", .OLB, .linebacker(LBAttributes(tackling:70,zoneCoverage:70,manCoverage:70,blitzing:70)), arch: a()),
+          mkM("MLB1", .MLB, .linebacker(LBAttributes(tackling:70,zoneCoverage:70,manCoverage:70,blitzing:70)), arch: a()),
+          mkM("CB1", .CB, .defensiveBack(DBAttributes(manCoverage:70,zoneCoverage:70,press:70,ballSkills:70)), arch: a()),
+          mkM("CB2", .CB, .defensiveBack(DBAttributes(manCoverage:70,zoneCoverage:70,press:70,ballSkills:70)), arch: a()),
+          mkM("FS1", .FS, .defensiveBack(DBAttributes(manCoverage:70,zoneCoverage:70,press:70,ballSkills:70)), arch: a()),
+          mkM("SS1", .SS, .defensiveBack(DBAttributes(manCoverage:70,zoneCoverage:70,press:70,ballSkills:70)), arch: a()) ]
+    }
+    // SIM-feeder mapping (mirrors GameSimulator.feedDriveHeat) over one drive's plays.
+    // Routes offense-key rewards to the possessing team's heat, defense-key rewards
+    // to the defending team's heat — the same split GameSimulator's shared tracker
+    // makes by unique player IDs. Bidirectional so a hot defense cools completions.
+    func feedDrive(_ plays: [PlayResult], offHeat: inout HeatState, defHeat: inout HeatState, elig: (UUID) -> Bool) {
+        for r in plays {
+            let big = r.yardsGained >= 20
+            switch r.outcome {
+            case .touchdown: if let id = r.keyOffensePlayerID { offHeat.reward(id, HeatState.bigStep, scaleEligible: elig(id)) }
+            case .completion: if let id = r.keyOffensePlayerID { offHeat.reward(id, big ? HeatState.bigStep : HeatState.winStep, scaleEligible: elig(id)) }
+            case .rush: if let id = r.keyOffensePlayerID {
+                if big { offHeat.reward(id, HeatState.bigStep, scaleEligible: elig(id)) }
+                else if r.yardsGained >= 4 { offHeat.reward(id, HeatState.winStep, scaleEligible: elig(id)) }
+                else if r.yardsGained <= 1 { offHeat.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) } }
+            case .incompletion:
+                if r.wasDrop == true, let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) }
+                if r.passBreakup == true, let did = r.keyDefensePlayerID { defHeat.reward(did, HeatState.winStep, scaleEligible: elig(did)) }
+            case .sack:
+                if let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) }
+                if let did = r.keyDefensePlayerID { defHeat.reward(did, HeatState.bigStep, scaleEligible: elig(did)) }
+            case .interception:
+                if let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.turnoverStep, scaleEligible: elig(id)) }
+                if let did = r.keyDefensePlayerID { defHeat.reward(did, HeatState.bigStep, scaleEligible: elig(did)) }
+            case .fumbleLost: if let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.turnoverStep, scaleEligible: elig(id)) }
+            default: break
+            }
+        }
+    }
+    func fgMakeProb(_ kickYds: Int) -> Double {
+        switch kickYds { case ..<36: return 0.94; case ..<44: return 0.82; case ..<50: return 0.68; case ..<56: return 0.50; default: return 0.30 }
+    }
+    // Simulate one team's drive from `startYL` against the given defense; returns (points, plays[]).
+    func simDrive(off: [SimPlayer], def: [SimPlayer], startYL: Int, quarter: Int, scoreDiff: Int) -> (pts: Int, plays: [PlayResult]) {
+        var yardLine = startYL, down = 1, dist = 10, snaps = 0
+        var plays: [PlayResult] = []
+        while snaps < 22 {
+            snaps += 1
+            let longToGo = dist >= 7
+            let passProb = down >= 3 ? (longToGo ? 0.85 : 0.55) : (down == 2 && longToGo ? 0.62 : 0.50)
+            let isPass = Double.random(in: 0..<1) < passProb
+            let call = isPass ? passMix.randomElement()! : runMix.randomElement()!
+            let r = PlaySimulator.simulatePlay(offensePlayers: off, defensePlayers: def, down: down, distance: dist,
+                yardLine: yardLine, quarter: quarter, timeRemaining: 450, momentum: 0, playNumber: snaps,
+                offensiveCall: call, defensivePackage: rp(), scoreDifferential: scoreDiff)
+            if r.outcome == .penalty { snaps -= 1; if snaps < 0 { snaps = 0 }; continue }
+            plays.append(r)
+            if r.isTurnover || r.outcome == .interception || r.outcome == .fumbleLost { return (0, plays) }
+            yardLine += r.yardsGained
+            if yardLine >= 100 { return (7, plays) }                 // TD + XP
+            if yardLine < 1 { return (0, plays) }                    // backed up / safety-ish → punt-equiv
+            if r.yardsGained >= dist {                               // first down
+                down = 1; dist = min(10, 100 - yardLine)
+            } else {
+                down += 1; dist -= r.yardsGained
+                if down > 4 { break }
+            }
+            if down == 4 {                                           // kick or punt on 4th
+                let kickYds = (100 - yardLine) + 17
+                if kickYds <= 55 { return (Double.random(in: 0..<1) < fgMakeProb(kickYds) ? 3 : 0, plays) }
+                return (0, plays)                                    // punt
+            }
+        }
+        return (0, plays)
+    }
+    func playGame(heatLive: Bool) -> (home: Int, away: Int, comp: (Int,Int), run: (Int,Int), ints: Int, att: Int) {
+        let homeOff = randOff(), homeDef = randDef()
+        let awayOff = randOff(), awayDef = randDef()
+        // One heat tracker per team, spanning its FULL 22-man roster (offense +
+        // defense), exactly like GameSimulator threads a per-team stamp off a
+        // shared per-game HeatState.
+        var homeHeat = HeatState(), awayHeat = HeatState()
+        var elig: [UUID: Bool] = [:]
+        for p in homeOff + homeDef + awayOff + awayDef { elig[p.id] = !p.personalityArchetype.isFormImmune }
+        var hScore = 0, aScore = 0
+        var comps = 0, atts = 0, runY = 0, runN = 0, ints = 0
+        for d in 0..<drivesPerGame {
+            let homeBall = d % 2 == 0
+            let quarter = min(4, d / (drivesPerGame / 4) + 1)
+            var off = homeBall ? homeOff : awayOff
+            var def = homeBall ? awayDef : homeDef
+            if heatLive {
+                let offSrc = homeBall ? homeHeat : awayHeat      // possessing team
+                let defSrc = homeBall ? awayHeat : homeHeat      // defending team
+                for i in off.indices { off[i].heat = offSrc.value(off[i].id) }
+                for i in def.indices { def[i].heat = defSrc.value(def[i].id) }
+            }
+            let scoreDiff = homeBall ? hScore - aScore : aScore - hScore
+            let res = simDrive(off: off, def: def, startYL: 25, quarter: quarter, scoreDiff: scoreDiff)
+            if homeBall { hScore += res.pts } else { aScore += res.pts }
+            for r in res.plays {
+                switch r.outcome {
+                case .completion, .touchdown: comps += 1; atts += 1
+                case .incompletion: atts += 1
+                case .interception: atts += 1; ints += 1
+                default: break
+                }
+                if r.playType == .run { runY += r.yardsGained; runN += 1 }
+            }
+            if heatLive {
+                // offense-keys → possessing team's heat; defense-keys → defending team's.
+                if homeBall { feedDrive(res.plays, offHeat: &homeHeat, defHeat: &awayHeat, elig: { elig[$0] ?? true }) }
+                else        { feedDrive(res.plays, offHeat: &awayHeat, defHeat: &homeHeat, elig: { elig[$0] ?? true }) }
+                homeHeat.decayAll(HeatState.decayPerDrive)   // one drive boundary → both
+                awayHeat.decayAll(HeatState.decayPerDrive)   // teams decay once, as in the engine
+            }
+        }
+        return (hScore, aScore, (comps, atts), (runY, runN), ints, atts)
+    }
+    func runCondition(heatLive: Bool) -> (mean: Double, sd: Double, lo: Int, hi: Int, bandPct: Double, comp: Double, ypc: Double, intPct: Double) {
+        var teamPts: [Int] = []; teamPts.reserveCapacity(games * 2)
+        var comps = 0, atts = 0, runY = 0, runN = 0, ints = 0
+        for _ in 0..<games {
+            let g = playGame(heatLive: heatLive)
+            teamPts.append(g.home); teamPts.append(g.away)
+            comps += g.comp.0; atts += g.comp.1; runY += g.run.0; runN += g.run.1; ints += g.ints
+        }
+        let n = Double(teamPts.count)
+        let mean = Double(teamPts.reduce(0,+)) / n
+        let varc = teamPts.reduce(0.0) { $0 + pow(Double($1) - mean, 2) } / n
+        let band = teamPts.filter { $0 >= 10 && $0 <= 38 }.count
+        return (mean, sqrt(varc), teamPts.min() ?? 0, teamPts.max() ?? 0, Double(band)/n*100,
+                pctf(comps, atts), Double(runY)/Double(max(1,runN)), pctf(ints, atts))
+    }
+    let live = runCondition(heatLive: true)
+    let off  = runCondition(heatLive: false)
+    print(String(format: "  games=%d  team-seasons=%d per condition", games, games*2))
+    print(String(format: "  HEAT-LIVE  pts/team/game mean=%.1f  sd=%.1f  [min %d, max %d]  10-38 band=%.0f%%  comp%%=%.1f ypc=%.2f INT%%=%.2f",
+        live.mean, live.sd, live.lo, live.hi, live.bandPct, live.comp, live.ypc, live.intPct))
+    print(String(format: "  HEAT-OFF   pts/team/game mean=%.1f  sd=%.1f  [min %d, max %d]  10-38 band=%.0f%%  comp%%=%.1f ypc=%.2f INT%%=%.2f",
+        off.mean, off.sd, off.lo, off.hi, off.bandPct, off.comp, off.ypc, off.intPct))
+    print(String(format: "  Δmean(live-off)=%+.2f pts (|Δ|<=~0.6 → no heat-driven scoring inflation)   Δcomp%%=%+.2f Δypc=%+.2f Δint%%=%+.2f",
+        live.mean - off.mean, live.comp - off.comp, live.ypc - off.ypc, live.intPct - off.intPct))
+    print(String(format: "  NFL sanity: mean 17-27 pts/team is realistic → mean %.1f %@",
+        live.mean, (live.mean >= 15 && live.mean <= 30) ? "OK" : "OUT-OF-BAND"))
+}
+
+// ============================================================================
 // Dispatcher
 // ============================================================================
-let allScenarios = ["percall", "depth", "keyed-pa", "regression", "pass-talent", "run-talent", "familiarity", "stacking", "spam"]
+let allScenarios = ["percall", "depth", "keyed-pa", "regression", "pass-talent", "run-talent", "familiarity", "stacking", "spam",
+                    "heat-traj", "heat-mag", "composure-lev", "mental-regression", "heat-dist", "heat-ratio", "macro"]
 func run(_ name: String) {
     switch name {
     case "percall":     scenarioPerCall()
@@ -524,6 +1033,13 @@ func run(_ name: String) {
     case "familiarity": scenarioFamiliarity()
     case "stacking":    scenarioStacking()
     case "spam":        scenarioSpam()
+    case "heat-traj":         scenarioHeatTraj()
+    case "heat-mag":          scenarioHeatMag()
+    case "composure-lev":     scenarioComposureLev()
+    case "mental-regression": scenarioMentalRegression()
+    case "heat-dist":         scenarioHeatDist()
+    case "heat-ratio":        scenarioHeatRatio()
+    case "macro":             scenarioMacro()
     default:
         FileHandle.standardError.write("unknown scenario: \(name)\n".data(using: .utf8)!)
         FileHandle.standardError.write("valid: \(allScenarios.joined(separator: ", ")), all\n".data(using: .utf8)!)

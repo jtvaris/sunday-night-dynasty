@@ -471,19 +471,33 @@ final class LiveGameEngine: ObservableObject {
     private var recentMatchupForm: [UUID: [Bool]] = [:]
     private static let recentFormWindow = 5
 
+    /// Round 4 (mental states): the RICH live feed of the SAME `HeatState`
+    /// component the sim runs. Fed from every resolved `MatchupResolver` battle
+    /// (both sides — fully bidirectional DB heat), stamped onto the per-play
+    /// snapshots in `applyMentalGameModifiers`, decayed at each drive boundary,
+    /// and written back to morale at the whistle. In-memory only — never persisted.
+    private var heatState = HeatState()
+
+    /// A player accumulates heat unless he is a form-immune metronome pro.
+    private func heatEligible(_ id: UUID) -> Bool {
+        !(personalityArchetype(for: id)?.isFormImmune ?? false)
+    }
+
     /// A player's current form streak for the quarter report: hot when he
     /// has won 3+ of his last 5 battles, cold when he has lost 3+.
     enum FormStreak {
         case hot, cold
     }
 
-    /// `nil` until the player has fought at least 3 recent battles (or when
-    /// his recent record is mixed).
+    /// Round 4 (§6b): re-pointed onto the unified `HeatState` so the badge
+    /// reflects exactly what the round-3 composites apply this snap — hot at or
+    /// above +0.5 heat, cold at or below −0.5 (the same band the end-of-game
+    /// morale write-back uses), `nil` in between. The API shape is unchanged, so
+    /// the quarter report and Coach's Board form icons need no edit of their own.
     func formStreak(_ playerID: UUID) -> FormStreak? {
-        guard let recent = recentMatchupForm[playerID], recent.count >= 3 else { return nil }
-        let wins = recent.filter { $0 }.count
-        if wins >= 3 { return .hot }
-        if recent.count - wins >= 3 { return .cold }
+        let heat = heatState.value(playerID)
+        if heat >= HeatState.hotThreshold { return .hot }
+        if heat <= HeatState.coldThreshold { return .cold }
         return nil
     }
 
@@ -1181,6 +1195,13 @@ final class LiveGameEngine: ObservableObject {
     /// Drive number on which each ego player's frustration was relieved by a
     /// touch; the very next drive carries a small "fired up" boost.
     private var egoRelievedAtDrive: [UUID: Int] = [:]
+    /// Round 4 (§6c): players who have already surfaced a "heating up" /
+    /// "gone cold" coach cue this half, so each ±0.6 heat crossing fires its
+    /// note exactly once. Crossing the opposite band clears the other flag
+    /// (natural hysteresis — a re-heat after a cold spell fires again); both
+    /// reset at halftime.
+    private var notedHeatingUp: Set<UUID> = []
+    private var notedGoneCold: Set<UUID> = []
 
     /// Effective-attribute swing a form-sensitive player gets while hot (+) or
     /// cold (−). Small — a nudge to speed / agility / awareness / decision
@@ -1192,6 +1213,12 @@ final class LiveGameEngine: ObservableObject {
     private static let egoFrustrationPenalty = 2
     /// Effective-attribute boost for the drive right after his frustration lifts.
     private static let egoReliefBoost = 1
+    /// Round 4 (§6c): heat at or above which a mid-game "heating up" coach cue
+    /// fires; the mirror "gone cold" cue fires at or below its negative. Set
+    /// past the ±0.5 form-badge band so a cue only trails a decisively hot or
+    /// cold run, not every flicker across neutral.
+    private static let heatCueHotThreshold = 0.6
+    private static let heatCueColdThreshold = -0.6
 
     #if DEBUG
     /// Test hook: skip all live mental-game modifiers (mech 1 & 2). Never set
@@ -1505,7 +1532,10 @@ final class LiveGameEngine: ObservableObject {
             // Layer B: the category / exact / counter shifts computed above.
             passCompletionDelta: memPassDelta,
             runYardDelta: memRunYardDelta,
-            runStuffDelta: memRunStuffDelta
+            runStuffDelta: memRunStuffDelta,
+            // Round 4 (mental states): offense-relative score margin for the
+            // situational leverage index (composure).
+            scoreDifferential: homeHasPossession ? homeScore - awayScore : awayScore - homeScore
         )
 
         // Adaptive opponent AI: log the PLAYER's explicit call for tendency
@@ -1590,6 +1620,10 @@ final class LiveGameEngine: ObservableObject {
                             matchupLosses[id, default: 0] += 1
                         }
                         recordRecentForm(id, win: event.offenseWon)
+                        // Round 4: feed the SAME HeatState the sim feeds — an
+                        // offensive battle won heats the winner, lost cools him.
+                        heatState.reward(id, event.offenseWon ? HeatState.winStep : -HeatState.lossStep,
+                                         scaleEligible: heatEligible(id))
                         let category = LiveGameEngine.offenseCategory(
                             role: offRole, playType: recordedPlay.playType
                         )
@@ -1604,6 +1638,10 @@ final class LiveGameEngine: ObservableObject {
                             matchupWins[id, default: 0] += 1
                         }
                         recordRecentForm(id, win: !event.offenseWon)
+                        // Round 4: the defender's battle — a stop heats him, a
+                        // beaten rep cools him (bidirectional, unlike the sim feed).
+                        heatState.reward(id, !event.offenseWon ? HeatState.winStep : -HeatState.lossStep,
+                                         scaleEligible: heatEligible(id))
                         let category = LiveGameEngine.defenseCategory(
                             role: defRole, playType: recordedPlay.playType
                         )
@@ -1617,13 +1655,25 @@ final class LiveGameEngine: ObservableObject {
             // sack counts against the QB who took it.
             if recordedPlay.yardsGained >= 20, let keyID = recordedPlay.keyOffensePlayerID {
                 bigPlayCounts[keyID, default: 0] += 1
+                // Round 4: a chunk play is a big heat accent for the ball's key man.
+                heatState.reward(keyID, HeatState.bigStep, scaleEligible: heatEligible(keyID))
             }
             if recordedPlay.outcome == .fumbleLost, let keyID = recordedPlay.keyOffensePlayerID {
                 turnoverCounts[keyID, default: 0] += 1
+                // Round 4: a lost fumble is the biggest single cool-down.
+                heatState.reward(keyID, -HeatState.turnoverStep, scaleEligible: heatEligible(keyID))
             }
             if recordedPlay.outcome == .sack {
                 sackTakenCounts[offenseUnit[0].id, default: 0] += 1
+                // Round 4: the QB who took the sack cools; the sim mirrors this.
+                let qbID = offenseUnit[0].id
+                heatState.reward(qbID, -HeatState.lossStep, scaleEligible: heatEligible(qbID))
             }
+            // Round 4 (§6c): with this snap's heat now fed, surface a "heating
+            // up" / "gone cold" coach cue for anyone on the field who just
+            // crossed the ±0.6 band (edge-triggered, once per crossing per half).
+            for player in offenseUnit.players { noteHeatCrossing(for: player) }
+            for player in defenseUnit.players { noteHeatCrossing(for: player) }
             // R38 mech 5: a dropped catchable ball dings the receiver's grade.
             if recordedPlay.wasDrop == true, let keyID = recordedPlay.keyOffensePlayerID {
                 dropCounts[keyID, default: 0] += 1
@@ -2666,6 +2716,20 @@ final class LiveGameEngine: ObservableObject {
             guard losses >= 2, losses > wins, let live = livePlayerByID[id] else { continue }
             live.morale = max(1, min(100, live.morale - 1))
         }
+
+        // Round 4 (§5): end-of-game heat → morale echo for the player's team,
+        // layered on top of the top-3 / shutout logic above. A hot game
+        // (heat ≥ +0.5) nudges morale +2, a cold one (≤ −0.5) −2. No schema
+        // change — the same `live.morale` seam the block above uses.
+        for id in playerIDs {
+            guard let live = livePlayerByID[id] else { continue }
+            let h = heatState.value(id)
+            if h >= HeatState.hotThreshold {
+                live.morale = max(1, min(100, live.morale + HeatState.moraleNudge))
+            } else if h <= HeatState.coldThreshold {
+                live.morale = max(1, min(100, live.morale - HeatState.moraleNudge))
+            }
+        }
     }
 
     // MARK: - Injuries & Rotation (private)
@@ -2706,27 +2770,27 @@ final class LiveGameEngine: ObservableObject {
         #endif
         for i in players.indices {
             let p = players[i]
+
+            // Round 4 (mech 1, FORM): the hot/cold swing now rides `HeatState`
+            // into the round-3 composites (a hot WR wins HIS matchup, far more
+            // targeted than the old blanket speed/agility/awareness/DM nudge,
+            // which is retired). Absolute SET onto this fresh per-play snapshot,
+            // never an increment — nothing compounds across plays, and the
+            // persistent roster snapshot stays untouched (heat 0).
+            players[i].heat = heatState.value(p.id)
+
+            // Mech 2 (EGO, live-only): a frustrated ego star presses (−); the
+            // drive right after he finally gets fed, he plays fired up (+). This
+            // stays the richer LIVE mechanic (the sim gets a heat-echo instead,
+            // §4), so it keeps its own attribute nudge.
+            guard offenseSide else { continue }
             var delta = 0
-
-            // Mech 1: streak-sensitive personalities ride form; steady pros and
-            // everyone else are unmoved.
-            if p.isFormSensitive, let streak = formStreak(p.id) {
-                delta += (streak == .hot)
-                    ? LiveGameEngine.formStreakDelta
-                    : -LiveGameEngine.formStreakDelta
+            if frustratedEgoIDs.contains(p.id) {
+                delta -= LiveGameEngine.egoFrustrationPenalty
             }
-
-            // Mech 2: a frustrated ego star presses (−); the drive right after
-            // he finally gets fed, he plays fired up (+).
-            if offenseSide {
-                if frustratedEgoIDs.contains(p.id) {
-                    delta -= LiveGameEngine.egoFrustrationPenalty
-                }
-                if let relieved = egoRelievedAtDrive[p.id], driveNumber == relieved + 1 {
-                    delta += LiveGameEngine.egoReliefBoost
-                }
+            if let relieved = egoRelievedAtDrive[p.id], driveNumber == relieved + 1 {
+                delta += LiveGameEngine.egoReliefBoost
             }
-
             guard delta != 0 else { continue }
             func adj(_ v: Int) -> Int { max(1, min(99, v + delta)) }
             players[i].physical.speed = adj(p.physical.speed)
@@ -2758,6 +2822,28 @@ final class LiveGameEngine: ObservableObject {
                     lastMentalNote = MentalNote(text: "\(shortName(p.fullName)) wants the ball")
                 }
             }
+        }
+    }
+
+    /// Round 4 (§6c): surface a one-line coach cue the first time a player
+    /// crosses the ±0.6 heat band this half. Edge-triggered via the noted sets
+    /// so it fires once per crossing; the opposite crossing clears the other
+    /// flag so an alternating hot/cold run re-fires, and both flags reset at
+    /// halftime. The cue describes the PAST (a run already on the books), so it
+    /// is safe to raise live under the HUD reveal gating. Reuses the same
+    /// `lastMentalNote` plumbing as the "wants the ball" note.
+    private func noteHeatCrossing(for player: SimPlayer) {
+        let heat = heatState.value(player.id)
+        if heat >= LiveGameEngine.heatCueHotThreshold {
+            guard notedHeatingUp.insert(player.id).inserted else { return }
+            notedGoneCold.remove(player.id)
+            lastMentalNote = MentalNote(
+                text: String(format: String(localized: "%@ is heating up"), shortName(player.fullName)))
+        } else if heat <= LiveGameEngine.heatCueColdThreshold {
+            guard notedGoneCold.insert(player.id).inserted else { return }
+            notedHeatingUp.remove(player.id)
+            lastMentalNote = MentalNote(
+                text: String(format: String(localized: "%@ has gone cold"), shortName(player.fullName)))
         }
     }
 
@@ -3219,6 +3305,10 @@ final class LiveGameEngine: ObservableObject {
                 homeTimeouts = 3
                 awayTimeouts = 3
                 timeoutClockStopPending = false
+                // Round 4 (§6c): clear the fired heat-cue flags so a fresh
+                // second-half hot or cold run can surface its own cue.
+                notedHeatingUp.removeAll()
+                notedGoneCold.removeAll()
                 // The live view pauses here for the halftime report; the
                 // engine itself plays on regardless (auto-sim parity).
                 halftimePending = true
@@ -3483,6 +3573,9 @@ final class LiveGameEngine: ObservableObject {
         moraleAppliedForCurrentDrive = false
         // Mental game (#36B mech 2): fresh touch ledger for the new drive.
         touchedThisDrive = []
+        // Round 4 (mental states): decay every player's heat toward neutral at
+        // the drive boundary (same factor the sim uses).
+        heatState.decayAll(HeatState.decayPerDrive)
         // Fatigue rotation is decided between drives (player's team only).
         updateRBRotation()
     }

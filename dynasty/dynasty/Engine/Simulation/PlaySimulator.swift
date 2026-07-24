@@ -94,7 +94,13 @@ enum PlaySimulator {
         //   • runStuffDelta — extra stuff probability (folded into `stuffChance`).
         passCompletionDelta: (short: Double, mid: Double, deep: Double) = (0, 0, 0),
         runYardDelta: Double = 0,
-        runStuffDelta: Double = 0
+        runStuffDelta: Double = 0,
+        // Round 4 (mental states): the OFFENSE-RELATIVE score margin, used only
+        // to build the situational `leverageIndex` that scales composure. 0 →
+        // no trailing-leverage contribution, which (with composure 70 / heat 0)
+        // is mean-neutral everywhere — a nil-argument / quick-sim snap is
+        // byte-for-byte identical to today.
+        scoreDifferential: Int = 0
     ) -> PlayResult {
         let playCall: PlayType
         if let forced = forcedPlayType {
@@ -157,7 +163,8 @@ enum PlaySimulator {
                 weather: weather,
                 adjustments: adjustments,
                 runKeyIntensity: runKeyIntensity,
-                passCompletionDelta: passCompletionDelta
+                passCompletionDelta: passCompletionDelta,
+                scoreDifferential: scoreDifferential
             )
         case .run:
             return simulateRunPlay(
@@ -178,7 +185,8 @@ enum PlaySimulator {
                 adjustments: adjustments,
                 runKeyIntensity: runKeyIntensity,
                 runYardDelta: runYardDelta,
-                runStuffDelta: runStuffDelta
+                runStuffDelta: runStuffDelta,
+                scoreDifferential: scoreDifferential
             )
         case .punt:
             return simulatePunt(
@@ -240,7 +248,8 @@ enum PlaySimulator {
                 adjustments: adjustments,
                 runKeyIntensity: runKeyIntensity,
                 runYardDelta: runYardDelta,
-                runStuffDelta: runStuffDelta
+                runStuffDelta: runStuffDelta,
+                scoreDifferential: scoreDifferential
             )
         }
     }
@@ -392,7 +401,10 @@ enum PlaySimulator {
         runKeyIntensity: Double = 0,
         // Layer B (PLAY-MEMORY): per-depth completion shift, already net-signed
         // and malus-capped by the engine. (0,0,0) = identity → parity intact.
-        passCompletionDelta: (short: Double, mid: Double, deep: Double) = (0, 0, 0)
+        passCompletionDelta: (short: Double, mid: Double, deep: Double) = (0, 0, 0),
+        // Round 4 (mental states): offense-relative score margin for leverage.
+        // 0 = parity.
+        scoreDifferential: Int = 0
     ) -> PlayResult {
         let qb = findQB(in: offensePlayers)
         let qbAttrs = qbAttributes(for: qb)
@@ -625,19 +637,30 @@ enum PlaySimulator {
             ? Int((AdaptiveOpponentAI.paKeyBigPlay(runKeyIntensity) * deepPunishScale).rounded())
             : 0
 
+        // Round 4 (mental states): the situational leverage index for THIS snap
+        // (Q4/OT, red zone, 3rd/4th-and-medium, two-minute, trailing big).
+        // 0 on a neutral early-down snap → composure inert (parity). Scales the
+        // composure swing on QB accuracy (below) and the mental completion delta.
+        let lev = leverageIndex(down: down, distance: distance, quarter: quarter,
+                                timeRemaining: timeRemaining, yardLine: yardLine,
+                                scoreDifferential: scoreDifferential)
+
         // --- Accuracy & Openness Check ---
         // Mech 3: arm strength lifts the deep-ball accuracy (±cap points).
         var accuracyRating = qbAccuracyForDistance(qbAttrs, distance: passDistance)
         if passDistance == .deep {
             accuracyRating += armDeepAccuracyBonus(qbAttrs)
         }
-        // #36B mech 3 (mental game): a low-composure QB's accuracy sags in the
-        // big moment (Q4/OT or red zone). One lever — accuracyRating feeds both
-        // the completion odds and the interception roll, so a rattled passer
-        // both misses more AND forces a few more picks. High composure is
-        // untouched here (the Q4 clutch boost in applyMoraleModifiers is the
-        // up-side). Shared path → quick sim and the live engine get it alike.
-        accuracyRating -= composurePenalty(for: qb, quarter: quarter, yardLine: yardLine)
+        // Round 4 (mental states): composure is now a two-sided SWING scaled by
+        // the situational leverage, replacing the old downside-only Q4/red-zone
+        // penalty. accuracyRating feeds both the completion odds (short/mid, via
+        // qbBase) and the interception roll, so a rattled passer both misses more
+        // AND forces a few more picks (the preserved two-for-one); a clutch passer
+        // gets the mirror up-side (the old Q4 clutch boost in applyMoraleModifiers
+        // stays the separate baseline modulator). Composure 70 @ any leverage →
+        // swing 0 → byte-identical to today. Shared path → quick sim and the live
+        // engine get it alike.
+        accuracyRating += composureSwing(qb, lev) * composureAccuracyGain
         // Mech 3 (presentation): the 3D flight-speed multiplier for this QB.
         let velocityScale = armVelocityScale(qbAttrs)
 
@@ -686,6 +709,31 @@ enum PlaySimulator {
         // lives in its own 70-centered term. .deep is byte-unchanged (its own
         // composite). The grand soft-cap is applied once at the very end, after
         // every downstream completion mod (replacing the old hard 0.15…0.85 wall).
+        // Round 4 (mental states): the ONE bounded mental completion term, folded
+        // in BESIDE momentumBoost so it composes through the same clamp/soft-cap
+        // stack. It is heat (form) + composure (poise), each per-player:
+        //   • a HOT WR wins more 50/50s (target.heat, full points);
+        //   • a hot QB is dialed in (qb.heat, smaller);
+        //   • a hot CB tightens the window (−coverMan.heat) — the DB's heat IS his
+        //     coverage effect, so no separate coverage-composite edit;
+        //   • composure adds the poise swing (target + half the QB), leverage-scaled.
+        // Every term is `heat * points * heatEffectScale`, so heat 0 (or an immune
+        // archetype) and composure 70 ⇒ 0 (parity). The sum is clamped to its own
+        // dedicated grand cap, a third lane parallel to the play-memory malus cap
+        // and the defensive-bite cap — stacking is intended, each independently
+        // bounded, and short/mid additionally sit under `softCapCompletion`.
+        let composureTerm = (composureSwing(target, lev)
+                             + 0.5 * composureSwing(qb, lev)) * composureSwingSlope
+        let heatShortMidTerm = target.heat * heatPassCompletionPoints * target.heatEffectScale
+            + qb.heat * heatQBCompletionPoints * qb.heatEffectScale
+            - coverMan.heatContribution * heatDBCompletionPoints
+        let heatDeepTerm = target.heat * heatDeepCompletionPoints * target.heatEffectScale
+            + qb.heat * heatDeepCompletionPoints * qb.heatEffectScale
+        let mentalPassDelta = clamp(heatShortMidTerm + composureTerm,
+                                    min: -mentalCompletionCap, max: mentalCompletionCap)
+        let mentalDeepDelta = clamp(heatDeepTerm + composureTerm,
+                                    min: -mentalCompletionCap, max: mentalCompletionCap)
+
         var completionChance: Double
         switch passDistance {
         case .short, .mid:
@@ -693,9 +741,9 @@ enum PlaySimulator {
             let qbBase = base70
                 + (accuracyRating - 70.0) * qbAccCompSlope
                 + (completionReadingAttr(for: qb) - 70.0) * qbReadCompSlope
-            completionChance = qbBase + matchupEdgeCompletion(matchupEdge) + momentumBoost
+            completionChance = qbBase + matchupEdgeCompletion(matchupEdge) + momentumBoost + mentalPassDelta
         case .deep:
-            completionChance = clamp(deepBaseCompletion + deepEdgeCompletion(deepEdge) + momentumBoost,
+            completionChance = clamp(deepBaseCompletion + deepEdgeCompletion(deepEdge) + momentumBoost + mentalDeepDelta,
                                      min: 0.05, max: 0.90)
         }
 
@@ -1169,7 +1217,10 @@ enum PlaySimulator {
         // Layer B (PLAY-MEMORY): extra run bite (yards) + stuff probability from
         // the coached sub-concept / exact-call read. Both 0 = identity → parity.
         runYardDelta: Double = 0,
-        runStuffDelta: Double = 0
+        runStuffDelta: Double = 0,
+        // Round 4 (mental states): offense-relative score margin for leverage.
+        // 0 = parity.
+        scoreDifferential: Int = 0
     ) -> PlayResult {
         let rb = findRB(in: offensePlayers)
         let rbAttrs = rbAttributes(for: rb)
@@ -1177,6 +1228,19 @@ enum PlaySimulator {
         // Fatigue-adjusted carrier speed — used by the edge-crease term (below)
         // and the breakaway foot race (further down); computed once.
         let rbSpeed = effectiveSpeed(rb)
+
+        // Round 4 (mental states): the carrier-only mental run bonus (yards), heat
+        // (form) + composure (poise), leverage-scaled. Ball-carrier ONLY — there
+        // is deliberately no defensive run heat, keeping the tight inside/edge/stuff
+        // bands off the razor's edge. rb.heat 0 (or immune) and composure 70 ⇒ 0
+        // (parity). Bounded by its own dedicated grand cap.
+        let runLev = leverageIndex(down: down, distance: distance, quarter: quarter,
+                                   timeRemaining: timeRemaining, yardLine: yardLine,
+                                   scoreDifferential: scoreDifferential)
+        let mentalRunBonus = clamp(
+            rb.heat * heatRunYardPoints * rb.heatEffectScale
+                + composureSwing(rb, runLev) * composureRunSlope,
+            min: -mentalRunYardCap, max: mentalRunYardCap)
 
         // Scheme fit modifiers
         let offSchemeFit = schemeFitModifier(
@@ -1288,7 +1352,7 @@ enum PlaySimulator {
                                  min: edgeCreaseMin, max: edgeCreaseMax)
             return edgeBaseYards * edgeFactor * edgeSpeed * edgeGate
         }()
-        var totalYards = Int((baseYards + visionBonus + elusivenessBonus + carrierBurst + blockingAdvantage * runBlockYardGain + edgeContribution + momentumBoost * 2.0 + adjustmentYards).rounded())
+        var totalYards = Int((baseYards + visionBonus + elusivenessBonus + carrierBurst + blockingAdvantage * runBlockYardGain + edgeContribution + momentumBoost * 2.0 + adjustmentYards + mentalRunBonus).rounded())
 
         // Apply scheme fit modifiers: offense fit boosts yards, defense fit reduces them
         let schemeYardAdjustment = Double(totalYards) * (offSchemeFit - defSchemeFit)
@@ -1383,6 +1447,12 @@ enum PlaySimulator {
         // `creaseQuality` (0 at neutral OL → parity), not the gap-shaded blocking.
         breakawayChance *= clamp(1.0 + creaseQuality * breakawayCreaseSlope,
                                  min: breakawayCreaseMin, max: breakawayCreaseMax)
+        // Round 4 (mental states): a hot back hits the hole with conviction — a
+        // tightly-bounded nudge on breakaway CHANCE (never magnitude), so the
+        // ±0.35-yд mean bonus above stays the only yardage lever. rb.heat 0 (or
+        // immune) ⇒ ×1.0 (parity).
+        breakawayChance *= clamp(1.0 + rb.heat * heatBreakawaySlope * rb.heatEffectScale,
+                                 min: 0.90, max: 1.10)
         // Snow: nobody outruns the pursuit on a buried track.
         if weather == .snow { breakawayChance *= 0.5 }
         // B1d: a stuffed carry never breaks away.
@@ -2316,6 +2386,11 @@ enum PlaySimulator {
         let coverage: Double
         let speed: Double
         let ballSkills: Double?
+        /// Round 4 (mental states): the assigned cover man's hot/cold FORM
+        /// contribution, already `heat × heatEffectScale`. 0 for the neutral /
+        /// unit-help fallback (no individualized man) ⇒ the DB heat term vanishes
+        /// (parity). A hot CB tightens the window; a cold one loosens it.
+        var heatContribution: Double = 0
     }
 
     /// A linebacker's coverage rating (man+zone)/2 — the TE/RB-vs-LB mismatch
@@ -2356,10 +2431,12 @@ enum PlaySimulator {
         let lbs = defense.filter { isLB($0) }.sorted { $0.overall > $1.overall }
         func dbMatch(_ p: SimPlayer) -> CoverMatch {
             CoverMatch(coverage: dbCoverageRating(for: p), speed: effectiveSpeed(p),
-                       ballSkills: dbBallSkillsRating(for: p))
+                       ballSkills: dbBallSkillsRating(for: p),
+                       heatContribution: p.heat * p.heatEffectScale)
         }
         func lbMatch(_ p: SimPlayer) -> CoverMatch {
-            CoverMatch(coverage: lbCoverageRating(for: p), speed: effectiveSpeed(p), ballSkills: nil)
+            CoverMatch(coverage: lbCoverageRating(for: p), speed: effectiveSpeed(p), ballSkills: nil,
+                       heatContribution: p.heat * p.heatEffectScale)
         }
         func betterSafety() -> SimPlayer? {
             safeties.max(by: { dbCoverageRating(for: $0) < dbCoverageRating(for: $1) })
@@ -2724,16 +2801,63 @@ enum PlaySimulator {
     private static let decisionIntSlope = 0.00016
     private static let decisionPressureGain = 1.0
 
-    // MARK: - Mental-Game Tuning (#36B)
+    // MARK: - Mental-Game Tuning (#36B + round 4)
 
-    /// Composure (mental mech 3): in a big moment a player whose composure
-    /// (`SimPlayer.composureRating`) is below `composureThreshold` loses up to
-    /// `composureCap` effective accuracy points, `composureSlope` per point of
-    /// deficit. Small and downside-only — the poised are left to the existing
-    /// Q4 clutch boost. Measured by the quick-sim gate (shared path).
-    private static let composureThreshold = 60.0
-    private static let composureSlope = 0.15
-    private static let composureCap = 3.0
+    // Round 4 (mental states). The old downside-only composure penalty
+    // (`composureThreshold`/`composureSlope`/`composureCap`) is RETIRED — it is
+    // subsumed by the two-sided, leverage-scaled `composureSwing` below. All
+    // magnitudes are 70-centered / heat-zero-neutral, so a composure-70 / heat-0
+    // roster reproduces pre-round-4 behavior byte-for-byte.
+
+    // -- Leverage index weights (situational pressure, clamped to [0,1]) --
+    /// Q4 / OT.
+    private static let leverageQ4 = 0.40
+    /// Red zone (inside the 20).
+    private static let leverageRedZone = 0.30
+    /// 3rd/4th-and-medium-or-more.
+    private static let leverageThirdMedium = 0.30
+    /// Two-minute (end of half or game).
+    private static let leverageTwoMinute = 0.30
+    /// Trailing by 9+.
+    private static let leverageTrailing = 0.30
+
+    // -- Composure swing (poise, both-sided) --
+    /// League-mean composure — the swing pivot, so aggregate ~0.
+    private static let composureNeutral = 70.0
+    /// Accuracy points per unit swing on the QB (composure 40 @ full leverage →
+    /// −3.0 acc, matching the old cap; composure 90 → +2.0).
+    private static let composureAccuracyGain = 0.10
+    /// Completion-probability slope per unit swing (composure 45 @ full leverage
+    /// → −0.045 comp; 90 → +0.036).
+    private static let composureSwingSlope = 0.0018
+    /// Run-yard slope per unit swing (composure 45 @ full leverage → −0.30 yд).
+    private static let composureRunSlope = 0.012
+
+    // -- Heat (hot/cold FORM) effect magnitudes --
+    /// Full-hot sensitive WR: +4.5pp completion (a 50% ball → ~54.5%).
+    private static let heatPassCompletionPoints = 0.045
+    /// Hot QB is dialed in — a smaller completion lane.
+    private static let heatQBCompletionPoints = 0.020
+    /// Hot CB tightens the window (subtracted from completion).
+    private static let heatDBCompletionPoints = 0.030
+    /// Deep is rarer / higher-variance, so a smaller per-player deep lane.
+    private static let heatDeepCompletionPoints = 0.030
+    /// ±0.25 yд/carry at full heat. Trimmed from the design's 0.35 after the
+    /// `heat-dist` full-game gate: a net-positive offense keeps its back warm
+    /// most of the game, so 0.35 nudged aggregate rushing ~+0.15 (over the tight
+    /// edge 4.0-4.1 band); 0.25 lands the live-heat aggregate drift ≤ ~0.10 while
+    /// keeping the effect visible.
+    private static let heatRunYardPoints = 0.25
+    /// Breakaway-CHANCE multiplier slope (×[0.90, 1.10]). Trimmed with the yard
+    /// points for the same aggregate reason.
+    private static let heatBreakawaySlope = 0.10
+
+    // -- Dedicated grand caps (a THIRD lane, parallel to the play-memory malus
+    //    cap and the defensive-bite cap — each independently bounded) --
+    /// Cap on the summed pass mental delta (heat + composure).
+    private static let mentalCompletionCap = 0.10
+    /// Cap on the summed run mental yardage (heat + composure).
+    private static let mentalRunYardCap = 0.60
 
     /// Away false-start guilt boost (mech 6): the crowd noise on the road
     /// jumps the false-start SHARE of the offense's flags by +20% (relative);
@@ -2948,19 +3072,35 @@ enum PlaySimulator {
             * (1.0 + pressure * decisionPressureGain)
     }
 
-    /// Effective-accuracy sag from low composure in a pressure moment
-    /// (mental mech 3). Zero unless it is a big moment — Q4/OT, or a red-zone
-    /// snap in any quarter — and the passer's composure is below the
-    /// threshold. Neutralized by the balance harness.
-    static func composurePenalty(for player: SimPlayer, quarter: Int, yardLine: Int) -> Double {
+    /// Round 4 (mental states): the situational LEVERAGE of a snap, `[0, 1]`.
+    /// Neutral early-down snaps score 0 → composure inert (parity with the old
+    /// "big moment only", generalized). Shared by both engines through the same
+    /// `simulatePlay` entry, so composure behaves identically live and in sim.
+    static func leverageIndex(down: Int, distance: Int, quarter: Int,
+                              timeRemaining: Int, yardLine: Int,
+                              scoreDifferential: Int) -> Double {
+        var L = 0.0
+        if quarter >= 4 { L += leverageQ4 }                                  // Q4/OT
+        if (100 - yardLine) <= 20 { L += leverageRedZone }                   // red zone
+        if down >= 3 && distance >= 4 { L += leverageThirdMedium }           // 3rd/4th & medium+
+        if timeRemaining <= 120 && (quarter == 2 || quarter >= 4) {          // two-minute
+            L += leverageTwoMinute
+        }
+        if scoreDifferential <= -9 { L += leverageTrailing }                 // trailing by 9+
+        return Swift.min(1.0, L)
+    }
+
+    /// Round 4 (mental states): the two-sided composure swing for a player at a
+    /// given leverage. `(composure − 70) × leverage` — the poised rise in the
+    /// moment, the shaky sag. Composure 70 (or leverage 0) ⇒ 0, so a neutral
+    /// snap and the all-70 harness are byte-identical to pre-round-4. The
+    /// balance-harness debug gate rides on the swing (replacing the retired
+    /// `composurePenalty` gate).
+    static func composureSwing(_ player: SimPlayer, _ leverage: Double) -> Double {
         #if DEBUG
         if debugNeutralComposure { return 0 }
         #endif
-        let bigMoment = quarter >= 4 || (100 - yardLine) <= 20
-        guard bigMoment else { return 0 }
-        let composure = player.composureRating
-        guard composure < composureThreshold else { return 0 }
-        return Swift.min(composureCap, (composureThreshold - composure) * composureSlope)
+        return (player.composureRating - composureNeutral) * leverage
     }
 
     /// Drop probability on an open, catchable ball (mech 5).
