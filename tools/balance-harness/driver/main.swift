@@ -26,6 +26,17 @@ import Foundation
 //   spam         degenerate spam-collapse + mixed-parity (memory ON vs OFF)
 //   all          every scenario above
 //
+// Round-5 PARAMETERIZED scenarios (take `--flag value` args, not a name list;
+// run on their own — never via `all` — see README "Round-5 full-game campaign"):
+//   fullgame       complete games via the shipped GameSimulator/DriveSimulator
+//                  pipeline; per-game box + N-game aggregates vs NFL bands + win split.
+//                  fullgame --home-tier X --away-tier Y --n N [--home-override U=tier,…]
+//                  [--home-asym elite-O/weak-D] [--archetypes sensitive|immune|mixed]
+//                  [--fam 33|66|100] [--offense-style run-heavy|balanced|pass-heavy]
+//                  [--seedable] [--seed N] [--detail]  (per-side --home-*/--away-* too)
+//   positionsweep  one group swept {55,70,85,95} on an avg roster vs avg; win% + stat.
+//                  positionsweep --group QB|RB|WR|TE|OL|DL|LB|CB|S --n N [--seedable]
+//
 // Sample sizes: env BH_N (default 40000) per cell; BH_GN (default 24000) per grid
 // cell. The default reproduces the round-3 verifier numbers (see README).
 // ============================================================================
@@ -1018,6 +1029,394 @@ func scenarioMacro() {
 }
 
 // ============================================================================
+// ROUND 5 — FULL-GAME CAMPAIGN
+// ============================================================================
+// Runs COMPLETE games through the SHIPPED GameSimulator → DriveSimulator →
+// PlaySimulator pipeline (all sha-verified verbatim sources) against generated
+// tier rosters. Nothing here reimplements the game loop, box score, or heat
+// feed — it drives the real engine and reads the real BoxScore. See README §
+// "Round-5 full-game campaign".
+// ============================================================================
+
+// ---- Seedable harness RNG (roster generation only) --------------------------
+// SplitMix64 gives reproducible ROSTER draws under --seedable. NOTE: the engine's
+// play-by-play uses Swift's global (unseedable) RNG, so games still carry
+// Monte-Carlo noise even when the rosters are fixed — that is unavoidable without
+// touching the engine, and it is exactly why campaigns run N games and report bands.
+struct SplitMix64: RandomNumberGenerator {
+    var state: UInt64
+    init(seed: UInt64) { state = seed }
+    mutating func next() -> UInt64 {
+        state = state &+ 0x9E3779B97F4A7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        return z ^ (z >> 31)
+    }
+}
+var hrng = SplitMix64(seed: 0x5EED_1234_ABCD_0F01)
+func seedRNG(_ f: [String: String]) {
+    if f["seedable"] != nil {
+        hrng = SplitMix64(seed: UInt64(f["seed"] ?? "") ?? 0x5EED_1234_ABCD_0F01)
+    } else {
+        var sys = SystemRandomNumberGenerator()
+        hrng = SplitMix64(seed: sys.next())
+    }
+}
+
+// ---- Named tiers ------------------------------------------------------------
+// elite 88-95 · good 80-87 · avg 70-79 · weak 55-69 (a bare number ⇒ that exact grade).
+func tierBand(_ name: String) -> ClosedRange<Int>? {
+    switch name.lowercased() {
+    case "elite":            return 88...95
+    case "good":             return 80...87
+    case "avg", "average":   return 70...79
+    case "weak":             return 55...69
+    default:                 if let n = Int(name) { return n...n }; return nil
+    }
+}
+
+// ---- Roster layout: a full two-way 25-man squad -----------------------------
+struct Slot { let name: String; let pos: Position; let unit: String; let idx: Int }
+let rosterLayout: [Slot] = [
+    Slot(name: "QB1", pos: .QB, unit: "QB", idx: 0),
+    Slot(name: "RB1", pos: .RB, unit: "RB", idx: 0), Slot(name: "RB2", pos: .RB, unit: "RB", idx: 1),
+    Slot(name: "WR1", pos: .WR, unit: "WR", idx: 0), Slot(name: "WR2", pos: .WR, unit: "WR", idx: 1), Slot(name: "WR3", pos: .WR, unit: "WR", idx: 2),
+    Slot(name: "TE1", pos: .TE, unit: "TE", idx: 0),
+    Slot(name: "LT", pos: .LT, unit: "OL", idx: 0), Slot(name: "LG", pos: .LG, unit: "OL", idx: 1), Slot(name: "C", pos: .C, unit: "OL", idx: 2),
+    Slot(name: "RG", pos: .RG, unit: "OL", idx: 3), Slot(name: "RT", pos: .RT, unit: "OL", idx: 4),
+    Slot(name: "DE1", pos: .DE, unit: "DL", idx: 0), Slot(name: "DE2", pos: .DE, unit: "DL", idx: 1),
+    Slot(name: "DT1", pos: .DT, unit: "DL", idx: 2), Slot(name: "DT2", pos: .DT, unit: "DL", idx: 3),
+    Slot(name: "OLB1", pos: .OLB, unit: "LB", idx: 0), Slot(name: "OLB2", pos: .OLB, unit: "LB", idx: 1), Slot(name: "MLB1", pos: .MLB, unit: "LB", idx: 2),
+    Slot(name: "CB1", pos: .CB, unit: "CB", idx: 0), Slot(name: "CB2", pos: .CB, unit: "CB", idx: 1),
+    Slot(name: "FS1", pos: .FS, unit: "S", idx: 0), Slot(name: "SS1", pos: .SS, unit: "S", idx: 1),
+    Slot(name: "K1", pos: .K, unit: "K", idx: 0), Slot(name: "P1", pos: .P, unit: "P", idx: 0),
+]
+let unitOrder = ["QB", "RB", "WR", "TE", "OL", "DL", "LB", "CB", "S"]
+func unitCount(_ u: String) -> Int { rosterLayout.filter { $0.unit == u.uppercased() }.count }
+
+/// Position attributes with every rating pinned to a single grade `g` — so a
+/// "tier-88" player is uniformly ~88 across his attribute cluster.
+func posAttr(_ pos: Position, _ g: Int) -> PositionAttributes {
+    switch pos {
+    case .QB:                    return .quarterback(QBAttributes(armStrength: g, accuracyShort: g, accuracyMid: g, accuracyDeep: g, pocketPresence: g, scrambling: g))
+    case .RB, .FB:               return .runningBack(RBAttributes(vision: g, elusiveness: g, breakTackle: g, receiving: g))
+    case .WR:                    return .wideReceiver(WRAttributes(routeRunning: g, catching: g, release: g, spectacularCatch: g))
+    case .TE:                    return .tightEnd(TEAttributes(blocking: g, catching: g, routeRunning: g, speed: g))
+    case .LT, .LG, .C, .RG, .RT: return .offensiveLine(OLAttributes(runBlock: g, passBlock: g, pull: g, anchor: g))
+    case .DE, .DT:               return .defensiveLine(DLAttributes(passRush: g, blockShedding: g, powerMoves: g, finesseMoves: g))
+    case .OLB, .MLB:             return .linebacker(LBAttributes(tackling: g, zoneCoverage: g, manCoverage: g, blitzing: g))
+    case .CB, .FS, .SS:          return .defensiveBack(DBAttributes(manCoverage: g, zoneCoverage: g, press: g, ballSkills: g))
+    default:                     return .kicking(KickingAttributes(kickPower: g, kickAccuracy: g))
+    }
+}
+
+let archMixFull: [PersonalityArchetype] = [.fieryCompetitor, .feelPlayer, .dramaQueen, .classClown,
+    .steadyPerformer, .quietProfessional, .teamLeader, .loneWolf, .mentor]
+func archetypeFor(_ mode: String) -> PersonalityArchetype {
+    switch mode.lowercased() {
+    case "sensitive": return .fieryCompetitor    // isFormSensitive, heatEffectScale 1.0
+    case "immune":    return .steadyPerformer     // isFormImmune,    heatEffectScale 0.0
+    default:          return archMixFull.randomElement(using: &hrng)!
+    }
+}
+func planFor(_ style: String?) -> GamePlan? {
+    guard let s = style?.lowercased() else { return nil }
+    var gp = GamePlan.balanced
+    switch s {
+    case "run-heavy", "run":   gp.runPassRatio = 0.25
+    case "pass-heavy", "pass": gp.runPassRatio = 0.75
+    default:                   gp.runPassRatio = 0.50
+    }
+    return gp
+}
+
+// ---- Roster spec ------------------------------------------------------------
+struct RosterSpec {
+    var tier: String = "avg"
+    var overrides: [String: (band: ClosedRange<Int>, count: Int)] = [:]
+    var archetypes: String = "mixed"
+    var fam: Int? = nil
+    var style: String? = nil
+}
+func describe(_ s: RosterSpec) -> String {
+    var parts = ["tier=\(s.tier)"]
+    if !s.overrides.isEmpty {
+        let ovs = unitOrder.compactMap { u -> String? in
+            guard let o = s.overrides[u] else { return nil }
+            let cnt = o.count < unitCount(u) ? "x\(o.count)" : ""
+            return "\(u)=\(o.band.lowerBound == o.band.upperBound ? "\(o.band.lowerBound)" : "\(o.band.lowerBound)-\(o.band.upperBound)")\(cnt)"
+        }
+        parts.append("override[\(ovs.joined(separator: ","))]")
+    }
+    if s.archetypes != "mixed" { parts.append("arch=\(s.archetypes)") }
+    if let f = s.fam { parts.append("fam=\(f)") }
+    if let st = s.style { parts.append("style=\(st)") }
+    return parts.joined(separator: " ")
+}
+
+/// Builds one team's roster (+ neutral scheme-carrying coaches when familiarity
+/// is exercised, + a GamePlan when an offense style is set).
+func buildRoster(_ spec: RosterSpec, side: String) -> (team: Team, coaches: [Coach], plan: GamePlan?) {
+    let baseBand = tierBand(spec.tier) ?? 70...79
+    let osKey = OffensiveScheme.westCoast.rawValue
+    let dsKey = DefensiveScheme.cover3.rawValue
+    var players: [Player] = []
+    players.reserveCapacity(rosterLayout.count)
+    for slot in rosterLayout {
+        let band: ClosedRange<Int>
+        if let o = spec.overrides[slot.unit], slot.idx < o.count { band = o.band } else { band = baseBand }
+        let g = Int.random(in: band, using: &hrng)
+        var fam: [String: Int] = [:]
+        if let f = spec.fam { fam[osKey] = f; fam[dsKey] = f }
+        players.append(Player(
+            fullName: "\(side)-\(slot.name)", position: slot.pos,
+            physical: PhysicalAttributes(speed: g, acceleration: g, strength: g, agility: g, stamina: 70, durability: 70),
+            mental: MentalAttributes(awareness: g, decisionMaking: g, clutch: g, workEthic: 70, coachability: 70, leadership: 70),
+            positionAttributes: posAttr(slot.pos, g),
+            personalityArchetype: archetypeFor(spec.archetypes),
+            overall: g, schemeFamiliarity: fam))
+    }
+    var coaches: [Coach] = []
+    if spec.fam != nil {
+        // Grade-70 neutral staff — carries the schemes so directFamiliarity /
+        // scheme-fit fire, without any CoachingModifiers edge (every mechanic
+        // is centered at 70 ⇒ ~0 effect).
+        coaches = [Coach(role: .offensiveCoordinator, offensiveScheme: .westCoast),
+                   Coach(role: .defensiveCoordinator, defensiveScheme: .cover3),
+                   Coach(role: .headCoach)]
+    }
+    return (Team(players: players), coaches, planFor(spec.style))
+}
+
+// ---- Per-team box line extracted from a finished game -----------------------
+struct TeamLine {
+    var pts = 0, passYds = 0, rushYds = 0, totYds = 0, plays = 0, rushAtt = 0
+    var sacks = 0, ints = 0, comps = 0, atts = 0, thirdC = 0, thirdA = 0
+    var firstDowns = 0, passTD = 0, rushTD = 0, retTD = 0, turnovers = 0
+    var compPct: Double { atts > 0 ? Double(comps) / Double(atts) * 100 : 0 }
+    var thirdPct: Double { thirdA > 0 ? Double(thirdC) / Double(thirdA) * 100 : 0 }
+    var netYPA: Double { (atts + sacks) > 0 ? Double(passYds) / Double(atts + sacks) : 0 }
+    var ypc: Double { rushAtt > 0 ? Double(rushYds) / Double(rushAtt) : 0 }
+}
+func teamLine(_ box: TeamBoxScore, drives: [DriveResult], teamID: UUID) -> TeamLine {
+    var L = TeamLine()
+    L.pts = box.score; L.passYds = box.passingYards; L.rushYds = box.rushingYards
+    L.totYds = box.totalYards; L.sacks = box.sacks; L.turnovers = box.turnovers
+    L.thirdC = box.thirdDownConversions; L.thirdA = box.thirdDownAttempts; L.firstDowns = box.firstDowns
+    for drive in drives where drive.teamID == teamID {
+        for p in drive.plays {
+            if p.outcome == .penalty { continue }
+            if p.playType == .pass || p.playType == .run { L.plays += 1 }
+            if p.playType == .run { L.rushAtt += 1 }
+            switch p.outcome {
+            case .completion:   L.comps += 1; L.atts += 1
+            case .incompletion: L.atts += 1
+            case .interception: L.atts += 1; L.ints += 1
+            case .touchdown:
+                if p.playType == .pass { L.comps += 1; L.atts += 1; L.passTD += 1 }
+                else if p.playType == .run { L.rushTD += 1 }
+                else if p.playType == .kickoff { L.retTD += 1 }
+            default: break     // sacks (excluded from att), FG, punt, etc.
+            }
+        }
+    }
+    return L
+}
+func fmtLine(_ L: TeamLine) -> String {
+    String(format: "%2dpt %3dyd(%3dp/%3dr) %2dpl %dsk %dint %.0f%%cmp %.1fnYPA %.1fypc %d/%d-3rd TD %dp/%dr%@",
+        L.pts, L.totYds, L.passYds, L.rushYds, L.plays, L.sacks, L.ints, L.compPct,
+        L.netYPA, L.ypc, L.thirdC, L.thirdA, L.passTD, L.rushTD, L.retTD > 0 ? "/\(L.retTD)ret" : "")
+}
+
+// ---- Aggregates -------------------------------------------------------------
+func meanD(_ xs: [Double]) -> Double { xs.isEmpty ? 0 : xs.reduce(0, +) / Double(xs.count) }
+func sdD(_ xs: [Double]) -> Double {
+    guard xs.count > 1 else { return 0 }
+    let m = meanD(xs); return (xs.reduce(0) { $0 + ($1 - m) * ($1 - m) } / Double(xs.count)).squareRoot()
+}
+func band(_ v: Double, _ lo: Double, _ hi: Double) -> String { (v >= lo && v <= hi) ? "OK " : "OUT" }
+
+struct Aggregate {
+    var lines: [TeamLine] = []
+    var pts: [Double] { lines.map { Double($0.pts) } }
+    var totYds: [Double] { lines.map { Double($0.totYds) } }
+    var meanPts: Double { meanD(pts) }
+    var meanPassYds: Double { meanD(lines.map { Double($0.passYds) }) }
+    var meanRushYds: Double { meanD(lines.map { Double($0.rushYds) }) }
+    var meanTotYds: Double { meanD(totYds) }
+    var meanPlays: Double { meanD(lines.map { Double($0.plays) }) }
+    var meanSacks: Double { meanD(lines.map { Double($0.sacks) }) }
+    var meanInts: Double { meanD(lines.map { Double($0.ints) }) }
+    var meanFirst: Double { meanD(lines.map { Double($0.firstDowns) }) }
+    var meanPassTD: Double { meanD(lines.map { Double($0.passTD) }) }
+    var meanRushTD: Double { meanD(lines.map { Double($0.rushTD) }) }
+    // Pooled ratios (total/total) — avoids small-sample per-game ratio bias.
+    var compPct: Double { let c = lines.reduce(0) { $0 + $1.comps }, a = lines.reduce(0) { $0 + $1.atts }; return a > 0 ? Double(c) / Double(a) * 100 : 0 }
+    var thirdPct: Double { let c = lines.reduce(0) { $0 + $1.thirdC }, a = lines.reduce(0) { $0 + $1.thirdA }; return a > 0 ? Double(c) / Double(a) * 100 : 0 }
+    var netYPA: Double { let y = lines.reduce(0) { $0 + $1.passYds }, a = lines.reduce(0) { $0 + $1.atts + $1.sacks }; return a > 0 ? Double(y) / Double(a) : 0 }
+    var ypc: Double { let y = lines.reduce(0) { $0 + $1.rushYds }, a = lines.reduce(0) { $0 + $1.rushAtt }; return a > 0 ? Double(y) / Double(a) : 0 }
+}
+
+func printBandTable(_ a: Aggregate) {
+    print("  --- per-team-per-game aggregate (both teams pooled, N×2 team-games) vs NFL bands ---")
+    print(String(format: "    points     %6.1f  (sd %.1f, min %.0f max %.0f)   band 17-27   [%@]",
+        a.meanPts, sdD(a.pts), a.pts.min() ?? 0, a.pts.max() ?? 0, band(a.meanPts, 17, 27)))
+    print(String(format: "    total yds  %6.1f  (sd %.1f)                    band 300-400 [%@]", a.meanTotYds, sdD(a.totYds), band(a.meanTotYds, 300, 400)))
+    print(String(format: "    pass yds   %6.1f                               band 200-250 [%@]", a.meanPassYds, band(a.meanPassYds, 200, 250)))
+    print(String(format: "    rush yds   %6.1f                               band 100-130 [%@]", a.meanRushYds, band(a.meanRushYds, 100, 130)))
+    print(String(format: "    plays      %6.1f                               band 58-68   [%@]", a.meanPlays, band(a.meanPlays, 58, 68)))
+    print(String(format: "    sacks-took %6.2f                               band 2-3     [%@]", a.meanSacks, band(a.meanSacks, 2, 3)))
+    print(String(format: "    INT thrown %6.2f                               band 0.7-1.3 [%@]", a.meanInts, band(a.meanInts, 0.7, 1.3)))
+    print(String(format: "    completion %6.1f%%                              band 60-67   [%@]", a.compPct, band(a.compPct, 60, 67)))
+    print(String(format: "    ypc        %6.2f                               band 3.9-4.6 [%@]", a.ypc, band(a.ypc, 3.9, 4.6)))
+    print(String(format: "    net YPA    %6.2f                               band 5.9-7.5 [%@]", a.netYPA, band(a.netYPA, 5.9, 7.5)))
+    print(String(format: "    3rd-down   %6.1f%%                              band 35-45   [%@]", a.thirdPct, band(a.thirdPct, 35, 45)))
+    print(String(format: "    TD/team    %.2f pass + %.2f rush  first-downs %.1f", a.meanPassTD, a.meanRushTD, a.meanFirst))
+}
+
+// ---- fullgame scenario ------------------------------------------------------
+func scenarioFullGame(_ f: [String: String]) {
+    let n = Int(f["n"] ?? "") ?? 20
+    seedRNG(f)
+    let homeSpec = specFrom(f, side: "home")
+    let awaySpec = specFrom(f, side: "away")
+    print("===== SCENARIO fullgame: complete games via GameSimulator/DriveSimulator pipeline =====")
+    print("  HOME: \(describe(homeSpec))")
+    print("  AWAY: \(describe(awaySpec))")
+    print("  games=\(n)  seedable=\(f["seedable"] != nil ? "rosters-fixed" : "no")  (engine play-by-play RNG is always stochastic)")
+    var home = Aggregate(), away = Aggregate(), both = Aggregate()
+    var homeWins = 0, awayWins = 0, ties = 0
+    var margins: [Double] = []
+    let detail = n <= 8 || f["detail"] != nil
+    let t0 = Date()
+    for i in 0..<n {
+        let (ht, hc, hp) = buildRoster(homeSpec, side: "H")
+        let (at, ac, ap) = buildRoster(awaySpec, side: "A")
+        let r = GameSimulator.simulate(homeTeam: ht, awayTeam: at, homeCoaches: hc, awayCoaches: ac,
+                                       homeGamePlan: hp, awayGamePlan: ap)
+        let hl = teamLine(r.boxScore.home, drives: r.boxScore.drives, teamID: ht.id)
+        let al = teamLine(r.boxScore.away, drives: r.boxScore.drives, teamID: at.id)
+        home.lines.append(hl); away.lines.append(al); both.lines.append(hl); both.lines.append(al)
+        margins.append(Double(r.homeScore - r.awayScore))
+        if r.homeScore > r.awayScore { homeWins += 1 } else if r.awayScore > r.homeScore { awayWins += 1 } else { ties += 1 }
+        if detail {
+            print(String(format: "  G%02d  H %2d-%2d A  | H: %@ | A: %@", i + 1, r.homeScore, r.awayScore, fmtLine(hl), fmtLine(al)))
+        }
+    }
+    let elapsed = Date().timeIntervalSince(t0)
+    print("")
+    printBandTable(both)
+    let hp = Double(homeWins) / Double(n) * 100, apw = Double(awayWins) / Double(n) * 100, tp = Double(ties) / Double(n) * 100
+    print(String(format: "  WIN SPLIT  home=%.1f%% away=%.1f%% tie=%.1f%%   home margin mean=%+.1f (sd %.1f)  home pts %.1f | away pts %.1f",
+        hp, apw, tp, meanD(margins), sdD(margins), home.meanPts, away.meanPts))
+    print(String(format: "  RUNTIME  %d games in %.2fs = %.1f games/sec", n, elapsed, Double(n) / max(elapsed, 0.0001)))
+}
+
+// ---- positionsweep scenario -------------------------------------------------
+func scenarioPositionSweep(_ f: [String: String]) {
+    let group = (f["group"] ?? "QB").uppercased()
+    let n = Int(f["n"] ?? "") ?? 20
+    seedRNG(f)
+    guard unitOrder.contains(group) else {
+        FileHandle.standardError.write("positionsweep: unknown --group \(group); valid: \(unitOrder.joined(separator: "|"))\n".data(using: .utf8)!)
+        exit(2)
+    }
+    print("===== SCENARIO positionsweep: group \(group) swept {55,70,85,95} on avg roster vs avg =====")
+    print("  N=\(n) full games per point. Home sweeps \(group); away is straight avg. headline = the group's signal.")
+    func headline(_ group: String, home: Aggregate, away: Aggregate) -> String {
+        switch group {
+        case "QB": return String(format: "home comp%%=%.1f  home netYPA=%.2f", home.compPct, home.netYPA)
+        case "RB": return String(format: "home ypc=%.2f  rushYds/g=%.0f", home.ypc, home.meanRushYds)
+        case "WR": return String(format: "home passYds/g=%.0f  comp%%=%.1f", home.meanPassYds, home.compPct)
+        case "TE": return String(format: "home comp%%=%.1f  passYds/g=%.0f", home.compPct, home.meanPassYds)
+        case "OL": return String(format: "home ypc=%.2f  sacks-allowed/g=%.2f", home.ypc, home.meanSacks)
+        case "DL": return String(format: "sacks-made/g=%.2f (opp took)  opp ypc=%.2f", away.meanSacks, away.ypc)
+        case "LB": return String(format: "opp ypc=%.2f  opp rushYds/g=%.0f", away.ypc, away.meanRushYds)
+        case "CB": return String(format: "opp comp%%=%.1f  opp netYPA=%.2f", away.compPct, away.netYPA)
+        case "S":  return String(format: "opp passYds/g=%.0f  opp comp%%=%.1f", away.meanPassYds, away.compPct)
+        default:   return String(format: "home comp%%=%.1f", home.compPct)
+        }
+    }
+    print(String(format: "  %-5@ | %-8@ | %-9@ | %-9@ | %@", "grade", "home-win%", "home-pts", "away-pts", "headline stat"))
+    let t0 = Date(); var totalGames = 0
+    for g in [55, 70, 85, 95] {
+        var homeSpec = RosterSpec(); homeSpec.tier = "avg"; homeSpec.overrides[group] = (g...g, unitCount(group))
+        var awaySpec = RosterSpec(); awaySpec.tier = "avg"
+        var home = Aggregate(), away = Aggregate()
+        var homeWins = 0
+        for _ in 0..<n {
+            let (ht, hc, hp) = buildRoster(homeSpec, side: "H")
+            let (at, ac, ap) = buildRoster(awaySpec, side: "A")
+            let r = GameSimulator.simulate(homeTeam: ht, awayTeam: at, homeCoaches: hc, awayCoaches: ac, homeGamePlan: hp, awayGamePlan: ap)
+            home.lines.append(teamLine(r.boxScore.home, drives: r.boxScore.drives, teamID: ht.id))
+            away.lines.append(teamLine(r.boxScore.away, drives: r.boxScore.drives, teamID: at.id))
+            if r.homeScore > r.awayScore { homeWins += 1 }
+            totalGames += 1
+        }
+        print(String(format: "  %-5d | %7.1f%% | %9.1f | %9.1f | %@",
+            g, Double(homeWins) / Double(n) * 100, home.meanPts, away.meanPts, headline(group, home: home, away: away)))
+    }
+    let elapsed = Date().timeIntervalSince(t0)
+    print(String(format: "  RUNTIME  %d games in %.2fs = %.1f games/sec", totalGames, elapsed, Double(totalGames) / max(elapsed, 0.0001)))
+}
+
+// ---- Flag / spec parsing ----------------------------------------------------
+func parseFlags(_ a: [String]) -> [String: String] {
+    var d: [String: String] = [:]
+    var i = 0
+    while i < a.count {
+        let t = a[i]
+        guard t.hasPrefix("--") else { i += 1; continue }
+        let key = String(t.dropFirst(2))
+        if i + 1 < a.count && !a[i + 1].hasPrefix("--") { d[key] = a[i + 1]; i += 2 }
+        else { d[key] = "true"; i += 1 }   // boolean flag, e.g. --seedable
+    }
+    return d
+}
+/// Parses "QB=95,OL=weak,CB=95x2" → unit → (band, count). Comma-separated (no
+/// spaces — a single arg token). Tier is a name or a bare grade; optional `xN`
+/// applies the override to only the first N players of the unit.
+func parseOverrides(_ s: String) -> [String: (band: ClosedRange<Int>, count: Int)] {
+    var ov: [String: (band: ClosedRange<Int>, count: Int)] = [:]
+    for item in s.split(whereSeparator: { $0 == "," }) {
+        let kv = item.split(separator: "=", maxSplits: 1)
+        guard kv.count == 2 else { continue }
+        let unit = kv[0].uppercased()
+        var tierTok = String(kv[1]); var count = unitCount(unit)
+        if let xr = tierTok.range(of: "x") {
+            count = Int(tierTok[xr.upperBound...]) ?? count
+            tierTok = String(tierTok[..<xr.lowerBound])
+        }
+        guard let b = tierBand(tierTok) else { continue }
+        ov[unit] = (b, count)
+    }
+    return ov
+}
+/// Merges an asym preset like "elite-O/weak-D" (offense units elite, defense weak).
+func mergeAsym(_ ov: inout [String: (band: ClosedRange<Int>, count: Int)], _ spec: String) {
+    for part in spec.lowercased().split(whereSeparator: { $0 == "/" || $0 == "," }) {
+        let comps = part.split(separator: "-").map(String.init)
+        guard comps.count >= 2, let sideLetter = comps.last else { continue }
+        let tierName = comps.dropLast().joined(separator: "-")
+        guard let b = tierBand(tierName) else { continue }
+        let units = sideLetter.hasPrefix("o") ? ["QB", "RB", "WR", "TE", "OL"] : ["DL", "LB", "CB", "S"]
+        for u in units { ov[u] = (b, unitCount(u)) }
+    }
+}
+func specFrom(_ f: [String: String], side: String) -> RosterSpec {
+    var s = RosterSpec()
+    s.tier = f["\(side)-tier"] ?? f["tier"] ?? "avg"
+    var ov = parseOverrides(f["\(side)-override"] ?? f["override"] ?? "")
+    if let asym = f["\(side)-asym"] ?? (side == "home" ? f["asym"] : nil) { mergeAsym(&ov, asym) }
+    s.overrides = ov
+    s.archetypes = f["\(side)-archetypes"] ?? f["archetypes"] ?? "mixed"
+    s.fam = Int(f["\(side)-fam"] ?? f["fam"] ?? "")
+    s.style = f["\(side)-offense-style"] ?? f["offense-style"]
+    return s
+}
+
+// ============================================================================
 // Dispatcher
 // ============================================================================
 let allScenarios = ["percall", "depth", "keyed-pa", "regression", "pass-talent", "run-talent", "familiarity", "stacking", "spam",
@@ -1048,10 +1447,32 @@ func run(_ name: String) {
 }
 
 let args = Array(CommandLine.arguments.dropFirst())
+
+func printHeader() {
+    print("######################################################################")
+    print("# BALANCE MEASUREMENT HARNESS  —  repo-literal engine  (N=\(N), GN=\(GN))")
+    print(String(format: "# paKeyCompletion(1.0)=%.3f  paKeyBigPlay(1.0)=%.2f  (repo 0.035/2.0)",
+        AdaptiveOpponentAI.paKeyCompletion(1.0), AdaptiveOpponentAI.paKeyBigPlay(1.0)))
+    print("######################################################################")
+}
+
+// Parameterized round-5 scenarios consume `--flag value` args instead of a
+// scenario-name list. They dispatch BEFORE the name-list path so every existing
+// scenario keeps working exactly as before.
+if let first = args.first, first == "fullgame" || first == "positionsweep" {
+    let flags = parseFlags(Array(args.dropFirst()))
+    printHeader()
+    print("")
+    if first == "fullgame" { scenarioFullGame(flags) } else { scenarioPositionSweep(flags) }
+    print("\nDONE.")
+    exit(0)
+}
+
 let requested: [String]
 if args.isEmpty {
     FileHandle.standardError.write("usage: harness <scenario> [scenario ...]\n".data(using: .utf8)!)
     FileHandle.standardError.write("scenarios: \(allScenarios.joined(separator: ", ")), all\n".data(using: .utf8)!)
+    FileHandle.standardError.write("parameterized: fullgame --home-tier X --away-tier Y --n N [flags] | positionsweep --group G --n N\n".data(using: .utf8)!)
     exit(2)
 } else if args.contains("all") {
     requested = allScenarios
@@ -1059,11 +1480,7 @@ if args.isEmpty {
     requested = args
 }
 
-print("######################################################################")
-print("# BALANCE MEASUREMENT HARNESS  —  repo-literal engine  (N=\(N), GN=\(GN))")
-print(String(format: "# paKeyCompletion(1.0)=%.3f  paKeyBigPlay(1.0)=%.2f  (repo 0.035/2.0)",
-    AdaptiveOpponentAI.paKeyCompletion(1.0), AdaptiveOpponentAI.paKeyBigPlay(1.0)))
-print("######################################################################")
+printHeader()
 for (i, name) in requested.enumerated() {
     print("")
     run(name)

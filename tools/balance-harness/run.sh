@@ -4,12 +4,16 @@
 # ============================================================================
 # Usage:
 #   ./run.sh <scenario> [scenario ...]      # e.g. ./run.sh percall keyed-pa
-#   ./run.sh all                            # every scenario
+#   ./run.sh all                            # every per-play scenario
 #   BH_N=60000 ./run.sh regression          # override per-cell sample size
 #   ./run.sh --no-sync depth                # skip re-sync (reuse build/src)
+#   ./run.sh fullgame --home-tier elite --away-tier weak --n 200   # round-5 full games
+#   ./run.sh positionsweep --group CB --n 100                      # round-5 sweep
 #
-# Scenarios: percall depth keyed-pa regression pass-talent run-talent
-#            familiarity stacking spam  (see README.md for band targets).
+# Per-play scenarios: percall depth keyed-pa regression pass-talent run-talent
+#            familiarity stacking spam heat-* composure-lev mental-regression macro.
+# Round-5 parameterized scenarios (flag args, run on their own — not via `all`):
+#            fullgame, positionsweep.  (see README.md for the full CLI + band targets.)
 #
 # This is REPO TOOLING — it does NOT build the iOS app. It compiles only the
 # synced simulation sources + the driver with swiftc -O.

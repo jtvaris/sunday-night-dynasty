@@ -28,9 +28,13 @@ struct SimPlayer {
         isMoodDependent: Bool = false,
         personalityArchetype: PersonalityArchetype = .steadyPerformer,
         schemeFamiliarity: [String: Int] = [:],
-        fatigue: Int = 0
+        fatigue: Int = 0,
+        // Optional identity seam: defaults to a fresh UUID (every existing call
+        // site is unchanged), but `SimPlayer.init(from: Player)` passes the live
+        // player's id so heat attribution + fatigue/morale write-back key correctly.
+        id: UUID? = nil
     ) {
-        self.id = UUID()
+        self.id = id ?? UUID()
         self.fullName = fullName
         self.position = position
         self.physical = physical

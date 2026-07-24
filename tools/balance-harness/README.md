@@ -54,14 +54,19 @@ tools/balance-harness/
     SimPlayer.harness.swift
                          SimPlayer scaffolding (memberwise init + stubs) with two
                          splice markers filled from the repo on each sync
+    GameModels.harness.swift
+                         SwiftData-model stubs (Player/Team/Coach/CoachRole +
+                         SimPlayer.init(from:)) so the shipped full-game pipeline
+                         (GameSimulator/DriveSimulator) compiles standalone
   build/                 GENERATED, git-ignored — reproduced by sync_sources.sh
     src/                 staged engine sources + MANIFEST.txt
     harness              compiled binary
 ```
 
-`build/` is `.gitignore`d — nothing generated is committed. Only the four
+`build/` is `.gitignore`d — nothing generated is committed. Only the five
 authored files (`sync_sources.sh`, `run.sh`, `driver/main.swift`,
-`driver/SimPlayer.harness.swift`) plus this README live in git.
+`driver/SimPlayer.harness.swift`, `driver/GameModels.harness.swift`) plus this
+README live in git.
 
 ---
 
@@ -69,13 +74,21 @@ authored files (`sync_sources.sh`, `run.sh`, `driver/main.swift`,
 
 `sync_sources.sh` produces `build/src/` in three ways:
 
-### 1. Verbatim copies (10 files, SHA-verified)
+### 1. Verbatim copies (17 files, SHA-verified)
 
-`PlayCall.swift`, `PlayType.swift`, `Position.swift`, `Scheme.swift`,
-`GameWeather.swift`, `PersonalityArchetype.swift`, `PlayResult.swift`,
-`PlayerAttributes.swift`, `GamePlan.swift`, `PlaySimulator.swift` are copied
-byte-for-byte. The script asserts `sha(copy) == sha(repo)` for each and records
-both in `MANIFEST.txt`; a mismatch aborts the build.
+**Play-by-play (11):** `PlayCall.swift`, `PlayType.swift`, `Position.swift`,
+`Scheme.swift`, `GameWeather.swift`, `PersonalityArchetype.swift`,
+`PlayResult.swift`, `PlayerAttributes.swift`, `GamePlan.swift`,
+`PlaySimulator.swift`, `HeatState.swift`.
+
+**Full-game pipeline (6, round 5):** `DriveResult.swift`, `BoxScore.swift`,
+`PlayerGameStats.swift`, `CoachingModifiers.swift`, `DriveSimulator.swift`,
+`GameSimulator.swift` — the SHIPPED complete-game engine, so the `fullgame` /
+`positionsweep` scenarios run the exact box-score pipeline the app ships (no
+reimplemented game loop, momentum, clock, heat feed, or box score).
+
+All 17 are copied byte-for-byte. The script asserts `sha(copy) == sha(repo)` for
+each and records both in `MANIFEST.txt`; a mismatch aborts the build.
 
 ### 2. `AdaptiveOpponentAIExtract.swift` — mechanically sliced from the repo
 
@@ -125,8 +138,22 @@ So the sim-read fields and the mental-game computeds are drift-proof too. If the
 repo adds a stored property, the splice re-emits it and the memberwise init
 fails to compile until updated — a loud, fail-closed signal, never silent drift.
 
-`MANIFEST.txt` records the role (`VERBATIM` / `EXTRACT` / `ASSEMBLED`), the
-staged file's SHA, and the repo source SHA for every file.
+### 4. `GameModels.swift` — harness-owned SwiftData-model stubs
+
+The shipped `GameSimulator` is written against three SwiftData `@Model` types —
+`Player`, `Team`, `Coach` — that cannot compile outside the iOS app. **None of
+the three carries any balance math**; they are pure data holders. So
+`driver/GameModels.harness.swift` supplies plain shells (a reference-type
+`Player` — required because `finalizeGameResult` writes fatigue back through a
+`let` dictionary — plus `Team`, `Coach`, a minimal `CoachRole`, and a
+`SimPlayer.init(from: Player)` overload). It is copied verbatim into
+`build/src/GameModels.swift`; the sync asserts the `Player` stub and
+`init(from:)` survive, and **fails the build if the stub ever contains a
+`static let` numeric constant** — no engine number may live in the scaffolding.
+Every tuning literal still flows from the sha-verified verbatim sources above.
+
+`MANIFEST.txt` records the role (`VERBATIM` / `EXTRACT` / `ASSEMBLED` /
+`HARNESS`), the staged file's SHA, and the repo source SHA for every file.
 
 ---
 
@@ -134,9 +161,13 @@ staged file's SHA, and the repo source SHA for every file.
 
 ```bash
 ./run.sh <scenario> [scenario ...]     # sync + build + run
-./run.sh all                           # every scenario
+./run.sh all                           # every per-play scenario
 ./run.sh --no-sync depth               # reuse build/src, skip re-sync
 BH_N=60000 ./run.sh regression         # override per-cell sample size
+
+# Round-5 parameterized scenarios (flag args passed straight through):
+./run.sh fullgame --home-tier elite --away-tier weak --n 200 --seedable
+./run.sh positionsweep --group CB --n 100
 ```
 
 `run.sh` re-syncs (unless `--no-sync`), rebuilds only when a source is newer
@@ -161,6 +192,12 @@ with margin for that.
 | `familiarity` | CATEGORY 4 — offense/defense scheme-familiarity sweeps + drive TD% | comp/ypc rise with off-fam; def busts fall with def-fam; TD% gap 100-vs-33 |
 | `stacking` | CATEGORY 5 — worst-case grand-cap floors (run/deep/short) | adaptive-only (neutral fam) run floor **≥ ~1.8** (`runGrandBiteCap` 1.80); with a **fam20 scheme bust** stacked on top 5a lands ~1.4 (intended worst-of-worst); deep/short stay functional (~8 % / ~27 % comp) |
 | `spam` | degenerate spam-collapse + mixed-parity (memory ON vs OFF) | repeated call decays to ~45 % of r1; varied script `|Δ| ≤ 0.3` (balanced-control) |
+| `fullgame` | **round 5** — complete games via the shipped GameSimulator/DriveSimulator; per-game box + N-game aggregates + win split | per-team-per-game NFL bands (see below) + equal-tier ~50/50, elite-vs-weak decisive-not-deterministic |
+| `positionsweep` | **round 5** — one position group swept {55,70,85,95} on an avg roster vs an avg opponent | monotone win% + headline stat vs the swept group |
+
+The last two are **parameterized** — they take `--flag value` args instead of a
+scenario-name list (see "Round-5 full-game campaign" below), so they are invoked
+on their own, not via `all`.
 
 ---
 
@@ -199,3 +236,103 @@ percall insideRun vs-mix ypc=4.16  quick-sim(nil) ypc=4.02          (verifier pr
 > `PlaySimulator.swift` yields the same ~4.0. The harness always measures whatever
 > is in the working tree at sync time — that is the point: it never carries a
 > stale copy of the engine.
+
+---
+
+## Round-5 full-game campaign (`fullgame` / `positionsweep`)
+
+Round 5 runs **complete games** through the shipped
+`GameSimulator → DriveSimulator → PlaySimulator` pipeline (all sha-verified
+verbatim) against generated tier rosters, and reads the engine's **own**
+`BoxScore` — so every points / pass-yds / rush-yds / sacks / 3rd-down number is
+what the app itself would report, not a harness re-derivation.
+
+### Tier roster generator
+
+Full two-way 25-man squads (QB, 2 RB, 3 WR, TE, 5 OL, 4 DL, 3 LB, 2 CB, 2 S, K, P).
+Each player's attributes are drawn uniformly within the tier band and pinned
+across his cluster:
+
+| tier | band |
+|------|------|
+| `elite` | 88–95 |
+| `good`  | 80–87 |
+| `avg`   | 70–79 |
+| `weak`  | 55–69 |
+
+A bare number (`--home-tier 70`) means that exact grade. **Unit-level overrides**
+put a different tier on one position group: `--home-override QB=elite,OL=weak,CB=95x2`
+(comma-separated, no spaces; `xN` limits it to the first N of the group).
+**Asym presets** expand to overrides: `--home-asym elite-O/weak-D` sets the
+offense units (QB/RB/WR/TE/OL) elite and the defense units (DL/LB/CB/S) weak.
+**Archetype mixes** `--archetypes sensitive|immune|mixed` set every skill player's
+form personality. **Familiarity** `--fam 33|66|100` attaches neutral (grade-70,
+zero-edge) scheme-carrying coaches and sets every player's scheme learning, so
+the directFamiliarity / scheme-fit terms fire in full games. **Offense style**
+`--offense-style run-heavy|balanced|pass-heavy` threads a `GamePlan.runPassRatio`
+(0.25 / 0.5 / 0.75) into the drive, exercising the Layer-A run-key / PlayMemory
+read across a whole game. Every knob has a per-side form (`--home-*` / `--away-*`)
+and a both-sides default.
+
+### CLI reference
+
+```
+harness fullgame  --home-tier <tier> --away-tier <tier> --n <games>
+                  [--home-override U=tier[,U=tier...]] [--away-override ...]
+                  [--home-asym elite-O/weak-D]         [--away-asym ...]
+                  [--archetypes sensitive|immune|mixed] [--home-archetypes ...]
+                  [--fam 33|66|100]                     [--home-fam ...]
+                  [--offense-style run-heavy|balanced|pass-heavy] [--home-offense-style ...]
+                  [--seedable] [--seed N] [--detail]
+
+harness positionsweep --group QB|RB|WR|TE|OL|DL|LB|CB|S --n <games> [--seedable]
+```
+
+`fullgame` prints a per-game box line when `--n ≤ 8` (or with `--detail`), then a
+pooled per-team-per-game aggregate with an `[OK]/[OUT]` marker against each NFL
+band, the home/away/tie win split + margin, and the games/sec. `positionsweep`
+runs N games per `{55,70,85,95}` point and prints win% + home/away points + the
+swept group's headline stat.
+
+**`--seedable`** seeds a SplitMix64 used for **roster** draws only, so the rosters
+are reproducible run-to-run. The engine's play-by-play uses Swift's global
+(unseedable) RNG, so games still carry Monte-Carlo noise — which is exactly why
+campaigns run N games and report bands. `--seed N` picks the roster seed.
+
+### Throughput
+
+~**600 games/sec** on an M-series laptop (`swiftc -O`, rosters rebuilt per game,
+no per-play allocation in the driver). A **200-game campaign finishes in ~0.3 s**;
+even a 4-point positionsweep at N=200 (800 games) is ~1.3 s.
+
+### NFL reference bands (per team per game) and what round 5 found
+
+Bands: points **17–27** · total yds **300–400** · pass yds **200–250** · rush yds
+**100–130** · plays **58–68** · sacks-taken **2–3** · INT thrown **0.7–1.3** ·
+completion **60–67 %** · ypc **3.9–4.6** · net YPA **5.9–7.5** · 3rd-down **35–45 %**.
+
+Smoke campaigns surfaced two headline results (the harness is faithful — these
+are engine properties, reported, **not** fixed here; fixes are out of this
+tool's file scope):
+
+1. **Full-game passing/scoring runs hot.** At the engine's own calibration point
+   (`--home-tier 70 --away-tier 70`, attribute-identical to the all-70 rosters the
+   per-play bands are calibrated on), full games land **plays 66.9 [OK]**,
+   **completion 66 % [OK]**, **sacks 2.5 [OK]** — but **net YPA 8.4**, **pass yds
+   330**, **3rd-down 50 %**, **points 29** all **[OUT]** high. Since the players
+   are identical to the calibrated per-play rosters, the gap is **pure
+   play-selection**: the situational full-game AI produces higher passing
+   efficiency than the flat 45/40/15 per-play blend, compounding into ~29 pts/team.
+2. **The talent curve is too steep at the extremes.** Uniform-tier
+   `elite (88–95)` vs `weak (55–69)` is **deterministic** — home **100 %**, mean
+   score **~103–4** — well past the "biggest NFL favorites ~85–90 %, never
+   deterministic" guardrail. (Caveat: uniform tiers are an extreme construction;
+   a realistic star/role-player mix via `--home-override` narrows it. `weak`-vs-
+   `weak` lands **26.5 pts [OK]**, `avg`-vs-`avg` 31, `elite`-vs-`elite` 39 — the
+   response is monotone but scales faster than NFL.)
+
+`positionsweep` confirms the **discrimination is clean and monotone** even where
+aggregates run hot — e.g. sweeping `CB` drives opponent completion **74.8 → 59.5 %**
+and home win% **33 → 80 %**; sweeping `QB` drives net YPA **6.5 → 10.1** and
+completion **52 → 76 %**. Equal-tier matchups sit near 50/50 with a modest
+engine home-field tilt (~56–62 % home over small N).

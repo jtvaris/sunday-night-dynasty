@@ -5,7 +5,10 @@
 # Populates build/src/ with the CANONICAL engine sources needed to compile the
 # balance harness against the SHIPPED simulation math:
 #
-#   • 11 files copied VERBATIM from the repo (byte-identical; sha-verified).
+#   • 17 files copied VERBATIM from the repo (byte-identical; sha-verified).
+#     11 play-by-play sources + 6 full-game sources (GameSimulator / DriveSimulator /
+#     CoachingModifiers / BoxScore / PlayerGameStats / DriveResult) for the round-5
+#     full-game campaign — all pure engine, no hand-typed constants.
 #   • AdaptiveOpponentAIExtract.swift REGENERATED mechanically from the shipped
 #     Engine/Match/AdaptiveOpponentAI.swift by awk-stripping only the 4
 #     persona-hint functions (which need DCPersona/OCPersona and carry ZERO
@@ -46,7 +49,7 @@ cleanup() { rm -f "$SLICE" "$STORAGE" "$COMPUTED"; }
 trap cleanup EXIT
 
 # --- Canonical repo sources (relative to $ENGINE) --------------------------
-# 11 files copied verbatim.
+# 17 files copied verbatim: 11 play-by-play + 6 full-game.
 VERBATIM_SOURCES=(
   "Domain/Enums/PlayCall.swift"
   "Domain/Enums/PlayType.swift"
@@ -59,10 +62,20 @@ VERBATIM_SOURCES=(
   "Domain/Models/Team/GamePlan.swift"
   "Engine/Simulation/PlaySimulator.swift"
   "Engine/Match/HeatState.swift"
+  # --- round-5 full-game pipeline (sha-verified verbatim; zero hand-typed math) ---
+  "Domain/Models/League/DriveResult.swift"
+  "Domain/Models/League/BoxScore.swift"
+  "Domain/Models/League/PlayerGameStats.swift"
+  "Engine/Simulation/CoachingModifiers.swift"
+  "Engine/Simulation/DriveSimulator.swift"
+  "Engine/Simulation/GameSimulator.swift"
 )
 AI_SOURCE="$ENGINE/Engine/Match/AdaptiveOpponentAI.swift"
 SIM_SOURCE="$ENGINE/Engine/Simulation/SimPlayer.swift"
 SIM_TEMPLATE="$HARNESS_DIR/driver/SimPlayer.harness.swift"
+# Harness-owned SwiftData-model stubs (Player/Team/Coach/CoachRole + SimPlayer.init(from:))
+# copied verbatim so the synced full-game pipeline compiles standalone.
+GAMEMODELS_TEMPLATE="$HARNESS_DIR/driver/GameModels.harness.swift"
 
 # --- Preflight: refuse to build if any source is missing -------------------
 missing=0
@@ -72,6 +85,7 @@ done
 [ -f "$AI_SOURCE" ]     || { echo "  MISSING: $AI_SOURCE" >&2; missing=1; }
 [ -f "$SIM_SOURCE" ]    || { echo "  MISSING: $SIM_SOURCE" >&2; missing=1; }
 [ -f "$SIM_TEMPLATE" ]  || { echo "  MISSING: $SIM_TEMPLATE" >&2; missing=1; }
+[ -f "$GAMEMODELS_TEMPLATE" ] || { echo "  MISSING: $GAMEMODELS_TEMPLATE" >&2; missing=1; }
 [ "$missing" -eq 0 ] || die "one or more canonical sources are missing — refusing to build."
 
 rm -rf "$SRC_OUT"
@@ -180,6 +194,26 @@ if grep -q '@@SPLICE:' "$SIM_OUT"; then die "a SimPlayer splice marker was left 
 echo "    SimPlayer.swift  (storage + computed-prop block spliced from repo)"
 printf 'ASSEMBLED  %s  build/src/SimPlayer.swift  <=  %s  dynasty/dynasty/Engine/Simulation/SimPlayer.swift  (storage+computed spliced into driver/SimPlayer.harness.swift)\n' \
   "$(sha "$SIM_OUT")" "$(sha "$SIM_SOURCE")" >> "$MANIFEST"
+
+# --- 4) GameModels.swift (harness-owned SwiftData-model stubs, verbatim copy) -
+# No repo splice: these are harness scaffolding (Player/Team/Coach/CoachRole +
+# SimPlayer.init(from:)) carrying ZERO balance math, so they are copied straight
+# from the driver/ template. They exist only to let the sha-verified full-game
+# engine sources above compile & run standalone.
+echo "==> copying harness model stubs (GameModels.swift)"
+GAMEMODELS_OUT="$SRC_OUT/GameModels.swift"
+cp "$GAMEMODELS_TEMPLATE" "$GAMEMODELS_OUT"
+grep -q 'final class Player' "$GAMEMODELS_OUT"   || die "GameModels.swift lost the Player stub."
+grep -q 'init(from p: Player)' "$GAMEMODELS_OUT" || die "GameModels.swift lost SimPlayer.init(from:)."
+# Guard: the stubs must stay math-free. If a repo constant ever needs to live here
+# it belongs in a verbatim engine source instead — fail loudly rather than let a
+# hand-typed number sneak into the harness (the stale-default incident lesson).
+if grep -qE '^[[:space:]]*static let [A-Za-z].*=[[:space:]]*[0-9]' "$GAMEMODELS_OUT"; then
+  die "GameModels.swift contains a static-let numeric constant — stubs must carry no balance math."
+fi
+printf 'HARNESS    %s  build/src/GameModels.swift  <=  (harness-owned stub) driver/GameModels.harness.swift  %s\n' \
+  "$(sha "$GAMEMODELS_OUT")" "$(sha "$GAMEMODELS_TEMPLATE")" >> "$MANIFEST"
+echo "    GameModels.swift  (Player/Team/Coach/CoachRole stubs + SimPlayer.init(from:))"
 
 echo "==> MANIFEST written to build/src/MANIFEST.txt"
 echo "==> sync complete: $(ls "$SRC_OUT"/*.swift | wc -l | tr -d ' ') engine sources staged."
