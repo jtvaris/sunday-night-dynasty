@@ -319,6 +319,29 @@ enum MatchupResolver {
         let corner = defense[cbRole]
         m.separation = 0.6
 
+        // FIX-2: the rush forced the ball out. Collapse the pocket and name the
+        // closing rusher — the sim's man when he's a rush-eligible role (0–3 DL
+        // or 4–6 blitzing LB) on the field, else a rating-weighted DL side (a
+        // blitzing LB caves the pocket from a DL gap, exactly like resolveSack).
+        // Role space only; the choreographer applies the mirror later.
+        if play.pressured == true {
+            m.pocketCollapse = 0.85
+            m.separation = 0.7
+            if let role = m.pickDefRole, (0...3).contains(role) {
+                m.rushWinnerDefRole = role
+            } else {
+                m.rushWinnerDefRole = weightedPick(roles: [0, 1, 2, 3], weight: { passRush(defense[$0]) })
+            }
+            let rusher = defense[m.rushWinnerDefRole]
+            let blocker = offense[blockerFacing(defRole: m.rushWinnerDefRole)]
+            m.events.append(Event(
+                kind: .pressure,
+                text: "\(rusher.shortName) beats \(blocker.shortName) and forces the throw",
+                offenseWon: false, offRole: nil, defRole: m.rushWinnerDefRole, magnitude: 0.85
+            ))
+            return
+        }
+
         // Scheme bust: a receiver who hasn't learned the playbook sometimes
         // cuts the route short — surfaced so the coach can SEE why it failed.
         if let scheme, bustRoll(receiver, scheme: scheme, call: call) {

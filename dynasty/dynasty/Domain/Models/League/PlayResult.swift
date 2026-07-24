@@ -60,4 +60,17 @@ struct PlayResult: Codable {
     /// multiplier (~0.85–1.15) for the 3D throw animation. nil = league
     /// average (pre-R38 velocity).
     var passVelocityScale: Double? = nil
+
+    // FIX-2 pressured-throwaway signals (all optional so older encoded plays
+    // keep decoding; nil = pre-fix behavior — a plain incompletion).
+    /// True when the incompletion was forced by the pass rush (the sim already
+    /// picked the man in the QB's face and stashed him in ``keyDefensePlayerID``).
+    /// The live match view stages that rusher beating his block and closing to
+    /// the launch point. Presentation only — no sim math or box-score stat.
+    var pressured: Bool? = nil
+    /// True when the pressured throw was a DELIBERATE throwaway to open space
+    /// (not a hurried near-target miss): the 3D ball is a low flat heave to the
+    /// sideline/out of bounds with no contester. Only meaningful when
+    /// ``pressured`` is true.
+    var wasThrowaway: Bool? = nil
 }

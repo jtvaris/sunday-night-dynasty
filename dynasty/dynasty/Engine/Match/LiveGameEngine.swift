@@ -997,6 +997,32 @@ final class LiveGameEngine: ObservableObject {
     /// parity is intact.
     private var tendencyTracker = AdaptiveOpponentAI.Tracker()
 
+    /// Layer A + B: the per-game PLAY-MEMORY of the PLAYER offense — it OWNS the
+    /// `RunKeyState` run/pass macro read (the one component shared with the
+    /// simmed path via `DriveSimulator`) and adds the coached-only category /
+    /// exact-call / counter layers on top. Filled only from the player's explicit
+    /// live calls (alongside `tendencyTracker.recordOffense`), so a nil-argument
+    /// game never keys and quick-sim parity is intact. Save-free: never persisted.
+    private var playMemory = AdaptiveOpponentAI.PlayMemory()
+
+    /// Read-only key intensity on the current down — for the pre-snap "loading
+    /// the box" read line (A6). 0 whenever the player isn't the one on offense.
+    var offenseRunKeyIntensity: Double {
+        playerIsOnOffense ? playMemory.keyIntensity(down: down) : 0
+    }
+
+    /// The player's most recently recorded scrimmage call — drives the Layer B
+    /// read lines in `updateAdaptationState` (post-resolve).
+    private var lastPlayerCall: OffensivePlayCall?
+    /// One-shot latches so each Layer B read line fires once per keying episode
+    /// and re-arms only after the read decays (mirrors `activeDefenseRead`).
+    private var activeExactRead: OffensivePlayCall?
+    private var activeCategoryRead: AdaptiveOpponentAI.OffenseTendency?
+
+    /// One-shot latch so the EARLY run-key intel line (A6) fires once per
+    /// keying episode; re-arms when the offense diversifies back under the line.
+    private var runKeyHintFired = false
+
     /// The tendency the AI DEFENSE is currently keying on (player attacks).
     private var activeDefenseRead: AdaptiveOpponentAI.OffenseTendency?
     /// The tendency the AI OFFENSE is currently exploiting (player defends).
@@ -1274,6 +1300,16 @@ final class LiveGameEngine: ObservableObject {
         opponentOCPersona = opponentCoaches.first { $0.role == .offensiveCoordinator }
             .map(OCPersona.derive(for:)) ?? .balanced
 
+        // Layer B: configure the category read's TIMING off the AI DC's persona
+        // + grade. Persona/grade move only WHEN (catPivot) and HOW FAST
+        // (catAlpha) the read arms — never the bite ceiling — so an elite,
+        // aggressive DC keys sooner and ramps faster while staying fair. The
+        // exact-call and counter layers use fixed steps (independent of persona).
+        playMemory.catPivot = AdaptiveOpponentAI.catPivot(
+            thresholdOffset: opponentDCPersona.thresholdOffset, grade: opponentDCGrade)
+        playMemory.catAlpha = AdaptiveOpponentAI.catAlpha(
+            thresholdOffset: opponentDCPersona.thresholdOffset, grade: opponentDCGrade)
+
         // #26: the PLAYER's own coordinators drive the pre-snap recommendation.
         // Same derivation as the opponent personas; grade blends play-calling
         // with adaptability (a sharper coordinator gives a more specific read).
@@ -1397,6 +1433,46 @@ final class LiveGameEngine: ObservableObject {
             }
         }
 
+        // Layer B (PLAY-MEMORY): the AI defense's category + exact-call + counter
+        // read of the PLAYER's called concept, resolved into the parity-safe
+        // completion / run-bite / stuff SHIFTS. Only when the player has the ball
+        // (the AI is defending); a mixed caller reads every share below `catPivot`,
+        // so every delta is 0 and the snap is identical to today.
+        var memPassDelta: (short: Double, mid: Double, deep: Double) = (0, 0, 0)
+        var memRunYardDelta = 0.0
+        var memRunStuffDelta = 0.0
+        if playerIsOnOffense, let call = offensiveCall,
+           let concept = AdaptiveOpponentAI.concept(of: call) {
+            let keyIntensity = playMemory.keyIntensity(down: down)
+            // Deep counter-open is suppressed while runKey's paKey levers already
+            // own the deep punish (guard against worsening the keyed PA-deep EV).
+            let paKeyActive = keyIntensity > 0
+                && (call.simulatorHint.isPlayAction || call.simulatorHint.passDepth == .deep)
+            let catAnt = playMemory.anticipation(of: concept, down: down)
+            let exact = playMemory.exactPunish(for: call)
+            let open = playMemory.counterOpen(
+                forCalled: concept, down: down, suppressDeepCounter: paKeyActive)
+            if call.isPass || call == .screen {
+                // Category + exact malus are capped TOGETHER by passTotalMalusCap;
+                // the counter-open bonus is added on top (a lean, then a reward).
+                let malus = Swift.min(
+                    AdaptiveOpponentAI.catPassCompletionMalus * catAnt + exact.pass,
+                    AdaptiveOpponentAI.passTotalMalusCap)
+                let net = -malus + open.pass
+                switch concept {
+                case .shortPass, .screen:    memPassDelta.short = net
+                case .mediumPass:            memPassDelta.mid = net
+                case .deepPass, .playAction: memPassDelta.deep = net
+                default: break
+                }
+            } else {
+                // Run sub-concept bite + stuff; counter-open LEANS the bite off.
+                memRunYardDelta = AdaptiveOpponentAI.catRunYardBite * catAnt
+                    + exact.runYard - open.run
+                memRunStuffDelta = AdaptiveOpponentAI.catRunStuffBonus * catAnt + exact.runStuff
+            }
+        }
+
         let result = PlaySimulator.simulatePlay(
             offensePlayers: offense,
             defensePlayers: defense,
@@ -1420,7 +1496,16 @@ final class LiveGameEngine: ObservableObject {
                 homeHasPossession ? homeOffenseAdj : awayOffenseAdj,
                 (quarter >= 3 && playerIsOnOffense) ? halftimeAdjustment?.simAdjustments : nil),
             // Mech 6: the offense on the road draws more false starts (crowd).
-            offenseIsAway: !homeHasPossession
+            offenseIsAway: !homeHasPossession,
+            // Layer A: the AI defense keys the PLAYER's run tendency. Only when
+            // the player has the ball (the AI is defending) — when the player is
+            // on defense they pick their own front, so no auto-key. 0 keeps the
+            // snap identical to today for a balanced / passing offense.
+            runKeyIntensity: playerIsOnOffense ? playMemory.keyIntensity(down: down) : 0,
+            // Layer B: the category / exact / counter shifts computed above.
+            passCompletionDelta: memPassDelta,
+            runYardDelta: memRunYardDelta,
+            runStuffDelta: memRunStuffDelta
         )
 
         // Adaptive opponent AI: log the PLAYER's explicit call for tendency
@@ -1428,7 +1513,17 @@ final class LiveGameEngine: ObservableObject {
         // flag wipes the down out). AI-side calls are never recorded.
         if result.playType == .pass || result.playType == .run {
             if playerIsOnOffense {
-                if let call = offensiveCall { tendencyTracker.recordOffense(call) }
+                if let call = offensiveCall {
+                    tendencyTracker.recordOffense(call)
+                    // Layer A + B: fold this snap into the PLAY-MEMORY component on
+                    // the down it was CALLED on (`down` hasn't advanced yet) —
+                    // category EWMA + exact-call ring + the run-key macro facet
+                    // (screen counts as a pass, matching `result.playType`, so the
+                    // macro read is byte-identical to the shipped `offenseRunKey`).
+                    // The recorded call is the FINAL (audibled) call the UI passed.
+                    lastPlayerCall = call
+                    playMemory.record(call: call, down: down)
+                }
             } else {
                 if let package = defensivePackage { tendencyTracker.recordDefense(package) }
                 // #26: opponent-offense run/pass window, feeding the DC
@@ -1691,6 +1786,21 @@ final class LiveGameEngine: ObservableObject {
         } else if distance <= 2 {
             // Short yardage: crowd the box with the bear front.
             return DefensivePackage(coverage: .cover1, blitz: .noBlitz, front: .bear)
+        } else if playerIsOnOffense, playMemory.isKeyed(down: down) {
+            // Layer A4: the AI has keyed the player's run tendency — it visibly
+            // stacks the box on a normal down with a Bear front the player can
+            // SEE (and torch with play-action, via A3). The always-on A2 yard
+            // bite is the mechanic; this makes the read legible. Player-offense
+            // only: the run key fills solely from the player's calls, so this is
+            // the AI's own front, never forced onto the player's defense.
+            return DefensivePackage(coverage: .cover1, blitz: .noBlitz, front: .bear)
+        } else if playerIsOnOffense,
+                  playMemory.anticipationPeak(of: .deepPass) >= AdaptiveOpponentAI.catHintAnticipation {
+            // Layer B (front legibility): the AI has keyed the player's DEEP
+            // passing category — it shows a two-deep Cover 2 shell the player can
+            // SEE (mirrors the A4 Bear-front). The category completion malus is
+            // the mechanic; this makes the read legible. AI's own front only.
+            return DefensivePackage(coverage: .cover2, blitz: .noBlitz, front: .base)
         } else {
             return .standard // Cover 3, no blitz, base front
         }
@@ -1715,6 +1825,67 @@ final class LiveGameEngine: ObservableObject {
     /// (nil-argument games) this resolves to no-ops and consumes no RNG.
     private func updateAdaptationState() {
         guard !isGameOver else { return }
+
+        // Layer A6: surface the run key EARLY. The moment the player offense's
+        // run share crosses the keying line (intensity ≥ 0.4 → ~carry 3–4) the
+        // broadcast calls it out — instead of waiting for the slower category
+        // tendency (which needs `minSampleSize` snaps to arm). Player-offense
+        // only; the direction is read off the recent calls so an edge-run team
+        // hears "stringing out your sweeps", an interior team "keying the inside
+        // run" (an aggressive DC "all-in on stopping the run"). The latch
+        // re-arms once the offense diversifies back under the line.
+        if playerIsOnOffense, playMemory.keyIntensity(down: down) >= 0.4 {
+            if !runKeyHintFired {
+                runKeyHintFired = true
+                let recentRuns = tendencyTracker.offenseCalls.suffix(6)
+                    .compactMap { AdaptiveOpponentAI.tendency(of: $0) }
+                let outside = recentRuns.filter { $0 == .outsideRun }.count
+                let inside = recentRuns.filter { $0 == .insideRun }.count
+                emitAdaptationHint(
+                    AdaptiveOpponentAI.defenseKeyHint(
+                        for: outside > inside ? .outsideRun : .insideRun,
+                        opponentAbbr: opponentAbbreviation,
+                        persona: opponentDCPersona
+                    )
+                )
+            }
+        } else {
+            runKeyHintFired = false
+        }
+
+        // Layer B read lines — the AI's PLAY-MEMORY going public. Two triggers,
+        // each behind its own latch, both riding the shared 120s `emitAdaptationHint`
+        // cooldown so exact + category + the A6 run-key line can never flood the
+        // feed in one keying episode:
+        //   • EXACT — "BAL is sitting on the toss sweep": the 3rd identical call.
+        //   • CATEGORY — "BAL is loading up for the deep ball": the recency share
+        //     of a whole concept crosses the read threshold (~0.5 anticipation).
+        // Each latch re-arms once its read decays (a switch drops the exact read
+        // immediately; a diversified script decays the category read out).
+        if playerIsOnOffense, let call = lastPlayerCall,
+           let concept = AdaptiveOpponentAI.concept(of: call) {
+            if playMemory.recentCount(of: call) >= AdaptiveOpponentAI.exactHintRepeat {
+                if activeExactRead != call {
+                    activeExactRead = call
+                    emitAdaptationHint(AdaptiveOpponentAI.exactCallHint(
+                        for: call, opponentAbbr: opponentAbbreviation, persona: opponentDCPersona))
+                }
+            } else if activeExactRead == call {
+                activeExactRead = nil
+            }
+            if playMemory.anticipationPeak(of: concept) >= AdaptiveOpponentAI.catHintAnticipation {
+                if activeCategoryRead != concept {
+                    activeCategoryRead = concept
+                    emitAdaptationHint(AdaptiveOpponentAI.categoryKeyHint(
+                        for: concept, opponentAbbr: opponentAbbreviation, persona: opponentDCPersona))
+                }
+            } else if activeCategoryRead == concept {
+                activeCategoryRead = nil
+            }
+        } else {
+            activeExactRead = nil
+            activeCategoryRead = nil
+        }
 
         // AI DEFENSE reads the player's offense. The DC persona (R33) shades
         // how fast it keys and how hard it counters.

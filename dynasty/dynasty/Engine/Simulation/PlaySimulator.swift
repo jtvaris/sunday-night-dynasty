@@ -75,7 +75,26 @@ enum PlaySimulator {
         gamePlan: GamePlan? = nil,
         weather: GameWeather? = nil,
         adjustments: Adjustments? = nil,
-        offenseIsAway: Bool = false
+        offenseIsAway: Bool = false,
+        // Layer A: how hard the defense is keying THIS offense's run tendency
+        // (0…1, from `AdaptiveOpponentAI.RunKeyState.keyIntensity`). 0 = no key,
+        // which is mean-neutral everywhere — a nil-argument / quick-sim snap is
+        // byte-for-byte identical to today. Drives the run yard-bite + stuff
+        // bonus (A2) and the play-action / deep punish (A3).
+        runKeyIntensity: Double = 0,
+        // Layer B (PLAY-MEMORY, coached path): signed probability/value SHIFTS
+        // the live engine folds in from the category / exact-call / counter read
+        // of the PLAYER's called concept. ALL default to identity (0) so every
+        // nil-argument / quick-sim / sim-path snap is byte-identical to today —
+        // these add ZERO RNG draws, they only move existing shift sites.
+        //   • passCompletionDelta — per-depth completion shift (already net-signed
+        //     and malus-capped by the engine), applied at the depth curve.
+        //   • runYardDelta — extra run yard bite (folded into `runStopBite`,
+        //     combined with runKey's bite under `runGrandBiteCap`).
+        //   • runStuffDelta — extra stuff probability (folded into `stuffChance`).
+        passCompletionDelta: (short: Double, mid: Double, deep: Double) = (0, 0, 0),
+        runYardDelta: Double = 0,
+        runStuffDelta: Double = 0
     ) -> PlayResult {
         let playCall: PlayType
         if let forced = forcedPlayType {
@@ -136,7 +155,9 @@ enum PlaySimulator {
                 hint: hint,
                 defensivePackage: defensivePackage,
                 weather: weather,
-                adjustments: adjustments
+                adjustments: adjustments,
+                runKeyIntensity: runKeyIntensity,
+                passCompletionDelta: passCompletionDelta
             )
         case .run:
             return simulateRunPlay(
@@ -154,7 +175,10 @@ enum PlaySimulator {
                 hint: hint,
                 defensivePackage: defensivePackage,
                 weather: weather,
-                adjustments: adjustments
+                adjustments: adjustments,
+                runKeyIntensity: runKeyIntensity,
+                runYardDelta: runYardDelta,
+                runStuffDelta: runStuffDelta
             )
         case .punt:
             return simulatePunt(
@@ -213,7 +237,10 @@ enum PlaySimulator {
                 hint: hint,
                 defensivePackage: defensivePackage,
                 weather: weather,
-                adjustments: adjustments
+                adjustments: adjustments,
+                runKeyIntensity: runKeyIntensity,
+                runYardDelta: runYardDelta,
+                runStuffDelta: runStuffDelta
             )
         }
     }
@@ -361,7 +388,11 @@ enum PlaySimulator {
         hint: OffensivePlayCall.SimulatorHint? = nil,
         defensivePackage: DefensivePackage? = nil,
         weather: GameWeather? = nil,
-        adjustments: Adjustments? = nil
+        adjustments: Adjustments? = nil,
+        runKeyIntensity: Double = 0,
+        // Layer B (PLAY-MEMORY): per-depth completion shift, already net-signed
+        // and malus-capped by the engine. (0,0,0) = identity → parity intact.
+        passCompletionDelta: (short: Double, mid: Double, deep: Double) = (0, 0, 0)
     ) -> PlayResult {
         let qb = findQB(in: offensePlayers)
         let qbAttrs = qbAttributes(for: qb)
@@ -395,7 +426,13 @@ enum PlaySimulator {
                 defensePlayers.filter { isLB($0) || $0.position == .SS || $0.position == .FS },
                 extractor: { Double($0.mental.awareness) }
             )
-            let biteChance = clamp(0.5 + (70.0 - boxAwareness) * paBiteAwarenessSlope,
+            // A3 (Layer A RPS): an over-committed, run-keyed box bites the fake
+            // far harder — the whole point of play-action is to punish a defense
+            // that has sold out to stop the run. Push the bite probability up by
+            // the key intensity (base 0.5 → ~0.9 at full key). 0 intensity = the
+            // old symmetric ~50% bite, so an un-keyed defense is unchanged.
+            let biteChance = clamp(0.5 + (70.0 - boxAwareness) * paBiteAwarenessSlope
+                                   + runKeyIntensity * 0.4,
                                    min: 0.05, max: 0.95)
             paBite = randomChance(biteChance)
         }
@@ -409,14 +446,21 @@ enum PlaySimulator {
             defensePlayers.filter { isDL($0) },
             extractor: { dlPassRushRating(for: $0) }
         )
-        // Add LB blitz pressure
+        // Add LB blitz pressure — B3a: ONLY when the defense actually blitzed.
+        // A no-blitz front (or the nil quick-sim package) previously levied a
+        // phantom ~21-pt rush term on EVERY dropback, which is the bulk of the
+        // ~24% baseline sack rate. Gate it on a real blitz call so base fronts
+        // don't send a phantom rusher.
+        let isBlitzing = defensivePackage.map { $0.blitz != .noBlitz } ?? false
         let lbBlitz = averageAttribute(
             defensePlayers.filter { isLB($0) },
             extractor: { lbBlitzRating(for: $0) }
-        ) * 0.3
+        ) * 0.3 * (isBlitzing ? 1.0 : 0.0)
 
         let protectionRating = (olPassBlock + momentumBoost * 100) - (dlPassRush + lbBlitz)
-        var sackChance = max(0.05, min(0.35, 0.20 - protectionRating / 500.0))
+        // B3b: re-base the sack curve. base 0.20→0.07 (equal-talent no-blitz ≈7%),
+        // floor 0.05→0.02 (a clean pocket can be near-sackless). Ceiling unchanged.
+        var sackChance = max(0.02, min(0.35, 0.07 - protectionRating / 500.0))
 
         // Mech 2: a mobile, poised QB slides pressure and escapes the pocket —
         // scrambling + pocket presence buy him out of the sack. A statue QB
@@ -539,7 +583,47 @@ enum PlaySimulator {
         case .deep:   passDistance = .deep
         case nil:     passDistance = choosePassDistance(distance: distance, yardLine: yardLine)
         }
-        let targetYards = passYardsForDistance(passDistance)
+        // A0 (Balance R3): the assigned cover defender for THIS target + how
+        // man-oriented the called shell is. Computed once; feeds the deep
+        // composite (A1-deep), the short/mid matchup edge (A1), and the INT
+        // ball-hawk blend (A2-pass). At all-70 the assigned man == the unit
+        // average == 70, so every blend collapses to today's value (parity).
+        let coverManWeight = coverageManWeight(defensivePackage)
+        let coverMan = coverAssignment(for: target, offense: offensePlayers,
+                                       defense: defensePlayers, package: defensivePackage)
+
+        // DEEP-TALENT: the deep composite edge (offense deep-threat − DB deep
+        // defense), 0-centered at all-70. Drives the deep completion, the deep
+        // air-yards ride, and the keyed-punish scaler below. Computed once;
+        // only READ on the .deep branch, so short/mid are byte-untouched.
+        let deepEdge = deepCompositeEdge(qb: qb, target: target, defensePlayers: defensePlayers,
+                                         coverMan: coverMan, manWeight: coverManWeight)
+        var targetYards = passYardsForDistance(passDistance)
+        if passDistance == .deep {
+            // Composite air ride: an elite duo pushes the bomb deeper (bigger
+            // house calls), a weak one is floored. Re-centers neutral deep EV.
+            targetYards = max(deepAirFloor,
+                              targetYards + Int((deepEdge * deepAirSlope).rounded()))
+        }
+
+        // A3 (Layer A RPS punish): the SAME key intensity that suppresses the
+        // run REWARDS the shot plays that punish an over-committed box — a
+        // play-action call or a straight deep shot. This closes the RPS
+        // triangle: keying the run hard opens the deep ball, so run-keying is a
+        // real trade, not a blind nerf. Gated on the shot plays only (and on a
+        // live/simmed key), so a balanced offense — which never builds key
+        // intensity — is untouched. DEEP-TALENT rebase: the keyed bonus scales
+        // with `deepPunishScale` (the deep composite), so an elite deep duo
+        // torches a stacked box, a 70/70 duo only nicks it, and a weak duo
+        // cannot. `paKeyAirBonus` rides into the caught-ball yardage below; the
+        // completion bump is applied after the PA swing.
+        let paPunishActive = runKeyIntensity > 0
+            && (hint?.isPlayAction == true || passDistance == .deep)
+        let deepPunishScale = clamp(1.0 + deepEdge * deepPunishEdgeSlope,
+                                    min: deepPunishScaleMin, max: deepPunishScaleMax)
+        let paKeyAirBonus = paPunishActive
+            ? Int((AdaptiveOpponentAI.paKeyBigPlay(runKeyIntensity) * deepPunishScale).rounded())
+            : 0
 
         // --- Accuracy & Openness Check ---
         // Mech 3: arm strength lifts the deep-ball accuracy (±cap points).
@@ -577,15 +661,58 @@ enum PlaySimulator {
             extractor: { dbCoverageRating(for: $0) }
         )
 
-        // R39 mech 4 (de-overlap): the "reading the coverage" contribution to
-        // completion belongs to AWARENESS (recognition / target selection).
-        // decisionMaking is reassigned to turnover risk (interceptionChance), so
-        // awareness and decisionMaking no longer double-count.
-        let completionBase = (accuracyRating * 0.4
-                              + opennessAttr * 0.35
-                              + completionReadingAttr(for: qb) * 0.1) / 100.0
-        let coveragePenalty = Double(dbCoverage) / 200.0
-        var completionChance = clamp(completionBase - coveragePenalty + momentumBoost, min: 0.15, max: 0.85)
+        // A0/A1 (Balance R3): the assigned-cover blend + the WR-vs-assignedCB
+        // matchup edge. `coverBlend` is the DB unit coverage blended toward the
+        // assigned man by the shell's man-weight; at all-70 both are 70, so the
+        // blend is 70 and the edge is 0 (neutral parity). The edge carries the
+        // WR route quality vs the ACTUAL cover man — a shutdown CB1 on WR1 bites,
+        // an LB-covered TE/RB opens up (LB coverage ≪ CB coverage).
+        let coverBlend = dbCoverage * (1.0 - coverManWeight) + coverMan.coverage * coverManWeight
+        var matchupEdge = opennessAttr - coverBlend
+        matchupEdge = clamp(matchupEdge, min: -matchupEdgeCapRaw, max: matchupEdgeCapRaw)
+
+        // A1b (Balance R3): a small bounded matchup air ride for short/mid — an
+        // elite duo pushes the catch a hair deeper than YAC alone, a mismatch
+        // shortens it. Floored per depth; deep keeps its own (larger) ride above.
+        if passDistance != .deep {
+            targetYards = max(shortMidAirFloor(passDistance),
+                              targetYards + Int((matchupEdge * shortMidAirSlope).rounded()))
+        }
+
+        // A1 (Balance R3): short/mid completion = base + QB (accuracy + reading)
+        // + the matchup edge, mirroring the shipped deep composite (base +
+        // asymmetric edge). The WR quality lives in the EDGE (not a saturating
+        // additive base), so the duel is not swallowed behind an elite QB; the QB
+        // lives in its own 70-centered term. .deep is byte-unchanged (its own
+        // composite). The grand soft-cap is applied once at the very end, after
+        // every downstream completion mod (replacing the old hard 0.15…0.85 wall).
+        var completionChance: Double
+        switch passDistance {
+        case .short, .mid:
+            let base70 = passDistance == .short ? shortBaseCompletion : midBaseCompletion
+            let qbBase = base70
+                + (accuracyRating - 70.0) * qbAccCompSlope
+                + (completionReadingAttr(for: qb) - 70.0) * qbReadCompSlope
+            completionChance = qbBase + matchupEdgeCompletion(matchupEdge) + momentumBoost
+        case .deep:
+            completionChance = clamp(deepBaseCompletion + deepEdgeCompletion(deepEdge) + momentumBoost,
+                                     min: 0.05, max: 0.90)
+        }
+
+        // Layer B (PLAY-MEMORY): the depth-matched completion shift from the
+        // coached read (category malus + exact-call malus − counter-open bonus,
+        // pre-summed and clamped by `passTotalMalusCap` in the engine). Identity
+        // (0) for a mixed caller and for every quick-sim / sim snap, so parity
+        // holds. Sits right on the depth curve so it composes with B5.
+        let memPassDelta: Double
+        switch passDistance {
+        case .short: memPassDelta = passCompletionDelta.short
+        case .mid:   memPassDelta = passCompletionDelta.mid
+        case .deep:  memPassDelta = passCompletionDelta.deep
+        }
+        if memPassDelta != 0 {
+            completionChance = clamp(completionChance + memPassDelta, min: 0.05, max: 0.95)
+        }
 
         // Defensive package: tighter coverage shaves the completion odds.
         if let package = defensivePackage {
@@ -666,18 +793,99 @@ enum PlaySimulator {
             completionChance = clamp(completionChance + swing, min: 0.05, max: 0.95)
         }
 
+        // A3 (Layer A RPS punish): a run-keyed box has vacated the deep third —
+        // the shot play completes more often (up to +0.18 at full key) on top of
+        // the extra air yards (`paKeyAirBonus`). Only the shot plays, only vs a
+        // keyed defense; an un-keyed snap (intensity 0) adds exactly nothing.
+        if paPunishActive {
+            completionChance = clamp(
+                completionChance + AdaptiveOpponentAI.paKeyCompletion(runKeyIntensity) * deepPunishScale,
+                min: 0.05, max: 0.95)
+        }
+
         // Halftime adjustment: schemed separation lifts the completion odds.
         if let adjustments, adjustments.completionBonus != 0 {
             completionChance = clamp(completionChance + adjustments.completionBonus, min: 0.05, max: 0.95)
         }
 
+        // B1 (Balance R3): the SCHEME-FAMILIARITY completion shift. A well-drilled
+        // offense executes the concept a beat cleaner (the window opens → more
+        // catches); a raw one plays a step slow. The defense's own knowledge
+        // shrinks that window. `famCurve` pivots at the seeded-league mean (70), so
+        // a neutral matchup adds exactly 0 (parity); a nil scheme (quick sim /
+        // neutral harness) collapses both sides to the pivot → 0. Player-only
+        // channel (coachExpertise nil); the coordinator's own completion edge stays
+        // the separate mech-6 lane. Applied to every depth, before the soft-cap.
+        let offFam = effectiveSquadFam(offensePlayers, scheme: offensiveScheme?.rawValue)
+        let defFam = effectiveSquadFam(defensePlayers, scheme: defensiveScheme?.rawValue)
+        let famShift = famCurve(offFam) - famCurve(defFam)
+        if famShift != 0 {
+            completionChance = clamp(completionChance + famShift, min: 0.05, max: 0.95)
+        }
+
+        // A1 (Balance R3): the grand soft-cap for short/mid — the single ceiling,
+        // applied ONCE after every downstream completion mod. Linear below the
+        // knee (neutral is untouched), exponential approach to the ceiling above
+        // (elite duos climb without the old hard 0.85 wall). Deep owns its own
+        // ceiling upstream, so it is left exactly as today.
+        if passDistance != .deep {
+            completionChance = softCapCompletion(completionChance)
+        }
+
+        // B2 (Balance R3): the BLOWN-ASSIGNMENT bust — the true negative play that
+        // makes low familiarity BITE beyond the completion shift. Weighted to the
+        // ball-carrier's OWN familiarity (the guy running the route busts it, not
+        // the team mean). Pivot 55 < the seeded mean → a neutral squad NEVER busts,
+        // and the `> 0` guard means the roll draws NO RNG at neutral (byte-parity).
+        //   • OFFENSE bust → a forced incompletion (miscommunication / bad timing),
+        //     pre-empting the INT + catch rolls ("still learning the playbook").
+        //   • DEFENSE bust → a blown coverage: the target comes wide open, forcing a
+        //     clean completion (pre-empts the pick — nobody was there to catch it).
+        let offBustChance = familiarityBustChance(carrier: target, squad: offensePlayers,
+                                                  scheme: offensiveScheme?.rawValue)
+        if offBustChance > 0, randomChance(offBustChance) {
+            var play = PlayResult(
+                playNumber: playNumber,
+                quarter: quarter,
+                timeRemaining: timeRemaining,
+                down: down,
+                distance: distance,
+                yardLine: yardLine,
+                playType: .pass,
+                outcome: .incompletion,
+                yardsGained: 0,
+                description: "\(qb.fullName) and \(target.fullName) aren't on the same page — the timing's off, incomplete.",
+                isFirstDown: false,
+                isTurnover: false,
+                scoringPlay: false,
+                pointsScored: 0,
+                keyOffensePlayerID: target.id
+            )
+            play.defenseBitOnFake = paBite
+            play.passVelocityScale = velocityScale
+            return play
+        }
+        let defBustChance = squadBustChance(defensePlayers, scheme: defensiveScheme?.rawValue)
+        if defBustChance > 0, randomChance(defBustChance) {
+            // Blown coverage — the receiver is uncovered, so it is a clean grab.
+            return makeCatch(contested: false)
+        }
+
         // --- Interception Check ---
+        // A2-pass (Balance R3): blend the DB unit ball-skills toward the ASSIGNED
+        // cover man so a ball-hawk CB1 on WR1 adds real INT risk on that target;
+        // an LB-covered TE/RB (nil assignedBallSkills) falls back to the unit
+        // value. At all-70 the assigned man == unit == 70 → parity holds.
+        let dbUnitBallSkills = averageAttribute(
+            defensePlayers.filter { isDB($0) },
+            extractor: { dbBallSkillsRating(for: $0) }
+        )
+        let dbBallSkillsBlended = coverMan.ballSkills.map {
+            dbUnitBallSkills * (1.0 - coverManWeight) + $0 * coverManWeight
+        } ?? dbUnitBallSkills
         let intChance = interceptionChance(
             accuracyRating: accuracyRating,
-            dbBallSkills: averageAttribute(
-                defensePlayers.filter { isDB($0) },
-                extractor: { dbBallSkillsRating(for: $0) }
-            ),
+            dbBallSkills: dbBallSkillsBlended,
             passDistance: passDistance,
             decisionMaking: qb.mental.decisionMaking,
             pressure: sackChance
@@ -741,7 +949,9 @@ enum PlaySimulator {
             if !contested, let hint = hint {
                 yacBonus = max(0, Int((Double(yacBonus) * hint.yacMultiplier).rounded()))
             }
-            var totalYards = targetYards + yacBonus
+            // A3 (Layer A): a run-keyed box that got beaten over the top gives up
+            // extra air yards on the shot play (0 unless the punish is active).
+            var totalYards = targetYards + yacBonus + paKeyAirBonus
 
             // Apply scheme fit modifiers: offense fit boosts yards, defense fit reduces them
             let schemeYardAdjustment = Double(totalYards) * (offSchemeFit - defSchemeFit)
@@ -868,6 +1078,13 @@ enum PlaySimulator {
             var text = "\(qb.fullName) throws incomplete intended for \(target.fullName)."
             var breakupID: UUID? = nil
             var wasBreakup = false
+            // FIX-2: surface the pressure branch as structured metadata (the
+            // rusher the sim already picked, and whether the chosen line was a
+            // deliberate throwaway). No new RNG — the flags only record the
+            // branch already taken and the already-picked rusher.
+            var pressuredRusherID: UUID? = nil
+            var wasPressure = false
+            var wasThrowawayThrow = false
             let breakupChance = clamp(0.22 + (dbCoverage - 60.0) / 250.0, min: 0.10, max: 0.40)
             if randomChance(breakupChance) {
                 // The breakup goes to a coverage man on the field — coverage
@@ -886,7 +1103,11 @@ enum PlaySimulator {
                     let score = passRushScore($0)
                     return score * score
                 }) {
-                    text = pressureDescription(qb: qb, target: target, rusher: rusher)
+                    let pressure = pressureDescription(qb: qb, target: target, rusher: rusher)
+                    text = pressure.text
+                    wasPressure = true
+                    pressuredRusherID = rusher.id
+                    wasThrowawayThrow = pressure.isThrowaway
                 }
             } else if randomChance(0.35) {
                 text = incompletionVariant(qb: qb, target: target)
@@ -907,13 +1128,20 @@ enum PlaySimulator {
                 scoringPlay: false,
                 pointsScored: 0,
                 keyOffensePlayerID: target.id,
-                keyDefensePlayerID: breakupID
+                keyDefensePlayerID: breakupID ?? pressuredRusherID
             )
             play.defenseBitOnFake = paBite
             play.passVelocityScale = velocityScale
             if wasBreakup {
                 play.passBreakup = true
                 play.defensiveHighlight = true
+            }
+            // FIX-2: the rush forced this ball out. Stat-safe — GameSimulator
+            // credits an incompletion PD only when passBreakup == true (not set
+            // here), so the captured rusher id adds no box-score stat.
+            if wasPressure {
+                play.pressured = true
+                play.wasThrowaway = wasThrowawayThrow
             }
             return play
         }
@@ -936,7 +1164,12 @@ enum PlaySimulator {
         hint: OffensivePlayCall.SimulatorHint? = nil,
         defensivePackage: DefensivePackage? = nil,
         weather: GameWeather? = nil,
-        adjustments: Adjustments? = nil
+        adjustments: Adjustments? = nil,
+        runKeyIntensity: Double = 0,
+        // Layer B (PLAY-MEMORY): extra run bite (yards) + stuff probability from
+        // the coached sub-concept / exact-call read. Both 0 = identity → parity.
+        runYardDelta: Double = 0,
+        runStuffDelta: Double = 0
     ) -> PlayResult {
         let rb = findRB(in: offensePlayers)
         let rbAttrs = rbAttributes(for: rb)
@@ -955,39 +1188,70 @@ enum PlaySimulator {
         )
 
         // --- Run Blocking vs Defensive Front ---
+        // B7: average the trench over the STARTING units (best-per-spot), not the
+        // whole roster. A deep OL bench inflated the OL run-block mean vs a thinner
+        // DL bench (OL≈78 vs DL≈69 on real depth charts), handing the offense a free
+        // ~+0.27 yд/run blueprint bias. On the field only the starters block.
         let olRunBlock = averageAttribute(
-            offensePlayers.filter { isOL($0) },
+            startingOL(offensePlayers),
             extractor: { olRunBlockRating(for: $0) }
         )
         let dlBlockShed = averageAttribute(
-            defensePlayers.filter { isDL($0) },
+            startingDL(defensePlayers),
             extractor: { dlBlockSheddingRating(for: $0) }
         )
         let lbTackling = averageAttribute(
-            defensePlayers.filter { isLB($0) },
+            startingLBs(defensePlayers),
             extractor: { lbTacklingRating(for: $0) }
         )
 
-        var blockingAdvantage = (olRunBlock - (dlBlockShed * 0.6 + lbTackling * 0.4)) / 100.0
-
-        // Play-call gap bonus (interior power runs, QB sneak) shades blocking.
-        if let hint = hint {
-            blockingAdvantage += hint.runGapBonus
-        }
+        let trenchBase = (olRunBlock - (dlBlockShed * 0.6 + lbTackling * 0.4)) / 100.0
 
         // R39 mech 2a (strength trench, run side): a stronger OL moves the DL
         // off the ball. Near-zero mean → the league rushing average holds.
-        blockingAdvantage += strengthTrenchRunBonus(
+        let strengthCrease = strengthTrenchRunBonus(
             olStrength: averageAttribute(offensePlayers.filter { isOL($0) },
                                          extractor: { Double($0.physical.strength) }),
             dlStrength: averageAttribute(defensePlayers.filter { isDL($0) },
                                          extractor: { Double($0.physical.strength) })
         )
 
+        // A2-run (Balance R3): `creaseQuality` is the pure OL-vs-front crease
+        // (trench + strength), 0-centered at neutral OL and INDEPENDENT of the
+        // play-design gap bonus — so a bad line reads as a bad crease on every
+        // play type (an inside run's +0.15 gap bonus no longer masks a poor OL).
+        // This is what GATES the breakaway (a burner still needs a hole). The
+        // gap bonus rides only into the YARD LEVER via `blockingAdvantage`.
+        let creaseQuality = trenchBase + strengthCrease
+
+        var blockingAdvantage = creaseQuality
+        // Play-call gap bonus (interior power runs, QB sneak) shades blocking.
+        if let hint = hint {
+            blockingAdvantage += hint.runGapBonus
+        }
+
         // --- Base Yards ---
-        let baseYards = Double.random(in: 2.0...5.0)
-        let visionBonus = Double(rbAttrs.vision) / 100.0 * 2.0
-        let elusivenessBonus = Double(rbAttrs.elusiveness) / 100.0 * 1.5
+        // B1c (harness-dialed): the design's start point 0.5…5.5 (mean 3.0)
+        // under-shot — with the centered bonuses (B1a/b) and the 15% negative
+        // stuff tail (B1d) it produced only ~3.1 ypc and, because base 0.5
+        // rounds to 0/1, inflated the ≤1-yд stuff share to ~30%. The harness
+        // dialed the band to 2.0…6.5 (mean 4.25): the floor of 2.0 keeps every
+        // non-stuffed carry ≥2 yд (so ≤1-yд stuffs come only from the B1d roll,
+        // ~15%), and the higher mean lands the blended run at ~4.3 ypc — both in
+        // the NFL band. (Design authorized: "B1c … start points — the harness
+        // dials them to the target bands.")
+        // A2-run (Balance R3): the OL crease is now the dominant yard lever
+        // (`runBlockYardGain` below), so the RNG base band is trimmed to hold the
+        // neutral (all-70) mean while the raised lever + crease-gated breakaway
+        // give elite OL real yards even behind an average back (fixing the
+        // elite-RB-beats-elite-OL inversion). Dial-authorized start point.
+        let baseYards = Double.random(in: 2.1...6.4)
+        // B1a/B1b: center the vision & elusiveness contributions on the 70-rated
+        // league mean. Previously vision/100·2 (+1.4@70) and elusiveness/100·1.5
+        // (+1.05@70) stacked an unconditional ~+2.5-yard floor onto every carry;
+        // centered on 70 they add 0 at the mean and only separate above/below it.
+        let visionBonus = (Double(rbAttrs.vision) - 70.0) / 100.0 * 2.0
+        let elusivenessBonus = (Double(rbAttrs.elusiveness) - 70.0) / 100.0 * 1.5
         // R39 carrier bursts — three distinct, non-overlapping athletic traits,
         // each centered at the 70-rated mean so the league rushing average holds
         // while athletic backs separate from plodders:
@@ -999,15 +1263,72 @@ enum PlaySimulator {
             + agilityJukeBonus(for: rb)
         // Halftime adjustment: a run-first commitment adds expected yardage.
         let adjustmentYards = adjustments?.runYardageBonus ?? 0
-        var totalYards = Int((baseYards + visionBonus + elusivenessBonus + carrierBurst + blockingAdvantage * 3.0 + momentumBoost * 2.0 + adjustmentYards).rounded())
+        var totalYards = Int((baseYards + visionBonus + elusivenessBonus + carrierBurst + blockingAdvantage * runBlockYardGain + momentumBoost * 2.0 + adjustmentYards).rounded())
 
         // Apply scheme fit modifiers: offense fit boosts yards, defense fit reduces them
         let schemeYardAdjustment = Double(totalYards) * (offSchemeFit - defSchemeFit)
         totalYards += Int(schemeYardAdjustment.rounded())
 
         // Defensive package: run-stopping fronts subtract expected yardage.
+        // B2b: accumulate the bite in Double at scale 15.0 (was Int(runStop·6.0),
+        // which topped out at ~−1 yд and truncated), rounded once to the carry
+        // total — a committed front now actually costs yards: bear 0.14·15≈2.1,
+        // goalLine 0.18·15≈2.7. (The Double `runStopBite` is where Layer A folds
+        // in `runKeyYardBite(intensity)` before the single rounding.)
+        // A2 (Layer A): the always-on run-key yard bite. A defense that has
+        // keyed this offense's run tendency shaves the mean by up to ~1.1 yд
+        // (scaled by intensity), accumulated in the SAME Double as the called
+        // front's run-stop bite and rounded ONCE. This is the mechanically
+        // effective adaptation — it bites every keyed snap, not just the rare
+        // counter package. At 0 intensity it is exactly 0 (nothing changes).
+        // A2 + Layer B: the ADAPTIVE bite is runKey's macro yard-bite PLUS the
+        // PLAY-MEMORY sub-concept/exact bite (`runYardDelta`, which counter-open
+        // can push negative to LEAN OFF). Their sum is capped by `runGrandBiteCap`
+        // — the single fairness gate that keeps a triple-stacked (runKey +
+        // category + exact) spammed run a LEAN, never a wall (spammed inside run
+        // stays ≥ ~2.2 ypc). The called front's run-stop bite is added AFTER the
+        // cap (a defense that also DIALS UP a run front is a separate lever). At
+        // runKeyIntensity 0 and runYardDelta 0 this equals runKey's ≤1.1 bite,
+        // which is < the 1.8 cap → byte-identical to today (parity intact).
+        var adaptiveBite = AdaptiveOpponentAI.runKeyYardBite(runKeyIntensity) + runYardDelta
+        adaptiveBite = Swift.min(adaptiveBite, AdaptiveOpponentAI.runGrandBiteCap)
+        var runStopBite = adaptiveBite
         if let package = defensivePackage {
-            totalYards -= Int((package.totalRunStopModifier * 6.0).rounded())
+            runStopBite += package.totalRunStopModifier * 15.0
+        }
+        if runStopBite != 0 {
+            totalYards -= Int(runStopBite.rounded())
+        }
+
+        // B1d: negative-tail stuff roll — restores the NFL ~16-19% stuffed-run
+        // rate the old hard positive floor had deleted. Equal talent
+        // (dlBlockShed ≈ olRunBlock) ≈ 15%; a dominant front pushes toward the
+        // 0.40 cap, a dominant OL toward the 0.04 floor. On a stuff the carry is
+        // blown up for a loss-to-short-gain and the breakaway foot race is
+        // skipped (you don't house a run you were stuffed on).
+        // A2 (Layer A): a keyed defense also generates more stuffs — up to
+        // +0.08 probability at full key. Combined with the yard bite, a fully
+        // keyed front turns the ~4.3-ypc neutral run into ~2.85 ypc (harness-
+        // measured, mid of the 2.5–3.5 band), regressing an all-run offense
+        // within ~6 carries as the design requires.
+        // Layer B: the coached read adds its own stuff probability (`runStuffDelta`,
+        // category + exact) on TOP of runKey's macro stuff bonus; the existing
+        // 0.04…0.40 clamp bounds the total. 0 = identity → parity.
+        // B2 (Balance R3): the run-side blown-assignment bust folds in here — a
+        // missed blocking assignment on a raw offense is a TFL. Weighted to the
+        // carrier's OWN scheme familiarity (pivot 55), so a neutral squad adds 0
+        // (parity, no new RNG draw) and a raw offense gets stuffed a little more.
+        let famRunBust = familiarityBustChance(carrier: rb, squad: offensePlayers,
+                                               scheme: offensiveScheme?.rawValue)
+        let stuffChance = clamp(0.15 + (dlBlockShed - olRunBlock) / 300.0
+                                + AdaptiveOpponentAI.runKeyStuffBonus(runKeyIntensity)
+                                + runStuffDelta
+                                + famRunBust,
+                                min: 0.04, max: 0.40)
+        var runWasStuffed = false
+        if randomChance(stuffChance) {
+            totalYards = Int.random(in: -3...1)
+            runWasStuffed = true
         }
 
         // --- Breakaway Run Check ---
@@ -1030,10 +1351,25 @@ enum PlaySimulator {
             breakawayChance *= clamp(1.0 + (carrierSight - 70.0) * carrierVisionSlope,
                                      min: 0.6, max: 1.4)
         }
+        // A2-run (Balance R3): the OL crease GATES the breakaway probability — a
+        // burner without a hole rarely breaks one. Capped at 1.0 (an elite crease
+        // does not INFLATE the odds — that would compound with a fast back into an
+        // unbounded ceiling); it only SUPPRESSES a bad crease. Keyed on the pure
+        // `creaseQuality` (0 at neutral OL → parity), not the gap-shaded blocking.
+        breakawayChance *= clamp(1.0 + creaseQuality * breakawayCreaseSlope,
+                                 min: breakawayCreaseMin, max: breakawayCreaseMax)
         // Snow: nobody outruns the pursuit on a buried track.
         if weather == .snow { breakawayChance *= 0.5 }
-        if randomChance(breakawayChance) {
-            totalYards += Int.random(in: 15...45)
+        // B1d: a stuffed carry never breaks away.
+        if !runWasStuffed && randomChance(breakawayChance) {
+            // A2-run: the crease also GATES the breakaway MAGNITUDE — a breakaway
+            // behind a bad line is a short chunk, behind an elite line a house
+            // call. `breakawayMagCenter` (<1) globally trims the raw 15…45 chunk
+            // so an elite RB's houses do not blow past the band; the crease then
+            // rides it up (elite line) or down (bad line).
+            let creaseMag = clamp(breakawayMagCenter + creaseQuality * creaseYardSlope,
+                                  min: breakawayYardMin, max: breakawayYardMax)
+            totalYards += Int((Double.random(in: 15...45) * creaseMag).rounded())
         }
 
         // --- Fumble Check ---
@@ -1864,9 +2200,228 @@ enum PlaySimulator {
         case .mid:
             return Int.random(in: 11...20)
         case .deep:
-            return Int.random(in: 21...45)
+            // DEEP-TALENT air-yards re-center: the neutral bomb band drops from
+            // 21...45 (mean 33) to 20...30 (mean 25). The composite air ride in
+            // simulatePassPlay then adds Int(deepEdge*deepAirSlope) on top, so an
+            // elite duo restores the big-play reach while neutral deep EV falls
+            // from ~14 to ~8.5.
+            return Int.random(in: 20...30)
         }
     }
+
+    // MARK: - DEEP-TALENT (composite-owned deep ball)
+    //
+    // A dedicated deep completion + air path that fully replaces the generic
+    // completion weighting for passDistance == .deep ONLY. Short/mid pipeline is
+    // byte-untouched. The composite is 0-centered at all-70, so a neutral matchup
+    // reproduces the re-centered deep bands and elite/weak duos separate cleanly
+    // and monotonically in BOTH the QB and WR axes.
+
+    private static let deepBaseCompletion = 0.53   // 70/70 vs-mix lands ~38%
+    private static let deepCompSlopeUp   = 0.0060  // edge >= 0 (elite ceiling ~55%)
+    private static let deepCompSlopeDown = 0.0095  // edge <  0 (weak floor drops harder)
+    private static let deepAirSlope      = 0.30    // composite air ride (elite +~7 air)
+    private static let deepAirFloor      = 15
+    private static let deepPunishEdgeSlope = 0.03  // keyed-punish composite scaler slope
+    private static let deepPunishScaleMin  = 0.30
+    private static let deepPunishScaleMax  = 2.50
+
+    /// Asymmetric deep-edge → completion shift (single symmetric slope cannot hit
+    /// both the elite ceiling and the weak floor because the edges are asymmetric,
+    /// +25 elite vs −15 weak — the split IS the mechanism).
+    private static func deepEdgeCompletion(_ deepEdge: Double) -> Double {
+        deepEdge >= 0 ? deepEdge * deepCompSlopeUp : deepEdge * deepCompSlopeDown
+    }
+
+    /// QB deep component: deep accuracy weighted a hair over arm strength.
+    private static func qbDeepRating(_ attrs: QBAttributes) -> Double {
+        Double(attrs.accuracyDeep) * 0.55 + Double(attrs.armStrength) * 0.45
+    }
+
+    /// Receiver deep-threat: speed-led. There is no WR "deep" attr, so the deep
+    /// threat is shared speed + route running + spectacular catch (TE/RB fall
+    /// back on receiving/route in place of the missing spectacular-catch attr;
+    /// their low speed attr gates blocking TEs out of the deep game).
+    private static func receiverDeepThreatRating(for player: SimPlayer) -> Double {
+        switch player.positionAttributes {
+        case .wideReceiver(let a):
+            return Double(player.physical.speed) * 0.50 + Double(a.routeRunning) * 0.30 + Double(a.spectacularCatch) * 0.20
+        case .tightEnd(let a):
+            return Double(player.physical.speed) * 0.50 + Double(a.routeRunning) * 0.50
+        case .runningBack(let a):
+            return Double(player.physical.speed) * 0.50 + Double(a.receiving) * 0.50
+        default:
+            return Double(player.physical.speed)
+        }
+    }
+
+    /// Deep composite edge = offense deep threat − DB deep defense, 0-centered at
+    /// all-70. +25 for an elite 95/95 duo vs a 70 secondary; −15 for a weak 55/55.
+    /// A1-deep (Balance R3): the DB unit deep defense is blended toward the
+    /// ASSIGNED cover man on this target (`coverMan`/`manWeight`), so a shutdown
+    /// CB1 erases WR1 even on the bomb. At all-70 the assigned man == the unit
+    /// average == 70, so `defDeep` is byte-unchanged and neutral parity holds.
+    private static func deepCompositeEdge(qb: SimPlayer, target: SimPlayer, defensePlayers: [SimPlayer],
+                                          coverMan: CoverMatch, manWeight: Double) -> Double {
+        let qbDeep = qbDeepRating(qbAttributes(for: qb))
+        let wrDeep = receiverDeepThreatRating(for: target)
+        let offDeep = qbDeep * 0.55 + wrDeep * 0.45   // QB weighted a hair over WR
+        let dbs = defensePlayers.filter { isDB($0) }
+        let dbCov = averageAttribute(dbs, extractor: { dbCoverageRating(for: $0) })
+        let dbSpd = averageAttribute(dbs, extractor: { effectiveSpeed($0) })
+        let defDeepUnit = dbCov * 0.55 + dbSpd * 0.45
+        let assignedDeep = coverMan.coverage * 0.55 + coverMan.speed * 0.45
+        let defDeep = defDeepUnit * (1.0 - manWeight) + assignedDeep * manWeight
+        return offDeep - defDeep
+    }
+
+    // MARK: - UNIFIED MATCHUP (Balance R3, Part A)
+    //
+    // A shared assigned-cover pairing + a base+QB+matchup-edge completion for
+    // short/mid that mirrors the shipped deep composite. Every term is 0-centered
+    // at all-70 (the assigned defender == the unit average == 70 there), so a
+    // neutral matchup is byte-near-identical to today and talent only widens the
+    // spread. Rebuilt inside the sim from the flat defense array — no FieldUnit
+    // threading, no caller edits, no save-schema change.
+
+    /// The cover defender the sim duels on a given target: the matchup-appropriate
+    /// coverage rating, the defender's effective speed (deep blend), and — only
+    /// when the assigned man is a DB — his ball-skills (INT blend).
+    struct CoverMatch {
+        let coverage: Double
+        let speed: Double
+        let ballSkills: Double?
+    }
+
+    /// A linebacker's coverage rating (man+zone)/2 — the TE/RB-vs-LB mismatch
+    /// lever (LB coverage ≪ CB coverage, so a TE/RB on a cover-LB pays off).
+    private static func lbCoverageRating(for player: SimPlayer) -> Double {
+        if case .linebacker(let a) = player.positionAttributes {
+            return Double((a.manCoverage + a.zoneCoverage) / 2)
+        }
+        return 50.0
+    }
+
+    /// How man-oriented the called shell is: how much the pairing is
+    /// individualized (assigned man) vs blended into unit help. A nil package
+    /// (quick sim / neutral harness) uses the mixed-shell base weight.
+    private static let baseZoneManWeight = 0.55
+    private static func coverageManWeight(_ package: DefensivePackage?) -> Double {
+        guard let package = package else { return baseZoneManWeight }
+        switch package.coverage {
+        case .manToMan:        return 0.90
+        case .cover1:          return 0.80
+        case .cover2, .cover4: return 0.45
+        case .cover3:          return 0.40
+        case .prevent:         return 0.30
+        default:               return baseZoneManWeight
+        }
+    }
+
+    /// The assigned cover defender for THIS target, mirroring `FieldUnit`+`coverFor`:
+    /// the target's rank within its position group (by overall) picks the
+    /// correspondingly-ranked defender. WR1→CB1, WR2→CB2, slot→nickel CB (if the
+    /// front fields one) else better safety, TE→max-cover of {best cover LB,
+    /// better S}, RB→2nd LB.
+    private static func coverAssignment(for target: SimPlayer, offense: [SimPlayer],
+                                        defense: [SimPlayer], package: DefensivePackage?) -> CoverMatch {
+        let neutral = CoverMatch(coverage: 70, speed: 70, ballSkills: nil)
+        let cbs = defense.filter { $0.position == .CB }.sorted { $0.overall > $1.overall }
+        let safeties = defense.filter { $0.position == .FS || $0.position == .SS }
+        let lbs = defense.filter { isLB($0) }.sorted { $0.overall > $1.overall }
+        func dbMatch(_ p: SimPlayer) -> CoverMatch {
+            CoverMatch(coverage: dbCoverageRating(for: p), speed: effectiveSpeed(p),
+                       ballSkills: dbBallSkillsRating(for: p))
+        }
+        func lbMatch(_ p: SimPlayer) -> CoverMatch {
+            CoverMatch(coverage: lbCoverageRating(for: p), speed: effectiveSpeed(p), ballSkills: nil)
+        }
+        func betterSafety() -> SimPlayer? {
+            safeties.max(by: { dbCoverageRating(for: $0) < dbCoverageRating(for: $1) })
+        }
+        switch target.position {
+        case .WR:
+            let wrs = offense.filter { $0.position == .WR }.sorted { $0.overall > $1.overall }
+            let rank = wrs.firstIndex(where: { $0.id == target.id }) ?? 0
+            if rank <= 1, cbs.count > rank { return dbMatch(cbs[rank]) }
+            // Slot (rank 2+): the nickel/dime corner if the front fields one, else
+            // the better safety rolls down over the slot.
+            let nickelDime = package.map { $0.front == .nickel || $0.front == .dime } ?? false
+            if nickelDime, cbs.count > 2 { return dbMatch(cbs[2]) }
+            if let s = betterSafety() { return dbMatch(s) }
+            if let cb = cbs.first { return dbMatch(cb) }
+            return neutral
+        case .TE:
+            let bestCoverLB = lbs.max(by: { lbCoverageRating(for: $0) < lbCoverageRating(for: $1) })
+            let s = betterSafety()
+            let lbCov = bestCoverLB.map { lbCoverageRating(for: $0) } ?? -1
+            let sCov = s.map { dbCoverageRating(for: $0) } ?? -1
+            if sCov >= lbCov, let s = s { return dbMatch(s) }
+            if let lb = bestCoverLB { return lbMatch(lb) }
+            if let s = s { return dbMatch(s) }
+            return neutral
+        case .RB, .FB:
+            if lbs.count >= 2 { return lbMatch(lbs[1]) }
+            if let lb = lbs.first { return lbMatch(lb) }
+            return neutral
+        default:
+            return neutral
+        }
+    }
+
+    // Short/mid completion composite constants (Balance R3, Part A / A1). All
+    // 0-centered at 70, dial-authorized. `shortBaseCompletion`/`midBaseCompletion`
+    // anchor the neutral (all-70 vs the standard mix) completion; the QB terms and
+    // the matchup edge add 0 at 70v70.
+    private static let shortBaseCompletion = 0.77
+    private static let midBaseCompletion   = 0.71
+    private static let qbAccCompSlope      = 0.0045
+    private static let qbReadCompSlope     = 0.0015
+    private static let coverEdgeSlopeUp    = 0.0050  // WR wins the matchup
+    private static let coverEdgeSlopeDown  = 0.0075  // CB wins (steeper — shutdown bites)
+    private static let matchupEdgeCapRaw   = 30.0    // raw edge clamp (±) before slope
+    private static let shortMidAirSlope    = 0.06    // bounded short/mid matchup air ride
+
+    /// Asymmetric matchup-edge → completion shift (mirrors `deepEdgeCompletion`).
+    private static func matchupEdgeCompletion(_ edge: Double) -> Double {
+        edge >= 0 ? edge * coverEdgeSlopeUp : edge * coverEdgeSlopeDown
+    }
+
+    /// Per-depth minimum air yards (the short/mid ride floor).
+    private static func shortMidAirFloor(_ d: PassDistance) -> Int {
+        switch d {
+        case .short: return 2
+        case .mid:   return 11
+        case .deep:  return deepAirFloor
+        }
+    }
+
+    // Short/mid grand soft-cap: linear below the knee, exponential approach to
+    // the ceiling above — replaces the old hard 0.85 clamp so an elite duo climbs
+    // toward the ceiling without the brick wall that flattened the top.
+    private static let shortMidCompFloor = 0.08
+    private static let shortMidCompKnee  = 0.72
+    private static let shortMidCompCeil  = 0.92
+    private static func softCapCompletion(_ x: Double) -> Double {
+        if x <= shortMidCompFloor { return shortMidCompFloor }
+        if x <= shortMidCompKnee { return x }
+        let span = shortMidCompCeil - shortMidCompKnee
+        let over = x - shortMidCompKnee
+        return shortMidCompKnee + span * (1.0 - exp(-over / span))
+    }
+
+    // Run crease-gate constants (Balance R3, Part A / A2-run). The OL crease both
+    // yields yards (the raised lever) and gates the back's big play (probability
+    // AND magnitude), fixing the elite-RB-beats-elite-OL inversion. All gates are
+    // centered at blockingAdvantage 0 (neutral no-op → parity), dial-authorized.
+    private static let runBlockYardGain      = 6.8   // OL crease yards (was 3.0) — the dominant OL lever
+    private static let breakawayCreaseSlope  = 3.5   // breakaway-probability gate steepness (bad crease bites)
+    private static let breakawayCreaseMin    = 0.20  // bad crease floors the odds here
+    private static let breakawayCreaseMax    = 1.0   // no upward boost (avoids the runaway ceiling)
+    private static let breakawayMagCenter    = 0.45  // global breakaway-magnitude trim (elite houses stay in band)
+    private static let creaseYardSlope       = 1.2   // breakaway-magnitude gate steepness
+    private static let breakawayYardMin      = 0.20
+    private static let breakawayYardMax      = 0.30
 
     private static func qbAccuracyForDistance(_ attrs: QBAttributes, distance: PassDistance) -> Double {
         switch distance {
@@ -1890,7 +2445,11 @@ enum PlaySimulator {
         case .deep:  baseRate = 0.04
         }
         let accuracyMod = (70.0 - accuracyRating) / 1000.0
-        let dbMod = (dbBallSkills - 50.0) / 500.0
+        // B6: pivot the DB ball-skills contribution on the 70 mean (was 50).
+        // At the mean DB (≈70) this is 0, so INT falls back to the base rates
+        // (1.5/2.5/4.0%), blending ~2.3% — the old pivot at 50 added ~+0.04 on
+        // every throw, roughly doubling the pick rate.
+        let dbMod = (dbBallSkills - 70.0) / 500.0
         // Mech 4: decision-making risk, amplified by pass-rush pressure. Widens
         // the clamp ceiling slightly so a reckless QB flushed from the pocket
         // can actually reach the higher risk; centered at 70 → mean-neutral.
@@ -2611,14 +3170,21 @@ enum PlaySimulator {
     }
 
     /// Hurried-throw line crediting the rusher who forced it (no sack, no stat).
+    /// Returns the chosen line AND whether it was a deliberate throwaway (pool
+    /// index 0 "throws it away" or 2 "fires wide" — off-target on purpose; index
+    /// 1 "hurried throw" is a contested near-miss). Derived from the SAME single
+    /// `randomElement()` draw so the RNG stream is unchanged (FIX-2).
     private static func pressureDescription(qb: SimPlayer, target: SimPlayer,
-                                            rusher: SimPlayer) -> String {
+                                            rusher: SimPlayer)
+        -> (text: String, isThrowaway: Bool) {
         let pool = [
             "Under pressure from \(rusher.fullName), \(qb.fullName) throws it away.",
             "\(rusher.fullName) is in his face — \(qb.fullName)'s hurried throw falls incomplete.",
             "Flushed by \(rusher.fullName), \(qb.fullName) fires wide of \(target.fullName).",
         ]
-        return pool.randomElement() ?? pool[0]
+        let chosen = pool.randomElement() ?? pool[0]
+        let isThrowaway = (chosen == pool[0] || chosen == pool[2])
+        return (chosen, isThrowaway)
     }
 
     /// Dropped-pass line (R38 mech 5): the receiver got open and the throw
@@ -2732,6 +3298,92 @@ enum PlaySimulator {
     private static let familiarityNeutralPivot = 70.0
     private static let familiarityDirectGain = 0.0016
     private static let familiarityDirectCap = 0.04
+
+    // MARK: - SCHEME-FAMILIARITY LAYER (Balance R3, Part B)
+    //
+    // A completion-side shift (B1) + a real blown-assignment bust (B2) that make
+    // 100%-vs-33% scheme familiarity VISIBLE on the box score (more/fewer catches,
+    // visible negative plays), where the shipped R41 channel was yards-only and
+    // invisible in the 55-85 seed band. Both channels pivot at the seeded-league
+    // mean (famCurve at 70, the bust at 55 < mean), so a neutral squad is
+    // parity-safe by construction — famShift is 0 and the guarded bust never rolls
+    // (no RNG draw). Threads the SHARED PlaySimulator path, so it shows on both the
+    // coached (LiveGameEngine) and simmed (Game/DriveSimulator) games. The legacy
+    // `schemeYardAdjustment` / `directFamiliarity` yard channel (B3) is left intact.
+
+    // B1 — completion shift. `famCurve` is 0 at the pivot (70) → parity; a
+    // well-drilled squad earns a small execution bonus, a raw one is docked
+    // harder (asymmetric down-slope), each side grand-bounded.
+    private static let famUpSlope   = 0.0010   // fam100 → +0.03 comp
+    private static let famDownSlope = 0.0025   // fam66 → -0.01, fam33 → -0.093 (pre-cap)
+    private static let famUpCap     = 0.03
+    private static let famDownCap   = -0.11
+    // Optional coach blend (design B1): effectiveSquadFam = player*0.7 + coach*0.3.
+    // `coachExpertise` nil = player-only (the shipping default; the coordinator's
+    // own completion channel stays the separate mech-6 lane, no double-count).
+    private static let famCoachPlayerWeight = 0.7
+    private static let famCoachExpertWeight = 0.3
+
+    // B2 — blown-assignment bust. Pivot 55 < the seeded mean 70 → a neutral squad
+    // NEVER busts (parity); a raw squad coughs up the occasional forced negative
+    // play. Weighted to the ball-carrier's OWN familiarity (the guy running the
+    // route / carrying the ball busts it — fixes team-mean dilution).
+    private static let famBustPivot       = 55.0
+    private static let famBustSlope       = 0.0027  // fam33 → ~5.9% (in the 5-8% band), fam20 → ~9.5%
+    private static let famBustCap         = 0.10
+    private static let famBustOwnWeight   = 0.6
+    private static let famBustSquadWeight = 0.4
+
+    /// B1: familiarity → completion shift. 0 at the neutral pivot (70) → parity;
+    /// asymmetric (a raw squad is docked harder than a drilled one is rewarded),
+    /// each side grand-bounded.
+    private static func famCurve(_ f: Double) -> Double {
+        let d = f - familiarityNeutralPivot
+        return d >= 0 ? Swift.min(d * famUpSlope, famUpCap)
+                      : Swift.max(d * famDownSlope, famDownCap)
+    }
+
+    /// The squad's average scheme familiarity against its called scheme, blended
+    /// toward the coordinator's expertise. A nil scheme (quick sim / neutral
+    /// harness) collapses to the pivot → famCurve 0 (parity). A nil coach
+    /// expertise (the shipping player-only path) uses player familiarity alone.
+    private static func effectiveSquadFam(_ players: [SimPlayer], scheme: String?,
+                                          coachExpertise: Double? = nil) -> Double {
+        guard let scheme = scheme, !players.isEmpty else { return familiarityNeutralPivot }
+        let playerAvg = players.map { Double($0.schemeFam(for: scheme)) }
+            .reduce(0, +) / Double(players.count)
+        guard let coach = coachExpertise else { return playerAvg }
+        return playerAvg * famCoachPlayerWeight + coach * famCoachExpertWeight
+    }
+
+    /// B2: an effective familiarity → bust probability. 0 at fam ≥ pivot (55) → a
+    /// neutral squad never busts (parity).
+    private static func bustChance(forEffectiveFam eff: Double) -> Double {
+        clamp((famBustPivot - eff) * famBustSlope, min: 0, max: famBustCap)
+    }
+
+    /// B2 (offense / carrier side): the blown-assignment bust for a specific
+    /// ball-carrier, weighted to his OWN scheme familiarity with squad dilution.
+    /// A nil scheme → 0 (parity, no RNG draw at the guarded call site).
+    private static func familiarityBustChance(carrier: SimPlayer, squad: [SimPlayer],
+                                              scheme: String?) -> Double {
+        guard let scheme = scheme else { return 0 }
+        let own = Double(carrier.schemeFam(for: scheme))
+        let squadAvg = squad.isEmpty ? own
+            : squad.map { Double($0.schemeFam(for: scheme)) }.reduce(0, +) / Double(squad.count)
+        let eff = own * famBustOwnWeight + squadAvg * famBustSquadWeight
+        return bustChance(forEffectiveFam: eff)
+    }
+
+    /// B2 (defense side): a blown-coverage bust from the defense's squad-wide
+    /// scheme familiarity — a raw coverage unit occasionally hands over a clean
+    /// catch. A nil scheme → 0 (parity).
+    private static func squadBustChance(_ players: [SimPlayer], scheme: String?) -> Double {
+        guard let scheme = scheme, !players.isEmpty else { return 0 }
+        let avg = players.map { Double($0.schemeFam(for: scheme)) }
+            .reduce(0, +) / Double(players.count)
+        return bustChance(forEffectiveFam: avg)
+    }
 
     // MARK: - Utility Functions
 

@@ -473,7 +473,9 @@ enum DefensivePlayCall: String, Codable, CaseIterable {
         case .noBlitz, .lbBlitz, .dbBlitz, .allOutBlitz: return 0.0
         case .doubleAGap: return 0.04    // mugged-up backers plug the middle
         case .safetyBlitz:return 0.02
-        case .base:       return 0.08
+        case .base:       return 0.0     // B2a: a plain base front no longer
+                                         // nerfs the neutral run (the neutral
+                                         // point is now set by B1, not the front)
         case .nickel:     return -0.05
         case .dime:       return -0.10
         case .bear:       return 0.14    // 46-style front swallows interior runs

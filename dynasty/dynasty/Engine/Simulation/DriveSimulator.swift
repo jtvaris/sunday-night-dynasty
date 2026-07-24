@@ -43,7 +43,13 @@ enum DriveSimulator {
         gamePlan: GamePlan? = nil,
         weather: GameWeather? = nil,
         offenseIsAway: Bool = false,
-        adjustments: PlaySimulator.Adjustments? = nil
+        adjustments: PlaySimulator.Adjustments? = nil,
+        // Layer A: the ball-carrier team's per-game run-key EWMA, owned by
+        // `GameSimulator` and threaded across all of its drives so the defense's
+        // read persists snap-to-snap and drive-to-drive (the same component the
+        // coached path runs). `inout` — read `keyIntensity` before each snap,
+        // `record` the resolved play type after.
+        runKeyState: inout AdaptiveOpponentAI.RunKeyState
     ) -> DriveSimulationResult {
         var plays: [PlayResult] = []
         var currentDown = 1
@@ -77,6 +83,10 @@ enum DriveSimulator {
                 )
             }
 
+            // Layer A: read the defense's key intensity BEFORE the snap, off the
+            // run share built up to this point. Same lever the coached path uses.
+            let currentKeyIntensity = runKeyState.keyIntensity(down: currentDown)
+
             // --- Simulate Play ---
             let result = PlaySimulator.simulatePlay(
                 offensePlayers: offensePlayers,
@@ -93,7 +103,8 @@ enum DriveSimulator {
                 gamePlan: gamePlan,
                 weather: weather,
                 adjustments: adjustments,
-                offenseIsAway: offenseIsAway
+                offenseIsAway: offenseIsAway,
+                runKeyIntensity: currentKeyIntensity
             )
 
             // Store the play with current clock values
@@ -101,6 +112,13 @@ enum DriveSimulator {
             recordedPlay.quarter = currentQuarter
             recordedPlay.timeRemaining = currentTime
             plays.append(recordedPlay)
+
+            // Layer A: fold the resolved scrimmage snap into the key EWMA (on the
+            // down it was called on). Special-teams / clock plays don't count as
+            // a run/pass tendency, so only run & pass update the read.
+            if result.playType == .run || result.playType == .pass {
+                runKeyState.record(isRun: result.playType == .run, down: currentDown)
+            }
 
             // --- Consume Clock ---
             let elapsed = clockConsumption(for: result)

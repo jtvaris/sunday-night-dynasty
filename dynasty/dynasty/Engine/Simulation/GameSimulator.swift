@@ -166,6 +166,13 @@ enum GameSimulator {
         var homeTimeOfPossession = 0
         var awayTimeOfPossession = 0
 
+        // Layer A: per-game run-key state for each offense — threaded through
+        // every drive so the defense's read of that offense's run tendency
+        // persists across the whole game (AI-vs-AI box scores regress a run-
+        // heavy offense to NFL-realistic rushing, same component as coached).
+        var homeOffenseRunKey = AdaptiveOpponentAI.RunKeyState()
+        var awayOffenseRunKey = AdaptiveOpponentAI.RunKeyState()
+
         // -----------------------------------------------------------------
         // 2. Game Loop — Regulation
         // -----------------------------------------------------------------
@@ -184,6 +191,10 @@ enum GameSimulator {
 
             // Simulate the drive via DriveSimulator (created in parallel)
             let offenseTeamID = homeHasPossession ? homeTeam.id : awayTeam.id
+            // Layer A: pass the ball-carrier's run-key state as `inout`. Swift
+            // can't take `&` of a ternary, so copy the value struct out, thread
+            // it, and write it back — the read persists across drives.
+            var driveRunKey = homeHasPossession ? homeOffenseRunKey : awayOffenseRunKey
             let driveResult = DriveSimulator.simulateDrive(
                 offensePlayers: offensePlayers,
                 defensePlayers: defensePlayers,
@@ -198,8 +209,11 @@ enum GameSimulator {
                 gamePlan: homeHasPossession ? homeGamePlan : awayGamePlan,
                 weather: weather,
                 offenseIsAway: !homeHasPossession,
-                adjustments: homeHasPossession ? homeOffenseAdj : awayOffenseAdj
+                adjustments: homeHasPossession ? homeOffenseAdj : awayOffenseAdj,
+                runKeyState: &driveRunKey
             )
+            if homeHasPossession { homeOffenseRunKey = driveRunKey }
+            else { awayOffenseRunKey = driveRunKey }
 
             var drive = driveResult.drive
             quarter = driveResult.endQuarter
@@ -1019,6 +1033,10 @@ enum GameSimulator {
         var secondPossessionComplete = false
         var startingYardLine = kickoffStartYardLine() // OT kickoff draw
 
+        // Layer A: run-key state per offense for the overtime period.
+        var homeOffenseRunKey = AdaptiveOpponentAI.RunKeyState()
+        var awayOffenseRunKey = AdaptiveOpponentAI.RunKeyState()
+
         while otTimeRemaining > 0 {
             driveNumber += 1
 
@@ -1026,6 +1044,7 @@ enum GameSimulator {
             let defensePlayers = homeHasPossession ? awayPlayers : homePlayers
 
             let otOffenseTeamID = homeHasPossession ? homeTeam.id : awayTeam.id
+            var driveRunKey = homeHasPossession ? homeOffenseRunKey : awayOffenseRunKey
             let driveResult = DriveSimulator.simulateDrive(
                 offensePlayers: offensePlayers,
                 defensePlayers: defensePlayers,
@@ -1040,8 +1059,11 @@ enum GameSimulator {
                 gamePlan: homeHasPossession ? homeGamePlan : awayGamePlan,
                 weather: weather,
                 offenseIsAway: !homeHasPossession,
-                adjustments: homeHasPossession ? homeOffenseAdj : awayOffenseAdj
+                adjustments: homeHasPossession ? homeOffenseAdj : awayOffenseAdj,
+                runKeyState: &driveRunKey
             )
+            if homeHasPossession { homeOffenseRunKey = driveRunKey }
+            else { awayOffenseRunKey = driveRunKey }
 
             let drive = driveResult.drive
             otTimeRemaining = driveResult.endTime
