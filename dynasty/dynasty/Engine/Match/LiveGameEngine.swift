@@ -1818,25 +1818,19 @@ final class LiveGameEngine: ObservableObject {
     /// The purely situational base package (today's exact logic) — shared by
     /// the live pick and the persona pre-roll so both see the same fabric.
     private func baseDefensivePackage() -> DefensivePackage {
-        let yardsToEndzone = 100 - yardLine
         // Score margin from the DEFENSE's perspective (positive = leading).
         let defenseLeadsBy = homeHasPossession ? awayScore - homeScore : homeScore - awayScore
-        if yardsToEndzone <= 10 {
-            // Red zone: sell out against the short field.
-            return DefensivePackage(coverage: .manToMan, blitz: .noBlitz, front: .goalLine)
-        } else if quarter >= 4 && timeRemaining <= 240
-                    && defenseLeadsBy > 0 && defenseLeadsBy <= 16
-                    && yardsToEndzone > 25 {
-            // Protecting a late lead: prevent shell — concede the checkdown,
-            // never the bomb.
-            return DefensivePackage(coverage: .prevent, blitz: .noBlitz, front: .dime)
-        } else if down == 3 && distance >= 7 {
-            // 3rd & long: extra DBs and a pressure look.
-            return DefensivePackage(coverage: .cover4, blitz: .dbBlitz, front: .dime)
-        } else if distance <= 2 {
-            // Short yardage: crowd the box with the bear front.
-            return DefensivePackage(coverage: .cover1, blitz: .noBlitz, front: .bear)
-        } else if playerIsOnOffense, playMemory.isKeyed(down: down) {
+        // Situational shells (red zone / late-lead prevent / 3rd-&-long /
+        // short-yardage) come from the ONE brain the auto-sim's `DriveSimulator`
+        // now shares, so the two engines can never drift apart.
+        if let situational = DriveSimulator.situationalDefensivePackage(
+            yardLine: yardLine, quarter: quarter, timeRemaining: timeRemaining,
+            down: down, distance: distance, defenseLeadsBy: defenseLeadsBy) {
+            return situational
+        }
+        // Live-only player-legibility reads below (they need `PlayMemory`, which
+        // fills solely from the human's calls) — never reached by the auto-sim.
+        if playerIsOnOffense, playMemory.isKeyed(down: down) {
             // Layer A4: the AI has keyed the player's run tendency — it visibly
             // stacks the box on a normal down with a Bear front the player can
             // SEE (and torch with play-action, via A3). The always-on A2 yard

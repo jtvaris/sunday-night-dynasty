@@ -1363,6 +1363,197 @@ func scenarioPositionSweep(_ f: [String: String]) {
     print(String(format: "  RUNTIME  %d games in %.2fs = %.1f games/sec", totalGames, elapsed, Double(totalGames) / max(elapsed, 0.0001)))
 }
 
+// ---- attribution scenario ---------------------------------------------------
+// Decomposes the full-game net-YPA (~8.4) vs the per-play blend (~6.4) using the
+// SHIPPED sim play-calling brain (GameSimulator's DriveSimulator loop). All-70
+// rosters — byte-identical to the per-play calibration roster — so any gap is
+// PURE play-selection (offensive call mix + pass-depth mix + defensive package).
+func scenarioAttribution() {
+    print("===== SCENARIO attribution: full-game net-YPA (~8.4) vs per-play blend (~6.4) decomposition =====")
+    let off = offenseFor()        // all-70, identical to the per-play calibration roster
+    let def = defenseFor()        // all-70
+    let AN = max(N, 60000)
+    let drives = Int(ProcessInfo.processInfo.environment["BH_DRIVES"] ?? "") ?? 12000
+
+    // Mirror of PlaySimulator.choosePassDistance (for the realized depth mix).
+    // Kept in sync with the engine: P0-1 pulled the deep share from ~24% to
+    // ~10-12% (short 0.68/0.52/0.30, deep 0.08/0.12/0.26 by distance bucket).
+    func depthProbs(_ distance: Int, _ yardLine: Int) -> (s: Double, m: Double, d: Double) {
+        if 100 - yardLine <= 10 { return (1, 0, 0) }
+        if distance <= 5  { return (0.68, 0.24, 0.08) }
+        if distance <= 10 { return (0.52, 0.36, 0.12) }
+        return (0.30, 0.44, 0.26)
+    }
+    func bandIdx(_ d: Int) -> Int { d <= 3 ? 0 : (d <= 6 ? 1 : (d <= 10 ? 2 : 3)) }
+
+    // ---- (1) run real drives through the SHIPPED sim play-calling brain ----
+    var passCt = Array(repeating: Array(repeating: 0, count: 4), count: 5)   // [down][band]
+    var runCt  = Array(repeating: Array(repeating: 0, count: 4), count: 5)
+    var gtY = 0, gtDrop = 0                                                  // ground-truth net-YPA
+    var sMix = 0.0, mMix = 0.0, dMix = 0.0, passPlays = 0.0
+    var earlyPass = 0, earlyTot = 0
+    var thirdPass = 0, thirdTot = 0
+    var samples: [(Int, Int, Int)] = []; samples.reserveCapacity(60000)
+    let tid = UUID()
+    for i in 0..<drives {
+        var rk = AdaptiveOpponentAI.RunKeyState()
+        let r = DriveSimulator.simulateDrive(
+            offensePlayers: off, defensePlayers: def, startingYardLine: 25,
+            driveNumber: i + 1, quarter: 1, timeRemaining: 900, momentum: 0,
+            teamID: tid, runKeyState: &rk)
+        for p in r.drive.plays {
+            let bi = bandIdx(p.distance)
+            let dn = min(max(p.down, 1), 4)
+            if p.playType == .pass {
+                passCt[dn][bi] += 1
+                if p.outcome != .penalty { gtDrop += 1; gtY += p.yardsGained; samples.append((p.down, p.distance, p.yardLine)) }
+                let pr = depthProbs(p.distance, p.yardLine)
+                sMix += pr.s; mMix += pr.m; dMix += pr.d; passPlays += 1
+                if dn <= 2 { earlyPass += 1; earlyTot += 1 }
+                if dn == 3 { thirdPass += 1; thirdTot += 1 }
+            } else if p.playType == .run {
+                runCt[dn][bi] += 1
+                if dn <= 2 { earlyTot += 1 }
+                if dn == 3 { thirdTot += 1 }
+            }
+        }
+    }
+    let gtNet = Double(gtY) / Double(max(1, gtDrop))
+    let totPass = passCt.flatMap { $0 }.reduce(0, +)
+    let totRun  = runCt.flatMap { $0 }.reduce(0, +)
+    let passRate = Double(totPass) / Double(max(1, totPass + totRun)) * 100
+    let sShare = sMix / passPlays, mShare = mMix / passPlays, dShare = dMix / passPlays
+
+    print(String(format: "  SIM brain over %d drives (all-70, gamePlan=nil balanced, defensivePackage=SITUATIONAL as the P0-1 DriveSimulator now wires it):", drives))
+    print(String(format: "    overall pass rate = %.1f%% (NFL ~57-60%%)  early-down(1&2) pass = %.1f%% (NFL ~50%%)  3rd-down pass = %.1f%%",
+        passRate, Double(earlyPass) / Double(max(1, earlyTot)) * 100, Double(thirdPass) / Double(max(1, thirdTot)) * 100))
+    print("    pass% by down x distance-to-go band (blank = no snaps):")
+    print("      down |   1-3     4-6    7-10     11+")
+    for dn in 1...4 {
+        var cells = ""
+        for bi in 0..<4 {
+            let pc = passCt[dn][bi], rc = runCt[dn][bi], tot = pc + rc
+            cells += tot == 0 ? "     -  " : String(format: "  %5.0f%%", Double(pc) / Double(tot) * 100)
+        }
+        print(String(format: "      %4d |%@", dn, cells))
+    }
+    print(String(format: "    realized pass-DEPTH mix (choosePassDistance): short=%.0f%% mid=%.0f%% DEEP=%.0f%%  [per-play blend=45/40/15; NFL deep ~10-12%%]",
+        sShare * 100, mShare * 100, dShare * 100))
+    print(String(format: "    GROUND-TRUTH sim net-YPA (drive plays) = %.2f", gtNet))
+
+    // ---- (2) per-depth net-YPA vs standard MIX and vs NIL package (mechanism) ----
+    func measDepth(_ call: OffensivePlayCall, nilPkg: Bool) -> Double {
+        var allY = 0, drop = 0, i = 0
+        while i < AN { i += 1
+            let r = PlaySimulator.simulatePlay(
+                offensePlayers: off, defensePlayers: def, down: 1, distance: 10,
+                yardLine: 25, quarter: 2, timeRemaining: 450, momentum: 0, playNumber: 5,
+                offensiveCall: call, defensivePackage: nilPkg ? nil : rp())
+            if r.outcome == .penalty { continue }
+            drop += 1; allY += r.yardsGained
+        }
+        return Double(allY) / Double(max(1, drop))
+    }
+    let shMix = measDepth(.slant, nilPkg: false), mdMix = measDepth(.dig, nilPkg: false), dpMix = measDepth(.goRoute, nilPkg: false)
+    let shNil = measDepth(.slant, nilPkg: true),  mdNil = measDepth(.dig, nilPkg: true),  dpNil = measDepth(.goRoute, nilPkg: true)
+    print("")
+    print("  per-depth net-YPA basis:  short   mid    deep")
+    print(String(format: "    vs standard MIX rp():  %5.2f  %5.2f  %5.2f", shMix, mdMix, dpMix))
+    print(String(format: "    vs NIL pkg (sim path): %5.2f  %5.2f  %5.2f", shNil, mdNil, dpNil))
+    print(String(format: "    NIL package tax removed: short +%.2f  mid +%.2f  deep +%.2f  (mean coverage tax the sim skips)", shNil - shMix, mdNil - mdMix, dpNil - dpMix))
+
+    // ---- (3) additive decomposition on the ACTUAL generic-pass engine path ----
+    func genNet(_ pick: () -> (Int, Int, Int), _ pkg: () -> DefensivePackage?, _ n: Int) -> Double {
+        var allY = 0, drop = 0, i = 0
+        while i < n { i += 1
+            let (dn, ds, yl) = pick()
+            let r = PlaySimulator.simulatePlay(
+                offensePlayers: off, defensePlayers: def, down: dn, distance: ds,
+                yardLine: yl, quarter: 2, timeRemaining: 450, momentum: 0, playNumber: 5,
+                forcedPlayType: .pass, defensivePackage: pkg())
+            if r.outcome == .penalty { continue }
+            drop += 1; allY += r.yardsGained
+        }
+        return Double(allY) / Double(max(1, drop))
+    }
+    let neutral: () -> (Int, Int, Int) = { (1, 10, 25) }
+    let realized: () -> (Int, Int, Int) = { samples.isEmpty ? (1, 10, 25) : samples.randomElement()! }
+    let mixPkg: () -> DefensivePackage? = { rp() }
+    let nilPkg: () -> DefensivePackage? = { nil }
+
+    let b0 = shMix * 0.45 + mdMix * 0.40 + dpMix * 0.15          // per-play blend anchor (~6.47)
+    let gNeutralMix = genNet(neutral, mixPkg, AN)                 // generic path, neutral down, mix pkg
+    let gRealMix    = genNet(realized, mixPkg, AN)                // + real passing-down distribution
+    let gRealNil    = genNet(realized, nilPkg, AN)               // + nil package (the sim path) ~= gtNet
+
+    print("")
+    print("  DECOMPOSITION of the net-YPA gap (each step is a real engine measurement):")
+    print(String(format: "    (B0) per-play blend  45/40/15 x per-depth(mix)                 = %6.2f", b0))
+    print(String(format: "    (+)  generic-path + neutral-down depth (named->generic pass)   = %+6.2f   -> %.2f", gNeutralMix - b0, gNeutralMix))
+    print(String(format: "    (+)  situational depth skew (neutral -> real passing downs)    = %+6.2f   -> %.2f", gRealMix - gNeutralMix, gRealMix))
+    print(String(format: "    (+)  DEF-MIX delta (standard mix rp() -> NIL package)          = %+6.2f   -> %.2f", gRealNil - gRealMix, gRealNil))
+    print(String(format: "    (=)  reconstructed full-game net-YPA                           = %6.2f   (drive ground truth %.2f)", gRealNil, gtNet))
+    print(String(format: "    call-mix bucket (depth) = %+.2f | def-mix bucket (nil pkg) = %+.2f | residual/situational = %+.2f",
+        (gNeutralMix - b0) + (gRealMix - gNeutralMix), gRealNil - gRealMix, gtNet - gRealNil))
+
+    // ---- (4) end-to-end counterfactual: faithful drive loop (mirrors
+    // DriveSimulator.simulateDrive, reusing its own static helpers) run with the
+    // sim's NIL package vs the standard league mix wired in, to show the
+    // downstream points / 3rd-down / net-YPA all move into band together.
+    func simDriveCounterfactual(_ pkg: () -> DefensivePackage?, _ nDrives: Int) -> (pts: Double, third: Double, net: Double, plays: Double) {
+        var totPts = 0, thirdC = 0, thirdA = 0, py = 0, drop = 0, playCt = 0, ndr = 0
+        for i in 0..<nDrives {
+            var rk = AdaptiveOpponentAI.RunKeyState()
+            var down = 1, dist = 10, yl = 25, q = 1, t = 900, pn = 1
+            if 100 - yl < 10 { dist = 100 - yl }
+            ndr += 1
+            loop: while true {
+                if t <= 0 && DriveSimulator.shouldEndDrive(quarter: q) { break }
+                let ki = rk.keyIntensity(down: down)
+                let r = PlaySimulator.simulatePlay(
+                    offensePlayers: off, defensePlayers: def, down: down, distance: dist,
+                    yardLine: yl, quarter: q, timeRemaining: t, momentum: 0, playNumber: pn,
+                    defensivePackage: pkg(), runKeyIntensity: ki)
+                if r.playType == .run || r.playType == .pass { playCt += 1 }
+                if r.playType == .pass && r.outcome != .penalty { drop += 1; py += r.yardsGained }
+                if (r.playType == .run || r.playType == .pass) && down == 3 && r.outcome != .penalty {
+                    thirdA += 1; if r.isFirstDown || r.outcome == .touchdown { thirdC += 1 }
+                }
+                if r.playType == .run || r.playType == .pass { rk.record(isRun: r.playType == .run, down: down) }
+                t -= DriveSimulator.clockConsumption(for: r)
+                if t <= 0 {
+                    if DriveSimulator.shouldEndDrive(quarter: q) { break }
+                    q += 1; t = 900
+                }
+                if r.outcome == .touchdown { totPts += 7; break }
+                if r.outcome == .fieldGoalGood { totPts += 3; break }
+                switch r.outcome {
+                case .fieldGoalMissed, .interception, .fumbleLost, .punt, .touchback, .safety: break loop
+                default: break
+                }
+                let adv = DriveSimulator.advanceDownAndDistance(playResult: r, currentDown: down, currentDistance: dist, currentYardLine: yl)
+                down = adv.down; dist = adv.distance; yl = adv.yardLine
+                if down > 4 { break }
+                pn += 1
+                if pn > 40 { break }
+            }
+        }
+        return (Double(totPts) / Double(ndr), Double(thirdC) / Double(max(1, thirdA)) * 100,
+                Double(py) / Double(max(1, drop)), Double(playCt) / Double(ndr))
+    }
+    let cfN = 12000
+    let cfNil = simDriveCounterfactual({ nil }, cfN)
+    let cfMix = simDriveCounterfactual({ rp() }, cfN)
+    print("")
+    print("  END-TO-END COUNTERFACTUAL (faithful drive loop; drives cross halves, so pts/drive is a within-run comparison):")
+    print(String(format: "    sim path (NIL package):      net-YPA=%.2f  3rd-down=%.1f%%  pts/drive=%.2f  plays/drive=%.1f",
+        cfNil.net, cfNil.third, cfNil.pts, cfNil.plays))
+    print(String(format: "    FIX (standard league mix):   net-YPA=%.2f  3rd-down=%.1f%%  pts/drive=%.2f  plays/drive=%.1f",
+        cfMix.net, cfMix.third, cfMix.pts, cfMix.plays))
+    print(String(format: "    delta from wiring the package: net-YPA %+.2f  3rd-down %+.1fpp  pts/drive %+.1f%%",
+        cfMix.net - cfNil.net, cfMix.third - cfNil.third, (cfMix.pts / cfNil.pts - 1) * 100))
+}
+
 // ---- Flag / spec parsing ----------------------------------------------------
 func parseFlags(_ a: [String]) -> [String: String] {
     var d: [String: String] = [:]
@@ -1441,6 +1632,7 @@ func run(_ name: String) {
     case "heat-dist":         scenarioHeatDist()
     case "heat-ratio":        scenarioHeatRatio()
     case "macro":             scenarioMacro()
+    case "attribution":       scenarioAttribution()
     default:
         FileHandle.standardError.write("unknown scenario: \(name)\n".data(using: .utf8)!)
         FileHandle.standardError.write("valid: \(allScenarios.joined(separator: ", ")), all\n".data(using: .utf8)!)
@@ -1458,14 +1650,77 @@ func printHeader() {
     print("######################################################################")
 }
 
+// ---- blowoutprobe scenario (P0-2 compounding analysis) ----------------------
+// Reconstructs the SCORE TRAJECTORY from the ordered drive stream (engine
+// untouched) to quantify where the margin comes from: per-quarter cumulative
+// margin, drives/team, and "garbage-time" points (points a team scores while
+// already leading by >= gtLead BEFORE that drive). Evidences the missing
+// score-aware/comeback feedback and sizes the tail-cap mechanism.
+func scenarioBlowoutProbe(_ f: [String: String]) {
+    let n = Int(f["n"] ?? "") ?? 300
+    let gtLead = Int(f["gtlead"] ?? "") ?? 21
+    let matchups: [(String, String)] = [
+        ("avg", "avg"), ("good", "avg"), ("avg", "weak"),
+        ("good", "weak"), ("elite", "avg"), ("elite", "weak"),
+    ]
+    print("===== SCENARIO blowoutprobe: score-trajectory / garbage-time (gtLead=\(gtLead)) =====")
+    print(String(format: "  %-13@ | %-5@ | %-24@ | %-11@ | %@", "matchup", "drv/t",
+        "cum margin Q1/Q2/Q3/Q4", "final marg", "leader GT-pts (share of margin)"))
+    for (hT, aT) in matchups {
+        seedRNG(f)
+        var hSpec = RosterSpec(); hSpec.tier = hT
+        var aSpec = RosterSpec(); aSpec.tier = aT
+        var qMarg = [0.0, 0.0, 0.0, 0.0]          // cumulative home-away margin at end of each quarter
+        var drivesPerTeam = 0.0
+        var gtPts = 0.0                            // points scored by a team already up >= gtLead
+        var finalMargAbs = 0.0
+        for _ in 0..<n {
+            let (ht, hc, hp) = buildRoster(hSpec, side: "H")
+            let (at, ac, ap) = buildRoster(aSpec, side: "A")
+            let r = GameSimulator.simulate(homeTeam: ht, awayTeam: at, homeCoaches: hc, awayCoaches: ac,
+                                           homeGamePlan: hp, awayGamePlan: ap)
+            // Walk the ordered drives, maintaining running score. Each drive's
+            // points are attributed to its offense (covers TD/FG/XP/2pt; safeties
+            // and return TDs are the rare exception and ignored for this proxy).
+            var hs = 0, as_ = 0
+            var qEnd = [0, 0, 0, 0]
+            var driveCount = 0
+            for d in r.boxScore.drives {
+                let isHome = d.teamID == ht.id
+                let leadBefore = isHome ? hs - as_ : as_ - hs
+                let pts = d.plays.reduce(0) { $0 + $1.pointsScored }
+                if pts > 0, leadBefore >= gtLead { gtPts += Double(pts) }
+                if isHome { hs += pts } else { as_ += pts }
+                // record cumulative margin snapshot at the quarter this drive ended
+                let q = min((d.plays.last?.quarter ?? 1) - 1, 3)
+                for qi in q..<4 { qEnd[qi] = hs - as_ }
+                if d.plays.contains(where: { $0.playType == .run || $0.playType == .pass }) { driveCount += 1 }
+            }
+            for qi in 0..<4 { qMarg[qi] += Double(qEnd[qi]) }
+            drivesPerTeam += Double(driveCount) / 2.0
+            finalMargAbs += Double(abs(hs - as_))
+        }
+        let inv = 1.0 / Double(n)
+        let fm = finalMargAbs * inv
+        let gt = gtPts * inv
+        let label = "\(hT) vs \(aT)".padding(toLength: 13, withPad: " ", startingAt: 0)
+        print(String(format: "  %@ | %5.1f | %+6.1f %+6.1f %+6.1f %+6.1f | %+9.1f | %6.1f  (%.0f%%)",
+            label, drivesPerTeam * inv,
+            qMarg[0] * inv, qMarg[1] * inv, qMarg[2] * inv, qMarg[3] * inv,
+            fm, gt, fm > 0 ? gt / fm * 100 : 0))
+    }
+}
+
 // Parameterized round-5 scenarios consume `--flag value` args instead of a
 // scenario-name list. They dispatch BEFORE the name-list path so every existing
 // scenario keeps working exactly as before.
-if let first = args.first, first == "fullgame" || first == "positionsweep" {
+if let first = args.first, first == "fullgame" || first == "positionsweep" || first == "blowoutprobe" {
     let flags = parseFlags(Array(args.dropFirst()))
     printHeader()
     print("")
-    if first == "fullgame" { scenarioFullGame(flags) } else { scenarioPositionSweep(flags) }
+    if first == "fullgame" { scenarioFullGame(flags) }
+    else if first == "blowoutprobe" { scenarioBlowoutProbe(flags) }
+    else { scenarioPositionSweep(flags) }
     print("\nDONE.")
     exit(0)
 }

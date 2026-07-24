@@ -92,6 +92,25 @@ enum DriveSimulator {
             // run share built up to this point. Same lever the coached path uses.
             let currentKeyIntensity = runKeyState.keyIntensity(down: currentDown)
 
+            // P0-1: dial up a real defensive package for THIS snap — the SAME
+            // situational brain the coached `LiveGameEngine` runs (shared via
+            // `situationalDefensivePackage`). Before this the sim path passed a
+            // nil package on every snap, skipping the ~0.12 coverage tax the
+            // per-play completion/net-YPA bands are calibrated against, which is
+            // the entire full-game passing/scoring inflation. `.standard`
+            // (Cover 3 / no blitz / base) is the neutral league-average fallback.
+            let defensivePackage = situationalDefensivePackage(
+                yardLine: currentYardLine,
+                quarter: currentQuarter,
+                timeRemaining: currentTime,
+                down: currentDown,
+                distance: currentDistance,
+                // scoreDifferential is offense-relative; the defense leads by its
+                // negation. (0 at drive start in OT / the all-70 harness ⇒ the
+                // late-lead prevent shell simply never fires.)
+                defenseLeadsBy: -scoreDifferential
+            ) ?? .standard
+
             // --- Simulate Play ---
             let result = PlaySimulator.simulatePlay(
                 offensePlayers: offensePlayers,
@@ -105,6 +124,7 @@ enum DriveSimulator {
                 playNumber: playNumber,
                 offensiveScheme: offensiveScheme,
                 defensiveScheme: defensiveScheme,
+                defensivePackage: defensivePackage,
                 gamePlan: gamePlan,
                 weather: weather,
                 adjustments: adjustments,
@@ -214,6 +234,59 @@ enum DriveSimulator {
                 )
             }
         }
+    }
+
+    // MARK: - Defensive Play-Calling (shared with LiveGameEngine)
+
+    /// The purely situational defensive package for a snap — the ONE defensive
+    /// brain shared by the auto-sim (this loop) and the coached
+    /// `LiveGameEngine.baseDefensivePackage()`, so the two engines can never
+    /// drift apart. Returns `nil` when no higher-priority situational shell
+    /// applies; the caller then falls back to ``DefensivePackage/standard``
+    /// (Cover 3 / no blitz / base) — the neutral league-average look whose
+    /// ~0.12 total coverage tax the per-play bands are calibrated against.
+    ///
+    /// The live engine's two extra branches (a Bear front once it has KEYED the
+    /// player's run tendency, a Cover 2 shell once it has keyed the deep game)
+    /// are intentionally OMITTED here: both depend on `PlayMemory`, a live-only
+    /// read that fills solely from the human's calls and never applies to an
+    /// AI-vs-AI auto-sim. Everything else is branch-for-branch identical.
+    ///
+    /// - Parameter defenseLeadsBy: score margin from the DEFENSE's perspective
+    ///   (positive ⇒ the defending team leads). Drives only the late-lead
+    ///   prevent shell; `0` keeps every other branch untouched.
+    static func situationalDefensivePackage(
+        yardLine: Int,
+        quarter: Int,
+        timeRemaining: Int,
+        down: Int,
+        distance: Int,
+        defenseLeadsBy: Int
+    ) -> DefensivePackage? {
+        let yardsToEndzone = 100 - yardLine
+        if yardsToEndzone <= 10 {
+            // Red zone: sell out against the short field.
+            return DefensivePackage(coverage: .manToMan, blitz: .noBlitz, front: .goalLine)
+        } else if quarter >= 4 && timeRemaining <= 240
+                    && defenseLeadsBy > 0 && defenseLeadsBy <= 16
+                    && yardsToEndzone > 25 {
+            // Protecting a late lead: prevent shell — concede the checkdown,
+            // never the bomb.
+            return DefensivePackage(coverage: .prevent, blitz: .noBlitz, front: .dime)
+        } else if down == 3 && distance >= 7 {
+            // 3rd & long: quarters coverage out of a dime personnel — take away
+            // the sticks, rush four. P0-1: this was a cover4 + DB-BLITZ look, but
+            // on the pass-heaviest down the blitz tripped the engine's LB-blitz
+            // phantom-rush term and over-produced sacks league-wide. Dropping the
+            // blitz (rush four, quarters behind it) removes the phantom and its
+            // −pressure trims the sack rate back into band, while the tighter
+            // quarters shell keeps 3rd-&-long conversions suppressed.
+            return DefensivePackage(coverage: .cover4, blitz: .noBlitz, front: .dime)
+        } else if distance <= 2 {
+            // Short yardage: crowd the box with the bear front.
+            return DefensivePackage(coverage: .cover1, blitz: .noBlitz, front: .bear)
+        }
+        return nil
     }
 
     // MARK: - Down & Distance Management

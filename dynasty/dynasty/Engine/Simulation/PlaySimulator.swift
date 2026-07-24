@@ -116,7 +116,8 @@ enum PlaySimulator {
                 timeRemaining: timeRemaining,
                 offensiveScheme: offensiveScheme,
                 gamePlan: gamePlan,
-                weather: weather
+                weather: weather,
+                scoreDifferential: scoreDifferential
             )
         }
 
@@ -279,6 +280,11 @@ enum PlaySimulator {
     /// - Parameter weather: Optional game weather. Snow shifts the play mix
     ///   toward the run (pass probability -0.08); other conditions and `nil`
     ///   leave the call untouched.
+    // P0-2 game-management levers. A lead of >= `LeadPts` late shifts the run/pass
+    // mix by `BiasSlope` per point beyond the threshold, capped at `BiasCap`.
+    private static let gameMgmtLeadPts  = 7      // one-score-plus trigger
+    private static let gameMgmtBiasSlope = 0.030 // pass-bias shift per point past the trigger
+    private static let gameMgmtBiasCap   = 0.40  // max run-lean (leader) / pass-lean (trailer)
     static func decidePlayCall(
         down: Int,
         distance: Int,
@@ -287,10 +293,38 @@ enum PlaySimulator {
         timeRemaining: Int,
         offensiveScheme: OffensiveScheme? = nil,
         gamePlan: GamePlan? = nil,
-        weather: GameWeather? = nil
+        weather: GameWeather? = nil,
+        // P0-2: offense-relative score margin (+ = offense leading). 0 → every
+        // score-aware term below is inert, so quick sim / early-game / competitive
+        // snaps are byte-identical to today.
+        scoreDifferential: Int = 0
     ) -> PlayType {
         let yardsToEndzone = 100 - yardLine
+        // P0-2 GAME MANAGEMENT (garbage time / comeback). The single biggest driver
+        // of the runaway margin is that play-calling is score-BLIND: a team up 40
+        // keeps its two-minute drill and 55% pass rate, trading fast incompletion-
+        // stopped possessions instead of bleeding the clock, so the blowout
+        // compounds linearly to the whistle. Real coaches manage the score:
+        //   • protecting a multi-score lead late → run-heavy (clock drains, ~30-40s
+        //     vs an incompletion's ~6s → FEWER possessions → the margin stops
+        //     growing and possession-inflation is removed);
+        //   • trailing late → pass-heavy + hurry (the comeback attempt, which adds
+        //     upset variance).
+        // Gated on `lateGame` AND a multi-score gap, so a close or early game — and
+        // every equal-talent matchup — never triggers it (parity preserved).
+        let lateGame = quarter >= 3   // whole second half
+        let mgmtPassBias: Double = {
+            guard lateGame else { return 0 }
+            let d = Double(scoreDifferential)
+            let trig = Double(gameMgmtLeadPts)
+            if d >= trig { return -min(gameMgmtBiasCap, gameMgmtBiasSlope * (d - trig + 1)) }
+            if d <= -trig { return  min(gameMgmtBiasCap, gameMgmtBiasSlope * (-d - trig + 1)) }
+            return 0
+        }()
+        // A comfortable late lead suppresses the hurry-up: bleed the clock, don't
+        // trade snaps. The drill still fires for a tied/trailing/one-score offense.
         let isTwoMinuteDrill = quarter == 4 && timeRemaining <= 120
+            && scoreDifferential < gameMgmtLeadPts
         let fieldGoalRange = yardsToEndzone <= 45
 
         // Scheme pass bias: shifts pass probability up (pass-heavy) or down (run-heavy)
@@ -316,10 +350,18 @@ enum PlaySimulator {
         // Weather run bias: in snow both AI coordinators lean on the ground
         // game — the pass probability drops by 0.08 across every situation.
         let weatherPassBias: Double = weather == .snow ? -0.08 : 0.0
-        let schemePassBias = schemeOnlyPassBias + planPassBias + weatherPassBias
+        let schemePassBias = schemeOnlyPassBias + planPassBias + weatherPassBias + mgmtPassBias
 
         // 4th down decisions
         if down == 4 {
+            // P0-2: a team protecting a multi-score lead late never gambles on 4th
+            // down — take the FG in range, otherwise punt and make them drive the
+            // length of the field. (Goal-line 4th-and-1 for the lead still resolves
+            // below; this only removes the low-percentage gambles that pad blowouts.)
+            if lateGame && scoreDifferential >= gameMgmtLeadPts {
+                if fieldGoalRange { return .fieldGoal }
+                return .punt
+            }
             // Very conservative plans (< 0.35) kick/punt even on 4th & short —
             // except in a late-game desperation drive, where punting the ball
             // away would be indefensible.
@@ -357,10 +399,16 @@ enum PlaySimulator {
             return coinFlip(clamp(0.85 + schemePassBias * 0.3, min: 0.70, max: 0.95)) ? .pass : .run
         }
 
-        // Normal play calling by down and distance, with scheme bias applied
+        // Normal play calling by down and distance, with scheme bias applied.
+        // P0-1 (secondary): early-down pass weights were ~6pp above the NFL
+        // (1st-down 0.55, 3rd-&-short 0.50) which — once the defensive coverage
+        // tax was restored — left too many drop-backs, over-producing sacks
+        // (absolute count) and holding rushing below the band. Trimmed to NFL-
+        // sane (1st-down 0.50, 3rd-&-short 0.42). Named play-calls / the per-play
+        // FIXED-BASELINE bands force their play type and never reach this switch.
         switch down {
         case 1:
-            return coinFlip(clamp(0.55 + schemePassBias, min: 0.25, max: 0.80)) ? .pass : .run
+            return coinFlip(clamp(0.50 + schemePassBias, min: 0.25, max: 0.80)) ? .pass : .run
         case 2:
             if distance >= 7 {
                 return coinFlip(clamp(0.65 + schemePassBias, min: 0.35, max: 0.85)) ? .pass : .run
@@ -369,7 +417,7 @@ enum PlaySimulator {
             }
         case 3:
             if distance <= 3 {
-                return coinFlip(clamp(0.50 + schemePassBias, min: 0.25, max: 0.75)) ? .pass : .run
+                return coinFlip(clamp(0.42 + schemePassBias, min: 0.25, max: 0.75)) ? .pass : .run
             } else if distance >= 7 {
                 return coinFlip(clamp(0.80 + schemePassBias * 0.5, min: 0.60, max: 0.95)) ? .pass : .run
             } else {
@@ -409,6 +457,17 @@ enum PlaySimulator {
         let qb = findQB(in: offensePlayers)
         let qbAttrs = qbAttributes(for: qb)
         let momentumBoost = momentum * 0.05
+        // P0-2: team-breadth diminishing-returns scale, computed once and applied to
+        // EVERY talent-differential channel below (sack, QB completion, matchup/deep
+        // edges, INT). 1.0 at parity / single-unit mismatch; shrinks on a whole-team
+        // mismatch. Scaling one channel is not enough — the talent signal is spread
+        // across all of them, so the compression must be comprehensive to bite.
+        // Garbage-time damp folds in here: a team already up multi-scores late coasts
+        // (backups, vanilla calls, prevent looks the other way), so LESS of its talent
+        // edge is deployed — capping the tail through the same plumbing.
+        var edgeScale = edgeCompressionScale(offense: offensePlayers, defense: defensePlayers)
+        edgeScale *= garbageEdgeFactor(scoreDifferential: scoreDifferential, quarter: quarter,
+                                       timeRemaining: timeRemaining)
 
         // Scheme fit modifiers: offensive scheme boosts/penalizes yards, defensive scheme reduces them
         let offSchemeFit = schemeFitModifier(
@@ -469,7 +528,8 @@ enum PlaySimulator {
             extractor: { lbBlitzRating(for: $0) }
         ) * 0.3 * (isBlitzing ? 1.0 : 0.0)
 
-        let protectionRating = (olPassBlock + momentumBoost * 100) - (dlPassRush + lbBlitz)
+        // P0-2: compress the OL−DL talent net (momentum / blitz stay full-weight).
+        let protectionRating = (olPassBlock - dlPassRush) * edgeScale + momentumBoost * 100 - lbBlitz
         // B3b: re-base the sack curve. base 0.20→0.07 (equal-talent no-blitz ≈7%),
         // floor 0.05→0.02 (a clean pocket can be near-sackless). Ceiling unchanged.
         var sackChance = max(0.02, min(0.35, 0.07 - protectionRating / 500.0))
@@ -609,7 +669,7 @@ enum PlaySimulator {
         // air-yards ride, and the keyed-punish scaler below. Computed once;
         // only READ on the .deep branch, so short/mid are byte-untouched.
         let deepEdge = deepCompositeEdge(qb: qb, target: target, defensePlayers: defensePlayers,
-                                         coverMan: coverMan, manWeight: coverManWeight)
+                                         coverMan: coverMan, manWeight: coverManWeight) * edgeScale
         var targetYards = passYardsForDistance(passDistance)
         if passDistance == .deep {
             // Composite air ride: an elite duo pushes the bomb deeper (bigger
@@ -692,7 +752,7 @@ enum PlaySimulator {
         // an LB-covered TE/RB opens up (LB coverage ≪ CB coverage).
         let coverBlend = dbCoverage * (1.0 - coverManWeight) + coverMan.coverage * coverManWeight
         var matchupEdge = opennessAttr - coverBlend
-        matchupEdge = clamp(matchupEdge, min: -matchupEdgeCapRaw, max: matchupEdgeCapRaw)
+        matchupEdge = clamp(matchupEdge, min: -matchupEdgeCapRaw, max: matchupEdgeCapRaw) * edgeScale
 
         // A1b (Balance R3): a small bounded matchup air ride for short/mid — an
         // elite duo pushes the catch a hair deeper than YAC alone, a mismatch
@@ -739,8 +799,8 @@ enum PlaySimulator {
         case .short, .mid:
             let base70 = passDistance == .short ? shortBaseCompletion : midBaseCompletion
             let qbBase = base70
-                + (accuracyRating - 70.0) * qbAccCompSlope
-                + (completionReadingAttr(for: qb) - 70.0) * qbReadCompSlope
+                + (accuracyRating - 70.0) * qbAccCompSlope * edgeScale
+                + (completionReadingAttr(for: qb) - 70.0) * qbReadCompSlope * edgeScale
             completionChance = qbBase + matchupEdgeCompletion(matchupEdge) + momentumBoost + mentalPassDelta
         case .deep:
             completionChance = clamp(deepBaseCompletion + deepEdgeCompletion(deepEdge) + momentumBoost + mentalDeepDelta,
@@ -938,7 +998,8 @@ enum PlaySimulator {
             dbBallSkills: dbBallSkillsBlended,
             passDistance: passDistance,
             decisionMaking: qb.mental.decisionMaking,
-            pressure: sackChance
+            pressure: sackChance,
+            edgeScale: edgeScale
         )
 
         if randomChance(intChance) {
@@ -1089,7 +1150,7 @@ enum PlaySimulator {
             if gotOpen { return makeCatch(contested: false) }
         } else if gotOpen {
             // Open, on-target ball — the hands decide.
-            if randomChance(dropChance(for: target)) {
+            if randomChance(dropChance(for: target, edgeScale: edgeScale)) {
                 var play = PlayResult(
                     playNumber: playNumber,
                     quarter: quarter,
@@ -1119,7 +1180,7 @@ enum PlaySimulator {
                 defensePlayers.filter { isDB($0) },
                 extractor: { dbBallSkillsRating(for: $0) }
             )
-            if randomChance(contestedCatchChance(target: target, dbBallSkills: dbBallSkills)) {
+            if randomChance(contestedCatchChance(target: target, dbBallSkills: dbBallSkills, edgeScale: edgeScale)) {
                 return makeCatch(contested: true)
             }
         }
@@ -1234,6 +1295,11 @@ enum PlaySimulator {
         let rb = findRB(in: offensePlayers)
         let rbAttrs = rbAttributes(for: rb)
         let momentumBoost = momentum * 0.05
+        // P0-2: team-breadth diminishing-returns scale + garbage-time damp (see
+        // simulatePassPlay).
+        var edgeScale = edgeCompressionScale(offense: offensePlayers, defense: defensePlayers)
+        edgeScale *= garbageEdgeFactor(scoreDifferential: scoreDifferential, quarter: quarter,
+                                       timeRemaining: timeRemaining)
         // Fatigue-adjusted carrier speed — used by the edge-crease term (below)
         // and the breakaway foot race (further down); computed once.
         let rbSpeed = effectiveSpeed(rb)
@@ -1305,6 +1371,9 @@ enum PlaySimulator {
         if let hint = hint {
             blockingAdvantage += hint.runGapBonus
         }
+        // P0-2: team-breadth diminishing-returns on the run yard lever (breakaway /
+        // edge gates keep the raw crease, so single-unit OL signatures survive).
+        blockingAdvantage *= edgeScale
 
         // --- Base Yards ---
         // B1c (harness-dialed): the design's start point 0.5…5.5 (mean 3.0)
@@ -1361,7 +1430,10 @@ enum PlaySimulator {
                                  min: edgeCreaseMin, max: edgeCreaseMax)
             return edgeBaseYards * edgeFactor * edgeSpeed * edgeGate
         }()
-        var totalYards = Int((baseYards + visionBonus + elusivenessBonus + carrierBurst + blockingAdvantage * runBlockYardGain + edgeContribution + momentumBoost * 2.0 + adjustmentYards + mentalRunBonus).rounded())
+        // P0-2: the 0-centered carrier bonuses (vision / elusiveness / burst) are
+        // talent deviations too, so they ride the same team-breadth compression.
+        let carrierTalent = (visionBonus + elusivenessBonus + carrierBurst) * edgeScale
+        var totalYards = Int((baseYards + carrierTalent + blockingAdvantage * runBlockYardGain + edgeContribution + momentumBoost * 2.0 + adjustmentYards + mentalRunBonus).rounded())
 
         // Apply scheme fit modifiers: offense fit boosts yards, defense fit reduces them
         let schemeYardAdjustment = Double(totalYards) * (offSchemeFit - defSchemeFit)
@@ -1418,7 +1490,7 @@ enum PlaySimulator {
         // (parity, no new RNG draw) and a raw offense gets stuffed a little more.
         let famRunBust = familiarityBustChance(carrier: rb, squad: offensePlayers,
                                                scheme: offensiveScheme?.rawValue)
-        let stuffChance = clamp(0.15 + (dlBlockShed - olRunBlock) / 300.0
+        let stuffChance = clamp(0.15 + (dlBlockShed - olRunBlock) / 300.0 * edgeScale
                                 + AdaptiveOpponentAI.runKeyStuffBonus(runKeyIntensity)
                                 + runStuffDelta
                                 + famRunBust,
@@ -1444,7 +1516,10 @@ enum PlaySimulator {
         if debugNeutralCarrierVision { visionActive = false }
         #endif
         let carrierSight = Double(rbAttrs.vision) * 0.6 + Double(rb.mental.awareness) * 0.4
-        var breakawayChance = max(0.0, (rbSpeed - avgDBSpeed) / 200.0 + 0.03)
+        // P0-2: the carrier-vs-secondary speed differential is 0-centered, so it
+        // rides `edgeScale`; the 0.03 league base and the crease/vision GATES below
+        // stay raw (a single burner on an even roster ⇒ team gap ≈ 0 ⇒ scale ≈ 1).
+        var breakawayChance = max(0.0, (rbSpeed - avgDBSpeed) / 200.0 * edgeScale + 0.03)
         if visionActive {
             breakawayChance *= clamp(1.0 + (carrierSight - 70.0) * carrierVisionSlope,
                                      min: 0.6, max: 1.4)
@@ -1488,7 +1563,8 @@ enum PlaySimulator {
         var fumbleChance: Double
         if securityActive {
             let security = Double(rbAttrs.breakTackle) * 0.5 + Double(rb.mental.awareness) * 0.5
-            fumbleChance = clamp(0.005 - (security - 70.0) * ballSecuritySlope,
+            // P0-2: the ball-security deviation from the 70 mean is 0-centered → rides `edgeScale`.
+            fumbleChance = clamp(0.005 - (security - 70.0) * ballSecuritySlope * edgeScale,
                                  min: 0.002, max: 0.008)
         } else {
             fumbleChance = max(0.005, 0.01 - Double(rbAttrs.breakTackle) / 10000.0)
@@ -2277,22 +2353,29 @@ enum PlaySimulator {
         // If close to the endzone, favor shorter passes
         if yardsToEndzone <= 10 { return .short }
 
+        // P0-1 (secondary): pull the realized deep-shot share from ~24% down to
+        // ~12% (NFL is ~10-12%). The old mix fired a bomb on nearly a quarter of
+        // generic drop-backs — with the newly-restored coverage tax that both
+        // dragged pooled completion below the band (deep balls miss more) and
+        // over-inflated pass yards / sack exposure (deep drops hold longer).
+        // Named play-calls (the FIXED-BASELINE `depth` band) bypass this helper,
+        // so those anchors are untouched; only the generic AI drop-back shifts.
         if distance <= 5 {
             // Short yardage: favor short/mid
             let roll = Double.random(in: 0...1)
-            if roll < 0.55 { return .short }
-            if roll < 0.85 { return .mid }
+            if roll < 0.68 { return .short }
+            if roll < 0.92 { return .mid }
             return .deep
         } else if distance <= 10 {
             let roll = Double.random(in: 0...1)
-            if roll < 0.35 { return .short }
-            if roll < 0.75 { return .mid }
+            if roll < 0.52 { return .short }
+            if roll < 0.88 { return .mid }
             return .deep
         } else {
             // Long distance: favor mid/deep
             let roll = Double.random(in: 0...1)
-            if roll < 0.15 { return .short }
-            if roll < 0.55 { return .mid }
+            if roll < 0.30 { return .short }
+            if roll < 0.74 { return .mid }
             return .deep
         }
     }
@@ -2493,6 +2576,66 @@ enum PlaySimulator {
     private static let matchupEdgeCapRaw   = 30.0    // raw edge clamp (±) before slope
     private static let shortMidAirSlope    = 0.06    // bounded short/mid matchup air ride
 
+    // ---- P0-2 COMPRESSION: team-breadth talent-curve flattening on composite edges ----
+    // WHY team-breadth, not per-play magnitude: a shutdown CB and a uniform 2-tier
+    // roster produce a SIMILAR per-snap edge, so a knee on the per-play edge cannot
+    // tell them apart — it would flatten the shutdown corner while barely denting
+    // the blowout. The determinism is a BREADTH phenomenon: every unit is mismatched
+    // at once and the small per-snap edges compound across ~130 plays. So the scale
+    // keys on the TEAM-AGGREGATE talent gap (mean offense overall − mean defense
+    // overall) and multiplies EVERY 0-centered talent channel (sack, completion,
+    // matchup, deep, INT, drops, contested, run block, carrier, stuff, breakaway,
+    // fumble — comprehensive, because the talent signal is spread across all of them).
+    //
+    // SHAPE — a monotone-DECREASING ramp, NOT a saturating soft-knee. Measured surface
+    // (constant-edgeScale sweep, N=800/cell, joint with P0-1's de-inflated base):
+    //   • the whole tier ladder lands on target at a floor scale ≈ 0.085 (1-tier
+    //     69-75% / +6-7, 2-tier 86-89% / +11-13, 3-tier 93% / +15 — never 100%);
+    //   • BUT single-unit signatures live at small team gaps — a shutdown-CB pair
+    //     moves the team mean only ≈3 pts, an elite OL (5 of 12) ≈7 — so the scale
+    //     must stay ≈1 there. A soft-knee is structurally unable to do both: it is
+    //     monotone-INCREASING, so it cannot give scale≈0.9 at gap 3 AND ≈0.08 at
+    //     gap 9. A smoothstep ramp (1.0 below `teamEdgeFull`, floor above
+    //     `teamEdgeCrush`) can: parity + shutdown-CB + every per-play tier-matrix
+    //     cell (only 1-2 units elevated ⇒ gap ≤ ~4) sit in the flat 1.0 zone and
+    //     are byte-untouched; a whole-roster mismatch sits at the floor and is
+    //     crushed. (The elite-OL fullgame at gap ≈7 straddles the ramp and is
+    //     partially damped — an inherent limit of keying on the team aggregate.)
+    // The scale is a positive multiplier, so it preserves the SIGN and RANK of every
+    // edge ⇒ per-play monotonicity and tier ORDERING survive; only the magnitude bends.
+    private static let teamEdgeFull  = 3.5     // |team gap| at/below which scale = 1.0 (single-unit + matrix-cell safe zone)
+    private static let teamEdgeCrush = 9.0     // |team gap| at/above which scale = floor (uniform-tier zone)
+    private static let teamEdgeFloor = 0.085   // residual edge deployed on a full-team mismatch
+    /// Talent-curve compression scale (∈ [floor, 1]) on the per-play composite edges,
+    /// from the team-aggregate offense−defense overall gap. 1.0 at parity / single-unit
+    /// (small gap); ramps down to `teamEdgeFloor` as the whole roster out-classes the
+    /// opponent. Symmetric in the sign of the gap (weak-offense penalties compress too).
+    static func edgeCompressionScale(offense: [SimPlayer], defense: [SimPlayer]) -> Double {
+        let a = abs(averageAttribute(offense, extractor: { Double($0.overall) })
+                  - averageAttribute(defense, extractor: { Double($0.overall) }))
+        if a <= teamEdgeFull  { return 1.0 }
+        if a >= teamEdgeCrush { return teamEdgeFloor }
+        let t = (a - teamEdgeFull) / (teamEdgeCrush - teamEdgeFull)
+        let s = t * t * (3.0 - 2.0 * t)                  // smoothstep (C¹, monotone)
+        return 1.0 - (1.0 - teamEdgeFloor) * s
+    }
+
+    // Garbage-time edge damp: a team protecting a multi-score lead late deploys less
+    // of its talent edge (backups in, vanilla play-calls, sit-on-the-lead) → its
+    // scoring efficiency regresses toward neutral, capping the runaway margin from
+    // the top. Keyed on the OFFENSE-relative score margin + clock: 1.0 (inert) until
+    // late AND leading by `gtLeadPts`, then multiplies the edge scale down toward
+    // `gtEdgeFloor`. Trailing / close / early ⇒ 1.0, so competitive games and equal
+    // talent are byte-identical.
+    private static let gtLeadPts   = 10     // multi-score lead that triggers coasting
+    private static let gtEdgeDamp  = 0.055  // edge-scale reduction per point past the trigger
+    private static let gtEdgeFloor = 0.35   // never fully erase the edge (still a pro offense)
+    private static func garbageEdgeFactor(scoreDifferential: Int, quarter: Int, timeRemaining: Int) -> Double {
+        let late = quarter >= 4 || (quarter == 3 && timeRemaining <= 420)  // Q4 or last 7 min of Q3
+        guard late, scoreDifferential >= gtLeadPts else { return 1.0 }
+        return max(gtEdgeFloor, 1.0 - gtEdgeDamp * Double(scoreDifferential - gtLeadPts + 1))
+    }
+
     /// Asymmetric matchup-edge → completion shift (mirrors `deepEdgeCompletion`).
     private static func matchupEdgeCompletion(_ edge: Double) -> Double {
         edge >= 0 ? edge * coverEdgeSlopeUp : edge * coverEdgeSlopeDown
@@ -2561,7 +2704,14 @@ enum PlaySimulator {
         dbBallSkills: Double,
         passDistance: PassDistance,
         decisionMaking: Int,
-        pressure: Double
+        pressure: Double,
+        // P0-2: team-breadth compression (1.0 at parity / single-unit). The INT
+        // talent net is a 0-centered differential channel just like completion /
+        // matchup, so it rides the same scale — a whole-roster mismatch no longer
+        // forces the drive-killing +2.8%/throw pick storm that collapsed the weak
+        // offense's scoring. At parity edgeScale=1.0 ⇒ the INT band is byte-identical;
+        // a lone ball-hawk CB keeps team gap ≈ 0 ⇒ scale ≈ 1 ⇒ its picks survive.
+        edgeScale: Double = 1.0
     ) -> Double {
         let baseRate: Double
         switch passDistance {
@@ -2579,7 +2729,9 @@ enum PlaySimulator {
         // the clamp ceiling slightly so a reckless QB flushed from the pocket
         // can actually reach the higher risk; centered at 70 → mean-neutral.
         let riskMod = decisionRiskBonus(decisionMaking: decisionMaking, pressure: pressure)
-        return clamp(baseRate + accuracyMod + dbMod + riskMod, min: 0.005, max: 0.10)
+        // P0-2: compress the whole 0-centered talent net; baseRate (the league
+        // floor) is untouched, so equal talent still blends ~2.3%.
+        return clamp(baseRate + (accuracyMod + dbMod + riskMod) * edgeScale, min: 0.005, max: 0.10)
     }
 
     private static func yardsAfterCatch(for player: SimPlayer, momentum: Double) -> Int {
@@ -3113,15 +3265,18 @@ enum PlaySimulator {
     }
 
     /// Drop probability on an open, catchable ball (mech 5).
-    private static func dropChance(for target: SimPlayer) -> Double {
+    /// P0-2: the hands deviation from the 70 mean is a 0-centered talent channel,
+    /// so it rides the team-breadth `edgeScale` (1.0 at parity / single-unit).
+    private static func dropChance(for target: SimPlayer, edgeScale: Double = 1.0) -> Double {
         let hands = receiverHandsRating(for: target)
-        return clamp(dropBase - (hands - 70.0) * dropHandsSlope, min: dropMin, max: dropMax)
+        return clamp(dropBase - (hands - 70.0) * dropHandsSlope * edgeScale, min: dropMin, max: dropMax)
     }
 
     /// Contested-catch probability in tight coverage (mech 5).
-    private static func contestedCatchChance(target: SimPlayer, dbBallSkills: Double) -> Double {
+    /// P0-2: the receiver-vs-DB contested edge is 0-centered, so it rides `edgeScale`.
+    private static func contestedCatchChance(target: SimPlayer, dbBallSkills: Double, edgeScale: Double = 1.0) -> Double {
         let edge = receiverContestedRating(for: target) - dbBallSkills
-        return clamp(contestedBase + edge / contestedDivisor, min: contestedMin, max: contestedMax)
+        return clamp(contestedBase + edge * edgeScale / contestedDivisor, min: contestedMin, max: contestedMax)
     }
 
     // MARK: - Player IQ Helpers (R37)

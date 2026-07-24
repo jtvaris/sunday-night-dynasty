@@ -1,5 +1,11 @@
 # Dynasty - TODO
 
+## 📊 BALANSSI v2 — P0-FIXIT + UUSINTA-ANALYYSI VALMIS (2026-07-24 ilta; raportti-v2 docs/BALANCE_REPORT_2026-07.md)
+
+- **Kaikki 3 round-5-löydöstä KORJATTU ja riippumattomasti re-verifioitu:** pisteet 33→19.9 (kaista 17-27), pass yds 341→235, net-YPA 8.62→6.16, 3rd-down 52.8→43.6%, **eliitti-vs-heikko 100%/+96 → 93.9%/+15.7 (max-pisteet 139→58)**, good-vs-avg 98.6→71.7%, fam-cliff 93→77.6%. Kaksitasoladder 82.9/88.7 (kaista 82-90). Synteesi adjudikoi 2 sweep-lukua uudelleenajoilla (Sweep C:n good-good oli transkriptioduplikaatti — korjattu monotoniseksi).
+- **🟠 UUSI M-REGRESSIO (ainoa HEALTHY-blokkeri): weak-weak-pelit alle kaistan kaikilla akseleilla** (14.0 pistettä, comp 51.5%, ypc 3.29, nYPA 5.28) — P0-1:n de-inflaatio oli ~tasainen −13 pistettä ja murskasi heikon tierin. **Taper-workflow ajossa:** de-inflaation portaistus heikkoa kaistaa kohti (nostaa matalan talentin lattian, tasoittaa samalla equal-tier-slopen → myös elite-elite-hot ja avg-lattiareunat korjautuvat).
+- **Taperiin sisällytetty myös (S):** avg comp 59.5 (−0.5 alle), ypc 3.87 lattialla; avg-vs-weak +3 kuuma (78.1%); **run-heavy-adaptaatiorangaistuksen re-check** (v2 listasi "neutralized" sivuvaikutuksena — käyttäjän ydinvaatimus, varmistettava ettei P0-1:n mix-muutos syönyt sitä); heat +0.7pt EV-lean (pitäisi olla ~0). RB>WR-inversio leveni (+19.4) — design-keskusteluun, ei bugi.
+
 ## 🎯 KIERROS 3 VALMIS (7/7, 2× PASS_WITH_NOTES) + KORJAUS-WORKFLOW AJOSSA — 2026-07-24
 
 - **Kierros 3 tulokset:** kaikki syötöt talenttipeliksi — short-grid spread 31.7 comp-pistettä (47.9→79.6), mid 33.5, monotoninen molemmilla akseleilla; **shutdown-CB vs scrub SAMASSA parituksessa: −8.0 pistettä short / −9.4 mid / −5.9 deep** (coverAssignment: WR1↔CB1, slot↔nickel, TE↔paras cover-LB/S, zone/man-blend 0.30-0.90); juoksun crease-malli korjasi audit-löydöksen INVERSION (eliteRB+badOL oli 8.76 > badRB+eliteOL 4.33 — väärinpäin käyttäjän malliin nähden); pelikirjatuntemus siirretty yards-only-±4%:sta completion/outcome-tasolle (bustit myös auto-simiin). Audit dokumentoi 7 talenttiaukkoa + 8 scheme-aukkoa (journal wf_310d0295).
