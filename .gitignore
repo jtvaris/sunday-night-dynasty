@@ -18,3 +18,4 @@ Pods/
 
 # macOS
 .DS_Store
+.claude/worktrees/
