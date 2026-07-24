@@ -1310,6 +1310,8 @@ func scenarioFullGame(_ f: [String: String]) {
     let hp = Double(homeWins) / Double(n) * 100, apw = Double(awayWins) / Double(n) * 100, tp = Double(ties) / Double(n) * 100
     print(String(format: "  WIN SPLIT  home=%.1f%% away=%.1f%% tie=%.1f%%   home margin mean=%+.1f (sd %.1f)  home pts %.1f | away pts %.1f",
         hp, apw, tp, meanD(margins), sdD(margins), home.meanPts, away.meanPts))
+    print(String(format: "  PER-SIDE   HOME off: passYds/g=%.0f netYPA=%.2f comp=%.1f%%  |  AWAY off: passYds/g=%.0f netYPA=%.2f comp=%.1f%%",
+        home.meanPassYds, home.netYPA, home.compPct, away.meanPassYds, away.netYPA, away.compPct))
     print(String(format: "  RUNTIME  %d games in %.2fs = %.1f games/sec", n, elapsed, Double(n) / max(elapsed, 0.0001)))
 }
 

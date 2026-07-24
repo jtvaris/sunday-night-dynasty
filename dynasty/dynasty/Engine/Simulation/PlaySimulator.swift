@@ -915,8 +915,10 @@ enum PlaySimulator {
         }
         let defBustChance = squadBustChance(defensePlayers, scheme: defensiveScheme?.rawValue)
         if defBustChance > 0, randomChance(defBustChance) {
-            // Blown coverage — the receiver is uncovered, so it is a clean grab.
-            return makeCatch(contested: false)
+            // Blown coverage — the receiver is uncovered, so it is a clean grab,
+            // but bounded (round-5 P1): a coverage bust is a chunk gain, not a free
+            // deep TD. `famDefBustYardCap` mirrors the offense bust's 0-yard floor.
+            return makeCatch(contested: false, yardCap: famDefBustYardCap)
         }
 
         // --- Interception Check ---
@@ -991,7 +993,7 @@ enum PlaySimulator {
         // --- Catch phase (R38 mech 5) ---
         // Builds the caught-ball result. A contested grab is a rare win in
         // traffic — caught at the catch point and tackled immediately (no YAC).
-        func makeCatch(contested: Bool) -> PlayResult {
+        func makeCatch(contested: Bool, yardCap: Int? = nil) -> PlayResult {
             var yacBonus = contested ? 0 : yardsAfterCatch(for: target, momentum: momentum)
             // Play-call YAC shading (screens, flats, go routes) — clean catches only.
             if !contested, let hint = hint {
@@ -1004,6 +1006,13 @@ enum PlaySimulator {
             // Apply scheme fit modifiers: offense fit boosts yards, defense fit reduces them
             let schemeYardAdjustment = Double(totalYards) * (offSchemeFit - defSchemeFit)
             totalYards += Int(schemeYardAdjustment.rounded())
+
+            // B2 (round-5 P1): OUTCOME cap for the defensive coverage-bust — the
+            // symmetric bound to the offense bust's fixed 0-yard incompletion. A
+            // blown coverage yields an easy pitch-and-catch chunk, NOT an uncapped
+            // walk-in deep bomb; without this the bust leaked ~500 pass-yds/g to a
+            // low-fam defense. nil (every other catch path) is unbounded as before.
+            if let yardCap { totalYards = Swift.min(totalYards, yardCap) }
 
             // Cap yards at endzone
             let yardsToEndzone = 100 - yardLine
@@ -3473,10 +3482,10 @@ enum PlaySimulator {
     // R41 direct-familiarity tuning. Pivot 70 matches the league-seeded scheme
     // familiarity mean (starters seed 55-85), so an average squad is neutral;
     // below → a small yardage penalty, above → a small bonus. Gain/cap keep the
-    // total swing tangible (~±4% at the extremes) but inside the balance gates.
+    // total swing tangible (~±2.4% at the extremes) but inside the balance gates.
     private static let familiarityNeutralPivot = 70.0
-    private static let familiarityDirectGain = 0.0016
-    private static let familiarityDirectCap = 0.04
+    private static let familiarityDirectGain = 0.0010  // compressed from 0.0016 (round-5 P1) — this yards channel compounds into the fam win-gap
+    private static let familiarityDirectCap = 0.024    // compressed from 0.04 (round-5 P1)
 
     // MARK: - SCHEME-FAMILIARITY LAYER (Balance R3, Part B)
     //
@@ -3493,10 +3502,10 @@ enum PlaySimulator {
     // B1 — completion shift. `famCurve` is 0 at the pivot (70) → parity; a
     // well-drilled squad earns a small execution bonus, a raw one is docked
     // harder (asymmetric down-slope), each side grand-bounded.
-    private static let famUpSlope   = 0.0010   // fam100 → +0.03 comp
-    private static let famDownSlope = 0.0025   // fam66 → -0.01, fam33 → -0.093 (pre-cap)
-    private static let famUpCap     = 0.03
-    private static let famDownCap   = -0.11
+    private static let famUpSlope   = 0.0007   // fam100 → +0.021 comp (UP side kept — fam100 must stay clearly better)
+    private static let famDownSlope = 0.00045  // fam66 → -0.0018, fam33 → -0.0167 (pre-cap) — compressed from 0.0025; the DOWN side was the over-punishing cliff (round-5 P1)
+    private static let famUpCap     = 0.021
+    private static let famDownCap   = -0.02    // compressed from -0.11 so a low-fam squad is docked, not gutted (round-5 P1)
     // Optional coach blend (design B1): effectiveSquadFam = player*0.7 + coach*0.3.
     // `coachExpertise` nil = player-only (the shipping default; the coordinator's
     // own completion channel stays the separate mech-6 lane, no double-count).
@@ -3508,10 +3517,16 @@ enum PlaySimulator {
     // play. Weighted to the ball-carrier's OWN familiarity (the guy running the
     // route / carrying the ball busts it — fixes team-mean dilution).
     private static let famBustPivot       = 55.0
-    private static let famBustSlope       = 0.0027  // fam33 → ~5.9% (in the 5-8% band), fam20 → ~9.5%
-    private static let famBustCap         = 0.10
+    private static let famBustSlope       = 0.0013  // fam33 → ~2.9%, fam20 → ~4.6% — compressed from 0.0027 (round-5 P1)
+    private static let famBustCap         = 0.05     // symmetric hard cap on BOTH bust sides, halved from 0.10 (round-5 P1)
     private static let famBustOwnWeight   = 0.6
     private static let famBustSquadWeight = 0.4
+    // Yardage bound on the DEFENSE coverage-bust catch — the symmetric analog of
+    // the OFFENSE bust's fixed 0-yard incompletion. A blown coverage is an easy
+    // chunk (a first-down-ish pitch-and-catch), never an uncapped deep bomb; this
+    // is the "cap the defensive bust term" fix (round-5 P1). Deep busts were the
+    // ~500-pass-yd leak; short/mid busts already land under it (no-op there).
+    private static let famDefBustYardCap  = 18
 
     /// B1: familiarity → completion shift. 0 at the neutral pivot (70) → parity;
     /// asymmetric (a raw squad is docked harder than a drilled one is rewarded),
