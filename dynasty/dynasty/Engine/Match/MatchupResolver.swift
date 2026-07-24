@@ -321,12 +321,28 @@ enum MatchupResolver {
 
         // FIX-2: the rush forced the ball out. Collapse the pocket and name the
         // closing rusher — the sim's man when he's a rush-eligible role (0–3 DL
-        // or 4–6 blitzing LB) on the field, else a rating-weighted DL side (a
-        // blitzing LB caves the pocket from a DL gap, exactly like resolveSack).
+        // or 4–6 blitzing LB) on the field, else a rating-weighted DL side.
         // Role space only; the choreographer applies the mirror later.
         if play.pressured == true {
             m.pocketCollapse = 0.85
             m.separation = 0.7
+            // A blitzing LB the sim credited (keyDefensePlayerID → role 4–6, since
+            // passRushPool includes the starting backers) keeps HIS name on the
+            // callout, HIS role on the Event, and HIS role as the choreographed
+            // rusher — all three agree with the sim's play text. Mirrors
+            // resolveSack's LB branch; `pressuredIncompletionSteps` bursts
+            // `rushWinnerDefRole` at the QB (c.dl(4…6) resolves to the LB node),
+            // so the man named is the man the field shows getting home.
+            if let role = m.pickDefRole, (4...6).contains(role) {
+                m.rushWinnerDefRole = role
+                let rusher = defense[role]
+                m.events.append(Event(
+                    kind: .pressure,
+                    text: "\(rusher.shortName) times the blitz and forces the throw",
+                    offenseWon: false, offRole: nil, defRole: role, magnitude: 0.85
+                ))
+                return
+            }
             if let role = m.pickDefRole, (0...3).contains(role) {
                 m.rushWinnerDefRole = role
             } else {

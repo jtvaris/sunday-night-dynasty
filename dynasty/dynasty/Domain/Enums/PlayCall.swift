@@ -270,6 +270,13 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
         /// True for run-fake passes: the sim rolls whether the box bites on
         /// the fake (awareness-driven, R37) and shades the completion odds.
         var isPlayAction: Bool = false
+        /// Balance R3 fix — perimeter weight (0 = interior). Stretch/toss/jet
+        /// runs win on the EDGE, where the back's speed matters once the OL
+        /// seals the crease. `PlaySimulator` adds an edge-crease yard term
+        /// scaled by this factor, gated on the blocking crease (so a burner
+        /// still needs a lane). 0 for every interior run → inside runs and the
+        /// RB×OL ordering cells stay byte-identical.
+        var edgeFactor: Double = 0
 
         static let neutral = SimulatorHint(
             passDepth: nil,
@@ -291,13 +298,14 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
         case .insideRun:
             return SimulatorHint(passDepth: nil, runGapBonus: 0.15, blitzPickupBonus: 0, yacMultiplier: 1.0)
         case .outsideRun:
-            return SimulatorHint(passDepth: nil, runGapBonus: -0.05, blitzPickupBonus: 0, yacMultiplier: 1.3)
+            // Stretch to the edge: perimeter yards gated on sealing the edge.
+            return SimulatorHint(passDepth: nil, runGapBonus: -0.05, blitzPickupBonus: 0, yacMultiplier: 1.3, edgeFactor: 0.85)
         case .counter:
             // Misdirection: interior gap credit once the pursuit over-flows
             return SimulatorHint(passDepth: nil, runGapBonus: 0.1, blitzPickupBonus: 0, yacMultiplier: 1.15)
         case .toss:
             // Edge speed: boom-or-bust to the perimeter
-            return SimulatorHint(passDepth: nil, runGapBonus: -0.1, blitzPickupBonus: 0, yacMultiplier: 1.45)
+            return SimulatorHint(passDepth: nil, runGapBonus: -0.1, blitzPickupBonus: 0, yacMultiplier: 1.45, edgeFactor: 1.05)
         case .draw:
             // Draw holds the pass rush briefly; slightly better vs. blitz
             return SimulatorHint(passDepth: nil, runGapBonus: 0.05, blitzPickupBonus: 0.1, yacMultiplier: 1.1)
@@ -308,7 +316,7 @@ enum OffensivePlayCall: String, Codable, CaseIterable {
             return SimulatorHint(passDepth: nil, runGapBonus: 0.28, blitzPickupBonus: 0, yacMultiplier: 0.7)
         case .jetSweep:
             // Full-speed handoff at the edge: boom-or-bust with big YAC.
-            return SimulatorHint(passDepth: nil, runGapBonus: -0.15, blitzPickupBonus: 0.05, yacMultiplier: 1.6)
+            return SimulatorHint(passDepth: nil, runGapBonus: -0.15, blitzPickupBonus: 0.05, yacMultiplier: 1.6, edgeFactor: 1.20)
 
         // --- Short pass ---
         case .slant:

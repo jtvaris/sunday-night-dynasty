@@ -1,5 +1,10 @@
 # Dynasty - TODO
 
+## 🎯 KIERROS 3 VALMIS (7/7, 2× PASS_WITH_NOTES) + KORJAUS-WORKFLOW AJOSSA — 2026-07-24
+
+- **Kierros 3 tulokset:** kaikki syötöt talenttipeliksi — short-grid spread 31.7 comp-pistettä (47.9→79.6), mid 33.5, monotoninen molemmilla akseleilla; **shutdown-CB vs scrub SAMASSA parituksessa: −8.0 pistettä short / −9.4 mid / −5.9 deep** (coverAssignment: WR1↔CB1, slot↔nickel, TE↔paras cover-LB/S, zone/man-blend 0.30-0.90); juoksun crease-malli korjasi audit-löydöksen INVERSION (eliteRB+badOL oli 8.76 > badRB+eliteOL 4.33 — väärinpäin käyttäjän malliin nähden); pelikirjatuntemus siirretty yards-only-±4%:sta completion/outcome-tasolle (bustit myös auto-simiin). Audit dokumentoi 7 talenttiaukkoa + 8 scheme-aukkoa (journal wf_310d0295).
+- **Fix-workflow ajossa (3 löydöstä):** (1) LB-blitz-paineen krediitti (presentaatio nimeää DL:n vaikka sim kreditoi LB:n — resolveSack-malli); (2) laitajuoksut pehmeät @70/70 (outside 3.04/toss 2.77/jet 2.45 vs inside 4.11 — edge-crease-termi joka gatettuu blokkaukseen, EI paluuta vapaaseen RB-speed-raceen); (3) **harness repoon** `tools/balance-harness/` sync-skriptillä + mekaanisella extract-generoinnilla — stale-default-ansa (puri kierroksissa 2 JA 3, "VERBATIM"-valekommentilla) mahdoton jatkossa. Sitten: fix-commit+push → kierros 4 automaattisesti.
+
 ## 📊 KIERROS 5 JONOSSA: KATTAVA BALANSSIVALIDOINTI — 2026-07-24 (kun kierros 4 maalissa)
 
 - **Käyttäjän tilaus:** kattava balanssilaskenta eri tasoisilla joukkueilla ja pelaajilla; jokainen pelityyppi ja pelipaikka kerrallaan; myös lopputulokset ja lopulliset statsit.

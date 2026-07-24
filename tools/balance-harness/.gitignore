@@ -1,0 +1,3 @@
+# Generated build tree: synced/regenerated engine sources + compiled binary.
+# Everything here is reproduced by ./sync_sources.sh from the repo — never commit it.
+build/

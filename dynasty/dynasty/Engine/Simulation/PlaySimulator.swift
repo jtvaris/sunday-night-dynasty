@@ -1174,6 +1174,9 @@ enum PlaySimulator {
         let rb = findRB(in: offensePlayers)
         let rbAttrs = rbAttributes(for: rb)
         let momentumBoost = momentum * 0.05
+        // Fatigue-adjusted carrier speed — used by the edge-crease term (below)
+        // and the breakaway foot race (further down); computed once.
+        let rbSpeed = effectiveSpeed(rb)
 
         // Scheme fit modifiers
         let offSchemeFit = schemeFitModifier(
@@ -1263,7 +1266,29 @@ enum PlaySimulator {
             + agilityJukeBonus(for: rb)
         // Halftime adjustment: a run-first commitment adds expected yardage.
         let adjustmentYards = adjustments?.runYardageBonus ?? 0
-        var totalYards = Int((baseYards + visionBonus + elusivenessBonus + carrierBurst + blockingAdvantage * runBlockYardGain + momentumBoost * 2.0 + adjustmentYards).rounded())
+        // A2-run-edge (Balance R3 fix): perimeter runs (stretch/toss/jet) lost
+        // their old RB-speed contribution in the round-3 crease rebalance, which
+        // dropped them well below the league edge-run average. Give it back as an
+        // EDGE-CREASE term — extra perimeter yards that still GATE on the blocking
+        // crease (`creaseQuality`, the same pure-OL lever the breakaway gates on,
+        // 0-centered at neutral OL) with the back's SPEED as a multiplier ON that
+        // crease. A burner turns a SEALED edge into chunk yards, but a burner
+        // behind a BEATEN edge (bad OL → creaseQuality < 0) gets almost nothing —
+        // so raw RB speed can never again swamp the OL (it is a multiplier on the
+        // crease, not a free breakaway race). `edgeFactor` is 0 for every interior
+        // run, so inside runs, the RB×OL ordering cells and the stuff tail are
+        // byte-unchanged; this term folds in BEFORE the stuff roll, so a stuffed
+        // edge run correctly discards it. Added inside the single rounding.
+        let edgeContribution: Double = {
+            let edgeFactor = hint?.edgeFactor ?? 0
+            guard edgeFactor > 0 else { return 0 }
+            let edgeSpeed = clamp(1.0 + (rbSpeed - 70.0) * edgeSpeedSlope,
+                                  min: edgeSpeedMin, max: edgeSpeedMax)
+            let edgeGate = clamp(1.0 + creaseQuality * edgeCreaseSlope,
+                                 min: edgeCreaseMin, max: edgeCreaseMax)
+            return edgeBaseYards * edgeFactor * edgeSpeed * edgeGate
+        }()
+        var totalYards = Int((baseYards + visionBonus + elusivenessBonus + carrierBurst + blockingAdvantage * runBlockYardGain + edgeContribution + momentumBoost * 2.0 + adjustmentYards).rounded())
 
         // Apply scheme fit modifiers: offense fit boosts yards, defense fit reduces them
         let schemeYardAdjustment = Double(totalYards) * (offSchemeFit - defSchemeFit)
@@ -1335,8 +1360,8 @@ enum PlaySimulator {
         // R37: the carrier's VISION finds the crease. Vision + awareness
         // scale the breakaway odds around the 70-rated league mean, so the
         // league-wide rushing average holds while individual backs separate.
-        // Mech 1: fatigue drags effective speed on the breakaway foot race.
-        let rbSpeed = effectiveSpeed(rb)
+        // Mech 1: fatigue drags effective speed on the breakaway foot race
+        // (rbSpeed computed once up top).
         let avgDBSpeed = averageAttribute(
             defensePlayers.filter { isDB($0) },
             extractor: { effectiveSpeed($0) }
@@ -2422,6 +2447,20 @@ enum PlaySimulator {
     private static let creaseYardSlope       = 1.2   // breakaway-magnitude gate steepness
     private static let breakawayYardMin      = 0.20
     private static let breakawayYardMax      = 0.30
+
+    // Edge-crease constants (Balance R3 fix / A2-run-edge). Perimeter runs recover
+    // their RB-speed contribution as extra edge yards = edgeBaseYards · edgeFactor ·
+    // edgeSpeed · edgeGate. edgeSpeed (RB wheels) and edgeGate (OL crease) are both
+    // 1.0 at neutral (70 speed, 0 crease) → the term is a flat edge bonus at neutral
+    // and 0 for interior runs; the gate collapses it behind a beaten edge so speed
+    // never swamps blocking. Dial-authorized.
+    private static let edgeBaseYards         = 1.6   // neutral edge yards at edgeFactor 1.0
+    private static let edgeSpeedSlope        = 0.010 // RB speed → edge multiplier (speed 90 ≈ 1.20×)
+    private static let edgeSpeedMin          = 0.65  // a plodder still gets some edge behind a sealed line
+    private static let edgeSpeedMax          = 1.40  // burner cap (no runaway)
+    private static let edgeCreaseSlope       = 2.5   // OL crease → edge gate steepness
+    private static let edgeCreaseMin         = 0.15  // a beaten edge nearly erases the term (RB speed can't save it)
+    private static let edgeCreaseMax         = 1.50  // an elite seal opens the lane (capped)
 
     private static func qbAccuracyForDistance(_ attrs: QBAttributes, distance: PassDistance) -> Double {
         switch distance {

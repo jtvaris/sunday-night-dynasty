@@ -2356,8 +2356,13 @@ struct PlayChoreographer {
         steps.append(snapStep(c, frame: frame, isPA: isPA))
 
         // Dropback while the credited rusher knifes through a pocket collapsing
-        // from HIS side; the QB reaches his launch point.
-        let dropPaths = framePaths(frame, step: 1)
+        // from HIS side; the QB reaches his launch point. The credited rusher is
+        // EXCLUDED from the coverage frame so his explicit shed-then-burst move
+        // always wins — a blitzing LB the sim credited (rushWinnerDefRole 4–6)
+        // then reliably reads as the man getting home rather than dropping into
+        // his frame coverage assignment. For a DL rusher (0–3, never in the
+        // coverage frame) this exclusion is a no-op.
+        let dropPaths = framePaths(frame, step: 1, excludeNodes: [rusher])
         var taken = Set(dropPaths.map(\.nodeIndex))
         steps.append(Step(
             moves: merge(
@@ -2382,7 +2387,7 @@ struct PlayChoreographer {
         // their route paths are dropped this step in favor of the break-off.
         let receiverNodes: Set<Int> = wasThrowaway
             ? Set([1, 7, 8, 9, 10].map { c.oBase + $0 }) : []
-        let flightPaths = framePaths(frame, step: 2, excludeNodes: receiverNodes)
+        let flightPaths = framePaths(frame, step: 2, excludeNodes: receiverNodes.union([rusher]))
         taken = Set(flightPaths.map(\.nodeIndex))
         var flightMoves: [Move] = [
             (nodeIndex: rusher, to: rusherBurst, duration: flight),
