@@ -12,12 +12,15 @@ import SwiftUI
 struct PlayDiagramView: View {
 
     let call: OffensivePlayCall
+    /// The coach's REVERSE flip: when true the card art reflects across the
+    /// ball (x = 0.5), matching the mirrored field alignment + routes.
+    var mirrored = false
 
     var body: some View {
         Canvas { context, size in
             let w = size.width
             let h = size.height
-            let diagram = RouteSpec.diagram(for: call)
+            let diagram = RouteSpec.diagram(for: call, mirror: mirrored ? -1 : 1)
             func pt(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * w, y: p.y * h) }
 
             // Line of scrimmage

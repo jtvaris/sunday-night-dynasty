@@ -125,16 +125,35 @@ struct CoachedGameView: View {
     /// it when the replay tears down so the game flow never stalls.
     @State private var pendingProceedAfterReplay = false
     @State private var gameStarted = false
-    /// Spoiler-safe scoreboard mirror (#35). The engine books points the
-    /// instant a play resolves (well before its choreography reaches the end
-    /// zone) — binding the board straight to `engine.homeScore/awayScore`
-    /// would flash a kickoff-return TD, a long scrimmage score or a made kick
-    /// before the animation shows it. The board reads these displayed values
-    /// instead; `revealScore()` snaps them to the engine's truth only when the
-    /// play has finished on the field (or the field teleports to truth on a
-    /// skip / sim-to-end / break). The engine score stays the source of truth.
-    @State private var displayedHomeScore = 0
-    @State private var displayedAwayScore = 0
+    /// Spoiler-safe HUD mirror (#35, FIX-1). The engine advances *every*
+    /// field the instant `step()` runs — score, clock, quarter, down/distance,
+    /// the play log, and on a drive-ending play the ensuing drive's spot and
+    /// possession — well before the choreography reaches the whistle. Binding
+    /// the always-visible HUD (scoreboard, situation chips, play feed) straight
+    /// to `engine.*` flashes those results early: a kickoff-return TD, a long
+    /// score, or "BUF ball 1st & 10 OWN 30" before the return has even run.
+    /// The HUD reads this snapshot instead; `revealHUD` snaps it to the
+    /// engine's truth only once a play has finished on the field (finishPlay,
+    /// the kickoff return) or the field teleports to truth with no animation
+    /// left to wait on (syncFieldToSituation, the startGame seed). Between
+    /// plays the mirror holds the previous reveal, which equals the current
+    /// pre-snap truth — so nothing needs snapshotting at snap time. The engine
+    /// stays the single source of truth; this is presentation-only.
+    private struct HUDMirror {
+        var homeScore = 0
+        var awayScore = 0
+        var down = 1
+        var distance = 10
+        var yardLine = 25
+        var homeHasPossession = true
+        var playerIsOnOffense = true
+        var quarter = 1
+        var timeRemaining = 900
+        var clock = "15:00"
+        var drivePlays: [PlayResult] = []
+        var feed: [PlayResult] = []
+    }
+    @State private var shown = HUDMirror()
     @State private var resultBanner: String? = nil
     @State private var possessionBanner: String? = nil
     /// Gold "WIN OR GO HOME" plate flashed over the field at a playoff
@@ -163,6 +182,10 @@ struct CoachedGameView: View {
     // Offense call state
     @State private var selectedCategory: String = "Run"
     @State private var selectedCall: OffensivePlayCall? = nil
+    /// Plan B: the coach's REVERSE flip for the selected offensive play — runs
+    /// the same call to the opposite side. Offense-relative (±1 via `offMirror`),
+    /// reset whenever the selection changes or a play snaps. Presentation only.
+    @State private var mirrored = false
     @State private var wentForIt = false
     /// The special-teams option highlighted on the 4th-down panel. Selecting
     /// never snaps — only the explicit SNAP button commits the play.
@@ -390,7 +413,10 @@ struct CoachedGameView: View {
         .onAppear(perform: startGame)
         .onDisappear { AudioDirector.shared.endMatch() }
         .onReceive(playClockTicker) { _ in tickPlayClock() }
-        .onChange(of: engine.timeRemaining) { _, remaining in
+        .onChange(of: shown.timeRemaining) { _, remaining in
+            // FIX-1: fire the two-minute-warning chip when the clock *visibly*
+            // settles (the mirror reveal), not when the engine ticks past 2:00
+            // mid-animation — same gating as the rest of the HUD.
             checkTwoMinuteWarning(remaining)
         }
         .onChange(of: engine.quarter) { _, quarter in
@@ -400,7 +426,12 @@ struct CoachedGameView: View {
                 defAudiblesLeft = 2
             }
         }
-        .onChange(of: selectedCall) { _, _ in previewFormation() }
+        .onChange(of: selectedCall) { _, _ in
+            // A new selection (or a clear) drops any REVERSE flip before the
+            // preview realigns, so the flip never carries onto another call.
+            mirrored = false
+            previewFormation()
+        }
         .onChange(of: defCall) { _, _ in
             // A new named call replaces any shell audible dialed on the old one.
             defShellOverride = nil
@@ -470,7 +501,7 @@ struct CoachedGameView: View {
 
     private var scoreboardBar: some View {
         HStack(spacing: 0) {
-            teamBlock(team: awayTeam, score: displayedAwayScore, hasBall: !engine.homeHasPossession, leading: true)
+            teamBlock(team: awayTeam, score: shown.awayScore, hasBall: !shown.homeHasPossession, leading: true)
             Spacer()
             VStack(spacing: 2) {
                 Text(quarterLabel)
@@ -512,7 +543,7 @@ struct CoachedGameView: View {
                 }
             }
             Spacer()
-            teamBlock(team: homeTeam, score: displayedHomeScore, hasBall: engine.homeHasPossession, leading: false)
+            teamBlock(team: homeTeam, score: shown.homeScore, hasBall: shown.homeHasPossession, leading: false)
         }
         .padding(.leading, 20)
         .padding(.trailing, 56) // keep the right team block clear of the exit button
@@ -523,20 +554,20 @@ struct CoachedGameView: View {
     }
 
     private var quarterLabel: String {
-        engine.quarter <= 4 ? "Q\(engine.quarter)" : "OT"
+        shown.quarter <= 4 ? "Q\(shown.quarter)" : "OT"
     }
 
     /// Q2/Q4 with two minutes or less on the clock — crunch time.
     private var isTwoMinuteDrill: Bool {
-        (engine.quarter == 2 || engine.quarter == 4)
-            && engine.timeRemaining <= 120 && engine.timeRemaining > 0
+        (shown.quarter == 2 || shown.quarter == 4)
+            && shown.timeRemaining <= 120 && shown.timeRemaining > 0
             && !engine.isGameOver
     }
 
     /// Broadcast clock — pulses red inside the two-minute drill (Q2/Q4).
     @ViewBuilder
     private var clockDisplay: some View {
-        let clockText = Text(engine.formattedClock)
+        let clockText = Text(shown.clock)
             .font(.system(size: 27, weight: .heavy).monospacedDigit())
         if isTwoMinuteDrill && reduceMotion {
             // Reduce Motion: crunch time stays red but does not pulse.
@@ -624,8 +655,8 @@ struct CoachedGameView: View {
                 HStack(spacing: 10) {
                     chip(downDistanceText, color: .accentGold)
                     chip(fieldPositionText, color: .accentBlue)
-                    chip(possessionText, color: engine.playerIsOnOffense ? .success : .danger)
-                    if !engine.currentDrivePlays.isEmpty {
+                    chip(possessionText, color: shown.playerIsOnOffense ? .success : .danger)
+                    if !shown.drivePlays.isEmpty {
                         chip(driveChipText, color: .textSecondary)
                     }
                     if showTwoMinuteChip {
@@ -722,7 +753,7 @@ struct CoachedGameView: View {
     /// Compact current-drive summary, e.g. "Drive: 5 plays, 42 yds".
     /// Penalty walk-offs don't count as offensive yards.
     private var driveChipText: String {
-        let plays = engine.currentDrivePlays
+        let plays = shown.drivePlays
         let yards = plays
             .filter { ($0.playType == .pass || $0.playType == .run) && $0.outcome != .penalty }
             .reduce(0) { $0 + $1.yardsGained }
@@ -744,21 +775,21 @@ struct CoachedGameView: View {
 
     private var downDistanceText: String {
         let ord: String
-        switch engine.down {
-        case 1: ord = "1st"; case 2: ord = "2nd"; case 3: ord = "3rd"; default: ord = "\(engine.down)th"
+        switch shown.down {
+        case 1: ord = "1st"; case 2: ord = "2nd"; case 3: ord = "3rd"; default: ord = "\(shown.down)th"
         }
-        let goal = 100 - engine.yardLine <= engine.distance
-        return "\(ord) & \(goal ? "Goal" : "\(engine.distance)")"
+        let goal = 100 - shown.yardLine <= shown.distance
+        return "\(ord) & \(goal ? "Goal" : "\(shown.distance)")"
     }
 
     private var fieldPositionText: String {
-        let yl = engine.yardLine
+        let yl = shown.yardLine
         if yl == 50 { return "Midfield" }
         return yl > 50 ? "OPP \(100 - yl)" : "OWN \(yl)"
     }
 
     private var possessionText: String {
-        let abbr = engine.homeHasPossession ? homeTeam.abbreviation : awayTeam.abbreviation
+        let abbr = shown.homeHasPossession ? homeTeam.abbreviation : awayTeam.abbreviation
         return "\(abbr) ball"
     }
 
@@ -1092,7 +1123,7 @@ struct CoachedGameView: View {
     /// with the newest call emphasized (bigger type, event-color accent,
     /// light plate) and older lines stepped down so the eye lands on "now".
     private var miniPlayFeed: some View {
-        let recent = Array(engine.playLog.suffix(3))
+        let recent = shown.feed
         return VStack(alignment: .leading, spacing: 5) {
             ForEach(Array(recent.enumerated()), id: \.offset) { index, play in
                 feedRow(play, age: recent.count - 1 - index)
@@ -1369,6 +1400,30 @@ struct CoachedGameView: View {
                     }
                     .buttonStyle(.plain)
                 }
+                // Plan B: REVERSE runs the selected offensive play to the
+                // opposite side — flips the alignment, routes and card art.
+                if engine.playerIsOnOffense, selectedCall != nil {
+                    Button {
+                        withAnimation(.spring(duration: 0.2)) { mirrored.toggle() }
+                        previewFormation()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.left.arrow.right")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("REVERSE")
+                                .font(.system(size: 12, weight: .black))
+                        }
+                        .foregroundStyle(mirrored ? Color.backgroundPrimary : Color.accentGold)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(mirrored ? Color.accentGold : Color.accentGold.opacity(0.14),
+                                    in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(mirrored
+                        ? Text("Reverse is on — the play runs to the opposite side. Tap to restore.")
+                        : Text("Reverse the play to the opposite side"))
+                }
                 if let suggestion = cachedSuggestion {
                     Button {
                         offCallDirtied = true // explicitly adopted — stands on a delay
@@ -1483,7 +1538,7 @@ struct CoachedGameView: View {
             withAnimation(.spring(duration: 0.15)) { selectedCall = play }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
-                PlayDiagramView(call: play)
+                PlayDiagramView(call: play, mirrored: play == selectedCall && mirrored)
                     .frame(maxWidth: .infinity)
                     .opacity(installed ? 1 : 0.45)
                 HStack(spacing: 4) {
@@ -1555,6 +1610,12 @@ struct CoachedGameView: View {
         guard offAudiblesLeft > 0, let call = selectedCall else { return false }
         return !call.audibleOptions(installed: { engine.playerHasInstalled($0) }).isEmpty
     }
+
+    /// Plan B: the REVERSE flip as a geometry factor. `-1` mirrors the
+    /// selected offensive play's alignment + routes across the ball; `+1` is
+    /// the canonical side. Composes with Plan A's screen-space `lateralSign`
+    /// at the scene boundary (they are separate factors — no double-negation).
+    private var offMirror: Float { mirrored ? -1 : 1 }
 
     /// Horizontal strip of same-formation checks. Picking one swaps the call
     /// in place (no re-huddle — the look at the line doesn't change), burns
@@ -2573,8 +2634,15 @@ struct CoachedGameView: View {
         }
         let uncertain = awareness < 75 || believed != actual
         let shellName = believed.shellShortLabel
+        // Layer A6: when the AI defense has keyed the run, the QB SEES the
+        // stacked box pre-snap — a companion line that tells the coach the deep
+        // shot / play-action is there to be taken (the RPS counter to the key).
+        var readText = uncertain ? "Looks like \(shellName)?" : "Reads: \(shellName) shell"
+        if engine.offenseRunKeyIntensity >= 0.4 {
+            readText += " — they're loading the box"
+        }
         coverageRead = CoverageRead(
-            text: uncertain ? "Looks like \(shellName)?" : "Reads: \(shellName) shell",
+            text: readText,
             uncertain: uncertain,
             believedShell: believed
         )
@@ -2801,9 +2869,10 @@ struct CoachedGameView: View {
         guard !gameStarted else { return }
         gameStarted = true
 
-        // Seed the spoiler-safe scoreboard mirror (#35) to whatever the engine
-        // already holds — 0-0 on a fresh game, the live tally on a resume.
-        revealScore()
+        // Seed the spoiler-safe HUD mirror (#35, FIX-1) to whatever the engine
+        // already holds — 0-0 / opening-drive spot on a fresh game, the live
+        // situation on a resume. No animation is pending, so reveal everything.
+        revealHUD()
 
         // R34 audio: preload every SFX voice before the first snap and bring
         // the stadium bed up under the opening kickoff.
@@ -3042,11 +3111,16 @@ struct CoachedGameView: View {
         fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.7)
         fieldScene.updateMarkers(losZ: nil, firstDownZ: nil)
         fieldScene.setDefensiveFraming(false)
-        // Broadcast frame for the whole kickoff presentation (the follow-cam
-        // keeps the same style through the return; the next scrimmage
-        // pre-snap hands the shot back to the Coach/Broadcast choice).
-        fieldScene.focusCamera(z: PlayChoreographer.kickoffSpotZ(kickingTeamIsHome: event.kickingTeamIsHome),
-                               style: .broadcast)
+        // FIX-3: a dedicated kickoff ball-cam owns the boot + return shot.
+        // The generic attack-ratchet live-follow mis-tracks a kickoff's flight
+        // (it runs toward the receiving end zone, often opposite the coached
+        // team's attack), so a broadcast-rail follower locked on the ball
+        // replaces it. It stands down focusCamera/beginLiveFollow while active
+        // and is torn down (endKickoffCamera) in EVERY completion branch below
+        // before the next scripted focus. `towardZ` = the receiving end zone
+        // side (touchback catch ≈ ownYard(-3)).
+        let kickDir: Float = event.kickingTeamIsHome ? 1 : -1
+        fieldScene.beginKickoffCamera(towardZ: kickDir * 53, kickDir: kickDir)
 
         let steps = PlayChoreographer.kickoffSteps(
             kickingTeamIsHome: event.kickingTeamIsHome,
@@ -3058,11 +3132,20 @@ struct CoachedGameView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.15) {
             fieldScene.runPlay(steps: steps) {
                 isAnimating = false
-                // #35: a housed kickoff return (the engine booked its six +
-                // the auto point-after before this boot animated) only shows
-                // on the board here, as the returner crosses the goal line and
-                // the horn sounds — never at the whistle of the prior score.
-                if event.isReturnTouchdown { revealScore() }
+                // FIX-3: hand the shot back BEFORE any branch refocuses — the
+                // TD branch's endzone focusCamera and the touchback/return
+                // pre-snap focus are all gated by kickoffCameraActive, so the
+                // teardown must run first in every path (no early returns here).
+                fieldScene.endKickoffCamera()
+                // #35/FIX-1: the kickoff return is the moment the ensuing
+                // drive legitimately appears — the returner is tackled or
+                // crosses the goal. Reveal the whole HUD here: the ensuing
+                // "BUF ball 1st & 10 OWN 30" situation the engine set at
+                // beginDrive (held back through any TD->PAT->kickoff sequence),
+                // plus a housed return's six + auto point-after, both surface
+                // now as the horn sounds — never at the whistle of the prior
+                // score. A normal return simply confirms the spot it reached.
+                revealHUD()
                 if event.isReturnTouchdown {
                     AudioDirector.shared.play(.tdHorn)
                     AudioDirector.shared.play(.crowdSwell)
@@ -3212,7 +3295,12 @@ struct CoachedGameView: View {
         }
 
         isAnimating = true
+        // Plan B: freeze the REVERSE flip for THIS snap before clearing the
+        // selection (the opponent's snap is always canonical). Replays are
+        // auto-safe — recordPlay stores the already-resolved geometry.
+        let snapMirror: Float = engine.playerIsOnOffense ? offMirror : 1
         selectedCall = nil
+        mirrored = false
 
         let matchups = engine.lastMatchups
 
@@ -3221,7 +3309,8 @@ struct CoachedGameView: View {
         let formation = PlayChoreographer.preSnapStep(
             for: play, losYardLine: losYard, offenseIsHome: offenseIsHome,
             call: animatedCall, defensivePackage: defPackage,
-            offenseNumbers: offUnit.numbers, defenseNumbers: defUnit.numbers
+            offenseNumbers: offUnit.numbers, defenseNumbers: defUnit.numbers,
+            mirror: snapMirror
         )
         let presnapStances = PlayChoreographer.stances(offenseIsHome: offenseIsHome,
                                                        call: animatedCall)
@@ -3281,7 +3370,8 @@ struct CoachedGameView: View {
                                                 offenseIsHome: offenseIsHome, matchups: matchups,
                                                 call: animatedCall, defensivePackage: defPackage,
                                                 offenseSpeeds: fieldSpeeds(offUnit),
-                                                defenseSpeeds: fieldSpeeds(defUnit))
+                                                defenseSpeeds: fieldSpeeds(defUnit),
+                                                mirror: snapMirror)
             // R35: capture the deterministic timeline for replays — the
             // recent buffer, the highlight reel and the instant offer.
             recordPlay(steps: steps, play: play,
@@ -3309,12 +3399,20 @@ struct CoachedGameView: View {
                             distanceBefore: Int = 99) {
         isAnimating = false
 
-        // #35: the play has reached its end on the field — now (and not when
-        // the engine booked the points, before this animation) the scoreboard
-        // catches up to the truth, in the same beat as the TD horn / crowd
-        // swell below. Covers every scrimmage score: TD, FG, XP, two-point,
-        // and safety (all carry pointsScored the engine already added).
-        revealScore()
+        // #35/FIX-1: the play has reached its end on the field — now (and not
+        // when the engine booked them, before this animation) score and feed
+        // catch up to the truth, in the same beat as the TD horn / crowd swell
+        // below. Covers every scrimmage score: TD, FG, XP, two-point, safety.
+        //
+        // The *situation* is withheld while a scoring sequence is still
+        // mid-flight — a TD holds the drive and pre-sets the point-after spot
+        // (pendingConversion), and an FG/safety pre-sets the ensuing drive and
+        // free/kickoff (pendingKickoff). Revealing the situation here would
+        // spoil that ensuing spot at the score's own whistle; instead it
+        // surfaces atomically at the kickoff return. Normal gains, punts,
+        // turnovers and downs carry neither pending, so they settle their own
+        // down/distance/possession right here as the ball-carrier is tackled.
+        revealHUD(situation: engine.pendingKickoff == nil && engine.pendingConversion == nil)
 
         // R34 audio: the result stings — horn on six, whistle otherwise,
         // and the crowd swells for scores and takeaways. The bed then
@@ -3486,7 +3584,10 @@ struct CoachedGameView: View {
                 ? engine.aiDefensivePackage() : effectiveDefensePackage,
             losZ: losZ, direction: engine.homeHasPossession ? 1 : -1,
             offenseNumbers: engine.currentOffenseUnit.numbers,
-            defenseNumbers: engine.currentDefenseUnit.numbers
+            defenseNumbers: engine.currentDefenseUnit.numbers,
+            // Plan B: preview the REVERSE flip only when the player owns the
+            // offense (the opponent's look is always canonical).
+            mirror: engine.playerIsOnOffense ? offMirror : 1
         )
         let stances = PlayChoreographer.stances(
             offenseIsHome: engine.homeHasPossession,
@@ -3507,20 +3608,42 @@ struct CoachedGameView: View {
         updateMarkers()
         // A teleport to truth (skip drive, sim-to-end, onside, hurry-up
         // no-huddle, quarter/half break resume) has no animation left to
-        // wait on — the board jumps straight to the engine's score. Score
-        // reveals on a shown play happen in finishPlay / the kickoff return
-        // instead; this path is only reached when nothing is choreographing.
-        revealScore()
+        // wait on — the HUD jumps straight to the engine's truth (score,
+        // situation, feed all at once). Reveals on a *shown* play happen in
+        // finishPlay / the kickoff return instead; this path is only reached
+        // when nothing is choreographing, so the full situation reveals now.
+        revealHUD()
     }
 
-    /// Snaps the spoiler-safe scoreboard mirror (#35) to the engine's true
-    /// score. Called only once a scoring play's choreography has reached the
-    /// end zone (finishPlay, kickoff return), or when the field teleports to
-    /// truth with no pending animation (syncFieldToSituation). Never called
-    /// from a replay, which must not disturb the live board.
-    private func revealScore() {
-        displayedHomeScore = engine.homeScore
-        displayedAwayScore = engine.awayScore
+    /// Snaps the spoiler-safe HUD mirror (#35, FIX-1) to the engine's truth.
+    /// Called only once a play's choreography has finished on the field
+    /// (finishPlay, the kickoff return), or when the field teleports to truth
+    /// with no pending animation (syncFieldToSituation, the startGame seed).
+    /// Never called from a replay or record path, which must not disturb the
+    /// live board.
+    ///
+    /// Score and feed are always revealed — both are append-only/monotonic, so
+    /// showing the just-animated result is always correct. The situation
+    /// (down/distance/spot/possession/quarter/clock/drive) is withheld when
+    /// `situation` is false: finishPlay passes false while a scoring sequence
+    /// is mid-flight (a pending kickoff or point-after) so the ensuing drive's
+    /// spot only surfaces at the kickoff return, never as a spoiler at the
+    /// score's own whistle.
+    private func revealHUD(situation: Bool = true) {
+        shown.homeScore = engine.homeScore
+        shown.awayScore = engine.awayScore
+        shown.feed = Array(engine.playLog.suffix(3))
+        if situation {
+            shown.down = engine.down
+            shown.distance = engine.distance
+            shown.yardLine = engine.yardLine
+            shown.homeHasPossession = engine.homeHasPossession
+            shown.playerIsOnOffense = engine.playerIsOnOffense
+            shown.quarter = engine.quarter
+            shown.timeRemaining = engine.timeRemaining
+            shown.clock = engine.formattedClock
+            shown.drivePlays = engine.currentDrivePlays
+        }
     }
 
     /// Positions the broadcast LOS/first-down stripes for the current situation.

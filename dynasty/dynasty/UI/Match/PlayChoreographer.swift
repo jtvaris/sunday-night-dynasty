@@ -136,9 +136,11 @@ struct PlayChoreographer {
     static func formation(for playType: PlayType, call: OffensivePlayCall? = nil,
                           defensivePackage: DefensivePackage? = nil,
                           losZ: Float, direction: Float,
-                          offenseNumbers: [Int]? = nil, defenseNumbers: [Int]? = nil)
+                          offenseNumbers: [Int]? = nil, defenseNumbers: [Int]? = nil,
+                          mirror: Float = 1)
         -> (home: [(x: Float, z: Float, number: Int)], away: [(x: Float, z: Float, number: Int)]) {
-        var offense = offensePositions(for: playType, call: call, losZ: losZ, direction: direction)
+        var offense = offensePositions(for: playType, call: call, losZ: losZ,
+                                       direction: direction, mirror: mirror)
         var defense = defensePositions(losZ: losZ, direction: direction, package: defensivePackage)
         offense = renumber(offense, with: offenseNumbers)
         defense = renumber(defense, with: defenseNumbers)
@@ -152,26 +154,26 @@ struct PlayChoreographer {
     }
 
     /// Position-appropriate pre-snap stances keyed by per-team node index:
-    /// OL/DL/TE dig into a deep 3-point with the hand down, RB/LB/S sit in a
-    /// 2-point crouch with hands near the knees, WR/CB stand in an upright
-    /// split stance. The QB stays tall in the gun (upright by omission) but
-    /// bends over the C with his hands out when the CALL puts him under
+    /// OL/DL/TE dig into a deep 3-point with the hand down, the RB sits in a
+    /// back-specific crouch while LB/S share the generic 2-point, WR/CB stand
+    /// in an upright split stance. The QB waits in a dedicated shotgun pose,
+    /// but bends over the C with his hands out when the CALL puts him under
     /// center — the snap exchange starts from that pose.
     static func stances(offenseIsHome: Bool, call: OffensivePlayCall? = nil)
         -> (home: [Int: FootballFieldScene.Stance], away: [Int: FootballFieldScene.Stance]) {
-        var offense: [Int: FootballFieldScene.Stance] = [1: .twoPoint, 10: .threePoint]
+        var offense: [Int: FootballFieldScene.Stance] = [1: .runningBack, 10: .threePoint]
         switch call {
         case .insideRun, .qbSneak, .dive, .kneel:
             offense[0] = .underCenter
         default:
-            break
+            offense[0] = .shotgunQB
         }
         for role in 2...6 { offense[role] = .threePoint }   // OL
         for role in [7, 8, 9] { offense[role] = .split }    // WRs
         var defense: [Int: FootballFieldScene.Stance] = [:]
         for role in 0...3 { defense[role] = .threePoint }   // DL
-        for role in [4, 5, 6, 9, 10] { defense[role] = .twoPoint }  // LBs + safeties
-        for role in [7, 8] { defense[role] = .split }       // CBs
+        for role in [4, 5, 6, 9, 10] { defense[role] = .linebacker }  // LBs + safeties: ready coil
+        for role in [7, 8] { defense[role] = .cornerback }  // CBs: pressed low coil
         return offenseIsHome ? (home: offense, away: defense) : (home: defense, away: offense)
     }
 
@@ -197,7 +199,8 @@ struct PlayChoreographer {
     static func preSnapStep(for play: PlayResult, losYardLine: Int, offenseIsHome: Bool,
                             call: OffensivePlayCall? = nil,
                             defensivePackage: DefensivePackage? = nil,
-                            offenseNumbers: [Int]? = nil, defenseNumbers: [Int]? = nil)
+                            offenseNumbers: [Int]? = nil, defenseNumbers: [Int]? = nil,
+                            mirror: Float = 1)
         -> (home: [(x: Float, z: Float, number: Int)], away: [(x: Float, z: Float, number: Int)]) {
         formation(
             for: play.playType,
@@ -206,7 +209,8 @@ struct PlayChoreographer {
             losZ: losZ(yardLine: losYardLine, offenseIsHome: offenseIsHome),
             direction: offenseIsHome ? 1 : -1,
             offenseNumbers: offenseNumbers,
-            defenseNumbers: defenseNumbers
+            defenseNumbers: defenseNumbers,
+            mirror: mirror
         )
     }
 
@@ -228,7 +232,7 @@ struct PlayChoreographer {
     /// Internal (not private) so `RouteSpec.diagram` projects the play card
     /// from the exact same alignments the field uses.
     static func offensePositions(for playType: PlayType, call: OffensivePlayCall? = nil,
-                                 losZ: Float, direction: Float)
+                                 losZ: Float, direction: Float, mirror: Float = 1)
         -> [(x: Float, z: Float, number: Int)] {
         let behind = losZ - direction * 0.7  // OL just behind the LOS
 
@@ -279,7 +283,10 @@ struct PlayChoreographer {
             (slot.x, losZ - direction * slot.depth, 84),         // 9 slot WR
             (teX, behind, 87),                                   // 10 TE
         ]
-        return raw.map { (x: clampX($0.x), z: clampZ($0.z), number: $0.number) }
+        // `mirror` (±1) is the coach's REVERSE flip: reflect the final X across
+        // the ball so rb/slot/teX flip and WR-L/R swap; QB/OL (x=0) are fixed
+        // points. `mirror == 1` is byte-for-byte the old alignment.
+        return raw.map { (x: clampX($0.x * mirror), z: clampZ($0.z), number: $0.number) }
     }
 
     /// Defense role order: 0-3=DL, 4-6=LB, 7-8=CB, 9-10=S.
@@ -390,11 +397,13 @@ struct PlayChoreographer {
                       call: OffensivePlayCall? = nil,
                       defensivePackage: DefensivePackage? = nil,
                       offenseSpeeds: [Float]? = nil,
-                      defenseSpeeds: [Float]? = nil)
+                      defenseSpeeds: [Float]? = nil,
+                      mirror: Float = 1)
         -> [FootballFieldScene.PlayStep] {
         let context = Context(play: play, losYardLine: losYardLine, offenseIsHome: offenseIsHome,
                               matchups: matchups, call: call, defensivePackage: defensivePackage,
-                              offenseSpeeds: offenseSpeeds, defenseSpeeds: defenseSpeeds)
+                              offenseSpeeds: offenseSpeeds, defenseSpeeds: defenseSpeeds,
+                              mirror: mirror)
         let gainZ = clampZ(context.losZ + context.direction * Float(play.yardsGained))
 
         switch play.outcome {
@@ -464,6 +473,9 @@ struct PlayChoreographer {
         /// attributes; defaults when the caller supplies none.
         let offenseSpeeds: [Float]
         let defenseSpeeds: [Float]
+        /// The coach's REVERSE flip (±1), offense-relative — already baked into
+        /// `offense` here; forwarded to `spec.points` so the routes reflect too.
+        let mirror: Float
 
         func oSpeed(_ role: Int) -> Float {
             offenseSpeeds.indices.contains(role) ? offenseSpeeds[role]
@@ -480,14 +492,17 @@ struct PlayChoreographer {
              call: OffensivePlayCall? = nil,
              defensivePackage: DefensivePackage? = nil,
              offenseSpeeds: [Float]? = nil,
-             defenseSpeeds: [Float]? = nil) {
+             defenseSpeeds: [Float]? = nil,
+             mirror: Float = 1) {
             self.play = play
+            self.mirror = mirror
             self.losZ = PlayChoreographer.losZ(yardLine: losYardLine, offenseIsHome: offenseIsHome)
             self.direction = offenseIsHome ? 1 : -1
             self.oBase = offenseIsHome ? 0 : 11
             self.dBase = offenseIsHome ? 11 : 0
             self.offense = PlayChoreographer.offensePositions(for: play.playType, call: call,
-                                                              losZ: losZ, direction: direction)
+                                                              losZ: losZ, direction: direction,
+                                                              mirror: mirror)
             self.defense = PlayChoreographer.defensePositions(losZ: losZ, direction: direction,
                                                               package: defensivePackage)
             self.matchups = matchups
@@ -824,7 +839,7 @@ struct PlayChoreographer {
         let start = c.offense[role]
         guard let pts = c.spec.points(role: role, startX: start.x, startZ: start.z,
                                       losZ: c.losZ, direction: c.direction,
-                                      depthScale: depthScale) else { return nil }
+                                      depthScale: depthScale, mirror: c.mirror) else { return nil }
         var mapped = pts.map { (x: clampX($0.x), z: clampZ($0.z)) }
         if mapped.count > 2 {
             let jitter = lateralJitter(role: role, c: c)
@@ -841,7 +856,7 @@ struct PlayChoreographer {
         let pts = RouteSpec.resolve(RouteSpec.checkdown(role: role),
                                     startX: start.x, startZ: start.z,
                                     losZ: c.losZ, direction: c.direction,
-                                    depthScale: depthScale)
+                                    depthScale: depthScale, mirror: c.mirror)
         return RoutePath(points: pts.map { (clampX($0.x), clampZ($0.z)) })
     }
 
@@ -1366,10 +1381,44 @@ struct PlayChoreographer {
         }
         var track = fitTrack(shape, endZ: endZ, direction: c.direction)
 
-        // Handoff timing along the track: the mesh lands ~a third in; the
-        // delayed draw holds the back until the dropback is sold.
-        let f1: Float = isDraw ? 0.06 : 0.14
-        let f2: Float = isDraw ? 0.3 : (isScramble ? 0.42 : 0.32)
+        // Visible mesh-point handoff. On a hand-to-hand run (NOT a toss pitch,
+        // a sold-dropback draw, or a QB keeper) the ball must change hands AT
+        // the QB/RB mesh instead of teleporting to a far-away back. Splice a
+        // mesh waypoint — a short fixed reach off the QB toward the back, so it
+        // sits right beside/behind him — into the FRONT of the carrier's track,
+        // then fire `.carry` exactly there. The point is derived from the two
+        // ALREADY mirror-baked alignments (qbStart/carrierStart), so Plan B
+        // REVERSE and the scene's lateralSign both flow through automatically;
+        // `.carry` itself carries no coordinate and is immune to both.
+        let isHandoff = !isScramble && !isToss && !isDraw
+        var meshPoint: (x: Float, z: Float)? = nil
+        var meshFraction: Float? = nil
+        if isHandoff {
+            let dx = carrierStart.x - qbStart.x
+            let dz = carrierStart.z - qbStart.z
+            let d = max((dx * dx + dz * dz).squareRoot(), 0.001)
+            let meshRadius: Float = 0.85   // arm's-reach spacing (no capsule clip)
+            let mesh = (x: clampX(qbStart.x + dx / d * meshRadius),
+                        z: clampZ(qbStart.z + dz / d * meshRadius))
+            track = RoutePath(points: [track.pts[0], mesh] + track.pts.dropFirst())
+            meshPoint = mesh
+            meshFraction = track.cum[1] / track.total
+        }
+
+        // Handoff timing along the track. A mesh run fires `.carry` exactly at
+        // the spliced mesh (f1 = the mesh's arc fraction, so the transfer beat
+        // == the RB's arrival beat) and takes a short beat past it before the
+        // open-field run; the delayed draw holds the back until the dropback is
+        // sold; toss/scramble keep their authored constants.
+        let f1: Float
+        let f2: Float
+        if let meshFraction {
+            f1 = meshFraction
+            f2 = meshFraction + (1 - meshFraction) * 0.25
+        } else {
+            f1 = isDraw ? 0.06 : 0.14
+            f2 = isDraw ? 0.3 : (isScramble ? 0.42 : 0.32)
+        }
 
         // Breakaway runs flash 1-2 open-field moves; a juke also splices a
         // hard lateral jig into the track so the cut is real, not just a body
@@ -1460,6 +1509,15 @@ struct PlayChoreographer {
         if isDraw {
             snapScripted.append((c.qb, player(qbStart.x, qbStart.z - c.direction * 1.5), snapDur))
             snapBackpedals.append(c.qb)
+        } else if let meshPoint {
+            // The QB opens toward the mesh and extends the ball to the back so
+            // the exchange reads as a real hand-off. His chest ball rides his
+            // hands every frame, so this half-step actually carries the ball to
+            // the mesh — closing the visible gap — until step 2's `.carry`
+            // re-parents it to the arriving back.
+            snapScripted.append((c.qb,
+                player(qbStart.x + (meshPoint.x - qbStart.x) * 0.5,
+                       qbStart.z + (meshPoint.z - qbStart.z) * 0.5), snapDur))
         }
         let snapTaken = Set(snapPaths.map(\.nodeIndex))
         steps.append(Step(
@@ -2113,6 +2171,14 @@ struct PlayChoreographer {
         if c.call == .screen {
             return screenSteps(c, endZ: c.losZ, complete: false).steps
         }
+        // FIX-2: a rush-forced incompletion plays its OWN choreography — the
+        // credited rusher beats his block and closes to the launch point, and
+        // a deliberate throwaway sails to open space out of bounds. Gated OFF
+        // for named coverage breakups (passBreakup) and plain misses so those
+        // still run the generic in-pattern miss below.
+        if c.play.pressured == true, c.play.passBreakup != true {
+            return pressuredIncompletionSteps(c)
+        }
         let receiverRole = targetRole(c)
         let receiver = c.oBase + receiverRole
 
@@ -2201,6 +2267,160 @@ struct PlayChoreographer {
         return steps
     }
 
+    /// FIX-2 — under-pressure incompletion. The CREDITED rusher beats his
+    /// blocker and closes to the QB's launch point, arriving right as the ball
+    /// comes out (no fall, no bury — the QB gets it off just before contact).
+    /// On a deliberate throwaway the ball is a LOW flat heave to an
+    /// out-of-bounds sideline point past the widest receiver, the receivers
+    /// break off their routes, and no defender contests it. A hurried (non-
+    /// throwaway) forced throw is a near-target miss with no accurate draped
+    /// contest. Mirror-safe: the sideline is derived from the already-mirrored
+    /// offense x and `direction`, never a raw constant.
+    private static func pressuredIncompletionSteps(_ c: Context) -> [Step] {
+        let receiverRole = targetRole(c)
+        let route = specPath(role: receiverRole, c: c) ?? fallbackPath(role: receiverRole, c: c)
+        let routeDepth = max(route.maxDepth(losZ: c.losZ, direction: c.direction), 1)
+
+        let isPA = c.call == .playActionDeep
+        let deepDrop = routeDepth >= 15
+        let qbStart = c.offenseStart(0)
+        let qbDropZ = clampZ(qbStart.z - c.direction * dropDepth(c, deep: deepDrop))
+        let launch = player(qbStart.x, qbDropZ)
+
+        // The rusher who got home (MatchupResolver set rushWinnerDefRole on a
+        // pressure), same side the pocket caves from — exactly like sackSteps.
+        let rusherRole = c.matchups?.rushWinnerDefRole ?? 2
+        let rusher = c.dl(rusherRole)
+        let beaten = blockerFacing(defRole: rusherRole)
+
+        let wasThrowaway = c.play.wasThrowaway == true
+
+        // Ball destination.
+        let target: SCNVector3
+        let apex: Float
+        if wasThrowaway {
+            // Open space at the sideline on the FLOW side: the sign of the
+            // widest eligible receiver's ALREADY-MIRRORED x, thrown past the
+            // toe-tap line (~24, clampX-guarded to the field edge) into the
+            // near flat. Correct under REVERSE (mirror) and away offense
+            // (direction) with no raw constant.
+            let widest = [7, 8, 9, 10, 1]
+                .max(by: { abs(c.offense[$0].x) < abs(c.offense[$1].x) }) ?? 7
+            let side: Float = c.offense[widest].x >= 0 ? 1 : -1
+            target = air(clampX(side * 24), clampZ(c.losZ + c.direction * 5), 0.5)
+            apex = 1.5
+        } else {
+            // Hurried near-target miss: past the route's break, no draped contest.
+            let endPt = route.end
+            let prevPt = route.pts.count >= 2 ? route.pts[route.pts.count - 2]
+                : (x: endPt.x, z: endPt.z - c.direction)
+            let legDX = endPt.x - prevPt.x
+            let legDZ = endPt.z - prevPt.z
+            let legLen = max((legDX * legDX + legDZ * legDZ).squareRoot(), 0.01)
+            target = air(clampX(endPt.x + legDX / legLen * 2.0),
+                         clampZ(endPt.z + legDZ / legLen * 2.0), 0.5)
+            apex = 3
+        }
+
+        // Real pocket time: pressure gets home fast (pocketCollapse ~0.85 →
+        // ~1.5 s), then a short ball flight from the launch point.
+        let rushTime = TimeInterval(2.3 - c.pocketCollapse * 0.9)
+        let missDX = target.x - launch.x
+        let missDZ = target.z - launch.z
+        let missDistance = (missDX * missDX + missDZ * missDZ).squareRoot()
+        let flight = TimeInterval(min(max(missDistance / Self.passVelocity, 0.5), 1.3))
+        let durations: [TimeInterval] = [isPA ? 1.0 : 0.65, rushTime, flight]
+        // A throwaway heaves to nobody: run every route full (no fitted target).
+        let frame = dropbackFrame(c, targetRole: wasThrowaway ? nil : receiverRole,
+                                  targetPath: wasThrowaway ? nil : route,
+                                  durations: durations, qbDropZ: qbDropZ)
+
+        // Shed-then-burst (mirrors sackSteps). The pressuring rusher GRINDS at
+        // the line through the dropback, then SHEDS and BURSTS to the launch
+        // point, bearing down just as the ball comes out — instead of one slow
+        // drift then a last-yard creep. The burst window here is the ball
+        // FLIGHT (not a fixed 0.8 s), so scale the reclaimed distance to it
+        // (~6.5 yd/s) and clamp to the QB's actual drop depth. x's track the
+        // ALREADY-MIRRORED beaten blocker / QB spot so REVERSE stays correct;
+        // the burst stops a stride short of the throwing QB (no clip, no fall).
+        let launchDepth = (c.losZ - launch.z) * c.direction
+        let burstReach = min(max(Float(flight) * 6.5, 3.0), launchDepth)
+        let engageDepth = max(launchDepth - burstReach, 1.4)
+        let engageX = lerp(c.offense[beaten].x, launch.x, 0.3)
+        let rusherEngage = player(engageX, c.losZ - c.direction * engageDepth)
+        let rusherBurst = player(lerp(engageX, launch.x, 0.85), launch.z + c.direction * 0.6)
+
+        var steps: [Step] = []
+
+        // Snap: protection sets, all routes release, coverage plays its call.
+        steps.append(snapStep(c, frame: frame, isPA: isPA))
+
+        // Dropback while the credited rusher knifes through a pocket collapsing
+        // from HIS side; the QB reaches his launch point.
+        let dropPaths = framePaths(frame, step: 1)
+        var taken = Set(dropPaths.map(\.nodeIndex))
+        steps.append(Step(
+            moves: merge(
+                [
+                    (nodeIndex: c.qb, to: launch, duration: rushTime),
+                    (nodeIndex: rusher, to: rusherEngage, duration: rushTime),
+                ],
+                pocketMoves(c, p: 1, d: rushTime, beatenBlocker: beaten)
+                    + zoneMoves(c, plan: frame.plan, p: 0.9, d: rushTime)
+            ).filter { !taken.contains($0.nodeIndex) },
+            paths: dropPaths,
+            ballMove: .carryChest(nodeIndex: c.qb),
+            duration: rushTime,
+            backpedals: [c.qb],
+            blocks: lineBlockNodes(c).filter { $0 != rusher },
+            blockStyles: blockStyleMap(c, run: false, beatenBlocker: beaten)
+        ))
+
+        // Release: the ball comes out just as the rusher arrives at the launch
+        // point — no fall, no bury. On a throwaway the receivers peel back and
+        // relax (nobody chases an uncatchable ball); nobody contests it, so
+        // their route paths are dropped this step in favor of the break-off.
+        let receiverNodes: Set<Int> = wasThrowaway
+            ? Set([1, 7, 8, 9, 10].map { c.oBase + $0 }) : []
+        let flightPaths = framePaths(frame, step: 2, excludeNodes: receiverNodes)
+        taken = Set(flightPaths.map(\.nodeIndex))
+        var flightMoves: [Move] = [
+            (nodeIndex: rusher, to: rusherBurst, duration: flight),
+        ]
+        if wasThrowaway {
+            for role in [1, 7, 8, 9, 10] {
+                let idx = c.oBase + role
+                guard !taken.contains(idx), let end = frame.routeEnds[role] else { continue }
+                flightMoves.append((idx, player(lerp(end.x, qbStart.x, 0.15),
+                                                end.z - c.direction * 1.5), flight))
+            }
+        }
+        flightMoves += zoneMoves(c, plan: frame.plan, p: 1, d: flight)
+        let flightCovered = taken.union(flightMoves.map(\.nodeIndex))
+        flightMoves += flightSupportMoves(c, frame: frame, ballSpot: (target.x, target.z),
+                                          covered: flightCovered, d: flight)
+        let (blockNodes, blockStyles) = flightBlocks(c, frame: frame)
+        steps.append(Step(
+            moves: flightMoves.filter { !taken.contains($0.nodeIndex) },
+            paths: flightPaths,
+            ballMove: .arc(to: target, apex: apex, duration: flight, from: c.qb),
+            duration: flight,
+            blocks: blockNodes.filter { $0 != rusher },
+            throwStyle: .offFoot,
+            blockStyles: blockStyles
+        ))
+
+        // Ball dies — skittering out of bounds on a throwaway, dead on the turf
+        // on a hurried miss. No advance.
+        steps.append(Step(
+            moves: [],
+            ballMove: .slide(to: ground(target.x, target.z + c.direction * 1.5), duration: 0.5),
+            duration: 0.6
+        ))
+        steps.append(Step(moves: [], ballMove: nil, duration: 0.5))
+        return steps
+    }
+
     /// Snap → dropback → the CREDITED rusher beats his blocker and buries the
     /// QB at losZ - direction * |yards|. The pocket caves from the WINNING
     /// rusher's side (his blocker is driven back), routes still run full so
@@ -2220,6 +2440,30 @@ struct PlayChoreographer {
         let frame = dropbackFrame(c, targetRole: nil, targetPath: nil,
                                   durations: durations, qbDropZ: sackSpot.z)
 
+        // Shed-then-burst. The credited rusher GRINDS at the line through the
+        // whole dropback — locked with his beaten blocker a stride in front of
+        // the sack (a short LOS fight, not a slow drift across open backfield) —
+        // then SHEDS and BURSTS to the QB across the 0.8 s finish window at a
+        // real closing speed. The engage point seats so the finish reclaims
+        // ~`burstReach` yards (≈7 yd/s), i.e. sackSpot pulled back along the
+        // rush; on a deep sack the engage sits deeper so phase A is a jog, not a
+        // sprint. Both x's track the ALREADY-MIRRORED beaten blocker / QB spot
+        // (never a raw lateral constant) so REVERSE shades the rush to the
+        // correct side. Feet settle via the loco EMA, so the low-cadence grind
+        // reads as planted rather than a creep-walk.
+        let burstReach: Float = 5.5
+        let engageDepth = max(sackDepth - burstReach, 1.4)
+        let engageX = lerp(c.offense[beaten].x, sackSpot.x, 0.3)
+        let rusherEngage = player(engageX, c.losZ - c.direction * engageDepth)
+        let rusherBurst = player(lerp(engageX, sackSpot.x, 0.85), sackSpot.z)
+        // Shallow sacks (sackYards 3-4) leave < 3yd between engage and the QB,
+        // so a fixed 0.8s finish would replay the old creep-walk. Scale the
+        // burst window to the actual distance (~7 yd/s) and give the leftover
+        // time back to the grind phase — the bury beat stays put.
+        let burstDist = hypot(rusherBurst.x - rusherEngage.x, rusherBurst.z - rusherEngage.z)
+        let burstDur = min(0.8, max(0.35, TimeInterval(burstDist / 7.0)))
+        let grindDur = rushTime + (0.8 - burstDur)
+
         var steps: [Step] = []
 
         // Snap: protection sets, all routes release, coverage plays its call.
@@ -2232,15 +2476,15 @@ struct PlayChoreographer {
         steps.append(Step(
             moves: merge(
                 [
-                    (nodeIndex: c.qb, to: sackSpot, duration: rushTime),
-                    (nodeIndex: rusher, to: player(sackSpot.x + 1, sackSpot.z + c.direction * 1.5), duration: rushTime),
+                    (nodeIndex: c.qb, to: sackSpot, duration: grindDur),
+                    (nodeIndex: rusher, to: rusherEngage, duration: grindDur),
                 ],
-                pocketMoves(c, p: 1, d: rushTime, beatenBlocker: beaten)
-                    + zoneMoves(c, plan: frame.plan, p: 0.9, d: rushTime)
+                pocketMoves(c, p: 1, d: grindDur, beatenBlocker: beaten)
+                    + zoneMoves(c, plan: frame.plan, p: 0.9, d: grindDur)
             ).filter { !taken.contains($0.nodeIndex) },
             paths: dropPaths,
             ballMove: .carryChest(nodeIndex: c.qb),
-            duration: rushTime,
+            duration: grindDur,
             backpedals: [c.qb],
             blocks: lineBlockNodes(c).filter { $0 != rusher },
             blockStyles: blockStyleMap(c, run: false, beatenBlocker: beaten)
@@ -2251,12 +2495,12 @@ struct PlayChoreographer {
         taken = Set(finishPaths.map(\.nodeIndex))
         steps.append(Step(
             moves: merge(
-                [(nodeIndex: rusher, to: player(sackSpot.x + 0.4, sackSpot.z), duration: 0.8)],
-                zoneMoves(c, plan: frame.plan, p: 1, d: 0.75)
+                [(nodeIndex: rusher, to: rusherBurst, duration: burstDur)],
+                zoneMoves(c, plan: frame.plan, p: 1, d: burstDur * 0.94)
             ).filter { !taken.contains($0.nodeIndex) },
             paths: finishPaths,
             ballMove: .carryChest(nodeIndex: c.qb),
-            duration: 0.8
+            duration: burstDur
         ))
 
         // Sack: the QB is buried; both hit the turf, the rusher wrapped
@@ -2614,17 +2858,26 @@ struct PlayChoreographer {
         //    into the wedge and the returner settles under the ball.
         let hang: TimeInterval = 2.4  // real kickoff hang time
         var bootMoves: [Move] = [(returner, player(0, catchZ), hang)]
+        // FIX-3/K1: a live return floods the coverage down to the receiving 22
+        // and folds the front unit into a return wall. A TOUCHBACK is a dead
+        // ball the instant it sails into the end zone — the coverage releases
+        // only a short way and pulls up (near the receiving 40, not the 22),
+        // and the return unit barely leaves its lanes (no wall, no pursuit).
+        let coverZ = clampZ(isTouchback ? ownYard(42) : ownYard(22))
+        let frontZ = clampZ(isTouchback ? ownYard(33) : ownYard(18))
+        let waveZ = clampZ(isTouchback ? ownYard(19) : ownYard(10))
+        let upbackZ = clampZ(isTouchback ? ownYard(9) : ownYard(6))
         for i in 1...10 {
-            bootMoves.append((kBase + i, player(kicking[i].x * 0.8, clampZ(ownYard(22))), hang))
+            bootMoves.append((kBase + i, player(kicking[i].x * (isTouchback ? 0.95 : 0.8), coverZ), hang))
         }
         bootMoves.append((kBase, player(0, teeZ + kickDir * 4), hang))
         for i in 0..<5 {
-            bootMoves.append((rBase + i, player(receiving[i].x * 0.55, clampZ(ownYard(18))), hang))
+            bootMoves.append((rBase + i, player(receiving[i].x * (isTouchback ? 0.9 : 0.55), frontZ), hang))
         }
         for i in 5..<9 {
-            bootMoves.append((rBase + i, player(receiving[i].x * 0.7, clampZ(ownYard(10))), hang))
+            bootMoves.append((rBase + i, player(receiving[i].x * (isTouchback ? 0.95 : 0.7), waveZ), hang))
         }
-        bootMoves.append((rBase + 9, player(-2, clampZ(ownYard(6))), hang))
+        bootMoves.append((rBase + 9, player(-2, upbackZ), hang))
         steps.append(Step(
             moves: bootMoves,
             ballMove: .arc(to: air(0, catchZ), apex: 16, duration: hang, from: nil),
@@ -2635,9 +2888,13 @@ struct PlayChoreographer {
         ))
 
         if isTouchback {
-            // 3. Kneel in the end zone; the coverage pulls up.
-            steps.append(Step(moves: [], ballMove: .carry(nodeIndex: returner), duration: 0.9))
-            steps.append(Step(moves: [], ballMove: .carry(nodeIndex: returner), duration: 0.5))
+            // 3. Dead ball. FIX-3: the returner fields it and settles in the
+            //    end zone — no return (the engine already spotted the drive),
+            //    no downfield move, no standing-holding-the-ball dwell. The
+            //    coverage has already pulled up short (step 2). The view plays
+            //    the whistle + "Touchback — drive starts at the N" banner on
+            //    completion, so a single short settle beat is all it needs.
+            steps.append(Step(moves: [], ballMove: .carry(nodeIndex: returner), duration: 0.6))
             return steps
         }
 

@@ -55,14 +55,22 @@ struct RouteSpec {
     /// `direction` is +1 when the offense drives toward +Z. `depthScale`
     /// stretches/squeezes route depth gently (fit the simulated catch depth).
     /// The SAME function feeds the 3D field and the 2D card.
+    /// `mirror` (±1) is the coach's REVERSE flip, offense-relative. It arrives
+    /// having ALREADY reflected the alignment X in `offensePositions`, so
+    /// `startX` here is the reflected start. To pick the correct "his sideline"
+    /// we recover the canonical (pre-reflection) alignment with `startX * mirror`
+    /// (mirror·mirror = 1), then reflect the lateral DISPLACEMENT by the same
+    /// `mirror` — this is what flips a CENTERED carrier (x=0) whose alignment
+    /// alone would not move. `mirror == 1` is byte-for-byte the old behavior.
     static func resolve(_ waypoints: [Waypoint], startX: Float, startZ: Float,
                         losZ: Float, direction: Float,
-                        depthScale: Float = 1) -> [(x: Float, z: Float)] {
+                        depthScale: Float = 1, mirror: Float = 1) -> [(x: Float, z: Float)] {
         // Which sideline is "his": alignment left of the ball mirrors laterals.
-        let sideSign: Float = startX < -0.5 ? -1 : 1
+        let canonicalStartX = startX * mirror
+        let sideSign: Float = canonicalStartX < -0.5 ? -1 : 1
         var points: [(x: Float, z: Float)] = [(startX, startZ)]
         for waypoint in waypoints {
-            points.append((startX + waypoint.lateral * sideSign,
+            points.append((startX + waypoint.lateral * sideSign * mirror,
                            losZ + direction * waypoint.depth * depthScale))
         }
         return points
@@ -71,10 +79,12 @@ struct RouteSpec {
     /// Field-space polyline for one role (alignment start included), or nil
     /// when the role blocks on this play.
     func points(role: Int, startX: Float, startZ: Float, losZ: Float,
-                direction: Float, depthScale: Float = 1) -> [(x: Float, z: Float)]? {
+                direction: Float, depthScale: Float = 1,
+                mirror: Float = 1) -> [(x: Float, z: Float)]? {
         guard let waypoints = routes[role] else { return nil }
         return RouteSpec.resolve(waypoints, startX: startX, startZ: startZ,
-                                 losZ: losZ, direction: direction, depthScale: depthScale)
+                                 losZ: losZ, direction: direction,
+                                 depthScale: depthScale, mirror: mirror)
     }
 
     // MARK: The Playbook
@@ -348,11 +358,11 @@ struct PlayDiagramData {
 }
 
 extension RouteSpec {
-    static func diagram(for call: OffensivePlayCall) -> PlayDiagramData {
+    static func diagram(for call: OffensivePlayCall, mirror: Float = 1) -> PlayDiagramData {
         let losY: CGFloat = 0.60
         let playType: PlayType = call == .kneel ? .kneel : (call.isRun ? .run : .pass)
         let formation = PlayChoreographer.offensePositions(for: playType, call: call,
-                                                           losZ: 0, direction: 1)
+                                                           losZ: 0, direction: 1, mirror: mirror)
         let spec = RouteSpec.spec(for: call)
 
         // Downfield yards compress a touch more than backfield yards so the
@@ -371,7 +381,8 @@ extension RouteSpec {
         for (role, _) in spec.routes.sorted(by: { $0.key < $1.key }) {
             guard role < formation.count,
                   let pts = spec.points(role: role, startX: formation[role].x,
-                                        startZ: formation[role].z, losZ: 0, direction: 1)
+                                        startZ: formation[role].z, losZ: 0, direction: 1,
+                                        mirror: mirror)
             else { continue }
             routes.append(PlayDiagramData.Line(points: pts.map { norm($0.x, $0.z) },
                                                primary: role == spec.primaryRole))

@@ -308,6 +308,11 @@ class FootballFieldScene: SCNScene {
     /// True while the current carrier holds the ball at his chest in both
     /// hands (QB dropback) instead of the under-arm tuck.
     private var carryingChest = false
+    /// While a skeletal QB winds up a throw, the carrier node index whose
+    /// throwing hand (hand_r) the still-parented ball rides until the release
+    /// beat — then it launches from that live hand position. nil except during
+    /// a throw wind-up; `pinCarriedBallToBody` reads it each frame.
+    private var releasingHandIndex: Int?
     /// Bumped by every ball transition (snap, carry, arc, slide). A snap's
     /// asynchronous carry-attach captures the token and no-ops if a later
     /// move already claimed the ball — this kills the snap→throw race that
@@ -371,6 +376,16 @@ class FootballFieldScene: SCNScene {
     /// the other way still drags the camera along. Mutated on the render
     /// thread inside the follow constraints only.
     private var followProgress: Float = 0
+    /// Wall-clock deadline (CACurrentMediaTime) through which the follow rig
+    /// freezes its forward glide on the run-mesh exchange, so the two-man
+    /// hand-to-hand (QB extend + RB tuck) reads inside a held frame before the
+    /// camera trucks downfield with the back. Armed once at the genuine
+    /// handoff (attachBall), reset per play in begin/endLiveFollow.
+    private var followHoldUntil: TimeInterval = 0
+    /// How long the follow rig holds the mesh in frame after the handoff, in
+    /// real seconds (divided by the playback rate when armed so it stays
+    /// proportional at 2x/4x). Shorter than the run leg so it releases into it.
+    static let meshHoldSeconds: TimeInterval = 0.5
 
     /// Switches the scrimmage framing and (unless a kick shot owns the
     /// camera) glides the current shot into the new style. The floating
@@ -593,7 +608,7 @@ class FootballFieldScene: SCNScene {
         for (index, info) in home.enumerated() {
             let node = makePlayerNode(uniform: homeUniform, number: info.number,
                                       bodyType: bodyTypesHome[index] ?? .medium)
-            node.position = SCNVector3(info.x, FieldConstants.playerHeight / 2, info.z)
+            node.position = SCNVector3(info.x * lateralSign, FieldConstants.playerHeight / 2, info.z)
             node.eulerAngles = SCNVector3(0, homeYaw, 0)
             rootNode.addChildNode(node)
             homePlayerNodes.append(node)
@@ -603,7 +618,7 @@ class FootballFieldScene: SCNScene {
         for (index, info) in away.enumerated() {
             let node = makePlayerNode(uniform: awayUniform, number: info.number,
                                       bodyType: bodyTypesAway[index] ?? .medium)
-            node.position = SCNVector3(info.x, FieldConstants.playerHeight / 2, info.z)
+            node.position = SCNVector3(info.x * lateralSign, FieldConstants.playerHeight / 2, info.z)
             node.eulerAngles = SCNVector3(0, awayYaw, 0)
             rootNode.addChildNode(node)
             awayPlayerNodes.append(node)
@@ -836,8 +851,22 @@ class FootballFieldScene: SCNScene {
         /// QB under center: bent at the waist, both hands extended down under
         /// the C's rear waiting on the exchange.
         case underCenter
-        /// Standing tall (QB, special-teams units).
+        /// Standing tall (special-teams units, and any player left out of the
+        /// stance dict).
         case upright
+        /// QB waiting in the shotgun — tall but set for the snap. Distinct from
+        /// `upright` so re-authoring the gun pose never touches the
+        /// special-teams / default-upright players.
+        case shotgunQB
+        /// RB set behind the QB in a back-specific crouch. Distinct from
+        /// `twoPoint` so it never touches the LB/S who share that pose.
+        case runningBack
+        /// LB/S ready stance: quarter-squat coil, hands held in front of the
+        /// thighs (not resting on the knees), chest and head up.
+        case linebacker
+        /// Pressed corner: deep coil, butt dropped, arms hanging loose at knee
+        /// height, locked on the QB/receiver.
+        case cornerback
     }
 
     /// Smoothly moves the existing player nodes into a new formation instead of
@@ -870,7 +899,7 @@ class FootballFieldScene: SCNScene {
         let generation = playGeneration
         for (offset, pair) in zip(homePlayerNodes + awayPlayerNodes, home + away).enumerated() {
             let (node, info) = pair
-            let target = SCNVector3(info.x, FieldConstants.playerHeight / 2, info.z)
+            let target = SCNVector3(info.x * lateralSign, FieldConstants.playerHeight / 2, info.z)
             updateJerseyNumber(on: node, to: info.number)
 
             let isHomeNode = offset < homePlayerNodes.count
@@ -940,16 +969,17 @@ class FootballFieldScene: SCNScene {
                 duration: TimeInterval = 0.55) {
         let nodes = teamIsHome ? homePlayerNodes : awayPlayerNodes
         guard nodes.count == positions.count, !positions.isEmpty else { return }
-        let centerX = positions.map(\.x).reduce(0, +) / Float(positions.count)
+        let centerX = positions.map(\.x).reduce(0, +) / Float(positions.count) * lateralSign
         let centerZ = positions.map(\.z).reduce(0, +) / Float(positions.count)
         let generation = playGeneration
         for (offset, pair) in zip(nodes, positions).enumerated() {
             let (node, spot) = pair
             let start = { [weak self, weak node] in
                 guard let self, let node, self.playGeneration == generation else { return }
-                self.run(node: node, to: SCNVector3(spot.x, FieldConstants.playerHeight / 2, spot.z),
+                let sx = spot.x * self.lateralSign
+                self.run(node: node, to: SCNVector3(sx, FieldConstants.playerHeight / 2, spot.z),
                          duration: duration, key: "formationMove")
-                let yaw = atan2(centerX - spot.x, centerZ - spot.z)
+                let yaw = atan2(centerX - sx, centerZ - spot.z)
                 node.runAction(SCNAction.sequence([
                     SCNAction.wait(duration: duration),
                     SCNAction.rotateTo(x: 0, y: CGFloat(yaw), z: 0, duration: 0.22,
@@ -989,6 +1019,10 @@ class FootballFieldScene: SCNScene {
             case .split:       clip = "stanceSplit"
             case .underCenter: clip = "stanceUC"
             case .upright:     clip = "stanceUpright"
+            case .shotgunQB:   clip = "stanceQBGun"
+            case .runningBack: clip = "stanceRB"
+            case .linebacker:  clip = "stanceLB"
+            case .cornerback:  clip = "stanceCB"
             }
             skel.playStance(clip, delay: delay)
             return
@@ -1010,8 +1044,10 @@ class FootballFieldScene: SCNScene {
                 ("leg", 0.5, 0, -0.6),
                 ("legR", 0.8, 0, -0.85),
             ]
-        case .twoPoint:
-            // Light crouch, both hands resting toward the knees.
+        case .twoPoint, .runningBack, .linebacker, .cornerback:
+            // Light crouch, both hands resting toward the knees. The RB/LB/CB
+            // share this procedural fallback (their real poses live in the
+            // skeletal clips).
             pitch = 0.3; sink = -0.07
             limbs = [
                 ("arm", 0.55, 0.25, -0.7),
@@ -1038,7 +1074,9 @@ class FootballFieldScene: SCNScene {
                 ("leg", 0.25, 0, -0.35),
                 ("legR", 0.25, 0, -0.35),
             ]
-        case .upright:
+        case .upright, .shotgunQB:
+            // Standing tall. The shotgun QB shares this procedural fallback
+            // (his own pose lives in the skeletal clip).
             pitch = 0; sink = 0
             limbs = [
                 ("arm", 0, 0.25, -0.15),
@@ -1081,8 +1119,18 @@ class FootballFieldScene: SCNScene {
     /// re-orients so it stays readable from the active side.
     private(set) var viewFacing: Float = 1
 
+    /// World→screen handedness compensation (sign-tested 2026-07-22): with
+    /// `viewFacing == +1` the camera looks toward +Z, so world +X lands on
+    /// screen LEFT — the mirror image of the playbook card, which always
+    /// draws +X to the right. Mirroring every choreographer X by this sign
+    /// at the data-in boundary (formations, huddles, step moves/paths, ball
+    /// flight — never read-back node positions) forces the field's
+    /// handedness to match the card for both home and away framings.
+    private(set) var lateralSign: Float = -1
+
     func setViewFacing(_ facing: Float) {
         viewFacing = facing >= 0 ? 1 : -1
+        lateralSign = -viewFacing
         orientFieldText()
         // The end wall on the camera's side would sit in front of the lens.
         rootNode.childNode(withName: "endWallPos", recursively: false)?.isHidden = viewFacing < 0
@@ -1163,9 +1211,12 @@ class FootballFieldScene: SCNScene {
 
     func focusCamera(z: Float, animated: Bool = true, duration: TimeInterval = 0.8,
                      pushIn: Bool = false, style styleOverride: CameraStyle? = nil) {
-        // A running replay owns the shot outright — scripted refocuses (and
-        // the follow-cam) resume once endReplayCamera() hands it back.
-        guard !replayCameraActive else { return }
+        // A running replay (or a kickoff ball-cam) owns the shot outright —
+        // scripted refocuses (and the follow-cam) resume once its endXxx()
+        // hands it back. FIX-3: missing the kickoff teardown would freeze the
+        // ensuing drive's pre-snap here, so endKickoffCamera() runs in every
+        // completion branch before the next focus.
+        guard !replayCameraActive, !kickoffCameraActive else { return }
         kickCameraActive = false
         cameraNode.removeAction(forKey: "pushIn")
         let clampedZ = max(-45, min(45, z))
@@ -1294,10 +1345,11 @@ class FootballFieldScene: SCNScene {
     /// both framings and at any playback speed. `runPlay` starts it at the
     /// snap; kicks and replays keep their own shots (guarded here).
     private func beginLiveFollow() {
-        guard !kickCameraActive, !replayCameraActive, !liveFollowActive else { return }
+        guard !kickCameraActive, !replayCameraActive, !kickoffCameraActive, !liveFollowActive else { return }
         liveFollowActive = true
         followAnchorZ = focusZ
         followProgress = 0
+        followHoldUntil = 0
         cameraNode.removeAction(forKey: "pushIn")
         cameraNode.removeAction(forKey: "focus")
         cameraTargetNode.removeAction(forKey: "focus")
@@ -1308,7 +1360,11 @@ class FootballFieldScene: SCNScene {
             let rig = self.shotRig(for: self.currentShotStyle)
             let baseZ = self.followBaseZ()
             let ballX = self.ballNode.presentation.worldPosition.x
-            let goal = SCNVector3(max(-14, min(14, ballX * 0.85)),
+            // During the mesh hold, damp the lateral follow so a counter/sweep
+            // back can't whip the frame sideways off the exchange — keeps QB
+            // and RB both framed; the factor snaps back once the hold releases.
+            let lateralFactor: Float = CACurrentMediaTime() < self.followHoldUntil ? 0.25 : 0.85
+            let goal = SCNVector3(max(-14, min(14, ballX * lateralFactor)),
                                   rig.targetHeight,
                                   baseZ + self.viewFacing * rig.targetLead)
             return SCNVector3(position.x + (goal.x - position.x) * 0.12,
@@ -1344,6 +1400,13 @@ class FootballFieldScene: SCNScene {
     /// return running the other way still drags the camera along. Called from
     /// the follow constraints (render thread).
     private func followBaseZ() -> Float {
+        // Mesh hold: park the frame on the exchange (no forward glide, and the
+        // ratchet does not accumulate) so the handoff reads. Step 1 already
+        // sits the frame at the anchor via the backward-snap ratchet, so this
+        // just extends that parked composition through the hand-off + hold.
+        if CACurrentMediaTime() < followHoldUntil {
+            return max(-45, min(45, followAnchorZ))
+        }
         let attack: Float = defensiveFraming ? -viewFacing : viewFacing
         let ballZ = ballNode.presentation.worldPosition.z
         let progress = (ballZ - followAnchorZ) * attack
@@ -1360,6 +1423,7 @@ class FootballFieldScene: SCNScene {
     private func endLiveFollow() {
         guard liveFollowActive else { return }
         liveFollowActive = false
+        followHoldUntil = 0
         cameraTargetNode.position = cameraTargetNode.presentation.position
         cameraNode.position = cameraNode.presentation.position
         cameraTargetNode.constraints = nil
@@ -1464,7 +1528,9 @@ class FootballFieldScene: SCNScene {
         case .sideline:
             // Near rail, low, level with the LOS; the body slides along Z
             // with the ball while X/Y stay parked (the bump can still dip Y).
-            cameraNode.position = SCNVector3(-27.5, 3.2, max(-58, min(58, losZ)))
+            // The rail follows `lateralSign` so the mirrored world is viewed
+            // from the same side of the action as before the handedness fix.
+            cameraNode.position = SCNVector3(-27.5 * lateralSign, 3.2, max(-58, min(58, losZ)))
             let slide = SCNTransformConstraint.positionConstraint(inWorldSpace: true) {
                 [weak self] _, position in
                 guard let self else { return position }
@@ -1502,6 +1568,97 @@ class FootballFieldScene: SCNScene {
     func endReplayCamera() {
         guard replayCameraActive else { return }
         replayCameraActive = false
+        cameraTargetNode.constraints = nil
+        if let lookAt = cameraLookAtConstraint {
+            cameraNode.constraints = [lookAt]
+        }
+    }
+
+    // MARK: - Kickoff Camera (FIX-3)
+
+    /// While true the kickoff ball-cam owns the shot: `focusCamera` and the
+    /// in-play attack-ratchet follow (`beginLiveFollow`) stand down until
+    /// `endKickoffCamera()` hands the field back. Same pattern as the replay
+    /// cam, but dedicated because a kickoff's flight runs toward the RECEIVING
+    /// end zone — frequently opposite the coached team's attack direction — so
+    /// the generic `followBaseZ()` forward-ratchet mis-tracks the boot (K2).
+    private(set) var kickoffCameraActive = false
+
+    /// Installs a dedicated kickoff follower modeled on the replay ball-cam:
+    /// an elevated near-rail broadcast vantage whose aim eases onto the ball's
+    /// world position every rendered frame (NO attack ratchet) and whose body
+    /// slides in Z with the ball — so the shot rides one coherent parabola out
+    /// to the end zone (touchback) or tracks the returner back (return). Opens
+    /// framed on the tee so the kicker's approach + leg swing read (K3).
+    /// `towardZ` is the landing side (the receiving end zone); `kickDir` is the
+    /// kicking direction sign (+1 = kick toward +Z).
+    func beginKickoffCamera(towardZ: Float, kickDir: Float) {
+        endLiveFollow()
+        kickoffCameraActive = true
+        replayCameraActive = false
+        kickCameraActive = false
+        cameraNode.removeAction(forKey: "pushIn")
+        cameraNode.removeAction(forKey: "focus")
+        cameraTargetNode.removeAction(forKey: "focus")
+
+        let teeZ = max(-58, min(58, -kickDir * 15))
+
+        // Seat the ball on the tee so the shot opens clean on the kicker with
+        // no stale-ball drift while the follower eases in. Step 1's ball slide
+        // then starts from the tee (a no-op) and the boot arcs from here.
+        ballNode.removeAllActions()
+        detachBallToRoot()
+        ballNode.position = SCNVector3(0, 0.3, teeZ)
+
+        // Broadcast lens for the whole flight (a high apex + long carry fit).
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = 0.3
+        cameraNode.camera?.fieldOfView = 52
+        SCNTransaction.commit()
+
+        // Aim: ease the target onto the ball's world position every frame,
+        // lifted slightly so the apex-16 arc sits inside the top of frame.
+        let aim = SCNTransformConstraint.positionConstraint(inWorldSpace: true) {
+            [weak self] _, position in
+            guard let self, self.kickoffCameraActive else { return position }
+            let ball = self.ballNode.presentation.worldPosition
+            let goal = SCNVector3(max(-14, min(14, ball.x)),
+                                  ball.y + 0.6,
+                                  max(-58, min(58, ball.z)))
+            return SCNVector3(position.x + (goal.x - position.x) * 0.14,
+                              position.y + (goal.y - position.y) * 0.14,
+                              position.z + (goal.z - position.z) * 0.14)
+        }
+        cameraTargetNode.constraints = [aim]
+        cameraTargetNode.position = SCNVector3(0, 1.2, teeZ)
+
+        guard let lookAt = cameraLookAtConstraint else { return }
+        // Elevated near rail, opened on the tee with a touch of downfield lead
+        // toward the landing side; the body slides in Z with the ball while
+        // X/Y stay parked. The rail follows `lateralSign` so the mirrored
+        // world is shot from the consistent side of the action.
+        let leadZ = max(-58, min(58, teeZ + (towardZ - teeZ) * 0.1))
+        cameraNode.position = SCNVector3(-32 * lateralSign, 11, leadZ)
+        let slide = SCNTransformConstraint.positionConstraint(inWorldSpace: true) {
+            [weak self] _, position in
+            guard let self, self.kickoffCameraActive else { return position }
+            let ballZ = max(-58, min(58, self.ballNode.presentation.worldPosition.z))
+            return SCNVector3(position.x, position.y,
+                              position.z + (ballZ - position.z) * 0.07)
+        }
+        cameraNode.constraints = [slide, lookAt]
+    }
+
+    /// Removes the kickoff follower constraints and hands the camera back to
+    /// the normal focus machinery. Freezes the model transforms where the
+    /// follower left the shot (so the next scripted focus is a move, not a
+    /// snap), then restores the plain look-at rig. MUST run in every kickoff
+    /// completion branch — a missed teardown freezes the next pre-snap focus.
+    func endKickoffCamera() {
+        guard kickoffCameraActive else { return }
+        kickoffCameraActive = false
+        cameraTargetNode.position = cameraTargetNode.presentation.position
+        cameraNode.position = cameraNode.presentation.position
         cameraTargetNode.constraints = nil
         if let lookAt = cameraLookAtConstraint {
             cameraNode.constraints = [lookAt]
@@ -3076,27 +3233,29 @@ class FootballFieldScene: SCNScene {
         for move in step.moves {
             guard let node = playerNode(at: move.nodeIndex) else { continue }
             let backpedal = step.backpedals.contains(move.nodeIndex)
+            let to = SCNVector3(move.to.x * lateralSign, move.to.y, move.to.z)
             if let delay = step.startDelays[move.nodeIndex], delay > 0.02 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     guard let self, self.playGeneration == generation else { return }
-                    self.run(node: node, to: move.to, duration: move.duration, key: "playMove",
+                    self.run(node: node, to: to, duration: move.duration, key: "playMove",
                              backpedal: backpedal)
                 }
             } else {
-                run(node: node, to: move.to, duration: move.duration, key: "playMove",
+                run(node: node, to: to, duration: move.duration, key: "playMove",
                     backpedal: backpedal)
             }
         }
         for path in step.paths where !path.points.isEmpty {
             let backpedal = step.backpedals.contains(path.nodeIndex)
+            let points = path.points.map { SCNVector3($0.x * lateralSign, $0.y, $0.z) }
             if let delay = step.startDelays[path.nodeIndex], delay > 0.02 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     guard let self, self.playGeneration == generation else { return }
-                    self.runPath(nodeIndex: path.nodeIndex, points: path.points,
+                    self.runPath(nodeIndex: path.nodeIndex, points: points,
                                  duration: path.duration, backpedal: backpedal)
                 }
             } else {
-                runPath(nodeIndex: path.nodeIndex, points: path.points, duration: path.duration,
+                runPath(nodeIndex: path.nodeIndex, points: points, duration: path.duration,
                         backpedal: backpedal)
             }
         }
@@ -3195,10 +3354,11 @@ class FootballFieldScene: SCNScene {
         case .snap(let toNodeIndex, let shotgun):
             runSnapExchange(to: toNodeIndex, shotgun: shotgun)
         case .arc(let to, let apex, let duration, let from):
-            runBallArc(to: to, apex: apex, duration: duration, from: from, style: step.throwStyle,
+            runBallArc(to: SCNVector3(to.x * lateralSign, to.y, to.z),
+                       apex: apex, duration: duration, from: from, style: step.throwStyle,
                        launchDelay: apex > 2.0 ? Self.throwWindup : 0)
         case .slide(let to, let duration):
-            runBallSlide(to: to, duration: duration)
+            runBallSlide(to: SCNVector3(to.x * lateralSign, to.y, to.z), duration: duration)
         case nil:
             break
         }
@@ -3226,6 +3386,17 @@ class FootballFieldScene: SCNScene {
         carryingChest = chest
         if let giverIndex, giverIndex != index {
             handoffGesture(giverIndex: giverIndex, chest: giverChest, toward: node)
+            // Genuine hand-to-hand mesh (QB giver -> RB taker, tuck): hold the
+            // follow-cam on the exchange so it reads before the frame glides
+            // downfield. Gated on !chest (the tuck carry) and the live rig, and
+            // fires ONCE — the step-3 .carry no-ops at the parent guard above,
+            // so it never re-arms. Pass/toss/snap receptions detach to root
+            // first (giver=nil) and QB keepers have giver==index, so none of
+            // them reach here — this is run-mesh only. Divided by the playback
+            // rate so the hold matches the compressed beat at 2x/4x.
+            if !chest, liveFollowActive {
+                followHoldUntil = CACurrentMediaTime() + Self.meshHoldSeconds / currentPlaybackRate
+            }
         }
         ballNode.removeAllActions()
         ballNode.eulerAngles = SCNVector3Zero
@@ -3274,6 +3445,7 @@ class FootballFieldScene: SCNScene {
         }
         carryingIndex = nil
         carryingChest = false
+        releasingHandIndex = nil    // safety net: any detach/reset ends a wind-up pin
         guard ballNode.parent !== rootNode else { return }
         let worldPosition = ballNode.worldPosition
         ballNode.removeFromParentNode()
@@ -3345,8 +3517,11 @@ class FootballFieldScene: SCNScene {
     static let throwWindup: TimeInterval = 0.42
 
     /// Flies the ball along a parabola. The launch point is always the
-    /// passer's hands: `from` (or the live carry) resolves the thrower and
-    /// the flight starts at his ANIMATED chest position — never a stale spot.
+    /// passer's throwing hand: for a skeletal QB the ball rides `hand_r`
+    /// through the wind-up and launches from that LIVE animated hand at the
+    /// release beat — never a stale spot and never a motionless ball parked at
+    /// the LOS. `from` (or the live carry) resolves the thrower; non-skeletal
+    /// figures fall back to the chest release point.
     private func runBallArc(to target: SCNVector3, apex: Float, duration: TimeInterval,
                             from passerIndex: Int? = nil, style: ThrowStyle? = nil,
                             launchDelay: TimeInterval = 0) {
@@ -3354,26 +3529,74 @@ class FootballFieldScene: SCNScene {
         ballHandoffToken += 1
         // Whoever carries the ball is the passer; a snap→throw race can leave
         // the carry unassigned, so fall back to the passer the call named.
-        let thrower = playerNode(at: carryingIndex ?? passerIndex ?? -1)
-        // Invariant: capture the hand release point BEFORE the detach clears
-        // the carry, from the thrower's presentation (his on-screen spot).
+        let carryIndex = carryingIndex
+        let thrower = playerNode(at: carryIndex ?? passerIndex ?? -1)
+        // Chest release point for non-skeletal figures (and as a fallback).
         let release = thrower.map { ballReleasePoint(for: $0) }
+        // The skeletal driver behind the thrower, if he runs the skinned rig —
+        // only then can the ball ride the animated hand.
+        let skel = thrower
+            .flatMap { $0.childNode(withName: "figure", recursively: false) }
+            .flatMap { skeletalDriver(for: $0) }
+
+        // Hand-carried wind-up throw: the ball is currently parented to a
+        // skeletal QB and the release beat is `launchDelay` away. Keep it
+        // pinned to his throwing hand (see pinCarriedBallToBody) while the arm
+        // cocks, THEN launch from the LIVE hand position at the release beat —
+        // so the ball is visibly carried to the release instant and the arc
+        // starts from the hand, not a parked chest point.
+        if duration > 0, launchDelay > 0, let skel, let carryIndex,
+           let thrower, ballNode.parent === thrower {
+            // Arm motion now; its release beat is time-warped to land at
+            // `launchDelay` (throwMotion → play(beatAt:)), matching the launch.
+            if apex <= 2.0 { pitchMotion(of: thrower, toward: target) }
+            else { throwMotion(of: thrower, style: style ?? .overhand, releaseAt: launchDelay) }
+            releasingHandIndex = carryIndex     // pinCarriedBallToBody rides hand_r now
+            let token = ballHandoffToken
+            let generation = playGeneration
+            DispatchQueue.main.asyncAfter(deadline: .now() + launchDelay) { [weak self] in
+                guard let self else { return }
+                if self.releasingHandIndex == carryIndex { self.releasingHandIndex = nil }
+                // A later ball move (or a new play) already claimed the ball —
+                // it owns the detach/flight; never snatch it back.
+                guard self.playGeneration == generation, self.ballHandoffToken == token else { return }
+                // Launch from the SAME hand read the last pinned frame used, so
+                // there is no pin-less jump between wind-up and flight.
+                let liveStart = skel.throwHandWorldPosition() ?? release ?? self.ballNode.worldPosition
+                self.detachBallToRoot()
+                self.ballNode.removeAllActions()
+                self.launchBallFlight(from: liveStart, to: target, apex: apex, duration: duration)
+            }
+            return
+        }
+
+        // No wind-up pin (pitch with launchDelay 0, non-skeletal figure, a
+        // scramble race where the ball isn't parented to the thrower, or a
+        // 0-duration snap-onto-target): original order — detach first (resets
+        // the mesh arm pose), then arm motion, then launch. A skeletal thrower
+        // still launches from his hand; others from the chest release point.
         detachBallToRoot()
         ballNode.removeAllActions()
         guard duration > 0 else {
             ballNode.position = release ?? target
             return
         }
-        // A short low flip is a pitch (toss / screen shovel) with a light
-        // lateral scoop; a real arc is an overhead throw. Kicks (no passer)
-        // get no arm at all.
         if let thrower {
             if apex <= 2.0 { pitchMotion(of: thrower, toward: target) }
             else { throwMotion(of: thrower, style: style ?? .overhand, releaseAt: launchDelay) }
         }
+        let start = skel?.throwHandWorldPosition() ?? release ?? ballNode.position
+        launchBallFlight(from: start, to: target, apex: apex, duration: duration, hold: launchDelay)
+    }
 
-        let start = release ?? ballNode.position
+    /// Runs the ball's parabolic flight (+ spiral + turf shadow) from `start`
+    /// to `target`. `hold` waits that long before releasing (a windless throw
+    /// that still wants the release beat, or a kick); the hand-pinned wind-up
+    /// path passes 0 because it has already waited on the hand.
+    private func launchBallFlight(from start: SCNVector3, to target: SCNVector3,
+                                  apex: Float, duration: TimeInterval, hold: TimeInterval = 0) {
         ballNode.position = start
+        let holdAction = SCNAction.wait(duration: hold)
         let arc = SCNAction.customAction(duration: duration) { node, elapsed in
             let t = max(0, min(Float(elapsed) / Float(duration), 1))
             node.position = SCNVector3(
@@ -3382,20 +3605,17 @@ class FootballFieldScene: SCNScene {
                 start.z + (target.z - start.z) * t
             )
         }
-        // Snap exactly onto the target in case the last frame lands short. On a throw,
-        // `launchDelay` holds the ball in the passer's hand while his arm winds up, so
-        // it leaves exactly as the release beat lands (synced in throwMotion via beatAt).
+        // Snap exactly onto the target in case the last frame lands short.
         let settle = SCNAction.move(to: target, duration: 0)
-        let hold = SCNAction.wait(duration: launchDelay)
-        ballNode.runAction(SCNAction.sequence([hold, arc, settle]), forKey: "ballMove")
+        ballNode.runAction(SCNAction.sequence([holdAction, arc, settle]), forKey: "ballMove")
 
         // Passes spiral around the long axis; kicks/punts (high apex) tumble
         // end over end. Reset the orientation when the flight lands.
         let spin: SCNAction = apex >= 8
             ? SCNAction.repeatForever(SCNAction.rotateBy(x: -2 * .pi, y: 0, z: 0, duration: 0.7))
             : SCNAction.repeatForever(SCNAction.rotateBy(x: 0, y: 0, z: 2 * .pi, duration: 0.35))
-        ballNode.runAction(SCNAction.sequence([hold, spin]), forKey: "ballSpin")
-        DispatchQueue.main.asyncAfter(deadline: .now() + launchDelay + duration) { [weak self] in
+        ballNode.runAction(SCNAction.sequence([holdAction, spin]), forKey: "ballSpin")
+        DispatchQueue.main.asyncAfter(deadline: .now() + hold + duration) { [weak self] in
             self?.ballNode.removeAction(forKey: "ballSpin")
             self?.ballNode.eulerAngles = SCNVector3Zero
         }
@@ -3421,7 +3641,7 @@ class FootballFieldScene: SCNScene {
                 start.z + (target.z - start.z) * t
             )
         }
-        shadow.runAction(SCNAction.sequence([hold, track, SCNAction.removeFromParentNode()]))
+        shadow.runAction(SCNAction.sequence([holdAction, track, SCNAction.removeFromParentNode()]))
     }
 
     /// Per-style shaping of the throwing motion. Amplitudes and durations
@@ -4935,6 +5155,9 @@ class FootballFieldScene: SCNScene {
     ///     forward off the container-pinned ball, which reads as a phantom fumble);
     ///     a normal upright run keeps `attachBall`'s stable hip offset (no change),
     ///     and the one small reposition at contact is masked by the tackle.
+    ///   • Throw wind-up (`releasingHandIndex`): ride the throwing hand (hand_r)
+    ///     so the ball stays in the QB's hand as the arm cocks and leaves it from
+    ///     the hand at the release beat (runBallArc launches from the same read).
     /// Runs each frame for the single carrier only; kit figures keep the offset.
     /// `presentation` conversion keeps it correct while the carrier is mid-move.
     private func pinCarriedBallToBody() {
@@ -4942,6 +5165,11 @@ class FootballFieldScene: SCNScene {
               let node = playerNode(at: index), ballNode.parent === node,
               let figure = node.childNode(withName: "figure", recursively: false),
               let skel = skeletalDriver(for: figure) else { return }
+        if releasingHandIndex == index {
+            guard let handWorld = skel.throwHandWorldPosition() else { return }
+            ballNode.position = node.presentation.convertPosition(handWorld, from: nil)
+            return
+        }
         guard carryingChest || skel.isGrounded else { return }
         guard let anchorWorld = skel.ballCarryWorldPosition(chest: carryingChest) else { return }
         ballNode.position = node.presentation.convertPosition(anchorWorld, from: nil)

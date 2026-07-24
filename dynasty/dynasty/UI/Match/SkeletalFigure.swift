@@ -40,6 +40,8 @@ final class SkeletalFigure {
     static let clipNames = ["run", "idle", "sprint", "tackle", "throw", "catch", "kick", "juke", "celebrate",
                             // per-position pre-snap stances (held; played by applyStance)
                             "stance3", "stance2", "stanceSplit", "stanceUC", "stanceUpright",
+                            "stanceQBGun", "stanceRB",   // QB-shotgun + RB, distinct from upright/stance2
+                            "stanceLB", "stanceCB",      // LB/S ready coil + pressed corner
                             "fall_back"]   // big-hit backward knockdown (forward falls reuse tackle_a/b)
 
     /// One-shot action clips retargeted from Mixamo carry a long lead-in/hold
@@ -82,7 +84,7 @@ final class SkeletalFigure {
     /// a game event (the ball's arrival). Default 0.5 for anything unlisted.
     private static let actionHitFraction: [String: Double] = [
         "catch_a": 0.66, "catch_b": 0.70, "catch_c": 0.35, "catch_d": 0.32,
-        "throw_a": 0.55, "throw_b": 0.55, "throw_c": 0.39,
+        "throw_a": 0.60, "throw_b": 0.55, "throw_c": 0.66,
         "tackle_a": 0.80, "tackle_b": 0.60,
         "kick_a": 0.50, "kick_b": 0.50,   // foot through the ball ~mid-swing
         "dive": 0.35,
@@ -565,6 +567,14 @@ final class SkeletalFigure {
             return SCNVector3((l.x + r.x) * 0.5, (l.y + r.y) * 0.5, (l.z + r.z) * 0.5)
         }
         return tuckBone?.presentation.worldPosition
+    }
+
+    /// World position of the throwing hand (hand_r) — where a pass leaves the
+    /// QB's hand at the release beat. Falls back to the off hand, then nil if
+    /// the rig lacks hands. `presentation` reflects the live animated pose, so
+    /// the ball rides the hand through the wind-up and launches from it.
+    func throwHandWorldPosition() -> SCNVector3? {
+        handBoneR?.presentation.worldPosition ?? handBoneL?.presentation.worldPosition
     }
 
     /// Fire a one-shot action clip (catch/tackle/throw…) over the locomotion.
