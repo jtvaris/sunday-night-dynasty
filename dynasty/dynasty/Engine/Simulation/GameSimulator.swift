@@ -1571,16 +1571,24 @@ enum GameSimulator {
             case .rush:
                 // BIDIRECTIONAL so sim run heat is ~0-mean in aggregate (mirrors
                 // the live path's per-battle win/loss, and keeps a productive back
-                // from PINNING hot): a chunk carry (≥4, at/above the league mean)
-                // heats him, a stuffed one (≤1, the stuff line) cools him, 2-3 is
-                // a push. Without the cool-down the back only ever warms and the
-                // aggregate rushing drifts up.
+                // from PINNING hot): a chunk carry heats him, a stuffed one cools
+                // him, the middle band is a push. FINAL-POLISH (item 1, EV lean):
+                // the old ≥4 / ≤1 lines were NOT balanced — at the 70-tier
+                // calibration point the per-team-game run-yield median is ~5, so ≥4
+                // captured ~77 % of carries while ≤1 captured only ~16 %. That
+                // lopsided warm ratchet drifted the RB's heat up (+0.05 ypc live-vs-
+                // off every seed → a +0.3-pt macro scoring lean). Re-centered on the
+                // median: a real chunk (≥6) heats, a poor carry (≤3) cools, 4-5 is
+                // the push. This lands the sim run feed at ~0-mean (chunk share ~42 %,
+                // stuff share ~23 % — the residual keeps a genuinely dominant back
+                // warming, which is intended, while zeroing the aggregate drift).
+                // ≥20 still books the bigStep chunk accent.
                 if let id = play.keyOffensePlayerID {
                     if big {
                         heat.reward(id, HeatState.bigStep, scaleEligible: elig(id))
-                    } else if play.yardsGained >= 4 {
+                    } else if play.yardsGained >= 6 {
                         heat.reward(id, HeatState.winStep, scaleEligible: elig(id))
-                    } else if play.yardsGained <= 1 {
+                    } else if play.yardsGained <= 3 {
                         heat.reward(id, -HeatState.lossStep, scaleEligible: elig(id))
                     }
                 }

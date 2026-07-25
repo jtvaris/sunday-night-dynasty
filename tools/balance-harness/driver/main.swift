@@ -750,10 +750,13 @@ func scenarioHeatDist() {
         case .completion: if let id = r.keyOffensePlayerID { hs.reward(id, big ? HeatState.bigStep : HeatState.winStep, scaleEligible: elig(id)) }
         case .rush: if let id = r.keyOffensePlayerID {   // bidirectional (mirrors GameSimulator.feedDriveHeat)
             if big { hs.reward(id, HeatState.bigStep, scaleEligible: elig(id)) }
-            else if r.yardsGained >= 4 { hs.reward(id, HeatState.winStep, scaleEligible: elig(id)) }
-            else if r.yardsGained <= 1 { hs.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) } }
+            else if r.yardsGained >= 6 { hs.reward(id, HeatState.winStep, scaleEligible: elig(id)) }   // item 1: median-centered (was ≥4)
+            else if r.yardsGained <= 3 { hs.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) } }  // item 1: (was ≤1)
         case .incompletion:
-            if r.wasDrop == true, let id = r.keyOffensePlayerID { hs.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) }
+            // item 1: faithful mirror of the engine feed — ANY incompletion cools
+            // the target by passMissStep (was stale drop-only -lossStep, a one-way
+            // completion ratchet that predates the ROUND-6 passMissStep fix).
+            if let id = r.keyOffensePlayerID { hs.reward(id, -HeatState.passMissStep, scaleEligible: elig(id)) }
             if r.passBreakup == true, let did = r.keyDefensePlayerID { hs.reward(did, HeatState.winStep, scaleEligible: elig(did)) }
         case .sack:
             if let id = r.keyOffensePlayerID { hs.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) }
@@ -848,6 +851,20 @@ func scenarioHeatRatio() {
         dS != 0 ? dU / dS : 0, abs(dI) < 0.6 ? "YES" : "NO"))
 }
 
+// ---- Per-feed heat instrumentation (item 1: hunt the EV-lean asymmetry) -----
+// The SIM feeder applies a signed heat step per play outcome. To find which feeds
+// carry a nonzero mean (the EV lean), accumulate every eligible signed step by
+// feed key over the whole live campaign. Net-offense = sum of the offense-key
+// feeds; a nonzero net-offense mean is the heat drift that inflates scoring.
+var gHeatFeed: [String: Double] = [:]
+var gHeatFeedN = 0                       // team-games observed (games*2)
+let gHeatOffKeys = ["TD", "cmpWin", "cmpBig", "rushWin", "rushBig", "rushStuff",
+                    "incmp", "sackOff", "intOff", "fumOff"]
+let gHeatDefKeys = ["breakupDef", "sackDef", "intDef"]
+@inline(__always) func heatFeedTally(_ key: String, _ amount: Double, _ eligible: Bool) {
+    if eligible { gHeatFeed[key, default: 0] += amount }
+}
+
 // ---- macro: 200+ full-ish game sims — scoring distribution, heat-live vs off -
 // A possession-model game engine over PlaySimulator.simulatePlay (the only
 // resolvable path in the harness): realistic pass/run mix, first downs, FG range,
@@ -900,25 +917,27 @@ func scenarioMacro() {
         for r in plays {
             let big = r.yardsGained >= 20
             switch r.outcome {
-            case .touchdown: if let id = r.keyOffensePlayerID { offHeat.reward(id, HeatState.bigStep, scaleEligible: elig(id)) }
-            case .completion: if let id = r.keyOffensePlayerID { offHeat.reward(id, big ? HeatState.bigStep : HeatState.winStep, scaleEligible: elig(id)) }
+            case .touchdown: if let id = r.keyOffensePlayerID { offHeat.reward(id, HeatState.bigStep, scaleEligible: elig(id)); heatFeedTally("TD", HeatState.bigStep, elig(id)) }
+            case .completion: if let id = r.keyOffensePlayerID { offHeat.reward(id, big ? HeatState.bigStep : HeatState.winStep, scaleEligible: elig(id)); heatFeedTally(big ? "cmpBig" : "cmpWin", big ? HeatState.bigStep : HeatState.winStep, elig(id)) }
             case .rush: if let id = r.keyOffensePlayerID {
-                if big { offHeat.reward(id, HeatState.bigStep, scaleEligible: elig(id)) }
-                else if r.yardsGained >= 4 { offHeat.reward(id, HeatState.winStep, scaleEligible: elig(id)) }
-                else if r.yardsGained <= 1 { offHeat.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) } }
+                // Mirrors GameSimulator.feedDriveHeat — item-1 median-centered run
+                // feed: chunk ≥6 heats, poor carry ≤3 cools, 4-5 push (was ≥4/≤1).
+                if big { offHeat.reward(id, HeatState.bigStep, scaleEligible: elig(id)); heatFeedTally("rushBig", HeatState.bigStep, elig(id)) }
+                else if r.yardsGained >= 6 { offHeat.reward(id, HeatState.winStep, scaleEligible: elig(id)); heatFeedTally("rushWin", HeatState.winStep, elig(id)) }
+                else if r.yardsGained <= 3 { offHeat.reward(id, -HeatState.lossStep, scaleEligible: elig(id)); heatFeedTally("rushStuff", -HeatState.lossStep, elig(id)) } }
             case .incompletion:
                 // ROUND-6 (mirror GameSimulator): bidirectional receiver heat — ANY
                 // incompletion cools the target by lossStep (was drop-only), zeroing
                 // the one-way completion ratchet. Breakup still credits the defender.
-                if let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.passMissStep, scaleEligible: elig(id)) }
-                if r.passBreakup == true, let did = r.keyDefensePlayerID { defHeat.reward(did, HeatState.winStep, scaleEligible: elig(did)) }
+                if let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.passMissStep, scaleEligible: elig(id)); heatFeedTally("incmp", -HeatState.passMissStep, elig(id)) }
+                if r.passBreakup == true, let did = r.keyDefensePlayerID { defHeat.reward(did, HeatState.winStep, scaleEligible: elig(did)); heatFeedTally("breakupDef", HeatState.winStep, elig(did)) }
             case .sack:
-                if let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) }
-                if let did = r.keyDefensePlayerID { defHeat.reward(did, HeatState.bigStep, scaleEligible: elig(did)) }
+                if let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.lossStep, scaleEligible: elig(id)); heatFeedTally("sackOff", -HeatState.lossStep, elig(id)) }
+                if let did = r.keyDefensePlayerID { defHeat.reward(did, HeatState.bigStep, scaleEligible: elig(did)); heatFeedTally("sackDef", HeatState.bigStep, elig(did)) }
             case .interception:
-                if let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.turnoverStep, scaleEligible: elig(id)) }
-                if let did = r.keyDefensePlayerID { defHeat.reward(did, HeatState.bigStep, scaleEligible: elig(did)) }
-            case .fumbleLost: if let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.turnoverStep, scaleEligible: elig(id)) }
+                if let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.turnoverStep, scaleEligible: elig(id)); heatFeedTally("intOff", -HeatState.turnoverStep, elig(id)) }
+                if let did = r.keyDefensePlayerID { defHeat.reward(did, HeatState.bigStep, scaleEligible: elig(did)); heatFeedTally("intDef", HeatState.bigStep, elig(did)) }
+            case .fumbleLost: if let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.turnoverStep, scaleEligible: elig(id)); heatFeedTally("fumOff", -HeatState.turnoverStep, elig(id)) }
             default: break
             }
         }
@@ -1018,7 +1037,9 @@ func scenarioMacro() {
         return (mean, sqrt(varc), teamPts.min() ?? 0, teamPts.max() ?? 0, Double(band)/n*100,
                 pctf(comps, atts), Double(runY)/Double(max(1,runN)), pctf(ints, atts))
     }
+    gHeatFeed = [:]
     let live = runCondition(heatLive: true)
+    gHeatFeedN = games * 2                        // team-games observed during the live run
     let off  = runCondition(heatLive: false)
     print(String(format: "  games=%d  team-seasons=%d per condition", games, games*2))
     print(String(format: "  HEAT-LIVE  pts/team/game mean=%.1f  sd=%.1f  [min %d, max %d]  10-38 band=%.0f%%  comp%%=%.1f ypc=%.2f INT%%=%.2f",
@@ -1029,6 +1050,17 @@ func scenarioMacro() {
         live.mean - off.mean, live.comp - off.comp, live.ypc - off.ypc, live.intPct - off.intPct))
     print(String(format: "  NFL sanity: mean 17-27 pts/team is realistic → mean %.1f %@",
         live.mean, (live.mean >= 15 && live.mean <= 30) ? "OK" : "OUT-OF-BAND"))
+    // ---- Per-feed heat contribution means (item 1 diagnostic) ----------------
+    let invN = gHeatFeedN > 0 ? 1.0 / Double(gHeatFeedN) : 0
+    var offNet = 0.0, defNet = 0.0
+    print("  --- per-feed heat contribution means (signed step sum ÷ team-game; offense-key feeds drive scoring) ---")
+    var offParts: [String] = []
+    for k in gHeatOffKeys { let m = (gHeatFeed[k] ?? 0) * invN; offNet += m; offParts.append(String(format: "%@=%+.3f", k, m)) }
+    print("    OFF  " + offParts.joined(separator: " "))
+    var defParts: [String] = []
+    for k in gHeatDefKeys { let m = (gHeatFeed[k] ?? 0) * invN; defNet += m; defParts.append(String(format: "%@=%+.3f", k, m)) }
+    print("    DEF  " + defParts.joined(separator: " "))
+    print(String(format: "    NET  offense=%+.3f/team-game  defense=%+.3f/team-game  (offense drift is the EV lean; target ~0)", offNet, defNet))
 }
 
 // ============================================================================
@@ -1259,6 +1291,9 @@ struct Aggregate {
     var thirdPct: Double { let c = lines.reduce(0) { $0 + $1.thirdC }, a = lines.reduce(0) { $0 + $1.thirdA }; return a > 0 ? Double(c) / Double(a) * 100 : 0 }
     var netYPA: Double { let y = lines.reduce(0) { $0 + $1.passYds }, a = lines.reduce(0) { $0 + $1.atts + $1.sacks }; return a > 0 ? Double(y) / Double(a) : 0 }
     var ypc: Double { let y = lines.reduce(0) { $0 + $1.rushYds }, a = lines.reduce(0) { $0 + $1.rushAtt }; return a > 0 ? Double(y) / Double(a) : 0 }
+    // Scrimmage run share (rush att ÷ run+pass plays) — how run-heavy the AI
+    // actually called, the input RunKeyState keys on (item 2 diagnostic).
+    var runShare: Double { let r = lines.reduce(0) { $0 + $1.rushAtt }, p = lines.reduce(0) { $0 + $1.plays }; return p > 0 ? Double(r) / Double(p) * 100 : 0 }
 }
 
 func printBandTable(_ a: Aggregate) {
@@ -1313,8 +1348,8 @@ func scenarioFullGame(_ f: [String: String]) {
     let hp = Double(homeWins) / Double(n) * 100, apw = Double(awayWins) / Double(n) * 100, tp = Double(ties) / Double(n) * 100
     print(String(format: "  WIN SPLIT  home=%.1f%% away=%.1f%% tie=%.1f%%   home margin mean=%+.1f (sd %.1f)  home pts %.1f | away pts %.1f",
         hp, apw, tp, meanD(margins), sdD(margins), home.meanPts, away.meanPts))
-    print(String(format: "  PER-SIDE   HOME off: passYds/g=%.0f netYPA=%.2f comp=%.1f%%  |  AWAY off: passYds/g=%.0f netYPA=%.2f comp=%.1f%%",
-        home.meanPassYds, home.netYPA, home.compPct, away.meanPassYds, away.netYPA, away.compPct))
+    print(String(format: "  PER-SIDE   HOME off: passYds/g=%.0f netYPA=%.2f comp=%.1f%% runShare=%.1f%% ypc=%.2f  |  AWAY off: passYds/g=%.0f netYPA=%.2f comp=%.1f%% runShare=%.1f%% ypc=%.2f",
+        home.meanPassYds, home.netYPA, home.compPct, home.runShare, home.ypc, away.meanPassYds, away.netYPA, away.compPct, away.runShare, away.ypc))
     print(String(format: "  RUNTIME  %d games in %.2fs = %.1f games/sec", n, elapsed, Double(n) / max(elapsed, 0.0001)))
 }
 

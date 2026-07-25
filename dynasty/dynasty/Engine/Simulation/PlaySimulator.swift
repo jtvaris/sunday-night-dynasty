@@ -343,18 +343,27 @@ enum PlaySimulator {
         }()
 
         // Game-plan pass bias: the user's Play Calling Mix slider shifts the
-        // pass probability by up to ±0.30 (runPassRatio 0 → -0.30, 1 → +0.30).
-        // ROUND-6: slope raised 0.3 → 0.60 to restore the run-heavy adaptation
-        // penalty. At 0.3 a "run-heavy" plan (runPassRatio 0.25) only lifted the
-        // early-down run share ~0.45 → ~0.52 — indistinguishable from balanced
-        // (~0.45) to RunKeyState's EWMA, so a predictable run team was never keyed.
-        // At 0.60 it produces a genuinely distinct ~0.585 run share the defense can
-        // key and punish (see keyPivot) — restoring the ~-9pp run-heavy penalty. Held
-        // at 0.60 (not higher) so the SYMMETRIC pass side isn't over-leaned: a bigger
-        // slope re-inflates a pass-heavy plan's scoring, which the round-5 fix removed.
-        // A balanced plan (0.5) contributes EXACTLY 0, so every nil-gameplan /
-        // equal-tier path is byte-unchanged — only a styled plan moves.
-        let planPassBias = ((gamePlan?.runPassRatio ?? 0.5) - 0.5) * 0.60
+        // pass probability. ROUND-6 raised the slope 0.3 → 0.60 to restore the
+        // run-heavy adaptation penalty. FINAL-POLISH (item 2): 0.60 still under-
+        // produced — a "run-heavy" plan (runPassRatio 0.25) called only ~53 % of
+        // its snaps on the ground (~0.585 early-down share), barely over
+        // RunKeyState.keyPivot (0.55, keyIntensity ~0.18), so the defense keyed it
+        // only weakly and the penalty leaned on the P0-1 opportunity-cost alone.
+        // The KNOB — not the punishment — was diluted (the sane-mix P0-1 trim lifted
+        // BALANCED's own early-down run share, compressing the styles together). Fixed
+        // by steepening ONLY the run side: runPassRatio < 0.5 uses slope 1.00 so a
+        // run-heavy plan calls a genuinely run-heavy ~61 % scrimmage sequence (up from
+        // the diluted ~53 %; early-down ~0.68, clearly past keyPivot ⇒ the defense keys
+        // and its ground game collapses to ~2.9 ypc, restoring a ~68 % HFA-neutral
+        // balanced-beats-run-heavy penalty — in the 60-70 % target). The pass side
+        // stays at the round-5-safe 0.60 so a pass-heavy plan's scoring is NOT
+        // re-inflated (the asymmetry is the whole point). Held at 1.00, not higher: at
+        // 1.10-1.20 the steep keyIntensity ramp near-full-keys the ~63 % sequence and
+        // over-corrects the penalty past 70 %. A balanced plan (0.5) contributes
+        // EXACTLY 0, so every nil-gameplan / equal-tier path is byte-unchanged — only
+        // a styled plan moves.
+        let planRatioDelta = (gamePlan?.runPassRatio ?? 0.5) - 0.5
+        let planPassBias = planRatioDelta * (planRatioDelta < 0 ? 1.00 : 0.60)
 
         // Weather run bias: in snow both AI coordinators lean on the ground
         // game — the pass probability drops by 0.08 across every situation.
@@ -862,6 +871,16 @@ enum PlaySimulator {
             + underdogReliefCompletion(offenseMean: offMeanOverall, defenseMean: defMeanOverall)
         if floorComp != 0 {
             completionChance = clamp(completionChance + floorComp, min: 0.05, max: 0.95)
+        }
+        // Item 3: situational 3rd-down stiffening — trims good/elite 3rd-down
+        // conversion (≤47) without touching general scoring. Byte-zero at all-70 /
+        // avg / weak (combined ≤ 80) and off 3rd down, so per-play parity holds.
+        if down == 3 {
+            let cm3 = (offMeanOverall + defMeanOverall) / 2.0
+            if cm3 > thirdDownPivot {
+                let cool = Swift.min(thirdDownStiffenCap, (cm3 - thirdDownPivot) * thirdDownStiffen)
+                completionChance = clamp(completionChance - cool, min: 0.05, max: 0.95)
+            }
         }
 
         // Mech 4: WR release vs DB press on man-press SHORT throws (live games
@@ -2682,8 +2701,8 @@ enum PlaySimulator {
     // per-play probe (combined mean == 70), the avg tier, and the good tier therefore
     // see byte-zero adjustment; only the weak and elite EQUAL-tier extremes bend.
     private static let floorWarmPivot   = 70.0   // no warm at/above the all-70 calibration mean
-    private static let floorWarmComp    = 0.0082 // completion restored per overall-pt below the pivot
-    private static let floorWarmRun     = 0.058  // run yd/carry restored per overall-pt below the pivot
+    private static let floorWarmComp    = 0.0100 // completion restored per overall-pt below the pivot (item 3: 0.0082→0.0100, restores weak-weak pts to the 17 floor 5ae0989 raised, after item-1's correct heat de-inflation lowered it)
+    private static let floorWarmRun     = 0.076  // run yd/carry restored per overall-pt below the pivot (item 3: 0.058→0.076, weak-tier ypc floor back to ~3.64 ≥3.6 + weak-weak pts back into band after item-1 RB-heat de-inflation nudged ypc to ~3.52 / pts to 16.6)
     private static let floorWarmCompCap = 0.11
     private static let floorWarmRunCap  = 0.62
     private static let ceilCoolPivot    = 85.0   // relax the un-compressed elite tail above this
@@ -2691,6 +2710,21 @@ enum PlaySimulator {
     private static let ceilCoolRun      = 0.028  // run yd/carry trimmed per overall-pt above the pivot
     private static let ceilCoolCompCap  = 0.055
     private static let ceilCoolRunCap   = 0.28
+
+    // ---- ITEM 3: SITUATIONAL 3rd-DOWN STIFFENING (good/elite convert too often) ----
+    // Good- and elite-tier EQUAL games convert 3rd downs ~49-51 % (over the ~44 % NFL
+    // norm) purely as a downstream effect of their high per-play efficiency — there is
+    // no 3rd-down-specific lever, so the general taper can't reach it without nerfing
+    // their (in-band) overall comp/ypc/points. This is a small, talent-scaled completion
+    // cool that fires ONLY on 3rd down and ONLY when the COMBINED on-field mean clears
+    // `thirdDownPivot` (80) — so good (~83.5) and elite (~91.5) are trimmed while avg
+    // (~74.5), weak (~62), the all-70 per-play probe (70), and every mismatch that
+    // averages below 80 are BYTE-ZERO. It shaves the pass-conversion rate on the down
+    // that decides drives, dropping 3rd-down to ≤47 without moving general scoring below
+    // band (a converted-3rd is only ~1-2 pts of the drive's EV).
+    private static let thirdDownPivot     = 80.0
+    private static let thirdDownStiffen   = 0.013  // completion cooled per combined-pt above the pivot, on 3rd down
+    private static let thirdDownStiffenCap = 0.105
 
     /// Combined on-field mean overall = (mean offense overall + mean defense overall)
     /// / 2 — how far this whole matchup sits from the 70 calibration mean.
@@ -2733,7 +2767,15 @@ enum PlaySimulator {
     // elite-vs-weak / every 2-3-tier rung is byte-untouched). 0 at parity ⇒ equal-tier
     // games and the all-70 probe (gap 0) are untouched.
     private static let underdogGapMin  = 4.0    // deadzone: below this the gap is single-unit noise
-    private static let underdogGapPeak = 11.0   // one-tier team gap → full relief
+    private static let underdogGapPeak = 11.0   // one-tier team gap → full relief (ramp end)
+    // ITEM 3: full-relief PLATEAU end. The avg-vs-weak gap is ~12.5 (the weak band 55-69
+    // is wide, so its mean ~62 vs avg ~74.5), which sat PAST the old single-point peak
+    // (11) on the fade-out ramp — getting only ~0.81 of the relief and leaving avg-weak
+    // ~1pp hot (76.1). Widening the peak to a plateau [11,13] gives that wide-band
+    // one-tier rung its FULL relief (→ ≤75) while the true one-tier rungs good-avg (gap
+    // ~9) and elite-good (~8) stay on the untouched ramp — a surgical fix, not a global
+    // relief bump.
+    private static let underdogGapPlateau = 13.0
     private static let underdogGapZero = 19.0   // two-tier team gap → relief gone
     private static let underdogReliefComp = 0.045 // completion relief at the one-tier peak
 
@@ -2742,9 +2784,14 @@ enum PlaySimulator {
     static func underdogReliefCompletion(offenseMean o: Double, defenseMean d: Double) -> Double {
         let gap = d - o                          // > 0 ⇒ this offense is the underdog
         if gap <= underdogGapMin || gap >= underdogGapZero { return 0 }
-        let t: Double = gap <= underdogGapPeak
-            ? (gap - underdogGapMin) / (underdogGapPeak - underdogGapMin)   // ramp in
-            : (underdogGapZero - gap) / (underdogGapZero - underdogGapPeak) // fade out
+        let t: Double
+        if gap <= underdogGapPeak {
+            t = (gap - underdogGapMin) / (underdogGapPeak - underdogGapMin)      // ramp in
+        } else if gap <= underdogGapPlateau {
+            t = 1.0                                                              // full-relief plateau
+        } else {
+            t = (underdogGapZero - gap) / (underdogGapZero - underdogGapPlateau) // fade out
+        }
         return underdogReliefComp * Swift.max(0.0, t)
     }
 
