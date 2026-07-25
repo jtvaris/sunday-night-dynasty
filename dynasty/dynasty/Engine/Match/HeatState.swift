@@ -25,6 +25,14 @@ struct HeatState {
     static let winStep = 0.34
     /// A lost individual battle.
     static let lossStep = 0.34
+    /// An incomplete pass, from the TARGET receiver's view (ROUND-6, zero the heat
+    /// EV lean). Passing is binary with no "push" zone, so completions (~57%)
+    /// outnumber incompletions (~43%): cooling a miss by the plain `lossStep` still
+    /// leaves the receiver a net-positive one-way ratchet. Sized `winStep × ~57/43`
+    /// so the frequent-completion warm nets to ~zero mean while every rep still moves
+    /// heat (variance preserved). The run feed keeps `lossStep` — it HAS a 2-3-yard
+    /// push zone, so its ≥4 / ≤1 steps are already balanced.
+    static let passMissStep = 0.46
     /// A 20+ chunk / TD / big defensive stop.
     static let bigStep = 0.50
     /// A turnover (INT thrown, fumble lost) — the biggest single swing.

@@ -415,15 +415,29 @@ enum AdaptiveOpponentAI {
         // Two buckets so a 3rd-and-long pass doesn't wipe the early-down read.
         private(set) var earlyDownRunShare = 0.5   // downs 1–2
         private(set) var lateDownRunShare  = 0.5   // downs 3–4
-        static let alpha    = 0.30   // ~6–8-play ramp (as designed)
-        // Design start point 0.60. Harness-dialed to 0.65: at 0.60 a balanced
-        // 55/45 offense — only 5 pts under the pivot, and the α=0.30 EWMA is
-        // noisy — sat right on the −0.30 balanced-control boundary. 0.65 cleanly
-        // separates "balanced" from "run-heavy" (keyed at ~65%+), giving a robust
-        // control margin while an all-run offense still reaches full key by carry
-        // ~6. (Design authorizes harness dialing to the target bands.)
-        static let keyPivot = 0.65   // below → not keyed
-        static let keyFull  = 0.95   // at/above → full intensity (as designed)
+        static let alpha    = 0.18   // ROUND-6: 0.30 → 0.18. A Bernoulli run/pass
+        // stream makes the EWMA noisy (at α=0.30 its sd ≈ 0.20), so a balanced
+        // offense's ~0.45 read randomly spiked past any run-heavy pivot ~25-30% of
+        // snaps — false-positive keying that cooled the equal-tier run game. The
+        // smoother 0.18 (sd ≈ 0.16) needs a SUSTAINED run tendency to cross the
+        // pivot, so a truly predictable run-heavy offense still keys (and collapses
+        // LATE as the read builds) while a balanced offense stays clear.
+        // ROUND-6 re-dial (restore the run-heavy adaptation penalty). The prior
+        // 0.65 pivot was set to "cleanly separate" the two styles, but it sat ABOVE
+        // what the run-heavy knob actually produces: after P0-1 trimmed the early-down
+        // pass weights, a run-heavy plan (runPassRatio 0.25) runs only ~58-62% on early
+        // downs — its EWMA never crossed 0.65, so `keyIntensity` stayed ~0 and the
+        // defense NEVER keyed it. That (plus P0-1 removing the pass-inflation
+        // opportunity cost) is why the run-heavy win-penalty collapsed to ~0. Re-dialed
+        // so a persistent run-heavy tendency (~0.60) IS keyed while a balanced offense
+        // (~0.49 early-down run share, measured) stays clear: pivot 0.56 sits in the
+        // ~0.10-wide gap between the two styles, and a steeper `keyFull` 0.80 (was 0.95)
+        // makes a sustained run offense's rushing collapse late as its EWMA climbs —
+        // full key by an all-run ~0.80 share. FIXED-BASELINE-inert: the keyed-PA anchor
+        // passes a hardcoded intensity 1.0 and the run bands pass 0, so neither reads
+        // these constants; only the live full-game / coached keying does.
+        static let keyPivot = 0.55   // below → not keyed (balanced ~0.45 stays clear; run-heavy ~0.58 keys)
+        static let keyFull  = 0.72   // at/above → full intensity (steeper ⇒ predictable run collapses late)
 
         /// Fold one resolved scrimmage snap into the down-bucketed EWMA.
         mutating func record(isRun: Bool, down: Int) {

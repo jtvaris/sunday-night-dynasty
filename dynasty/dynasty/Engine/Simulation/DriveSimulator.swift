@@ -142,7 +142,15 @@ enum DriveSimulator {
             // Layer A: fold the resolved scrimmage snap into the key EWMA (on the
             // down it was called on). Special-teams / clock plays don't count as
             // a run/pass tendency, so only run & pass update the read.
-            if result.playType == .run || result.playType == .pass {
+            // ROUND-6: a team protecting a multi-score lead late is run-leaning to
+            // BLEED THE CLOCK (game management), not showing a schematic tendency —
+            // folding those clock-kill runs into the EWMA spuriously "keys" an
+            // otherwise-balanced offense and drags the equal-tier ypc below band. Skip
+            // recording in that game-management window (mirrors `decidePlayCall`'s
+            // `lateGame && scoreDifferential >= gameMgmtLeadPts`, 7), so the read
+            // reflects only the COMPETITIVE run/pass tendency the defense keys on.
+            let inClockKillWindow = currentQuarter >= 3 && scoreDifferential >= 7
+            if !inClockKillWindow, result.playType == .run || result.playType == .pass {
                 runKeyState.record(isRun: result.playType == .run, down: currentDown)
             }
 

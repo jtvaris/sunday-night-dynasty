@@ -343,9 +343,18 @@ enum PlaySimulator {
         }()
 
         // Game-plan pass bias: the user's Play Calling Mix slider shifts the
-        // pass probability by up to ±0.15 (runPassRatio 0 → -0.15, 1 → +0.15).
-        // A balanced plan (0.5) contributes exactly 0, preserving old behavior.
-        let planPassBias = ((gamePlan?.runPassRatio ?? 0.5) - 0.5) * 0.3
+        // pass probability by up to ±0.30 (runPassRatio 0 → -0.30, 1 → +0.30).
+        // ROUND-6: slope raised 0.3 → 0.60 to restore the run-heavy adaptation
+        // penalty. At 0.3 a "run-heavy" plan (runPassRatio 0.25) only lifted the
+        // early-down run share ~0.45 → ~0.52 — indistinguishable from balanced
+        // (~0.45) to RunKeyState's EWMA, so a predictable run team was never keyed.
+        // At 0.60 it produces a genuinely distinct ~0.585 run share the defense can
+        // key and punish (see keyPivot) — restoring the ~-9pp run-heavy penalty. Held
+        // at 0.60 (not higher) so the SYMMETRIC pass side isn't over-leaned: a bigger
+        // slope re-inflates a pass-heavy plan's scoring, which the round-5 fix removed.
+        // A balanced plan (0.5) contributes EXACTLY 0, so every nil-gameplan /
+        // equal-tier path is byte-unchanged — only a styled plan moves.
+        let planPassBias = ((gamePlan?.runPassRatio ?? 0.5) - 0.5) * 0.60
 
         // Weather run bias: in snow both AI coordinators lean on the ground
         // game — the pass probability drops by 0.08 across every situation.
@@ -837,6 +846,22 @@ enum PlaySimulator {
             if depthShade != 0 {
                 completionChance = clamp(completionChance - depthShade, min: 0.05, max: 0.95)
             }
+        }
+
+        // ROUND-6 weak-floor taper: partially offset P0-1's flat de-inflation for a
+        // below-average MATCHUP (warm) / relax the elite tail (cool). Keyed on the
+        // combined on-field mean overall; exactly 0 in the calibrated [70,85] middle,
+        // so the all-70 probe, the avg/good tiers, and every mismatch that averages
+        // into the middle are byte-untouched. Applied AFTER the coverage tax (it is
+        // relief FROM that tax) and before the soft cap, so a warmed weak completion
+        // still rides the same ceiling curve. The one-tier UNDERDOG relief (item 2)
+        // rides alongside it, keyed on the SIGNED gap; both share the two team means.
+        let offMeanOverall = averageAttribute(offensePlayers, extractor: { Double($0.overall) })
+        let defMeanOverall = averageAttribute(defensePlayers, extractor: { Double($0.overall) })
+        let floorComp = floorTaperCompletion(combinedMean: (offMeanOverall + defMeanOverall) / 2.0)
+            + underdogReliefCompletion(offenseMean: offMeanOverall, defenseMean: defMeanOverall)
+        if floorComp != 0 {
+            completionChance = clamp(completionChance + floorComp, min: 0.05, max: 0.95)
         }
 
         // Mech 4: WR release vs DB press on man-press SHORT throws (live games
@@ -1433,7 +1458,12 @@ enum PlaySimulator {
         // P0-2: the 0-centered carrier bonuses (vision / elusiveness / burst) are
         // talent deviations too, so they ride the same team-breadth compression.
         let carrierTalent = (visionBonus + elusivenessBonus + carrierBurst) * edgeScale
-        var totalYards = Int((baseYards + carrierTalent + blockingAdvantage * runBlockYardGain + edgeContribution + momentumBoost * 2.0 + adjustmentYards + mentalRunBonus).rounded())
+        // ROUND-6 weak-floor taper: a per-carry yard warm for a below-average MATCHUP
+        // (a weak run game is starved at low talent) / a trim for the elite tail; 0 in
+        // the calibrated [70,85] middle, so the all-70 run bands and every mismatch are
+        // untouched. A stuffed carry (below) overrides totalYards, so it never un-stuffs.
+        let floorRun = floorTaperRunYards(combinedMean: combinedFieldMean(offense: offensePlayers, defense: defensePlayers))
+        var totalYards = Int((baseYards + carrierTalent + blockingAdvantage * runBlockYardGain + edgeContribution + momentumBoost * 2.0 + adjustmentYards + mentalRunBonus + floorRun).rounded())
 
         // Apply scheme fit modifiers: offense fit boosts yards, defense fit reduces them
         let schemeYardAdjustment = Double(totalYards) * (offSchemeFit - defSchemeFit)
@@ -2618,6 +2648,104 @@ enum PlaySimulator {
         let t = (a - teamEdgeFull) / (teamEdgeCrush - teamEdgeFull)
         let s = t * t * (3.0 - 2.0 * t)                  // smoothstep (C¹, monotone)
         return 1.0 - (1.0 - teamEdgeFloor) * s
+    }
+
+    // ---- ROUND-6 WEAK-FLOOR TAPER: talent-scaled relief for the P0-1 de-inflation ----
+    // WHY: P0-1's full-game de-inflation (the restored ~0.13 coverage tax + the
+    // early-down pass-weight and deep-share trims) is a roughly-FLAT downshift, so it
+    // over-cools a BELOW-average offense — whose completion sits on the steep part of
+    // the scoring curve — far more than an average one. That dropped the whole weak
+    // tier below the NFL bad-team floor (weak-weak pts 14 / comp 51.5 / ypc 3.29 /
+    // nYPA 5.28 / 3rd 34.7, all OUT-lo), the one Medium item gating HEALTHY.
+    //
+    // WHAT: restore a talent-scaled fraction of that efficiency for a weak offense
+    // (a WARM below `floorWarmPivot`), and — symmetrically, from the top — trim the
+    // un-compressed equal-tier elite tail (a COOL above `ceilCoolPivot`). Together
+    // they flatten the too-steep equal-tier efficiency slope from BOTH ends
+    // (weak cold ⇄ elite hot) with a single principled surface.
+    //
+    // KEYED on the COMBINED on-field talent — the mean of the offense's and the
+    // defense's mean overall — i.e. how far THIS matchup as a whole sits from the 70
+    // calibration mean. This is deliberately combined, not offense-only: the equal-tier
+    // slope is the target, and a weak-vs-weak game (combined ~62) or an elite-vs-elite
+    // game (combined ~91) sits at an extreme and is bent, whereas a MISMATCH averages
+    // out into the [70,85] dead zone (elite-vs-weak combined ~77, good-vs-weak ~73) and
+    // is left byte-untouched — so the whole P0-2 mismatch ladder (win% + margin, the
+    // never-100 tail) is preserved intact. Keying on offense-only instead would fire
+    // the warm on the underdog AND the cool on the favorite in the SAME mismatch,
+    // double-compressing and collapsing the ladder. A single elevated UNIT barely moves
+    // either team mean, so single-unit signatures and the per-play FIXED BASELINE are
+    // untouched — same whole-roster philosophy as P0-2's `edgeScale`.
+    //
+    // FIXED-BASELINE / calibration SAFETY: BOTH terms are exactly ZERO across the
+    // whole calibrated [floorWarmPivot, ceilCoolPivot] = [70, 85] band. The all-70
+    // per-play probe (combined mean == 70), the avg tier, and the good tier therefore
+    // see byte-zero adjustment; only the weak and elite EQUAL-tier extremes bend.
+    private static let floorWarmPivot   = 70.0   // no warm at/above the all-70 calibration mean
+    private static let floorWarmComp    = 0.0082 // completion restored per overall-pt below the pivot
+    private static let floorWarmRun     = 0.058  // run yd/carry restored per overall-pt below the pivot
+    private static let floorWarmCompCap = 0.11
+    private static let floorWarmRunCap  = 0.62
+    private static let ceilCoolPivot    = 85.0   // relax the un-compressed elite tail above this
+    private static let ceilCoolComp     = 0.006  // completion trimmed per overall-pt above the pivot
+    private static let ceilCoolRun      = 0.028  // run yd/carry trimmed per overall-pt above the pivot
+    private static let ceilCoolCompCap  = 0.055
+    private static let ceilCoolRunCap   = 0.28
+
+    /// Combined on-field mean overall = (mean offense overall + mean defense overall)
+    /// / 2 — how far this whole matchup sits from the 70 calibration mean.
+    static func combinedFieldMean(offense: [SimPlayer], defense: [SimPlayer]) -> Double {
+        (averageAttribute(offense, extractor: { Double($0.overall) })
+         + averageAttribute(defense, extractor: { Double($0.overall) })) / 2.0
+    }
+
+    /// Talent-scaled completion adjustment: a WARM (>0) for a weak matchup (combined
+    /// mean < 70), a COOL (<0) for an elite matchup (combined mean > 85), and exactly
+    /// 0 across the calibrated [70,85] middle (so the all-70 probe / avg / good / every
+    /// mismatch that averages into the middle are untouched).
+    static func floorTaperCompletion(combinedMean m: Double) -> Double {
+        if m < floorWarmPivot { return  Swift.min(floorWarmCompCap, (floorWarmPivot - m) * floorWarmComp) }
+        if m > ceilCoolPivot  { return -Swift.min(ceilCoolCompCap,  (m - ceilCoolPivot)  * ceilCoolComp) }
+        return 0
+    }
+
+    /// Talent-scaled per-carry run-yard adjustment, same weak-warm / elite-cool
+    /// surface as ``floorTaperCompletion`` and likewise 0 in the calibrated middle.
+    static func floorTaperRunYards(combinedMean m: Double) -> Double {
+        if m < floorWarmPivot { return  Swift.min(floorWarmRunCap, (floorWarmPivot - m) * floorWarmRun) }
+        if m > ceilCoolPivot  { return -Swift.min(ceilCoolRunCap,  (m - ceilCoolPivot)  * ceilCoolRun) }
+        return 0
+    }
+
+    // ---- ONE-TIER UNDERDOG RELIEF (item 2: avg-vs-weak runs +3 hot) ----
+    // A ONE-tier underdog is over-compressed specifically because the weak band is
+    // WIDE (55-69): a "weak" team means ~62 vs a "avg" team's ~74.5, a ~12.5 team gap
+    // that is larger than good-vs-avg's ~9, so avg-vs-weak plays hotter than the other
+    // one-tier rungs (~78% vs the 66-75 band). The combined-keyed floor taper cannot
+    // fix it — it warms BOTH offenses equally in that game, leaving the margin intact.
+    // This adds a small completion relief to the UNDERDOG only (the offense whose team
+    // is weaker than the defense it faces), keyed on the SIGNED talent gap (defense −
+    // offense) — a continuous principled quantity, the signed mirror of P0-2's |gap|
+    // `edgeScale`, NOT a per-tier lookup. A trapezoid on the gap: a `gapMin` deadzone
+    // (so a single elevated defensive UNIT — a shutdown-CB pair moves the team gap only
+    // ~2 — never triggers it, protecting single-unit signatures), a ramp to full at a
+    // one-tier `gapPeak`, and a fade to 0 by a two-tier `gapZero` (so good-vs-weak /
+    // elite-vs-weak / every 2-3-tier rung is byte-untouched). 0 at parity ⇒ equal-tier
+    // games and the all-70 probe (gap 0) are untouched.
+    private static let underdogGapMin  = 4.0    // deadzone: below this the gap is single-unit noise
+    private static let underdogGapPeak = 11.0   // one-tier team gap → full relief
+    private static let underdogGapZero = 19.0   // two-tier team gap → relief gone
+    private static let underdogReliefComp = 0.045 // completion relief at the one-tier peak
+
+    /// Completion relief for a one-tier underdog offense (0 unless the defense out-rates
+    /// the offense by a one-tier-ish team gap). See the block comment above.
+    static func underdogReliefCompletion(offenseMean o: Double, defenseMean d: Double) -> Double {
+        let gap = d - o                          // > 0 ⇒ this offense is the underdog
+        if gap <= underdogGapMin || gap >= underdogGapZero { return 0 }
+        let t: Double = gap <= underdogGapPeak
+            ? (gap - underdogGapMin) / (underdogGapPeak - underdogGapMin)   // ramp in
+            : (underdogGapZero - gap) / (underdogGapZero - underdogGapPeak) // fade out
+        return underdogReliefComp * Swift.max(0.0, t)
     }
 
     // Garbage-time edge damp: a team protecting a multi-score lead late deploys less

@@ -1585,10 +1585,17 @@ enum GameSimulator {
                     }
                 }
             case .incompletion:
-                // A DROP is the receiver's fault (cools him); a coverage BREAKUP
-                // credits the defender (heats him). Distinct signals.
-                if play.wasDrop == true, let id = play.keyOffensePlayerID {
-                    heat.reward(id, -HeatState.lossStep, scaleEligible: elig(id))
+                // ROUND-6 (zero the heat EV lean): a completion WARMS the target, so
+                // an incompletion must COOL him — otherwise receiver heat is a one-way
+                // ratchet (only completions/drops ever moved it) that drifts the
+                // aggregate completion, and thus scoring, upward (macro Δmean +0.62).
+                // Now BIDIRECTIONAL like the run feed: any incompletion — a drop OR a
+                // covered/overthrown miss — cools the target by `lossStep` (a drop is
+                // no longer singled out), so the pass feed is ~0-mean by construction
+                // while every rep still moves heat (variance preserved). A coverage
+                // BREAKUP additionally credits the defender (his win).
+                if let id = play.keyOffensePlayerID {
+                    heat.reward(id, -HeatState.passMissStep, scaleEligible: elig(id))
                 }
                 if play.passBreakup == true, let did = play.keyDefensePlayerID {
                     heat.reward(did, HeatState.winStep, scaleEligible: elig(did))

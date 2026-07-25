@@ -907,7 +907,10 @@ func scenarioMacro() {
                 else if r.yardsGained >= 4 { offHeat.reward(id, HeatState.winStep, scaleEligible: elig(id)) }
                 else if r.yardsGained <= 1 { offHeat.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) } }
             case .incompletion:
-                if r.wasDrop == true, let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) }
+                // ROUND-6 (mirror GameSimulator): bidirectional receiver heat — ANY
+                // incompletion cools the target by lossStep (was drop-only), zeroing
+                // the one-way completion ratchet. Breakup still credits the defender.
+                if let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.passMissStep, scaleEligible: elig(id)) }
                 if r.passBreakup == true, let did = r.keyDefensePlayerID { defHeat.reward(did, HeatState.winStep, scaleEligible: elig(did)) }
             case .sack:
                 if let id = r.keyOffensePlayerID { offHeat.reward(id, -HeatState.lossStep, scaleEligible: elig(id)) }
