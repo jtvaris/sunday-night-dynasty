@@ -377,15 +377,61 @@ class FootballFieldScene: SCNScene {
     /// thread inside the follow constraints only.
     private var followProgress: Float = 0
     /// Wall-clock deadline (CACurrentMediaTime) through which the follow rig
-    /// freezes its forward glide on the run-mesh exchange, so the two-man
-    /// hand-to-hand (QB extend + RB tuck) reads inside a held frame before the
-    /// camera trucks downfield with the back. Armed once at the genuine
-    /// handoff (attachBall), reset per play in begin/endLiveFollow.
+    /// PARKS its forward glide on the live action — the run-mesh handoff, or a
+    /// pile / catch downfield (QW-6 camera beat sheet). While held, the frame
+    /// freezes at its current ratcheted progress and the lateral follow is
+    /// damped, so the beat reads before the camera trucks on. Armed via
+    /// `armFollowHold`, reset per play in begin/endLiveFollow.
     private var followHoldUntil: TimeInterval = 0
-    /// How long the follow rig holds the mesh in frame after the handoff, in
-    /// real seconds (divided by the playback rate when armed so it stays
-    /// proportional at 2x/4x). Shorter than the run leg so it releases into it.
-    static let meshHoldSeconds: TimeInterval = 0.5
+    /// Wall-clock deadline for a HITSTOP: while active the follow rig locks the
+    /// exact frame (no ease toward the ball at all), so a big hit lands on a
+    /// frozen composition before the glide resumes — the punchy impact beat the
+    /// soft hold above is too gentle for. Camera-only. (QW-6b)
+    private var followFreezeUntil: TimeInterval = 0
+    /// Touchdown slow-mo ramp (QW-6b): while `CACurrentMediaTime()` is under
+    /// `followSlowMoUntil`, the follow rig eases at `followSlowMoRate` of its
+    /// normal speed, so the camera drifts onto the score in slow motion.
+    /// Camera-only — the play timeline is never retimed, so engine results are
+    /// untouched. `1` = full speed.
+    private var followSlowMoUntil: TimeInterval = 0
+    private var followSlowMoRate: Double = 1
+
+    /// The camera "beat sheet" (QW-6): the former single `meshHoldSeconds`
+    /// constant promoted into per-play-type hold / impact timings, in real
+    /// seconds. Each cell is read by the live follow rig via `armFollowHold`
+    /// (soft parks), `beginHitstop` (hard frame-lock), or `beginTouchdownSlowMo`
+    /// (ease ramp), all divided by the playback rate when armed so beats stay
+    /// proportional at 2x/4x. Every beat is mirror-safe: it works through the
+    /// `viewFacing`/clamped-Z framing, so it holds identically on the REVERSE
+    /// side. Replay and kick-camera shots own their own framing and are untouched.
+    struct CameraBeat {
+        /// Soft follow-cam park on the run-mesh handoff exchange (QB→RB tuck).
+        var meshHold: TimeInterval = 0
+        /// Soft follow-cam park on the pile after a tackle / going to ground.
+        var contactHold: TimeInterval = 0
+        /// Soft follow-cam park on the catch moment (fixes pass continuity).
+        var catchHold: TimeInterval = 0
+        /// Hard frame-lock on a big impact (sack / blow-up), paired w/ cameraBump.
+        var hitstop: TimeInterval = 0
+        /// Follow-cam ease multiplier for the slow-mo ramp into the endzone on a
+        /// scoring celebration (`1` = no ramp).
+        var slowMoRate: Double = 1
+    }
+
+    /// The play kind a single `PlayStep` reads as, for the beat sheet lookup.
+    enum PlayBeatType { case run, pass, sack, kickoff, fieldGoal, touchdown }
+
+    /// The beat sheet itself. Run + pass + sack share the 0.75s pile hold; the
+    /// mesh hold and catch hold live on their own rows; the sack adds a 0.2s
+    /// hitstop; the touchdown drops the follow-cam into a 0.5x slow-mo ramp.
+    static let cameraBeatSheet: [PlayBeatType: CameraBeat] = [
+        .run:       CameraBeat(meshHold: 0.75, contactHold: 0.75),
+        .pass:      CameraBeat(contactHold: 0.75, catchHold: 0.60),
+        .sack:      CameraBeat(contactHold: 0.75, hitstop: 0.20),
+        .kickoff:   CameraBeat(catchHold: 0.60),
+        .fieldGoal: CameraBeat(),
+        .touchdown: CameraBeat(slowMoRate: 0.50),
+    ]
 
     /// Switches the scrimmage framing and (unless a kick shot owns the
     /// camera) glides the current shot into the new style. The floating
@@ -1350,6 +1396,9 @@ class FootballFieldScene: SCNScene {
         followAnchorZ = focusZ
         followProgress = 0
         followHoldUntil = 0
+        followFreezeUntil = 0
+        followSlowMoUntil = 0
+        followSlowMoRate = 1
         cameraNode.removeAction(forKey: "pushIn")
         cameraNode.removeAction(forKey: "focus")
         cameraTargetNode.removeAction(forKey: "focus")
@@ -1357,34 +1406,42 @@ class FootballFieldScene: SCNScene {
         let aim = SCNTransformConstraint.positionConstraint(inWorldSpace: true) {
             [weak self] _, position in
             guard let self, self.liveFollowActive else { return position }
+            // Hitstop: lock the exact frame on a big impact (QW-6b) — no ease
+            // toward the ball at all until the freeze deadline passes.
+            if CACurrentMediaTime() < self.followFreezeUntil { return position }
             let rig = self.shotRig(for: self.currentShotStyle)
             let baseZ = self.followBaseZ()
             let ballX = self.ballNode.presentation.worldPosition.x
-            // During the mesh hold, damp the lateral follow so a counter/sweep
-            // back can't whip the frame sideways off the exchange — keeps QB
-            // and RB both framed; the factor snaps back once the hold releases.
+            // During a hold, damp the lateral follow so a counter/sweep back
+            // can't whip the frame sideways off the exchange/pile — keeps both
+            // men framed; the factor snaps back once the hold releases.
             let lateralFactor: Float = CACurrentMediaTime() < self.followHoldUntil ? 0.25 : 0.85
+            // Slow-mo ramp (touchdown): drop the ease so the camera drifts onto
+            // the score in slow motion. Camera-only — timeline untouched.
+            let ease: Float = CACurrentMediaTime() < self.followSlowMoUntil ? Float(self.followSlowMoRate) : 1
             let goal = SCNVector3(max(-14, min(14, ballX * lateralFactor)),
                                   rig.targetHeight,
                                   baseZ + self.viewFacing * rig.targetLead)
-            return SCNVector3(position.x + (goal.x - position.x) * 0.12,
-                              position.y + (goal.y - position.y) * 0.12,
-                              position.z + (goal.z - position.z) * 0.12)
+            return SCNVector3(position.x + (goal.x - position.x) * 0.12 * ease,
+                              position.y + (goal.y - position.y) * 0.12 * ease,
+                              position.z + (goal.z - position.z) * 0.12 * ease)
         }
         cameraTargetNode.constraints = [aim]
 
         let chase = SCNTransformConstraint.positionConstraint(inWorldSpace: true) {
             [weak self] _, position in
             guard let self, self.liveFollowActive else { return position }
+            if CACurrentMediaTime() < self.followFreezeUntil { return position }
             let rig = self.shotRig(for: self.currentShotStyle)
             let baseZ = self.followBaseZ()
             let ballX = self.ballNode.presentation.worldPosition.x
+            let ease: Float = CACurrentMediaTime() < self.followSlowMoUntil ? Float(self.followSlowMoRate) : 1
             let goal = SCNVector3(max(-10, min(10, ballX * 0.55)),
                                   rig.cameraHeight,
                                   baseZ - self.viewFacing * rig.cameraBack)
-            return SCNVector3(position.x + (goal.x - position.x) * 0.10,
-                              position.y + (goal.y - position.y) * 0.10,
-                              position.z + (goal.z - position.z) * 0.10)
+            return SCNVector3(position.x + (goal.x - position.x) * 0.10 * ease,
+                              position.y + (goal.y - position.y) * 0.10 * ease,
+                              position.z + (goal.z - position.z) * 0.10 * ease)
         }
         if let lookAt = cameraLookAtConstraint {
             cameraNode.constraints = [chase, lookAt]
@@ -1400,14 +1457,15 @@ class FootballFieldScene: SCNScene {
     /// return running the other way still drags the camera along. Called from
     /// the follow constraints (render thread).
     private func followBaseZ() -> Float {
-        // Mesh hold: park the frame on the exchange (no forward glide, and the
-        // ratchet does not accumulate) so the handoff reads. Step 1 already
-        // sits the frame at the anchor via the backward-snap ratchet, so this
-        // just extends that parked composition through the hand-off + hold.
-        if CACurrentMediaTime() < followHoldUntil {
-            return max(-45, min(45, followAnchorZ))
-        }
         let attack: Float = defensiveFraming ? -viewFacing : viewFacing
+        // Hold (mesh / contact / catch): freeze the forward ratchet at its
+        // CURRENT progress so the frame parks on the live action — the handoff
+        // at the LOS (progress ≈ 0, matching the old anchor-park behaviour) or
+        // a pile / catch downfield — instead of gliding on. The ratchet does
+        // not accumulate while held, so it releases cleanly into the next leg.
+        if CACurrentMediaTime() < followHoldUntil {
+            return max(-45, min(45, followAnchorZ + attack * followProgress))
+        }
         let ballZ = ballNode.presentation.worldPosition.z
         let progress = (ballZ - followAnchorZ) * attack
         followProgress = max(followProgress, progress)
@@ -1424,6 +1482,9 @@ class FootballFieldScene: SCNScene {
         guard liveFollowActive else { return }
         liveFollowActive = false
         followHoldUntil = 0
+        followFreezeUntil = 0
+        followSlowMoUntil = 0
+        followSlowMoRate = 1
         cameraTargetNode.position = cameraTargetNode.presentation.position
         cameraNode.position = cameraNode.presentation.position
         cameraTargetNode.constraints = nil
@@ -1432,6 +1493,51 @@ class FootballFieldScene: SCNScene {
         }
         let rig = shotRig(for: currentShotStyle)
         focusZ = max(-45, min(45, cameraTargetNode.position.z - viewFacing * rig.targetLead))
+    }
+
+    // MARK: - Camera beat sheet (QW-6)
+
+    /// Extends the live follow-cam SOFT hold to at least `seconds` from now
+    /// (real time, divided by the playback rate so beats stay proportional at
+    /// 2x/4x). The `followHoldUntil` deadline parks `followBaseZ()` at the
+    /// current downfield progress and damps the lateral follow, so the beat
+    /// (handoff / pile / catch) reads before the glide resumes. Mirror-safe and
+    /// a no-op off the live rig. Multiple arms take the latest deadline.
+    private func armFollowHold(_ seconds: TimeInterval) {
+        guard liveFollowActive, seconds > 0 else { return }
+        followHoldUntil = max(followHoldUntil, CACurrentMediaTime() + seconds / currentPlaybackRate)
+    }
+
+    /// A hitstop: locks the exact follow-cam frame for `seconds` (rate-scaled)
+    /// so a big hit lands on a frozen composition before the glide resumes —
+    /// the punchy impact beat, paired with `cameraBump`. Camera-only, no-op off
+    /// the live rig.
+    private func beginHitstop(_ seconds: TimeInterval) {
+        guard liveFollowActive, seconds > 0 else { return }
+        followFreezeUntil = max(followFreezeUntil, CACurrentMediaTime() + seconds / currentPlaybackRate)
+    }
+
+    /// Touchdown slow-mo ramp: drops the live follow-cam ease to `rate` of full
+    /// speed for a ~1.2s (rate-scaled) beat, so the camera drifts onto the
+    /// score in slow motion. Realized entirely on the camera — the play
+    /// timeline is never retimed, so the engine result is untouched (the plan's
+    /// replay-vs-live guardrail). No-op off the live rig or when `rate >= 1`.
+    private func beginTouchdownSlowMo(rate: Double) {
+        guard liveFollowActive, rate < 1 else { return }
+        followSlowMoRate = rate
+        followSlowMoUntil = CACurrentMediaTime() + 1.2 / currentPlaybackRate
+    }
+
+    /// Classifies a `PlayStep` into a beat-sheet row (QW-6). One step reads as
+    /// one beat: a scoring celebration wins, then the kick shots (kickoff vs FG
+    /// by which kick camera owns the shot), then a blow-up (big hit / sack),
+    /// then a reception (a catch this step), else the base run/carry beat.
+    private func playBeatType(for step: PlayStep) -> PlayBeatType {
+        if !step.celebrates.isEmpty { return .touchdown }
+        if step.kicker != nil { return kickoffCameraActive ? .kickoff : .fieldGoal }
+        if !step.bigHits.isEmpty { return .sack }
+        if !step.reaches.isEmpty || !step.catchStyles.isEmpty { return .pass }
+        return .run
     }
 
     /// Keeps the precipitation slab riding with the live follow: each step
@@ -3332,6 +3438,29 @@ class FootballFieldScene: SCNScene {
         for index in step.pylonDives { pylonDive(nodeIndex: index) }
         for index in step.qbSlides { qbSlide(nodeIndex: index) }
         for index in step.lunges { lunge(nodeIndex: index) }
+
+        // Camera beat sheet (QW-6): the per-play-type hold / impact grammar
+        // layered onto the live follow rig. Every beat is mirror-safe — it
+        // works through followHoldUntil / followFreezeUntil / followSlowMo,
+        // which read the (mirrored) ball world position and the clamped framing
+        // Z, so it holds identically on the REVERSE side; all are no-ops off the
+        // live rig, and replay / kick shots keep their own framing. The mesh
+        // (handoff) hold is armed in attachBall; these are the on-field beats.
+        let beat = Self.cameraBeatSheet[playBeatType(for: step)] ?? CameraBeat()
+        if !step.reaches.isEmpty || !step.catchStyles.isEmpty {
+            armFollowHold(beat.catchHold)               // hold on the catch (continuity)
+        }
+        if !step.bigHits.isEmpty {
+            beginHitstop(beat.hitstop)                  // near-freeze on the blow-up (+ bump above)
+        }
+        if !step.falls.isEmpty || !step.bigHits.isEmpty || !step.diveFalls.isEmpty
+            || !step.trips.isEmpty || !step.pylonDives.isEmpty {
+            armFollowHold(beat.contactHold)             // hold on the pile
+        }
+        if !step.celebrates.isEmpty {
+            beginTouchdownSlowMo(rate: beat.slowMoRate) // slow-mo ramp into the endzone
+        }
+
         // Open-field moves fire mid-step at their scheduled beats; they die
         // with the play generation like every queued step.
         if !step.openField.isEmpty {
@@ -3392,10 +3521,11 @@ class FootballFieldScene: SCNScene {
             // fires ONCE — the step-3 .carry no-ops at the parent guard above,
             // so it never re-arms. Pass/toss/snap receptions detach to root
             // first (giver=nil) and QB keepers have giver==index, so none of
-            // them reach here — this is run-mesh only. Divided by the playback
-            // rate so the hold matches the compressed beat at 2x/4x.
-            if !chest, liveFollowActive {
-                followHoldUntil = CACurrentMediaTime() + Self.meshHoldSeconds / currentPlaybackRate
+            // them reach here — this is run-mesh only. The mesh-hold duration
+            // now comes from the camera beat sheet's run row (QW-6); armFollow-
+            // Hold rate-scales it so the hold matches the beat at 2x/4x.
+            if !chest {
+                armFollowHold(Self.cameraBeatSheet[.run]?.meshHold ?? 0)
             }
         }
         ballNode.removeAllActions()
@@ -5188,19 +5318,6 @@ class FootballFieldScene: SCNScene {
         figure.scale = SCNVector3(1.28, 1.18, 1.18)
         container.addChildNode(figure)
 
-        // Blob shadow under the feet — the hard PSX-era drop shadow that
-        // anchors every player to the turf.
-        let shadowGeometry = SCNCylinder(radius: 0.46, height: 0.01)
-        let shadowMaterial = SCNMaterial()
-        shadowMaterial.diffuse.contents = UIColor(white: 0, alpha: 0.38)
-        shadowMaterial.lightingModel = .constant
-        shadowGeometry.materials = [shadowMaterial]
-        let shadow = SCNNode(geometry: shadowGeometry)
-        shadow.name = "blobShadow"
-        shadow.position = SCNVector3(0, -0.47, 0)
-        shadow.castsShadow = false
-        container.addChildNode(shadow)
-
         let skin = Self.skinTones[number % Self.skinTones.count]
         // Size + pre-snap stance by build: linemen bigger and crouched low,
         // skill players leaner and more upright.
@@ -5210,6 +5327,7 @@ class FootballFieldScene: SCNScene {
         case .medium: bodyScale = 1.0;  stance = 0.40
         case .lean:   bodyScale = 0.95; stance = 0.0
         }
+        var usedSkeletalFigure = false
         if FieldConstants.useSkeletalFigures,
            let skel = SkeletalFigure(jersey: uniform.jersey, pants: uniform.pants,
                                      helmet: uniform.helmet, skin: skin,
@@ -5220,12 +5338,32 @@ class FootballFieldScene: SCNScene {
             figure.scale = SCNVector3(1, 1, 1)
             figure.addChildNode(skel.content)
             skeletalFigures[ObjectIdentifier(figure)] = skel
+            usedSkeletalFigure = true
         } else if let kit = Self.playerKit {
             buildKitFigure(kit: kit, in: figure, uniform: uniform, number: number)
             applyBodyType(bodyType, to: container)
         } else {
             buildProceduralFigure(in: figure, uniform: uniform, number: number)
             applyBodyType(bodyType, to: container)
+        }
+
+        // Blob shadow: the hard PSX-era drop cylinder that anchored every
+        // player to the turf — now the FALLBACK ONLY (QW-2b). The skeletal
+        // figures catch the softened real cast shadow from the key light
+        // (shadowRadius 5), so the decal is dropped there; keeping it only for
+        // the kit/procedural path removes 22 constant-shaded cylinders from the
+        // live scene, a net draw-call win.
+        if !usedSkeletalFigure {
+            let shadowGeometry = SCNCylinder(radius: 0.46, height: 0.01)
+            let shadowMaterial = SCNMaterial()
+            shadowMaterial.diffuse.contents = UIColor(white: 0, alpha: 0.38)
+            shadowMaterial.lightingModel = .constant
+            shadowGeometry.materials = [shadowMaterial]
+            let shadow = SCNNode(geometry: shadowGeometry)
+            shadow.name = "blobShadow"
+            shadow.position = SCNVector3(0, -0.47, 0)
+            shadow.castsShadow = false
+            container.addChildNode(shadow)
         }
 
         // Numbers printed on the jersey itself, chest and back (Madden-2000).
@@ -5456,8 +5594,8 @@ class FootballFieldScene: SCNScene {
         mainLight.castsShadow = true
         mainLight.shadowMode = .deferred
         mainLight.shadowColor = UIColor(white: 0, alpha: 0.45)
-        mainLight.shadowRadius = 3
-        mainLight.shadowSampleCount = 16   // crisper contact shadows under floodlights
+        mainLight.shadowRadius = 5         // softened penumbra: a real contact shadow, not a hard decal (QW-2b)
+        mainLight.shadowSampleCount = 24   // more samples so the wider blur stays clean under floodlights
         mainLight.shadowMapSize = CGSize(width: 2048, height: 2048)
 
         let mainLightNode = SCNNode()
@@ -5479,6 +5617,26 @@ class FootballFieldScene: SCNScene {
         fillLightNode.light = fillLight
         fillLightNode.eulerAngles = SCNVector3(-Float.pi / 4, -Float.pi / 4, 0)
         rootNode.addChildNode(fillLightNode)
+
+        // Rim / back light (QW-2a): a warm sodium key raking in from behind the
+        // action, opposite the main light's azimuth, so it skims the tops of
+        // helmets and shoulder pads and separates the players from the dark
+        // bowl instead of leaving them as flat silhouettes. castsShadow=false
+        // → no extra shadow-map pass, so it is ~free on TBDR and keeps the rig
+        // at exactly one shadow-caster (the real cost with 22 skinned players).
+        let rimLight = SCNLight()
+        rimLight.type = .directional
+        rimLight.color = UIColor(red: 1.0, green: 0.95, blue: 0.85, alpha: 1.0)  // warm sodium floodlight
+        rimLight.intensity = 350
+        rimLight.castsShadow = false
+
+        let rimLightNode = SCNNode()
+        rimLightNode.name = "rimLight"
+        rimLightNode.light = rimLight
+        // Shallow back-angle opposite the key: rakes the far side of the
+        // pads/helmets toward the lens for the broadcast rim highlight.
+        rimLightNode.eulerAngles = SCNVector3(-Float.pi / 6, -Float.pi * 5 / 6, 0)
+        rootNode.addChildNode(rimLightNode)
 
         // Ambient fill so nothing is pure black
         let ambientLight = SCNLight()
@@ -5547,7 +5705,47 @@ class FootballFieldScene: SCNScene {
         fogStartDistance = start
         fogEndDistance = end
         fogDensityExponent = 1.4
-        background.contents = color
+        // Sky: a graded dusk gradient (deep-navy zenith → a warm sodium
+        // floodlight glow at the horizon that melts into the fog color)
+        // instead of the old flat fill — kills the dead black wedge above the
+        // bowl on kickoff / deep-ball apex frames (QW-3, and the TODO apex
+        // finding). The horizon band IS the fog color, so the far field still
+        // dissolves seamlessly into the sky. Built once per fog change; zero
+        // per-frame cost.
+        background.contents = Self.skyGradientImage(horizon: color)
+    }
+
+    /// The dusk/night sky the scene background shows behind the bowl: a
+    /// vertical gradient from a deep-navy zenith down to a dim warm sodium
+    /// floodlight glow that resolves into `horizon` (the current fog color) so
+    /// the far edge of the field dissolves into the sky with no seam and no
+    /// flat black backdrop (QW-3). SceneKit maps a single background image
+    /// equirectangularly onto the sky sphere, so the horizon sits at the
+    /// vertical midpoint — the warm band is placed just above it.
+    private static func skyGradientImage(horizon: UIColor) -> UIImage {
+        let size = CGSize(width: 2, height: 512)
+        // Zenith stays near-black navy; the sodium band is a DIM warm bounce
+        // (the floodlight family, not a bright wash) so it reads as a night
+        // sky glow instead of fighting the broadcast grade.
+        let zenith = UIColor(red: 0.02, green: 0.03, blue: 0.07, alpha: 1)
+        let sodiumGlow = UIColor(red: 0.30, green: 0.25, blue: 0.16, alpha: 1)
+        return UIGraphicsImageRenderer(size: size).image { ctx in
+            let cg = ctx.cgContext
+            let colors = [zenith.cgColor, zenith.cgColor,
+                          sodiumGlow.cgColor, horizon.cgColor, horizon.cgColor]
+            let locations: [CGFloat] = [0.0, 0.40, 0.50, 0.56, 1.0]
+            guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                            colors: colors as CFArray,
+                                            locations: locations) else {
+                horizon.setFill()
+                cg.fill(CGRect(origin: .zero, size: size))
+                return
+            }
+            cg.drawLinearGradient(gradient,
+                                  start: CGPoint(x: 0, y: 0),
+                                  end: CGPoint(x: 0, y: size.height),
+                                  options: [])
+        }
     }
 
     private func setLightIntensities(main: CGFloat, fill: CGFloat, ambient: CGFloat) {

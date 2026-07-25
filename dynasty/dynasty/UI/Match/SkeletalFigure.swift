@@ -70,7 +70,8 @@ final class SkeletalFigure {
         "throw":     ["throw_a", "throw_b", "throw_c"],             // pack ×2 + Ochi Throw 01
         "celebrate": ["celeb_a", "celeb_b"],                       // spike / arms-up
         "juke":      ["juke_a"],
-        "kick":      ["kick_a", "kick_b"],                          // pack punt / Ochi kickoff
+        // "kick" has NO pool — it loads PlayerClip_kick.usdc directly (the single
+        // authored kick clip with a full approach), so pickVariant returns "kick".
     ]
     /// Last variant played per action on THIS figure, so back-to-back plays don't
     /// repeat the same clip (variety reads best when consecutive actions differ).
@@ -86,7 +87,7 @@ final class SkeletalFigure {
         "catch_a": 0.66, "catch_b": 0.70, "catch_c": 0.35, "catch_d": 0.32,
         "throw_a": 0.60, "throw_b": 0.55, "throw_c": 0.66,
         "tackle_a": 0.80, "tackle_b": 0.60,
-        "kick_a": 0.50, "kick_b": 0.50,   // foot through the ball ~mid-swing
+        "kick": 0.36,   // foot through the ball on the single authored kick clip (post-approach)
         "dive": 0.35,
     ]
 
@@ -247,35 +248,58 @@ final class SkeletalFigure {
         self.content = wrapper
         self.skeleton = skel
         self.figureScale = s
-        applyUniform(jersey: jersey)
+        applyTeamColors(jersey: jersey, pants: pants)
         setupFootLocks()
         setMoving(false, speed: 0)   // idle by default
     }
 
     // MARK: Team uniforms
-    // The Studio Ochi pack ships 6 uniform textures (one UV atlas, different
-    // colors). Pick the one nearest the team's jersey color so the two teams on
-    // the field read as distinct and roughly match their real colors.
-    private static let uniformColors: [(r: CGFloat, g: CGFloat, b: CGFloat)] = [
-        (0.13, 0.32, 0.72),  // 0  blue      (Athletes 01)
-        (0.00, 0.70, 0.70),  // 1  teal      (Athletes 02)
-        (0.05, 0.42, 0.16),  // 2  green     (Athletes 03)
-        (0.18, 0.18, 0.20),  // 3  graphite  (Athletes 04)
-        (0.72, 0.12, 0.20),  // 4  red       (Athletes 05)
-        (0.42, 0.68, 0.08),  // 5  lime      (Athletes 06)
-    ]
+    //
+    // The Studio Ochi player is textured with ONE material bound to a single
+    // horizontal 8-tile UV atlas (8000×1000, each tile 1000px, no GeomSubsets /
+    // named slots — verified from PlayerRig.usdc). The pack ships that atlas in 6
+    // pre-baked color variants (uniform_0…5.png). The old path picked the variant
+    // nearest the team jersey and swapped the whole texture — so every team landed
+    // on one of just 6 wrong-ish colors AND every player wore the same baked "10".
+    //
+    // Instead we load ONE base variant purely as a LUMINANCE + skin source and
+    // recolor the uniform tiles to the EXACT team colors in a `.surface` shader
+    // modifier. This is a per-fragment tint that reuses the diffuse sample already
+    // taken (no extra texture read, no extra pass — the real TBDR budget), composes
+    // with SceneKit's lighting, and costs a handful of ALU ops on ~22 skinned
+    // players.
+    //
+    // The mask is UV-based (which 1/8 tile a fragment's U falls in), NOT geometry/
+    // height based — a skinned mesh deforms every frame, so a height mask would
+    // mis-classify the instant a player dives or falls; a UV mask is pose-stable.
+    //
+    // Tile → body region, VERIFIED by an offscreen debug render that colors each
+    // tile distinctly (scratchpad/tintcheck) + a USDC UV↔vertex-height correlation.
+    // IMPORTANT: this mocap-pack unwrap is NOT semantic — one tile can fuse parts
+    // that a clean uniform would separate, so a jersey-vs-pants-vs-helmet split is
+    // only approximate:
+    //   0  tiny dark trim                                  — untouched
+    //   1  SKIN: arms, hands, bare calves, neck            — untouched (HARD rule)
+    //   2  facemask + feet/sole                            → jerseyColor
+    //   3  jersey shoulders (+ small helmet-back patch)    → jerseyColor
+    //   4  jersey CHEST/BACK — carries the baked "10"      → jerseyColor
+    //   5  helmet crown + thighs + sock band (fused)       → jerseyColor
+    //   6  shoes                                            → pantsColor
+    //   7  shoe / ankle accent                              → pantsColor
+    // Net effect: the whole uniform mass takes the team's PRIMARY, shoes take the
+    // SECONDARY, skin is never touched. A team-colored helmet reads correctly for
+    // most franchises and beats leaving it the base variant's arbitrary hue; the
+    // helmet crown can't be excluded without also dropping the thighs (same tile).
+    // The two spans below are the only tuning knob (e.g. move tile 5→pants for a
+    // secondary-colored lower body, at the cost of a secondary-colored helmet).
+    private static let jerseyTiles: ClosedRange<Int> = 2...5
+    private static let pantsTiles:  ClosedRange<Int> = 6...7
+    /// Which of the 6 shipped variants supplies the base luminance/number/skin.
+    /// Its hue is irrelevant (the shader keeps only luminance on tinted tiles);
+    /// index 0 has strong number contrast on the chest/back tiles.
+    private static let baseUniformIndex = 0
     private static var uniformImageCache: [Int: UIImage] = [:]
 
-    private static func nearestUniformIndex(to color: UIColor) -> Int {
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        color.getRed(&r, green: &g, blue: &b, alpha: &a)
-        var best = 0, bestD = CGFloat.greatestFiniteMagnitude
-        for (i, c) in uniformColors.enumerated() {
-            let d = (r - c.r) * (r - c.r) + (g - c.g) * (g - c.g) + (b - c.b) * (b - c.b)
-            if d < bestD { bestD = d; best = i }
-        }
-        return best
-    }
     private static func uniformImage(_ idx: Int) -> UIImage? {
         if let img = uniformImageCache[idx] { return img }
         guard let url = Bundle.main.url(forResource: "uniform_\(idx)", withExtension: "png"),
@@ -284,15 +308,60 @@ final class SkeletalFigure {
         return img
     }
 
-    /// Dress the player in the team uniform whose color is nearest the jersey.
-    /// Swaps the whole textured atlas, so helmet/pads/pants/number all change.
-    func applyUniform(jersey: UIColor) {
-        guard let img = Self.uniformImage(Self.nearestUniformIndex(to: jersey)) else { return }
+    /// `.surface` shader modifier: recolor the uniform atlas tiles to the team's
+    /// primary/secondary while leaving SKIN as sampled (the one hard exclusion).
+    /// `step()`-based region select (branch-free → no warp divergence). The
+    /// tint is luminance-preserving: the fabric's baked shading/AO and the baked
+    /// number survive as light/dark shades of the team hue. Tile bounds are
+    /// injected as literals so the classifier stays a compile-time constant.
+    private static let teamTintSurfaceModifier: String = {
+        let jLo = Float(jerseyTiles.lowerBound) - 0.5   // step edges between tiles
+        let jHi = Float(jerseyTiles.upperBound) + 0.5
+        let pLo = Float(pantsTiles.lowerBound) - 0.5
+        let pHi = Float(pantsTiles.upperBound) + 0.5
+        return """
+        #pragma arguments
+        float3 jerseyColor;
+        float3 pantsColor;
+        #pragma body
+        float  u    = _surface.diffuseTexcoord.x;
+        float  tile = floor(clamp(u * 8.0, 0.0, 7.999));
+        float3 base = _surface.diffuse.rgb;
+        float  lum  = dot(base, float3(0.299, 0.587, 0.114));
+        float  isJersey = step(\(jLo), tile) * step(tile, \(jHi));
+        float  isPants  = step(\(pLo), tile) * step(tile, \(pHi));
+        float3 target   = mix(base, jerseyColor, isJersey);
+        target          = mix(target, pantsColor, isPants);
+        float  tintable = max(isJersey, isPants);
+        // gentle shading curve: team hue dominant, folds/number a darker shade,
+        // white-bg number tiles held just below blow-out.
+        float3 tinted   = target * (0.55 + 0.60 * lum);
+        _surface.diffuse.rgb = mix(base, tinted, tintable);
+        """
+    }()
+
+    /// Dress the player in the actual team colors: base atlas for luminance/skin,
+    /// then a shader-modifier tint that drives the uniform mass→primary and the
+    /// shoes→secondary. Replaces the old nearest-of-6 whole-atlas swap. Skin is
+    /// the only region excluded from the mask (see the tile map above).
+    func applyTeamColors(jersey: UIColor, pants: UIColor) {
+        let base = Self.uniformImage(Self.baseUniformIndex)
+        let jerseyVec = NSValue(scnVector3: Self.rgbVector(jersey))
+        let pantsVec  = NSValue(scnVector3: Self.rgbVector(pants))
         Self.forEachGeometry(in: content) { geometry in
             for material in geometry.materials {
-                material.diffuse.contents = img
+                if let base = base { material.diffuse.contents = base }
+                material.shaderModifiers = [.surface: Self.teamTintSurfaceModifier]
+                material.setValue(jerseyVec, forKey: "jerseyColor")
+                material.setValue(pantsVec, forKey: "pantsColor")
             }
         }
+    }
+
+    private static func rgbVector(_ color: UIColor) -> SCNVector3 {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return SCNVector3(Float(r), Float(g), Float(b))
     }
 
     // MARK: Driving

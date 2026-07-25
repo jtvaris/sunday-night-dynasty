@@ -139,6 +139,33 @@ struct CoachedGameView: View {
     /// plays the mirror holds the previous reveal, which equals the current
     /// pre-snap truth — so nothing needs snapshotting at snap time. The engine
     /// stays the single source of truth; this is presentation-only.
+    /// QW-5d — result-reveal v1: how the result banner is color-coded when a
+    /// play settles on the whistle. A calm neutral plate for routine gains; a
+    /// gold plate when your offense scores; green when your defense takes it
+    /// away; red when your offense turns it over. (The two-stage broadcast
+    /// stinger — gold-rule wipe + score tick + camera bump — is MED-6, not this.)
+    private enum ResultBannerTone {
+        case neutral, score, positive, negative
+
+        /// Fill tint, border, text color, and an optional leading glyph. Colors
+        /// come from the DS semantic/remedial tokens so every pair clears AA.
+        var plate: (fill: Color, border: Color, text: Color, icon: String?) {
+            switch self {
+            case .neutral:
+                return (.backgroundTertiary, .surfaceBorder, .textPrimary, nil)
+            case .score:
+                return (Color.accentGold.opacity(0.22), Color.accentGold.opacity(0.6),
+                        .accentGold, "football.fill")
+            case .positive:
+                return (Color.statusOffense.opacity(0.20), Color.statusOffense.opacity(0.55),
+                        .statusOffense, "hand.raised.fill")
+            case .negative:
+                return (Color.danger.opacity(0.20), Color.danger.opacity(0.55),
+                        .dangerText, "exclamationmark.triangle.fill")
+            }
+        }
+    }
+
     private struct HUDMirror {
         var homeScore = 0
         var awayScore = 0
@@ -154,7 +181,17 @@ struct CoachedGameView: View {
         var feed: [PlayResult] = []
     }
     @State private var shown = HUDMirror()
+    /// QW-5c chip-leak gate: the situation chips (down & distance, field
+    /// position, possession, drive) only show once the situation has been
+    /// legitimately revealed — never during a kickoff / point-after sequence,
+    /// when the `shown` mirror still carries the prior scrimmage spot. Driven by
+    /// `revealHUD(situation:)` and forced false while a kickoff is pending, so a
+    /// special-teams down reads as a special-teams down, not a leaked spot.
+    @State private var situationRevealed = false
     @State private var resultBanner: String? = nil
+    /// QW-5d result-reveal v1: the outcome tone that color-codes `resultBanner`
+    /// (gold score / green takeaway-you-got / red takeaway-against-you / neutral).
+    @State private var resultBannerTone: ResultBannerTone = .neutral
     @State private var possessionBanner: String? = nil
     /// Gold "WIN OR GO HOME" plate flashed over the field at a playoff
     /// opening kickoff (R19) — same visual language as the possession banner.
@@ -503,44 +540,17 @@ struct CoachedGameView: View {
         HStack(spacing: 0) {
             teamBlock(team: awayTeam, score: shown.awayScore, hasBall: !shown.homeHasPossession, leading: true)
             Spacer()
-            VStack(spacing: 2) {
+            // The clock is the dominant anchor: the quarter is a quiet overline
+            // above it, and the three former meta chips (playoffs / division /
+            // weather) collapse into a single priority badge below, so nothing
+            // competes with the clock's read.
+            VStack(spacing: 3) {
                 Text(quarterLabel)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(DSType.caption)
+                    .tracking(1.0)
                     .foregroundStyle(Color.textSecondary)
                 clockDisplay
-                // Stakes chip under the clock: a playoff game outranks the
-                // division rivalry framing when both apply.
-                if isPlayoff {
-                    Text("PLAYOFFS")
-                        .font(.system(size: 9, weight: .black))
-                        .tracking(1.2)
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(Color.accentGold, in: Capsule())
-                } else if isDivisionGame {
-                    Text("DIVISION")
-                        .font(.system(size: 9, weight: .black))
-                        .tracking(1.2)
-                        .foregroundStyle(Color.accentGold)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(Color.accentGold.opacity(0.14), in: Capsule())
-                        .overlay(Capsule().strokeBorder(Color.accentGold.opacity(0.4), lineWidth: 1))
-                }
-                if weather != .clear {
-                    HStack(spacing: 3) {
-                        Image(systemName: weather.symbolName)
-                            .font(.system(size: 9, weight: .bold))
-                        Text(weather.label.uppercased())
-                            .font(.system(size: 9, weight: .black))
-                            .tracking(0.8)
-                    }
-                    .foregroundStyle(Color.accentBlue)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(Color.accentBlue.opacity(0.14), in: Capsule())
-                }
+                metaBadge
             }
             Spacer()
             teamBlock(team: homeTeam, score: shown.homeScore, hasBall: shown.homeHasPossession, leading: false)
@@ -557,6 +567,43 @@ struct CoachedGameView: View {
         shown.quarter <= 4 ? "Q\(shown.quarter)" : "OT"
     }
 
+    /// The single meta badge under the clock — priority order playoffs >
+    /// division > weather. Collapses the three former stacked chips so the
+    /// clock stays the dominant scoreboard anchor.
+    @ViewBuilder
+    private var metaBadge: some View {
+        if isPlayoff {
+            Text("PLAYOFFS")
+                .font(DSType.overline)
+                .tracking(1.2)
+                .foregroundStyle(Color.backgroundPrimary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(Color.accentGold, in: Capsule())
+        } else if isDivisionGame {
+            Text("DIVISION")
+                .font(DSType.overline)
+                .tracking(1.2)
+                .foregroundStyle(Color.accentGold)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(Color.accentGold.opacity(0.14), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.accentGold.opacity(0.4), lineWidth: 1))
+        } else if weather != .clear {
+            HStack(spacing: 3) {
+                Image(systemName: weather.symbolName)
+                    .font(.system(size: 9, weight: .bold))
+                Text(weather.label.uppercased())
+                    .font(DSType.overline)
+                    .tracking(0.8)
+            }
+            .foregroundStyle(Color.accentBlue)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Color.accentBlue.opacity(0.14), in: Capsule())
+        }
+    }
+
     /// Q2/Q4 with two minutes or less on the clock — crunch time.
     private var isTwoMinuteDrill: Bool {
         (shown.quarter == 2 || shown.quarter == 4)
@@ -568,7 +615,7 @@ struct CoachedGameView: View {
     @ViewBuilder
     private var clockDisplay: some View {
         let clockText = Text(shown.clock)
-            .font(.system(size: 27, weight: .heavy).monospacedDigit())
+            .font(DSType.clock)
         if isTwoMinuteDrill && reduceMotion {
             // Reduce Motion: crunch time stays red but does not pulse.
             clockText.foregroundStyle(Color.danger)
@@ -590,10 +637,10 @@ struct CoachedGameView: View {
             if !leading, hasBall { possessionDot }
             VStack(alignment: leading ? .leading : .trailing, spacing: 0) {
                 Text(team.abbreviation)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(DSType.label)
                     .foregroundStyle(isPlayerTeam(team) ? Color.accentGold : Color.textSecondary)
                 Text("\(score)")
-                    .font(.system(size: 34, weight: .black).monospacedDigit())
+                    .font(DSType.score)
                     .foregroundStyle(Color.textPrimary)
                     .contentTransition(.numericText())
                     .animation(.spring(duration: 0.4), value: score)
@@ -653,14 +700,24 @@ struct CoachedGameView: View {
             // screens the content fits and nothing changes visually.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    chip(downDistanceText, color: .accentGold)
-                    chip(fieldPositionText, color: .accentBlue)
-                    chip(possessionText, color: shown.playerIsOnOffense ? .success : .danger)
-                    if !shown.drivePlays.isEmpty {
-                        chip(driveChipText, color: .textSecondary)
+                    // Tier 1 — the situational read. Down & distance is the one
+                    // KEY chip (gold); field position and possession are quieter
+                    // neutral chips whose status rides in a colored leading dot
+                    // ("no info by color alone"). All four are gated behind the
+                    // reveal so a kickoff / point-after never leaks the settled
+                    // spot (QW-5c).
+                    if situationRevealed {
+                        chip(downDistanceText, color: .chipKey)
+                        infoChip(fieldPositionText, dot: .chipInfo)
+                        infoChip(possessionText,
+                                 dot: shown.playerIsOnOffense ? .statusOffense : .statusDefense)
+                        if !shown.drivePlays.isEmpty {
+                            infoChip(driveChipText, dot: .textTertiaryReadable)
+                        }
                     }
+                    // Transient alerts stay visible regardless of the gate.
                     if showTwoMinuteChip {
-                        chip("2-MINUTE WARNING", color: .danger)
+                        chip("2-MINUTE WARNING", color: .danger, textColor: .dangerText)
                             .transition(.scale.combined(with: .opacity))
                     }
                     if !engine.pendingSubstitutions.isEmpty {
@@ -668,6 +725,7 @@ struct CoachedGameView: View {
                     }
                 }
             }
+            .animation(.spring(duration: 0.3), value: situationRevealed)
             Spacer(minLength: 12)
             // Action buttons: visually heavier than the info chips on the left —
             // full 44 pt tap targets with a solid plate and border.
@@ -719,6 +777,9 @@ struct CoachedGameView: View {
         .padding(.vertical, 6)
         .background(Color.backgroundSecondary)
         .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.surfaceBorder), alignment: .bottom)
+        // Navy-tinted lift so the whole HUD block reads above the field, not
+        // pasted onto it.
+        .dsElevation(.bar)
     }
 
     /// Shared plate for the strip's action buttons: 44 pt minimum tap target,
@@ -731,7 +792,7 @@ struct CoachedGameView: View {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .semibold))
             Text(title)
-                .font(.system(size: 14, weight: .bold))
+                .font(DSType.action)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
         }
@@ -747,6 +808,9 @@ struct CoachedGameView: View {
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(prominent ? tint.opacity(0.45) : Color.surfaceBorder, lineWidth: 1)
         )
+        // Subtle navy lift so the control reads as a raised button, not a
+        // flat charcoal pill.
+        .dsElevation(.chip)
         .contentShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -762,15 +826,37 @@ struct CoachedGameView: View {
             : String(localized: "Drive: \(plays.count) plays, \(yards) yds")
     }
 
-    private func chip(_ text: String, color: Color) -> some View {
+    /// A colored status chip. `color` tints the fill; the text uses `textColor`
+    /// when supplied (so a red *alert* can use the readable `dangerText` while
+    /// keeping the `danger` fill) and otherwise matches the tint.
+    private func chip(_ text: String, color: Color, textColor: Color? = nil) -> some View {
         Text(text)
-            .font(.system(size: 13, weight: .bold))
+            .font(DSType.label)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
-            .foregroundStyle(color)
+            .foregroundStyle(textColor ?? color)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(color.opacity(0.14), in: Capsule())
+    }
+
+    /// A neutral (Tier-2) info chip: readable neutral text with a small colored
+    /// leading dot carrying the status, on a neutral plate — quieter than a
+    /// colored `chip`, so the gold down-&-distance chip stays the visual key.
+    private func infoChip(_ text: String, dot: Color) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(dot)
+                .frame(width: 6, height: 6)
+            Text(text)
+                .font(DSType.label)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .foregroundStyle(Color.textPrimary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Color.backgroundTertiary, in: Capsule())
     }
 
     private var downDistanceText: String {
@@ -1130,7 +1216,7 @@ struct CoachedGameView: View {
             }
             if recent.isEmpty {
                 Text("Kickoff — the game is about to start.")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(DSType.body)
                     .foregroundStyle(Color.textSecondary)
             }
         }
@@ -1150,7 +1236,9 @@ struct CoachedGameView: View {
                 .fill(accent ?? Color.textTertiary)
                 .frame(width: isLatest ? 9 : 6, height: isLatest ? 9 : 6)
             Text(play.description)
-                .font(.system(size: isLatest ? 16 : 13, weight: isLatest ? .semibold : .regular))
+                // Latest line reads as body on the type scale; older lines stay
+                // deliberately muted (regular 13) so the eye lands on "now".
+                .font(isLatest ? DSType.body : .system(size: 13, weight: .regular))
                 .foregroundStyle(isLatest ? (accent ?? Color.textPrimary) : Color.textSecondary)
                 .lineLimit(1)
             Spacer(minLength: 0)
@@ -2400,15 +2488,27 @@ struct CoachedGameView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 if let banner = resultBanner {
-                    Text(banner)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.textPrimary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 11)
-                        .background(Color.backgroundTertiary.opacity(0.96), in: Capsule())
-                        .overlay(Capsule().strokeBorder(Color.surfaceBorder, lineWidth: 1))
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    // QW-5d result-reveal v1: the plate is color-coded to the
+                    // outcome and lands on the whistle (finishPlay reveals it in
+                    // the same beat as the horn/whistle). A leading glyph carries
+                    // the meaning too, so it never relies on color alone.
+                    let plate = resultBannerTone.plate
+                    HStack(spacing: 8) {
+                        if let icon = plate.icon {
+                            Image(systemName: icon)
+                                .font(.system(size: 12, weight: .black))
+                        }
+                        Text(banner)
+                            .font(DSType.body)
+                            .multilineTextAlignment(.center)
+                    }
+                    .foregroundStyle(plate.text)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                    .background(plate.fill.opacity(0.96), in: Capsule())
+                    .overlay(Capsule().strokeBorder(plate.border, lineWidth: 1))
+                    .dsElevation(.card)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
             // Clear of the snap plate / matchup callouts hugging the
@@ -3158,7 +3258,11 @@ struct CoachedGameView: View {
                     let endzoneZ: Float = event.kickingTeamIsHome ? -50 : 50
                     fieldScene.focusCamera(z: endzoneZ, duration: 1.0, style: .broadcast)
                     fieldScene.celebrate(atZ: endzoneZ)
-                    showBanner("The kickoff is returned ALL THE WAY for a touchdown!")
+                    // The returning team is the non-kicking team — gold when
+                    // that's your team's house call, calm neutral otherwise.
+                    let playerReturned = (event.kickingTeamIsHome != playerTeamIsHome)
+                    showBanner("The kickoff is returned ALL THE WAY for a touchdown!",
+                               tone: playerReturned ? .score : .neutral)
                 } else if event.isTouchback {
                     showBanner("Touchback — the drive starts at the \(event.startYardLine).")
                 } else {
@@ -3462,7 +3566,21 @@ struct CoachedGameView: View {
             }
         }
 
-        showBanner(play.description)
+        // QW-5d — color the result reveal by outcome, from the player's
+        // perspective: your offense scoring reads gold; your defense taking it
+        // away reads green; your offense turning it over reads red; everything
+        // else (routine gains, an opponent's plain score) stays a calm neutral
+        // plate. Turnovers outrank scores so a pick-six is read as the takeaway.
+        let offenseWasPlayer = (possessionBefore == playerTeamIsHome)
+        let resultTone: ResultBannerTone
+        if play.isTurnover {
+            resultTone = offenseWasPlayer ? .negative : .positive
+        } else if play.scoringPlay && offenseWasPlayer {
+            resultTone = .score
+        } else {
+            resultTone = .neutral
+        }
+        showBanner(play.description, tone: resultTone)
 
         // Two-point try verdict: gold broadcast plate over the field.
         if play.playType == .twoPointConversion {
@@ -3644,6 +3762,13 @@ struct CoachedGameView: View {
             shown.clock = engine.formattedClock
             shown.drivePlays = engine.currentDrivePlays
         }
+        // QW-5c chip-leak gate: the situation chips are shown only when this
+        // reveal actually surfaces the situation AND no kickoff is pending. The
+        // withheld-situation reveals (a scoring sequence mid-flight) and the
+        // opening / post-score kickoff windows both leave it false, so the
+        // strip reads as a special-teams down until the return legitimately
+        // reveals the ensuing spot — never leaking the settled spot early.
+        situationRevealed = situation && engine.pendingKickoff == nil
     }
 
     /// Positions the broadcast LOS/first-down stripes for the current situation.
@@ -3701,7 +3826,8 @@ struct CoachedGameView: View {
         }
     }
 
-    private func showBanner(_ text: String) {
+    private func showBanner(_ text: String, tone: ResultBannerTone = .neutral) {
+        resultBannerTone = tone
         resultBanner = text
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
             if resultBanner == text { resultBanner = nil }
