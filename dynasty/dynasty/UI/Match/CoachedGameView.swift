@@ -3012,7 +3012,8 @@ struct CoachedGameView: View {
         // scrimmage formation otherwise.
         if let kickoff = engine.pendingKickoff {
             let kickFormation = PlayChoreographer.kickoffFormation(kickingTeamIsHome: kickoff.kickingTeamIsHome)
-            fieldScene.movePlayersToFormation(home: kickFormation.home, away: kickFormation.away, duration: 0.1)
+            fieldScene.movePlayersToFormation(home: kickFormation.home, away: kickFormation.away, duration: 0.1,
+                                              scaleToDistance: false)
             // Kickoffs always use the wide broadcast frame — the units are
             // spread across 60 yards and the coach shot can't hold them.
             fieldScene.focusCamera(
@@ -3031,7 +3032,8 @@ struct CoachedGameView: View {
             let openingBuilds = PlayChoreographer.bodyTypes(offenseIsHome: engine.homeHasPossession)
             fieldScene.movePlayersToFormation(home: formation.home, away: formation.away, duration: 0.1,
                                               stancesHome: openingStances.home, stancesAway: openingStances.away,
-                                              bodyTypesHome: openingBuilds.home, bodyTypesAway: openingBuilds.away)
+                                              bodyTypesHome: openingBuilds.home, bodyTypesAway: openingBuilds.away,
+                                              scaleToDistance: false)
             fieldScene.setDefensiveFraming(engine.homeHasPossession != playerTeamIsHome)
             fieldScene.focusCamera(z: losZ, animated: false)
         }
@@ -4022,7 +4024,8 @@ struct CoachedGameView: View {
         fieldScene.movePlayersToFormation(
             home: replay.formationHome, away: replay.formationAway, duration: 0.45,
             stancesHome: replay.stancesHome, stancesAway: replay.stancesAway,
-            bodyTypesHome: replay.bodyTypesHome, bodyTypesAway: replay.bodyTypesAway)
+            bodyTypesHome: replay.bodyTypesHome, bodyTypesAway: replay.bodyTypesAway,
+            scaleToDistance: false)
         fieldScene.updateMarkers(losZ: replay.losZ, firstDownZ: replay.firstDownZ,
                                  offenseDirection: replay.direction)
         fieldScene.moveBall(to: SCNVector3(0, 0.26, replay.losZ))

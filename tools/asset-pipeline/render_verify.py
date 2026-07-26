@@ -80,6 +80,13 @@ p.add_argument("--float-tol", dest="float_tol", type=float, default=0.10)
 p.add_argument("--sink-tol", dest="sink_tol", type=float, default=0.50)
 p.add_argument("--min-descent", dest="min_descent", type=float, default=0.20)
 p.add_argument("--max-rise", dest="max_rise", type=float, default=0.15)
+p.add_argument("--end-flat-tol", dest="end_flat_tol", type=float, default=None,
+               help="[--fall] FAIL if, at the FINAL (held) frame, the highest lower-limb "
+                    "head (foot/toe/shin/heel) rises more than F above turf. Catches a "
+                    "'chest/head down but a leg kicked into the air' superman/pike freeze "
+                    "that fall_descent (spine-head only) certifies as a good fall. The held "
+                    "hold pose the runtime freezes on must be flush; measure the leg, not "
+                    "just the torso. Report-only (no gate) when unset.")
 args = p.parse_args(argv)
 
 ENGINE = {"WORKBENCH": "BLENDER_WORKBENCH", "EEVEE": "BLENDER_EEVEE_NEXT"}.get(
@@ -308,6 +315,24 @@ def verify_clip(source):
             "pass": ok,
         }
 
+    # ── end-pose flatness ─────────────────────────────────────────────────────────
+    # fall_descent tracks ONLY the spine (torso) head, so it certifies the chest coming
+    # down while a leg/pelvis can still be kicked into the air — the "superman / pike
+    # freeze" that a HELD tackle (runtime hold:true) would lock onto. Measure the FINAL
+    # frame's highest lower-limb head so that mode is visible (and gate-able).
+    sc.frame_set(fe)
+    bpy.context.view_layer.update()
+    LIMB_KEYS = ("foot", "toe", "shin", "heel")
+    end_limbs = [((arm.matrix_world @ b.head).z - ground_z)
+                 for b in arm.pose.bones if any(k in b.name.lower() for k in LIMB_KEYS)]
+    end_max_limb = round(max(end_limbs), 4) if end_limbs else None
+    end_pelvis = round(roots[-1] - ground_z, 4)  # spine(root) head above turf at hold
+    end_pose = {"max_lower_limb_z": end_max_limb, "pelvis_z": end_pelvis,
+                "flat_tol": args.end_flat_tol}
+    if args.fall and args.end_flat_tol is not None and end_max_limb is not None:
+        end_pose["pass"] = end_max_limb <= args.end_flat_tol
+        checks["end_pose_flat"] = end_pose
+
     clip_pass = all(c["pass"] for c in checks.values())
 
     # ── render pass ──
@@ -355,6 +380,7 @@ def verify_clip(source):
         "clip": clip, "source": path, "frames": [fs, fe], "sampled": sample,
         "lowest_head_z": {"min": round(lo_min, 4), "max": round(lo_max, 4),
                           "final": round(lo_final, 4)},
+        "end_pose": end_pose,
         "checks": checks, "pass": clip_pass,
         "contact_sheet": sheet_path,
     }
@@ -371,6 +397,11 @@ def verify_clip(source):
             fd["root_bone"], fd["root_start"], fd["root_end"], fd["net_descent"],
             fd["min_descent"], fd["rise_above_start"], fd["max_rise"],
             "PASS" if fd["pass"] else "FAIL"))
+    _ep = end_pose
+    _epg = ("PASS" if _ep.get("pass") else "FAIL") if "pass" in _ep else "report-only"
+    print("   end_pose(final f%d): max_lower_limb=%s pelvis=%+.3f (flat_tol=%s)  [%s]" % (
+        fe, ("%.3f" % _ep["max_lower_limb_z"]) if _ep["max_lower_limb_z"] is not None else "n/a",
+        _ep["pelvis_z"], _ep["flat_tol"], _epg))
     if sheet_path:
         print("   contact sheet -> %s" % sheet_path)
     print("   RESULT: %s" % ("PASS" if clip_pass else "FAIL"))

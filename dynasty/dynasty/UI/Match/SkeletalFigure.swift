@@ -48,12 +48,20 @@ final class SkeletalFigure {
     /// (throw 7.7s, tackle 5s, celebrate 4.5s) around a brief action beat; played
     /// at natural speed they drag. Compress each to a target on-screen duration so
     /// the beat lands in a football-appropriate window. Clips not listed play at
-    /// natural speed (e.g. the Ochi kick).
+    /// natural speed (e.g. the Ochi kick). Keyed by VARIANT first, then action —
+    /// the anim_v2 pack re-trims left variants with very different action content
+    /// (catch_a is a 67-frame running catch, catch_c a 0.55s dive), so one
+    /// per-action target smears them.
     private static let actionTargetDuration: [String: TimeInterval] = [
         // tackle clips play FAST — a football hit drops the man in ~0.5-0.8s, not a
         // 2.2s slow-motion flop (the old target left everyone standing then sinking).
-        "throw": 2.2, "catch": 1.6, "tackle": 1.0, "tackled": 0.85, "juke": 0.75, "celebrate": 3.0,
+        "throw": 2.2, "catch": 1.6, "tackle": 0.75, "tackled": 1.0, "juke": 0.75, "celebrate": 3.0,
         "kick": 1.5, "dive": 1.6,
+        // sack pair: QB crumple holds the turf; the sacker's wrap-drive blends back out.
+        "sacked": 0.85, "sack": 0.85,
+        // per-variant overrides (anim_v2 re-trims; see tools/asset-pipeline + scratchpad notes)
+        "catch_a": 0.85, "catch_b": 0.70, "catch_c": 0.55, "catch_e": 1.4,
+        "juke_b": 0.8, "juke_c": 0.7,
     ]
 
     /// Variety pools: an action name resolves to one of several real football-mocap
@@ -64,12 +72,19 @@ final class SkeletalFigure {
     /// Pools mix BOTH sources: the 21-clip pack AND Ochi's own action mocap
     /// (catch_d = Ochi Catch-and-Fall, throw_c = Ochi Throw 01) for maximum variety.
     static let variantPools: [String: [String]] = [
-        "catch":     ["catch_a", "catch_b", "catch_c", "catch_d"],  // secure / jump / dive / catch-and-fall(Ochi)
+        "catch":     ["catch_a", "catch_b", "catch_c", "catch_d"],  // running secure / jump / dive / catch-and-fall(Ochi)
         "tackle":    ["tackle_a"],                                  // diving tackle — the man MAKING the hit lays out
-        "tackled":   ["tackle_b"],                                  // getting hit / brought down — the man going DOWN
+        "tackled":   ["tackle_b"],                                  // getting hit — backward upend, flips to prone
         "throw":     ["throw_a", "throw_b", "throw_c"],             // pack ×2 + Ochi Throw 01
         "celebrate": ["celeb_a", "celeb_b"],                       // spike / arms-up
-        "juke":      ["juke_a"],
+        // opposite-handed real-mocap cuts from the zig-zag take (the Mixamo dodge
+        // juke_a stays in the bundle but reads generic next to these).
+        "juke":      ["juke_b", "juke_c"],
+        // sack pair: the QB crumples where he stands (no run lead-in), the rusher
+        // wrap-drives through him and recovers (hold:false — its trailing leg
+        // never grounds in the source take, so freezing it reads floaty).
+        "sacked":    ["sack_taken"],
+        "sack":      ["sack_make"],
         // "kick" has NO pool — it loads PlayerClip_kick.usdc directly (the single
         // authored kick clip with a full approach), so pickVariant returns "kick".
     ]
@@ -84,9 +99,12 @@ final class SkeletalFigure {
     /// `play(action:landAfter:)` uses it to delay the clip so the beat coincides with
     /// a game event (the ball's arrival). Default 0.5 for anything unlisted.
     private static let actionHitFraction: [String: Double] = [
-        "catch_a": 0.66, "catch_b": 0.70, "catch_c": 0.35, "catch_d": 0.32,
+        "catch_a": 0.45, "catch_b": 0.50, "catch_c": 0.50, "catch_d": 0.32,
+        "catch_e": 0.70,   // over-shoulder basket grab (hands close high, then tuck)
         "throw_a": 0.60, "throw_b": 0.55, "throw_c": 0.66,
-        "tackle_a": 0.80, "tackle_b": 0.60,
+        "tackle_a": 0.45, "tackle_b": 0.28,
+        "sack_taken": 0.18, "sack_make": 0.55,
+        "juke_b": 0.42, "juke_c": 0.35,
         "kick": 0.36,   // foot through the ball on the single authored kick clip (post-approach)
         "dive": 0.35,
     ]
@@ -223,6 +241,14 @@ final class SkeletalFigure {
               let skel = skinnerNode.skinner?.skeleton else {
             return nil
         }
+
+        // Frustum-culling guard on the skinned geometry node (see the scene's
+        // makePlayerNode for the matching container/figure boxes). SceneKit
+        // culls an SCNSkinner by bounds that don't track the animated pose.
+        let cullBig = SCNVector3(50, 50, 50)
+        let cullNeg = SCNVector3(-50, -50, -50)
+        skinnerNode.boundingBox = (cullNeg, cullBig)
+        skel.boundingBox = (cullNeg, cullBig)
 
         // Stand the Z-up rig up so it matches the kit convention: local +Z =
         // FRONT (downfield), which the container's yaw then orients per team.
@@ -383,12 +409,40 @@ final class SkeletalFigure {
         // tackled man up — otherwise a tackle beat that also slides the carrier
         // (drag-down / big-hit / shoestring) pops him back to his feet when that
         // slide's trailing idle-reset fires ~0.3-0.45s later.
+        // Coming out of a HELD pose (stance / fall) the skeleton has ONE clip at
+        // full weight and no loco underneath. If we fade that pose out while the
+        // loco fades in, SceneKit relaxes the un-weighted remainder toward the
+        // rig's REST pose — which for this rig sits at the floor (spine ≈ 0), so
+        // the figure visibly COLLAPSES flat for ~0.3s at the snap and rises back
+        // up ("players randomly go to ground mid-play"; measured torso 0.06m via
+        // the sink tracer). Fix: when leaving a held pose, snap the loco in fast
+        // (short fade) and drop the pose on the SAME short window, so the rig is
+        // never left relaxing toward the floor rest pose. Loco↔loco transitions
+        // (idle↔run) keep the smooth 0.32s crossfade — they never expose rest.
+        // Leaving a held pose: add the loco at FULL weight immediately (fade 0)
+        // and drop the pose the same instant. Any non-zero fade leaves a 1-2
+        // frame window where the loco weight is ~0 and the skeleton is 100% at
+        // the rig's floor rest pose (measured torso 0.01m) — the visible
+        // ground-collapse. A hard cut from the crouch to the first run frame is
+        // upright→upright, so it reads as an instant rise, not a pop.
+        // The fadeIn-0 rest-pose guard applies ONLY when RISING into motion
+        // (moving == true, the snap). Going to IDLE must keep the smooth 0.32s
+        // fade: a stance attached with a future beginTime (pre-snap lineup)
+        // counts as "held" here, and snapping the idle in at full weight
+        // stamps the upright idle over the not-yet-started stance — the man
+        // never settles INTO his stance (he stands upright pre-snap and only
+        // flashes the crouch at the snap). Only the snap needs the instant cut.
+        let leavingHeldPose = moving
+            && (skeleton.animationPlayer(forKey: "stance") != nil
+                || skeleton.animationPlayer(forKey: "fall") != nil)
+        let inFade: TimeInterval = leavingHeldPose ? 0 : 0.32
         if moving {
-            skeleton.removeAnimation(forKey: "fall", blendOutDuration: 0.15)
-            // The snap breaks the pre-snap pose: blend the held stance OUT over a
-            // beat so the man RISES smoothly out of his crouch into the run rather
-            // than snapping upright (a "jump" to standing).
-            skeleton.removeAnimation(forKey: "stance", blendOutDuration: 0.3)
+            let outFade: CGFloat = leavingHeldPose ? 0 : 0.32
+            skeleton.removeAnimation(forKey: "fall", blendOutDuration: outFade)
+            // The snap breaks the pre-snap pose: blend the held stance OUT so the
+            // man rises into the run. Kept short (matched to the loco fade-in) so
+            // there is no rest-pose collapse window between the two.
+            skeleton.removeAnimation(forKey: "stance", blendOutDuration: outFade)
         }
         let want: Loco = moving ? (backpedal ? .backpedal : .run) : .idle
         if let cur = loco, cur == want {
@@ -405,7 +459,7 @@ final class SkeletalFigure {
         if let prev = prev { skeleton.removeAnimation(forKey: animKey(for: prev), blendOutDuration: 0.32) }
         guard let base = Self.clip(clipName(for: want))?.copy() as? CAAnimation else { return }
         base.repeatCount = .infinity
-        base.fadeInDuration = 0.32
+        base.fadeInDuration = inFade
         base.fadeOutDuration = 0.32
         if moving {
             base.timeOffset = phase01 * base.duration   // desync the squad's gait phase
@@ -665,7 +719,8 @@ final class SkeletalFigure {
         let hitFrac = Self.actionHitFraction[variant] ?? 0.5
         if let beat = beatAt, beat > 0.01, base.duration > 0.01 {
             base.speed = Float(max(0.5, base.duration * hitFrac / beat))   // release lands at `beat`
-        } else if let target = Self.actionTargetDuration[name], base.duration > 0.01 {
+        } else if let target = Self.actionTargetDuration[variant] ?? Self.actionTargetDuration[name],
+                  base.duration > 0.01 {
             // Compress long clips to a football-appropriate beat; the pack variants are
             // already trimmed, so only ever speed UP (never slow into sluggish slow-mo).
             base.speed = Float(max(1.0, base.duration / target))
@@ -680,6 +735,17 @@ final class SkeletalFigure {
         base.fadeOutDuration = hold ? 0 : 0.3
         base.isRemovedOnCompletion = !hold
         if hold { base.fillMode = .forwards }
+        // Attach the clip on a FUTURE beginTime (the pre-wave behavior). The
+        // clip sits on the "action"/"fall" key from now and only starts driving
+        // the skeleton at `beginTime`; SceneKit holds the rig on the loco
+        // underneath until then. The alternative — deferring the addAnimation
+        // itself via asyncAfter — leaves the action key EMPTY through the whole
+        // pre-catch window, and on a long landAfter delay (kickoff hang, deep
+        // ball) any brief loco gap in that window drops the rig to the floor
+        // rest pose, so the man SINKS under the turf and "disappears, then comes
+        // back" at the catch. Keeping the clip attached (beginTime) closes that
+        // window. (The real snap-collapse fix is the fadeIn-0 stance exit in
+        // setMoving, independent of this.)
         if startDelay > 0 { base.beginTime = CACurrentMediaTime() + startDelay }
         skeleton.addAnimation(base, forKey: hold ? "fall" : "action")
     }

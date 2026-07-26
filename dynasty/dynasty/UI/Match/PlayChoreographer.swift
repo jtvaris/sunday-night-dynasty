@@ -2513,8 +2513,9 @@ struct PlayChoreographer {
         let openHands: [Int] = c.matchups?.openNonTargetOffRole
             .flatMap { [c.oBase + $0] } ?? []
         steps.append(Step(moves: [], ballMove: .carryChest(nodeIndex: c.qb), duration: 1.3,
-                          pulses: [rusher], falls: [c.qb, rusher], wraps: [rusher],
-                          reaches: openHands))
+                          pulses: [rusher], falls: [c.qb, rusher],
+                          fallStyles: [c.qb: .sacked, rusher: .sackDrive],
+                          wraps: [rusher], reaches: openHands))
         steps.append(Step(moves: [], ballMove: .carryChest(nodeIndex: c.qb), duration: 0.4))
         return steps
     }
@@ -2687,8 +2688,9 @@ struct PlayChoreographer {
 
     // MARK: - Scripts: Special Teams
 
-    /// Long snap to the punter → high arc downfield → returner catches and
-    /// brings it back ~3yd.
+    /// Long snap to the punter → protection HOLDS while the gunners release →
+    /// high arc downfield → basket catch (the punt-catch mocap) → a short
+    /// escape weave → the gunners arrive first and wrap him up.
     private static func puntSteps(_ c: Context) -> [Step] {
         let punterSpot = c.offenseStart(0)  // formation already puts the QB 7yd back
 
@@ -2697,61 +2699,114 @@ struct PlayChoreographer {
         let distance: Float = reported > 10 ? min(max(reported, 35), 45) : 40
         let landZ = clampZ(c.losZ + c.direction * distance)
         let returner = c.safety(0)
+        let gunnerA = c.oBase + 7, gunnerB = c.oBase + 8   // outside releases
 
-        // Coverage: everyone on the kicking team but the punter sprints
-        // downfield — gunners (outside WRs) lead the charge.
+        // Boot phase. Real punt anatomy: the GUNNERS release at the snap and
+        // beat the ball down; the interior EIGHT protect first (locked with
+        // the rush), then peel and chase — arriving staggered and well behind
+        // the gunners, not as one synchronized flood.
         let hang: TimeInterval = 2.1  // punt hang time (visual compromise)
-        var coverage: [Move] = []
+        var bootMoves: [Move] = [(returner, player(0, landZ), hang)]
+        var bootDelays: [Int: TimeInterval] = [:]
         for role in 1...10 {
             let start = c.offense[role]
-            let depth: Float = (role == 7 || role == 8) ? 2 : 6
-            coverage.append((c.oBase + role,
-                             player(start.x * 0.85, clampZ(landZ - c.direction * depth)), hang))
+            let isGunner = role == 7 || role == 8
+            // Gunners land 2 yd short of the catch; the interior release wave
+            // trails 10-16 yd behind, ragged by role.
+            let depth: Float = isGunner ? 2 : 10 + hash01(role * 29 + 3) * 6
+            bootMoves.append((c.oBase + role,
+                              player(start.x * 0.85, clampZ(landZ - c.direction * depth)), hang))
+            if !isGunner { bootDelays[c.oBase + role] = 0.55 }   // protect first, then peel
         }
-        // Return unit falls back to wall off in front of the returner.
-        var wall: [Move] = []
+        // Return unit: the interior shows a rush and stays LOCKED with the
+        // protection through the hang (block engagements, not a backfield
+        // drift); three men peel back late to wall off in front of the catch.
+        var blocksList: [Int] = []
+        var styles: [Int: FootballFieldScene.BlockStyle] = [:]
+        let wallLanes: [Float] = [-5, 0, 5]
+        var wallSlot = 0
         for role in 0..<11 where c.dBase + role != returner {
             let start = c.defense[role]
-            wall.append((c.dBase + role,
-                         player(lerp(start.x, Float(role % 3 - 1) * 4, 0.5),
-                                lerp(start.z, clampZ(landZ - c.direction * 7), 0.7)), hang))
+            if role < 6 {
+                // Rush shows, gets absorbed by the shield — both sides engage.
+                bootMoves.append((c.dBase + role,
+                                  player(start.x, clampZ(lerp(start.z, c.losZ, 0.5))), 0.5))
+                blocksList.append(c.dBase + role)
+                styles[c.dBase + role] = .drive
+            } else {
+                // Wall men turn and get depth in front of the landing spot.
+                let lane = wallLanes[wallSlot % wallLanes.count]; wallSlot += 1
+                bootMoves.append((c.dBase + role,
+                                  player(lane, clampZ(landZ - c.direction * 9)), hang))
+                bootDelays[c.dBase + role] = 0.4
+            }
+        }
+        // The protection shield is the engaged other half of those pairs.
+        for role in 1...6 {
+            blocksList.append(c.oBase + role)
+            styles[c.oBase + role] = .anchor   // absorb the rush, give a little ground
         }
 
+        // Catch → escape: the returner takes the basket catch, flashes one
+        // escape move, and gets ~3 yd before the gunners swallow him.
         let returnEnd = player(1, landZ - c.direction * 3)
-        return [
-            // Long snap slides back to the punter.
-            Step(
-                moves: [],
-                ballMove: .slide(to: ground(punterSpot.x, punterSpot.z), duration: 0.5),
-                duration: 0.6,
-                sound: .snap
-            ),
-            // Boot: high arc downfield; coverage races under it while the
-            // return unit sets its wall and the returner settles.
-            Step(
-                moves: merge([(nodeIndex: returner, to: player(0, landZ), duration: hang)],
-                             coverage + wall),
-                ballMove: .arc(to: air(0, landZ), apex: 12, duration: hang, from: nil),
-                duration: hang,
-                kicker: c.oBase,   // the punter boots it
-                sound: .kickThump
-            ),
-            // Catch and a short ~3yd return; the coverage rallies to the ball.
-            Step(
-                moves: merge(
-                    [(nodeIndex: returner, to: returnEnd, duration: 1.0)],
-                    (1...10).map { role in
-                        let start = c.offense[role]
-                        return (c.oBase + role,
-                                player(lerp(start.x * 0.85, returnEnd.x, 0.45),
-                                       lerp(clampZ(landZ - c.direction * 6), returnEnd.z, 0.45)), 1.0)
-                    }
-                ),
-                ballMove: .carry(nodeIndex: returner),
-                duration: 1.0
-            ),
-            Step(moves: [], ballMove: .carry(nodeIndex: returner), duration: 0.4),
+        let escape = [player(2.2, clampZ(landZ - c.direction * 1.2)),   // first step outside
+                      returnEnd]                                        // hauled back in
+
+        var steps: [Step] = []
+        // Long snap slides back to the punter.
+        steps.append(Step(
+            moves: [],
+            ballMove: .slide(to: ground(punterSpot.x, punterSpot.z), duration: 0.5),
+            duration: 0.6,
+            sound: .snap
+        ))
+        // Boot: gunners fly, the lines stay locked, the wall peels late and
+        // the returner settles under it for a basket catch (catch_e — the
+        // punt-catch mocap: look up, hands high, secure to the chest).
+        steps.append(Step(
+            moves: bootMoves,
+            ballMove: .arc(to: air(0, landZ), apex: 12, duration: hang, from: nil),
+            duration: hang,
+            reaches: [returner],
+            blocks: blocksList,
+            kicker: c.oBase,   // the punter boots it
+            catchStyles: [returner: .overShoulder],
+            blockStyles: styles,
+            startDelays: bootDelays,
+            sound: .kickThump
+        ))
+        // Catch and the short return: one juke feint off the catch while the
+        // gunners close; the trailing release wave keeps coming but arrives
+        // a beat too late to matter.
+        var rallyMoves: [Move] = [
+            (gunnerA, player(returnEnd.x - 1.0, returnEnd.z - c.direction * 1.0), 0.85),
+            (gunnerB, player(returnEnd.x + 1.4, returnEnd.z + c.direction * 0.8), 0.95),
         ]
+        for role in 1...10 where role != 7 && role != 8 {
+            let start = c.offense[role]
+            rallyMoves.append((c.oBase + role,
+                               player(lerp(start.x * 0.85, returnEnd.x, 0.4),
+                                      clampZ(landZ - c.direction * (5 + hash01(role * 11) * 4))), 1.0))
+        }
+        steps.append(Step(
+            moves: rallyMoves,
+            paths: [(returner, escape, 1.0)],
+            ballMove: .carry(nodeIndex: returner),
+            duration: 1.0,
+            openField: [FootballFieldScene.OpenFieldMove(nodeIndex: returner, kind: .juke,
+                                                         delay: 0.3)]
+        ))
+        // The gunners wrap him up — a real tackle finish, not a stand-around.
+        steps.append(Step(
+            moves: [],
+            ballMove: .carry(nodeIndex: returner),
+            duration: 1.1,
+            pulses: [gunnerA],
+            falls: [returner, gunnerA, gunnerB],
+            wraps: [gunnerA]
+        ))
+        return steps
     }
 
     /// Snap back to the holder, then the kick arcs at the goalposts:
@@ -2790,21 +2845,25 @@ struct PlayChoreographer {
         kickingTeamIsHome ? -15 : 15
     }
 
-    /// Kicking team layout in node-role order: 0 = kicker in his run-up,
-    /// 1-10 = the coverage line spread across the tee line.
+    /// Kicking team layout in node-role order: 0 = kicker in his run-up at the
+    /// tee, 1-10 = the coverage line up on the RECEIVING team's 40 — the
+    /// dynamic-kickoff alignment: both walls stand 5 yards apart downfield,
+    /// nobody but the kicker near the tee.
     private static func kickoffKickingPositions(kickDir: Float) -> [(x: Float, z: Float, number: Int)] {
         let teeZ = -kickDir * 15
+        let coverageZ = kickDir * 10   // receiving team's 40-yard line
         let lanes: [Float] = [-22, -17.5, -13, -8.5, -4, 4, 8.5, 13, 17.5, 22]
         let numbers = [41, 45, 52, 38, 29, 31, 47, 55, 44, 26]
         var out: [(x: Float, z: Float, number: Int)] = [(0, teeZ - kickDir * 6, 3)]
         for (i, x) in lanes.enumerated() {
-            out.append((x, teeZ - kickDir * 1, numbers[i]))
+            out.append((x, coverageZ, numbers[i]))
         }
         return out.map { (clampX($0.x), clampZ($0.z), $0.number) }
     }
 
-    /// Receiving team layout in node-role order: 0-4 = front line at their own
-    /// 35, 5-8 = wedge wave at the 20, 9 = upback, 10 = deep returner.
+    /// Receiving team layout in node-role order: 0-4 = front wall at their own
+    /// 35 (the setup zone, nose to nose with the coverage), 5-8 = second wave
+    /// at their 31, 9 = upback/escort, 10 = deep returner at the goal line.
     private static func kickoffReceivingPositions(kickDir: Float) -> [(x: Float, z: Float, number: Int)] {
         // Receiving team's own yard Y -> world z.
         func ownYard(_ y: Float) -> Float { kickDir * (50 - y) }
@@ -2814,8 +2873,8 @@ struct PlayChoreographer {
         for (i, x) in frontX.enumerated() { out.append((x, ownYard(35), frontNumbers[i])) }
         let waveX: [Float] = [-12, -4, 4, 12]
         let waveNumbers = [35, 27, 49, 42]
-        for (i, x) in waveX.enumerated() { out.append((x, ownYard(20), waveNumbers[i])) }
-        out.append((-3, ownYard(10), 22)) // upback
+        for (i, x) in waveX.enumerated() { out.append((x, ownYard(31), waveNumbers[i])) }
+        out.append((-2, ownYard(12), 22)) // upback escort
         out.append((0, ownYard(2), 30))   // deep returner
         return out.map { (clampX($0.x), clampZ($0.z), $0.number) }
     }
@@ -2844,6 +2903,7 @@ struct PlayChoreographer {
         let receiving = kickoffReceivingPositions(kickDir: kickDir)
         let teeZ = -kickDir * 15
         let returner = rBase + 10
+        let upback = rBase + 9
         func ownYard(_ y: Float) -> Float { kickDir * (50 - y) }
 
         // Touchbacks are fielded in the end zone; returns near the goal line.
@@ -2858,33 +2918,14 @@ struct PlayChoreographer {
             duration: 0.6
         ))
 
-        // 2. Boot: high hanging kick. Ten coverage men fly downfield in their
-        //    lanes, the kicker trails as the safety, the front line folds back
-        //    into the wedge and the returner settles under the ball.
+        // 2. Boot. Dynamic-kickoff rule: NOBODY but the kicker and the
+        //    returner moves while the ball is in the air — both walls stand
+        //    frozen five yards apart and the whole play erupts at the catch.
+        //    (The old float, where all 20 lerped downfield under the flight,
+        //    read as "everyone drifts, then the returner jogs into a line".)
         let hang: TimeInterval = 2.4  // real kickoff hang time
-        var bootMoves: [Move] = [(returner, player(0, catchZ), hang)]
-        // FIX-3/K1: a live return floods the coverage down to the receiving 22
-        // and folds the front unit into a return wall. A TOUCHBACK is a dead
-        // ball the instant it sails into the end zone — the coverage releases
-        // only a short way and pulls up (near the receiving 40, not the 22),
-        // and the return unit barely leaves its lanes (no wall, no pursuit).
-        let coverZ = clampZ(isTouchback ? ownYard(42) : ownYard(22))
-        let frontZ = clampZ(isTouchback ? ownYard(33) : ownYard(18))
-        let waveZ = clampZ(isTouchback ? ownYard(19) : ownYard(10))
-        let upbackZ = clampZ(isTouchback ? ownYard(9) : ownYard(6))
-        for i in 1...10 {
-            bootMoves.append((kBase + i, player(kicking[i].x * (isTouchback ? 0.95 : 0.8), coverZ), hang))
-        }
-        bootMoves.append((kBase, player(0, teeZ + kickDir * 4), hang))
-        for i in 0..<5 {
-            bootMoves.append((rBase + i, player(receiving[i].x * (isTouchback ? 0.9 : 0.55), frontZ), hang))
-        }
-        for i in 5..<9 {
-            bootMoves.append((rBase + i, player(receiving[i].x * (isTouchback ? 0.95 : 0.7), waveZ), hang))
-        }
-        bootMoves.append((rBase + 9, player(-2, upbackZ), hang))
         steps.append(Step(
-            moves: bootMoves,
+            moves: [(returner, player(0, catchZ), hang)],
             ballMove: .arc(to: air(0, catchZ), apex: 16, duration: hang, from: nil),
             duration: hang,
             reaches: [returner],
@@ -2893,44 +2934,113 @@ struct PlayChoreographer {
         ))
 
         if isTouchback {
-            // 3. Dead ball. FIX-3: the returner fields it and settles in the
-            //    end zone — no return (the engine already spotted the drive),
-            //    no downfield move, no standing-holding-the-ball dwell. The
-            //    coverage has already pulled up short (step 2). The view plays
-            //    the whistle + "Touchback — drive starts at the N" banner on
-            //    completion, so a single short settle beat is all it needs.
-            steps.append(Step(moves: [], ballMove: .carry(nodeIndex: returner), duration: 0.6))
+            // 3. Dead ball the instant it sails into the end zone: the walls
+            //    relax where they stand (a step of drift, no release, no
+            //    pursuit) and the returner settles with it. The view plays
+            //    the whistle + "Touchback" banner on completion.
+            var settle: [Move] = []
+            for i in 1...10 {
+                settle.append((kBase + i, player(kicking[i].x, kicking[i].z + kickDir * 1.2), 0.8))
+            }
+            steps.append(Step(moves: settle, ballMove: .carry(nodeIndex: returner), duration: 0.9))
             return steps
         }
 
-        // 3. Return: out to the drive start (or all the way on a housed kick)
-        //    with the coverage converging and the wedge escorting.
+        // 3. THE ERUPTION (catch -> first contact). Coverage releases down its
+        //    lanes, the two return walls fit onto them man for man, the upback
+        //    turns into the escort, and the returner takes his first burst.
+        //    Two middle-lane coverage men are deliberately left UNBLOCKED —
+        //    they become the pursuit (real returns die because somebody runs
+        //    free, not because the returner jogs into a standing line).
+        let chargeDur: TimeInterval = 1.3   // ~9 yd/s eruption, not warp speed
+        let tacklerA = kBase + 5     // free runners in the middle lanes
+        let tacklerB = kBase + 6
+        let engageZ = ownYard(28)    // where the walls meet the coverage
+        let blockedCoverage = [1, 2, 3, 4, 7, 8, 9, 10]
+        let blockers = [rBase + 0, rBase + 1, rBase + 2, rBase + 3,
+                        rBase + 5, rBase + 6, rBase + 7, rBase + 8]
+        var engageX: [Int: Float] = [:]   // coverage role -> engagement x
+        var charge: [Move] = []
+        for (slot, cov) in blockedCoverage.enumerated() {
+            let blocker = blockers[slot]
+            let x = lerp(kicking[cov].x, receiving[blocker - rBase].x, 0.55)
+            let jitter = (hash01(cov * 13 + 5) - 0.5) * 2.4   // ragged front
+            engageX[cov] = x
+            charge.append((kBase + cov, player(x, engageZ + kickDir * (1.0 + jitter)), chargeDur))
+            charge.append((blocker, player(x, engageZ - kickDir * 0.9 + kickDir * jitter * 0.4), chargeDur))
+        }
+        charge.append((tacklerA, player(-3, ownYard(29)), chargeDur))
+        charge.append((tacklerB, player(4.5, ownYard(28)), chargeDur))
+        charge.append((kBase, player(0, -kickDir * 5), chargeDur))           // kicker = safety, trails
+        charge.append((returner, player(1.5, ownYard(9)), chargeDur))        // first burst
+        charge.append((upback, player(-1.5, ownYard(13)), chargeDur))        // escort turns
+        steps.append(Step(moves: charge, ballMove: .carry(nodeIndex: returner), duration: chargeDur))
+
+        // 4. THE RETURN. The walls lock up (real block engagements grinding
+        //    downfield) while the returner WEAVES through the traffic —
+        //    outside press, cut back inside, then downhill — flashing
+        //    open-field moves at the cuts; the free runners pursue on angles
+        //    to the spot the engine picked.
         let endYard: Float = isReturnTouchdown ? 102 : Float(returnYardLine)
         let endZ = clampZ(ownYard(endYard))
-        let endX: Float = isReturnTouchdown ? 6 : 4
-        let runDistance = abs(endZ - catchZ)
-        // Return covered at a returner's sprint (~9 yd/s), not warp speed.
-        let runDuration = TimeInterval(min(max(runDistance / 9.0, 1.2), 3.6))
-        // A housed return leaves the coverage trailing; a normal one rallies in.
-        let convergence: Float = isReturnTouchdown ? 0.35 : 0.75
-        var returnMoves: [Move] = [(returner, player(endX, endZ), runDuration)]
-        for i in 1...10 {
-            let laneX = kicking[i].x * 0.8
-            let fromZ = clampZ(ownYard(22))
-            returnMoves.append((kBase + i,
-                                player(lerp(laneX, endX, convergence),
-                                       lerp(fromZ, endZ, convergence)), runDuration))
+        let endX: Float = isReturnTouchdown ? 10 : 3
+        let weaveStartZ = ownYard(9)
+        let runDistance = abs(endZ - weaveStartZ)
+        // Covered at a returner's sprint (~9 yd/s), not warp speed.
+        let runDuration = TimeInterval(min(max(runDistance / 9.0, 1.4), 4.0))
+        // Weave amplitude scales with the run so a short return doesn't zigzag
+        // in place; fractions keep the shape on any return length.
+        let amp = min(5.5, max(1.5, runDistance * 0.28))
+        func wz(_ t: Float) -> Float { weaveStartZ + (endZ - weaveStartZ) * t }
+        let weave = [player(amp, wz(0.30)),           // press outside
+                     player(-amp * 0.45, wz(0.58)),   // cut back through the wall
+                     player(endX, wz(1.0))]           // downhill to the spot
+        var returnMoves: [Move] = []
+        var blocksList: [Int] = []
+        var styles: [Int: FootballFieldScene.BlockStyle] = [:]
+        for (slot, cov) in blockedCoverage.enumerated() {
+            let blocker = blockers[slot]
+            blocksList += [kBase + cov, blocker]
+            styles[blocker] = .drive        // wall holds and grinds...
+            styles[kBase + cov] = .anchor   // ...coverage fights, gives ground
+            let x = engageX[cov] ?? kicking[cov].x
+            returnMoves.append((kBase + cov, player(x, engageZ + kickDir * 2.2), runDuration))
+            returnMoves.append((blocker, player(x, engageZ + kickDir * 1.4), runDuration))
         }
-        for i in 0..<5 {
-            returnMoves.append((rBase + i,
-                                player(receiving[i].x * 0.5,
-                                       lerp(clampZ(ownYard(18)), endZ, 0.5)), runDuration))
+        if isReturnTouchdown {
+            // Housed: the pursuit takes bad angles and trails the burst.
+            returnMoves.append((tacklerA, player(endX - 4, clampZ(wz(0.8))), runDuration))
+            returnMoves.append((tacklerB, player(endX - 7, clampZ(wz(0.65))), runDuration))
+        } else {
+            // Pursuit angles meet the returner at the engine's spot.
+            returnMoves.append((tacklerA, player(endX - 1.2, endZ - kickDir * 1.5), runDuration))
+            returnMoves.append((tacklerB, player(endX + 1.8, endZ + kickDir * 1.0), runDuration))
+        }
+        // Upback escorts a stride ahead of the weave; kicker stays the last man.
+        returnMoves.append((upback, player(endX - 2.5, clampZ(wz(0.75))), runDuration))
+        returnMoves.append((kBase, player(endX * 0.4, clampZ(ownYard(min(endYard + 12, 46)))), runDuration))
+        // Open-field moves at the cuts (the new mocap juke pair) — skipped on
+        // a stuffed short return where there's no room to set one up.
+        var openField: [FootballFieldScene.OpenFieldMove] = []
+        if runDistance >= 10 {
+            let second: FootballFieldScene.OpenFieldMove.Kind =
+                hash01(returnYardLine * 17 + 3) < 0.5 ? .deadLeg : .spin
+            openField = [
+                FootballFieldScene.OpenFieldMove(nodeIndex: returner, kind: .juke,
+                                                 delay: runDuration * 0.30),
+                FootballFieldScene.OpenFieldMove(nodeIndex: returner, kind: second,
+                                                 delay: runDuration * 0.58),
+            ]
         }
         steps.append(Step(
             moves: returnMoves,
+            paths: [(returner, weave, runDuration)],
             ballMove: .carry(nodeIndex: returner),
             duration: runDuration,
-            pulses: isReturnTouchdown ? [returner] : []
+            pulses: isReturnTouchdown ? [returner] : [],
+            blocks: blocksList,
+            blockStyles: styles,
+            openField: openField
         ))
 
         if isReturnTouchdown {
@@ -2939,21 +3049,16 @@ struct PlayChoreographer {
             steps.append(Step(moves: [], ballMove: .carry(nodeIndex: returner),
                               duration: 0.6, pulses: [returner], celebrates: [returner]))
         } else {
-            // 4. The nearest lane defenders wrap the returner up.
-            let tacklers = [kBase + 5, kBase + 6]
-            var tackleMoves: [Move] = []
-            for (i, idx) in tacklers.enumerated() {
-                tackleMoves.append((idx,
-                                    player(endX + (i == 0 ? 0.9 : -0.9), endZ + kickDir * 0.6),
-                                    0.45))
-            }
+            // 5. The pursuit arrives: the first free runner wraps, the second
+            //    cleans up from the far side a beat later.
             steps.append(Step(
-                moves: tackleMoves,
+                moves: [(tacklerA, player(endX - 0.4, endZ - kickDir * 0.4), 0.4),
+                        (tacklerB, player(endX + 0.6, endZ + kickDir * 0.4), 0.5)],
                 ballMove: .carry(nodeIndex: returner),
                 duration: 1.2,
-                pulses: [tacklers[0]],
-                falls: [returner] + tacklers,
-                wraps: tacklers
+                pulses: [tacklerA],
+                falls: [returner, tacklerA, tacklerB],
+                wraps: [tacklerA]
             ))
         }
 

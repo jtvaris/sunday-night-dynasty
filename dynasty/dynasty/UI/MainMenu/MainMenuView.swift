@@ -278,7 +278,7 @@ struct MainMenuView: View {
 
     private var footerBlock: some View {
         VStack(spacing: 2) {
-            Text("Sunday Night Dynasty  v\(Self.appVersion) (\(Self.buildNumber))")
+            Text("Sunday Night Dynasty  v\(Self.appVersion) (\(Self.buildNumber))\(Self.buildStamp)")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Color.white.opacity(0.35))
             Text("\u{00A9} \(Self.currentYear) Sunday Night Dynasty")
@@ -296,6 +296,20 @@ struct MainMenuView: View {
 
     private static var buildNumber: String {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+    }
+
+    /// Compile-time provenance: the executable's modification date IS the build
+    /// time, so the menu names the exact binary that is running. Ends the
+    /// "which build am I actually testing?" class of confusion — an Xcode Run
+    /// and a simctl-installed QA build are otherwise indistinguishable (both
+    /// say v1.0 (1)).
+    private static var buildStamp: String {
+        guard let url = Bundle.main.executableURL,
+              let date = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        else { return "" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d.M. HH:mm"
+        return "  ·  build \(formatter.string(from: date))"
     }
 
     private static var currentYear: String {

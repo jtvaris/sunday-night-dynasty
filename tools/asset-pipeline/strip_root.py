@@ -33,12 +33,23 @@
 # airborne phase (e.g. the pylon dive, which correctly leaps then lands) — seating would
 # kill the leap; leave those horizontal-only.
 #
-# Usage: blender --background --python strip_root.py -- <in.usdc> <out.usdc> [--seat]
+# Usage: blender --background --python strip_root.py -- <in.usdc> <out.usdc> [--seat] [--target Z]
+#
+# --target Z  overrides the auto seat floor. Normally --seat derives the floor from
+#   the START frame's lowest bone (target = lowest(fs) - margin), assuming the clip
+#   begins with a foot planted on the turf. For a window that STARTS mid-air (e.g. a
+#   tight tackle window that opens after launch, once both feet have left the ground)
+#   the start frame's lowest bone is high, so the auto floor is high and the whole
+#   seated clip FLOATS at that height (render_verify ground_contact FAIL). Since --seat
+#   pins EVERY keyframe's lowest bone to the common floor anyway, the fix is simply to
+#   pass the real turf floor explicitly: --target 0.047 grounds an airborne-start dive
+#   exactly like a planted-start one, with identical relative motion (a rigid drop).
 import bpy, sys
 
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 SRC, OUT = argv[0], argv[1]
 SEAT = "--seat" in argv[2:]
+TARGET_OVERRIDE = float(argv[argv.index("--target") + 1]) if "--target" in argv else None
 SEAT_MARGIN = 0.05   # sink the lowest bone this far under turf so the lift-only clamp always engages
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -95,7 +106,12 @@ if SEAT:
             return min((arm.matrix_world @ b.head).z for b in arm.pose.bones)
 
         # rest-feet height at the standing start frame = the ground we seat onto
-        target = lowest_world_z(fs) - SEAT_MARGIN
+        # (unless the caller pins the floor explicitly for an airborne-start window)
+        if TARGET_OVERRIDE is not None:
+            target = TARGET_OVERRIDE
+            print("strip_root: seat floor OVERRIDDEN to %.4f (airborne-start window)" % target)
+        else:
+            target = lowest_world_z(fs) - SEAT_MARGIN
 
         # measure gain = d(world Z) / d(root_Y): perturb one keyframe by +1, restore.
         probe = vfc.keyframe_points[len(vfc.keyframe_points) // 2]

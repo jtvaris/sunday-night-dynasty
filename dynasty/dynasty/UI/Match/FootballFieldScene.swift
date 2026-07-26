@@ -69,6 +69,10 @@ class FootballFieldScene: SCNScene {
         var pulses: [Int] = []
         /// Player nodes that go to the ground when the step begins (tackles).
         var falls: [Int] = []
+        /// Per-node fall presentation override for `falls` (missing = .forward).
+        /// Lets a sack step drop the QB with the standing crumple and the rusher
+        /// with the wrap-drive while keeping the shared pile/rise machinery.
+        var fallStyles: [Int: FallStyle] = [:]
         /// Player nodes whose arms wrap around the man they're hitting when
         /// the step begins (wrap tackles — pair with `falls` or a drive-back).
         var wraps: [Int] = []
@@ -383,6 +387,23 @@ class FootballFieldScene: SCNScene {
     /// damped, so the beat reads before the camera trucks on. Armed via
     /// `armFollowHold`, reset per play in begin/endLiveFollow.
     private var followHoldUntil: TimeInterval = 0
+    /// When true, the current `followHoldUntil` releases the LATERAL glide
+    /// slowly: the frame stays parked another 0.5 s past the deadline, then
+    /// ramps back to full lateral tracking over 1.0 s (beat-time, rate-scaled).
+    /// Set for pile/contact holds — a sideline tackle must not whip the frame
+    /// back toward midfield the moment the hold expires. Mesh/catch holds leave
+    /// it false (the run needs immediate lateral tracking on release).
+    private var followHoldReleasesSlowly = false
+    /// Broadcast flight framing: while a thrown ball is in the air
+    /// (`CACurrentMediaTime() < followFlightUntil`), the live follow aims at
+    /// the LANDING SPOT (`followFlightAimX`, blended 65/35 over the live ball)
+    /// instead of chasing the ball per frame. A deep, laterally-breaking arc
+    /// otherwise pans the frame so hard that a smoothly-running receiver
+    /// sweeps across / out of the shot — playtests read it as "players
+    /// teleporting" although the nodes never jump (verified frame-by-frame).
+    /// Set in `runBallArc` for real passes (apex > 2), reset per play.
+    private var followFlightAimX: Float = 0
+    private var followFlightUntil: TimeInterval = 0
     /// Wall-clock deadline for a HITSTOP: while active the follow rig locks the
     /// exact frame (no ease toward the ball at all), so a big hit lands on a
     /// frozen composition before the glide resumes — the punchy impact beat the
@@ -485,7 +506,7 @@ class FootballFieldScene: SCNScene {
             // and JERSEY/PANTS/HELMET/SKIN materials compile too.
             let home = (0..<11).map { (x: Float($0) * 2 - 10, z: Float(-3), number: $0 + 1) }
             let away = (0..<11).map { (x: Float($0) * 2 - 10, z: Float(3), number: $0 + 12) }
-            scene.movePlayersToFormation(home: home, away: away, duration: 0)
+            scene.movePlayersToFormation(home: home, away: away, duration: 0, scaleToDistance: false)
             let renderer = SCNRenderer(device: device, options: nil)
             renderer.scene = scene
             // Uploads geometry + textures to the GPU. (A full offscreen
@@ -920,6 +941,12 @@ class FootballFieldScene: SCNScene {
     /// player counts differ. Jersey numbers on existing nodes are updated in
     /// place, and each player settles into his position's pre-snap stance
     /// (keyed by per-team node index; missing = upright).
+    /// `scaleToDistance` (default true) stretches each man's travel time so he
+    /// never exceeds ~9 yd/s — after a punt/kickoff/long gain the far side of
+    /// the field JOGS to its new alignment instead of warping there in the
+    /// fixed duration (the defense skips the huddle, so on a possession flip
+    /// it otherwise crossed 30+ yards in 0.3 s — the between-plays teleport).
+    /// Pass false for true teleport syncs (game seed, replay restage).
     func movePlayersToFormation(home: [(x: Float, z: Float, number: Int)],
                                 away: [(x: Float, z: Float, number: Int)],
                                 duration: TimeInterval = 0.8,
@@ -927,7 +954,8 @@ class FootballFieldScene: SCNScene {
                                 stancesAway: [Int: Stance] = [:],
                                 bodyTypesHome: [Int: BodyType] = [:],
                                 bodyTypesAway: [Int: BodyType] = [:],
-                                holdStance: Bool = false) {
+                                holdStance: Bool = false,
+                                scaleToDistance: Bool = true) {
         guard homePlayerNodes.count == home.count,
               awayPlayerNodes.count == away.count,
               !home.isEmpty || !away.isEmpty else {
@@ -965,10 +993,17 @@ class FootballFieldScene: SCNScene {
 
             let start = { [weak self, weak node] in
                 guard let self, let node, self.playGeneration == generation else { return }
-                self.run(node: node, to: target, duration: duration, key: "formationMove",
+                // Distance-scaled arrival: cap the slide at a run (~9 yd/s)
+                // so distant men JOG to the new spot; explicit teleport syncs
+                // (scaleToDistance false) keep the fixed duration.
+                let dx = target.x - node.position.x, dz = target.z - node.position.z
+                let dist = TimeInterval((dx * dx + dz * dz).squareRoot())
+                let moveDur = scaleToDistance
+                    ? min(max(duration, dist / 9.0), 2.6) : duration
+                self.run(node: node, to: target, duration: moveDur, key: "formationMove",
                          holdStance: holdStance)
                 let settle = SCNAction.sequence([
-                    SCNAction.wait(duration: duration),
+                    SCNAction.wait(duration: moveDur),
                     SCNAction.rotateTo(x: 0, y: CGFloat(settleYaw), z: 0, duration: 0.25,
                                        usesShortestUnitArc: true),
                 ])
@@ -982,7 +1017,7 @@ class FootballFieldScene: SCNScene {
                 // the new clip finally starts. Holding means: leave the pose untouched
                 // until the snap itself breaks it.
                 if !holdStance {
-                    self.applyStance(stance, to: node, delay: duration + 0.2)
+                    self.applyStance(stance, to: node, delay: moveDur + 0.2)
                 }
             }
 
@@ -1023,11 +1058,16 @@ class FootballFieldScene: SCNScene {
             let start = { [weak self, weak node] in
                 guard let self, let node, self.playGeneration == generation else { return }
                 let sx = spot.x * self.lateralSign
+                // Distance-scaled trot into the ring — a returner 40 yards
+                // deep must JOG to the huddle, not warp (cap ~9 yd/s).
+                let dx = sx - node.position.x, dz = spot.z - node.position.z
+                let dist = TimeInterval((dx * dx + dz * dz).squareRoot())
+                let moveDur = min(max(duration, dist / 9.0), 2.4)
                 self.run(node: node, to: SCNVector3(sx, FieldConstants.playerHeight / 2, spot.z),
-                         duration: duration, key: "formationMove")
+                         duration: moveDur, key: "formationMove")
                 let yaw = atan2(centerX - sx, centerZ - spot.z)
                 node.runAction(SCNAction.sequence([
-                    SCNAction.wait(duration: duration),
+                    SCNAction.wait(duration: moveDur),
                     SCNAction.rotateTo(x: 0, y: CGFloat(yaw), z: 0, duration: 0.22,
                                        usesShortestUnitArc: true),
                 ]), forKey: "settleFacing")
@@ -1396,6 +1436,8 @@ class FootballFieldScene: SCNScene {
         followAnchorZ = focusZ
         followProgress = 0
         followHoldUntil = 0
+        followHoldReleasesSlowly = false
+        followFlightUntil = 0
         followFreezeUntil = 0
         followSlowMoUntil = 0
         followSlowMoRate = 1
@@ -1412,17 +1454,33 @@ class FootballFieldScene: SCNScene {
             let rig = self.shotRig(for: self.currentShotStyle)
             let baseZ = self.followBaseZ()
             let ballX = self.ballNode.presentation.worldPosition.x
-            // During a hold, damp the lateral follow so a counter/sweep back
-            // can't whip the frame sideways off the exchange/pile — keeps both
-            // men framed; the factor snaps back once the hold releases.
-            let lateralFactor: Float = CACurrentMediaTime() < self.followHoldUntil ? 0.25 : 0.85
+            let now = CACurrentMediaTime()
+            // During a hold the lateral follow PARKS where it is — the old
+            // 0.25-factor damp aimed at a much more central x, which actively
+            // pulled a sideline pile back toward midfield the instant the
+            // tackle armed the hold (read as an annoying fast re-center).
+            // Contact holds also release slowly: 0.5 s extra park, then the
+            // lateral glide ramps back to full over 1.0 s (beat-time).
+            let lateralEase: Float
+            if now < self.followHoldUntil {
+                lateralEase = 0
+            } else if self.followHoldReleasesSlowly, self.followHoldUntil > 0 {
+                let sinceHold = (now - self.followHoldUntil) * self.currentPlaybackRate
+                lateralEase = sinceHold < 0.5 ? 0 : Float(min(1, (sinceHold - 0.5) / 1.0))
+            } else {
+                lateralEase = 1
+            }
             // Slow-mo ramp (touchdown): drop the ease so the camera drifts onto
             // the score in slow motion. Camera-only — timeline untouched.
-            let ease: Float = CACurrentMediaTime() < self.followSlowMoUntil ? Float(self.followSlowMoRate) : 1
-            let goal = SCNVector3(max(-14, min(14, ballX * lateralFactor)),
+            let ease: Float = now < self.followSlowMoUntil ? Float(self.followSlowMoRate) : 1
+            // Broadcast flight framing: aim at the landing spot while the ball
+            // is in the air (see followFlightAimX).
+            let aimX: Float = now < self.followFlightUntil
+                ? ballX + (self.followFlightAimX - ballX) * 0.5 : ballX
+            let goal = SCNVector3(max(-14, min(14, aimX * 0.85)),
                                   rig.targetHeight,
                                   baseZ + self.viewFacing * rig.targetLead)
-            return SCNVector3(position.x + (goal.x - position.x) * 0.12 * ease,
+            return SCNVector3(position.x + (goal.x - position.x) * 0.12 * ease * lateralEase,
                               position.y + (goal.y - position.y) * 0.12 * ease,
                               position.z + (goal.z - position.z) * 0.12 * ease)
         }
@@ -1435,8 +1493,12 @@ class FootballFieldScene: SCNScene {
             let rig = self.shotRig(for: self.currentShotStyle)
             let baseZ = self.followBaseZ()
             let ballX = self.ballNode.presentation.worldPosition.x
-            let ease: Float = CACurrentMediaTime() < self.followSlowMoUntil ? Float(self.followSlowMoRate) : 1
-            let goal = SCNVector3(max(-10, min(10, ballX * 0.55)),
+            let now = CACurrentMediaTime()
+            let ease: Float = now < self.followSlowMoUntil ? Float(self.followSlowMoRate) : 1
+            // Broadcast flight framing (matches the aim constraint above).
+            let chaseX: Float = now < self.followFlightUntil
+                ? ballX + (self.followFlightAimX - ballX) * 0.5 : ballX
+            let goal = SCNVector3(max(-10, min(10, chaseX * 0.55)),
                                   rig.cameraHeight,
                                   baseZ - self.viewFacing * rig.cameraBack)
             return SCNVector3(position.x + (goal.x - position.x) * 0.10 * ease,
@@ -1482,6 +1544,8 @@ class FootballFieldScene: SCNScene {
         guard liveFollowActive else { return }
         liveFollowActive = false
         followHoldUntil = 0
+        followHoldReleasesSlowly = false
+        followFlightUntil = 0
         followFreezeUntil = 0
         followSlowMoUntil = 0
         followSlowMoRate = 1
@@ -1503,9 +1567,13 @@ class FootballFieldScene: SCNScene {
     /// current downfield progress and damps the lateral follow, so the beat
     /// (handoff / pile / catch) reads before the glide resumes. Mirror-safe and
     /// a no-op off the live rig. Multiple arms take the latest deadline.
-    private func armFollowHold(_ seconds: TimeInterval) {
+    /// `slowRelease` marks a pile/contact hold: on expiry the lateral glide
+    /// stays parked 0.5 s, then ramps back over 1.0 s (see the aim constraint)
+    /// instead of snapping — the post-tackle frame leaves the pile gently.
+    private func armFollowHold(_ seconds: TimeInterval, slowRelease: Bool = false) {
         guard liveFollowActive, seconds > 0 else { return }
         followHoldUntil = max(followHoldUntil, CACurrentMediaTime() + seconds / currentPlaybackRate)
+        if slowRelease { followHoldReleasesSlowly = true }
     }
 
     /// A hitstop: locks the exact follow-cam frame for `seconds` (rate-scaled)
@@ -1920,6 +1988,15 @@ class FootballFieldScene: SCNScene {
             node.removeAction(forKey: "walk")
             node.removeAction(forKey: "pulse")
             node.removeAction(forKey: "settleFacing")
+            // The snap kills any straggling between-plays lineup mover. A
+            // formationMove that survives into the live play drags its man to
+            // his PRE-SNAP spot at warp speed until his first play move
+            // replaces it — and on plays where he gets NO early move (the
+            // frozen kickoff hang, punt coverage) it runs unopposed through
+            // the whole flight. Measured: 36 yards in 0.15 s mid-play — the
+            // "teleport right before the catch" bug (teleport tracer, 2026-07-25).
+            node.removeAction(forKey: "formationMove")
+            node.removeAction(forKey: "facing")
             resetGait(of: node)
         }
         ballNode.removeAllActions()
@@ -2477,8 +2554,9 @@ class FootballFieldScene: SCNScene {
         }
     }
 
-    /// How a figure goes to the turf.
-    private enum FallStyle {
+    /// How a figure goes to the turf. (Internal, not private: PlayChoreographer
+    /// tags per-node styles into PlayStep.fallStyles.)
+    enum FallStyle {
         /// The standard forward tackle collapse.
         case forward
         /// Blown backward off his feet onto his back (big hits).
@@ -2488,6 +2566,13 @@ class FootballFieldScene: SCNScene {
         /// Legs cut from under him: a hard forward pitch, arms flung out to
         /// break the fall — the shoestring-tackle stumble.
         case trip
+        /// A sacked QB: dropped where he stands — face-down slam + flush prone
+        /// hold, no running lead-in (PlayerClip_sack_taken).
+        case sacked
+        /// The sack maker: wrap-drive through the QB, then recovers to his feet
+        /// (hold:false — the clip's trailing leg never grounds, so freezing it
+        /// would read as a floating limb; he ends standing over the pile).
+        case sackDrive
     }
 
     /// Deep-ball catch: both arms extend up and FORWARD along the run — the
@@ -2496,7 +2581,9 @@ class FootballFieldScene: SCNScene {
         guard let node = playerNode(at: nodeIndex),
               let figure = node.childNode(withName: "figure", recursively: false) else { return }
         if let skel = skeletalDriver(for: figure) {
-            skel.play(action: "catch_a", landAfter: arriveIn)   // deep tracking catch on the run (no jump)
+            // Dedicated over-the-shoulder basket catch (from the punt-catch mocap):
+            // look up and back, hands close high, secure to the chest.
+            skel.play(action: "catch_e", landAfter: arriveIn)
             return
         }
         catchBodyTurn(figure, yaw: turnYaw, hold: 0.6)
@@ -2924,9 +3011,13 @@ class FootballFieldScene: SCNScene {
             // down onto his back; everyone else pitches forward and lays out prone.
             let clip: String
             switch style {
-            case .backward: clip = "fall_back"       // hit high, knocked onto his back
-            case .dive:     clip = "tackle"          // diving tackler lays out forward
-            default:        clip = "tackled"         // brought down, forward collapse
+            case .backward:  clip = "fall_back"      // hit high, knocked onto his back
+            case .dive:      clip = "tackle"         // diving tackler lays out forward
+            case .sacked:    clip = "sacked"         // QB crumple — slam + flush prone hold
+            case .sackDrive:                          // sacker wrap-drive: blends back out,
+                skel.play(action: "sack", delay: delay, hold: false)   // never frozen
+                return
+            default:         clip = "tackled"        // brought down, forward collapse
             }
             skel.play(action: clip, delay: delay, hold: true)
             return
@@ -2945,7 +3036,7 @@ class FootballFieldScene: SCNScene {
         // turf so nobody snaps flat from a dead-linear standstill.
         let brace: SCNAction?
         switch style {
-        case .forward:
+        case .forward, .sacked, .sackDrive:   // procedural figures: plain forward collapse
             pitch = CGFloat(-1.45 + yaw * 0.1)
             landing = SCNVector3(0, -0.32, 0.15)
             dropTime = 0.3
@@ -3426,7 +3517,8 @@ class FootballFieldScene: SCNScene {
             // carrier keeps his run facing (he goes down forward). The gang's
             // converge move (choreography) slides them into the pile under the pose.
             if index != carryingIndex { faceTowardCarrier(index) }
-            fall(nodeIndex: index, delay: Double(offset) * 0.12, getUpDelay: riseDelays[offset])
+            fall(nodeIndex: index, delay: Double(offset) * 0.12, getUpDelay: riseDelays[offset],
+                 style: step.fallStyles[index] ?? .forward)
         }
         // Big hits: the carrier flies onto his back and the camera pumps.
         for index in step.bigHits { fall(nodeIndex: index, style: .backward) }
@@ -3455,7 +3547,7 @@ class FootballFieldScene: SCNScene {
         }
         if !step.falls.isEmpty || !step.bigHits.isEmpty || !step.diveFalls.isEmpty
             || !step.trips.isEmpty || !step.pylonDives.isEmpty {
-            armFollowHold(beat.contactHold)             // hold on the pile
+            armFollowHold(beat.contactHold, slowRelease: true)   // hold on the pile, leave it gently
         }
         if !step.celebrates.isEmpty {
             beginTouchdownSlowMo(rate: beat.slowMoRate) // slow-mo ramp into the endzone
@@ -3657,6 +3749,13 @@ class FootballFieldScene: SCNScene {
                             launchDelay: TimeInterval = 0) {
         // Claim the ball so any pending snap-attach for this play no-ops.
         ballHandoffToken += 1
+        // Broadcast flight framing: a real pass arc (apex > 2) arms the live
+        // follow to frame the landing spot for the whole flight (see
+        // followFlightAimX). Kick/replay shots have the follow rig inactive.
+        if apex > 2.0, liveFollowActive {
+            followFlightAimX = target.x
+            followFlightUntil = CACurrentMediaTime() + launchDelay + duration
+        }
         // Whoever carries the ball is the passer; a snap→throw race can leave
         // the carry unassigned, so fall back to the passer the call named.
         let carryIndex = carryingIndex
@@ -5339,6 +5438,19 @@ class FootballFieldScene: SCNScene {
             figure.addChildNode(skel.content)
             skeletalFigures[ObjectIdentifier(figure)] = skel
             usedSkeletalFigure = true
+            // Disable frustum culling for the whole figure subtree. SceneKit
+            // culls an SCNSkinner by its skeleton's bounds, which do NOT track
+            // the animated pose — so a player CENTERED on screen can still get
+            // his whole mesh culled ("player vanishes briefly", proven in the
+            // kickoff via the visibility tracer: node centered at screen
+            // 916,1316 VANISHed). A generous fixed box on every node the render
+            // traversal tests (container, figure, content) forces the subtree
+            // always-in-frustum. Cost: 22 low-poly figures never culled = nil.
+            let big = SCNVector3(50, 50, 50)
+            let neg = SCNVector3(-50, -50, -50)
+            container.boundingBox = (neg, big)
+            figure.boundingBox = (neg, big)
+            skel.content.boundingBox = (neg, big)
         } else if let kit = Self.playerKit {
             buildKitFigure(kit: kit, in: figure, uniform: uniform, number: number)
             applyBodyType(bodyType, to: container)
