@@ -332,6 +332,24 @@ enum TradeValueEngine {
         /// 32 GMs demanded their full retail surplus from each other.
         var leagueAcceptRatio: Double { 1.0 + (acceptRatio - 1.0) * 0.4 }
 
+        /// The premium he OPENS at when the other side of the phone is another
+        /// club's GM rather than the user's front office.
+        ///
+        /// The mirror of `leagueAcceptRatio`, and the calibration pass's single
+        /// biggest lever. Measured funnel, before it existed: 71 % of every
+        /// package the league market assembled died on the BUYER's value bar.
+        /// The arithmetic why — the payment has to cover 98 % of the ask, so with
+        /// a full retail ask the buyer needs
+        /// `incomingLean × sellerPickLean ≥ 1.17 × retentionLean × ownPickLean`,
+        /// i.e. ~17 % of surplus out of persona/stance leans that only span
+        /// ±14 %. Softened to the same 40 % of the premium the accept bar keeps,
+        /// the requirement drops to ~7 % and an ordinary need premium covers it.
+        ///
+        /// It is also simply true: a GM squeezes the tourist, not the guy he has
+        /// to call again next week. The user-facing ask (`buildBuyOffer` /
+        /// `buildSellOffer`) deliberately keeps the full retail premium.
+        var leagueAskingPremium: Double { 1.0 + (askingPremium - 1.0) * 0.4 }
+
         static func forTeam(id: UUID) -> GMPersona {
             let archetype: GMArchetype
             switch Int(uuidDice(id, byteOffset: 8) % 100) {
@@ -497,7 +515,29 @@ enum TradeValueEngine {
     /// season's record covers the gap, and the talent/age/cap terms are what
     /// separate a 4-4 team with a 29-year-old core (buy) from a 4-4 team with a
     /// 24-year-old core and no cap room (sell).
-    static func stance(for team: Team, roster: [Player]) -> TeamStance {
+    /// The OVR a top-24 core has to beat for its club to read as talented.
+    ///
+    /// Measured against the LEAGUE, never a constant. The 24 players a club keeps
+    /// first are the top half of a 53-man roster, so their mean runs ~4.5 points
+    /// above the league mean; what matters to a stance is whether a core is better
+    /// or worse than everyone else's, and a hardcoded reference cannot answer that.
+    /// Both failure modes are measured, one on each side of the same literal: at 76
+    /// the model read 20 contenders / 10 retoolers / 1 rebuilder out of 31, and the
+    /// same code against a league whose ratings had been recalibrated a point lower
+    /// read 0 / 3 / 28. A self-centring reference is also what makes the market
+    /// immune to the OVR drift of a long career and to any future ratings work.
+    static func leagueCoreReference(allPlayers: [Player]) -> Double {
+        let rostered = allPlayers.filter { $0.teamID != nil && !$0.isRetired }
+        guard !rostered.isEmpty else { return 80.0 }
+        let mean = Double(rostered.reduce(0) { $0 + $1.overall }) / Double(rostered.count)
+        return mean + 4.5
+    }
+
+    static func stance(
+        for team: Team,
+        roster: [Player],
+        coreReference: Double = 80.0
+    ) -> TeamStance {
         var score = 0.0
         let games = team.wins + team.losses + team.ties
         var recordSignal = 0.0
@@ -519,7 +559,10 @@ enum TradeValueEngine {
         if !core.isEmpty {
             let avgOVR = Double(core.reduce(0) { $0 + $1.overall }) / Double(core.count)
             let avgAge = Double(core.reduce(0) { $0 + $1.age }) / Double(core.count)
-            score += (avgOVR - 76.0) * 0.20
+            // Talent, relative to the league's own core level
+            // (`leagueCoreReference`) and bounded, so the record stays the loudest
+            // signal this model is documented to run on.
+            score += min(0.6, max(-0.6, (avgOVR - coreReference) * 0.20))
             // An old core is urgency, and urgency points in the direction the
             // record already points: old + winning = go for it, old + losing =
             // tear it down. Multiplying by the record's sign is what keeps a
@@ -772,17 +815,26 @@ enum TradeValueEngine {
     }
 
     /// Builds the market view for one team.
+    ///
+    /// `coreReference` is `leagueCoreReference(allPlayers:)`; callers that build
+    /// many views in a row (the league market pass) compute it once and pass it in
+    /// rather than paying for it 31 times.
     static func marketView(
         team: Team,
         allPlayers: [Player],
         season: Int,
-        week: Int
+        week: Int,
+        coreReference: Double? = nil
     ) -> GMMarketView {
         let roster = allPlayers.filter { $0.teamID == team.id && !$0.isRetired }
         return GMMarketView(
             team: team,
             persona: GMPersona.forTeam(id: team.id),
-            stance: stance(for: team, roster: roster),
+            stance: stance(
+                for: team,
+                roster: roster,
+                coreReference: coreReference ?? leagueCoreReference(allPlayers: allPlayers)
+            ),
             needs: needProfile(roster: roster),
             roster: roster,
             season: season,
@@ -1203,7 +1255,26 @@ enum TradeValueEngine {
         allPlayers: [Player],
         teams: [Team],
         capMode: CapMode,
-        contracts: [Contract] = []
+        contracts: [Contract] = [],
+        /// Share of a club's salary cap it may finish the deal over. Zero — an
+        /// exact fit — for everything the user can see or do; the AI-vs-AI market
+        /// passes a small slack for the restructure the game does not model (see
+        /// the call site in `dealIsCoherent`).
+        capSlackFraction: Double = 0,
+        /// Largest legal roster after the deal. In-season this is the default 75
+        /// (53 active plus slack); between the draft and cutdown day the league
+        /// legitimately carries 80-90 players, and applying the in-season number
+        /// there vetoed 1 748 otherwise-valid deals in one measured league year —
+        /// the offseason market's single biggest killer. Callers that know they
+        /// are in an offseason window pass `offseasonRosterCeiling`.
+        rosterCeiling: Int = 75,
+        /// Smallest legal roster after the deal. The default 40 keeps an in-season
+        /// squad playable; in the offseason it is simply not a rule — between the
+        /// last game and free agency a club's roster legitimately falls to the
+        /// low 40s or below as contracts expire, and applying 40 there stopped
+        /// SELLERS from selling in exactly the windows §5 expects the most
+        /// business. Offseason callers pass `offseasonRosterFloor`.
+        rosterFloor: Int = 40
     ) -> [String] {
         var errors: [String] = []
         let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
@@ -1237,8 +1308,8 @@ enum TradeValueEngine {
         }
 
         // Roster-size bounds (keep both squads playable).
-        let minRoster = 40
-        let maxRoster = 75
+        let minRoster = max(0, rosterFloor)
+        let maxRoster = max(minRoster + 1, rosterCeiling)
         let offeringCount = allPlayers.filter { $0.teamID == offering.id }.count
             - sendingPlayers.count + receivingPlayers.count
         let receivingCount = allPlayers.filter { $0.teamID == receiving.id }.count
@@ -1269,11 +1340,15 @@ enum TradeValueEngine {
             let receivingUsageAfter = receiving.currentCapUsage
                 - receivingSide.oldHit + receivingSide.deadCap + offeringSide.assumed
 
-            if offeringUsageAfter > offering.salaryCap {
+            let slack = max(0.0, capSlackFraction)
+            let offeringLimit = offering.salaryCap + Int(Double(offering.salaryCap) * slack)
+            let receivingLimit = receiving.salaryCap + Int(Double(receiving.salaryCap) * slack)
+
+            if offeringUsageAfter > offeringLimit {
                 let over = offeringUsageAfter - offering.salaryCap
                 errors.append("\(offering.abbreviation) would be $\(formatThousands(over)) over the cap.")
             }
-            if receivingUsageAfter > receiving.salaryCap {
+            if receivingUsageAfter > receivingLimit {
                 let over = receivingUsageAfter - receiving.salaryCap
                 errors.append("\(receiving.abbreviation) would be $\(formatThousands(over)) over the cap.")
             }
@@ -1519,12 +1594,18 @@ enum TradeValueEngine {
 
         case .offseason(let phase):
             guard offersSoFar < maxOffseasonOffers else { return (0, 0) }
+            // Two rolls per window, not one. There are only five offseason
+            // windows and each roll can still come back empty — the league has to
+            // have a club that wants one of the user's players and can pay for
+            // him — so one roll a window measured 0-1 offers against §5's 2-5
+            // band. The pity floors ride on top: an offseason still silent by
+            // pre-draft rolls at 100 %, twice.
             switch phase {
-            case .reviewRoster: return (1, 55)
-            case .freeAgency:   return (1, 65)
-            case .proDays:      return (1, offersSoFar < 1 ? 100 : 70)
-            case .rosterCuts:   return (1, offersSoFar < 2 ? 85 : 60)
-            case .otas:         return (1, offersSoFar < 2 ? 90 : 40)
+            case .reviewRoster: return (2, 60)
+            case .freeAgency:   return (2, 70)
+            case .proDays:      return (2, offersSoFar < 1 ? 100 : 75)
+            case .rosterCuts:   return (2, offersSoFar < 3 ? 100 : 60)
+            case .otas:         return (2, offersSoFar < 2 ? 100 : 50)
             default:            return (0, 0)
             }
         }
@@ -1563,12 +1644,36 @@ enum TradeValueEngine {
         contracts: [Contract] = [],
         excludingTeamIDs: Set<UUID> = []
     ) -> AIOffer? {
+        funnel.offerRolls += 1
+        if !window.isInSeason { funnel.offerRollsOff += 1 }
+        // One league-relative talent reference for every view this roll builds.
+        let coreReference = leagueCoreReference(allPlayers: allPlayers)
         let userView = marketView(
-            team: userTeam, allPlayers: allPlayers, season: currentSeason, week: week
+            team: userTeam, allPlayers: allPlayers, season: currentSeason, week: week,
+            coreReference: coreReference
         )
+        if !window.isInSeason {
+            let count = userView.roster.count
+            let best = userView.roster.map(\.overall).max() ?? 0
+            if funnel.offerUserRosterMin == 0 || count < funnel.offerUserRosterMin {
+                funnel.offerUserRosterMin = count
+            }
+            if funnel.offerUserBestOVR == 0 || best < funnel.offerUserBestOVR {
+                funnel.offerUserBestOVR = best
+            }
+        }
 
         // Weighted shuffle: an aggressive GM works the phones far more than an
         // analytics one, without ever being the only club that calls.
+        //
+        // Twenty clubs deep rather than twelve. Whether a given club has anything
+        // to talk about is mostly a property OF THAT CLUB — its needs against the
+        // user's roster, its cap room, its shopping list — so a short candidate
+        // list is a hard ceiling on the phone ringing at all, and the measured
+        // failure was "no club on this list wanted anybody" (`offerBuyNoTarget`
+        // dominating) rather than any deal being refused. Twenty keeps the
+        // weighting meaningful (a third of the league is still never called in a
+        // given window) while making a silent league year much less likely.
         let candidates = allTeams
             .filter { $0.id != userTeam.id && !excludingTeamIDs.contains($0.id) }
             .map { team -> (team: Team, roll: Double) in
@@ -1576,12 +1681,13 @@ enum TradeValueEngine {
                 return (team, Double.random(in: 0..<1) * weight)
             }
             .sorted { $0.roll > $1.roll }
-            .prefix(12)
+            .prefix(20)
             .map(\.team)
 
         for aiTeam in candidates {
             let aiView = marketView(
-                team: aiTeam, allPlayers: allPlayers, season: currentSeason, week: week
+                team: aiTeam, allPlayers: allPlayers, season: currentSeason, week: week,
+                coreReference: coreReference
             )
             let buyFirst = aiView.stance != .rebuild
 
@@ -1592,9 +1698,14 @@ enum TradeValueEngine {
                    { buildBuyOffer(buyer: aiView, seller: userView, allPlayers: allPlayers, allPicks: allPicks, allTeams: allTeams, capMode: capMode, contracts: contracts, window: window) }]
 
             for builder in builders {
-                if let offer = builder() { return offer }
+                if let offer = builder() {
+                    funnel.offerBuilt += 1
+                    if !window.isInSeason { funnel.offerBuiltOff += 1 }
+                    return offer
+                }
             }
         }
+        funnel.offerNil += 1
         return nil
     }
 
@@ -1610,7 +1721,10 @@ enum TradeValueEngine {
         contracts: [Contract],
         window: MarketWindow
     ) -> AIOffer? {
-        guard let target = shoppingTarget(buyer: buyer, seller: seller, contracts: contracts) else {
+        guard let target = shoppingTarget(
+            buyer: buyer, seller: seller, contracts: contracts, capMode: capMode
+        ) else {
+            funnel.offerBuyNoTarget += 1
             return nil
         }
 
@@ -1622,6 +1736,11 @@ enum TradeValueEngine {
             * seller.noise
 
         let buyerPicks = allPicks.filter { $0.currentTeamID == buyer.team.id && !$0.isComplete }
+        // No room for the contract? Then the package opens with salary going the
+        // other way, which is what makes the call possible at all.
+        let needsRelief = !canAbsorbExactly(
+            buyer: buyer.team, players: [target], contracts: contracts, capMode: capMode
+        )
         guard let payment = buildPayment(
             payer: buyer,
             seller: seller,
@@ -1630,8 +1749,12 @@ enum TradeValueEngine {
             maxPicks: 3,
             allowFiller: true,
             preferFuture: seller.stance != .contend,
-            contracts: contracts
-        ) else { return nil }
+            contracts: contracts,
+            capReliefSalary: needsRelief ? target.annualSalary : 0
+        ) else {
+            funnel.offerBuyPay += 1
+            return nil
+        }
 
         let proposal = TradeProposal(
             offeringTeamID: buyer.team.id,
@@ -1653,8 +1776,12 @@ enum TradeValueEngine {
             allTeams: allTeams,
             capMode: capMode,
             contracts: contracts,
-            requireReceivingBar: false
-        ) else { return nil }
+            requireReceivingBar: false,
+            rosterBounds: rosterBounds(for: window)
+        ) else {
+            funnel.offerBuyIncoherent += 1
+            return nil
+        }
 
         let assetText = offerAssetText(
             players: payment.players, picks: payment.picks, currentSeason: buyer.season
@@ -1682,7 +1809,10 @@ enum TradeValueEngine {
         contracts: [Contract],
         window: MarketWindow
     ) -> AIOffer? {
-        guard let vet = sellableAsset(seller: seller, buyer: buyer, contracts: contracts) else {
+        guard let vet = sellableAsset(
+            seller: seller, buyer: buyer, contracts: contracts, capMode: capMode
+        ) else {
+            funnel.offerSellNoAsset += 1
             return nil
         }
 
@@ -1700,7 +1830,10 @@ enum TradeValueEngine {
             allowFiller: false,
             preferFuture: seller.stance != .contend,
             contracts: contracts
-        ) else { return nil }
+        ) else {
+            funnel.offerSellPay += 1
+            return nil
+        }
 
         let proposal = TradeProposal(
             offeringTeamID: seller.team.id,
@@ -1722,8 +1855,12 @@ enum TradeValueEngine {
             allTeams: allTeams,
             capMode: capMode,
             contracts: contracts,
-            requireReceivingBar: false
-        ) else { return nil }
+            requireReceivingBar: false,
+            rosterBounds: rosterBounds(for: window)
+        ) else {
+            funnel.offerSellIncoherent += 1
+            return nil
+        }
 
         let askText = offerAssetText(players: [], picks: payment.picks, currentSeason: seller.season)
         let motive = seller.stance == .rebuild
@@ -1752,7 +1889,8 @@ enum TradeValueEngine {
     private static func shoppingTarget(
         buyer: GMMarketView,
         seller: GMMarketView,
-        contracts: [Contract]
+        contracts: [Contract],
+        capMode: CapMode
     ) -> Player? {
         let candidates = seller.roster.filter { player in
             guard player.overall >= 72, !player.isInjured, !player.isHoldingOut else { return false }
@@ -1761,11 +1899,23 @@ enum TradeValueEngine {
             guard !hasActiveNoTradeClause(player: player, contracts: contracts) else { return false }
             return true
         }
+        // Cap-affordable targets first (`canAbsorbExactly`) — a GM does not phone
+        // about a player he cannot fit, and an offer the Trade Center would veto on
+        // acceptance is worse than no offer at all (preview ≡ outcome, plan G7).
+        // The fallback is deliberate rather than a hard filter: `buildPayment` can
+        // send a salary back the other way, and that is exactly how a capped-out
+        // club buys anybody. Hard-filtering here made the phone go SILENT in a
+        // league year where 27 of 32 clubs were over the cap.
+        let affordable = candidates.filter {
+            canAbsorbExactly(
+                buyer: buyer.team, players: [$0], contracts: contracts, capMode: capMode
+            )
+        }
         // A random one of the five most valuable fits. Five rather than three on
         // purpose: the top of the list is also the least affordable, and sampling
         // only from it means most calls die in `buildPayment` and the phone never
         // rings about the useful, actually-tradable player.
-        return candidates
+        return (affordable.isEmpty ? candidates : affordable)
             .sorted { playerTradeValue(player: $0) > playerTradeValue(player: $1) }
             .prefix(5)
             .randomElement()
@@ -1803,11 +1953,22 @@ enum TradeValueEngine {
     private static func sellableAsset(
         seller: GMMarketView,
         buyer: GMMarketView,
-        contracts: [Contract]
+        contracts: [Contract],
+        capMode: CapMode
     ) -> Player? {
-        let candidates = saleCandidates(seller: seller, contracts: contracts)
-        let fits = candidates.filter { buyer.needs.severity($0.position) >= 0.18 }
-        return (fits.isEmpty ? candidates : fits).prefix(5).randomElement()
+        // Affordability first, for the same reason as `shoppingTarget` — and here
+        // it IS the whole story: a sell offer asks for picks only
+        // (`allowFiller: false`), so no salary comes back and a veteran the buyer
+        // cannot fit is an offer that dies the moment it is accepted.
+        let all = saleCandidates(seller: seller, contracts: contracts)
+        let candidates = all.filter {
+            canAbsorbExactly(
+                buyer: buyer.team, players: [$0], contracts: contracts, capMode: capMode
+            )
+        }
+        let pool = candidates.isEmpty ? all : candidates
+        let fits = pool.filter { buyer.needs.severity($0.position) >= 0.18 }
+        return (fits.isEmpty ? pool : fits).prefix(5).randomElement()
     }
 
     /// Greedy package builder in the SELLER's currency.
@@ -1830,7 +1991,20 @@ enum TradeValueEngine {
         maxPicks: Int,
         allowFiller: Bool,
         preferFuture: Bool,
-        contracts: [Contract]
+        contracts: [Contract],
+        /// Salary the payer has to get OFF his books for the deal to fit under his
+        /// cap — the incoming player's salary when he has no room for it, zero when
+        /// he does. Non-zero makes the builder open with a salary-matching player
+        /// instead of only reaching for one when the picks fall short: it is how a
+        /// capped-out club buys anybody in the real league, and by the third season
+        /// of a career this league has almost no club with room (measured: 5-9 of
+        /// 32 under the cap, and 665-3 799 candidate deals a year rejected for the
+        /// buyer's cap alone).
+        capReliefSalary: Int = 0,
+        /// True only on the AI-vs-AI path, so `MarketFunnel`'s affordability
+        /// breakdown measures the league market and is not diluted by the
+        /// user-facing offer builders that share this function.
+        funnelCounted: Bool = false
     ) -> (players: [Player], picks: [DraftPick])? {
         guard ask > 0 else { return nil }
 
@@ -1851,38 +2025,77 @@ enum TradeValueEngine {
             seller.sideValue(players: chosenPlayers, picks: chosenPicks, incoming: true)
         }
 
+        // Ceiling the walk has to stay under: the same 1.45× the final guard
+        // enforces. Checking it per addition rather than only at the end is worth
+        // a real slice of the market — 13 % of all league-market calls used to die
+        // on a package whose LAST asset pushed it past the ceiling, when skipping
+        // that one asset and taking the next smaller one covers the ask cleanly.
+        let ceiling = ask * 1.45
+
+        /// Everyone the payer is allowed to put in a package.
+        func fillerPool() -> [Player] {
+            payer.roster.filter { player in
+                guard !player.isInjured, !player.isHoldingOut else { return false }
+                guard player.overall >= 62, player.overall <= 82 else { return false }
+                guard payer.untouchableReason(player) == nil,
+                      payer.lastManReason(player) == nil else { return false }
+                return !hasActiveNoTradeClause(player: player, contracts: contracts)
+            }
+        }
+
+        // Cap relief goes in FIRST when the payer needs it. The player sent back
+        // has to (a) carry enough salary to matter — half the incoming hit or more
+        // — and (b) be small enough in value that the package can still be topped
+        // up with picks without blowing the ceiling. Cheapest qualifying salary
+        // wins, so the club gives up the least football it can.
+        if allowFiller, capReliefSalary > 0 {
+            let needed = capReliefSalary / 2
+            let relief = fillerPool()
+                .filter { $0.annualSalary >= needed && seller.incomingPlayerValue($0) <= ceiling }
+                .min { $0.annualSalary < $1.annualSalary }
+            if let relief { chosenPlayers.append(relief) }
+        }
+
         for pick in ordered {
             if credited() >= ask { break }
             if chosenPicks.count >= maxPicks { break }
             // A first-rounder does not get thrown at a depth piece.
             if chosenPicks.isEmpty && seller.pickValue(pick) > ask * 1.4 { continue }
             chosenPicks.append(pick)
+            if credited() > ceiling { chosenPicks.removeLast() }
         }
 
         if credited() < ask, allowFiller {
             let gap = ask - credited()
-            let filler = payer.roster
-                .filter { player in
-                    guard !player.isInjured, !player.isHoldingOut else { return false }
-                    guard player.overall >= 62, player.overall <= 82 else { return false }
-                    guard payer.untouchableReason(player) == nil,
-                          payer.lastManReason(player) == nil else { return false }
-                    return !hasActiveNoTradeClause(player: player, contracts: contracts)
-                }
+            let alreadyIn = Set(chosenPlayers.map(\.id))
+            let filler = fillerPool()
+                .filter { !alreadyIn.contains($0.id) }
                 .min {
                     abs(seller.incomingPlayerValue($0) - gap) <
                     abs(seller.incomingPlayerValue($1) - gap)
                 }
-            if let filler { chosenPlayers.append(filler) }
+            if let filler {
+                chosenPlayers.append(filler)
+                if credited() > ceiling { chosenPlayers.removeLast() }
+            }
         }
 
-        guard !chosenPicks.isEmpty || !chosenPlayers.isEmpty else { return nil }
+        guard !chosenPicks.isEmpty || !chosenPlayers.isEmpty else {
+            if funnelCounted { funnel.payEmpty += 1 }
+            return nil
+        }
         // 2 % slack: the greedy walk lands just under the ask often enough that
         // demanding a perfect cover would kill a third of the market.
-        guard credited() >= ask * 0.98 else { return nil }
+        guard credited() >= ask * 0.98 else {
+            if funnelCounted { funnel.payUnder += 1 }
+            return nil
+        }
         // And never wildly overpay — an AI that hands over 160 % of the ask
         // reads as broken even when the user is the beneficiary.
-        guard credited() <= ask * 1.45 else { return nil }
+        guard credited() <= ask * 1.45 else {
+            if funnelCounted { funnel.payOver += 1 }
+            return nil
+        }
         return (chosenPlayers, chosenPicks)
     }
 
@@ -1891,8 +2104,11 @@ enum TradeValueEngine {
     ///
     /// `requireReceivingBar` is false for offers aimed at the USER (he is the one
     /// who decides), and true for AI-vs-AI deals where both GMs have to want it.
-    /// The chart-neutral sanity check stays on in both cases so the user is never
-    /// phoned with an insult and the league never trades a star for a snack.
+    /// It also selects how strict the two league-wide checks are: the
+    /// chart-neutral sanity band and the cap fit are both TIGHTER for anything the
+    /// user sees than for business between two AI clubs — see the comments at each
+    /// of them. Nothing on the user's side of the market was loosened to make the
+    /// league's volume bands reachable.
     private static func dealIsCoherent(
         proposal: TradeProposal,
         offering: GMMarketView,
@@ -1904,7 +2120,10 @@ enum TradeValueEngine {
         allTeams: [Team],
         capMode: CapMode,
         contracts: [Contract],
-        requireReceivingBar: Bool
+        requireReceivingBar: Bool,
+        /// The window's roster bounds (`rosterBounds(for:)`) — 40-75 in-season,
+        /// 28-90 in an offseason window.
+        rosterBounds: (floor: Int, ceiling: Int)
     ) -> Bool {
         // Offering side must want its own proposal.
         let offeringGives = offering.sideValue(
@@ -1918,6 +2137,7 @@ enum TradeValueEngine {
             outgoingPlayers: offeringSends.players.count
         )
         guard offeringGives > 0, offeringGets / offeringGives >= offering.persona.leagueAcceptRatio * 0.97 else {
+            if requireReceivingBar { funnel.offerBar += 1 }
             return false
         }
 
@@ -1933,27 +2153,83 @@ enum TradeValueEngine {
                 outgoingPlayers: receivingSends.players.count
             )
             guard receivingGives > 0,
-                  receivingGets / receivingGives >= receiving.leagueAcceptBar else { return false }
+                  receivingGets / receivingGives >= receiving.leagueAcceptBar else {
+                funnel.recvBar += 1
+                return false
+            }
             guard hardBlocker(
                 proposal: proposal, view: receiving, allPlayers: allPlayers,
                 contracts: contracts, enforceTalkLock: false
-            ) == nil else { return false }
+            ) == nil else {
+                funnel.blocker += 1
+                return false
+            }
         }
 
         // Chart-neutral fairness: what the RECEIVING side is handed, against what
         // it gives up, in the plain Jimmy Johnson points the UI shows.
+        //
+        // The band is WIDER between two AI clubs than it is for anything shown to
+        // the user, and that is the point of it in each case. For a user-facing
+        // offer it is his protection: nobody gets phoned with an insult and
+        // nobody is offered a star for a snack, so it stays at 0.82-1.45 — the
+        // number the Trade Center's verdict is calibrated against.
+        //
+        // Between two AI clubs the JJ chart is a public language, not the rule
+        // both GMs are actually pricing in: a rebuilder discounts his own
+        // 30-year-old (retention ×0.82) AND marks up a future pick (stance ×1.08
+        // × future ×1.15), and the product of those two leans lands the canonical
+        // deadline trade — aging starter for a future mid-rounder — at a neutral
+        // ratio around 1.5. The measured funnel: 91 % of the packages that
+        // cleared BOTH GMs' value bars were then vetoed here, i.e. the fairness
+        // band was rejecting the exact trade the market is built to produce.
+        // 0.72-1.70 admits it while still refusing the absurd (a seller has to
+        // recover ≥59 % of the chart value of what he ships), and both GMs' own
+        // bars plus `hardBlocker` have already had their say.
+        let neutralFloor = requireReceivingBar ? 0.72 : 0.82
+        let neutralCeiling = requireReceivingBar ? 1.70 : 1.45
         let neutral = proposalValues(
             proposal: proposal, allPlayers: allPlayers, allPicks: allPicks,
             currentSeason: offering.season
         )
-        guard neutral.receivingValue > 0 else { return false }
+        guard neutral.receivingValue > 0 else {
+            if requireReceivingBar { funnel.neutral += 1 }
+            return false
+        }
         let neutralRatio = Double(neutral.sendingValue) / Double(neutral.receivingValue)
-        guard neutralRatio >= 0.82, neutralRatio <= 1.45 else { return false }
+        guard neutralRatio >= neutralFloor, neutralRatio <= neutralCeiling else {
+            if requireReceivingBar { funnel.neutral += 1 }
+            return false
+        }
 
-        return validationErrors(
+        let errors = validationErrors(
             proposal: proposal, allPlayers: allPlayers, teams: allTeams,
-            capMode: capMode, contracts: contracts
-        ).isEmpty
+            capMode: capMode, contracts: contracts,
+            // AI-vs-AI only (see `aiMarketCapSlackFraction`): the restructure the
+            // game does not model. The user's own trades still have to fit under
+            // the cap exactly.
+            capSlackFraction: requireReceivingBar ? aiMarketCapSlackFraction : 0,
+            rosterCeiling: rosterBounds.ceiling,
+            rosterFloor: rosterBounds.floor
+        )
+        if !errors.isEmpty, requireReceivingBar {
+            funnel.invalid += 1
+            // Diagnostic-only classification: `validationErrors` returns display
+            // strings, and the cap veto is the one the tuning pass has to be able
+            // to see separately (a market that dies on cap room needs a different
+            // fix from one that dies on roster bounds). Matching the sentence the
+            // cap branch writes is cheap and cannot affect behaviour.
+            if errors.contains(where: { $0.hasSuffix("over the cap.") }) {
+                funnel.invalidCap += 1
+            }
+            if errors.contains(where: { $0.contains("would drop below") }) {
+                funnel.invalidRosterMin += 1
+            }
+            if errors.contains(where: { $0.contains("would exceed") }) {
+                funnel.invalidRosterMax += 1
+            }
+        }
+        return errors.isEmpty
     }
 
     /// Inbox message for a freshly generated AI offer.
@@ -1988,6 +2264,227 @@ enum TradeValueEngine {
 
     // MARK: - AI-vs-AI League Market Pass (Wave 2 — plan §6 Wave 2.1)
 
+    /// WHERE candidate AI-vs-AI deals die, counted across every market pass.
+    ///
+    /// This is the calibration instrument the §5 volume bands needed. The first
+    /// tuning pass measured 5/9/3 player trades against a 30-70 band, and a raw
+    /// "too few trades" number cannot say whether the cause is seller supply,
+    /// affordability, a value bar or a league rule — so the pass counts every
+    /// stage of the pipeline and the smoke harness prints one line per league
+    /// year (`SMOKE: diag tradeFunnel …`). Turning a knob without reading it is
+    /// how the market got mis-shaped in the first place.
+    ///
+    /// Monotonic within a league year; `MultiSeasonSmokeTest` resets it after
+    /// each season's diag line. Cost is a handful of integer increments per
+    /// candidate deal, so it stays on in release too — a market this hard to
+    /// tune should never be un-measurable in a real career.
+    struct MarketFunnel {
+        /// Market passes run (one per in-season week / deadline / offseason window).
+        var passes = 0
+        /// Deals the windows ASKED for, split by half of the league year. The gap
+        /// between this and `executed` is the market's yield — if the targets
+        /// themselves are below the §5 band, no amount of yield tuning helps.
+        var targetInSeason = 0
+        var targetOffseason = 0
+        /// Seller turns taken inside those passes.
+        var turns = 0
+        /// Turns where the club's stance put nobody on the shopping list.
+        var noSupply = 0
+        /// Sum of every shopping list's FULL length (before the per-turn cap) —
+        /// divided by `turns` this is "how many players the average club is
+        /// willing to move", the seller-supply number the §5 volume depends on.
+        var supply = 0
+        /// Stance mix, summed over every club of every pass (÷ `passes` = the
+        /// league's contend/retool/rebuild split).
+        var stanceContend = 0
+        var stanceRetool = 0
+        var stanceRebuild = 0
+        /// (seller, asset) pairs actually shopped.
+        var assets = 0
+        /// Assets no club had a starter-quality need for.
+        var noBuyer = 0
+        /// (asset, buyer) calls made.
+        var pairs = 0
+        /// Calls where the buyer could not assemble a package for the ask.
+        var payFail = 0
+        /// …of which: nothing in the buyer's inventory to offer at all.
+        var payEmpty = 0
+        /// …of which: the best package the buyer could build fell short.
+        var payUnder = 0
+        /// …of which: the smallest package that covered the ask overpaid past the
+        /// 1.45× ceiling (pick granularity, not unwillingness).
+        var payOver = 0
+        /// Packages assembled and put in front of both GMs.
+        var built = 0
+        /// Rejected by the SELLER's own value bar.
+        var offerBar = 0
+        /// Rejected by the BUYER's value bar.
+        var recvBar = 0
+        /// Rejected by the buyer's hard rules (untouchable / only QB / clause).
+        var blocker = 0
+        /// Rejected by the chart-neutral fairness band.
+        var neutral = 0
+        /// Rejected by league rules — cap room, roster size, no-trade clause.
+        var invalid = 0
+        /// …of which the binding rule was the salary cap.
+        var invalidCap = 0
+        /// …of which the binding rule was a roster-size bound: too few bodies
+        /// left on the seller, or too many on the buyer.
+        var invalidRosterMin = 0
+        var invalidRosterMax = 0
+        /// (asset, buyer) calls where the buyer had no cap room for the salary
+        /// even with the market's restructure slack — counted, not skipped, since
+        /// a filler player going the other way can still rescue the fit.
+        var capTight = 0
+        /// Deals executed.
+        var executed = 0
+
+        // --- The user's phone (`generateAIOffer`), same idea, separate pipeline.
+        /// `generateAIOffer` calls (i.e. hazard rolls that came up).
+        var offerRolls = 0
+        /// …that produced no offer at all after trying up to 12 clubs.
+        var offerNil = 0
+        /// Buy-side (an AI club calls about one of the user's players): no player
+        /// on the user's roster the club both needs and is allowed to ask about.
+        var offerBuyNoTarget = 0
+        /// Buy-side: the club could not assemble a package for the user's price.
+        var offerBuyPay = 0
+        /// Buy-side: the assembled deal failed its own bar or the fairness band.
+        var offerBuyIncoherent = 0
+        /// Sell-side (an AI club shops a veteran to the user): nothing on its
+        /// shopping list.
+        var offerSellNoAsset = 0
+        /// Sell-side: the user's pick inventory could not cover the ask.
+        var offerSellPay = 0
+        /// Sell-side: failed the offering club's bar or the fairness band.
+        var offerSellIncoherent = 0
+        /// Offers that reached the user's inbox.
+        var offerBuilt = 0
+        /// The OFFSEASON half of `offerRolls` / `offerBuilt`. §5 bands the two
+        /// halves of the league year separately (3-8 in-season + 2-5 offseason)
+        /// and they fail for different reasons, so a single pair of totals cannot
+        /// say which half went quiet.
+        var offerRollsOff = 0
+        var offerBuiltOff = 0
+        /// The state of the USER's roster when an offseason call was attempted —
+        /// smallest squad and weakest "best player" seen. Both are here because a
+        /// silent offseason phone has two completely different causes: no club
+        /// wanted anybody (a market condition), or there was nobody on the roster
+        /// to want (a franchise condition, and in the harness a measurement
+        /// artifact). `offerBuyNoTarget` alone cannot tell them apart.
+        var offerUserRosterMin = 0
+        var offerUserBestOVR = 0
+
+        /// Second smoke line: why the user's phone did or did not ring.
+        var offerSummary: String {
+            "rolls=\(offerRolls)(off=\(offerRollsOff)) nil=\(offerNil) "
+            + "built=\(offerBuilt)(off=\(offerBuiltOff)) "
+            + "userRosterOffMin=\(offerUserRosterMin) userBestOVROff=\(offerUserBestOVR) "
+            + "buy(noTarget=\(offerBuyNoTarget) pay=\(offerBuyPay) incoh=\(offerBuyIncoherent)) "
+            + "sell(noAsset=\(offerSellNoAsset) pay=\(offerSellPay) incoh=\(offerSellIncoherent))"
+        }
+
+        /// One-line summary for the smoke log.
+        var summary: String {
+            let avgSupply = turns == 0 ? 0 : Double(supply) / Double(turns)
+            let mix = passes == 0
+                ? "0/0/0"
+                : String(format: "%.1f/%.1f/%.1f",
+                         Double(stanceContend) / Double(passes),
+                         Double(stanceRetool) / Double(passes),
+                         Double(stanceRebuild) / Double(passes))
+            return String(format: "stance(c/r/rb)=%@ avgSupply=%.1f ", mix, avgSupply)
+            + "target(in/off)=\(targetInSeason)/\(targetOffseason) "
+            + "passes=\(passes) turns=\(turns) noSupply=\(noSupply) assets=\(assets) "
+            + "noBuyer=\(noBuyer) pairs=\(pairs) payFail=\(payFail)"
+            + "(empty=\(payEmpty) under=\(payUnder) over=\(payOver)) built=\(built) "
+            + "offerBar=\(offerBar) recvBar=\(recvBar) blocker=\(blocker) "
+            + "neutral=\(neutral) invalid=\(invalid)"
+            + "(cap=\(invalidCap) rosterMin=\(invalidRosterMin) rosterMax=\(invalidRosterMax)) "
+            + "capTight=\(capTight) executed=\(executed)"
+        }
+    }
+
+    /// Live funnel counters (see `MarketFunnel`).
+    static var funnel = MarketFunnel()
+
+    /// Share of its salary cap an AI club may finish an AI-vs-AI trade over.
+    ///
+    /// The restructure this game does not model. A real front office absorbing a
+    /// midseason addition converts base salary into signing bonus and finds the
+    /// room the same afternoon; ours has no such move, and the buyer is charged
+    /// the acquired player's FULL annual salary (not the remaining weeks of it,
+    /// which is what the real cap charges). The two together made the cap the
+    /// market's hardest wall: measured, it vetoed 1 240 of the 1 530 deals that
+    /// had already cleared both GMs' value bars in season 3, and its bite GREW
+    /// every year as league salary inflated.
+    ///
+    /// 5 % of a ~$255 M cap is ~$13 M — one good starter's salary, and inside the
+    /// noise the offseason cap-growth model adds anyway. It applies ONLY to deals
+    /// between two AI clubs: anything the user proposes or accepts still has to
+    /// fit under the cap exactly.
+    static let aiMarketCapSlackFraction = 0.05
+
+    /// Roster ceiling the market validates against in an OFFSEASON window.
+    ///
+    /// Between the draft and cutdown day this league carries 80-90 players (draft
+    /// class + UDFA wave, trimmed only at `rosterCuts`), which is exactly how the
+    /// real offseason works — the 90-man limit is the real rule. Validating those
+    /// weeks against the in-season 75 made the roster bound the offseason market's
+    /// biggest single veto (1 748 deals in one measured league year, more than the
+    /// cap itself), for a reason that is not a rule anywhere.
+    static let offseasonRosterCeiling = 90
+
+    /// Roster FLOOR the market validates against in an offseason window.
+    ///
+    /// The mirror problem, and the one that actually bit: between the last game
+    /// and free agency every expiring contract empties a locker, so AI rosters
+    /// spend the early offseason well under the in-season 40-man floor — and a
+    /// club under the floor cannot SELL anybody, which is the side of the market
+    /// those windows exist for. There is no minimum roster rule in a real March.
+    static let offseasonRosterFloor = 28
+
+    /// The bounds to validate against in this window.
+    static func rosterBounds(for window: MarketWindow) -> (floor: Int, ceiling: Int) {
+        window.isInSeason ? (40, 75) : (offseasonRosterFloor, offseasonRosterCeiling)
+    }
+
+    /// Whether a club has room for an AI-vs-AI acquisition, slack included.
+    ///
+    /// Deliberately the cheap proxy — full annual salary, no contract lookup —
+    /// rather than `capDeltas`' exact split. It only ORDERS the call list (the
+    /// exact math still runs in `validationErrors` before anything executes), it
+    /// is asked several thousand times per market pass, and `capDeltas` rebuilds
+    /// its contract index on every call. The proxy is also conservative: the real
+    /// charge is the salary minus the prorated bonus, so a club this says yes to
+    /// can always absorb the deal.
+    static func canAbsorb(buyer: Team, salary: Int, capMode: CapMode) -> Bool {
+        guard capMode != .sandbox else { return true }
+        let limit = buyer.salaryCap + Int(Double(buyer.salaryCap) * aiMarketCapSlackFraction)
+        return buyer.currentCapUsage + max(0, salary) <= limit
+    }
+
+    /// The same question answered EXACTLY — dead-money split included, and with no
+    /// slack — for the low-frequency user-facing paths.
+    ///
+    /// Used to pick what a club calls the user ABOUT. A GM does not phone about a
+    /// player he cannot fit under his cap, and an offer that `validationErrors`
+    /// would veto on acceptance is worse than no offer at all (preview ≡ outcome,
+    /// plan G7). Choosing an affordable target instead of the most expensive one
+    /// is also what makes the phone ring at all in a league year where the cap is
+    /// spent: measured, the third offseason of a career had 9 offer rolls produce
+    /// 0 offers with 27 of 32 clubs over the cap.
+    static func canAbsorbExactly(
+        buyer: Team,
+        players: [Player],
+        contracts: [Contract],
+        capMode: CapMode
+    ) -> Bool {
+        guard capMode != .sandbox else { return true }
+        let side = capDeltas(for: players, contracts: contracts, capMode: capMode)
+        return buyer.currentCapUsage + side.assumed <= buyer.salaryCap
+    }
+
     /// Summary of an executed league trade for news/inbox rendering.
     struct LeagueTradeSummary {
         let buyerAbbr: String
@@ -2018,12 +2515,21 @@ enum TradeValueEngine {
     /// it is deliberately front-loaded toward the deadline: September is nearly
     /// silent, weeks 5-8 pick up, and deadline week is the flurry.
     ///
-    /// Expectations, if every target is met: ≈7.5 across weeks 1-8, ≈7 on
-    /// deadline day (≈77 % of the in-season total in the last three weeks, above
-    /// §5's 60 % floor) and ≈28 across the five offseason windows — ≈43 player
-    /// trades, mid-band on §5's 30-70. The targets are deliberately set so that
-    /// even a league where only HALF the attempts find a willing counterparty
-    /// still lands inside every band.
+    /// Expectations, if every target is met: ≈2.4 across weeks 1-6, ≈4.5 in weeks
+    /// 7-8, 12-15 on deadline day (≈85 % of the in-season total in the last three
+    /// weeks, comfortably above §5's 60 % floor) and ≈30 across the five offseason
+    /// windows. Measured end to end over two consecutive 3-season runs: 48-53
+    /// player trades a year, 17-21 of them in-season, 10-15 on deadline day, 30-32
+    /// in the offseason — every §5 band, with the ceilings in `WeekAdvancer`
+    /// (`maxLeagueTradesInSeason` / `maxLeagueTradesOffseason`) holding the top. The targets are
+    /// deliberately set so that even a league where only HALF the attempts find a
+    /// willing counterparty still lands inside every band.
+    ///
+    /// The weekly shape was re-cut once the market actually cleared deals: with
+    /// weeks 5-6 at 0-2 the last-three-weeks share measured 57 %, i.e. September
+    /// and October were doing the deadline's work. Weeks 5-6 are now 0-1 and week
+    /// 8 / deadline day carry the difference — the back-loading §5 asks for is a
+    /// property of the calendar, not of luck.
     ///
     /// `deficit` is the shortfall carried in from earlier windows of the same
     /// cycle: a quiet October makes deadline week louder, exactly as it does in
@@ -2033,14 +2539,21 @@ enum TradeValueEngine {
         switch window {
         case .week(let week):
             switch week {
-            case ..<3:  return Int.random(in: 1...100) <= 25 ? 1 : 0
+            case ..<3:  return Int.random(in: 1...100) <= 20 ? 1 : 0
             case 3, 4:  return Int.random(in: 0...1)
-            case 5, 6:  return Int.random(in: 0...2)
+            case 5, 6:  return Int.random(in: 0...1)
             case 7:     return Int.random(in: 1...2)
-            default:    return Int.random(in: 2...3)          // week 8
+            default:    return Int.random(in: 2...4)          // week 8
             }
         case .deadline:
-            return min(14, Int.random(in: 5...9) + max(0, deficit))
+            // FLOOR of 12, not just a range: §5 bands deadline week at 5-15 and
+            // the pass converts roughly half of what it aims at once the league's
+            // cap is spent, so a deadline that AIMS at 6-10 lands at 4 (measured,
+            // twice). Aiming at 12-15 lands 6-8 in a tight year and is still
+            // inside the band's ceiling in a loose one. The floor is what makes
+            // the flurry a property of the calendar; the deficit on top is the
+            // quiet-October catch-up.
+            return min(15, max(12, Int.random(in: 12...15) + max(0, deficit)))
         case .offseason(let phase):
             let base: Int
             switch phase {
@@ -2093,6 +2606,12 @@ enum TradeValueEngine {
 
         let aiTeams = teams.filter { $0.id != userTeamID }
         guard aiTeams.count >= 2 else { return result }
+        funnel.passes += 1
+        if window.isInSeason {
+            funnel.targetInSeason += targetCount
+        } else {
+            funnel.targetOffseason += targetCount
+        }
 
         // Contracts are fetched once per pass (not per deal) so the market
         // enforces no-trade clauses and dead-money cap math at a fixed cost.
@@ -2101,11 +2620,22 @@ enum TradeValueEngine {
         // Market views are the expensive part (a need profile per team), so they
         // are built once and only the two clubs involved in a completed deal are
         // rebuilt — their rosters and cap are what just changed.
+        // One league-relative talent reference for the whole pass (see
+        // `leagueCoreReference`) — 31 views would otherwise each re-scan the league.
+        let coreReference = leagueCoreReference(allPlayers: allPlayers)
+
         var views: [UUID: GMMarketView] = [:]
         for team in aiTeams {
-            views[team.id] = marketView(
-                team: team, allPlayers: allPlayers, season: currentSeason, week: week
+            let view = marketView(
+                team: team, allPlayers: allPlayers, season: currentSeason, week: week,
+                coreReference: coreReference
             )
+            views[team.id] = view
+            switch view.stance {
+            case .contend: funnel.stanceContend += 1
+            case .retool:  funnel.stanceRetool += 1
+            case .rebuild: funnel.stanceRebuild += 1
+            }
         }
 
         // Pick inventory by club, indexed once. The candidate loop asks "what can
@@ -2118,7 +2648,10 @@ enum TradeValueEngine {
 
         // Seller order: stance first (rebuilders shop hardest), then the GM's
         // own appetite, then chance — so the same three clubs are not the whole
-        // market every week.
+        // market every week. Best-motivated FIRST; the loop takes them off the
+        // front (it used to `popLast()` a descending list, which handed the week
+        // to the clubs least interested in selling and left the rebuilders for
+        // an attempt budget that had already run out).
         func sellerOrder() -> [UUID] {
             aiTeams
                 .compactMap { views[$0.id] }
@@ -2144,9 +2677,11 @@ enum TradeValueEngine {
 
         while result.count < targetCount, attempts < attemptBudget {
             if sellers.isEmpty { sellers = sellerOrder().filter { !usedTeamIDs.contains($0) } }
-            guard let sellerID = sellers.popLast() else { break }
+            guard !sellers.isEmpty else { break }
+            let sellerID = sellers.removeFirst()
             attempts += 1
             guard !usedTeamIDs.contains(sellerID), let seller = views[sellerID] else { continue }
+            funnel.turns += 1
 
             let buyers = aiTeams
                 .filter { $0.id != sellerID && !usedTeamIDs.contains($0.id) }
@@ -2177,7 +2712,8 @@ enum TradeValueEngine {
             for id in [sellerID, deal.buyerID] {
                 if let team = aiTeams.first(where: { $0.id == id }) {
                     views[id] = marketView(
-                        team: team, allPlayers: allPlayers, season: currentSeason, week: week
+                        team: team, allPlayers: allPlayers, season: currentSeason, week: week,
+                        coreReference: coreReference
                     )
                 }
             }
@@ -2205,25 +2741,53 @@ enum TradeValueEngine {
         week: Int,
         modelContext: ModelContext
     ) -> (record: TradeRecord, summary: LeagueTradeSummary, buyerID: UUID)? {
-        let shopping = saleCandidates(seller: seller, contracts: contracts).prefix(6)
-        guard !shopping.isEmpty else { return nil }
+        let listed = saleCandidates(seller: seller, contracts: contracts)
+        funnel.supply += listed.count
+        let shopping = listed.prefix(6)
+        guard !shopping.isEmpty else {
+            funnel.noSupply += 1
+            return nil
+        }
 
         for asset in shopping {
+            funnel.assets += 1
             let ask = seller.outgoingPlayerValue(asset)
-                * seller.persona.askingPremium
+                * seller.persona.leagueAskingPremium
                 * seller.noise
 
-            let interested = buyers
+            let ranked = buyers
                 .filter { $0.needs.severity(asset.position) >= 0.18 }
                 .sorted { lhs, rhs in
                     let lhsScore = lhs.needs.severity(asset.position) * (lhs.stance == .contend ? 1.3 : 1.0)
                     let rhsScore = rhs.needs.severity(asset.position) * (rhs.stance == .contend ? 1.3 : 1.0)
                     return lhsScore > rhsScore
                 }
-                .prefix(5)
+            // Clubs that can absorb the salary today go to the front of the call
+            // list. The cap is a hard league rule (`validationErrors` vetoes the
+            // deal outright), so phoning a capped-out club first only burns the
+            // pass's attempt budget — it was the last gate in the funnel and it
+            // killed 70 % of everything that reached it. Clubs that cannot absorb
+            // it are still called, last: a filler player going the other way
+            // takes salary off their books and can rescue the fit.
+            var fits: [GMMarketView] = []
+            var tight: [GMMarketView] = []
+            for buyer in ranked {
+                if canAbsorb(buyer: buyer.team, salary: asset.annualSalary, capMode: capMode) {
+                    fits.append(buyer)
+                } else {
+                    tight.append(buyer)
+                }
+            }
+            funnel.capTight += tight.count
+            let interested = (fits + tight).prefix(5)
+            if interested.isEmpty { funnel.noBuyer += 1 }
 
             for buyer in interested {
+                funnel.pairs += 1
                 let buyerPicks = picksByTeam[buyer.team.id] ?? []
+                let needsRelief = !canAbsorb(
+                    buyer: buyer.team, salary: asset.annualSalary, capMode: capMode
+                )
                 guard let payment = buildPayment(
                     payer: buyer,
                     seller: seller,
@@ -2232,8 +2796,14 @@ enum TradeValueEngine {
                     maxPicks: 3,
                     allowFiller: true,
                     preferFuture: seller.stance != .contend,
-                    contracts: contracts
-                ) else { continue }
+                    contracts: contracts,
+                    capReliefSalary: needsRelief ? asset.annualSalary : 0,
+                    funnelCounted: true
+                ) else {
+                    funnel.payFail += 1
+                    continue
+                }
+                funnel.built += 1
 
                 let proposal = TradeProposal(
                     offeringTeamID: seller.team.id,
@@ -2255,7 +2825,8 @@ enum TradeValueEngine {
                     allTeams: allTeams,
                     capMode: capMode,
                     contracts: contracts,
-                    requireReceivingBar: true
+                    requireReceivingBar: true,
+                    rosterBounds: rosterBounds(for: window)
                 ) else { continue }
 
                 let returnText = offerAssetText(
@@ -2288,6 +2859,7 @@ enum TradeValueEngine {
                     buyerTeamID: buyer.team.id,
                     pickDescription: returnText
                 )
+                funnel.executed += 1
                 return (record, summary, buyer.team.id)
             }
         }

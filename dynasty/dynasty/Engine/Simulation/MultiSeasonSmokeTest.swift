@@ -65,6 +65,7 @@ enum MultiSeasonSmokeTest {
         WeekAdvancer.leagueTradesThisSeason = 0
         WeekAdvancer.leagueTradesThisOffseason = 0
         TradeValueEngine.TradeTalkRegistry.reset()
+        TradeValueEngine.funnel = TradeValueEngine.MarketFunnel()
 
         // League + career bootstrap (mirrors TeamSelectionView.startCareer,
         // except the user's team KEEPS its generated coaching staff — the
@@ -180,6 +181,27 @@ enum MultiSeasonSmokeTest {
             // for every team (including the user's) exactly like the war room.
             if career.currentPhase == .draft && phaseBefore != .draft {
                 draftedThisCycle = runAIDraft(career: career, context: context)
+            }
+
+            // The stand-in GM has to work in the OFFSEASON too, not only at
+            // kickoff.
+            //
+            // Every offseason strips the user's franchise of its expiring
+            // contracts and nothing re-signs for him until the next kickoff, so by
+            // the third cycle the harness was running the offseason trade market
+            // against a ~25-man roster of minimum-salary depth. That is not a
+            // market condition, it is a measurement artifact, and it silently
+            // zeroed §5's "2-5 offseason offers reaching the user" band in every
+            // run: `SMOKE: diag tradeOfferFunnel` showed all 7-9 offseason rolls
+            // dying with `buy(noTarget=<rolls × clubs>)` — nobody wanted anybody
+            // because there was nobody to want. Refilling at the top of the
+            // offseason and again before the pre-draft window keeps the franchise
+            // as plausible as the 31 clubs `refillAIRosters` looks after.
+            if career.currentPhase != phaseBefore,
+               career.currentPhase == .reviewRoster
+                || career.currentPhase == .freeAgency
+                || career.currentPhase == .proDays {
+                refillUserRoster(career: career, context: context)
             }
 
             // A new regular season just started → the previous cycle is fully
@@ -527,6 +549,33 @@ enum MultiSeasonSmokeTest {
             packageShare
         ))
 
+        // League cap headroom. The market's hardest wall is the buyer's cap room —
+        // it was vetoing 1 240 of the 1 530 deals a year that had already cleared
+        // both GMs' value bars — so the state of the league's books belongs next to
+        // the funnel that reports those vetoes, and it is the number that says
+        // whether a quiet market is the market's fault or the economy's.
+        let capTeams = (try? context.fetch(FetchDescriptor<Team>())) ?? []
+        if !capTeams.isEmpty {
+            let shares = capTeams.map { Double($0.availableCap) / Double(max(1, $0.salaryCap)) * 100 }
+            let underCap = shares.filter { $0 >= 0 }.count
+            print(String(
+                format: "SMOKE: diag capRoom season=%d underCap=%d/%d avgRoom=%.1f%% min=%.1f%% max=%.1f%%",
+                seasonLabel, underCap, capTeams.count,
+                shares.reduce(0, +) / Double(shares.count),
+                shares.min() ?? 0, shares.max() ?? 0
+            ))
+        }
+
+        // WHERE the league market's candidate deals died this cycle, and why the
+        // user's phone did or did not ring. Printed next to the volume line because
+        // the two are only readable together: "total=18" says a band was missed,
+        // these say whether the cause was seller supply, affordability, a GM's
+        // value bar, a league rule, or (twice during the tuning pass) the harness
+        // itself. Reset per season so each line is exactly one league year.
+        print("SMOKE: diag tradeFunnel season=\(seasonLabel) \(TradeValueEngine.funnel.summary)")
+        print("SMOKE: diag tradeOfferFunnel season=\(seasonLabel) \(TradeValueEngine.funnel.offerSummary)")
+        TradeValueEngine.funnel = TradeValueEngine.MarketFunnel()
+
         // --- §5 bands ---
         var misses: [String] = []
         func check(_ ok: Bool, _ message: @autoclosure () -> String) {
@@ -628,6 +677,30 @@ enum MultiSeasonSmokeTest {
     /// still by two errors cancelling — this line is what makes that visible.
     /// `faPool` is the unsigned, unretired population: inflow that the league
     /// took in but never cycled out.
+    ///
+    /// **The P1 quality-pyramid wave (2026-07-30) turned this from a print into a
+    /// GATE.** It was informational, and that is exactly how the shipped league
+    /// drifted to a 90+ share of 9.5 % by season 3 with every other smoke band
+    /// green: the mean drifted only +1.0 (inside the ≤1.5 gate) while the shape
+    /// underneath it inverted. Each band now prints `SMOKE: ANOMALY` on a miss,
+    /// the same idiom the trade and face-pool audits use, so a log says WHICH
+    /// season the pyramid fell out of NFL range and by how much.
+    ///
+    /// Band derivation — this is the app's whole league, so it is bracketed by the
+    /// two sources that feed it, both measured:
+    ///
+    /// | band | §8 | LeagueGenerator t=0 | dev-stack equilibrium | gate |
+    /// |---|---|---|---|---|
+    /// | 90+   | 1-2 %  | 1.7 %  | 2.0 %  | 0.8-2.5 % |
+    /// | 80+   | 12-16 %| 16.8 % | 17.3 % | 12-19 % |
+    /// | 75+   | 30-40 %| 35.2 % | 30.6 % | 28-40 % |
+    /// | sub-65| ~25 %  | 23.2 % | 19.0 % | 15-30 % |
+    /// | 33+   | ≤ ~2 % | 3.1 %  | 3.4 %  | ≤ 4 % (retirement follow-up) |
+    ///
+    /// The generator numbers come from `tools/league-data/make_templates.py`'s
+    /// verbatim mirror (400-league Monte-Carlo); the equilibrium numbers from
+    /// `tools/balance-harness` `career` (20 leagues × 30 seasons, asserts 6.9a-g).
+    /// Where the gate is wider than §8 the reason is named at the band.
     private static func printPyramidDiagnostics(
         seasonLabel: String,
         rostered: [Player],
@@ -641,16 +714,47 @@ enum MultiSeasonSmokeTest {
         let ages = rostered.map(\.age).sorted()
         let medianAge = ages[ages.count / 2]
         let meanAge = Double(ages.reduce(0, +)) / total
+        let s90 = share { $0.overall >= 90 }
+        let s80 = share { $0.overall >= 80 }
+        let s75 = share { $0.overall >= 75 }
+        let sub65 = share { $0.overall < 65 }
+        let a33 = share { $0.age >= 33 }
+        let yp03 = share { $0.yearsPro <= 3 }
+        let blueChips = Int((s90 / 100.0 * total).rounded())
         print(String(
-            format: "SMOKE: diag pyramid season=%@ 90+=%.1f%% [1-2] 80+=%.1f%% [12-16] 75+=%.1f%% [30-40] sub65=%.1f%% [~25] "
-                  + "ageMed=%d ageMean=%.1f a33plus=%.1f%% [<=2] yp0to3=%.1f%% [45-55] faPool=%d",
-            seasonLabel,
-            share { $0.overall >= 90 }, share { $0.overall >= 80 },
-            share { $0.overall >= 75 }, share { $0.overall < 65 },
-            medianAge, meanAge,
-            share { $0.age >= 33 }, share { $0.yearsPro <= 3 },
-            unsignedCount
+            format: "SMOKE: diag pyramid season=%@ 90+=%.1f%% [0.8-2.5] (=%d blue chips) 80+=%.1f%% [12-19] "
+                  + "75+=%.1f%% [28-40] sub65=%.1f%% [15-30] "
+                  + "ageMed=%d ageMean=%.1f a33plus=%.1f%% [<=4] yp0to3=%.1f%% [45-55] faPool=%d",
+            seasonLabel, s90, blueChips, s80, s75, sub65,
+            medianAge, meanAge, a33, yp03, unsignedCount
         ))
+
+        var misses: [String] = []
+        func band(_ name: String, _ value: Double, _ lo: Double, _ hi: Double) {
+            guard value < lo || value > hi else { return }
+            misses.append(String(format: "%@=%.1f%% (band %.1f-%.1f)", name, value, lo, hi))
+        }
+        // 90+ : §8's blue-chip band is 1-2 % (25-35 players). The floor is 0.8
+        // rather than 1.0 because a single 1 696-man league is a ±0.25 pp sample
+        // on a 1.7 % share; the ceiling is the brief's 2.5 %.
+        band("90+", s90, 0.8, 2.5)
+        // 80+ / 75+ : §8 12-16 / 30-40, widened to the interval spanned by the two
+        // measured sources (t=0 16.8/35.2 and equilibrium 17.3/30.6) plus sampling.
+        band("80+", s80, 12.0, 19.0)
+        band("75+", s75, 28.0, 40.0)
+        // sub-65 : §8 ~25 %. The floor is what catches the pathology this wave
+        // fixed — a league with NO depth tier, which is what 7.9 % meant.
+        band("sub65", sub65, 15.0, 30.0)
+        // 33+ : §8 wants ≤2 %; both sources sit at ~3.1-3.4 % and closing that is a
+        // retirement calibration (a separate wave). Banded so it cannot grow.
+        band("a33plus", a33, 0.0, 4.0)
+        band("yp0to3", yp03, 45.0, 55.0)
+        if !misses.isEmpty {
+            print("SMOKE: ANOMALY season=\(seasonLabel) §8 pyramid bands missed: "
+                  + misses.joined(separator: ", ")
+                  + " — see LeagueGenerator.targetQualityPyramid (intake) and"
+                  + " PlayerDevelopmentEngine.developmentCeiling (slope)")
+        }
     }
 
     /// Phase-2 §5 stage-6 gate: the league morale distribution must sit in a
