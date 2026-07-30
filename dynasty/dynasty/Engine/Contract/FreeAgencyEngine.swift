@@ -410,6 +410,7 @@ enum FreeAgencyEngine {
                 // before the number is destroyed, so the signing ledger can
                 // price this league year's wage-bill increase.
                 priorSalaryByPlayerID[player.id] = player.annualSalary
+                ChurnDiag.record(ChurnDiag.expire, player)
                 player.teamID = nil
                 player.annualSalary = 0
             }
@@ -632,6 +633,16 @@ enum FreeAgencyEngine {
     /// paid for out of cap room that the draft class then had to share.
     ///
     /// 46 = 53 − 7: an average draft class is 7-8 picks.
+    ///
+    /// Task #53 tried 42 — the argument being that the ceiling decides how much
+    /// of a roster is built by the market's ordering (`marketAppeal`) and how
+    /// much by the roster floor's (`RosterValue.keepScore`), so handing the
+    /// floor four more slots a club would tilt the league younger. It measured
+    /// the opposite and is left at 46: the floor signs at the veteran minimum
+    /// and keeps its picks forever, so moving ~128 roster spots a league year
+    /// onto it did not thin the 80+ band (20.3 % → 21.2 %) and cost 0.5 points
+    /// of league-mean drift (+0.80 → +1.33). The market, cap reserve and all, is
+    /// the more honest builder of the two.
     static let faRosterCeiling = 46
 
     /// Share of the cap an AI club holds back in free agency.
@@ -652,6 +663,111 @@ enum FreeAgencyEngine {
     /// with **8 %** room so the trade market has something to work with. 6.6 + 8
     /// ≈ 15.
     static let capReservePercent = 0.15
+
+    // MARK: - The market's age discount (task #53)
+
+    /// Age from which a free agent's appeal to the market starts decaying, and
+    /// the points of appeal each further year costs him.
+    ///
+    /// ## Why this exists: the market was the composition ratchet
+    ///
+    /// Task #51 proved the league's §8 pyramid drift is not a development pass
+    /// (`diag devsource`: camp + focus + breakout + gameXP sum to +0.07 mean OVR
+    /// a season). Task #53 measured the other half with `ChurnDiag`, and the
+    /// funnel named itself in one line — season 2027 of a 4-season smoke:
+    ///
+    ///     expire=1045/ovr67.9/age25.4   faSign=489/ovr79.2/age27.6
+    ///     washout=354/ovr61.7/age25.3   refill=189/ovr71.0/age25.9
+    ///
+    /// A thousand men hit the market at a mean of 67.9 OVR and 25.4 years old.
+    /// The market re-signed 489 of them at **+11.3 OVR and +2.2 years** on that
+    /// mean, and the 354 it passed over — 61.7 OVR, 25.3 years old — were fed
+    /// straight to the washout pass and left the league for good. Repeat that
+    /// four times and the rostered population is old and top-heavy by
+    /// construction: 80+ went 18.2 % → 22.7 %, 90+ drifted +1.4 pp and the 33+
+    /// share +1.7 pp, all with league development doing essentially nothing.
+    ///
+    /// The cause was a one-line asymmetry between the two halves of roster
+    /// management. `WeekAdvancer.trimAIRosters` and `refillAIRosters` both order
+    /// by `RosterValue.keepScore`, which discounts age at 3.2 points a year past
+    /// 25 — cheap youth beats expensive age at the back of a roster. This
+    /// market ordered by **raw `overall`**, which discounts it by nothing at
+    /// all, and `ContractEngine.estimateMarketValue` then made the older man
+    /// *cheaper* as well. So the same league cut on youth and signed on age,
+    /// every league year, and the men it kept were the ones a real front office
+    /// would have let walk.
+    ///
+    /// ## Why the market's discount is GENTLER than the cutdown's
+    ///
+    /// The two questions are not the same question. Cutdown day is choosing
+    /// between the 50th and the 54th man, where a 31-year-old journeyman offers
+    /// nothing a camp body does not — hence 3.2 points a year from 25. The
+    /// market is pricing a STARTER, where quality still buys years: clubs do
+    /// sign 30-year-old Pro Bowlers, they just do not sign them ahead of a
+    /// 25-year-old of similar standard. 2.0 points a year from 26 is the
+    /// discount that reproduces that ordering — a 79-OVR 30-year-old (67)
+    /// now falls behind a 70-OVR 25-year-old with an 80 ceiling (73.5), which
+    /// is the swap the funnel above was making backwards.
+    ///
+    /// The rate matches `RosterValue.keepScore` exactly, and that is the point:
+    /// the two halves of roster management now answer the same question the same
+    /// way. The gentler 2.0-2.4 tried first did close the AGE pyramid (33+ drift
+    /// went from +1.9 pp to −2.1 pp) but barely moved the QUALITY one — 80+ fell
+    /// only 23.2 % → 21.6 % — because the men the §8 80+ band is about are 27-to-30
+    /// and a 2.4-a-year discount hands them 5-to-12 points of head start over the
+    /// draft class competing for their roster spot. At 3.2 a 28-year-old at 80
+    /// grades 70.4 and a 25-year-old at 70 with a 80 ceiling grades 74.5, which
+    /// is the ordering cutdown day has always used.
+    ///
+    /// The CAP is what keeps stars signable. The discount is linear because
+    /// decline is, but "unemployed" is not a linear consequence of it: a
+    /// 32-year-old at 88 is still one of the best hundred players alive and a
+    /// club will pay him for the two years he has left. Uncapped, 3.2 a year
+    /// from 25 put him at 65 — below the market's own median appeal, i.e. out
+    /// of football, which is absurd. Capped at 14 he grades 74 and signs in the
+    /// first wave, while a 30-year-old at 79 (65) does not. The cap binds from
+    /// age 30, which is exactly where the question stops being "how much has he
+    /// declined" and starts being "how many years are left".
+    ///
+    /// Saturating EARLIER (11, binding at 28.4) was tried, to broaden a veteran
+    /// tier that had come out elite-only — 153 men at a mean of 84.8 OVR where
+    /// the generator's cross-section carries ~15 % of the league at eight-plus
+    /// years and a mean of 78.9. It broadened the tier by a point and cost the
+    /// quality bands more than it bought: 80+ 20.3 % → 21.2 %, league-mean drift
+    /// +0.80 → +1.33. A softer discount on 30-year-olds is a softer discount on
+    /// the 30-year-olds who are 82, and those are the ones the band counts.
+    static let marketAgeDiscountFrom = 25
+    static let marketAgeDiscountPerYear = 3.2
+    static let marketAgeDiscountCap = 14.0
+
+    /// How much of a young player's untapped ceiling the market counts as
+    /// present appeal, and the service window it applies over.
+    ///
+    /// The mirror of `RosterValue.upsidePremium` (0.45 over 3 years), same rate
+    /// and one year wider: free agency is a market for men who have already
+    /// played, so a fourth-year player's remaining ceiling is still worth
+    /// something here the way a tenth-year player's is not.
+    static let marketUpsidePremium = 0.45
+    static let marketUpsideYears = 4
+
+    /// Order the free-agent market signs in — `overall`, discounted for age and
+    /// credited for untapped ceiling. See `marketAgeDiscountFrom` for the
+    /// measurement this replaced and why the constants are what they are.
+    ///
+    /// This changes WHO gets the roster spots, not how many: the loop below
+    /// still signs until clubs hit `faRosterCeiling` or their cap reserve, so
+    /// the market writes the same number of contracts either way.
+    static func marketAppeal(_ player: Player) -> Double {
+        var score = Double(player.overall)
+        score -= min(
+            marketAgeDiscountCap,
+            Double(max(0, player.age - marketAgeDiscountFrom)) * marketAgeDiscountPerYear
+        )
+        if player.yearsPro <= marketUpsideYears {
+            score += Double(max(0, player.truePotential - player.overall)) * marketUpsidePremium
+        }
+        return score
+    }
 
     /// Let AI-controlled teams sign available free agents based on need and cap room.
     /// In sandbox cap mode the cap-room filter is dropped so any team can sign anyone.
@@ -676,8 +792,12 @@ enum FreeAgencyEngine {
         capMode: CapMode = .simple,
         allPlayers: [Player]? = nil
     ) {
-        // Sort free agents by overall (best first) so elite players go first
-        let sortedAgents = freeAgents.sorted { $0.player.overall > $1.player.overall }
+        // Order the market by APPEAL, not by raw `overall` (task #53). The
+        // elite still go first — an 88-OVR 32-year-old grades 76 against a
+        // league mean in the low 70s — but a 30-year-old no longer outranks a
+        // 25-year-old of the same standard, which is the swap that was quietly
+        // aging the league one league year at a time. See `marketAppeal`.
+        let sortedAgents = freeAgents.sorted { marketAppeal($0.player) > marketAppeal($1.player) }
 
         // R39 perf: one roster snapshot for every need lookup below.
         var needIndex: RosterNeedIndex?
@@ -780,6 +900,8 @@ enum FreeAgencyEngine {
                 team: winningTeam,
                 capMode: capMode
             )
+
+            ChurnDiag.record(ChurnDiag.faSign, agent.player)
 
             // Keep the need index in sync with the roster change (the old
             // per-call filter saw the new teamID on the next agent too).

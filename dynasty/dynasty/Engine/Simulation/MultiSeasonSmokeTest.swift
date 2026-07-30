@@ -60,6 +60,9 @@ enum MultiSeasonSmokeTest {
         // `DevelopmentSourceDiag`.
         DevelopmentSourceDiag.reset()
         DevelopmentSourceDiag.isEnabled = true
+        // Task #53: the OTHER half of the drift question — see `ChurnDiag`.
+        ChurnDiag.reset()
+        ChurnDiag.isEnabled = true
         resetPyramidBaselines()
 
         // League + career bootstrap (mirrors TeamSelectionView.startCareer,
@@ -798,6 +801,16 @@ enum MultiSeasonSmokeTest {
         }
 
         let unsigned = players.filter { $0.teamID == nil && !$0.isRetired }
+
+        // Task #53: the roster-churn funnel — WHICH stage selects the league's
+        // age/quality composition. Printed next to `devsource` because the two
+        // are the complete answer between them: development moves ratings,
+        // churn moves WHO the ratings are averaged over, and task #51 already
+        // proved it is not the first one.
+        if let churn = ChurnDiag.report(seasonLabel: seasonLabel, pool: unsigned) {
+            print(churn)
+        }
+
         printPyramidDiagnostics(
             seasonLabel: "\(seasonLabel)",
             rostered: rostered,
@@ -888,6 +901,42 @@ enum MultiSeasonSmokeTest {
     /// answer — `tools/balance-harness` `career` asserts sub-65 ≤ 25 % and
     /// measures 24.94 %, so any shared constant that develops the league less
     /// breaks 6.9d on its first run.
+    ///
+    /// ## `80+` and `yp0to3` pull against each other — read them as a pair (task #53)
+    ///
+    /// A 53-man league is 1 696 roster spots and nothing else. Every man the
+    /// market prefers because he is young is a man it did not prefer because he
+    /// is good, so the two bands sit at opposite ends of ONE dial, and a run can
+    /// be pushed off either edge by tuning the same constant in either
+    /// direction. The five-iteration sweep behind the shipped calibration
+    /// measured exactly that trade (season 4 of a 4-season run):
+    ///
+    /// | market age discount | 80+ | yp0to3 (seasons 1-3) | mean drift |
+    /// |---|---|---|---|
+    /// | none (pre-#53)      | 23.2 % | 58 / 54 / 49 | +0.67 |
+    /// | 2.0/yr from 26      | 21.6 % | 58 / 56 / 56 | +1.32 |
+    /// | 3.2/yr from 25, cap 14 | 19.8 % | 58 / 58 / 59 | +0.80 |
+    ///
+    /// So the shipped setting is a CHOICE, not a solved optimum: it takes the
+    /// 80+ / 75+ / 90+ / 33+ bands green-or-close and pays for it with a
+    /// mid-season `yp0to3` that runs 3-4 pp hot. Anyone re-tuning should move
+    /// the dial knowing which band they are buying and which they are selling.
+    ///
+    /// **The residual is not on that dial.** `leaguePot` climbs 73.0 → 78.4
+    /// across four seasons while realised headroom (`leaguePot − mean`) goes
+    /// 2.1 → 6.2, because the two things that populate the league disagree
+    /// about headroom: `LeagueGenerator` hands over a cross-section of nearly
+    /// maxed-out veterans (its own `leaguegen` gate 8.hea asserts headroom
+    /// ≤ 4.0 and measures 2.04) while `DraftClassBuilder` feeds in classes with
+    /// 8-11 points of it. A four-season window sits in the middle of that
+    /// transition, so league quality rises whatever the market does — and the
+    /// sweep above shows churning HARDER makes it rise faster, since churn is
+    /// the mechanism that swaps generator veterans for pipeline rookies. The
+    /// balance harness never sees this: its `career` scenario builds its league
+    /// from the same pipeline it then runs, so it starts AT the equilibrium
+    /// (`leaguePot` 81.6 → 82.3 over 21 seasons) and measures 80+ at 15.8 %.
+    /// Closing this properly is a `LeagueGenerator`-vs-`DraftClassBuilder`
+    /// headroom reconciliation, not a churn or development constant.
     private static func printPyramidDiagnostics(
         seasonLabel: String,
         rostered: [Player],
@@ -1016,14 +1065,21 @@ enum MultiSeasonSmokeTest {
                   + " — the 90+ and 33+ verdicts are DRIFT from this run's own"
                   + " `season=base` reading (binomial σ 0.32/0.37pp on one"
                   + " 1696-man league makes an absolute band on either a coin"
-                  + " flip — see the doc comment). Task #51 measured where the"
-                  + " remaining quality drift comes from and it is NOT a"
-                  + " development pass: `diag devsource` puts camp+focus+"
-                  + "breakout+gameXP at +0.07 mean OVR a season combined,"
-                  + " against +1.6 for the offseason pass the balance harness"
-                  + " also runs. What moves is the AGE pyramid — `yp8plus`"
-                  + " triples and `diag retired` shows the league shedding"
-                  + " 66-OVR 26-year-olds while keeping 78-OVR 31-year-olds")
+                  + " flip — see the doc comment). Read `diag churn` and"
+                  + " `diag devsource` together before touching a constant:"
+                  + " task #51 ruled out the development passes (camp+focus+"
+                  + "breakout+gameXP total +0.07 mean OVR a season) and task"
+                  + " #53 fixed the churn asymmetry they pointed at (the market"
+                  + " signed on raw `overall` while cutdown day cut on"
+                  + " age-discounted `keepScore`). What is LEFT is neither:"
+                  + " `leaguePot` climbs 73 → 78 over four seasons because"
+                  + " LeagueGenerator ships a cross-section with ~2 points of"
+                  + " potential headroom (its own gate 8.hea asserts ≤ 4) while"
+                  + " DraftClassBuilder ships classes with 8-11, so the league"
+                  + " necessarily gains quality until the intake's equilibrium"
+                  + " is reached — and churning HARDER accelerates it, because"
+                  + " churn is what swaps generator veterans for pipeline"
+                  + " rookies. See the `80+ vs yp0to3` note above")
         }
     }
 
@@ -1082,6 +1138,7 @@ enum MultiSeasonSmokeTest {
         if roster.count > 53 {
             let sorted = roster.sorted { RosterValue.keepScore($0) > RosterValue.keepScore($1) }
             for player in sorted.suffix(roster.count - 53) {
+                ChurnDiag.record(ChurnDiag.cut, player)
                 player.teamID = nil
                 player.annualSalary = 0
                 player.contractYearsRemaining = 0
@@ -1099,6 +1156,7 @@ enum MultiSeasonSmokeTest {
             if !pool.isEmpty {
                 let index = pool.firstIndex { needs.contains($0.position) } ?? 0
                 signing = pool.remove(at: index)
+                ChurnDiag.record(ChurnDiag.refill, signing)
             } else {
                 // Pool dry — street free agent, same as refillAIRosters.
                 signing = LeagueGenerator.generatePlayer(
@@ -1108,6 +1166,7 @@ enum MultiSeasonSmokeTest {
                 )
                 signing.careerID = career.id
                 context.insert(signing)
+                ChurnDiag.record(ChurnDiag.street, signing)
             }
             signing.teamID = teamID
             signing.contractYearsRemaining = Int.random(in: 1...2)

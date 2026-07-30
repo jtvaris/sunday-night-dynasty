@@ -86,6 +86,15 @@ final class CollegeProspect {
     var collegeStatLineStored: String? = nil
     var generatorVersion: Int = 0
 
+    /// Hometown, written by the synced `DraftClassBuilder` from the staged
+    /// `HometownGenerator` (`Data/Import/RandomNameGenerator.swift`). Pure
+    /// flavour — nothing in the draft-class or career math ever reads it — but
+    /// the builder assigns it, so the storage has to exist or the harness does
+    /// not compile. Added when the repo grew the fields; the harness had no
+    /// stub for them and every scenario failed at the sync step.
+    var hometownState: String? = nil
+    var hometownCity: String? = nil
+
     // MARK: - Repo math (spliced verbatim on every sync)
 
     // @@SPLICE:PRODUCTION@@

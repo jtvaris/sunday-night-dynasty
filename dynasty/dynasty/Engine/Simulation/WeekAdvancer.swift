@@ -1857,6 +1857,7 @@ enum WeekAdvancer {
                             formerTeamID: formerTeamID
                         )
                     }
+                    ChurnDiag.record(ChurnDiag.expire, player)
                     player.teamID = nil
                     player.annualSalary = 0
                 }
@@ -4537,6 +4538,7 @@ enum WeekAdvancer {
                 ? nil
                 : MilestoneTracker.hallOfFameSummary(position: player.position, facts: facts)
 
+            ChurnDiag.record(ChurnDiag.retire, player)
             PlayerRetirementEngine.retire(retirement, teamsByID: teamsByID)
 
             // Ceremony headline for league-wide stars (cap 4 per offseason).
@@ -4662,6 +4664,7 @@ enum WeekAdvancer {
         var inductees: [HallOfFameEntry] = []
         for washout in washouts {
             let player = washout.player
+            ChurnDiag.record(ChurnDiag.washout, player)
             PlayerRetirementEngine.retire(washout, teamsByID: [:])
 
             // A genuinely great career that ended on the scrap heap still gets
@@ -4772,8 +4775,10 @@ enum WeekAdvancer {
                 let signing: Player
                 if let index = freeAgentPool.firstIndex(where: { needs.contains($0.position) }) {
                     signing = freeAgentPool.remove(at: index)
+                    ChurnDiag.record(ChurnDiag.refill, signing)
                 } else if !freeAgentPool.isEmpty {
                     signing = freeAgentPool.removeFirst()
+                    ChurnDiag.record(ChurnDiag.refill, signing)
                 } else {
                     // Pool dry — a street free agent reports for a tryout.
                     let position = needs.first ?? .WR
@@ -4785,6 +4790,7 @@ enum WeekAdvancer {
                     generated.careerID = activeCareerID
                     modelContext.insert(generated)
                     signing = generated
+                    ChurnDiag.record(ChurnDiag.street, signing)
                 }
 
                 signing.teamID = team.id
@@ -4813,6 +4819,7 @@ enum WeekAdvancer {
             guard roster.count > rosterCeiling else { continue }
 
             for player in roster.suffix(roster.count - rosterCeiling) {
+                ChurnDiag.record(ChurnDiag.cut, player)
                 team.currentCapUsage -= player.annualSalary
                 player.teamID = nil
                 player.annualSalary = 0
