@@ -19,3 +19,29 @@ Pods/
 # macOS
 .DS_Store
 .claude/worktrees/
+
+# league-data bundle gate (tools/league-data/check_bundle.sh) build products
+tools/league-data/.bundle-gate-dd/
+tools/league-data/.bundle-gate-build.log
+tools/league-data/__pycache__/
+
+# face generation working set (tools/faces/generate_faces.py + package_faces.py)
+# raw/ = 2.9 GB of source PNG renders; out/ = the packaged copy, which is
+# committed under dynasty/dynasty/Resources/Faces/ instead (byte-identical).
+# tools/faces/manifest.json IS tracked — it is the (seed, bucket) ledger the
+# cull/regen loop needs.
+tools/faces/raw/
+tools/faces/out/
+tools/faces/__pycache__/
+
+# league-data source scrape cache (tools/league-data/build_raw.py) — 725 MB of
+# HTML/CSV snapshots, a fetch cache and a nested Xcode build dir. The refined
+# tools/league-data/raw/*.json that make_templates.py + scan_bundle.py read IS
+# tracked.
+tools/league-data/raw/_sources/
+
+# make_templates.py build products — byte-identical (cmp-verified) to the
+# bundled copies under dynasty/dynasty/Resources/. TRANSFORM_QA.md in the same
+# directory IS tracked.
+tools/league-data/out/league_2026_dev.json
+tools/league-data/out/league_2026_publish.json
