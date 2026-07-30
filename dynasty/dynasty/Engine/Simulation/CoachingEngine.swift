@@ -313,6 +313,221 @@ enum CoachingEngine {
         return min(1.0, max(0.0, rawScore + adaptabilityBonus))
     }
 
+    // MARK: - Roster Scheme Fit (task #54)
+
+    /// The neutral point of `rosterSchemeFit`. A player whose traits suit the
+    /// system his building runs exactly as well as they suit the average system
+    /// on his side of the ball, and who knows that playbook to
+    /// `schemeFitFamiliarityPivot`, scores exactly this.
+    ///
+    /// The harness's old frozen draw was centred at 0.55, and reproducing that
+    /// centre exactly cost the league ~0.4 truePotential — because the old draw
+    /// gave a ROOKIE 0.55 too, while a real computation prices a first-year
+    /// player at whatever he has actually learned. The ladder in
+    /// `PlayerDevelopmentEngine.updatePotentialRealization` only gets to move a
+    /// ceiling while there is still room to grow, so a centre that reads "has
+    /// not learned the playbook yet" as a verdict taxes precisely the four
+    /// seasons the development model cares about. 0.59 puts the LEAGUE MEAN at
+    /// 0.60 and a first-year player at ~0.54 — the level at which the measured
+    /// quality pyramid matches the one the harness was calibrated on.
+    /// Measured, not argued: see the `career` scenario's SCHEME FIT block.
+    static let schemeFitNeutral = 0.59
+
+    /// How hard a TRAIT edge moves the fit. The edge is a difference of two
+    /// `schemeFit` scores and measures sd 0.097 across the league, so this gain
+    /// puts sd ≈ 0.17 of the reported fit on TRAITS — i.e. the total spread
+    /// lands on the sd 0.18 the harness's old model declared.
+    ///
+    /// Spread is not a free knob here the way it was for a frozen draw. Fit is a
+    /// persistent property of a player now, so it compounds through
+    /// `updatePotentialRealization` season after season, and both tails of the
+    /// quality pyramid move with it: at sd 0.16 the elite share falls out of its
+    /// §6.2 band, at sd 0.20 the sub-65 share falls out of its §8 band.
+    static let schemeFitTraitGain = 1.77
+
+    /// How hard a PLAYBOOK edge moves the fit — deliberately the SMALL half
+    /// (sd ≈ 0.04 against the trait half's 0.17).
+    ///
+    /// Familiarity is mostly a statement about tenure: it rises every practice
+    /// week a player spends in one building and resets when the building
+    /// changes its mind. Letting it carry the fit would make "scheme fit" a
+    /// synonym for "has been here a while" — and, worse, would tax every rookie
+    /// and every player on a club coming off a coordinator change during exactly
+    /// the seasons `PlayerDevelopmentEngine` lets a ceiling still matter. It
+    /// belongs in the number (a room that does not know the playbook is not
+    /// getting the most out of anybody) but it does not belong in charge of it.
+    static let schemeFitFamiliarityGain = 0.25
+
+    /// The familiarity level treated as par — the ONE fitted constant here.
+    ///
+    /// It is set to the familiarity a steady-state roster actually carries once
+    /// intake, install years and coordinator churn are all running, measured on
+    /// `tools/balance-harness`'s `career` scenario (22 measured seasons, 20
+    /// independent leagues, 745 k player-seasons). Anchoring on the equilibrium
+    /// rather than on a round number is what keeps the fit distribution
+    /// STATIONARY: pin it too high and every league slides down as its
+    /// generator-seeded veterans retire, which is exactly the 0.52 → 0.39 slide
+    /// task #54 exists to remove.
+    ///
+    /// Deliberately just under `VersatilityDevelopmentEngine.unusedSchemeFloor`:
+    /// a player who has genuinely played a system and let it go still reads at
+    /// or above par for it.
+    static let schemeFitFamiliarityPivot = 52.0
+
+    /// Reporting band. Kept off the 0/1 rails so neither end of
+    /// `updatePotentialRealization`'s ladder can be reached by clamping alone.
+    static let schemeFitFloor = 0.05
+    /// Upper end of the reporting band (see `schemeFitFloor`).
+    static let schemeFitCeiling = 0.95
+
+    /// How well a rostered player fits what his own building runs — the ONE
+    /// definition of "scheme fit" for a player who already has a team.
+    ///
+    /// This function is the canonical source for both the shipped season
+    /// pipeline (`WeekAdvancer.offseasonSchemeFit`) and `tools/balance-harness`,
+    /// which slices it out of this file on every sync. Before task #54 the two
+    /// disagreed completely: the harness drew a frozen `N(0.55, 0.18)` per
+    /// player, while the shipped pipeline returned a hard-coded 0.5 for every
+    /// rookie, every specialist and every club without a coordinator, and
+    /// `schemeFamiliarity / 100` for everyone else — which pinned the shipped
+    /// median at exactly 0.50 and let the mean slide season after season as the
+    /// generator-seeded veterans were replaced by intake that enters the league
+    /// at familiarity 15-45.
+    ///
+    /// Both halves are measured as an EDGE against a neutral rather than as a
+    /// level, which is what makes the distribution stationary:
+    ///
+    /// * **Traits** — his fit for THIS system minus his average fit across every
+    ///   system on his side of the ball. A great player fits every scheme well;
+    ///   that is talent, not fit. What this term isolates is whether the club is
+    ///   asking him to do the thing he is comparatively best at.
+    /// * **Playbook** — how far his familiarity with the installed system sits
+    ///   from `schemeFitFamiliarityPivot`.
+    ///
+    /// - Parameters:
+    ///   - player: The rostered player being evaluated.
+    ///   - offensiveScheme: The offensive system the building actually installs.
+    ///   - defensiveScheme: The defensive system the building actually installs.
+    /// - Returns: Fit in `schemeFitFloor...schemeFitCeiling`.
+    static func rosterSchemeFit(
+        player: Player,
+        offensiveScheme: OffensiveScheme?,
+        defensiveScheme: DefensiveScheme?
+    ) -> Double {
+        let traitEdge = schemeTraitEdge(
+            positionAttributes: player.positionAttributes,
+            physical: player.physical,
+            mental: player.mental,
+            side: player.position.side,
+            offensiveScheme: offensiveScheme,
+            defensiveScheme: defensiveScheme
+        )
+        let familiarity = activeSchemeFamiliarity(
+            player: player,
+            offensiveScheme: offensiveScheme,
+            defensiveScheme: defensiveScheme
+        )
+        let raw = schemeFitNeutral
+            + schemeFitTraitGain * traitEdge
+            + schemeFitFamiliarityGain * (familiarity - schemeFitFamiliarityPivot) / 100.0
+        return min(schemeFitCeiling, max(schemeFitFloor, raw))
+    }
+
+    /// His `schemeFit` for the installed system minus his mean `schemeFit`
+    /// across every system on his side of the ball.
+    ///
+    /// Specialists get 0: no offensive or defensive scheme asks anything of a
+    /// kicker's traits, so for them the fit is the playbook term alone.
+    private static func schemeTraitEdge(
+        positionAttributes: PositionAttributes,
+        physical: PhysicalAttributes,
+        mental: MentalAttributes,
+        side: PositionSide,
+        offensiveScheme: OffensiveScheme?,
+        defensiveScheme: DefensiveScheme?
+    ) -> Double {
+        switch side {
+        case .offense:
+            guard let scheme = offensiveScheme else { return 0.0 }
+            let mine = schemeFit(
+                positionAttributes: positionAttributes,
+                physical: physical,
+                mental: mental,
+                offensiveScheme: scheme,
+                defensiveScheme: nil
+            )
+            var total = 0.0
+            for candidate in OffensiveScheme.allCases {
+                total += schemeFit(
+                    positionAttributes: positionAttributes,
+                    physical: physical,
+                    mental: mental,
+                    offensiveScheme: candidate,
+                    defensiveScheme: nil
+                )
+            }
+            return mine - total / Double(OffensiveScheme.allCases.count)
+
+        case .defense:
+            guard let scheme = defensiveScheme else { return 0.0 }
+            let mine = schemeFit(
+                positionAttributes: positionAttributes,
+                physical: physical,
+                mental: mental,
+                offensiveScheme: nil,
+                defensiveScheme: scheme
+            )
+            var total = 0.0
+            for candidate in DefensiveScheme.allCases {
+                total += schemeFit(
+                    positionAttributes: positionAttributes,
+                    physical: physical,
+                    mental: mental,
+                    offensiveScheme: nil,
+                    defensiveScheme: candidate
+                )
+            }
+            return mine - total / Double(DefensiveScheme.allCases.count)
+
+        case .specialTeams:
+            return 0.0
+        }
+    }
+
+    /// The 0-100 familiarity that actually applies to this player: his
+    /// coordinator's system, or — for a specialist, who answers to neither
+    /// coordinator and sits through both installs — the mean of the two.
+    ///
+    /// A club with no coordinator carrying a system reports the pivot, i.e. par,
+    /// rather than zero: a vacancy is not evidence that the room forgot football.
+    private static func activeSchemeFamiliarity(
+        player: Player,
+        offensiveScheme: OffensiveScheme?,
+        defensiveScheme: DefensiveScheme?
+    ) -> Double {
+        switch player.position.side {
+        case .offense:
+            guard let scheme = offensiveScheme else { return schemeFitFamiliarityPivot }
+            return Double(player.schemeFam(for: scheme.rawValue))
+        case .defense:
+            guard let scheme = defensiveScheme else { return schemeFitFamiliarityPivot }
+            return Double(player.schemeFam(for: scheme.rawValue))
+        case .specialTeams:
+            var total = 0.0
+            var count = 0.0
+            if let scheme = offensiveScheme {
+                total += Double(player.schemeFam(for: scheme.rawValue))
+                count += 1
+            }
+            if let scheme = defensiveScheme {
+                total += Double(player.schemeFam(for: scheme.rawValue))
+                count += 1
+            }
+            guard count > 0 else { return schemeFitFamiliarityPivot }
+            return total / count
+        }
+    }
+
     // MARK: - Coach Development
 
     /// Applies end-of-season development to a coach via the XP-based CoachDevelopmentEngine.

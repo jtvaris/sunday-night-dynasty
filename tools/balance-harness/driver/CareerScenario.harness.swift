@@ -353,9 +353,13 @@ final class CRLeague {
     // --- per-player bookkeeping -------------------------------------------
     var history: [UUID: [CRSeasonRow]] = [:]
     var careers: [UUID: CRCareer] = [:]
-    /// Deterministic per-player scheme-fit draw (the harness has no play sim, so
-    /// fit is a stable player↔building property rather than a computed one).
-    var schemeFitByPlayer: [UUID: Double] = [:]
+    /// Scheme-fit samples handed to `updatePotentialRealization` this season —
+    /// the same numbers the shipped smoke prints on its `diag devsource` line,
+    /// so the two distributions can be compared directly (task #54).
+    var schemeFitBySeason: [Int: [Double]] = [:]
+    /// 0-100 familiarity with the system his side of the ball actually runs,
+    /// sampled at the same moment as `schemeFitBySeason`.
+    var activeFamiliarity: [Double] = []
     var majorInjuryThisSeason: Set<UUID> = []
     var draftRoundByPlayer: [UUID: Int] = [:]
 
@@ -579,10 +583,6 @@ final class CRLeague {
             defensiveScheme: club.defensiveScheme,
             isUndrafted: undrafted
         )
-        schemeFitByPlayer[player.id] = PositionPhysicalProfile
-            .truncatedGaussian(mean: 0.55, sd: 0.18, limit: 2.0)
-            .cr_clampedD(0.05, 0.95)
-
         let round = pickNumber.map { DraftEngine.roundForPick($0) } ?? 8
         draftRoundByPlayer[player.id] = round
         if season >= measureFrom, season <= measureThrough {
@@ -816,9 +816,27 @@ final class CRLeague {
             let env = environment(for: club)
             let activeSchemes: Set<String> = [club.offensiveScheme.rawValue, club.defensiveScheme.rawValue]
 
+            // Task #54, mirroring the shipped camp order exactly: the building's
+            // systems are aged out and seeded FIRST, then the fit is read off the
+            // dictionary that results. `WeekAdvancer` moved `applySchemeChanges`
+            // ahead of `buildOffseasonInputs` for the same reason.
+            for p in club.roster {
+                VersatilityDevelopmentEngine.decayUnusedSchemes(player: p, activeSchemes: activeSchemes)
+                VersatilityDevelopmentEngine.seedActiveSchemes(player: p, activeSchemes: activeSchemes)
+            }
+
             var inputs: [UUID: PlayerDevelopmentEngine.OffseasonInputs] = [:]
             for p in club.roster {
                 inputs[p.id] = offseasonInputs(player: p, club: club)
+                if measured {
+                    schemeFitBySeason[season, default: []].append(inputs[p.id]?.schemeFit ?? 0)
+                    // The playbook half's raw input, so the fit's two components
+                    // can be separated when the gains are set (task #54).
+                    let key: String? = p.position.side == .offense
+                        ? club.offensiveScheme.rawValue
+                        : (p.position.side == .defense ? club.defensiveScheme.rawValue : nil)
+                    if let key { activeFamiliarity.append(Double(p.schemeFam(for: key))) }
+                }
             }
 
             // The R and motivation the engine is about to use, recomputed here
@@ -848,10 +866,6 @@ final class CRLeague {
                     motivationCounts[state, default: 0] += 1
                     measuredOffseasonPasses += 1
                 }
-            }
-
-            for p in club.roster {
-                VersatilityDevelopmentEngine.decayUnusedSchemes(player: p, activeSchemes: activeSchemes)
             }
 
             var before: [UUID: Int] = [:]
@@ -919,7 +933,17 @@ final class CRLeague {
             inp.previousOverall = prev.overall
         }
         if rows.count >= 3 { inp.overallTwoSeasonsAgo = rows[rows.count - 3].overall }
-        inp.schemeFit = schemeFitByPlayer[player.id] ?? 0.5
+        // Task #54: the SHIPPED computation, sliced out of CoachingEngine.swift
+        // by sync_sources.sh — not a frozen N(0.55, 0.18) draw. It reads the
+        // player's traits against the systems this building installs and his
+        // familiarity with the one his side of the ball actually runs, so a
+        // coordinator swap, a trade and a rookie's first camp all move it here
+        // exactly as they move it in `WeekAdvancer.offseasonSchemeFit`.
+        inp.schemeFit = CoachingEngine.rosterSchemeFit(
+            player: player,
+            offensiveScheme: club.offensiveScheme,
+            defensiveScheme: club.defensiveScheme
+        )
         if let index = club.coaches.firstIndex(where: {
             CoachingEngine.positionRoleMatch(coachRole: $0.role, playerPosition: player.position)
         }) {
@@ -1007,6 +1031,34 @@ final class CRLeague {
                     }
                 }
                 _ = TrainingFocusEngine.applyWeeklyFocusTick(roster: club.roster, coaches: club.coaches)
+
+                // Task #54: the shipped `WeekAdvancer` runs `learnScheme` on
+                // EVERY practice week at half intensity (×1.25 through an
+                // install year), and the harness ran it only at camp. Seventeen
+                // half-intensity reps a season are most of how a roster actually
+                // climbs out of an install, so without them the familiarity —
+                // and therefore the scheme fit — the harness measures is a
+                // different distribution from the one the game reaches.
+                let intensity = 0.5 * (club.offenseInstallYear || club.defenseInstallYear
+                    ? VersatilityDevelopmentEngine.schemeInstallIntensityBonus : 1.0)
+                let oc = club.coach(.offensiveCoordinator)
+                let dc = club.coach(.defensiveCoordinator)
+                for p in club.roster where !p.isInjured {
+                    if let scheme = oc?.offensiveScheme, p.position.side == .offense {
+                        let key = scheme.rawValue
+                        let gain = VersatilityDevelopmentEngine.learnScheme(
+                            player: p, scheme: key, coordinator: oc, practiceIntensity: intensity
+                        )
+                        p.schemeFamiliarity[key] = min(100, (p.schemeFamiliarity[key] ?? 0) + gain)
+                    }
+                    if let scheme = dc?.defensiveScheme, p.position.side == .defense {
+                        let key = scheme.rawValue
+                        let gain = VersatilityDevelopmentEngine.learnScheme(
+                            player: p, scheme: key, coordinator: dc, practiceIntensity: intensity
+                        )
+                        p.schemeFamiliarity[key] = min(100, (p.schemeFamiliarity[key] ?? 0) + gain)
+                    }
+                }
             }
         }
         finishSeason(season: season)
@@ -1417,6 +1469,79 @@ func crReport(leagues: [CRLeague], elapsed: TimeInterval) {
         }
         return s
     }
+    // ---- 5b. Scheme fit (task #54) --------------------------------------
+    // Printed in exactly the shape `DevelopmentSourceDiag` prints on the shipped
+    // smoke's `diag devsource` line, per measured season, so the two are read
+    // off the same ruler. Both sides now call `CoachingEngine.rosterSchemeFit`,
+    // so a divergence here is a difference in league DYNAMICS (intake, churn,
+    // install years) rather than in the definition of fit — which is the only
+    // kind of difference worth arguing about.
+    print("")
+    print("--- SCHEME FIT (shared CoachingEngine.rosterSchemeFit) --------------------")
+    var fitSeasons: Set<Int> = []
+    for l in leagues { fitSeasons.formUnion(l.schemeFitBySeason.keys) }
+    for s in fitSeasons.sorted() {
+        let xs = leagues.flatMap { $0.schemeFitBySeason[s] ?? [] }
+        guard !xs.isEmpty else { continue }
+        print(String(format: "  season %2d  n=%6d  mean %.3f  p10 %.2f  p50 %.2f  p90 %.2f  fit>=0.80 %4.1f%%  fit<=0.20 %4.1f%%",
+                     s, xs.count, crMean(xs), crPct(xs, 0.10), crPct(xs, 0.50), crPct(xs, 0.90),
+                     crShare(xs.filter { $0 >= 0.80 }.count, xs.count),
+                     crShare(xs.filter { $0 <= 0.20 }.count, xs.count)))
+    }
+    let fitAll = leagues.flatMap { $0.schemeFitBySeason.values.flatMap { $0 } }
+    let fitMean = crMean(fitAll)
+    let fitSD: Double = {
+        guard fitAll.count > 1 else { return 0 }
+        let m = fitMean
+        return (fitAll.reduce(0.0) { $0 + ($1 - m) * ($1 - m) } / Double(fitAll.count)).squareRoot()
+    }()
+    // Stationarity: the whole point of #54. The first and last measured seasons
+    // are ~20 seasons apart, by which time every generator-seeded veteran is
+    // long retired and the population is pure intake + churn.
+    let fitFirst = fitSeasons.min().map { s in crMean(leagues.flatMap { $0.schemeFitBySeason[s] ?? [] }) } ?? 0
+    let fitLast = fitSeasons.max().map { s in crMean(leagues.flatMap { $0.schemeFitBySeason[s] ?? [] }) } ?? 0
+    print(String(format: "  pooled: mean %.3f  sd %.3f  n=%d   |   drift first->last %+.3f",
+                 fitMean, fitSD, fitAll.count, fitLast - fitFirst))
+    // The buckets `updatePotentialRealization` actually reads, and the expected
+    // ceiling drift they add up to. THIS is the number the development
+    // calibration is sensitive to — a distribution can match on mean and sd and
+    // still hand the league a different potential ratchet if its tails differ.
+    let bTop = crShare(fitAll.filter { $0 >= 0.80 }.count, fitAll.count)
+    let bHigh = crShare(fitAll.filter { $0 >= 0.60 && $0 < 0.80 }.count, fitAll.count)
+    let bMid = crShare(fitAll.filter { $0 >= 0.40 && $0 < 0.60 }.count, fitAll.count)
+    let bLow = crShare(fitAll.filter { $0 >= 0.20 && $0 < 0.40 }.count, fitAll.count)
+    let bBot = crShare(fitAll.filter { $0 < 0.20 }.count, fitAll.count)
+    let expectedDrift = (bTop * 1.5 + bHigh * 0.5 - bLow * 0.5 - bBot * 1.5) / 100.0
+    print(String(format: "  updatePotentialRealization buckets: >=.80 %.1f%%  .60-.80 %.1f%%  .40-.60 %.1f%%  .20-.40 %.1f%%  <.20 %.1f%%   E[dPot] %+.3f/player-season",
+                 bTop, bHigh, bMid, bLow, bBot, expectedDrift))
+    // The playbook half's raw input, and how much of the fit's spread each half
+    // is responsible for. `schemeFitFamiliarityPivot` is set off the MEAN below.
+    let famAll = leagues.flatMap { $0.activeFamiliarity }
+    let famMean = crMean(famAll)
+    let famSD: Double = {
+        guard famAll.count > 1 else { return 0 }
+        let m = famMean
+        return (famAll.reduce(0.0) { $0 + ($1 - m) * ($1 - m) } / Double(famAll.count)).squareRoot()
+    }()
+    let famComponentSD = CoachingEngine.schemeFitFamiliarityGain * famSD / 100.0
+    let traitComponentSD = max(0, fitSD * fitSD - famComponentSD * famComponentSD).squareRoot()
+    print(String(format: "  active-scheme familiarity: mean %.1f  sd %.1f  p10 %.0f  p50 %.0f  p90 %.0f  (pivot %.0f)",
+                 famMean, famSD, crPct(famAll, 0.10), crPct(famAll, 0.50), crPct(famAll, 0.90),
+                 CoachingEngine.schemeFitFamiliarityPivot))
+    print(String(format: "  fit spread split: playbook sd %.3f  traits sd %.3f  (gains %.2f / %.2f)",
+                 famComponentSD, traitComponentSD,
+                 CoachingEngine.schemeFitTraitGain, CoachingEngine.schemeFitFamiliarityGain))
+    A.check("6.10a", fitMean >= 0.55 && fitMean <= 0.65,
+            String(format: "scheme-fit league mean in [0.55,0.65] (%.3f)", fitMean))
+    A.check("6.10b", fitSD >= 0.15 && fitSD <= 0.21,
+            String(format: "scheme-fit sd in [0.15,0.21] — the old model's declared 0.18 (%.3f)", fitSD))
+    A.check("6.10c", abs(fitLast - fitFirst) <= 0.03,
+            String(format: "scheme-fit stationary across the measured window (drift %+.3f, |.| <= 0.03)",
+                   fitLast - fitFirst))
+    A.check("6.10d", crShare(fitAll.filter { $0 == 0.50 }.count, fitAll.count) <= 2.0,
+            String(format: "no default-value pin at 0.50 (%.2f%% of samples land exactly there)",
+                   crShare(fitAll.filter { $0 == 0.50 }.count, fitAll.count)))
+
     print(dist("competitiveness", snapshot.map { Double($0.competitiveness) }, [40, 45, 60, 65, 70]))
     print(dist("work ethic     ", snapshot.map { Double($0.mental.workEthic) }, [60]))
     print(dist("morale         ", snapshot.map { Double($0.morale) }, [40]))
