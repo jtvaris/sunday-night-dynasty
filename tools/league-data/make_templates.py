@@ -73,18 +73,40 @@ DEFAULT_OUT = os.path.join(HERE, "out")
 NO_COLLEGE = "No College"       # QA_REPORT carry-in #3: sentinel, never null
 
 # --- calibration bands (QA gates fail the run outside these) ---------------
-CALIB_MEAN_BAND = (75.4, 77.4)      # league mean OVR; reference generator = 76.46
-CALIB_SD_BAND = (7.0, 9.4)          # league OVR sd;   reference generator = 8.23
+#
+# **Re-derived in the P1 quality-pyramid wave (2026-07-30), NOT loosened.** Every
+# band here is a window around the random `LeagueGenerator`'s own Monte-Carlo,
+# because the whole point of this file's calibration step is that the two league
+# sources are twins. The generator moved (see
+# `LeagueGenerator.targetQualityPyramid`), so the windows moved with it — the
+# WIDTHS are unchanged, only their centres:
+#
+#   mean   band was (75.4, 77.4) = anchor 76.46 ± 1.0   →  anchor 71.00 ± 1.0
+#   sd     band was (7.0, 9.4)   = anchor  8.23 −1.23/+1.17 → anchor 8.86, same offsets
+#
+# Both anchors are measured, not asserted: `blueprint_league_mean()` returns
+# 71.005 and a 26 500-draw Monte-Carlo of `reference_overall` gives sd 8.83-8.90
+# across four independent seed streams (mean 70.91-71.09). The `assert`s below
+# make that traceability mechanical — if the mirror is ever edited without moving
+# the bands, the run stops instead of silently calibrating onto a stale target.
+CALIB_MEAN_BAND = (70.0, 72.0)      # league mean OVR; reference generator = 71.00
+CALIB_SD_BAND = (7.6, 10.0)         # league OVR sd;   reference generator = 8.86
 TEAM_SPREAD_TARGET = 5.0            # best team mean minus worst team mean
 TEAM_SPREAD_BAND = (4.0, 6.0)
 TEAM_STRENGTH_CORR_MIN = 0.55       # Spearman(team mean OVR, 2025 wins)
 REF_SIM_REPS = 140                  # reference-distribution Monte-Carlo reps
 
-# Elite tail: the reference generator tops out around 94. Genuine, decorated
-# stars are allowed a small stretch into 90-96 (task brief); the stretch touches
-# only the top ~1.2 % of the league so the mean moves by < 0.05.
-ELITE_STRETCH_PCTL = 0.988
-ELITE_STRETCH_MAX = 3.0
+# Elite tail. **Re-derived with the generator**: the old comment read "the
+# reference generator tops out around 94", which was true of the pre-P1 lattice
+# and is why decorated real stars were given up to +3 to reach 90-96. The new
+# generator reaches 97 natively and puts 1.6-1.9 % of the league at 90+ on its
+# own, so a +3 stretch on the top 1.2 % would push the TEMPLATE league's blue-chip
+# band above the random league's — breaking the twins property this file exists to
+# maintain. The stretch is therefore narrowed to the top 0.8 % and +1.5 max: still
+# a nod to "the genuinely decorated get the benefit of the doubt", no longer a
+# second source of 90s.
+ELITE_STRETCH_PCTL = 0.992
+ELITE_STRETCH_MAX = 1.5
 
 # ---------------------------------------------------------------------------
 # 1. Seeded-RNG plumbing
@@ -133,7 +155,8 @@ CAREER_AGE_SPAN = {
 }
 
 # LeagueGenerator.rosterBlueprint — the 53-man shape whose league mean OVR
-# (~76.46) is the binding calibration anchor.
+# (~71.00 since the P1 quality-pyramid wave; was ~76.46) is the binding
+# calibration anchor.
 ROSTER_BLUEPRINT = [("QB", 3), ("RB", 3), ("FB", 1), ("WR", 7), ("TE", 3),
                     ("LT", 2), ("LG", 2), ("C", 2), ("RG", 2), ("RT", 1),
                     ("DE", 5), ("DT", 3), ("OLB", 4), ("MLB", 3),
@@ -184,15 +207,44 @@ def clamp_int(v: float, lo: int = 25, hi: int = 99) -> int:
     return min(hi, max(lo, int(round(v))))
 
 
+# --- P1 quality-pyramid calibration (2026-07-30) ----------------------------
+# The three constants below and `talent_level_shift` mirror the Swift generator's
+# P1 wave. See `LeagueGenerator.targetQualityPyramid` for the target table and
+# the reasoning; the short version is that the old generator produced
+# `tierBase + depthShift + ageCurve + noise(sd 1.85)`, i.e. a lattice with no
+# per-player quality dimension, so it could not have a rare 90+ tier or a thick
+# sub-65 floor at any level.
+ROOKIE_AGE_LEVEL = -8.0         # LeagueGenerator.rookieAgeLevel  (was -6.0)
+PRIME_AGE_LEVEL = 6.0           # LeagueGenerator.primeAgeLevel   (was 11.0)
+PAST_PEAK_AGE_DECAY = 1.2       # LeagueGenerator.pastPeakAgeDecay
+
+# LeagueGenerator.talentLevelShift — split normal (sd_down, sd_up) per depth tier,
+# truncated at ±TALENT_SPREAD_LIMIT sigma (untruncated, the lower tail reached
+# OVR 33 — not a rostered NFL body).
+TALENT_SPREAD = {0: (4.5, 7.5), 1: (4.5, 4.5), 2: (5.0, 5.0)}
+TALENT_SPREAD_LIMIT = 2.6
+
+# LeagueGenerator.positionAttributeRange (was 75-95 / 60-80 / 50-70).
+POS_ATTR_RANGE = {0: (66, 88), 1: (57, 79), 2: (47, 69)}
+
+
 def age_level_shift(age: int, pos: str) -> float:
     """LeagueGenerator.ageLevelShift — the level curve the engine sustains."""
     lo, hi = PEAK_AGE[pos]
     if age >= lo:
         past = max(0, age - hi)
-        return 11.0 - past * 1.2
+        return PRIME_AGE_LEVEL - past * PAST_PEAK_AGE_DECAY
     span = max(1.0, lo - 21.0)
     prog = min(1.0, max(0.0, (age - 21.0) / span))
-    return -6.0 + (11.0 - (-6.0)) * prog
+    return ROOKIE_AGE_LEVEL + (PRIME_AGE_LEVEL - ROOKIE_AGE_LEVEL) * prog
+
+
+def talent_level_shift(rng: random.Random, depth_index: int) -> float:
+    """LeagueGenerator.talentLevelShift — the per-player quality draw."""
+    down, up = TALENT_SPREAD[depth_index]
+    z = rng.gauss(0.0, 1.0)
+    z = max(-TALENT_SPREAD_LIMIT, min(TALENT_SPREAD_LIMIT, z))
+    return z * (up if z >= 0 else down)
 
 
 def veteran_level_shift(depth_index: int) -> float:
@@ -200,16 +252,18 @@ def veteran_level_shift(depth_index: int) -> float:
 
 
 def pos_attr_range(depth_index: int) -> tuple:
-    if depth_index == 0:
-        return (75, 95)
-    if depth_index == 1:
-        return (60, 80)
-    return (50, 70)
+    return POS_ATTR_RANGE[depth_index]
 
 
 def reference_overall(rng: random.Random, pos: str, depth_index: int, age: int) -> int:
-    """One draw of `Player.overall` exactly as LeagueGenerator would produce it."""
-    shift = int(round(age_level_shift(age, pos)))
+    """One draw of `Player.overall` exactly as LeagueGenerator would produce it.
+
+    Note which term is rounded and which is not: the Swift generator folds the
+    age curve and the talent draw into one `levelShift`, hands the exact Double
+    to the physical/mental priors, and rounds only for the position-skill range
+    (which is an integer range). Reproduced here term for term."""
+    level_shift = age_level_shift(age, pos) + talent_level_shift(rng, depth_index)
+    shift = int(round(level_shift))
     vshift = veteran_level_shift(depth_index)
 
     lo, hi = pos_attr_range(depth_index)
@@ -218,14 +272,14 @@ def reference_overall(rng: random.Random, pos: str, depth_index: int, age: int) 
     n = N_POS_ATTRS[pos]
     pos_avg = sum(rng.randint(lo, hi) for _ in range(n)) / n
 
-    level = vshift + shift
+    level = vshift + level_shift
     priors = PHYS_PRIORS[pos] + [_STAM, _DUR]
     phys_avg = sum(clamp_int(soft_ceiling(rng.gauss(m + level, s)))
                    for m, s in priors) / 6.0
 
     aw = 62.0 if pos in MENTAL_HIGH_AWARENESS else 56.0
     mprior = [(aw, 9.0)] + MENTAL_PRIORS_TAIL
-    mshift = (MENTAL_BASE_LEVEL + vshift + shift) - (sum(m for m, _ in mprior) / 6.0)
+    mshift = (MENTAL_BASE_LEVEL + vshift + level_shift) - (sum(m for m, _ in mprior) / 6.0)
     mental_avg = sum(clamp_int(rng.gauss(m + mshift, s)) for m, s in mprior) / 6.0
 
     return int(round(pos_avg * 0.5 + phys_avg * 0.3 + mental_avg * 0.2))
@@ -236,9 +290,9 @@ def generator_age(rng: random.Random, pos: str) -> int:
     return min(rng.randint(lo, hi), rng.randint(lo, hi))
 
 
-def blueprint_league_mean() -> float:
-    """League mean OVR of the actual random `LeagueGenerator` league — the
-    binding calibration anchor (~76.46)."""
+def blueprint_league_stats() -> dict:
+    """Mean, sd and quality-pyramid shares of the actual random
+    `LeagueGenerator` league — the binding calibration anchor."""
     rng = seeded("blueprint")
     vals = []
     for _ in range(400):
@@ -246,30 +300,106 @@ def blueprint_league_mean() -> float:
             for idx in range(count):
                 vals.append(reference_overall(rng, pos, min(idx, 2),
                                               generator_age(rng, pos)))
-    return statistics.mean(vals)
+    n = len(vals)
+    share = lambda f: 100.0 * sum(1 for v in vals if f(v)) / n
+    return {
+        "n": n,
+        "mean": statistics.mean(vals),
+        "sd": statistics.pstdev(vals),
+        "p90": share(lambda v: v >= 90),
+        "p80": share(lambda v: v >= 80),
+        "p75": share(lambda v: v >= 75),
+        "sub65": share(lambda v: v < 65),
+        "min": min(vals),
+        "max": max(vals),
+    }
+
+
+def blueprint_league_mean() -> float:
+    """League mean OVR of the actual random `LeagueGenerator` league — the
+    binding calibration anchor (~71.00 since the P1 pyramid wave)."""
+    return blueprint_league_stats()["mean"]
+
+
+def assert_calibration_bands_track_the_generator() -> None:
+    """The bands above are windows around the generator's OWN Monte-Carlo, so
+    they must not be able to go stale when the generator moves. This is that
+    guard: it re-measures the mirror at import time and stops the run if either
+    band no longer contains the measured anchor. (Cheap — one 400-league
+    Monte-Carlo, ~1 s — and it is the difference between "calibrated onto the
+    generator" and "calibrated onto a number someone typed in 2026-07-29".)"""
+    st = blueprint_league_stats()
+    if not (CALIB_MEAN_BAND[0] <= st["mean"] <= CALIB_MEAN_BAND[1]):
+        raise SystemExit(
+            f"CALIB_MEAN_BAND {CALIB_MEAN_BAND} does not contain the generator's "
+            f"measured league mean {st['mean']:.2f}. The Swift generator and this "
+            f"mirror moved; re-derive the band (see its comment) instead of "
+            f"calibrating the template onto a stale target.")
+    if not (CALIB_SD_BAND[0] <= st["sd"] <= CALIB_SD_BAND[1]):
+        raise SystemExit(
+            f"CALIB_SD_BAND {CALIB_SD_BAND} does not contain the generator's "
+            f"measured league sd {st['sd']:.2f}. Re-derive the band.")
 
 
 def blueprint_tier_means() -> dict:
     """Per depth-index mean OVR of the random `LeagueGenerator` league —
-    the tier structure the template has to reproduce."""
+    the tier structure the template has to reproduce.
+
+    **Re-derived in the P1 pyramid wave: the buckets are now assigned the same
+    way the gate assigns the template's.** This used to bucket a draw by the
+    depth index it was DRAWN WITH (`reference_overall(..., d, ...)` → bucket
+    `d`), while gate G9 buckets the template by `min(depthRank - 1, 2)` — and
+    `depthRank` is re-derived from the final rating. Those are different
+    quantities: the second is a **max-of-N order statistic**, the first is a
+    single draw. The gap between them grows with how much the tiers overlap.
+
+    Before this wave the tiers were nearly disjoint (means 83.5 / 76.0 / 69.8 at
+    sd ≈ 5.3), the selection effect was ~+1 OVR, and the gate's ±2.0 tolerance
+    hid the mismatch. The new generator deliberately overlaps them — a starter
+    tier with real busts and a depth tier with real finds is the pyramid — and
+    the same selection effect is now +2.65, so the gate failed on a league that
+    is calibrated correctly. Measured: `idx0 79.8 (ref 77.2, +2.65)` while idx1
+    and idx2 sat at +0.26 and −0.58, i.e. exactly the signature of an order
+    statistic being compared against a mean.
+
+    So the reference now draws a whole blueprint roster, RE-RANKS each position
+    group by the rating it drew, and buckets by that rank. Both sides of the gate
+    then carry the same selection effect and the ±2.0 tolerance measures what it
+    is supposed to measure: whether the template's tier STRUCTURE matches the
+    generator's."""
     rng = seeded("blueprint-tiers")
     buckets = defaultdict(list)
     for _ in range(300):
         for pos, count in ROSTER_BLUEPRINT:
-            for idx in range(count):
-                d = min(idx, 2)
-                buckets[d].append(reference_overall(rng, pos, d, generator_age(rng, pos)))
+            drawn = [reference_overall(rng, pos, min(idx, 2), generator_age(rng, pos))
+                     for idx in range(count)]
+            drawn.sort(reverse=True)
+            for rank, ovr in enumerate(drawn):
+                buckets[min(rank, 2)].append(ovr)
     return {d: statistics.mean(v) for d, v in buckets.items()}
 
 
-def veteran_potential(rng: random.Random, overall: int, age: int, pos: str) -> int:
-    """LeagueGenerator.veteranPotential — phase-2 age-anchored veteran ceiling."""
-    peak_hi = PEAK_AGE[pos][1]
+def tier_earned_upside(depth_index: int) -> float:
+    """LeagueGenerator.tierEarnedUpside."""
+    return 1.00 if depth_index == 0 else (0.70 if depth_index == 1 else 0.45)
+
+
+def veteran_potential(rng: random.Random, overall: int, age: int, pos: str,
+                      depth_index: int = 2) -> int:
+    """LeagueGenerator.veteranPotential — P1 wave: age-anchored to the GROWTH
+    years and gated on the player's own trajectory (his depth tier), so a
+    generated veteran no longer arrives with free catch-up headroom."""
+    peak_lo, peak_hi = PEAK_AGE[pos]
     if age > peak_hi:
-        return min(99, overall + rng.randint(0, 3))
-    mu = max(2.0, 14.0 - 2.5 * max(0, age - 22))
-    upside = max(0.0, rng.gauss(mu, 4.0))
-    return min(99, overall + int(round(upside)))
+        return min(99, overall + rng.randint(0, 2))
+    if age >= peak_lo:
+        token = 3.0 if depth_index == 0 else (2.0 if depth_index == 1 else 1.0)
+        draw = rng.gauss(token * 0.5, token)
+        return min(99, overall + max(0, int(round(draw))))
+    runway = min(12.0, 2.5 * (peak_lo - age))
+    mu = 0.55 * runway * tier_earned_upside(depth_index)
+    draw = rng.gauss(mu, max(1.0, mu * 0.8))
+    return min(99, overall + max(0, int(round(draw))))
 
 
 # ---------------------------------------------------------------------------
@@ -2381,6 +2511,23 @@ def build_templates(raw: dict, log: list):
 
         float_of = {stable_id("player", abbr, p["name"], p["pos"]):
                     ovr_float[(abbr, p["name"], p["pos"])] for p in team["players"]}
+        # Depth index per player, capped at 2 — the same quantity the Swift
+        # generator passes to `veteranPotential`, derived from the same order the
+        # `depthRank` / `role` assignment below uses (rating desc, id as
+        # tiebreak). Computed up front because the P1 wave made the veteran
+        # potential rule depth-aware: a starter at 27 has realised his
+        # projection, a fourth-stringer at 27 has not.
+        depth_index_of = {}
+        _by_pos = defaultdict(list)
+        for p in team["players"]:
+            _by_pos[p["pos"]].append(p)
+        for _pos, _group in _by_pos.items():
+            _group = sorted(_group, key=lambda q: (
+                -ovr_float[(abbr, q["name"], q["pos"])],
+                stable_id("player", abbr, q["name"], q["pos"])))
+            for _i, _p in enumerate(_group):
+                depth_index_of[(_p["name"], _p["pos"])] = min(_i, 2)
+
         dev_players, pub_players = [], []
         for p in team["players"]:
             pos = p["pos"]
@@ -2388,7 +2535,8 @@ def build_templates(raw: dict, log: list):
             rating = ratings[key]
             salt = f"{abbr}|{p['name']}|{pos}"
             prng = seeded("potential", salt)
-            potential = veteran_potential(prng, rating, p["age"], pos)
+            potential = veteran_potential(prng, rating, p["age"], pos,
+                                          depth_index_of[(p["name"], pos)])
             rates = aggregate_career_rates(pos, p["seasons"])
             hints = area_hints(pos, rates, p["heightIn"], p["weightLb"])
             arc = career_arc(p, rating, potential, tables, salt)
@@ -3175,9 +3323,15 @@ def write_qa_report(path, dev, pub, ctx, gates, log):
       "level and shape therefore match by construction; only the ORDERING inside a "
       "position comes from the production model.")
     A("")
+    _bp = blueprint_league_stats()
     A(f"- league mean OVR **{statistics.mean(all_ovr):.2f}** "
-      f"(reference generator 76.46, band {CALIB_MEAN_BAND})")
-    A(f"- league sd **{statistics.pstdev(all_ovr):.2f}** (reference 8.23, band {CALIB_SD_BAND})")
+      f"(reference generator {_bp['mean']:.2f}, band {CALIB_MEAN_BAND})")
+    A(f"- league sd **{statistics.pstdev(all_ovr):.2f}** "
+      f"(reference generator {_bp['sd']:.2f}, band {CALIB_SD_BAND})")
+    A(f"- reference generator quality pyramid (DEVELOPMENT_NFL_REFERENCE §8): "
+      f"90+ {_bp['p90']:.2f}% [1-2] · 80+ {_bp['p80']:.2f}% [12-16] · "
+      f"75+ {_bp['p75']:.2f}% [30-40] · sub-65 {_bp['sub65']:.2f}% [~25] · "
+      f"range {_bp['min']}-{_bp['max']}")
     A(f"- team mean spread **{tmeans[0][0] - tmeans[-1][0]:.2f}** OVR "
       f"(target {TEAM_SPREAD_TARGET}, band {TEAM_SPREAD_BAND})")
     A(f"- OVR 90+: {sum(1 for v in all_ovr if v >= 90)} players; max {max(all_ovr)}; "
@@ -3517,6 +3671,10 @@ def main(argv=None):
     ap.add_argument("--out", default=DEFAULT_OUT)
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)
+
+    # The calibration bands are windows around the generator's own Monte-Carlo;
+    # this stops the run if the generator has moved out from under them.
+    assert_calibration_bands_track_the_generator()
 
     log = []
     raw = load_raw(RAW_PATH)

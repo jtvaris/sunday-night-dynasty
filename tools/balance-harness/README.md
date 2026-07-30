@@ -260,9 +260,10 @@ with margin for that.
 | `fullgame` | **round 5** — complete games via the shipped GameSimulator/DriveSimulator; per-game box + N-game aggregates + win split | per-team-per-game NFL bands (see below) + equal-tier ~50/50, elite-vs-weak decisive-not-deterministic |
 | `positionsweep` | **round 5** — one position group swept {55,70,85,95} on an avg roster vs an avg opponent | monotone win% + headline stat vs the swept group |
 | `draftclass` | **draft-class overhaul** — N classes through the shipped `DraftClassBuilder` + combine; full distribution report + the 31 plan-§7 invariants as hard asserts | every §7.1–§7.10 invariant; **exits 1** on any violation |
-| `career` | **development overhaul** — 20 independent 32-team leagues run end-to-end through the shipped development stack; hit rates by round, elite shares, trajectory mix, aging curves, R and motivation distributions, career lengths | every `PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §6 item; **exits 1** on any violation |
+| `career` | **development overhaul** — 20 independent 32-team leagues run end-to-end through the shipped development stack; hit rates by round, elite shares, trajectory mix, aging curves, R and motivation distributions, career lengths, **and the §8 league quality pyramid** | every `PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §6 item + `DEVELOPMENT_NFL_REFERENCE.md` §8 (6.9a-g); **exits 1** on any violation |
+| `leaguegen` | **P1 quality-pyramid wave** — the RANDOM league's t=0 intake: 400 × 53-man rosters straight out of `LeagueGenerator`'s rating path, reported as the §8 quality pyramid, plus a **pin against the Python mirror** in `tools/league-data/make_templates.py` | §8 bands on the intake distribution, depth-tier ordering, the rating floor, `veteranPotential` headroom ≤ 4, and Swift-vs-mirror agreement; **exits 1** on any violation |
 
-The last four are **parameterized** — they take `--flag value` args instead of a
+The last five are **parameterized** — they take `--flag value` args instead of a
 scenario-name list (see "Round-5 full-game campaign" and "Draft-class validation"
 below), so they are invoked on their own, not via `all`.
 
@@ -364,7 +365,25 @@ harness fullgame  --home-tier <tier> --away-tier <tier> --n <games>
                   [--seedable] [--seed N] [--detail]
 
 harness positionsweep --group QB|RB|WR|TE|OL|DL|LB|CB|S --n <games> [--seedable]
+
+harness career    [--teams 32] [--burnin 8] [--classes 10] [--window 12]
+                  [--leagues 20] [--size 420] [--fog 11.5] [--fog-slope 0]
+                  [--board 0.30] [--verbose]
+
+harness leaguegen [--leagues 400]
 ```
+
+**`leaguegen` exists to keep two independent implementations of one calibration
+honest.** The random `LeagueGenerator` and the fixed-2026 template league must sit
+at the same level and shape (`LeagueGenerator.targetQualityPyramid`), and the
+template achieves that by being rank-mapped onto a **Python mirror** of the Swift
+rating math (`make_templates.py`'s `reference_overall`). A mirror that drifts from
+the Swift therefore breaks BOTH league sources at once, and nothing else in the
+repo can see it. This scenario measures the Swift side — the rating path is
+awk-sliced verbatim into `LeagueGeneratorExtract.swift`, and `Player.overall` comes
+from the repo splice — and fails if the two disagree by more than Monte-Carlo
+slack. It earned its keep on its first run by catching a depth-chart bug worth
++0.79 OVR of league mean.
 
 `fullgame` prints a per-game box line when `--n ≤ 8` (or with `--detail`), then a
 pooled per-team-per-game aggregate with an `[OK]/[OUT]` marker against each NFL

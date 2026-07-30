@@ -84,6 +84,66 @@ enum ContractEngine {
     ///
     /// Uses the player's natural position (derived from positionAttributes) for salary
     /// calculation. A player moved from DE to DT still demands DE money.
+    /// Base market value as a percentage of the salary cap, before the position
+    /// multiplier and the age curve.
+    ///
+    /// **Re-derived in the P1 quality-pyramid wave (2026-07-30).** The old ladder
+    /// was `95 / 90 / 80 / 70 / 60` with slopes `0.55 / 0.7 / 0.5 / 0.2 / 0.06`,
+    /// anchored on a league whose mean OVR was 76.5. That league now averages
+    /// **71.0** (`LeagueGenerator.targetQualityPyramid`), and OVR bands do not
+    /// survive a level change: shipping the old ladder unchanged would have paid
+    /// the *same* league **1.83 %** of cap per player instead of 2.92 % — a 37 %
+    /// collapse in league-wide market value, which is the difference between a
+    /// cap that binds and a cap that no team ever approaches.
+    ///
+    /// The re-derivation is **percentile-preserving**, so the money a player
+    /// commands for a given standing in the league is unchanged. Each old
+    /// boundary was mapped to the new OVR holding the same share of the league at
+    /// or above it (measured over a 600-league Monte-Carlo of both generators):
+    ///
+    /// | old OVR | share ≥ | new OVR | share ≥ |
+    /// |---|---|---|---|
+    /// | 95 | 0.00 % | 94 | 0.20 % |
+    /// | 90 | 3.26 % | 87 | 4.19 % |
+    /// | 80 | 37.08 % | 74 | 39.22 % |
+    /// | 70 | 79.68 % | 64 | 80.10 % |
+    /// | 60 | 97.39 % | 54 | 97.66 % |
+    ///
+    /// The money at each anchor was then solved so the league-wide mean base
+    /// percentage comes out at **2.919 %** — identical to what the old ladder paid
+    /// the old league, to three decimals. The cap economy (bids, holdouts, cap
+    /// health, owner budget) therefore sees the same pressure it was validated
+    /// against.
+    ///
+    /// **It also fixes a monotonicity defect.** The old ladder was NOT increasing:
+    /// an 89-OVR player commanded `3.0 + 9·0.5` = **7.50 %** of the cap and a
+    /// 90-OVR player `6.0 + 0` = **6.00 %**, so getting better at exactly the
+    /// wrong moment cut a player's market value by a fifth — and with it his
+    /// contract demands, his trade value and his holdout threshold. Expressing the
+    /// ladder as interpolated anchor points instead of independent tier formulas
+    /// makes that class of bug unrepresentable.
+    static func marketBasePercent(overall: Int) -> Double {
+        // (OVR, % of cap). Strictly increasing in both coordinates.
+        let anchors: [(ovr: Double, pct: Double)] = [
+            (54, 0.40),   // depth / special teams — bottom ~2 % of the league below this
+            (64, 1.00),   // rotational contributor
+            (74, 3.20),   // starter-quality (DEVELOPMENT_NFL_REFERENCE §8's 75+ line)
+            (87, 7.20),   // top ~4 % — the second contract that resets a market
+            (94, 10.00),  // true elite: ~3 players league-wide (× QB 2.2 → 22 % of cap)
+        ]
+        let o = Double(overall)
+        // Fringe / practice-squad floor.
+        guard o > anchors[0].ovr else { return 0.28 }
+        for (lo, hi) in zip(anchors, anchors.dropFirst()) where o <= hi.ovr {
+            return lo.pct + (hi.pct - lo.pct) * (o - lo.ovr) / (hi.ovr - lo.ovr)
+        }
+        // Above the top anchor, continue its slope, capped so a 99 stays sane.
+        let top = anchors[anchors.count - 1]
+        let prev = anchors[anchors.count - 2]
+        let slope = (top.pct - prev.pct) / (top.ovr - prev.ovr)
+        return Swift.min(12.5, top.pct + slope * (o - top.ovr))
+    }
+
     static func estimateMarketValue(player: Player, salaryCap: Int = 265_000) -> Int {
         let overall = player.overall
         // Use the higher-paying position: current or natural (players demand pay
@@ -92,30 +152,7 @@ enum ContractEngine {
         let position = bestPayingPosition(current: player.position, natural: natural)
         let age = player.age
 
-        // Tiered base value as a percentage of the salary cap.
-        // Steeper curve at elite level — reflecting how elite talent commands
-        // exponentially more money in the real NFL.
-        let normalizedOVR = Double(overall)
-        let basePercent: Double
-        if normalizedOVR >= 95 {
-            // True elite: ~9.5% + 0.55% per OVR above 95 (× position → QB ~20%+)
-            basePercent = 9.5 + (normalizedOVR - 95.0) * 0.55
-        } else if normalizedOVR >= 90 {
-            // Elite tier: ~6% + 0.7% per OVR above 90
-            basePercent = 6.0 + (normalizedOVR - 90.0) * 0.7
-        } else if normalizedOVR >= 80 {
-            // Starter tier: ~3% + 0.5% per OVR above 80
-            basePercent = 3.0 + (normalizedOVR - 80.0) * 0.5
-        } else if normalizedOVR >= 70 {
-            // Solid contributor: ~1% + 0.2% per OVR above 70
-            basePercent = 1.0 + (normalizedOVR - 70.0) * 0.2
-        } else if normalizedOVR >= 60 {
-            // Depth/rotational: ~0.4% + 0.06% per OVR above 60
-            basePercent = 0.4 + (normalizedOVR - 60.0) * 0.06
-        } else {
-            // Fringe / practice squad: ~0.28% (minimum)
-            basePercent = 0.28
-        }
+        let basePercent = marketBasePercent(overall: overall)
 
         // Position multiplier calibrated to real NFL 2026 pay scales.
         let positionMultiplier: Double = {

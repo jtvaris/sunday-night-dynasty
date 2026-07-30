@@ -1220,8 +1220,22 @@ enum WeekAdvancer {
             let mentorBoost = isMentored ? 1.1 : 1.0
             let clipboardRoom = player.position == .QB
                 && (isMentored || clipboardTeamIDs.contains(player.teamID!))
-            // Approximate starters as those with overall >= 65 or on small rosters
-            if player.overall >= 65 {
+            // Approximate starters as those with overall >= 60 or on small rosters.
+            //
+            // **Level-relative — re-derived in the P1 quality-pyramid wave (was
+            // 65), percentile-preserving on purpose.** 65 admitted 90.6 % of the
+            // old 76.5-mean league; in the recalibrated 71.0-mean league the same
+            // 90.6 % share sits at OVR 60. Holding the SHARE fixed rather than the
+            // number keeps the league's total weekly game-experience volume
+            // unchanged, which is what keeps `MultiSeasonSmokeTest`'s OVR-drift
+            // gate measuring the calibration instead of measuring this line.
+            //
+            // Note what is NOT claimed: 90 % of a league are not starters. This
+            // approximation is wrong by ~50 pp and was wrong before the wave; the
+            // honest fix is to read the real depth chart (the game already tracks
+            // `gamesStartedThisSeason` from `GameSimulator`), and it belongs in a
+            // wave that can re-measure development volume on the simulator.
+            if player.overall >= 60 {
                 PlayerDevelopmentEngine.applyGameExperience(
                     player, gamesPlayed: 1, gamesStarted: 1, experienceBoost: mentorBoost
                 )

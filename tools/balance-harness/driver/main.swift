@@ -47,6 +47,10 @@ import Foundation
 //                  by round vs DRAFT_NFL_REFERENCE §6 + the §6.1-§6.8 asserts.
 //                  Exits 1 on any violation.
 //                  career [--teams 32] [--burnin 8] [--classes 10] [--window 12] [--verbose]
+//   leaguegen      RANDOM-league t=0 quality pyramid vs DEVELOPMENT_NFL_REFERENCE §8,
+//                  plus a pin against make_templates.py's Python mirror of the same
+//                  generator (the fixed-2026 template league is calibrated onto it).
+//                  leaguegen [--leagues 400]
 //
 // Sample sizes: env BH_N (default 40000) per cell; BH_GN (default 24000) per grid
 // cell. The default reproduces the round-3 verifier numbers (see README).
@@ -1783,7 +1787,7 @@ func scenarioBlowoutProbe(_ f: [String: String]) {
 // Parameterized round-5 scenarios consume `--flag value` args instead of a
 // scenario-name list. They dispatch BEFORE the name-list path so every existing
 // scenario keeps working exactly as before.
-if let first = args.first, first == "fullgame" || first == "positionsweep" || first == "blowoutprobe" || first == "draftclass" || first == "career" {
+if let first = args.first, first == "fullgame" || first == "positionsweep" || first == "blowoutprobe" || first == "draftclass" || first == "career" || first == "leaguegen" {
     let flags = parseFlags(Array(args.dropFirst()))
     printHeader()
     print("")
@@ -1791,6 +1795,7 @@ if let first = args.first, first == "fullgame" || first == "positionsweep" || fi
     else if first == "blowoutprobe" { scenarioBlowoutProbe(flags) }
     else if first == "draftclass" { scenarioDraftClass(flags) }
     else if first == "career" { scenarioCareer(flags) }
+    else if first == "leaguegen" { scenarioLeagueGen(flags) }
     else { scenarioPositionSweep(flags) }
     print("\nDONE.")
     exit(0)

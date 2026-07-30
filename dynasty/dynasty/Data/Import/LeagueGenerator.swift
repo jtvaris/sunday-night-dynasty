@@ -652,7 +652,14 @@ enum LeagueGenerator {
         let name = RandomNameGenerator.randomName()
         let age = randomAge(for: position)
         let yearsPro = max(0, age - Int.random(in: 21...23))
-        let ageShift = Int(ageLevelShift(age: age, position: position).rounded())
+        // The player's own level = where his age puts him + who he is. The
+        // second term is the P1 pyramid wave's addition; see `talentLevelShift`.
+        // Both are folded into ONE shift before it is applied, so the position
+        // skills, the physicals and the mentals all move together and `overall`
+        // moves with them roughly 1:1.
+        let levelShift = ageLevelShift(age: age, position: position)
+            + talentLevelShift(depthIndex: depthIndex)
+        let ageShift = Int(levelShift.rounded())
         let posAttrs = randomPositionAttributes(
             for: position, depthIndex: depthIndex, ageShift: ageShift
         )
@@ -660,9 +667,12 @@ enum LeagueGenerator {
         // prospects are drawn from one distribution. Previously every player at
         // every position got `PhysicalAttributes.random()` (uniform 40...99), so
         // a centre was as likely to be a 95-speed athlete as a cornerback.
+        // `levelShift` (not `ageShift`) — the physical and mental priors take a
+        // Double, so they get the exact level; only the position-skill range,
+        // which is an integer range, has to round.
         let physical = PositionPhysicalProfile.sample(
             for: position,
-            levelShift: veteranLevelShift(depthIndex: depthIndex) + Double(ageShift)
+            levelShift: veteranLevelShift(depthIndex: depthIndex) + levelShift
         )
         // Mental follows the same route as physical (phase-2 plan §2.2/§2.7):
         // the shared position-shaped priors instead of `MentalAttributes.random()`
@@ -674,7 +684,7 @@ enum LeagueGenerator {
         let mental = PositionPhysicalProfile.sampleMental(
             for: position,
             targetAverage: PositionPhysicalProfile.baseLevel
-                + veteranLevelShift(depthIndex: depthIndex) + Double(ageShift)
+                + veteranLevelShift(depthIndex: depthIndex) + levelShift
         )
         let personality = PlayerPersonality(
             archetype: PersonalityArchetype.allCases.randomElement()!,
@@ -713,7 +723,8 @@ enum LeagueGenerator {
         // Realization-consistent ceiling (plan §2.7) — replaces the `Player`
         // init's uniform `Int.random(in: 50...99)` default.
         player.truePotential = veteranPotential(
-            overall: player.overall, age: age, position: position
+            overall: player.overall, age: age, position: position,
+            depthIndex: depthIndex
         )
         // Anchor for the phase-2 ±8 lifetime potential-drift cap (plan §2.6).
         player.draftTruePotential = player.truePotential
@@ -763,24 +774,214 @@ enum LeagueGenerator {
     /// age (22yo ≈ 14 points, 28yo ≈ 2) and is gone once a player is past his
     /// position's peak window, so the league's potential level is stationary
     /// from season 1 instead of climbing toward the draft's.
+    ///
+    /// **P1 pyramid calibration (2026-07-30) — the upside is now EARNED, not
+    /// granted.** The rule above is age-anchored, which was the phase-2 fix, but
+    /// it still handed *every* player inside his peak window a positive upside
+    /// draw: `max(0, N(mu, 4))` is never negative, so a 26-year-old journeyman
+    /// backup arrived with a ceiling 2-6 points above his rating and a
+    /// 22-year-old with 14. Combined with the old
+    /// `developmentCeiling = 0.60·pot + 39`, which added a further +7 to +11 on
+    /// top for exactly those low-potential players, every generated veteran
+    /// started the save with 6-9 OVR of free catch-up room — and the measured
+    /// consequence was the 3-season smoke's 90+ share going 3.5 % → 9.5 %.
+    ///
+    /// Two changes, both matching `DEVELOPMENT_NFL_REFERENCE.md` §2's core claim
+    /// that "potential is a ceiling few touch" and that the ceiling is set by
+    /// TRAJECTORY:
+    ///
+    ///  1. **Age is measured against the growth years, not the peak window.**
+    ///     §1 puts growth *before* the peak window opens and then says
+    ///     "plateau". A player already inside his window has, by definition,
+    ///     arrived; his remaining upside is the last technique/processing
+    ///     increment, not a development runway. So the full runway is only for
+    ///     players still climbing toward `peakAgeRange.lowerBound`.
+    ///  2. **Upside is gated on the player's own trajectory.** A generated
+    ///     veteran's depth tier is the game's statement about what he has
+    ///     already become: a starter at 27 has realised his projection, a
+    ///     fourth-stringer at 27 has not and is not going to. `tierEarned`
+    ///     therefore scales the runway by how much of it the player's current
+    ///     standing still justifies, and the draw is centred so that roughly a
+    ///     third of players get **no** upside at all — the plateauer, which §2
+    ///     calls the single most common outcome.
     static func veteranPotential(overall: Int, age: Int, position: Position) -> Int {
+        veteranPotential(overall: overall, age: age, position: position, depthIndex: 2)
+    }
+
+    /// Depth-aware form. `depthIndex` is the trajectory signal — see the rule 2
+    /// discussion above. The `depthIndex: 2` default keeps every existing caller
+    /// that has no depth context (legacy rows, street free agents) on the most
+    /// conservative branch.
+    static func veteranPotential(
+        overall: Int, age: Int, position: Position, depthIndex: Int
+    ) -> Int {
         let peak = position.peakAgeRange
+        // Past peak: what you see is what is left. (Unchanged.)
         if age > peak.upperBound {
-            // Past peak: what you see is what is left.
-            return min(99, overall + Int.random(in: 0...3))
+            return min(99, overall + Int.random(in: 0...2))
         }
-        let mu = max(2.0, 14.0 - 2.5 * Double(max(0, age - 22)))
-        let upside = max(0.0, PositionPhysicalProfile.gaussian(mean: mu, sd: 4))
-        return min(99, overall + Int(upside.rounded()))
+        // Inside the peak window a player has arrived; only a token increment is
+        // left, and only for those still holding a job at the top of the chart.
+        if age >= peak.lowerBound {
+            let token = depthIndex == 0 ? 3.0 : (depthIndex == 1 ? 2.0 : 1.0)
+            let draw = PositionPhysicalProfile.gaussian(mean: token * 0.5, sd: token)
+            return min(99, overall + max(0, Int(draw.rounded())))
+        }
+        // Still climbing: the runway shrinks as the window approaches, and how
+        // much of it the player gets is what his depth tier has already earned.
+        let yearsToWindow = Double(peak.lowerBound - age)
+        let runway = min(12.0, 2.5 * yearsToWindow)
+        let earned = tierEarnedUpside(depthIndex: depthIndex)
+        // Centre at 0.55·(runway·earned) with a matching sd: the negative half of
+        // the draw is clipped to zero, so ~1 in 3 young players comes out with no
+        // headroom at all — the plateauer §2 calls the most common outcome.
+        let mu = 0.55 * runway * earned
+        let draw = PositionPhysicalProfile.gaussian(mean: mu, sd: max(1.0, mu * 0.8))
+        return min(99, overall + max(0, Int(draw.rounded())))
+    }
+
+    /// How much of a young player's remaining runway his current standing
+    /// justifies. A rookie already starting is a player his club believes in; a
+    /// camp body at the bottom of the chart is not, and the reference's
+    /// bust/plateau shares (§2: ~25 % bust, ~40 % plateau) are the outcome those
+    /// two facts have to produce.
+    static func tierEarnedUpside(depthIndex: Int) -> Double {
+        switch depthIndex {
+        case 0:  return 1.00
+        case 1:  return 0.70
+        default: return 0.45
+        }
     }
 
     /// Rating level of a generated 21-year-old relative to the depth tier's
     /// nominal ratings (plan §5 stage 6).
-    static let rookieAgeLevel: Double = -6.0
+    ///
+    /// **P1 pyramid calibration (2026-07-30): −6 → −8, and `primeAgeLevel`
+    /// 11 → 6.** Both halves of this curve were anchored on a league the engine
+    /// no longer sustains. The old +11 prime level was fitted against the
+    /// development loop's THEN-measured veteran plateaus (yp4-7 ≈ 78.6,
+    /// yp8+ ≈ 82); with `PlayerDevelopmentEngine.developmentCeiling` no longer
+    /// handing every player a ceiling above his own potential, the same loop now
+    /// plateaus 4-5 points lower, so the generator's prime level follows it down.
+    /// See `targetQualityPyramid` for the measured landing point.
+    static let rookieAgeLevel: Double = -8.0
     /// Rating level of a generated player inside his position's peak window.
-    static let primeAgeLevel: Double = 11.0
+    static let primeAgeLevel: Double = 6.0
     /// Give-back per year once a generated player is past his peak window.
     static let pastPeakAgeDecay: Double = 1.2
+
+    // MARK: - Target Quality Pyramid (the calibration contract)
+
+    /// **What this generator is calibrated to produce, and why those numbers.**
+    ///
+    /// `docs/DEVELOPMENT_NFL_REFERENCE.md` §8 states the league's quality
+    /// pyramid as ABSOLUTE shares of the ~1 700 rostered players:
+    ///
+    /// | band | §8 target | shipped before this wave | this generator |
+    /// |---|---|---|---|
+    /// | 90+ ("blue chip", 25-35 players) | 1-2 % | **3.3 %** | 1.80 % (30.5) |
+    /// | 80+ | 12-16 % | **37.4 %** | 17.10 % |
+    /// | 75+ (starter-quality) | 30-40 % | **62.1 %** | 35.06 % |
+    /// | sub-65 (depth / special teams) | ~25 % | **9.4 %** | 23.43 % |
+    /// | league mean (derived, not prescribed) | ~71-72 | **76.5** | 71.00 |
+    /// | league sd | — | 8.1 | 8.88 |
+    /// | rating range | — | 52…93 | 40…97 |
+    /// | depth-tier means (starter/backup/depth) | — | 83.5 / 76.0 / 69.8 | 77.3 / 70.9 / 64.9 |
+    ///
+    /// The old league was not merely too high, it was **too narrow**: every band
+    /// missed in the direction of "everybody is a starter". The cause is visible
+    /// in the arithmetic. A player's rating was
+    /// `tierBase + veteranLevelShift + ageLevelShift + noise`, and the noise term
+    /// — the only thing separating two 27-year-old starters at the same position
+    /// — has a standard deviation of just **1.85 OVR** (it is the average of four
+    /// uniforms plus two averaged Gaussian blocks, all weighted down). So the
+    /// entire spread of the league was three depth tiers times one age curve:
+    /// a lattice, not a pyramid, and a lattice cannot have a rare top or a thick
+    /// floor.
+    ///
+    /// The fix is therefore not only a level cut. It adds the missing dimension —
+    /// `talentLevelShift`, a per-player quality draw — and lowers and widens the
+    /// tier ranges around it.
+    ///
+    /// **Every number above is measured twice, on purpose.**
+    /// `cd tools/balance-harness && ./run.sh leaguegen` drives THIS code (the
+    /// rating path is awk-sliced verbatim into the harness) over 400 leagues and
+    /// asserts the bands; `tools/league-data/make_templates.py` carries an
+    /// independent Python mirror of the same math (`reference_overall`), because
+    /// the fixed-2026 template league is calibrated onto that mirror. The
+    /// `leaguegen` scenario pins the two against each other — they agree to 0.00
+    /// on the mean and ≤ 0.26 pp on every share — so a mirror that silently drifts
+    /// from this file cannot take both league sources wrong together.
+    ///
+    /// The mean lands where the DEVELOPMENT stack's own 30-season equilibrium
+    /// lands (career harness: 71.4), which is the point of matching them — drift
+    /// is by definition the distance between where the generator starts and where
+    /// the engine settles.
+    enum targetQualityPyramid {
+        static let mean = 71.00
+        static let sd = 8.88
+        static let share90Plus = 1.80
+        static let share80Plus = 17.10
+        static let share75Plus = 35.06
+        static let shareSub65 = 23.43
+    }
+
+    /// Per-player quality spread inside a depth tier — **the pyramid's missing
+    /// dimension** (see `targetQualityPyramid`).
+    ///
+    /// Two starting left tackles are not the same player. One is a perennial
+    /// All-Pro and one is the reason his club spends a first-round pick on the
+    /// position; the generator had no way to say so, because a tier and an age
+    /// determined a rating to within ±1.85. This is that draw: a level shift in
+    /// OVR points applied to all three rating components at once, so it moves
+    /// `overall` about 1:1.
+    ///
+    /// It is a **split normal** — a wider upper half than lower half — for the
+    /// starter tier, because that is the shape §8 describes and a symmetric draw
+    /// cannot produce it. A symmetric σ big enough to put 1-2 % of the league
+    /// past 90 also puts far too many in the 80-85 shoulder (measured: σ 6.0
+    /// symmetric gives 90+ 1.45 % but 80+ 16.6 %, against a 12-16 band). The
+    /// asymmetry buys the rare top without the fat shoulder: a small number of
+    /// genuine stars, a normal spread of ordinary starters.
+    ///
+    /// Backups and depth get a symmetric draw: there is no "star" tail among
+    /// players who are not starting, and the wide lower half is exactly the
+    /// sub-65 floor §8 asks for (23 % of this generator's league, against 9.4 %
+    /// before).
+    ///
+    /// Note that a split normal has a non-zero mean, `√(2/π)·(σ_up − σ_down)` ≈
+    /// +2.4 OVR for the starter tier, so it lifts as well as spreads; the tier
+    /// ranges below are set with that lift already in them.
+    static func talentLevelShift(depthIndex: Int) -> Double {
+        var rng = SystemRandomNumberGenerator()
+        return talentLevelShift(depthIndex: depthIndex, using: &rng)
+    }
+
+    /// Seeded variant, so the template pipeline and the random league execute
+    /// identical arithmetic.
+    static func talentLevelShift<G: RandomNumberGenerator>(
+        depthIndex: Int, using generator: inout G
+    ) -> Double {
+        let (down, up): (Double, Double)
+        switch depthIndex {
+        case 0:  (down, up) = (4.5, 7.5)   // starters: rare stars, real busts
+        case 1:  (down, up) = (4.5, 4.5)   // backups
+        default: (down, up) = (5.0, 5.0)   // depth / special teams
+        }
+        // Truncated at ±2.6σ. An untruncated draw reaches −5σ often enough to
+        // matter: measured over a 400-league Monte-Carlo it put the league's
+        // worst player at **OVR 33**, which is not a rostered NFL body at all.
+        // Clipping costs nothing at the top (the 90+ share and the league mean
+        // are unchanged to two decimals) and moves the floor to 40.
+        let z = PositionPhysicalProfile.truncatedGaussian(
+            mean: 0, sd: 1, limit: talentSpreadLimit, using: &generator
+        )
+        return z * (z >= 0 ? up : down)
+    }
+
+    /// Truncation on the talent draw, in standard deviations. See
+    /// `talentLevelShift`.
+    static let talentSpreadLimit: Double = 2.6
 
     /// Age-shaped rating level, so that **the league the game hands you is a
     /// league this engine sustains** (plan §5 stage 6).
@@ -917,8 +1118,9 @@ enum LeagueGenerator {
         player.competitiveness = competitivenessValue(
             archetype: personality.archetype, mental: mentalAttrs
         )
+        // The named starting QB is depth index 0 by construction.
         player.truePotential = veteranPotential(
-            overall: player.overall, age: age, position: .QB
+            overall: player.overall, age: age, position: .QB, depthIndex: 0
         )
         player.draftTruePotential = player.truePotential
         return player
@@ -1628,13 +1830,29 @@ enum LeagueGenerator {
     }
 
     /// Position-attribute range based on depth tier.
-    /// Starters (0): 75-95, Backups (1): 60-80, Deep depth (2+): 50-70 —
-    /// shifted by `ageLevelShift` at the draw site.
+    /// Starters (0): 66-88, Backups (1): 57-79, Deep depth (2+): 47-69 —
+    /// shifted by `ageLevelShift` + `talentLevelShift` at the draw site.
+    ///
+    /// **P1 pyramid calibration (2026-07-30)**: was 75-95 / 60-80 / 50-70. Two
+    /// separate problems, both visible in `targetQualityPyramid`'s table:
+    ///
+    ///  * **Level.** These are 50 % of `overall`, so their midpoints set the
+    ///    league's level more than anything else does. The old midpoints
+    ///    (85/70/60) plus a +11 prime age level put the average STARTER at 83.5
+    ///    in a league §8 wants to average ~72.
+    ///  * **A truncated top.** 95 + an 11-point prime shift is 106, clamped to
+    ///    99, so a prime-age starter drew position skills from a range whose top
+    ///    half did not exist. The league's maximum rating was 93 — the generator
+    ///    could not make a 96-OVR superstar at all, which is the other half of
+    ///    why the 90+ band was simultaneously too crowded (3.3 %) and too flat.
+    ///    Lowering the range so `hi + shift` lands near 99 for a genuine star,
+    ///    rather than for every starter, restores the tail: the range is now
+    ///    36..98 instead of 53..93.
     static func positionAttributeRange(forDepth depthIndex: Int) -> ClosedRange<Int> {
         switch depthIndex {
-        case 0:  return 75...95
-        case 1:  return 60...80
-        default: return 50...70
+        case 0:  return 66...88
+        case 1:  return 57...79
+        default: return 47...69
         }
     }
 

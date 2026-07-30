@@ -16,6 +16,25 @@ import SwiftData
 @MainActor
 enum CareerArcEngine {
 
+    /// The season-end OVR that counts as "he started for us that year".
+    ///
+    /// **Level-relative — re-derived in the P1 quality-pyramid wave (was 75).**
+    /// This is a stand-in for a ROLE, and the league's absolute level moved: the
+    /// generator now produces a 71.0-mean league and the development stack
+    /// settles at 71.4 (was 76.5 / 73.6). A 32-team league fields 704 starters
+    /// out of ~1 696 rostered players, so the role boundary is the 41.5th
+    /// percentile from the top, which in the calibrated league falls at OVR 72.4.
+    /// 73 is the nearest integer above it, and it is the same constant the
+    /// balance harness's §6 hit-rate proxy uses (`crStarterOverall`) — deliberately,
+    /// so a True Grade and a measured hit rate mean the same thing.
+    ///
+    /// Left unchanged around it: the `peakOVR` ladder in `computeTrueGrade`
+    /// (92 / 88 / 85 / 78 / 70). Those bars became MORE selective under the new
+    /// distribution, which is the direction this wave wants — an 85+ peak went
+    /// from describing 19.3 % of the league to 6.6 %, so an "A" grade now means
+    /// something. See the wave report for the full threshold sweep.
+    static let starterCaliberOverall = 73
+
     // MARK: - Public entry point
 
     /// Walks every drafted player and refreshes their `CareerArcState`
@@ -100,11 +119,13 @@ enum CareerArcEngine {
         // #33: `gamesPlayed` is now a real per-season appearance count, so a
         // healthy player accrues ~17 games whether he starts or rides the bench.
         // A "start season" therefore requires BOTH availability (8+ games, ~half
-        // the season) AND starter-caliber play that year (season-end OVR ≥ 75) —
-        // otherwise every healthy backup's roster season would count as a start
-        // and inflate his True Grade. The OVR gate keeps the heuristic meaningful
-        // now that the appearance signal exists.
-        state.startSeasons = history.filter { $0.gamesPlayed >= 8 && $0.overallAtEndOfSeason >= 75 }.count
+        // the season) AND starter-caliber play that year (season-end OVR ≥
+        // `starterCaliberOverall`) — otherwise every healthy backup's roster
+        // season would count as a start and inflate his True Grade. The OVR gate
+        // keeps the heuristic meaningful now that the appearance signal exists.
+        state.startSeasons = history.filter {
+            $0.gamesPlayed >= 8 && $0.overallAtEndOfSeason >= starterCaliberOverall
+        }.count
 
         // Bust event: cut by team before yearsPro 4 (rookie deal usually 4y)
         let isCut = (player.teamID == nil) && player.yearsPro <= 4

@@ -292,6 +292,14 @@ final class Team {
         self.id = id
         self.players = players
     }
+
+    /// Mirror of the shipped `Team.currentRoster()`. The shipped version fetches
+    /// `Player` rows by `teamID` and documents its own fallback: "falls back to
+    /// `players` only when the team has no model context: a league that was
+    /// generated in memory and never inserted (the DEBUG balance harness)."
+    /// That fallback IS this harness's situation, so returning `players` here is
+    /// the shipped behaviour, not an approximation.
+    func currentRoster() -> [Player] { players }
 }
 
 // MARK: - Position-versatility stubs (UNREACHABLE in this harness)

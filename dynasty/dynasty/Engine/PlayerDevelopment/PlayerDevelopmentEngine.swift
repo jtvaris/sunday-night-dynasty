@@ -8,26 +8,66 @@ enum PlayerDevelopmentEngine {
 
     // MARK: - Development Ceiling (shared formula)
 
-    /// Single source of truth for the attribute-development ceiling scaled
-    /// from `truePotential` (1-99): `truePotential * 0.65 + 35`.
-    /// A truePotential of 99 allows attributes up to 99; potential of 50
-    /// caps around 67.
+    /// Single source of truth for the attribute-development ceiling.
+    /// **`truePotential` IS the ceiling.**
     ///
     /// Every development path (offseason growth here, the R26 weekly
     /// training-focus tick, and the camp `TrainingPlanEngine`) MUST use this
     /// helper so the formula cannot drift between copies.
-    /// **Phase-2 recalibration (plan §5 stage 5).** The slope was 0.65 with a
-    /// 35 intercept. Measured over the career harness that made the ceiling
-    /// spread between a first-round and a seventh-round prospect ~13 OVR, which
-    /// — with rookie entry levels now converged on a common ~59 (see
-    /// `DraftEngine.rookieScaleFactors`) — put the round-1 vs round-3 hit-rate
-    /// gap at 41 pp where `DRAFT_NFL_REFERENCE.md` §6 wants 27. Flattening the
-    /// slope around the same pivot (`0.60·pot + 39` crosses `0.65·pot + 35` at
-    /// pot 80, the league's typical intake ceiling) pulls the elite ceiling in
-    /// by ~0.7 and lifts the day-3 ceiling by ~0.3, without moving the middle of
-    /// the league at all.
+    ///
+    /// **P1 pyramid calibration (2026-07-30).** This used to be an affine map,
+    /// `0.60·pot + 39` (and before that `0.65·pot + 35`). Both were *gifts*
+    /// handed out in inverse proportion to talent: the handout is
+    /// `39 − 0.40·pot`, i.e. **+11 OVR of headroom for a 70-potential depth
+    /// player, +7 for an 80, +1.6 for a 93.5-potential first-rounder and −0.6
+    /// for a 99.** That inversion is the measured root cause of two
+    /// `DEVELOPMENT_NFL_REFERENCE.md` §8 misses at once:
+    ///
+    ///   • **the vanishing bottom.** A 74-potential UDFA carried an 83.7
+    ///     ceiling, so the catch-up term pulled him to ~68 in one offseason and
+    ///     into the low 70s by year 3. §8 wants ~25 % of the league under 65;
+    ///     the career harness measured **9.7 %**, essentially just the rookie
+    ///     class, because no plateauing depth player was allowed to stay a
+    ///     depth player.
+    ///   • **the ballooning top.** Every generated veteran got a ceiling 6-9
+    ///     points above his own rating (`LeagueGenerator.veteranPotential`
+    ///     guarantees `pot ≥ overall`, then this added the handout on top), so
+    ///     the whole starting league climbed: the 3-season smoke measured the
+    ///     90+ share going 3.5 % → 9.5 % against a §8 band of 1-2 %.
+    ///
+    /// Identity is the calibration: a ceiling is what a player can *become*,
+    /// which is the definition of `truePotential`, and it keeps the ceiling
+    /// ordering identical to the potential ordering the draft already produces.
+    /// It lowers a day-3 ceiling by ~9 and an elite ceiling by ~1.6, which is
+    /// exactly the reshaping §8 asks for — thicker floor, rarer 90s — rather
+    /// than a uniform level cut.
+    ///
+    /// Note the asymmetry with the old formula's *stated* purpose (flattening
+    /// the R1-vs-R3 hit-rate gap): identity widens the ceiling spread between
+    /// rounds from ~11 OVR to ~19. The offsetting move is in the harness's one
+    /// declared fitted parameter, `crScoutErrorRange` — how wrong front offices
+    /// are about a prospect — not in a formula that pays low-potential players
+    /// to become starters.
+    ///
+    /// **Above `blueChipPivot` the identity bends.** Identity alone left the
+    /// blue-chip tail too fat (career harness measured 90+ at 4.9 % — 83 players
+    /// in a 1 696-man league — against §8's 1-2 % / 25-35), because the draft's
+    /// intake potential runs to 93.5 mean in round 1 and the realization model
+    /// lets a healthy, driven, starting first-rounder close most of that gap.
+    /// The last stretch of a rating is the hardest — going 84 → 90 is a
+    /// different problem from 74 → 80 — so above the pivot only
+    /// `blueChipRealizable` of the remaining potential is reachable. This is the
+    /// same shape `PositionPhysicalProfile.softCeiling` already applies to
+    /// physical priors, and it touches nothing below the pivot: the day-3 and
+    /// mid-round ceilings, which set the floor and the middle of the pyramid,
+    /// stay exactly at potential.
+    static let blueChipPivot = 84.0
+    static let blueChipRealizable = 0.72
+
     static func developmentCeiling(for player: Player) -> Int {
-        Int(Double(player.truePotential) * 0.60 + 39.0)
+        let pot = Double(player.truePotential)
+        guard pot > blueChipPivot else { return player.truePotential }
+        return Int((blueChipPivot + (pot - blueChipPivot) * blueChipRealizable).rounded())
     }
 
     // MARK: - 1. Offseason Development

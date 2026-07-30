@@ -5,7 +5,7 @@
 > never enter an app target's resources. `league_2026_dev.json` is DEBUG-only;
 > only `league_2026_publish.json` ships in a Release build.
 
-- built: `2026-07-30T11:19:08Z` (the templates themselves are byte-identical on every rebuild — their `generated` stamp is the source snapshot's, `2026-07-29T13:59:05Z`)
+- built: `2026-07-30T13:50:56Z` (the templates themselves are byte-identical on every rebuild — their `generated` stamp is the source snapshot's, `2026-07-29T13:59:05Z`)
 - globalSeed: `20260729` (deterministic — re-running reproduces both files)
 - source: `tools/league-data/raw/league_raw_2026.json` (schemaVersion 2, snapshot 2026-02-28)
 - outputs: `out/league_2026_dev.json` (devProfile), `out/league_2026_publish.json` (publishProfile)
@@ -22,9 +22,9 @@
 | 5 | `publish-no-same-initials` | PASS | no publish player shares initials with his real counterpart at the same team + position |
 | 6 | `publish-bio-jitter>=3-fields` | PASS | every publish player carries >= 3 transformed bio fields (min 4, mean 6.36) |
 | 7 | `publish-ovr-arcs-only` | PASS | publish carries OVR arcs only — statLines null and no gp/gs on any arc row |
-| 8 | `calibration-bands` | PASS | league mean 76.45 (band (75.4, 77.4)), sd 8.22 (band (7.0, 9.4)), team spread 5.01 (band (4.0, 6.0)), Spearman(team OVR, 2025 wins) 0.95 (min 0.55) |
-| 9 | `tier-structure` | PASS | depth-index means vs the random generator: idx0 84.6 (ref 83.5, +1.11, n=589), idx1 76.7 (ref 76.0, +0.73, n=463), idx2 69.9 (ref 69.8, +0.17, n=755); by role backup 71.9 (n=666), depth 66.4 (n=122), rotation 71.9 (n=209), starter 82.8 (n=810); league max 96, 90+ count 78 |
-| 10 | `depth-order-from-ratings` | PASS | depth rank is the rating order on all 32 rosters; 27 QA depth suspects resolved (0 inversions left); CIN QB: OK — QB1 85 OVR vs QB3 76 OVR; WAS QB: OK — QB1 88 OVR vs QB2 81 OVR |
+| 8 | `calibration-bands` | PASS | league mean 71.01 (band (70.0, 72.0)), sd 8.95 (band (7.6, 10.0)), team spread 4.90 (band (4.0, 6.0)), Spearman(team OVR, 2025 wins) 0.94 (min 0.55) |
+| 9 | `tier-structure` | PASS | depth-index means vs the random generator: idx0 79.8 (ref 78.5, +1.38, n=589), idx1 71.0 (ref 70.7, +0.33, n=463), idx2 64.1 (ref 63.5, +0.64, n=755); by role backup 65.9 (n=666), depth 60.2 (n=122), rotation 66.3 (n=209), starter 78.0 (n=810); league max 96, 90+ count 39 |
+| 10 | `depth-order-from-ratings` | PASS | depth rank is the rating order on all 32 rosters; 27 QA depth suspects resolved (0 inversions left); CIN QB: OK — QB1 78 OVR vs QB3 71 OVR; WAS QB: OK — QB1 88 OVR vs QB2 76 OVR |
 | 11 | `jersey-uniqueness` | PASS | no duplicate jersey number on any roster in either profile (the 2 raw collisions were reassigned) |
 | 12 | `publish-pick-notes-clean` | PASS | every 2026 pick trade note is reduced to the ownership chain ('from X via Y'); no player names survive |
 | 13 | `publish-draft-slot-fuzzed` | PASS | 1338 drafted players; 0 keep their real overall pick (round preserved, slot moved within round) |
@@ -33,7 +33,7 @@
 | 16 | `publish-name-recombination>=3` | PASS | all 239 x 385 = 92015 recombinations of the shipped first/last tokens are Levenshtein >= 3 from every real name — the importer generates 417 support-staff coaches by drawing the two halves independently, and those names never reach a bundle scan |
 | 17 | `publish-coach-tenure-moved` | PASS | all 95 publish coaches with a real `sinceYear` moved by exactly ±1 (spec §4); the direction is picked among the moves that survive the [1990, leagueYear] clamp, so a 2026 hire cannot be clamped back onto his real tenure |
 | 18 | `age-profile-in-drift-band` | PASS | mean age 26.7 (band 25.0-28.0), 33+ share 5.4% (ceiling 8.0%), roster sizes [55, 56, 57]. Reference random league: mean 25.8 / 3.2% at 33+ over exactly 53 men. The template is OLDER on purpose (real pyramid, real 53+IR rosters) and its first offseason retires ~86 players against the random league's ~46 — an ACCEPTED, recorded difference, not a calibration target; see TRANSFORM_QA §7 |
-| 19 | `face-preassignment` | PASS | dev 1902 unique faces (1807p + 95c), band 82.2%, build 88.6%, exact bucket 73.9%, 135 reserve; publish 1902 unique faces (1807p + 95c), band 84.3%, build 88.6%, exact bucket 76.1%, 135 reserve; 35 female coach faces in the pool (ids 2560+), 0 baked; buckets cross-checked against 3584 generated faces; pool 2048 generated + 512 reserve + 1024 extended |
+| 19 | `face-preassignment` | PASS | dev 1902 unique faces (1807p + 95c), band 82.1%, build 88.5%, exact bucket 74.1%, 135 reserve; publish 1902 unique faces (1807p + 95c), band 84.5%, build 88.6%, exact bucket 76.2%, 135 reserve; 35 female coach faces in the pool (ids 2560+), 0 baked; buckets cross-checked against 3584 generated faces; pool 2048 generated + 512 reserve + 1024 extended |
 
 **Verdict: ALL GATES PASS.**
 
@@ -43,47 +43,48 @@ Binding decision: the template league must sit where the *random* `LeagueGenerat
 
 Method: the tool Monte-Carlos the Swift generator (140 reps) over *this* league's actual composition — same positions, same per-team depth counts, same real ages — and then rank-maps each position's players onto that position's reference quantile curve. The level and shape therefore match by construction; only the ORDERING inside a position comes from the production model.
 
-- league mean OVR **76.45** (reference generator 76.46, band (75.4, 77.4))
-- league sd **8.22** (reference 8.23, band (7.0, 9.4))
-- team mean spread **5.01** OVR (target 5.0, band (4.0, 6.0))
-- OVR 90+: 78 players; max 96; min 55
+- league mean OVR **71.01** (reference generator 71.01, band (70.0, 72.0))
+- league sd **8.95** (reference generator 8.85, band (7.6, 10.0))
+- reference generator quality pyramid (DEVELOPMENT_NFL_REFERENCE §8): 90+ 1.84% [1-2] · 80+ 17.07% [12-16] · 75+ 34.76% [30-40] · sub-65 23.34% [~25] · range 40-97
+- team mean spread **4.90** OVR (target 5.0, band (4.0, 6.0))
+- OVR 90+: 39 players; max 96; min 45
 
 ### Team strength vs real 2025
 
 | Team | mean OVR | 2025 record | playoff finish |
 |---|---:|---|---|
-| SEA | 78.8 | 14-3 | Won Super Bowl LX |
-| CHI | 78.5 | 11-6 | Lost Divisional round |
-| NE | 78.2 | 14-3 | Lost Super Bowl LX |
-| DEN | 78.0 | 14-3 | Lost Conference Championship |
-| HOU | 78.0 | 12-5 | Lost Divisional round |
-| LA | 77.8 | 12-5 | Lost Conference Championship |
-| BUF | 77.6 | 12-5 | Lost Divisional round |
-| JAX | 77.6 | 13-4 | Lost Wild Card round |
-| PIT | 77.5 | 10-7 | Lost Wild Card round |
-| PHI | 77.4 | 11-6 | Lost Wild Card round |
-| DET | 77.2 | 9-8 | — |
-| SF | 77.0 | 12-5 | Lost Divisional round |
-| IND | 76.9 | 8-9 | — |
-| LAC | 76.9 | 11-6 | Lost Wild Card round |
-| TB | 76.9 | 8-9 | — |
-| DAL | 76.7 | 7-9-1 | — |
-| ATL | 76.7 | 8-9 | — |
-| MIN | 76.6 | 9-8 | — |
-| BAL | 76.5 | 8-9 | — |
-| GB | 76.4 | 9-7-1 | Lost Wild Card round |
-| CAR | 76.2 | 8-9 | Lost Wild Card round |
-| MIA | 75.9 | 7-10 | — |
-| CIN | 75.9 | 6-11 | — |
-| NO | 75.4 | 6-11 | — |
-| KC | 75.2 | 6-11 | — |
-| NYG | 74.9 | 4-13 | — |
-| CLE | 74.9 | 5-12 | — |
-| WAS | 74.7 | 5-12 | — |
-| TEN | 74.5 | 3-14 | — |
-| LV | 74.1 | 3-14 | — |
-| ARI | 74.1 | 3-14 | — |
-| NYJ | 73.8 | 3-14 | — |
+| SEA | 73.3 | 14-3 | Won Super Bowl LX |
+| CHI | 72.9 | 11-6 | Lost Divisional round |
+| NE | 72.7 | 14-3 | Lost Super Bowl LX |
+| HOU | 72.6 | 12-5 | Lost Divisional round |
+| DEN | 72.6 | 14-3 | Lost Conference Championship |
+| LA | 72.4 | 12-5 | Lost Conference Championship |
+| BUF | 72.1 | 12-5 | Lost Divisional round |
+| PIT | 72.1 | 10-7 | Lost Wild Card round |
+| JAX | 72.0 | 13-4 | Lost Wild Card round |
+| PHI | 71.8 | 11-6 | Lost Wild Card round |
+| DET | 71.8 | 9-8 | — |
+| SF | 71.6 | 12-5 | Lost Divisional round |
+| IND | 71.5 | 8-9 | — |
+| LAC | 71.4 | 11-6 | Lost Wild Card round |
+| TB | 71.4 | 8-9 | — |
+| DAL | 71.3 | 7-9-1 | — |
+| ATL | 71.3 | 8-9 | — |
+| MIN | 71.1 | 9-8 | — |
+| BAL | 71.0 | 8-9 | — |
+| GB | 71.0 | 9-7-1 | Lost Wild Card round |
+| CAR | 70.8 | 8-9 | Lost Wild Card round |
+| MIA | 70.4 | 7-10 | — |
+| CIN | 70.4 | 6-11 | — |
+| NO | 70.0 | 6-11 | — |
+| KC | 69.8 | 6-11 | — |
+| NYG | 69.5 | 4-13 | — |
+| CLE | 69.4 | 5-12 | — |
+| WAS | 69.3 | 5-12 | — |
+| TEN | 69.0 | 3-14 | — |
+| LV | 68.7 | 3-14 | — |
+| ARI | 68.7 | 3-14 | — |
+| NYJ | 68.4 | 3-14 | — |
 
 ## 3. Ratings derivation (position heuristics)
 
@@ -152,26 +153,26 @@ Read this table without scrolling to the answer key. Per `ANONYMIZATION_SPEC.md`
 
 | # | Name | Team | Pos | # | Age | Exp | College | Ht/Wt | Draft | OVR | Pot |
 |---:|---|---|---|---:|---:|---:|---|---|---|---:|---:|
-| 1 | Torrance Montague | HOU | DE | 78 | 25 | 3 | Arizona | 6-3 / 236 | 2023 R1 #11 | 84 | 93 |
-| 2 | Jarell Huddleston | LV | WR | 11 | 32 | 11 | Michigan State | 5-11 / 178 | 2015 R3 #65 | 77 | 77 |
-| 3 | Teagan Elmendorf | WAS | DE | 63 | 31 | 8 | Texas Tech | 6-4 / 294 | 2018 R4 #106 | 75 | 75 |
-| 4 | Reece Waldgrave | PHI | LT | 79 | 27 | 7 | Grambling State | 6-9 / 373 | 2018 R7 #226 | 88 | 92 |
-| 5 | Osric Sidebottom | PHI | DE | 61 | 25 | 3 | Georgia | 6-3 / 285 | 2023 R7 #243 | 76 | 85 |
-| 6 | Cormac Dowdell | MIA | RB | 36 | 21 | 1 | Penn State | 6-2 / 220 | UDFA | 56 | 73 |
-| 7 | Deshun Gantry | TEN | DE | 98 | 26 | 6 | Rutgers | 6-4 / 283 | 2020 R4 #138 | 71 | 74 |
-| 8 | Jamari Tunstall | JAX | RB | 34 | 28 | 5 | Auburn | 5-10 / 195 | 2021 R1 #26 | 90 | 90 |
-| 9 | Kai Thistlewood | DAL | TE | 43 | 28 | 3 | Rutgers | 6-4 / 256 | 2023 R2 #52 | 77 | 78 |
-| 10 | Quade Draycott | LAC | FB | 47 | 26 | 3 | Colorado State | 6-3 / 310 | 2023 R6 #199 | 88 | 96 |
-| 11 | Sebastien Waterhouse | ARI | CB | 32 | 26 | 5 | Middle Tennessee State | 6-0 / 184 | 2021 R4 #116 | 68 | 76 |
-| 12 | Dallin Estabrook | CLE | WR | 80 | 24 | 1 | Penn State | 5-8 / 165 | UDFA | 58 | 66 |
-| 13 | Ramiro Carrington | ARI | QB | 10 | 25 | 2 | Washington State | 6-3 / 223 | UDFA | 63 | 69 |
-| 14 | Killian Wendover | GB | OLB | 58 | 27 | 5 | Iowa State | 6-4 / 241 | 2021 R6 #193 | 72 | 75 |
-| 15 | Kester Derringer | NYJ | DT | 98 | 25 | 3 | Boston College | 6-3 / 347 | 2023 R1 #25 | 66 | 73 |
-| 16 | Carmine Woolridge | NO | MLB | 47 | 27 | 5 | Florida State | 6-3 / 232 | 2021 R2 #53 | 83 | 95 |
-| 17 | Phineas Wimberly | LAC | FS | 39 | 28 | 5 | Virginia | 5-11 / 195 | 2021 R3 #98 | 85 | 86 |
-| 18 | Orion Reinholt | SF | MLB | 57 | 34 | 11 | Georgia | 6-0 / 225 | 2015 R2 #48 | 80 | 83 |
-| 19 | Davion Ragsdale | NYJ | RB | 36 | 25 | 4 | Arizona | 6-0 / 227 | 2022 R2 #37 | 89 | 99 |
-| 20 | Verner Studebaker | SEA | RB | 24 | 27 | 4 | N.C. State | 6-1 / 194 | 2022 R3 #76 | 74 | 74 |
+| 1 | Torrance Montague | HOU | DE | 78 | 25 | 3 | Arizona | 6-3 / 236 | 2023 R1 #11 | 80 | 82 |
+| 2 | Jarell Huddleston | LV | WR | 11 | 32 | 11 | Michigan State | 5-11 / 178 | 2015 R3 #65 | 72 | 72 |
+| 3 | Teagan Elmendorf | WAS | DE | 63 | 31 | 8 | Texas Tech | 6-4 / 294 | 2018 R4 #106 | 69 | 69 |
+| 4 | Reece Waldgrave | PHI | LT | 79 | 27 | 7 | Grambling State | 6-9 / 373 | 2018 R7 #226 | 85 | 88 |
+| 5 | Osric Sidebottom | PHI | DE | 61 | 25 | 3 | Georgia | 6-3 / 285 | 2023 R7 #243 | 71 | 73 |
+| 6 | Cormac Dowdell | MIA | RB | 36 | 21 | 1 | Penn State | 6-2 / 220 | UDFA | 48 | 50 |
+| 7 | Deshun Gantry | TEN | DE | 98 | 26 | 6 | Rutgers | 6-4 / 283 | 2020 R4 #138 | 65 | 66 |
+| 8 | Jamari Tunstall | JAX | RB | 34 | 28 | 5 | Auburn | 5-10 / 195 | 2021 R1 #26 | 85 | 85 |
+| 9 | Kai Thistlewood | DAL | TE | 43 | 28 | 3 | Rutgers | 6-4 / 256 | 2023 R2 #52 | 72 | 73 |
+| 10 | Quade Draycott | LAC | FB | 47 | 26 | 3 | Colorado State | 6-3 / 310 | 2023 R6 #199 | 83 | 85 |
+| 11 | Sebastien Waterhouse | ARI | CB | 32 | 26 | 5 | Middle Tennessee State | 6-0 / 184 | 2021 R4 #116 | 63 | 64 |
+| 12 | Dallin Estabrook | CLE | WR | 80 | 24 | 1 | Penn State | 5-8 / 165 | UDFA | 52 | 53 |
+| 13 | Ramiro Carrington | ARI | QB | 10 | 25 | 2 | Washington State | 6-3 / 223 | UDFA | 57 | 59 |
+| 14 | Killian Wendover | GB | OLB | 58 | 27 | 5 | Iowa State | 6-4 / 241 | 2021 R6 #193 | 65 | 66 |
+| 15 | Kester Derringer | NYJ | DT | 98 | 25 | 3 | Boston College | 6-3 / 347 | 2023 R1 #25 | 61 | 62 |
+| 16 | Carmine Woolridge | NO | MLB | 47 | 27 | 5 | Florida State | 6-3 / 232 | 2021 R2 #53 | 77 | 85 |
+| 17 | Phineas Wimberly | LAC | FS | 39 | 28 | 5 | Virginia | 5-11 / 195 | 2021 R3 #98 | 79 | 80 |
+| 18 | Orion Reinholt | SF | MLB | 57 | 34 | 11 | Georgia | 6-0 / 225 | 2015 R2 #48 | 74 | 76 |
+| 19 | Davion Ragsdale | NYJ | RB | 36 | 25 | 4 | Arizona | 6-0 / 227 | 2022 R2 #37 | 83 | 86 |
+| 20 | Verner Studebaker | SEA | RB | 24 | 27 | 4 | N.C. State | 6-1 / 194 | 2022 R3 #76 | 67 | 67 |
 
 ### Answer key — real counterparts (DO NOT BUNDLE)
 
@@ -236,7 +237,7 @@ The last 1024 ids (`face_02560`-`face_03583`) are the **female extension range**
 | coach | 50-68 | 206 | +165 | 48 |
 
 - assigned: **1902 unique faces** (1807 players + 95 coaches), zero shared, zero role mismatches (no player wears a coach-age face)
-- bucket quality: age band exact on **84.3 %**, build exact on **88.6 %**, both on 76.1 %. The rest take the nearest neighbouring bucket — build is relaxed BEFORE age, exactly as `FaceLibrary.pickLocked` does at runtime.
+- bucket quality: age band exact on **84.5 %**, build exact on **88.6 %**, both on 76.2 %. The rest take the nearest neighbouring bucket — build is relaxed BEFORE age, exactly as `FaceLibrary.pickLocked` does at runtime.
 - reserve range: **135 people** — the whole 122-man `depth` tier plus the 13 lowest-rated backups. Allocation runs starters → rotation → backups → depth and takes the lowest free id first, so the ids whose pictures may not exist yet land on the least visible people, and the ids generated first land on the most visible ones.
 - left for the career: **281** generated-range and 1401 faces at `face_02048`+ (reserve plus the female extension range) for draft classes, UDFAs, hired coordinators and the 417 support-staff coaches the importer creates.
 
@@ -271,8 +272,8 @@ One coupling to know about: a template coach has no age in the file — `LeagueG
 - QA-suspect TB RB: Bucky Irving > Rachaad White (+1.84)
 - QA-suspect WAS WR: Treylon Burks > Chris Moore (+1.92)
 - QB starter lock: 2/32 rooms needed a lift so the snapshot's QB1 tops his room (QA_REPORT section 4.1)
-- team-spread fixed point: max |team mean error| = 0.170 OVR
-- blueprint anchor 76.44 OVR; global level shift +0.59 applied to match the random LeagueGenerator league mean
+- team-spread fixed point: max |team mean error| = 0.175 OVR
+- blueprint anchor 71.01 OVR; global level shift +0.60 applied to match the random LeagueGenerator league mean
 - jersey collision BUF #23: kept by the higher-rated player; Dane Jackson reassigned to #2
 - jersey collision IND #17: kept by the higher-rated player; Philip Rivers reassigned to #3
 - owners: 5 of 32 female (DET, IND, NO, SEA, TEN) — `identity.ownerGender` in BOTH profiles; the real NAME stays dev-only

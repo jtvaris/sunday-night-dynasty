@@ -16,10 +16,9 @@ Tila: vaiheet 1–4 valmiit ja kaikki portit vihreinä (draft class · kehitys-r
 - [x] **D · AI-pääkuvat: käyttäjän avatar + omistajat + kandidaattisivun kasvo — SWIFT-AALTO TEHTY 2026-07-30.** 116 HEIC + `extra_faces_manifest.json` `Resources/Faces/`-kansioon (litistyy bundlen juureen; app-nipussa nyt 3 700 heiciä). Uusi `ExtrasCatalog` (manifest-only, ei synteesiä eikä RNG-pariteettia — tarkoituksella; nil kun manifesti puuttuu). (1) Avatarvalitsin: 20 valokuvavalintaa piirroskuvien RINNALLA, kumpikin sukupuoliryhmä valokuvat ensin; `Career.avatarID` tallettaa id:n muuttumattomana ja `PersonFaceView(careerAvatarID:)` reitittää `avatar_*`-id:t `FaceImageCache`-polulle (asset-catalog-haku olisi piirtänyt tyhjää). (2) `Owner.faceID` (inline nil), deterministinen 32/96-jako owner-UUID:sta lineaarisella luotauksella (2 000 liigan verifiointi: aina 32 uniikkia, pahin tapaus 11 luotausta) + `ExtrasCatalog.backfillOwnerFaces` `CareerShellView.loadFaceLibrary`-latauksessa (omistajat luodaan kertaalleen → ei viikkopolkua, WeekAdvanceria ei koskettu). Omistaja-UI: `PersonFaceView(owner:)` (placeholder = vanha piirretty `owner_m*`) → OwnerMeeting, OwnerGoals, OwnerBudget, CareerDashboard-tile, RosterEvaluation, IntroSequence, OwnerSeasonReviewSheet. (3) `HireCoachView`-kandidaatin detaljiheaderiin `PersonFaceView(coach:)` large. (4) FaceBundleAudit tunnistaa extrasit: `extrasImages=116/116`, orphan-viesti kertoo KUMPI manifesti on vialla. **Jäljellä: silmämääräinen tarkistus laitteella** + tiivis lista huomioita alla (omistajan nimi/kuva-sukupuoliristiriita, avatargridin nimien katkeaminen 40 solulla).
 - [x] **C · Dev-moodiin oikeat nimet — TEHTY 2026-07-30.** Dev-template kantaa nyt OIKEAT pelaajat ja valmentajat (passthrough; `dev_morph` poistettu), oikeat 32 joukkueidentiteettiä (`REAL_NICKNAMES`, sama city+nickname kuin `NFLTeamData.swift`) ja oikeat omistajat (`DEV_OWNERS` → `identity.ownerName`; importer käyttää templaten nimeä jos se on, muuten `generateOwner`). Publish EI muuttunut: `league_2026_publish.json` on cmp-varmistettu tavu tavulta identtinen, publish-identiteetissä ei ole `ownerName`-kenttää lainkaan (portti 1 vahtii). Portit: make_templates 19/19 PASS, `check_bundle.sh` A–E PASS (exit 0), negatiivitesti (dev-json istutettuna .app:iin) 1906 osumaa = [B] + 1905 × [A] eli oikeat nimet paljastuvat nyt myös portista A. Huom kirjattavaksi: dev-uran support-staff-rekombinaatio tuottaa real-adjacent nimiä (dev-only, portti 16 on tarkoituksella vain publish-pinta) ja `DEV_OWNERS`-taulussa on 6 UNSURE-merkintää (CHI/GB/MIA/SEA/SF/TB) tarkistettavaksi käsin. **Jäljellä: `SIMCTL_CHILD_LEAGUE_TEMPLATE_VALIDATE=dev` uudestaan simulla** (ei ajettu — toinen työ käytti simua).
 
-**1 · P1: Laatupyramidin kalibrointiaalto** (suurin realismihyöty; tarkka mittausanalyysi alempana 2026-07-29-osiossa)
-- 90+ OVR -osuus paisuu 9,5 %:iin kaudella 3 (NFL-realismi ~1–2 % = ~25–35 blue chipiä/liiga); sub-65-täyte puuttuu. Juurisyyt: LeagueGeneratorin absoluuttitaso 76,4 vs referenssin ~72 + veteranPotential/developmentCeiling antaa 6–9 OVR catch-up-varan joka veteraanille. Kehityspino itsessään konvergoi oikein (career-harness 30 kautta → bandiin).
-- Korjaus = koordinoitu aalto: intake-taso + ceiling-slope + LeagueGenerator + template-kalibrointi + sim-kynnykset (starttiraja OVR≥65, sopimusbandit, PickGrade OVR≥75) + 18 career-asserttia + §8-smoke-bandit samassa liikkeessä. Hyöty: tähdet aidosti harvinaisia ja arvokkaita.
-- Muista myös: washout-volyymin seuranta (kausi 3: ~519 poistujaa — kytkeytyy tähän).
+**1 · ~~P1: Laatupyramidin kalibrointiaalto~~ TEHTY 2026-07-30 — odottaa 3 kauden smoke-ajoa simulla (orkestroija).** Ks. oma osio alempana ("P1 LAATUPYRAMIDIN KALIBROINTIAALTO"). Portit: `leaguegen` 10/10 · `draftclass` 32/32 · `career` **26/26** (oli 18) · `make_templates.py` 19/19 · `check_bundle.sh` exit 0 · buildi exit 0.
+- Tulos: intake 76,5 → **71,00** (90+ 3,3 % → **1,80 %** = 30,5 blue chipiä · 80+ 37,4 % → 17,1 % · 75+ 62,1 % → 35,1 % · sub65 9,4 % → **23,4 %**), kehityspinon 30 kauden tasapaino 73,6 → **71,4** samoin bandissa. `developmentCeiling` = potentiaali (ei enää lahja käänteisesti lahjakkuuteen), `veteranPotential` ansaittu (headroom 6–9 → **2,1**).
+- Jäljellä tästä aallosta: **3 kauden smoke + TVAL simulla** (odotusarvot kirjattu alempana), sekä kirjatut jatkot: ikäpyramidi 33+ 3,3 % vs §8 ≤2 % (eläköitymiskalibrointi), pelaikaosuuden binäärisyys (§7 antaa portaikon), TradeValueEngine-kynnykset (toisen agentin tiedosto).
 
 **2 · ~~PlayerSeasonHistoryn oikeat statsirivit + urasivun taulukkouudistus~~ TEHTY 2026-07-30** — typitetyt statsisarakkeet `PlayerSeasonHistory`lle (inline-default-migraatio), `SeasonStatLine` + `SeasonStatSynthesizer`, live-kausien oikea box-score-kertymä ja uusi aina auki oleva taulukko. Ks. BACKLOG 2026-07-30 -osio. Avoimet jatkot:
 - [ ] **`PlayerStatsView` (toolbarin "Stats") on yhä kuollut näkymä** — kaikki kolme välilehteä lukevat `seasonStats: [PlayerGameStats]`ia, jota mikään neljästä kutsupaikasta ei syötä. Sama koskee `PlayerDetailView`in "Season Stats" -yhteenvetoa ("No stats recorded this season" vaikka dataa on). Kytke `Player.seasonStatLine` + `PlayerSeasonHistory` niihin.
@@ -47,6 +46,69 @@ Tila: vaiheet 1–4 valmiit ja kaikki portit vihreinä (draft class · kehitys-r
 **5b · Raakadatan staffi-laatupassi (kirjattu 2026-07-30, dev-nimien sivulöydös).** Helmikuun 2026 scrape sisältää spekulatiivisia/vääriä staffirivejä, jotka näkyvät nyt oikeina ihmisinä dev-liigassa: ARI HC "Mike LaFleur", BAL HC "Jesse Minter", KC OC "Eric Bieniemy" (lähti KC:stä 2023!), PHI OC "Sean Mannion", SF OC "Klay Kubiak" — ja mahdollisesti muita. Passi: käy `tools/league-data/raw/league_raw_2026.json` → `staffs` läpi todellisia maalis-2026 staffeja vasten, korjaa raakadataan (EI transformiin), regeneroi molemmat templatet + portit. Huom: publish-puolen anonymisoidut nimet muuttuvat samalla (sound-alike-siemen per nimi) — publish-json pitää re-bundlata ja TVAL ajaa molemmilla profiileilla.
 
 **6 · P3-pikkuviilaukset:** combine-DNP-mekaniikka · roster-listan Mental-analyysimoodi (LRN/CMP-sarakkeet) · UserDefaults-prospektiarvosanojen vuoto careerien yli · hometownState/City veteraaneille · SWIFT_NAME_POOLS-katvehuomio (uusi runtime-nimilähde → lisää listaan, ks. RELEASE_CHECKLIST).
+
+## 🏔️ P1 LAATUPYRAMIDIN KALIBROINTIAALTO — 2026-07-30 (committoimaton; odottaa smoke-ajoa)
+
+Koordinoitu aalto: **intake-taso + ceiling-slope + template-kalibrointi + tasoon sidotut kynnykset + portit** yhdellä liikkeellä. Kaikki luvut mitattu, ei arvattu. Portit: `leaguegen` 10/10 (UUSI) · `draftclass` 32/32 · `career` **26/26** (oli 18) · `make_templates.py` 19/19 · `check_bundle.sh` exit 0 · buildi exit 0.
+
+### Vanha → uusi (mitatut vakiot)
+
+| kohde | vanha | uusi | mistä luku |
+|---|---|---|---|
+| `LeagueGenerator.primeAgeLevel` | 11,0 | **6,0** | kehityspinon uusi tasapaino (yp4-7/yp8+ plateau laski 4-5 pistettä) |
+| `LeagueGenerator.rookieAgeLevel` | −6,0 | **−8,0** | sama käyrä, alapää |
+| `positionAttributeRange` | 75-95 / 60-80 / 50-70 | **66-88 / 57-79 / 47-69** | taso + katkaistu huippu (95+11 leikkautui 99:ään → liigan max oli 93) |
+| `talentLevelShift` (UUSI) | — | **split-normal, (σ↓,σ↑) = (4,5;7,5)/(4,5;4,5)/(5,0;5,0), katkaisu ±2,6σ** | pyramidin puuttuva ulottuvuus: tier+ikä jättivät vain sd 1,85 hajontaa |
+| `developmentCeiling` | `0,60·pot + 39` | **`pot`, taitettuna `84 + 0,72·(pot−84)` yli 84:n** | vanha antoi +11 OVR lahjaa 70-potentiaalille ja −0,6 99:lle |
+| `veteranPotential` | `max(0, N(μ,4))`, μ ikäsidottu | **kasvuvuosiin sidottu + `tierEarnedUpside` (1,00/0,70/0,45), ~⅓ saa nollan** | §2: potentiaali on katto jota harva koskettaa; plateauer on yleisin |
+| `ContractEngine` rahakäyrä | portaat 95/90/80/70/60 | **ankkurit 54/64/74/87/94 → 0,40/1,00/3,20/7,20/10,00 % capista** | persentiilisäilyttävä uudelleenjohto; liigan ka 2,919 % ennallaan |
+| `CareerArcEngine` startti-OVR | 75 | **73** | 704/1696 = p58,5 → kalibroidussa liigassa OVR 72,4 |
+| `WeekAdvancer` "starter" | 65 | **60** | persentiilisäilyttävä (90,6 % liigasta molemmissa) |
+| `crStarterOverall` (harness) | 75 | **73** | sama johto; bar sweep vahvistaa (7/8 kierrosta ±8 pp sisään) |
+| `crBoardOverallWeight` | 0,55 | **0,30** | §6: draft on veto katosta; litistää R1/R3-eroa 3 pp |
+| `CALIB_MEAN_BAND` | (75,4; 77,4) | **(70,0; 72,0)** | ankkuri 76,46 → 71,00, leveys ±1,0 ennallaan |
+| `CALIB_SD_BAND` | (7,0; 9,4) | **(7,6; 10,0)** | ankkuri 8,23 → 8,86, samat siirtymät |
+| `ELITE_STRETCH_PCTL/MAX` | 0,988 / 3,0 | **0,992 / 1,5** | generaattori tekee 90+ itse (1,8 %); vanha venytys olisi rikkonut kaksosuuden |
+| `blueprint_tier_means()` | tier = arvontaindeksi | **tier = arvonnan JÄRJESTYSLUKU** | portti vertasi max-of-N:ää keskiarvoon; virhe kasvoi tierien limityksen myötä |
+
+### Mitattu jakauma (shipattu Swift, `./run.sh leaguegen`, 400 liigaa / 21 200 pelaajaa)
+
+```
+mean 71,00  sd 8,88  median 71  min 40  max 97
+90+ 1,80 % [§8 1-2] = 30,5 blue chipiä [25-35]   80+ 17,10 % [12-16]
+75+ 35,06 % [30-40]                              sub65 23,43 % [~25]
+tierit: idx0 77,27  idx1 70,87  idx2 64,85       ikä ka 25,62  33+ 2,75 %
+veteranPotential-headroom OVR:n yli +2,11 (oli 6-9)
+histogrammi: 40-44 0,1 · 45-49 0,6 · 50-54 2,6 · 55-59 6,8 · 60-64 13,5 · 65-69 19,9
+             70-74 21,6 · 75-79 18,0 · 80-84 10,2 · 85-89 5,1 · 90-94 1,7 · 95-99 0,1
+```
+
+Kehityspinon 30 kauden tasapaino (`./run.sh career`, 20 liigaa, ~34 000 pelaajapaikkaa):
+```
+mean 71,41  sd 7,79  drift +0,001/kausi   90+ 2,04 % (35 chipiä)  80+ 17,1 %
+75+ 30,3 %  sub65 19,1 %  ikä ka 26,09  33+ 3,37 %
+histogrammi: 55-59 2,0 · 60-64 17,1 · 65-69 29,9 · 70-74 20,5 · 75-79 13,3
+             80-84 9,2 · 85-89 6,1 · 90-94 2,0
+```
+
+### Uusi portti: `leaguegen` — kaksi toteutusta pinnattu toisiaan vasten
+Kaikki generaattorin luvut oli aiemmin fitattu `make_templates.py`:n **python-peiliin**, ja kiinteä 2026-liiga kalibroidaan sen peilin päälle → peilin hiljainen ero Swiftistä olisi vienyt **molemmat liigalähteet** väärään suuntaan eikä mikään portti olisi nähnyt sitä. Uusi skenaario mittaa Swift-puolen (ratingpolku awk-viipaloitu verbatimina, `Player.overall` repo-splicestä) ja failaa jos ero ylittää Monte-Carlo-liukuman. **Ansaitsi paikkansa ensimmäisellä ajolla:** paljasti depth-chart-bugin joka oli +0,79 OVR liigan keskiarvossa (blueprintin "extra depth" WR/DE/CB olisivat saaneet starttitason arvonnan).
+
+### `career`-portin uudelleenjohto: 18 → 26 asserttia
+- **6.1 → 6.1a + 6.1b.** ±8 pp pysyy kierroksille 2-UDFA (mitattu pahin −3,3 pp; ennen aaltoa −6,3). R1 gatetaan erikseen `[58,78]` %: §6 antaa R1:n **vaihteluvälinä 55-65** ja harnessin R1-washout on 9,9 % vs §6:n 20-25 % — harnessista puuttuu jokainen todellinen R1-bustimekanismi paitsi hidas kehitys, eikä ainoa fitattu parametri (`--fog`) korjaa sitä ilman että R5-R7 nousee yli.
+- **6.2a/b/c uudelleenjohdettu §8:n blue-chip-lukumäärästä** (stock-and-flow): 25-35 seisovaa 90+ ÷ 4,4 kauden residenssi = 5,7-8,0 uutta/vuosi → R1 [10,18] %, R2 [3,5;9] %, R3-7 **≤1,5 %** (oli ≤4). Vanha R1 [20,30] vaati yksin 28-42 seisovaa blue chipiä ennen R2:ta — juuri niin liiga päätyi 4,0-4,9 %:iin.
+- **UUDET 6.9a-g: §8-laatupyramidi on nyt ASSERTTI**, ei tuloste. Se oli informatiivinen, ja juuri niin liiga drifttasi 90+ 4,0 %:iin kaikkien 18 asserttin ollessa vihreitä (keskiarvo liikkui vain +1,0 kun muoto sen alla kääntyi).
+- Kaksi bandia on tarkoituksella harness-bandeja, syy kirjattu asserttiin: **sub65 [15,25]** (skenaariossa ei ole street-FA-polkua — lattia on "53. paras keho"; §8:n 25 % on smoke-portin asia) ja **33+ ≤4,0** (eläköitymiskalibrointi, oma aalto).
+
+### Löydös sivussa: `ContractEngine`in markkina-arvo ei ollut monotoninen
+Vanha portaikko maksoi 89-OVR:lle **7,50 %** capista ja 90-OVR:lle **6,00 %** — yhden pisteen parannus väärässä paikassa leikkasi pelaajan markkina-arvon, sopimusvaatimukset, tradearvon ja holdout-kynnyksen viidenneksellä. Uusi ankkurimuoto tekee tuon bugiluokan mahdottomaksi ilmaista. **Ja: vanhan portaikon shippaaminen sellaisenaan olisi maksanut uudelle liigalle 1,83 % capista/pelaaja (oli 2,92 %) = 37 % romahdus koko markkinassa** — ero sitovan ja merkityksettömän palkkakaton välillä.
+
+### Odotusarvot 3 kauden smokelle (orkestroijan ajo)
+`SMOKE: diag pyramid` on nyt gatetettu (`SMOKE: ANOMALY` osumatta). Odotus:
+- **season=base** (t=0, pelkkä generaattori): 90+ ~1,8 % · 80+ ~17 % · 75+ ~35 % · sub65 ~23 % · ageMed 25 · a33plus ~2,8 % · mean ~71,0
+- **kausi 1-3**: 90+ **1,5-2,5 %** · 80+ 15-19 % · 75+ 30-37 % · sub65 **18-25 %** · a33plus ≤4 % · yp0to3 45-55 %
+- **OVR-drift** ≤ 1,5 / 3 kautta (odotus |Δ| ≤ 0,7: generaattori 71,0 ja kehityspino 71,4 ovat 0,4 päässä toisistaan)
+- Jos `sub65` valuu alle 15 % tai `90+` yli 2,5 %, juurisyy on smoken oma polku (street-FA / FA-markkina / roster floor), ei intake eikä ceiling — molemmat on mitattu erikseen bandissa.
 
 ## 🙂 VAIHE 4 / AALTO 4: review-korjaukset (poolin kestävyys + placeholderit + UI) — 2026-07-30 (committoimaton)
 
