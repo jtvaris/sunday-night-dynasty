@@ -29,6 +29,11 @@ struct LeagueRostersView: View {
     /// (his division rivals are the rosters he cares about) without an init.
     @State private var pickedConference: Conference?
 
+    /// The user's saved depth chart, keyed by his `teamID`. Decoded once per
+    /// appearance rather than per row: his OWN row must quote the lineup he
+    /// actually set, the other 31 fall back to the auto-derived one.
+    @State private var userCharts: [UUID: DepthChart] = [:]
+
     private var conference: Conference {
         pickedConference
             ?? allTeams.first(where: { $0.id == career.teamID })?.conference
@@ -50,6 +55,7 @@ struct LeagueRostersView: View {
         }
         .navigationTitle("League Rosters")
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .task { userCharts = TeamStrength.savedCharts(for: career) }
     }
 
     private func board(rosters: [UUID: [Player]]) -> some View {
@@ -125,7 +131,7 @@ struct LeagueRostersView: View {
 
     private func teamRow(_ team: Team, roster: [Player]) -> some View {
         let isUserTeam = team.id == career.teamID
-        let strength = startingLineupOverall(roster)
+        let strength = startingLineupOverall(roster, chart: userCharts[team.id])
 
         return HStack(spacing: 12) {
             Text(team.abbreviation)
@@ -205,6 +211,8 @@ struct LeagueTeamRosterView: View {
     private var allPlayers: [Player] { allPlayersUnscoped.filter { $0.careerID == career.id } }
 
     @State private var showTradeCenter = false
+    /// The user's saved depth chart, decoded once rather than per body pass.
+    @State private var userCharts: [UUID: DepthChart] = [:]
 
     private var roster: [Player] {
         allPlayers.filter { $0.teamID == team.id }
@@ -263,6 +271,7 @@ struct LeagueTeamRosterView: View {
         }
         .navigationTitle("\(team.abbreviation) Roster")
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .task { userCharts = TeamStrength.savedCharts(for: career) }
         .toolbar {
             if !isUserTeam {
                 ToolbarItem(placement: .primaryAction) {
@@ -309,7 +318,10 @@ struct LeagueTeamRosterView: View {
                 }
 
                 HStack(spacing: 0) {
-                    headerStat(label: "Starters OVR", value: "\(startingLineupOverall(roster))")
+                    headerStat(
+                        label: "Starters OVR",
+                        value: "\(startingLineupOverall(roster, chart: userCharts[team.id]))"
+                    )
                     headerStat(label: "Roster", value: "\(roster.count)")
                     headerStat(label: "Cap Space", value: capLabel(team.availableCap))
                 }
@@ -459,13 +471,16 @@ struct ProposeTradeButton<Label: View>: View {
 
 // MARK: - Shared Formatting
 
-/// Starting-lineup quality proxy: mean OVR of a roster's best 22. Comparing full
-/// 53-man averages flatters teams that stash cheap depth, which is the opposite
-/// of what a GM wants to know when sizing up a trade partner.
-private func startingLineupOverall(_ roster: [Player]) -> Int {
-    guard !roster.isEmpty else { return 0 }
-    let best = roster.map(\.overall).sorted(by: >).prefix(22)
-    return best.reduce(0, +) / best.count
+/// Starting-lineup quality: the mean of the 22 men the lineup actually fields,
+/// via `TeamStrength` — the one definition of a team's rating, shared with the
+/// depth chart's TEAM pill and the schedule's opponent badge.
+///
+/// This used to be a private "best 22 by overall" average, which read 3-4
+/// points higher than the depth chart for the same club because it never
+/// priced a hole: a roster with six good receivers and no left tackle counted
+/// the receivers six times and the missing tackle not at all.
+private func startingLineupOverall(_ roster: [Player], chart: DepthChart? = nil) -> Int {
+    TeamStrength.startersOVR(roster, chart: chart)
 }
 
 /// Cap figures are stored in thousands.

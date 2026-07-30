@@ -5,6 +5,10 @@ struct RosterView: View {
     let players: [Player]
     /// The team's current salary cap in thousands. Falls back to 265_000 if not provided.
     var teamSalaryCap: Int = 265_000
+    /// `Team.currentCapUsage` in thousands — the same ledger the Cap screen and
+    /// the dashboard quote. `nil` only for previews and lightweight call sites,
+    /// where the summary bar falls back to summing the roster's salaries.
+    var teamCapUsed: Int? = nil
     /// The defensive coordinator's scheme, used to determine correct DL starter counts.
     var defensiveScheme: DefensiveScheme = .base43
     /// R28: career context for the Injury Report (pending return decisions).
@@ -335,7 +339,7 @@ struct RosterView: View {
             )
 
             VStack(spacing: 0) {
-                RosterSummaryBar(players: players, teamSalaryCap: teamSalaryCap)
+                RosterSummaryBar(players: players, teamSalaryCap: teamSalaryCap, capUsed: teamCapUsed)
 
                 viewModePicker
                     .padding(.horizontal)
@@ -793,9 +797,9 @@ struct RosterView: View {
         switch analysisMode {
         case .overview:
             Group {
-                sortButton("Age", sort: .age, width: 32)
+                sortButton("Age", sort: .age, width: PlayerRowView.Column.age)
                 headerLabel("Frm", width: 24)
-                sortButton("OVR", sort: .overall, width: 40)
+                sortButton("OVR", sort: .overall, width: PlayerRowView.Column.ovr)
                 headerLabel("↗", width: 20)
                 sortButton("Salary", sort: .salary, width: 52)
                 headerLabel("Yrs", width: 30)
@@ -808,12 +812,12 @@ struct RosterView: View {
                 headerLabel("Cap", width: 52)
                 headerLabel("Yrs", width: 34)
                 headerLabel("FA", width: 40)
-                sortButton("OVR", sort: .overall, width: 32)
+                sortButton("OVR", sort: .overall, width: PlayerRowView.Column.ovr)
             }
         case .development:
             Group {
-                sortButton("Age", sort: .age, width: 32)
-                sortButton("OVR", sort: .overall, width: 32)
+                sortButton("Age", sort: .age, width: PlayerRowView.Column.age)
+                sortButton("OVR", sort: .overall, width: PlayerRowView.Column.ovr)
                 headerLabel("Pot", width: 40)
                 headerLabel("Dev", width: 20)
                 headerLabel("Phase", width: 48)
@@ -822,12 +826,12 @@ struct RosterView: View {
             }
         case .mental:
             Group {
-                sortButton("Age", sort: .age, width: 32)
-                sortButton("OVR", sort: .overall, width: 32)
+                sortButton("Age", sort: .age, width: PlayerRowView.Column.age)
+                sortButton("OVR", sort: .overall, width: PlayerRowView.Column.ovr)
                 headerLabel("LRN", width: 34)
                 headerLabel("CMP", width: 34)
                 headerLabel("WE", width: 34)
-                headerLabel("Motiv", width: 56)
+                headerLabel("Motiv", width: PlayerRowView.Column.motivation)
             }
         case .physical:
             Group {
@@ -836,7 +840,7 @@ struct RosterView: View {
                 headerLabel("STA", width: 34)
                 headerLabel("DUR", width: 34)
                 headerLabel("Health", width: 28)
-                sortButton("OVR", sort: .overall, width: 32)
+                sortButton("OVR", sort: .overall, width: PlayerRowView.Column.ovr)
             }
         case .attributes:
             Group {
@@ -844,14 +848,14 @@ struct RosterView: View {
                 headerLabel("Skill 2", width: 32)
                 headerLabel("Skill 3", width: 32)
                 headerLabel("Skill 4", width: 32)
-                sortButton("OVR", sort: .overall, width: 32)
+                sortButton("OVR", sort: .overall, width: PlayerRowView.Column.ovr)
             }
         case .depth:
             Group {
                 headerLabel("Rank", width: 28)
                 headerLabel("Role", width: 52)
-                sortButton("OVR", sort: .overall, width: 32)
-                sortButton("Age", sort: .age, width: 28)
+                sortButton("OVR", sort: .overall, width: PlayerRowView.Column.ovr)
+                sortButton("Age", sort: .age, width: PlayerRowView.Column.age)
                 headerLabel("Health", width: 28)
                 headerLabel("Form", width: 24)
             }
@@ -860,6 +864,11 @@ struct RosterView: View {
 
     private func headerLabel(_ title: String, width: CGFloat) -> some View {
         Text(title)
+            // Same reason as `sortButton`: a fixed-width box wraps a label it
+            // cannot fit ("Health" in 28pt, "Skill 1" in 32) rather than
+            // shrinking it, which breaks the header's baseline.
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
             .frame(width: width, alignment: .center)
             .foregroundStyle(Color.textTertiary)
     }
@@ -892,6 +901,13 @@ struct RosterView: View {
         } label: {
             HStack(spacing: 2) {
                 Text(title)
+                    // A header in a fixed-width box wraps mid-word when the
+                    // chevron appears next to it — "OVR" became "OV / R" the
+                    // moment the column was sorted. The widths above are sized
+                    // for label + chevron; this makes wrapping impossible even
+                    // at larger dynamic type.
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 if sortOrder == sort {
                     Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
                         .font(.system(size: 8, weight: .bold))

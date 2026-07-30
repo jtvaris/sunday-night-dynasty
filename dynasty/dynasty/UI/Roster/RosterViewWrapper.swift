@@ -7,10 +7,19 @@ struct RosterViewWrapper: View {
     @Environment(\.modelContext) private var modelContext
     @State private var players: [Player] = []
     @State private var teamSalaryCap: Int = 265_000
+    /// `Team.currentCapUsage` — read from the same team fetch as the ceiling so
+    /// the roster header quotes the league's cap ledger, not its own sum.
+    @State private var teamCapUsed: Int? = nil
     @State private var defensiveScheme: DefensiveScheme = .base43
 
     var body: some View {
-        RosterView(players: players, teamSalaryCap: teamSalaryCap, defensiveScheme: defensiveScheme, career: career)
+        RosterView(
+            players: players,
+            teamSalaryCap: teamSalaryCap,
+            teamCapUsed: teamCapUsed,
+            defensiveScheme: defensiveScheme,
+            career: career
+        )
             .task {
                 guard let teamID = career.teamID else { return }
                 let playerDescriptor = FetchDescriptor<Player>(
@@ -24,6 +33,7 @@ struct RosterViewWrapper: View {
                 )
                 if let team = (try? modelContext.fetch(teamDescriptor))?.first {
                     teamSalaryCap = team.salaryCap
+                    teamCapUsed = team.currentCapUsage
                 }
 
                 // Fetch the defensive coordinator's scheme

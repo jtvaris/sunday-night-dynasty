@@ -5,6 +5,17 @@ struct RosterSummaryBar: View {
     let players: [Player]
     /// The team's current salary cap in thousands. Falls back to 265_000 if not provided.
     var teamSalaryCap: Int = 265_000
+    /// `Team.currentCapUsage` in thousands — the league's cap ledger.
+    ///
+    /// THE number, not a number: it is what the Cap screen, the dashboard, the
+    /// trade validator, free-agency affordability and the cap-floor check all
+    /// read, and it is the one that carries dead money and survives the
+    /// league-year true-up. Summing `annualSalary` over the roster (the
+    /// fallback below, kept only for previews and call sites without a team)
+    /// answers a different question and drifts from the ledger the moment a
+    /// contract's cap hit differs from its annual average — which is why the
+    /// header claimed $221.5M while every other screen said $189.4M.
+    var capUsed: Int? = nil
 
     private var totalCount: Int { players.count }
     private var healthyCount: Int { players.filter { !$0.isInjured }.count }
@@ -16,7 +27,7 @@ struct RosterSummaryBar: View {
     }
 
     private var totalCapUsed: Int {
-        players.reduce(0) { $0 + $1.annualSalary }
+        capUsed ?? players.reduce(0) { $0 + $1.annualSalary }
     }
 
     /// Salary cap ceiling in thousands (e.g., 265000 = $265M).

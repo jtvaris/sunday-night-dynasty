@@ -45,6 +45,47 @@ private func isRealisticConversion(from primary: Position, to target: Position) 
     return compatible.contains(target)
 }
 
+// MARK: - Hometown Formatting
+
+/// USPS codes for the states `HometownGenerator` draws from, so the header can
+/// say "From Long Beach, CA" instead of spending half the identity line on
+/// "California". Presentation only — `HometownDetector` keys its regions off the
+/// full state names, which is why the model keeps storing those.
+///
+/// Anything not in this table (a hand-authored league template, a future state)
+/// falls back to its full name rather than being dropped.
+private let usStateAbbreviations: [String: String] = [
+    "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
+    "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE",
+    "District of Columbia": "DC", "Florida": "FL", "Georgia": "GA", "Hawaii": "HI",
+    "Idaho": "ID", "Illinois": "IL", "Indiana": "IN", "Iowa": "IA",
+    "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME",
+    "Maryland": "MD", "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN",
+    "Mississippi": "MS", "Missouri": "MO", "Montana": "MT", "Nebraska": "NE",
+    "Nevada": "NV", "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM",
+    "New York": "NY", "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH",
+    "Oklahoma": "OK", "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI",
+    "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN", "Texas": "TX",
+    "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA",
+    "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY",
+]
+
+/// "From Long Beach, CA" from a city/state pair, or `nil` when there is nothing
+/// worth printing. Tolerates either half being missing: pre-hometown saves left
+/// both nil, and imported templates sometimes carry a state with no city.
+private func hometownDisplayText(city rawCity: String?, state rawState: String?) -> String? {
+    let city = rawCity?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let state = rawState?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let stateCode = state.isEmpty ? "" : (usStateAbbreviations[state] ?? state)
+
+    switch (city.isEmpty, stateCode.isEmpty) {
+    case (false, false): return "From \(city), \(stateCode)"
+    case (false, true):  return "From \(city)"
+    case (true, false):  return "From \(stateCode)"
+    case (true, true):   return nil
+    }
+}
+
 struct PlayerDetailView: View {
     let player: Player
 
@@ -211,6 +252,13 @@ struct PlayerDetailView: View {
         .navigationTitle(player.fullName)
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        // The default scroll-edge appearance is fully transparent, so scrolling
+        // slid the attribute rows straight under the title and they read as
+        // colliding with the player's name. Pin an opaque bar in the page's own
+        // background colour: content now passes cleanly behind it, and because
+        // the colour matches `backgroundPrimary` the bar is invisible at rest.
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarBackground(Color.backgroundPrimary, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 NavigationLink(destination: PlayerStatsView(
@@ -319,9 +367,21 @@ struct PlayerDetailView: View {
                                 player.yearsPro == 0 ? "Rookie" : "\(player.yearsPro)yr pro",
                                 systemImage: "figure.american.football"
                             )
+                            // iPad has the width to keep "where he's from" on the
+                            // same identity line; compact widths would truncate
+                            // both it and "9yr pro", so there it drops below.
+                            if isWideLayout || isLandscape {
+                                hometownLabel
+                            }
                         }
                         .font(.caption)
                         .foregroundStyle(Color.textSecondary)
+
+                        if !(isWideLayout || isLandscape) {
+                            hometownLabel
+                                .font(.caption)
+                                .foregroundStyle(Color.textSecondary)
+                        }
                         // (Trade value moved to dedicated section below — was duplicated.)
                     }
 
@@ -364,6 +424,19 @@ struct PlayerDetailView: View {
             .padding(.vertical, 4)
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// Where the player is from, for the header identity block. Renders nothing
+    /// at all when no hometown is recorded — the field only started being written
+    /// recently, so every player in an older save still has it nil and must not
+    /// leave a stray pin icon behind.
+    @ViewBuilder
+    private var hometownLabel: some View {
+        if let hometown = hometownDisplayText(city: player.hometownCity, state: player.hometownState) {
+            Label(hometown, systemImage: "mappin.and.ellipse")
+                .lineLimit(1)
+                .accessibilityLabel("Hometown: \(hometown.dropFirst("From ".count))")
+        }
     }
 
     // MARK: - Draft Grade Badges (Vaihe 5)
@@ -1101,8 +1174,14 @@ struct PlayerDetailView: View {
             // "If this player leaves" replacement preview (#37) — shows the next-best player
             // on the same team at the same position so the user understands the depth-chart
             // impact of cutting / trading.
+            //
+            // NO explicit `Divider()` here: a Divider written as a direct child of a
+            // `Section` is not an inline rule, it is its own List row — and a List row
+            // is subject to the ~44pt minimum row height, so it rendered as a tall
+            // blank slot with a faint hairline floating in the middle of it. The List
+            // already draws a separator between consecutive rows, which is the rule
+            // this was reaching for.
             if let replacement = replacementPlayerInfo {
-                Divider().overlay(Color.surfaceBorder)
                 HStack(spacing: 8) {
                     Image(systemName: "person.fill.questionmark")
                         .font(.caption)
@@ -1122,7 +1201,6 @@ struct PlayerDetailView: View {
             // Comparable players in the league at the same position with similar OVR (±3).
             // Helps anchor the player's trade value against real peers and their salaries.
             if let comparables = comparablesText {
-                Divider().overlay(Color.surfaceBorder)
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "person.3.fill")
                         .font(.caption)
@@ -1789,9 +1867,10 @@ struct PlayerDetailView: View {
                 }
             }
 
-            // #181: Show ALL relevant schemes, not just learned ones
-            Divider().overlay(Color.surfaceBorder)
-
+            // #181: Show ALL relevant schemes, not just learned ones.
+            // No standalone `Divider()` row here — see the note in `tradeValueSection`:
+            // at Section level it becomes an empty ~44pt List row, and the List's own
+            // separator already parts this heading from the block above it.
             Text("Scheme Familiarity")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Color.textSecondary)

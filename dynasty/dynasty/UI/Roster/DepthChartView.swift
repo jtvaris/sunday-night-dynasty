@@ -80,16 +80,23 @@ struct DepthChartView: View {
 
     // MARK: - Team OVR
 
+    /// All three pills go through `TeamStrength`, the single definition of a
+    /// team's rating, so this screen, the schedule rows and the league roster
+    /// browser can never quote three different numbers for the same club again.
+    ///
+    /// `DepthChart.teamOverall` — what TEAM used to read — averaged the first
+    /// man in EVERY slot, kicker and punter included and the returners counted
+    /// a second time, which is why TEAM sat below both OFF and DEF.
     private var teamOVR: Int {
-        depthChart.teamOverall(lookup: playerLookup)
+        TeamStrength.ovr(chart: depthChart, slots: TeamStrength.lineupSlots, lookup: playerLookup)
     }
 
     private var offenseOVR: Int {
-        depthChart.offenseOverall(lookup: playerLookup)
+        TeamStrength.ovr(chart: depthChart, slots: DepthChartSlot.offenseSlots, lookup: playerLookup)
     }
 
     private var defenseOVR: Int {
-        depthChart.defenseOverall(lookup: playerLookup)
+        TeamStrength.ovr(chart: depthChart, slots: DepthChartSlot.defenseSlots, lookup: playerLookup)
     }
 
     // MARK: - Body

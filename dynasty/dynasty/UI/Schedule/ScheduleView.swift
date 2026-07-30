@@ -14,25 +14,90 @@ import SwiftData
 /// signed, drafted or cut player was counted for the wrong club
 /// (`docs/TRADE_OVERHAUL_PLAN.md` §4 S3 / §7.5).
 enum TeamStrength {
-    /// Number of starters approximated for the OVR average.
-    private static let starterCount = 22
 
-    /// Starters OVR of ONE roster (the team's players, unfiltered).
-    static func startersOVR(_ roster: [Player]) -> Int {
-        let starters = roster
-            .sorted { $0.overall > $1.overall }
-            .prefix(starterCount)
+    /// The slots that make up "the starting lineup": the depth chart's 12
+    /// offensive and 10 defensive slots.
+    ///
+    /// Special teams are deliberately excluded. `K`/`P` are not part of the
+    /// 22 men who decide a matchup and their ratings sit in a different band,
+    /// so folding them in drags every club down by a couple of points; `KR`/`PR`
+    /// re-count a receiver or back who is already in the offensive eleven, so
+    /// they double-weight one player. Averaging exactly these 22 slots also
+    /// makes TEAM the honest weighted mean of the OFF and DEF pills shown
+    /// beside it on the depth chart.
+    static let lineupSlots: [DepthChartSlot] =
+        DepthChartSlot.offenseSlots + DepthChartSlot.defenseSlots
+
+    /// Mean OVR of the starters occupying `slots` in `chart`.
+    /// Slots nobody fills (no fullback on the roster, a traded player still
+    /// referenced by a stale saved chart) simply drop out of the average.
+    static func ovr(chart: DepthChart, slots: [DepthChartSlot], lookup: [UUID: Player]) -> Int {
+        let starters = slots
+            .compactMap { chart.starter(for: $0) }
+            .compactMap { lookup[$0] }
         guard !starters.isEmpty else { return 0 }
-        let total = starters.reduce(0) { $0 + $1.overall }
-        return total / starters.count
+        return starters.reduce(0) { $0 + $1.overall } / starters.count
+    }
+
+    /// The lineup a roster implies when no chart has been saved — the SAME
+    /// seeding `DepthChartView` shows on first open, so the number a rival's
+    /// row quotes is the number his depth chart would show.
+    static func lineup(of roster: [Player]) -> DepthChart {
+        var chart = DepthChart()
+        chart.autoGenerate(players: roster)
+        return chart
+    }
+
+    static func lookup(_ roster: [Player]) -> [UUID: Player] {
+        Dictionary(roster.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Starters OVR of ONE roster — THE team-strength number.
+    ///
+    /// Position-aware on purpose. The old "mean of the best 22 by overall"
+    /// answered "how good are this club's 22 best athletes", which flatters a
+    /// roster stacked at one position and ignores the hole at another: six
+    /// good receivers counted six times over while the missing left tackle
+    /// cost nothing. Averaging the lineup's 22 SLOTS prices the hole.
+    ///
+    /// - Parameter chart: The club's saved depth chart when one exists (the
+    ///   user's team). Falls back to the auto-derived lineup when it is absent
+    ///   or so stale that no slot resolves to a current player.
+    static func startersOVR(_ roster: [Player], chart: DepthChart? = nil) -> Int {
+        guard !roster.isEmpty else { return 0 }
+        let table = lookup(roster)
+        if let chart {
+            let saved = ovr(chart: chart, slots: lineupSlots, lookup: table)
+            if saved > 0 { return saved }
+        }
+        return ovr(chart: lineup(of: roster), slots: lineupSlots, lookup: table)
     }
 
     /// Starters OVR for every team in one pass, keyed by `teamID`. Feed it the
     /// league's players from a single fetch; the result is what the rows read,
     /// so no row ever touches a roster (or a query) itself.
-    static func startersOVRByTeam(players: [Player]) -> [UUID: Int] {
+    ///
+    /// - Parameter charts: Saved depth charts by `teamID` — in practice only
+    ///   the user's, since AI clubs never persist one.
+    static func startersOVRByTeam(players: [Player], charts: [UUID: DepthChart] = [:]) -> [UUID: Int] {
         let rosters = Dictionary(grouping: players.filter { $0.teamID != nil }) { $0.teamID! }
-        return rosters.mapValues { startersOVR($0) }
+        var result: [UUID: Int] = [:]
+        result.reserveCapacity(rosters.count)
+        for (teamID, roster) in rosters {
+            result[teamID] = startersOVR(roster, chart: charts[teamID])
+        }
+        return result
+    }
+
+    /// The user's saved chart, decoded once per screen appearance. Every
+    /// surface that quotes his team's OVR reads it through here so the depth
+    /// chart he edited and the schedule row that judges him agree.
+    static func savedCharts(for career: Career) -> [UUID: DepthChart] {
+        guard let teamID = career.teamID,
+              let data = career.depthChartData,
+              let chart = try? JSONDecoder().decode(DepthChart.self, from: data)
+        else { return [:] }
+        return [teamID: chart]
     }
 
     /// League-wide mean of the starters OVR — the pivot the schedule badge
@@ -84,6 +149,9 @@ struct ScheduleView: View {
     /// rosters are queried by `teamID`, never read off `Team.players`). The
     /// rows only ever do a dictionary lookup.
     @State private var ovrByTeam: [UUID: Int] = [:]
+    /// The user's saved depth chart, keyed by his `teamID`. Decoded once per
+    /// appearance so his own OVR here is the one his depth chart screen shows.
+    @State private var userCharts: [UUID: DepthChart] = [:]
 
     // MARK: - Init
 
@@ -185,7 +253,8 @@ struct ScheduleView: View {
                 predicate: #Predicate<Player> { $0.careerID == cid && $0.teamID != nil }
             )
             let players = (try? modelContext.fetch(descriptor)) ?? []
-            ovrByTeam = TeamStrength.startersOVRByTeam(players: players)
+            userCharts = TeamStrength.savedCharts(for: career)
+            ovrByTeam = TeamStrength.startersOVRByTeam(players: players, charts: userCharts)
             leagueAvgOVR = TeamStrength.leagueAverageStartersOVR(ovrByTeam)
         }
         .sheet(item: $previewGame) { game in
@@ -193,7 +262,8 @@ struct ScheduleView: View {
                 game: game,
                 teams: allTeams,
                 playerTeamID: playerTeamID,
-                teamRecords: teamRecords
+                teamRecords: teamRecords,
+                userCharts: userCharts
             )
         }
     }
@@ -682,6 +752,9 @@ private struct GamePreviewSheet: View {
     let teams: [Team]
     let playerTeamID: UUID?
     let teamRecords: [UUID: StandingsRecord]
+    /// The user's saved depth chart by `teamID`, handed down by the parent so
+    /// the preview quotes the same OVR the rest of the app does.
+    var userCharts: [UUID: DepthChart] = [:]
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -696,7 +769,7 @@ private struct GamePreviewSheet: View {
 
     private func teamOVR(_ team: Team?) -> Int {
         guard let team else { return 0 }
-        return TeamStrength.startersOVR(rosters[team.id] ?? [])
+        return TeamStrength.startersOVR(rosters[team.id] ?? [], chart: userCharts[team.id])
     }
 
     private func loadRosters() {

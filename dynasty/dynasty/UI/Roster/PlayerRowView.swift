@@ -1,6 +1,24 @@
 import SwiftUI
 
 struct PlayerRowView: View {
+
+    /// Column widths shared with `RosterView`'s sortable header.
+    ///
+    /// The header and the cells used to carry their own literals, so a column
+    /// could be 32pt wide in one file and 40 in the other — which is exactly
+    /// how the Mental mode's "OVR" sort button ended up 32pt wide and wrapped
+    /// to "OV / R" the moment the sort chevron joined it, and how "Discouraged"
+    /// ended up hyphen-less-wrapped into "Disco / urage / d" in a 56pt box.
+    /// One definition, read from both sides.
+    enum Column {
+        /// Fits "Age" plus the sort chevron on one line.
+        static let age: CGFloat = 36
+        /// Fits "OVR" plus the sort chevron on one line.
+        static let ovr: CGFloat = 40
+        /// Fits the icon plus "Discouraged", the longest motivation label.
+        static let motivation: CGFloat = 76
+    }
+
     let player: Player
     /// Depth chart index: 0 = starter, 1 = backup, 2+ = 3rd string. nil = unknown.
     var depthIndex: Int? = nil
@@ -104,13 +122,13 @@ struct PlayerRowView: View {
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 32, alignment: .center)
+                .frame(width: Column.age, alignment: .center)
 
             Text("\(player.overall)")
                 .font(.caption.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 32, alignment: .center)
+                .frame(width: Column.ovr, alignment: .center)
 
             colorCodedMiniAttribute(value: player.learning, label: "LRN")
                 .frame(width: 34, alignment: .center)
@@ -121,11 +139,17 @@ struct PlayerRowView: View {
             colorCodedMiniAttribute(value: player.mental.workEthic, label: "WE")
                 .frame(width: 34, alignment: .center)
 
+            // `lineLimit` + `minimumScaleFactor` rather than a wider box alone:
+            // the state names differ by five characters, so the widest one has
+            // to shrink a hair instead of breaking mid-word.
             Label(player.motivationState.displayName, systemImage: player.motivationState.icon)
                 .font(.system(size: 9, weight: .semibold))
                 .labelStyle(.titleAndIcon)
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 56, alignment: .center)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(width: Column.motivation, alignment: .center)
+                .accessibilityLabel("Motivation \(player.motivationState.displayName)")
         }
     }
 
@@ -138,7 +162,7 @@ struct PlayerRowView: View {
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 32, alignment: .center)
+                .frame(width: Column.age, alignment: .center)
 
             // Form indicator (#97)
             formColumn
@@ -148,7 +172,7 @@ struct PlayerRowView: View {
                 .font(.callout.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 40, alignment: .center)
+                .frame(width: Column.ovr, alignment: .center)
 
             // Development potential indicator
             Text(shortPotentialLabel)
@@ -225,7 +249,7 @@ struct PlayerRowView: View {
                 .font(.caption.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 32, alignment: .center)
+                .frame(width: Column.ovr, alignment: .center)
         }
     }
 
@@ -238,14 +262,14 @@ struct PlayerRowView: View {
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 32, alignment: .center)
+                .frame(width: Column.age, alignment: .center)
 
             // OVR
             Text("\(player.overall)")
                 .font(.caption.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 32, alignment: .center)
+                .frame(width: Column.ovr, alignment: .center)
 
             // Potential (hidden value shown as fuzzy label)
             Text(potentialLabel)
@@ -294,7 +318,7 @@ struct PlayerRowView: View {
                 .font(.caption.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 32, alignment: .center)
+                .frame(width: Column.ovr, alignment: .center)
         }
     }
 
@@ -348,7 +372,7 @@ struct PlayerRowView: View {
                 .font(.caption.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 32, alignment: .center)
+                .frame(width: Column.ovr, alignment: .center)
         }
     }
 
@@ -381,14 +405,14 @@ struct PlayerRowView: View {
                 .font(.caption.monospacedDigit())
                 .fontWeight(.bold)
                 .foregroundStyle(Color.forRating(player.overall))
-                .frame(width: 32, alignment: .center)
+                .frame(width: Column.ovr, alignment: .center)
 
             // Age
             Text("\(player.age)")
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Color.textSecondary)
-                .frame(width: 28, alignment: .center)
+                .frame(width: Column.age, alignment: .center)
 
             // Health
             healthIndicator
@@ -404,15 +428,9 @@ struct PlayerRowView: View {
     private var starterBadgeContent: some View {
         Text(depthBadgeText)
             .font(.system(size: 9, weight: .heavy))
-            .foregroundStyle(isStarterRole ? Color.backgroundPrimary : depthColor)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
-            .background(
-                isStarterRole
-                    ? AnyShapeStyle(depthColor)
-                    : AnyShapeStyle(depthColor.opacity(0.2)),
-                in: RoundedRectangle(cornerRadius: 3)
-            )
+            .depthChipStyle(isStarter: isStarterRole, tint: depthColor)
     }
 
     // MARK: - Form Column (#97)
@@ -526,31 +544,27 @@ struct PlayerRowView: View {
                     }
                 }
             } label: {
-                Text(depthBadgeShortText)
-                    .font(.system(size: 8, weight: .heavy))
-                    .foregroundStyle(isStarterRole ? Color.backgroundPrimary : depthColor)
-                    .frame(width: 14, height: 14)
-                    .background(
-                        isStarterRole
-                            ? AnyShapeStyle(depthColor)
-                            : AnyShapeStyle(depthColor.opacity(0.2)),
-                        in: RoundedRectangle(cornerRadius: 3)
-                    )
+                depthChip
             }
             .accessibilityLabel("\(depthLabel), tap to change")
         } else {
-            Text(depthBadgeShortText)
-                .font(.system(size: 8, weight: .heavy))
-                .foregroundStyle(isStarterRole ? Color.backgroundPrimary : depthColor)
-                .frame(width: 14, height: 14)
-                .background(
-                    isStarterRole
-                        ? AnyShapeStyle(depthColor)
-                        : AnyShapeStyle(depthColor.opacity(0.2)),
-                    in: RoundedRectangle(cornerRadius: 3)
-                )
+            depthChip
                 .accessibilityLabel(depthLabel)
         }
+    }
+
+    /// The small S / B / rank marker in front of a player's face.
+    ///
+    /// Rank 3 and deeper used to fall out of the chip language: same box, but
+    /// `textTertiary` on a 20 %-tertiary fill is barely a shape, so a "5" read
+    /// as a stray digit next to the solid green "S" and tinted blue "B" above
+    /// it. Now all three are one control in three colours — same font, box,
+    /// radius, fill weight and border — and the reserve tint is legible.
+    private var depthChip: some View {
+        Text(depthBadgeShortText)
+            .font(.system(size: 8, weight: .heavy))
+            .frame(width: 14, height: 14)
+            .depthChipStyle(isStarter: isStarterRole, tint: depthColor)
     }
 
     /// Returns a position-specific numbered depth badge, e.g. "DT1", "DE2", "QB1" (#279).
@@ -679,10 +693,14 @@ struct PlayerRowView: View {
     }
 
     private var depthColor: Color {
-        guard let idx = depthIndex else { return .textTertiary }
+        guard let idx = depthIndex else { return .textSecondary }
         if idx < starterCountForPosition { return .success }       // starter = green
         if idx < starterCountForPosition + 1 { return .accentBlue } // backup = blue
-        return .textTertiary // 3rd string or deeper = gray
+        // 3rd string or deeper = gray. `textSecondary`, not `textTertiary`:
+        // tertiary on a tertiary-tinted chip is below the contrast the green
+        // and blue chips read at, which is what made the rank badge look like
+        // a different component instead of the same one in gray.
+        return .textSecondary
     }
 
     private var depthLabel: String {
@@ -819,6 +837,44 @@ struct PlayerRowView: View {
             parts.append("injured \(player.injuryWeeksRemaining) weeks")
         }
         return parts.joined(separator: ", ")
+    }
+}
+
+// MARK: - Depth Chip Style
+
+/// The one visual definition of a depth marker, applied to both the compact
+/// S / B / rank chip in front of the player's face and the wider "WR1"-style
+/// badge in Depth mode: filled for a starter, tinted-with-border for everyone
+/// behind him, always the same corner radius and fill weight.
+private struct DepthChipStyle: ViewModifier {
+    let isStarter: Bool
+    let tint: Color
+
+    private static let radius: CGFloat = 3
+    private static let fill: Double = 0.22
+    private static let border: Double = 0.45
+
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(isStarter ? Color.backgroundPrimary : tint)
+            .background(
+                isStarter
+                    ? AnyShapeStyle(tint)
+                    : AnyShapeStyle(tint.opacity(Self.fill)),
+                in: RoundedRectangle(cornerRadius: Self.radius)
+            )
+            .overlay(
+                isStarter
+                    ? nil
+                    : RoundedRectangle(cornerRadius: Self.radius)
+                        .strokeBorder(tint.opacity(Self.border), lineWidth: 1)
+            )
+    }
+}
+
+private extension View {
+    func depthChipStyle(isStarter: Bool, tint: Color) -> some View {
+        modifier(DepthChipStyle(isStarter: isStarter, tint: tint))
     }
 }
 
