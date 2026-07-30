@@ -32,7 +32,7 @@ struct FranchiseTagView: View {
                             skipTagButton
                         }
                         .padding(24)
-                        .frame(maxWidth: 760)
+                        .frame(maxWidth: DSLayout.contentMeasure)
                         .frame(maxWidth: .infinity)
                     }
                 } else {

@@ -65,7 +65,7 @@ struct HalftimeView: View {
                     .buttonStyle(.plain)
                 }
                 .padding(30)
-                .frame(maxWidth: 720)
+                .frame(maxWidth: DSLayout.contentMeasure)
                 .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 20))
                 .overlay(
                     RoundedRectangle(cornerRadius: 20)

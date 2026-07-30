@@ -166,7 +166,7 @@ struct ScheduleView: View {
                             }
                         }
                         .padding(16)
-                        .frame(maxWidth: 720)
+                        .frame(maxWidth: DSLayout.contentMeasure)
                         .frame(maxWidth: .infinity)
                     }
                 }

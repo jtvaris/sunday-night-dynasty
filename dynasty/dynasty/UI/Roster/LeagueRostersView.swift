@@ -59,7 +59,7 @@ struct LeagueRostersView: View {
                 // Same 820pt measure as the division cards below, so the
                 // picker's edges line up with them instead of spanning the
                 // full iPad width above inset content.
-                .frame(maxWidth: 820)
+                .frame(maxWidth: DSLayout.wideMeasure)
                 .frame(maxWidth: .infinity)
                 .background(Color.backgroundSecondary)
 
@@ -70,7 +70,7 @@ struct LeagueRostersView: View {
                     }
                 }
                 .padding(16)
-                .frame(maxWidth: 820)
+                .frame(maxWidth: DSLayout.wideMeasure)
                 .frame(maxWidth: .infinity)
             }
         }

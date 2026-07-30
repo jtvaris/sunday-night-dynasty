@@ -187,7 +187,7 @@ struct PressConferenceView: View {
                 }
             }
             .padding(.horizontal, 20)
-            .frame(maxWidth: 800)
+            .frame(maxWidth: DSLayout.wideMeasure)
             .frame(maxWidth: .infinity)
             .frame(minHeight: geometry.size.height)
         }
@@ -278,7 +278,7 @@ struct PressConferenceView: View {
 
                 Spacer().frame(height: 40)
             }
-            .frame(maxWidth: 900)
+            .frame(maxWidth: DSLayout.wideMeasure)
             .frame(maxWidth: .infinity)
             .frame(minHeight: geometry.size.height)
         }
@@ -936,7 +936,7 @@ struct PressConferenceView: View {
                 }
                 .padding(.bottom, 40)
             }
-            .frame(maxWidth: 900)
+            .frame(maxWidth: DSLayout.wideMeasure)
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)

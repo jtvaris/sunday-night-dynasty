@@ -63,7 +63,7 @@ struct MentoringView: View {
                     pairsSection
                 }
                 .padding(20)
-                .frame(maxWidth: 860)
+                .frame(maxWidth: DSLayout.wideMeasure)
                 .frame(maxWidth: .infinity)
             }
         }

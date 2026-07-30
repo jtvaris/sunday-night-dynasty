@@ -263,7 +263,7 @@ struct NewsView: View {
                         }
                     }
                     .padding(20)
-                    .frame(maxWidth: 720)
+                    .frame(maxWidth: DSLayout.contentMeasure)
                     .frame(maxWidth: .infinity)
                 }
             }

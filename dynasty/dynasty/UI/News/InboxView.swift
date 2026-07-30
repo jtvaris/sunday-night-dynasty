@@ -101,7 +101,7 @@ struct InboxView: View {
         // Same 720pt measure as the message list, so "All" starts on the same
         // vertical as the message cards rather than out at the screen edge.
         // The band behind it still spans full width.
-        .frame(maxWidth: 720)
+        .frame(maxWidth: DSLayout.contentMeasure)
         .frame(maxWidth: .infinity)
         .background(Color.backgroundSecondary)
         .overlay(alignment: .bottom) {
@@ -156,7 +156,7 @@ struct InboxView: View {
                         }
                     }
                     .padding(20)
-                    .frame(maxWidth: 720)
+                    .frame(maxWidth: DSLayout.contentMeasure)
                     .frame(maxWidth: .infinity)
                 }
             }

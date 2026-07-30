@@ -68,7 +68,7 @@ struct StandingsView: View {
                     // Same 800pt measure as the division tables below, so the
                     // picker's edges line up with the cards instead of running
                     // the full iPad width while the content sits inset.
-                    .frame(maxWidth: 800)
+                    .frame(maxWidth: DSLayout.wideMeasure)
                     .frame(maxWidth: .infinity)
                     .background(Color.backgroundSecondary)
 
@@ -89,7 +89,7 @@ struct StandingsView: View {
                         }
                     }
                     .padding(16)
-                    .frame(maxWidth: 800)
+                    .frame(maxWidth: DSLayout.wideMeasure)
                     .frame(maxWidth: .infinity)
                 }
             }

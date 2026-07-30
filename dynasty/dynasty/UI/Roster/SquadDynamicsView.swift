@@ -261,7 +261,7 @@ struct SquadDynamicsView: View {
                     eventsSection
                 }
                 .padding(20)
-                .frame(maxWidth: 760)
+                .frame(maxWidth: DSLayout.contentMeasure)
                 .frame(maxWidth: .infinity)
             }
         }

@@ -194,6 +194,12 @@ struct LeagueHistoryView: View {
                     .font(.caption)
                     .foregroundStyle(Color.textSecondary)
                     .lineLimit(1)
+                if let production = careerProduction(entry) {
+                    Text(production)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.accentGold.opacity(0.85))
+                        .lineLimit(1)
+                }
             }
 
             Spacer(minLength: DSSpacing.xs)
@@ -209,6 +215,57 @@ struct LeagueHistoryView: View {
         }
         .padding(DSSpacing.sm)
         .cardBackground()
+    }
+
+    /// What the legend actually did on the field, in the same categories the
+    /// career stat table shows for his position (`CareerStatColumns`) so the
+    /// bust and the player page never disagree about what matters for a QB.
+    ///
+    /// Three tiers, because the entries are snapshots taken at induction and
+    /// older classes were inducted before career totals were persisted (#21):
+    /// the full line when it exists, the pre-phrased résumé when only that was
+    /// stored, and nothing at all for a pre-stats class — which renders exactly
+    /// as it did before, rather than as a row of confident zeros.
+    private func careerProduction(_ entry: HallOfFameEntry) -> String? {
+        guard let line = entry.careerStatLine, !line.isEmpty else {
+            return entry.careerResume
+        }
+
+        var parts: [String]
+        switch Position(rawValue: entry.positionRaw) {
+        case .QB:
+            parts = ["\(line.passYards) pass yd", "\(line.passTDs) TD", "\(line.passInts) INT"]
+        case .RB, .FB:
+            parts = ["\(line.rushYards) rush yd", "\(line.rushTDs) TD", "\(line.receptions) rec"]
+        case .WR, .TE:
+            parts = ["\(line.receptions) rec", "\(line.recYards) yd", "\(line.recTDs) TD"]
+        case .LT, .LG, .C, .RG, .RT:
+            // A lineman's career has no counting stats — snaps are the whole
+            // honest record, and a Hall of Fame line of zeros would be a lie.
+            parts = line.snapsPlayed > 0 ? ["\(line.snapsPlayed) snaps"] : []
+        case .DE, .DT:
+            parts = ["\(line.tackles) tkl", String(format: "%.1f sacks", line.sacks)]
+        case .OLB, .MLB:
+            parts = ["\(line.tackles) tkl", String(format: "%.1f sacks", line.sacks), "\(line.defInts) INT"]
+        case .CB, .FS, .SS:
+            parts = ["\(line.tackles) tkl", "\(line.defInts) INT", "\(line.passesDefended) PD"]
+        case .K:
+            parts = ["\(line.fieldGoalsMade)/\(line.fieldGoalsAttempted) FG"]
+        case .P:
+            parts = ["\(line.punts) punts", String(format: "%.1f avg", line.puntAverage)]
+        case nil:
+            // Position unreadable (a raw value from a future build): fall back
+            // to the sentence rather than guessing at categories.
+            return entry.careerResume
+        }
+
+        // A games count on its own is not a résumé — a lineman whose snaps were
+        // never recorded reads better as the phrased sentence.
+        guard !parts.isEmpty else { return entry.careerResume }
+        if let games = entry.careerGamesPlayed, games > 0 {
+            parts.append("\(games) G")
+        }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: - Bits

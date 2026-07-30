@@ -5,7 +5,7 @@
 > never enter an app target's resources. `league_2026_dev.json` is DEBUG-only;
 > only `league_2026_publish.json` ships in a Release build.
 
-- built: `2026-07-30T13:50:56Z` (the templates themselves are byte-identical on every rebuild — their `generated` stamp is the source snapshot's, `2026-07-29T13:59:05Z`)
+- built: `2026-07-30T20:09:04Z` (the templates themselves are byte-identical on every rebuild — their `generated` stamp is the source snapshot's, `2026-07-29T13:59:05Z`)
 - globalSeed: `20260729` (deterministic — re-running reproduces both files)
 - source: `tools/league-data/raw/league_raw_2026.json` (schemaVersion 2, snapshot 2026-02-28)
 - outputs: `out/league_2026_dev.json` (devProfile), `out/league_2026_publish.json` (publishProfile)
@@ -33,7 +33,7 @@
 | 16 | `publish-name-recombination>=3` | PASS | all 239 x 385 = 92015 recombinations of the shipped first/last tokens are Levenshtein >= 3 from every real name — the importer generates 417 support-staff coaches by drawing the two halves independently, and those names never reach a bundle scan |
 | 17 | `publish-coach-tenure-moved` | PASS | all 95 publish coaches with a real `sinceYear` moved by exactly ±1 (spec §4); the direction is picked among the moves that survive the [1990, leagueYear] clamp, so a 2026 hire cannot be clamped back onto his real tenure |
 | 18 | `age-profile-in-drift-band` | PASS | mean age 26.7 (band 25.0-28.0), 33+ share 5.4% (ceiling 8.0%), roster sizes [55, 56, 57]. Reference random league: mean 25.8 / 3.2% at 33+ over exactly 53 men. The template is OLDER on purpose (real pyramid, real 53+IR rosters) and its first offseason retires ~86 players against the random league's ~46 — an ACCEPTED, recorded difference, not a calibration target; see TRANSFORM_QA §7 |
-| 19 | `face-preassignment` | PASS | dev 1902 unique faces (1807p + 95c), band 82.1%, build 88.5%, exact bucket 74.1%, 135 reserve; publish 1902 unique faces (1807p + 95c), band 84.5%, build 88.6%, exact bucket 76.2%, 135 reserve; 35 female coach faces in the pool (ids 2560+), 0 baked; buckets cross-checked against 3584 generated faces; pool 2048 generated + 512 reserve + 1024 extended |
+| 19 | `face-preassignment` | PASS | dev 1902 unique faces (1807p + 95c), band 82.1%, build 88.5%, exact bucket 74.1%, 135 reserve; publish 1902 unique faces (1807p + 95c), band 84.5%, build 88.6%, exact bucket 76.2%, 135 reserve; 163 female coach faces in the pool (ids 2560+), 0 baked; buckets cross-checked against 3712 generated faces; pool 2048 generated + 512 reserve + 1024 extended + 128 female-only |
 
 **Verdict: ALL GATES PASS.**
 
@@ -224,22 +224,22 @@ Gate 18 (`age-profile-in-drift-band`) therefore records the numbers and only fai
 
 Every template person carries the face id he will wear. This is not a convenience: `LeagueTemplateImporter` gives each imported `Player` / `Coach` a FRESH `UUID()`, and the runtime picker hashes exactly that UUID — so a fixed league that assigned faces at runtime would show different portraits every time it was created. Baking the ids is what makes the fixed league fixed all the way down to the faces.
 
-**Pool decision: the library is extended to 3 584 ids** (`face_00000`-`face_03583`). The seed yields 1672 player-age faces in the default `--count 2048` range against 1807 template players, so per-person uniqueness is arithmetically impossible there. Sharing was rejected (a duplicated portrait inside ONE league reads as a bug), so the transform draws the overflow from a reserved range, `face_02048`-`face_03583`, which `python3 tools/faces/generate_faces.py --count 3584` produces later. Ids are stable and the manifest is append-only, so extending costs nothing already generated.
+**Pool decision: the library is extended to 3 712 ids** (`face_00000`-`face_03711`). The seed yields 1672 player-age faces in the default `--count 2048` range against 1807 template players, so per-person uniqueness is arithmetically impossible there. Sharing was rejected (a duplicated portrait inside ONE league reads as a bug), so the transform draws the overflow from a reserved range, `face_02048`-`face_03711`, which `python3 tools/faces/generate_faces.py --count 3584` produces later. Ids are stable and the manifest is append-only, so extending costs nothing already generated.
 
-The last 1024 ids (`face_02560`-`face_03583`) are the **female extension range**: a coach face there spends one extra draw on gender at 22%, and it is the library's only source of female portraits. The template never reaches it — its coaches anonymize real male head coaches and allocation is lowest-id-first — so the range exists purely for the women a career hires at run time.
+The last 1024 ids (`face_02560`-`face_03711`) are the **female extension range**: a coach face there spends one extra draw on gender at 22%, and it is the library's only source of female portraits. The template never reaches it — its coaches anonymize real male head coaches and allocation is lowest-id-first — so the range exists purely for the women a career hires at run time.
 
 | pool half | age band | faces `--count 2048` | + ids 2048+ | template demand |
 |---|---|---:|---:|---:|
 | player | 20-24 | 628 | +478 | 486 |
 | player | 25-29 | 656 | +482 | 970 |
 | player | 30-36 | 388 | +292 | 351 |
-| coach | 38-50 | 170 | +119 | 47 |
-| coach | 50-68 | 206 | +165 | 48 |
+| coach | 38-50 | 170 | +175 | 47 |
+| coach | 50-68 | 206 | +237 | 48 |
 
 - assigned: **1902 unique faces** (1807 players + 95 coaches), zero shared, zero role mismatches (no player wears a coach-age face)
 - bucket quality: age band exact on **84.5 %**, build exact on **88.6 %**, both on 76.2 %. The rest take the nearest neighbouring bucket — build is relaxed BEFORE age, exactly as `FaceLibrary.pickLocked` does at runtime.
 - reserve range: **135 people** — the whole 122-man `depth` tier plus the 13 lowest-rated backups. Allocation runs starters → rotation → backups → depth and takes the lowest free id first, so the ids whose pictures may not exist yet land on the least visible people, and the ids generated first land on the most visible ones.
-- left for the career: **281** generated-range and 1401 faces at `face_02048`+ (reserve plus the female extension range) for draft classes, UDFAs, hired coordinators and the 417 support-staff coaches the importer creates.
+- left for the career: **281** generated-range and 1529 faces at `face_02048`+ (reserve plus the female extension range) for draft classes, UDFAs, hired coordinators and the 417 support-staff coaches the importer creates.
 
 Nothing here needs an image. A face's bucket is a pure function of `(face seed, id)`, so this runs while the library is still generating, and `PersonFaceView` draws a silhouette for any id whose HEIC has not landed. Gate 19 cross-checks the bucket maths against every face the generator has actually produced.
 

@@ -2034,7 +2034,9 @@ FACE_COACH_SHARE = 0.1875            # generate_faces.py --coach-share
 FACE_GENERATED_POOL = 2048           # ids face_00000..face_02047 (--count 2048)
 FACE_RESERVE_POOL = 512              # ids face_02048..face_02559 (--count 2560)
 FACE_FEMALE_POOL = 1024              # ids face_02560..face_03583 (--count 3584)
-FACE_POOL = FACE_GENERATED_POOL + FACE_RESERVE_POOL + FACE_FEMALE_POOL
+FACE_FEMALE_ONLY_POOL = 128          # ids face_03584..face_03711 (--count 3712)
+FACE_POOL = (FACE_GENERATED_POOL + FACE_RESERVE_POOL
+             + FACE_FEMALE_POOL + FACE_FEMALE_ONLY_POOL)
 # The extended range is where female coach faces live. It is NOT a second
 # reserve: FACE_RESERVE_POOL keeps naming only the 512-id band the template
 # draws its overflow from, and the runtime picker treats 2560+ as a first-class
@@ -2044,6 +2046,12 @@ FACE_POOL = FACE_GENERATED_POOL + FACE_RESERVE_POOL + FACE_FEMALE_POOL
 # extend the same tail (the template stops at face_02344 and never reaches it).
 FACE_FEMALE_RANGE_START = 2560       # generate_faces.py FEMALE_RANGE_START
 FACE_FEMALE_COACH_SHARE = 0.22       # generate_faces.py --female-coach-share
+# Above this every id is a female coach face outright — no role draw, no gender
+# draw (see generate_faces.py FEMALE_ONLY_RANGE_START). It exists because 0.22
+# of 0.1875 only yields ~35 female faces per 1 024 ids and a career drains those
+# by season 2-3. Nothing in this transform changes: ids go out lowest-first and
+# the template stops at face_02344, so the range is pure runtime supply.
+FACE_FEMALE_ONLY_RANGE_START = 3584  # generate_faces.py FEMALE_ONLY_RANGE_START
 
 FACE_TONES = [("black", 0.55), ("white", 0.28), ("latino", 0.07),
               ("pacific", 0.04), ("mixed", 0.06)]
@@ -2122,18 +2130,24 @@ def face_bucket(index: int) -> dict:
     build); each pick consumes one `random()`. Verified against the live
     generator manifest by gate 19.
 
-    Two things are gated on the id, not on the pool size: ids at/after
+    Three things are gated on the id, not on the pool size: ids at/after
     FACE_FEMALE_RANGE_START spend ONE extra `random()` on the gender of a coach
-    face (players skip the draw but still carry "male"), and only those ids
-    carry a `gender` key at all. Ids below it predate the female range and must
-    stay byte-identical to the 2 560 manifest entries already shipped — adding
-    the key there would fail gate 19 from the other side.
+    face (players skip the draw but still carry "male"); only those ids carry a
+    `gender` key at all; and ids at/after FACE_FEMALE_ONLY_RANGE_START spend
+    NOTHING on either role or gender, because both are facts about that range
+    rather than outcomes — so `tone` there reads the first value off the stream.
+    Ids below each gate must stay byte-identical to the manifest entries already
+    shipped (adding the key below 2 560 would fail gate 19 from the other side),
+    which is why every gate is on the index and none on FACE_POOL.
     """
     rng = random.Random(f"{FACE_SEED}:{face_id(index)}")
-    role = "coach" if rng.random() < FACE_COACH_SHARE else "player"
-    gender = "male"
-    if index >= FACE_FEMALE_RANGE_START and role == "coach":
-        gender = "female" if rng.random() < FACE_FEMALE_COACH_SHARE else "male"
+    if index >= FACE_FEMALE_ONLY_RANGE_START:
+        role, gender = "coach", "female"
+    else:
+        role = "coach" if rng.random() < FACE_COACH_SHARE else "player"
+        gender = "male"
+        if index >= FACE_FEMALE_RANGE_START and role == "coach":
+            gender = "female" if rng.random() < FACE_FEMALE_COACH_SHARE else "male"
     tone = face_wpick(rng, FACE_TONES)
     age = face_wpick(rng, FACE_COACH_AGES if role == "coach" else FACE_PLAYER_AGES)
     build = face_wpick(rng, FACE_PLAYER_BUILDS if role == "player" else FACE_COACH_BUILDS)
@@ -3250,6 +3264,7 @@ def run_gates(dev, pub, ctx, log):
          + f"; buckets cross-checked against {checked} generated faces"
          + f"; pool {FACE_GENERATED_POOL} generated + {FACE_RESERVE_POOL} reserve"
          + f" + {FACE_FEMALE_POOL} extended"
+         + f" + {FACE_FEMALE_ONLY_POOL} female-only"
          if not face_err else "; ".join(face_err[:5]))
 
     return res
@@ -3585,7 +3600,7 @@ def write_qa_report(path, dev, pub, ctx, gates, log):
       "different portraits every time it was created. Baking the ids is what "
       "makes the fixed league fixed all the way down to the faces.")
     A("")
-    A("**Pool decision: the library is extended to 3 584 ids** "
+    A("**Pool decision: the library is extended to 3 712 ids** "
       f"(`face_00000`-`face_{FACE_POOL - 1:05d}`). The seed yields "
       f"{sum(v for (r, _b, s), v in supply.items() if r == 'player' and s == 'gen')} "
       "player-age faces in the default `--count 2048` range against "

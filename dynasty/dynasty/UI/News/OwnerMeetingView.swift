@@ -43,7 +43,7 @@ struct OwnerMeetingView: View {
                             }
                         }
                         .padding(24)
-                        .frame(maxWidth: 720)
+                        .frame(maxWidth: DSLayout.contentMeasure)
                         .frame(maxWidth: .infinity)
                     }
                 } else {

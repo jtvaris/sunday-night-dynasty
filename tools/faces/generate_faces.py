@@ -5,6 +5,8 @@ Usage:
   python3 generate_faces.py --pilot                 # 24 samples across buckets
   python3 generate_faces.py --count 2048            # full library (resumes)
   python3 generate_faces.py --count 2560            # + the reserve range
+  python3 generate_faces.py --count 3584            # + the female-capable range
+  python3 generate_faces.py --count 3712            # + the female-ONLY range
   python3 generate_faces.py --backend replicate ... # explicit backend
 
 QA cull loop: tick faces in out/review.html -> paste into culled.json -> re-run
@@ -82,6 +84,21 @@ FACIAL = ["clean shaven", "short beard", "full beard", "goatee", "light stubble"
 # manifest and the app's synthesized catalog both depend on it), so the extra
 # rng.random() gender draw is gated on the id, never on the count argument.
 FEMALE_RANGE_START = 2560
+
+# Ids at/after this are female coach faces, full stop: role and gender are
+# FACTS about the range, not draws. 0.22 of a 0.1875 coach share is one woman
+# per ~24 ids — 35 of them across the whole 1 024-id female range, which a
+# career exhausts by season 2-3 (measured: freeFemale=0 from 2027, 6-16
+# within-gender duplicates by 2028). Buying the next 128 through the same
+# lottery would have meant ~3 100 more images, ~2 975 of them men nobody needs.
+#
+# Forcing the two facts consumes NO rng.random(): a draw whose outcome is
+# already decided is not a draw, and spending one anyway would only shift the
+# tone/age/build stream of this range for no gain. Same discipline as
+# FEMALE_RANGE_START, from the other direction — the gate is on the id, so
+# every id below 3584 keeps the exact draw sequence its shipped picture was
+# painted from, whatever --count says.
+FEMALE_ONLY_RANGE_START = 3584
 
 def wpick(rng, items):
     r, acc = rng.random() * sum(w for _, _, w in items), 0.0
@@ -209,10 +226,13 @@ def main():
     def work(i):
         fid = f"face_{i:05d}"
         rng = random.Random(f"{args.seed}:{fid}")
-        role = "coach" if rng.random() < args.coach_share else "player"
-        gender = "male"
-        if i >= FEMALE_RANGE_START and role == "coach":
-            gender = "female" if rng.random() < args.female_coach_share else "male"
+        if i >= FEMALE_ONLY_RANGE_START:
+            role, gender = "coach", "female"   # forced facts, no draws — see the constant
+        else:
+            role = "coach" if rng.random() < args.coach_share else "player"
+            gender = "male"
+            if i >= FEMALE_RANGE_START and role == "coach":
+                gender = "female" if rng.random() < args.female_coach_share else "male"
         bucket, prompt = build_spec(rng, role, gender)
         seed = rng.randrange(1, 2**31)
         for attempt in range(5):

@@ -48,7 +48,7 @@ struct QuarterReportView: View {
                     .buttonStyle(.plain)
                 }
                 .padding(22)
-                .frame(maxWidth: 760)
+                .frame(maxWidth: DSLayout.contentMeasure)
                 .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 20))
                 .overlay(
                     RoundedRectangle(cornerRadius: 20)

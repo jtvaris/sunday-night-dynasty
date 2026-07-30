@@ -122,7 +122,7 @@ struct WeeklyPressConferenceView: View {
 
                 Spacer().frame(height: 40)
             }
-            .frame(maxWidth: 900)
+            .frame(maxWidth: DSLayout.wideMeasure)
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
@@ -631,7 +631,7 @@ struct WeeklyPressConferenceView: View {
                 }
                 .padding(.bottom, 40)
             }
-            .frame(maxWidth: 900)
+            .frame(maxWidth: DSLayout.wideMeasure)
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)

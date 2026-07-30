@@ -174,7 +174,7 @@ struct LockerRoomView: View {
                     eventsCard
                 }
                 .padding(20)
-                .frame(maxWidth: 720)
+                .frame(maxWidth: DSLayout.contentMeasure)
                 .frame(maxWidth: .infinity)
             }
         }

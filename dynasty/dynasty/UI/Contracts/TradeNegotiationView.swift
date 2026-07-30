@@ -660,7 +660,11 @@ struct TradeNegotiationView: View {
             allPicks: allPicks,
             currentSeason: career.currentSeason,
             contracts: allContracts,
-            week: career.currentWeek
+            week: career.currentWeek,
+            // Task #36: the round the user's line just landed in drives the GM's
+            // concession curve — his first counter holds near the opening ask,
+            // every further one walks toward the bar he signs at.
+            round: updated.round
         )
 
         switch response {

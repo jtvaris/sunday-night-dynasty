@@ -28,12 +28,16 @@ struct CapOverviewView: View {
                     }
                 }
                 .padding(20)
-                .frame(maxWidth: 720)
+                .frame(maxWidth: DSLayout.contentMeasure)
                 .frame(maxWidth: .infinity)
             }
         }
         .navigationTitle("Salary Cap")
-        .navigationBarTitleDisplayMode(.large)
+        // Inline, not `.large` (#47): a large title is pinned to the window's
+        // leading edge, so on an iPad it sat ~230 pt to the left of the centred
+        // content column and read as broken alignment. The nav bar still names
+        // the screen; the cards keep the reading measure the numbers need.
+        .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task { loadData() }
     }

@@ -162,7 +162,7 @@ struct TeamSelectionView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.bottom, 16)
-                        .frame(maxWidth: 1200)
+                        .frame(maxWidth: DSLayout.gridMeasure)
                         .frame(maxWidth: .infinity)
                     } else {
                         VStack(spacing: 2) {
@@ -175,7 +175,7 @@ struct TeamSelectionView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.bottom, 16)
-                        .frame(maxWidth: 900)
+                        .frame(maxWidth: DSLayout.wideMeasure)
                         .frame(maxWidth: .infinity)
                     }
                 }
@@ -1663,7 +1663,7 @@ private struct TeamDetailSheet: View {
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 32)
-        .frame(maxWidth: 900)
+        .frame(maxWidth: DSLayout.wideMeasure)
         .frame(maxWidth: .infinity)
     }
 }

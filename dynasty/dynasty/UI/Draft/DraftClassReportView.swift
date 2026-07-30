@@ -48,7 +48,7 @@ struct DraftClassReportView: View {
                 }
             }
             .padding(DSSpacing.md)
-            .frame(maxWidth: 900, alignment: .leading)
+            .frame(maxWidth: DSLayout.wideMeasure, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .background(Color.backgroundPrimary)

@@ -162,7 +162,7 @@ struct GamePlanView: View {
                     }
                 }
                 .padding(20)
-                .frame(maxWidth: 1080)
+                .frame(maxWidth: DSLayout.gridMeasure)
                 .frame(maxWidth: .infinity)
             }
         }

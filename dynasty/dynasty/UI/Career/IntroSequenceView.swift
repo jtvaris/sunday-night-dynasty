@@ -416,7 +416,7 @@ private struct OwnerMeetingStep: View {
 
                 Spacer().frame(height: 80)
             }
-            .frame(maxWidth: 800)
+            .frame(maxWidth: DSLayout.wideMeasure)
             .frame(maxWidth: .infinity)
             .frame(minHeight: geometry.size.height)
         }
@@ -922,7 +922,7 @@ private struct TeamOverviewStep: View {
 
                 Spacer().frame(height: 80)
             }
-            .frame(maxWidth: 800)
+            .frame(maxWidth: DSLayout.wideMeasure)
             .frame(maxWidth: .infinity)
             .frame(minHeight: geometry.size.height)
         }
@@ -1147,7 +1147,7 @@ private struct YourRoadmapStep: View {
 
                 Spacer().frame(height: 80)
             }
-            .frame(maxWidth: 900)
+            .frame(maxWidth: DSLayout.wideMeasure)
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)

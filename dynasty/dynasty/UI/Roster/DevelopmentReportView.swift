@@ -62,7 +62,7 @@ struct DevelopmentReportView: View {
                     reportsSection
                 }
                 .padding(20)
-                .frame(maxWidth: 860)
+                .frame(maxWidth: DSLayout.wideMeasure)
                 .frame(maxWidth: .infinity)
             }
         }

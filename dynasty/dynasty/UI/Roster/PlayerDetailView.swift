@@ -478,9 +478,7 @@ struct PlayerDetailView: View {
                 Image(systemName: "person.text.rectangle")
                     .font(.caption)
                     .foregroundStyle(Color.accentGold)
-                Text("Overview")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.textSecondary)
+                SectionHeaderText(title: "Overview")
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
@@ -535,9 +533,7 @@ struct PlayerDetailView: View {
                 Image(systemName: "doc.text")
                     .font(.caption)
                     .foregroundStyle(Color.accentGold)
-                Text("Contract")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.textSecondary)
+                SectionHeaderText(title: "Contract")
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
@@ -679,9 +675,7 @@ struct PlayerDetailView: View {
                     Image(systemName: developmentPhase.icon)
                         .font(.caption)
                         .foregroundStyle(developmentPhase.color)
-                    Text("Development")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Color.textSecondary)
+                    SectionHeaderText(title: "Development")
                     Spacer()
                     Text(developmentPhase.label)
                         .font(.caption.weight(.semibold))
@@ -815,7 +809,9 @@ struct PlayerDetailView: View {
         // the numbers rather than the "nothing recorded" note.
         let isEmpty = gamesPlayed == 0 && line.isEmpty
 
-        Section(currentSeason.map { "\(String($0)) Season Stats" } ?? "Season Stats") {
+        Section(header: SectionHeaderText(
+            title: currentSeason.map { "\(String($0)) Season Stats" } ?? "Season Stats"
+        )) {
             if !isEmpty {
                 HStack(spacing: 0) {
                     seasonQuickStat(label: "GP", value: "\(gamesPlayed)")
@@ -954,7 +950,7 @@ struct PlayerDetailView: View {
         // row in the store, so this is not a property to touch three times.
         let rows = careerTableRows
         if !rows.isEmpty {
-            Section("Career Stats by Season") {
+            Section(header: SectionHeaderText(title: "Career Stats by Season")) {
                 CareerStatTable(position: player.position, rows: rows)
                     .padding(.vertical, 4)
                 if let note = careerTableNote(rows: rows) {
@@ -983,7 +979,7 @@ struct PlayerDetailView: View {
     // MARK: - Trade Value Section (#37)
 
     private var tradeValueSection: some View {
-        Section("Trade Value") {
+        Section(header: SectionHeaderText(title: "Trade Value")) {
             HStack(spacing: 12) {
                 VStack(spacing: 4) {
                     Image(systemName: "arrow.left.arrow.right.circle.fill")
@@ -1095,7 +1091,7 @@ struct PlayerDetailView: View {
     }
 
     private var actionButtonsSection: some View {
-        Section("Actions") {
+        Section(header: SectionHeaderText(title: "Actions")) {
             // 2×2 grid for the four primary actions, then a full-width "Change Position"
             // beneath. Avoids the previous asymmetric 5-button layout where the last
             // button sat alone in its row.
@@ -1228,7 +1224,7 @@ struct PlayerDetailView: View {
     // MARK: - Injury History Section (#38)
 
     private var injuryHistorySection: some View {
-        Section("Injury History") {
+        Section(header: SectionHeaderText(title: "Injury History")) {
             if player.isInjured, let injuryType = player.injuryType {
                 HStack(spacing: 8) {
                     Image(systemName: "cross.circle.fill")
@@ -1421,7 +1417,7 @@ struct PlayerDetailView: View {
     // MARK: - Physical Section
 
     private var physicalSection: some View {
-        Section("Physical Attributes") {
+        Section(header: SectionHeaderText(title: "Physical Attributes")) {
             // #184: Trend arrows (no previous season data yet, show "---")
             AttributeRowWithTrend(name: "Speed",        value: player.physical.speed,        previousValue: nil)
             AttributeRowWithTrend(name: "Acceleration", value: player.physical.acceleration, previousValue: nil)
@@ -1436,7 +1432,7 @@ struct PlayerDetailView: View {
     // MARK: - Mental Section
 
     private var mentalSection: some View {
-        Section("Mental Attributes") {
+        Section(header: SectionHeaderText(title: "Mental Attributes")) {
             // #184: Trend arrows (no previous season data yet, show "---")
             AttributeRowWithTrend(name: "Awareness",       value: player.mental.awareness,      previousValue: nil)
             AttributeRowWithTrend(name: "Decision Making",  value: player.mental.decisionMaking, previousValue: nil)
@@ -1461,7 +1457,7 @@ struct PlayerDetailView: View {
         case .quarterback(let attrs):
             // #182: QB skills with league average context
             let avgAttrs = qbLeagueAverages
-            Section("Quarterback Skills") {
+            Section(header: SectionHeaderText(title: "Quarterback Skills")) {
                 AttributeRowWithContext(name: "Arm Strength",    value: attrs.armStrength,    avg: avgAttrs.armStrength)
                 AttributeRowWithContext(name: "Accuracy Short",  value: attrs.accuracyShort,  avg: avgAttrs.accuracyShort)
                 AttributeRowWithContext(name: "Accuracy Mid",    value: attrs.accuracyMid,    avg: avgAttrs.accuracyMid)
@@ -1472,7 +1468,7 @@ struct PlayerDetailView: View {
             .listRowBackground(Color.backgroundSecondary)
 
         case .wideReceiver(let attrs):
-            Section("Receiver Skills") {
+            Section(header: SectionHeaderText(title: "Receiver Skills")) {
                 ColorCodedAttributeRow(name: "Route Running",     value: attrs.routeRunning)
                 ColorCodedAttributeRow(name: "Catching",          value: attrs.catching)
                 ColorCodedAttributeRow(name: "Release",           value: attrs.release)
@@ -1481,7 +1477,7 @@ struct PlayerDetailView: View {
             .listRowBackground(Color.backgroundSecondary)
 
         case .runningBack(let attrs):
-            Section("Running Back Skills") {
+            Section(header: SectionHeaderText(title: "Running Back Skills")) {
                 ColorCodedAttributeRow(name: "Vision",       value: attrs.vision)
                 ColorCodedAttributeRow(name: "Elusiveness",  value: attrs.elusiveness)
                 ColorCodedAttributeRow(name: "Break Tackle", value: attrs.breakTackle)
@@ -1490,7 +1486,7 @@ struct PlayerDetailView: View {
             .listRowBackground(Color.backgroundSecondary)
 
         case .tightEnd(let attrs):
-            Section("Tight End Skills") {
+            Section(header: SectionHeaderText(title: "Tight End Skills")) {
                 ColorCodedAttributeRow(name: "Blocking",      value: attrs.blocking)
                 ColorCodedAttributeRow(name: "Catching",      value: attrs.catching)
                 ColorCodedAttributeRow(name: "Route Running", value: attrs.routeRunning)
@@ -1499,7 +1495,7 @@ struct PlayerDetailView: View {
             .listRowBackground(Color.backgroundSecondary)
 
         case .offensiveLine(let attrs):
-            Section("Offensive Line Skills") {
+            Section(header: SectionHeaderText(title: "Offensive Line Skills")) {
                 ColorCodedAttributeRow(name: "Run Block",  value: attrs.runBlock)
                 ColorCodedAttributeRow(name: "Pass Block", value: attrs.passBlock)
                 ColorCodedAttributeRow(name: "Pull",       value: attrs.pull)
@@ -1508,7 +1504,7 @@ struct PlayerDetailView: View {
             .listRowBackground(Color.backgroundSecondary)
 
         case .defensiveLine(let attrs):
-            Section("Defensive Line Skills") {
+            Section(header: SectionHeaderText(title: "Defensive Line Skills")) {
                 ColorCodedAttributeRow(name: "Pass Rush",      value: attrs.passRush)
                 ColorCodedAttributeRow(name: "Block Shedding", value: attrs.blockShedding)
                 ColorCodedAttributeRow(name: "Power Moves",    value: attrs.powerMoves)
@@ -1517,7 +1513,7 @@ struct PlayerDetailView: View {
             .listRowBackground(Color.backgroundSecondary)
 
         case .linebacker(let attrs):
-            Section("Linebacker Skills") {
+            Section(header: SectionHeaderText(title: "Linebacker Skills")) {
                 ColorCodedAttributeRow(name: "Tackling",      value: attrs.tackling)
                 ColorCodedAttributeRow(name: "Zone Coverage", value: attrs.zoneCoverage)
                 ColorCodedAttributeRow(name: "Man Coverage",  value: attrs.manCoverage)
@@ -1526,7 +1522,7 @@ struct PlayerDetailView: View {
             .listRowBackground(Color.backgroundSecondary)
 
         case .defensiveBack(let attrs):
-            Section("Defensive Back Skills") {
+            Section(header: SectionHeaderText(title: "Defensive Back Skills")) {
                 ColorCodedAttributeRow(name: "Man Coverage",  value: attrs.manCoverage)
                 ColorCodedAttributeRow(name: "Zone Coverage", value: attrs.zoneCoverage)
                 ColorCodedAttributeRow(name: "Press",         value: attrs.press)
@@ -1535,7 +1531,7 @@ struct PlayerDetailView: View {
             .listRowBackground(Color.backgroundSecondary)
 
         case .kicking(let attrs):
-            Section("Kicking Skills") {
+            Section(header: SectionHeaderText(title: "Kicking Skills")) {
                 ColorCodedAttributeRow(name: "Kick Power",    value: attrs.kickPower)
                 ColorCodedAttributeRow(name: "Kick Accuracy", value: attrs.kickAccuracy)
             }
@@ -1546,7 +1542,7 @@ struct PlayerDetailView: View {
     // MARK: - Personality Section
 
     private var personalitySection: some View {
-        Section("Personality") {
+        Section(header: SectionHeaderText(title: "Personality")) {
             // Archetype with explanation (#183)
             VStack(alignment: .leading, spacing: 4) {
                 LabeledContent("Archetype", value: archetypeDisplayName)
@@ -1580,7 +1576,7 @@ struct PlayerDetailView: View {
     // MARK: - Versatility & Scheme Familiarity Section
 
     private var versatilitySection: some View {
-        Section("Position Versatility") {
+        Section(header: SectionHeaderText(title: "Position Versatility")) {
             // Primary position at 100%
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
@@ -1753,7 +1749,7 @@ struct PlayerDetailView: View {
     // MARK: - Scheme Fit Section
 
     private var schemeFitSection: some View {
-        Section("Scheme Fit") {
+        Section(header: SectionHeaderText(title: "Scheme Fit")) {
             // Best-fit scheme call-out (#42) — derived from the player's highest familiarity entry.
             if let best = bestSchemeFit {
                 LabeledContent("Best Scheme") {
@@ -1808,7 +1804,7 @@ struct PlayerDetailView: View {
     // MARK: - Grid Attribute Sections (iPad / landscape)
 
     private var physicalAttributesGrid: some View {
-        Section("Physical Attributes") {
+        Section(header: SectionHeaderText(title: "Physical Attributes")) {
             attributeGrid([
                 ("Speed",        player.physical.speed),
                 ("Acceleration", player.physical.acceleration),
@@ -1822,7 +1818,7 @@ struct PlayerDetailView: View {
     }
 
     private var mentalAttributesGrid: some View {
-        Section("Mental Attributes") {
+        Section(header: SectionHeaderText(title: "Mental Attributes")) {
             attributeGrid([
                 ("Awareness",       player.mental.awareness),
                 ("Decision Making",  player.mental.decisionMaking),
@@ -1845,7 +1841,7 @@ struct PlayerDetailView: View {
         case .quarterback(let a):
             // #182: QB grid with league averages
             let avg = qbLeagueAverages
-            Section("Quarterback Skills") {
+            Section(header: SectionHeaderText(title: "Quarterback Skills")) {
                 attributeGridWithAvg([
                     ("Arm Strength", a.armStrength, avg.armStrength),
                     ("Accuracy Short", a.accuracyShort, avg.accuracyShort),
@@ -1856,56 +1852,56 @@ struct PlayerDetailView: View {
                 ])
             }.listRowBackground(Color.backgroundSecondary)
         case .wideReceiver(let a):
-            Section("Receiver Skills") {
+            Section(header: SectionHeaderText(title: "Receiver Skills")) {
                 attributeGrid([
                     ("Route Running", a.routeRunning), ("Catching", a.catching),
                     ("Release", a.release), ("Spectacular Catch", a.spectacularCatch),
                 ])
             }.listRowBackground(Color.backgroundSecondary)
         case .runningBack(let a):
-            Section("Running Back Skills") {
+            Section(header: SectionHeaderText(title: "Running Back Skills")) {
                 attributeGrid([
                     ("Vision", a.vision), ("Elusiveness", a.elusiveness),
                     ("Break Tackle", a.breakTackle), ("Receiving", a.receiving),
                 ])
             }.listRowBackground(Color.backgroundSecondary)
         case .tightEnd(let a):
-            Section("Tight End Skills") {
+            Section(header: SectionHeaderText(title: "Tight End Skills")) {
                 attributeGrid([
                     ("Blocking", a.blocking), ("Catching", a.catching),
                     ("Route Running", a.routeRunning), ("Speed", a.speed),
                 ])
             }.listRowBackground(Color.backgroundSecondary)
         case .offensiveLine(let a):
-            Section("Offensive Line Skills") {
+            Section(header: SectionHeaderText(title: "Offensive Line Skills")) {
                 attributeGrid([
                     ("Run Block", a.runBlock), ("Pass Block", a.passBlock),
                     ("Pull", a.pull), ("Anchor", a.anchor),
                 ])
             }.listRowBackground(Color.backgroundSecondary)
         case .defensiveLine(let a):
-            Section("Defensive Line Skills") {
+            Section(header: SectionHeaderText(title: "Defensive Line Skills")) {
                 attributeGrid([
                     ("Pass Rush", a.passRush), ("Block Shedding", a.blockShedding),
                     ("Power Moves", a.powerMoves), ("Finesse Moves", a.finesseMoves),
                 ])
             }.listRowBackground(Color.backgroundSecondary)
         case .linebacker(let a):
-            Section("Linebacker Skills") {
+            Section(header: SectionHeaderText(title: "Linebacker Skills")) {
                 attributeGrid([
                     ("Tackling", a.tackling), ("Zone Coverage", a.zoneCoverage),
                     ("Man Coverage", a.manCoverage), ("Blitzing", a.blitzing),
                 ])
             }.listRowBackground(Color.backgroundSecondary)
         case .defensiveBack(let a):
-            Section("Defensive Back Skills") {
+            Section(header: SectionHeaderText(title: "Defensive Back Skills")) {
                 attributeGrid([
                     ("Man Coverage", a.manCoverage), ("Zone Coverage", a.zoneCoverage),
                     ("Press", a.press), ("Ball Skills", a.ballSkills),
                 ])
             }.listRowBackground(Color.backgroundSecondary)
         case .kicking(let a):
-            Section("Kicking Skills") {
+            Section(header: SectionHeaderText(title: "Kicking Skills")) {
                 attributeGrid([
                     ("Kick Power", a.kickPower), ("Kick Accuracy", a.kickAccuracy),
                 ])

@@ -89,7 +89,7 @@ struct RoundResultsView: View {
                         }
                     }
                     .padding(20)
-                    .frame(maxWidth: 720)
+                    .frame(maxWidth: DSLayout.contentMeasure)
                     .frame(maxWidth: .infinity)
                 }
                 footer
@@ -439,7 +439,7 @@ struct RoundResultsView: View {
             }
         }
         .padding(20)
-        .frame(maxWidth: 720)
+        .frame(maxWidth: DSLayout.contentMeasure)
         .frame(maxWidth: .infinity)
         .background(Color.backgroundSecondary)
         .overlay(alignment: .top) {

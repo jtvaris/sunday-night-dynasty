@@ -137,6 +137,27 @@ enum DSSpacing {
     static let xl: CGFloat = 32
 }
 
+// MARK: - Content Measure Tokens
+//
+// How wide the content column is allowed to grow on an iPad. Screens used to
+// pick their own number — 720, 760, 800, 820, 860, 900, 1080, 1200 all shipped
+// — which is why a picker and the cards under it kept landing on different
+// centre lines. Three steps instead: pick the one that matches what the screen
+// shows, not a number.
+
+enum DSLayout {
+    /// 720 — the default reading column: one stack of cards, a form, a list,
+    /// a message. Anything wider makes body text uncomfortable to scan.
+    static let contentMeasure: CGFloat = 720
+    /// 900 — dense content that needs the room: multi-column tables, standings,
+    /// two-up card rows, the press-conference transcript.
+    static let wideMeasure: CGFloat = 900
+    /// 1200 — full-bleed grids that want the whole iPad (team selection, the
+    /// game plan board). Effectively "no column", capped so a Mac window or a
+    /// future larger display does not stretch it forever.
+    static let gridMeasure: CGFloat = 1200
+}
+
 // MARK: - Corner Radius Tokens
 //
 // Two scales: 8 for inline pills/buttons/chips, 12 for cards. Anything

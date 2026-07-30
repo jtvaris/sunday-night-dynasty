@@ -51200,6 +51200,1926 @@
    "backend": "replicate",
    "sha256": "fd1cf23e04737dbb",
    "prompt": "Black American man in his early thirties, muscular athletic build, medium afro, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark athletic compression shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03584",
+   "file": "raw/face_03584.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 845816625,
+   "backend": "replicate",
+   "sha256": "65107e46317b8945",
+   "prompt": "white American woman in her mid forties, heavyset build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03586",
+   "file": "raw/face_03586.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 106855063,
+   "backend": "replicate",
+   "sha256": "a236e1852951b177",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03585",
+   "file": "raw/face_03585.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 683857165,
+   "backend": "replicate",
+   "sha256": "6ac0e8aebbb79d83",
+   "prompt": "Black American woman in her mid forties, heavyset build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03587",
+   "file": "raw/face_03587.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 768823183,
+   "backend": "replicate",
+   "sha256": "d5d1a9b0c67258fb",
+   "prompt": "white American woman in her late fifties, some gray hair, heavyset build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03589",
+   "file": "raw/face_03589.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 434231799,
+   "backend": "replicate",
+   "sha256": "3a40c42e1b94290f",
+   "prompt": "white American woman in her mid forties, heavyset build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03590",
+   "file": "raw/face_03590.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "mixed",
+    "build": "athletic"
+   },
+   "seed": 2078497633,
+   "backend": "replicate",
+   "sha256": "5d652211bcf9a10b",
+   "prompt": "mixed-race American woman in her late fifties, some gray hair, sturdy build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03591",
+   "file": "raw/face_03591.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1975815760,
+   "backend": "replicate",
+   "sha256": "e6263382659e9bbb",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03593",
+   "file": "raw/face_03593.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 368168665,
+   "backend": "replicate",
+   "sha256": "59c0b7cccad1471a",
+   "prompt": "white American woman in her late fifties, some gray hair, sturdy build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03588",
+   "file": "raw/face_03588.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 666349819,
+   "backend": "replicate",
+   "sha256": "dc078819eb5ef70f",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03594",
+   "file": "raw/face_03594.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1255026710,
+   "backend": "replicate",
+   "sha256": "5649f08353cb10a2",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03592",
+   "file": "raw/face_03592.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1625480311,
+   "backend": "replicate",
+   "sha256": "fa0d3bc133182144",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03596",
+   "file": "raw/face_03596.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 482307120,
+   "backend": "replicate",
+   "sha256": "058c6f69abb08c21",
+   "prompt": "white American woman in her late fifties, some gray hair, average build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03597",
+   "file": "raw/face_03597.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1150347547,
+   "backend": "replicate",
+   "sha256": "fa1f204a4b726d20",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03599",
+   "file": "raw/face_03599.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1185559488,
+   "backend": "replicate",
+   "sha256": "9fbcecd1a7da4af2",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03600",
+   "file": "raw/face_03600.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 937314154,
+   "backend": "replicate",
+   "sha256": "2c9180ac186e0b39",
+   "prompt": "white American woman in her mid forties, average build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03598",
+   "file": "raw/face_03598.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 1583392160,
+   "backend": "replicate",
+   "sha256": "26cbecc5c78f747f",
+   "prompt": "white American woman in her late fifties, some gray hair, heavyset build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03602",
+   "file": "raw/face_03602.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "mixed",
+    "build": "lean"
+   },
+   "seed": 1761722704,
+   "backend": "replicate",
+   "sha256": "4232b66f904dda1d",
+   "prompt": "mixed-race American woman in her late fifties, some gray hair, average build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03603",
+   "file": "raw/face_03603.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 996229271,
+   "backend": "replicate",
+   "sha256": "b1acf316343dc0ad",
+   "prompt": "white American woman in her mid forties, average build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03604",
+   "file": "raw/face_03604.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 507072872,
+   "backend": "replicate",
+   "sha256": "eefce5c3341fd3e4",
+   "prompt": "white American woman in her mid forties, sturdy build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03605",
+   "file": "raw/face_03605.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 87109377,
+   "backend": "replicate",
+   "sha256": "41b222b2ebadacac",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03606",
+   "file": "raw/face_03606.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1761584692,
+   "backend": "replicate",
+   "sha256": "a24aa0bd7fb276c2",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03601",
+   "file": "raw/face_03601.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 820774801,
+   "backend": "replicate",
+   "sha256": "8f9a32222d23e58c",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03607",
+   "file": "raw/face_03607.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1800932949,
+   "backend": "replicate",
+   "sha256": "fb1a91c50dfa0fe5",
+   "prompt": "white American woman in her mid forties, sturdy build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03608",
+   "file": "raw/face_03608.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1831976831,
+   "backend": "replicate",
+   "sha256": "ff70ecb0443f453f",
+   "prompt": "white American woman in her late fifties, some gray hair, average build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03595",
+   "file": "raw/face_03595.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1218988849,
+   "backend": "replicate",
+   "sha256": "4d53e84706c6da31",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03611",
+   "file": "raw/face_03611.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "latino",
+    "build": "lean"
+   },
+   "seed": 2134816596,
+   "backend": "replicate",
+   "sha256": "3221600cac08cf63",
+   "prompt": "Latina American woman in her late fifties, some gray hair, average build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03609",
+   "file": "raw/face_03609.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1560459368,
+   "backend": "replicate",
+   "sha256": "8de5fc9ed262c9c9",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03610",
+   "file": "raw/face_03610.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 2095343238,
+   "backend": "replicate",
+   "sha256": "5d5bc49de6baa946",
+   "prompt": "white American woman in her late fifties, some gray hair, sturdy build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03613",
+   "file": "raw/face_03613.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1561814187,
+   "backend": "replicate",
+   "sha256": "5dab545b8f8b29c4",
+   "prompt": "Black American woman in her mid forties, sturdy build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03615",
+   "file": "raw/face_03615.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 553824253,
+   "backend": "replicate",
+   "sha256": "5232dc02ffd6d174",
+   "prompt": "white American woman in her mid forties, heavyset build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03614",
+   "file": "raw/face_03614.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1406261804,
+   "backend": "replicate",
+   "sha256": "8447abd65ddc1468",
+   "prompt": "white American woman in her mid forties, sturdy build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03616",
+   "file": "raw/face_03616.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 2055229591,
+   "backend": "replicate",
+   "sha256": "93cda3495458c909",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03612",
+   "file": "raw/face_03612.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1330647477,
+   "backend": "replicate",
+   "sha256": "000dbea19bc6d564",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03619",
+   "file": "raw/face_03619.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 735119915,
+   "backend": "replicate",
+   "sha256": "31ddef86cf94f483",
+   "prompt": "white American woman in her mid forties, average build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03617",
+   "file": "raw/face_03617.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1011799824,
+   "backend": "replicate",
+   "sha256": "8582de826710dc8f",
+   "prompt": "Black American woman in her mid forties, average build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03618",
+   "file": "raw/face_03618.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 975433859,
+   "backend": "replicate",
+   "sha256": "d1eb0aa3b17e8a64",
+   "prompt": "Black American woman in her mid forties, sturdy build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03621",
+   "file": "raw/face_03621.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1111586553,
+   "backend": "replicate",
+   "sha256": "c1e6f0480642f961",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03620",
+   "file": "raw/face_03620.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "latino",
+    "build": "lean"
+   },
+   "seed": 1797983240,
+   "backend": "replicate",
+   "sha256": "9f274c8e71dd3cf0",
+   "prompt": "Latina American woman in her mid forties, average build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03623",
+   "file": "raw/face_03623.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1877567141,
+   "backend": "replicate",
+   "sha256": "7de36c983d0cf209",
+   "prompt": "white American woman in her late fifties, some gray hair, sturdy build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03622",
+   "file": "raw/face_03622.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 918219892,
+   "backend": "replicate",
+   "sha256": "61f21bdec5c833af",
+   "prompt": "Black American woman in her mid forties, average build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03624",
+   "file": "raw/face_03624.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 2072950242,
+   "backend": "replicate",
+   "sha256": "c4bff45c099ea29b",
+   "prompt": "Black American woman in her mid forties, sturdy build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03625",
+   "file": "raw/face_03625.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1510340547,
+   "backend": "replicate",
+   "sha256": "492dcdfd2f98c1fb",
+   "prompt": "Black American woman in her mid forties, average build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03627",
+   "file": "raw/face_03627.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 1525017716,
+   "backend": "replicate",
+   "sha256": "494870056df2bc5d",
+   "prompt": "white American woman in her late fifties, some gray hair, heavyset build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03628",
+   "file": "raw/face_03628.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 823400384,
+   "backend": "replicate",
+   "sha256": "68bbbef034505f16",
+   "prompt": "white American woman in her late fifties, some gray hair, average build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03629",
+   "file": "raw/face_03629.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 251268384,
+   "backend": "replicate",
+   "sha256": "6354ad3a6c3d32fa",
+   "prompt": "white American woman in her mid forties, average build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03630",
+   "file": "raw/face_03630.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 157600309,
+   "backend": "replicate",
+   "sha256": "1b471dd27af5c9d2",
+   "prompt": "white American woman in her late fifties, some gray hair, heavyset build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03631",
+   "file": "raw/face_03631.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "pacific",
+    "build": "athletic"
+   },
+   "seed": 483677324,
+   "backend": "replicate",
+   "sha256": "cc85318becd9f7fe",
+   "prompt": "Pacific Islander (Samoan/Tongan) American woman in her mid forties, sturdy build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03632",
+   "file": "raw/face_03632.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1307344627,
+   "backend": "replicate",
+   "sha256": "91b4db765548d9e5",
+   "prompt": "white American woman in her late fifties, some gray hair, sturdy build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03633",
+   "file": "raw/face_03633.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 395123052,
+   "backend": "replicate",
+   "sha256": "8acf376d17bc2386",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03634",
+   "file": "raw/face_03634.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1466863708,
+   "backend": "replicate",
+   "sha256": "fc1caf407c0295fb",
+   "prompt": "Black American woman in her mid forties, sturdy build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03636",
+   "file": "raw/face_03636.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 457634948,
+   "backend": "replicate",
+   "sha256": "bf49848ea213c292",
+   "prompt": "Black American woman in her mid forties, heavyset build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03635",
+   "file": "raw/face_03635.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1120529449,
+   "backend": "replicate",
+   "sha256": "0860b97ea07fc9ba",
+   "prompt": "white American woman in her late fifties, some gray hair, sturdy build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03638",
+   "file": "raw/face_03638.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 85780406,
+   "backend": "replicate",
+   "sha256": "e491bb26ee1f1398",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03639",
+   "file": "raw/face_03639.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 532800519,
+   "backend": "replicate",
+   "sha256": "7e4b0faf56ad5d12",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03640",
+   "file": "raw/face_03640.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 770487156,
+   "backend": "replicate",
+   "sha256": "2430f8ee842d1719",
+   "prompt": "white American woman in her mid forties, average build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03641",
+   "file": "raw/face_03641.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1647670257,
+   "backend": "replicate",
+   "sha256": "a4c644edeae49c48",
+   "prompt": "Black American woman in her mid forties, average build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03642",
+   "file": "raw/face_03642.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 805923229,
+   "backend": "replicate",
+   "sha256": "d23c4565c34ab74f",
+   "prompt": "white American woman in her late fifties, some gray hair, average build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03643",
+   "file": "raw/face_03643.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "latino",
+    "build": "lean"
+   },
+   "seed": 2026623145,
+   "backend": "replicate",
+   "sha256": "50b5b8f9efb1a395",
+   "prompt": "Latina American woman in her late fifties, some gray hair, average build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03626",
+   "file": "raw/face_03626.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1574311008,
+   "backend": "replicate",
+   "sha256": "0059dc2901590272",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03645",
+   "file": "raw/face_03645.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1912205311,
+   "backend": "replicate",
+   "sha256": "17a792cad6113119",
+   "prompt": "white American woman in her mid forties, sturdy build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03646",
+   "file": "raw/face_03646.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1406539423,
+   "backend": "replicate",
+   "sha256": "777c0d93b76c4df0",
+   "prompt": "white American woman in her late fifties, some gray hair, average build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03647",
+   "file": "raw/face_03647.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 204929431,
+   "backend": "replicate",
+   "sha256": "babe015760dd7e34",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03644",
+   "file": "raw/face_03644.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 1300588351,
+   "backend": "replicate",
+   "sha256": "adddc6a0765a5054",
+   "prompt": "Black American woman in her mid forties, heavyset build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03649",
+   "file": "raw/face_03649.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "pacific",
+    "build": "athletic"
+   },
+   "seed": 734345672,
+   "backend": "replicate",
+   "sha256": "f1d9b9e7c7c7673a",
+   "prompt": "Pacific Islander (Samoan/Tongan) American woman in her mid forties, sturdy build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03637",
+   "file": "raw/face_03637.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 286117425,
+   "backend": "replicate",
+   "sha256": "1a97159ebf877fe5",
+   "prompt": "Black American woman in her late fifties, some gray hair, heavyset build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03650",
+   "file": "raw/face_03650.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 2017827214,
+   "backend": "replicate",
+   "sha256": "9bc24e9a76536bea",
+   "prompt": "white American woman in her mid forties, sturdy build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03652",
+   "file": "raw/face_03652.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 997760347,
+   "backend": "replicate",
+   "sha256": "c20ca190221ee973",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03653",
+   "file": "raw/face_03653.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 343618220,
+   "backend": "replicate",
+   "sha256": "5da500088112248e",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03651",
+   "file": "raw/face_03651.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1883999869,
+   "backend": "replicate",
+   "sha256": "fa9fdf27c8aff932",
+   "prompt": "Black American woman in her mid forties, average build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03655",
+   "file": "raw/face_03655.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1523918045,
+   "backend": "replicate",
+   "sha256": "0bcf8296e7d2266b",
+   "prompt": "Black American woman in her mid forties, sturdy build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03656",
+   "file": "raw/face_03656.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1339608799,
+   "backend": "replicate",
+   "sha256": "9ac566a3cea5302b",
+   "prompt": "Black American woman in her mid forties, sturdy build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03657",
+   "file": "raw/face_03657.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "mixed",
+    "build": "lean"
+   },
+   "seed": 856890846,
+   "backend": "replicate",
+   "sha256": "33c8aa5345caa9ea",
+   "prompt": "mixed-race American woman in her late fifties, some gray hair, average build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03658",
+   "file": "raw/face_03658.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1917878633,
+   "backend": "replicate",
+   "sha256": "85cd00828212c794",
+   "prompt": "Black American woman in her mid forties, sturdy build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03659",
+   "file": "raw/face_03659.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "mixed",
+    "build": "lean"
+   },
+   "seed": 1722375779,
+   "backend": "replicate",
+   "sha256": "a6f860e518a81cae",
+   "prompt": "mixed-race American woman in her late fifties, some gray hair, average build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03660",
+   "file": "raw/face_03660.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1529965805,
+   "backend": "replicate",
+   "sha256": "5f2c7aba6c2cc2e0",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03661",
+   "file": "raw/face_03661.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "mixed",
+    "build": "lean"
+   },
+   "seed": 1929588351,
+   "backend": "replicate",
+   "sha256": "23a086f9bd673e6d",
+   "prompt": "mixed-race American woman in her late fifties, some gray hair, average build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03648",
+   "file": "raw/face_03648.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1304941615,
+   "backend": "replicate",
+   "sha256": "1cdcc7bfc8724b7a",
+   "prompt": "Black American woman in her mid forties, sturdy build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03663",
+   "file": "raw/face_03663.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 63561201,
+   "backend": "replicate",
+   "sha256": "005dfeaebd4047ec",
+   "prompt": "white American woman in her mid forties, average build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03662",
+   "file": "raw/face_03662.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1719651132,
+   "backend": "replicate",
+   "sha256": "5a1448f191ea6864",
+   "prompt": "white American woman in her late fifties, some gray hair, sturdy build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03665",
+   "file": "raw/face_03665.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 919064952,
+   "backend": "replicate",
+   "sha256": "160a87deef28f967",
+   "prompt": "white American woman in her mid forties, heavyset build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03664",
+   "file": "raw/face_03664.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 420907241,
+   "backend": "replicate",
+   "sha256": "7e1f1b6a70ee4deb",
+   "prompt": "Black American woman in her mid forties, sturdy build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03667",
+   "file": "raw/face_03667.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 916377799,
+   "backend": "replicate",
+   "sha256": "41c6b8fc99cc12cc",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03668",
+   "file": "raw/face_03668.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1178638114,
+   "backend": "replicate",
+   "sha256": "3d28541e615c80b9",
+   "prompt": "white American woman in her late fifties, some gray hair, average build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03669",
+   "file": "raw/face_03669.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 393767328,
+   "backend": "replicate",
+   "sha256": "f6b19dc9715354e6",
+   "prompt": "white American woman in her late fifties, some gray hair, average build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03654",
+   "file": "raw/face_03654.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 2089007590,
+   "backend": "replicate",
+   "sha256": "cf8f423a62e3a2cf",
+   "prompt": "Black American woman in her mid forties, average build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03671",
+   "file": "raw/face_03671.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 747040518,
+   "backend": "replicate",
+   "sha256": "b71834446d582fa6",
+   "prompt": "white American woman in her late fifties, some gray hair, sturdy build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03672",
+   "file": "raw/face_03672.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 704140224,
+   "backend": "replicate",
+   "sha256": "ffdb607b87f40640",
+   "prompt": "white American woman in her mid forties, heavyset build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03670",
+   "file": "raw/face_03670.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 822655532,
+   "backend": "replicate",
+   "sha256": "df518b29adadd0c1",
+   "prompt": "white American woman in her late fifties, some gray hair, average build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03674",
+   "file": "raw/face_03674.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 2041772449,
+   "backend": "replicate",
+   "sha256": "a54bee06769d52d9",
+   "prompt": "Black American woman in her mid forties, heavyset build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03666",
+   "file": "raw/face_03666.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 2134387872,
+   "backend": "replicate",
+   "sha256": "cfde30d2327132d9",
+   "prompt": "Black American woman in her mid forties, sturdy build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03676",
+   "file": "raw/face_03676.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 65359055,
+   "backend": "replicate",
+   "sha256": "dd0b51809f6913c5",
+   "prompt": "Black American woman in her mid forties, average build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03677",
+   "file": "raw/face_03677.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "latino",
+    "build": "heavy"
+   },
+   "seed": 2146212813,
+   "backend": "replicate",
+   "sha256": "aad9675e28fdeeda",
+   "prompt": "Latina American woman in her late fifties, some gray hair, heavyset build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03678",
+   "file": "raw/face_03678.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 562580893,
+   "backend": "replicate",
+   "sha256": "1c73810b71c51b1c",
+   "prompt": "Black American woman in her late fifties, some gray hair, heavyset build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03673",
+   "file": "raw/face_03673.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 744957160,
+   "backend": "replicate",
+   "sha256": "08924086d7541c1a",
+   "prompt": "Black American woman in her mid forties, sturdy build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03679",
+   "file": "raw/face_03679.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 747161630,
+   "backend": "replicate",
+   "sha256": "d75ef649cb11bd31",
+   "prompt": "white American woman in her mid forties, average build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03681",
+   "file": "raw/face_03681.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1575173985,
+   "backend": "replicate",
+   "sha256": "3ab982f9c1257115",
+   "prompt": "white American woman in her mid forties, average build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03675",
+   "file": "raw/face_03675.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 860944537,
+   "backend": "replicate",
+   "sha256": "db2bfa13b0692b88",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03683",
+   "file": "raw/face_03683.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 947779736,
+   "backend": "replicate",
+   "sha256": "9ec76bfa08923a8b",
+   "prompt": "Black American woman in her mid forties, heavyset build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03684",
+   "file": "raw/face_03684.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 399732728,
+   "backend": "replicate",
+   "sha256": "b8e13b80d1fdb840",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03685",
+   "file": "raw/face_03685.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 546016355,
+   "backend": "replicate",
+   "sha256": "8b046d071b4452f4",
+   "prompt": "white American woman in her late fifties, some gray hair, heavyset build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03686",
+   "file": "raw/face_03686.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1295937222,
+   "backend": "replicate",
+   "sha256": "e6d4f89d9719e0f4",
+   "prompt": "Black American woman in her mid forties, average build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03687",
+   "file": "raw/face_03687.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "latino",
+    "build": "lean"
+   },
+   "seed": 2130208366,
+   "backend": "replicate",
+   "sha256": "19d050dbffc0f033",
+   "prompt": "Latina American woman in her late fifties, some gray hair, average build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03688",
+   "file": "raw/face_03688.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "pacific",
+    "build": "lean"
+   },
+   "seed": 1926108344,
+   "backend": "replicate",
+   "sha256": "c9c114c888a6bd31",
+   "prompt": "Pacific Islander (Samoan/Tongan) American woman in her late fifties, some gray hair, average build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03689",
+   "file": "raw/face_03689.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 24174558,
+   "backend": "replicate",
+   "sha256": "9b143da8458d9bd6",
+   "prompt": "Black American woman in her mid forties, heavyset build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03682",
+   "file": "raw/face_03682.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 561702831,
+   "backend": "replicate",
+   "sha256": "e66adf191abd4608",
+   "prompt": "white American woman in her mid forties, sturdy build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03680",
+   "file": "raw/face_03680.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1161969419,
+   "backend": "replicate",
+   "sha256": "de8f8725b1bf1f00",
+   "prompt": "Black American woman in her mid forties, sturdy build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03692",
+   "file": "raw/face_03692.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 822043341,
+   "backend": "replicate",
+   "sha256": "7e654d519fc2193c",
+   "prompt": "Black American woman in her mid forties, heavyset build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03693",
+   "file": "raw/face_03693.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 128574178,
+   "backend": "replicate",
+   "sha256": "981c3a9df30b9535",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03694",
+   "file": "raw/face_03694.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 2094954520,
+   "backend": "replicate",
+   "sha256": "4ea9b7129cbd0ce6",
+   "prompt": "white American woman in her late fifties, some gray hair, sturdy build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03695",
+   "file": "raw/face_03695.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1562685909,
+   "backend": "replicate",
+   "sha256": "2f119407ac3945a9",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, natural afro. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03696",
+   "file": "raw/face_03696.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 311846585,
+   "backend": "replicate",
+   "sha256": "0452052d7d72a5db",
+   "prompt": "white American woman in her mid forties, average build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03697",
+   "file": "raw/face_03697.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 972919632,
+   "backend": "replicate",
+   "sha256": "6deed6bbee417fe4",
+   "prompt": "white American woman in her late fifties, some gray hair, heavyset build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03691",
+   "file": "raw/face_03691.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1432119252,
+   "backend": "replicate",
+   "sha256": "2a268e1afc1a199d",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03698",
+   "file": "raw/face_03698.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 723004955,
+   "backend": "replicate",
+   "sha256": "c34a985fa42aa4f2",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03700",
+   "file": "raw/face_03700.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "latino",
+    "build": "athletic"
+   },
+   "seed": 473166597,
+   "backend": "replicate",
+   "sha256": "cff6e02a8fd40c45",
+   "prompt": "Latina American woman in her late fifties, some gray hair, sturdy build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03699",
+   "file": "raw/face_03699.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1243830039,
+   "backend": "replicate",
+   "sha256": "91f33a74f7815f31",
+   "prompt": "Black American woman in her late fifties, some gray hair, average build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03702",
+   "file": "raw/face_03702.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "latino",
+    "build": "lean"
+   },
+   "seed": 1532433784,
+   "backend": "replicate",
+   "sha256": "1ad963c76a36be57",
+   "prompt": "Latina American woman in her mid forties, average build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03701",
+   "file": "raw/face_03701.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 34733371,
+   "backend": "replicate",
+   "sha256": "bd3a6461af16416b",
+   "prompt": "Black American woman in her mid forties, sturdy build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03703",
+   "file": "raw/face_03703.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 380753034,
+   "backend": "replicate",
+   "sha256": "8ad6159e6ab863f2",
+   "prompt": "Black American woman in her late fifties, some gray hair, heavyset build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03705",
+   "file": "raw/face_03705.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 969678062,
+   "backend": "replicate",
+   "sha256": "36950eaf6aa5098d",
+   "prompt": "white American woman in her late fifties, some gray hair, sturdy build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03706",
+   "file": "raw/face_03706.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "mixed",
+    "build": "lean"
+   },
+   "seed": 850163468,
+   "backend": "replicate",
+   "sha256": "0123c35329460790",
+   "prompt": "mixed-race American woman in her late fifties, some gray hair, average build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03704",
+   "file": "raw/face_03704.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1560165868,
+   "backend": "replicate",
+   "sha256": "d2f78db7ffbb739d",
+   "prompt": "Black American woman in her mid forties, sturdy build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03707",
+   "file": "raw/face_03707.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "mixed",
+    "build": "athletic"
+   },
+   "seed": 369580198,
+   "backend": "replicate",
+   "sha256": "1f683917e0331000",
+   "prompt": "mixed-race American woman in her late fifties, some gray hair, sturdy build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03708",
+   "file": "raw/face_03708.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 807021988,
+   "backend": "replicate",
+   "sha256": "fbc8306c55528392",
+   "prompt": "white American woman in her mid forties, heavyset build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03710",
+   "file": "raw/face_03710.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 936076704,
+   "backend": "replicate",
+   "sha256": "7ce04856baf4d85d",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03690",
+   "file": "raw/face_03690.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 610924536,
+   "backend": "replicate",
+   "sha256": "dbab6695525e3417",
+   "prompt": "white American woman in her late fifties, some gray hair, average build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03711",
+   "file": "raw/face_03711.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 347906479,
+   "backend": "replicate",
+   "sha256": "2bfb0752dc2062af",
+   "prompt": "Black American woman in her mid forties, heavyset build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "face_03709",
+   "file": "raw/face_03709.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 934171276,
+   "backend": "replicate",
+   "sha256": "a2b628135b496483",
+   "prompt": "Black American woman in her mid forties, average build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
   }
  ]
 }
