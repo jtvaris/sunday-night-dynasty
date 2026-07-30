@@ -3733,9 +3733,19 @@ Evidenssi: 13 ruutua + coach-pelin video + motion-profiili (scratchpad/review/).
 - **Batch C** (pelaajakortti): Trade Value / Versatility -korttien tyhjät rivit; sisältö vuotaa headerin alle; kotipaikka näkyviin (uusi data)
 - **Batch D** (navigaatio): Draft-nav avaa LIVE-drafthuoneen kesken kauden (kello käy!) → recap-näkymä; Injuries-chip → medical-tila; News/Trades/Inbox päänavigaatioon (käyttäjävaatimus); Big Board CTA:t; sivupalkin valmiit vaiheet kokoon; Chemistry Good vs Elite
 - **Batch E** (game feel): pre-snap-idle TÄYSIN staattinen (20–55 s nollamotionia; gate idle ≥1) → idle-loopit/micro-sway
-- **Persona-analyysit** (designer/kasuaali/tosipelaaja/game dev): käynnissä, uudet löydökset → batch 2
+- **Persona-analyysit** (designer/kasuaali/tosipelaaja/game dev): VALMIS — 48 uutta löydöstä → batch 2 (7 agenttia, kaikki shipattu)
 
-Insinöörikohteet taustalla: #53 roster-churn-ikäkoostumus (oma smoke-sim), #54 schemeFit-unifiointi (harness), #59 ikävariantit (pilottiverdikti → täysi ajo)
+**TULOS 2026-07-31**: Wave 1 (A–E) + Batch 2 (2A–2G) toteutettu, verifioitu v2-evidenssillä ja pushattu (65ab875 asti):
+- 2A: scouting-sumu (ProspectFog: trueOverall ei enää vuoda draft-boardille; tähdet = kaistan leveys), Big Board -layout, story-ticker
+- 2B: Advance sekundääriksi kunnes viikon peli pelattu + skip-vahvistus; Position Battles -tiili oikeaan dataan; S/D-legenda
+- 2C: play-korttien nimet näkyviin (juurisyy: joustava Spacer puolitti gridin), OC/DC-chip, "Your plan" -kuitti, pysyvä tendency-strip
+- 2D: cap-työtila (Active+Dead = used-cap konstruktiona; 3v outlook; DEAD/SAVE-sarakkeet)
+- 2E: staff-auto-hire budjettisuunnittelulla, Auto-Set Lineup + toast, focus-picker %/wk+headroom, "Recommended vs opponent" -preset
+- 2F: liigalaajuinen pelaajahaku, rival-chip, trade-arvo pisteinä, 53 miehen fail-closed-portti, waiver-banneri
+- 2G: textTertiary AA-kontrastiin (4.9–6.2:1), Color.forRating(scale:), DIV/CONF/STRK, locker-tierit
+- Idle-fix: SCNView.isPlaying puuttui (renderöintiluuppi parkissa → 20–55 s bittitarkkaa); mikro-huojunta kalibroitu (idle mean abs diff 0.06 → 0.27); lopullinen tuntuma iPad-katselmuksessa
+
+Insinöörikohteet: #53 VALMIS (FA-markkina osti iällä; 80+ 23.2→19.8 %, jäännös = headroom-reconciliation #69), #54 VALMIS (kolme 0.5-defaulttia + tenure-luku; yksi rosterSchemeFit, harness kutsuu samaa; career 30/30), #59 ajossa
 ### schemeFit unification — one real computation, shipped == harness (#54, 2026-07-31)
 - [x] Root cause A (**the 0.50 pin**): `WeekAdvancer.offseasonSchemeFit` returned a hard-coded `0.5` for three cohorts — every rookie (`yearsPro < 1`), every specialist (`position.side == .specialTeams` → nil scheme key) and every club whose coordinator chair was empty. ~20 % of the league, which is why the smoke's `diag devsource` line showed p50 pinned at EXACTLY 0.50 forever.
 - [x] Root cause B (**the 0.52 → 0.39 slide**): the rest of the league got `schemeFamiliarity[activeScheme] / 100` — a measure of tenure, not of fit — and `schemeFam(for:)` answers **0** for an absent key. The generator seeds veterans at 55-85, but every draft cohort enters at 15-45 (`DraftEngine.initializeRookieFamiliarity`) and climbs ~+12/season, and every coordinator scheme swap dropped a whole roster onto a hard 0. So the league slid from the generator's seed toward the much lower intake/churn equilibrium and kept going.
