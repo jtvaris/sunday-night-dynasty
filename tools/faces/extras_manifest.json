@@ -1,0 +1,1745 @@
+{
+ "version": 1,
+ "faces": [
+  {
+   "id": "avatar_00001",
+   "file": "raw_extras/avatar_00001.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "male",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 587756341,
+   "backend": "replicate",
+   "sha256": "aff5e717ac88bb9e",
+   "prompt": "Black American man in his mid forties, average build, bald head, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00000",
+   "file": "raw_extras/avatar_00000.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "male",
+    "ageBand": "50-68",
+    "tone": "latino",
+    "build": "lean"
+   },
+   "seed": 1694567828,
+   "backend": "replicate",
+   "sha256": "9d2ffab1132fca48",
+   "prompt": "Latino American man in his late fifties, some gray hair, average build, fade haircut, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00002",
+   "file": "raw_extras/avatar_00002.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "male",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 412444431,
+   "backend": "replicate",
+   "sha256": "69f19c6e637a6d43",
+   "prompt": "Black American man in his mid forties, sturdy build, buzz cut, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00004",
+   "file": "raw_extras/avatar_00004.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "male",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 868872470,
+   "backend": "replicate",
+   "sha256": "d8f26a13fd904525",
+   "prompt": "Black American man in his mid forties, heavyset build, short straight hair, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00005",
+   "file": "raw_extras/avatar_00005.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "male",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 367969350,
+   "backend": "replicate",
+   "sha256": "11b23a64eedaa469",
+   "prompt": "Black American man in his mid forties, sturdy build, fade haircut, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00003",
+   "file": "raw_extras/avatar_00003.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "male",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 836701366,
+   "backend": "replicate",
+   "sha256": "b9b54fbdb1213ee4",
+   "prompt": "Black American man in his late fifties, some gray hair, average build, short straight hair, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00006",
+   "file": "raw_extras/avatar_00006.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "male",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1730349927,
+   "backend": "replicate",
+   "sha256": "68a7017ceae94bed",
+   "prompt": "Black American man in his late fifties, some gray hair, average build, short cropped hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00007",
+   "file": "raw_extras/avatar_00007.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "male",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1380687535,
+   "backend": "replicate",
+   "sha256": "c96c20179d728b6d",
+   "prompt": "white American man in his late fifties, some gray hair, sturdy build, short curly hair, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00008",
+   "file": "raw_extras/avatar_00008.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "male",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1537143274,
+   "backend": "replicate",
+   "sha256": "2d633e34ea361405",
+   "prompt": "Black American man in his mid forties, sturdy build, short cropped hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00009",
+   "file": "raw_extras/avatar_00009.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "male",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 1036587479,
+   "backend": "replicate",
+   "sha256": "823655d9e9023185",
+   "prompt": "Black American man in his late fifties, some gray hair, heavyset build, fade haircut, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00012",
+   "file": "raw_extras/avatar_00012.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 868274861,
+   "backend": "replicate",
+   "sha256": "7c23cceeb57033cd",
+   "prompt": "Black American woman in her mid forties, heavyset build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00010",
+   "file": "raw_extras/avatar_00010.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 354966492,
+   "backend": "replicate",
+   "sha256": "fb261d0ea99a486a",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00013",
+   "file": "raw_extras/avatar_00013.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1874124983,
+   "backend": "replicate",
+   "sha256": "bb693a746a40b6b3",
+   "prompt": "Black American woman in her mid forties, sturdy build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00011",
+   "file": "raw_extras/avatar_00011.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1463037329,
+   "backend": "replicate",
+   "sha256": "30342eb12123a79d",
+   "prompt": "Black American woman in her late fifties, some gray hair, sturdy build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00014",
+   "file": "raw_extras/avatar_00014.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 936615178,
+   "backend": "replicate",
+   "sha256": "b5318d6d35a0b135",
+   "prompt": "white American woman in her late fifties, some gray hair, average build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00016",
+   "file": "raw_extras/avatar_00016.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 887042840,
+   "backend": "replicate",
+   "sha256": "4c1511481c57d5e5",
+   "prompt": "Black American woman in her mid forties, average build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00015",
+   "file": "raw_extras/avatar_00015.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 665809177,
+   "backend": "replicate",
+   "sha256": "a88f4f18833899e4",
+   "prompt": "white American woman in her mid forties, sturdy build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00017",
+   "file": "raw_extras/avatar_00017.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 846281792,
+   "backend": "replicate",
+   "sha256": "a306fcee369ddab7",
+   "prompt": "white American woman in her late fifties, some gray hair, heavyset build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00018",
+   "file": "raw_extras/avatar_00018.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "female",
+    "ageBand": "50-68",
+    "tone": "pacific",
+    "build": "heavy"
+   },
+   "seed": 932533108,
+   "backend": "replicate",
+   "sha256": "dbf369c8816b1732",
+   "prompt": "Pacific Islander (Samoan/Tongan) American woman in her late fifties, some gray hair, heavyset build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00000",
+   "file": "raw_extras/owner_00000.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1711200960,
+   "backend": "replicate",
+   "sha256": "2b2c47a3b9135749",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, short straight hair, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00001",
+   "file": "raw_extras/owner_00001.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1588811484,
+   "backend": "replicate",
+   "sha256": "177186a6794cd098",
+   "prompt": "Black American man in his late sixties, gray hair, sturdy build, fade haircut, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "avatar_00019",
+   "file": "raw_extras/avatar_00019.png",
+   "bucket": {
+    "role": "avatar",
+    "gender": "female",
+    "ageBand": "38-50",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1003219415,
+   "backend": "replicate",
+   "sha256": "e99853d95417b4de",
+   "prompt": "Black American woman in her mid forties, sturdy build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00002",
+   "file": "raw_extras/owner_00002.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 759830217,
+   "backend": "replicate",
+   "sha256": "c4459cb8ec607931",
+   "prompt": "white American man in his late sixties, gray hair, trim build, short cropped hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00003",
+   "file": "raw_extras/owner_00003.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1131728115,
+   "backend": "replicate",
+   "sha256": "fc70cdcd28798299",
+   "prompt": "white American man in his mid fifties, trim build, short cropped hair, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00004",
+   "file": "raw_extras/owner_00004.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1875318700,
+   "backend": "replicate",
+   "sha256": "85e48d1ed8c86af0",
+   "prompt": "white American man in his mid fifties, sturdy build, fade haircut, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00005",
+   "file": "raw_extras/owner_00005.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 1813383002,
+   "backend": "replicate",
+   "sha256": "014b33589b9e29df",
+   "prompt": "Black American man in his mid fifties, heavyset build, short curly hair, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00007",
+   "file": "raw_extras/owner_00007.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 1807263866,
+   "backend": "replicate",
+   "sha256": "300e8f0d8aee93ed",
+   "prompt": "white American man in his mid fifties, heavyset build, short straight hair, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00008",
+   "file": "raw_extras/owner_00008.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 435509967,
+   "backend": "replicate",
+   "sha256": "6e2bc5ab62531227",
+   "prompt": "white American man in his late sixties, gray hair, heavyset build, fade haircut, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00009",
+   "file": "raw_extras/owner_00009.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "female",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 802280869,
+   "backend": "replicate",
+   "sha256": "c673737263914a41",
+   "prompt": "white American woman in her mid fifties, trim build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00010",
+   "file": "raw_extras/owner_00010.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1535766484,
+   "backend": "replicate",
+   "sha256": "f082b0c12c100dec",
+   "prompt": "white American man in his mid fifties, trim build, buzz cut, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00011",
+   "file": "raw_extras/owner_00011.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "female",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 270932788,
+   "backend": "replicate",
+   "sha256": "312bef4ae7e422f8",
+   "prompt": "white American woman in her late sixties, gray hair, trim build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00012",
+   "file": "raw_extras/owner_00012.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 301148666,
+   "backend": "replicate",
+   "sha256": "414b6d89264b3905",
+   "prompt": "white American man in his late sixties, gray hair, heavyset build, bald head, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00014",
+   "file": "raw_extras/owner_00014.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "pacific",
+    "build": "lean"
+   },
+   "seed": 2079082997,
+   "backend": "replicate",
+   "sha256": "fc30090095964299",
+   "prompt": "Pacific Islander American man in his late sixties, gray hair, trim build, buzz cut, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00015",
+   "file": "raw_extras/owner_00015.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 340850010,
+   "backend": "replicate",
+   "sha256": "df930ebe71000b98",
+   "prompt": "white American man in his late sixties, gray hair, trim build, bald head, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00016",
+   "file": "raw_extras/owner_00016.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1452794974,
+   "backend": "replicate",
+   "sha256": "d5a3c4bd93cd69d9",
+   "prompt": "Black American man in his late sixties, gray hair, sturdy build, bald head, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00013",
+   "file": "raw_extras/owner_00013.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "pacific",
+    "build": "athletic"
+   },
+   "seed": 325387711,
+   "backend": "replicate",
+   "sha256": "aa23f1b187b14ce9",
+   "prompt": "Pacific Islander American man in his mid fifties, sturdy build, short curly hair, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00018",
+   "file": "raw_extras/owner_00018.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 594934647,
+   "backend": "replicate",
+   "sha256": "22f9ecdb7d483b46",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, short cropped hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00019",
+   "file": "raw_extras/owner_00019.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1405349163,
+   "backend": "replicate",
+   "sha256": "9966ba2b167b5ab7",
+   "prompt": "white American man in his mid fifties, trim build, short cropped hair, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00020",
+   "file": "raw_extras/owner_00020.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 332886880,
+   "backend": "replicate",
+   "sha256": "47af5b5b7638bfb9",
+   "prompt": "white American man in his mid fifties, sturdy build, short curly hair, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00021",
+   "file": "raw_extras/owner_00021.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 850330776,
+   "backend": "replicate",
+   "sha256": "e1cec334e55a2206",
+   "prompt": "white American man in his mid fifties, trim build, short curly hair, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00022",
+   "file": "raw_extras/owner_00022.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 301894833,
+   "backend": "replicate",
+   "sha256": "87ac07c0fbd85c43",
+   "prompt": "white American man in his mid fifties, trim build, short dreadlocks, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00017",
+   "file": "raw_extras/owner_00017.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "female",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1506494032,
+   "backend": "replicate",
+   "sha256": "2cb9250d5978ce27",
+   "prompt": "white American woman in her late sixties, gray hair, sturdy build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00024",
+   "file": "raw_extras/owner_00024.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "mixed",
+    "build": "athletic"
+   },
+   "seed": 1273443556,
+   "backend": "replicate",
+   "sha256": "43388daf6655fc59",
+   "prompt": "mixed-race American man in his late sixties, gray hair, sturdy build, fade haircut, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00025",
+   "file": "raw_extras/owner_00025.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 553345154,
+   "backend": "replicate",
+   "sha256": "7ebab75794f2ca05",
+   "prompt": "white American man in his late sixties, gray hair, trim build, short dreadlocks, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00026",
+   "file": "raw_extras/owner_00026.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "female",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 451166334,
+   "backend": "replicate",
+   "sha256": "8ad32449a14d8a53",
+   "prompt": "white American woman in her late sixties, gray hair, heavyset build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00023",
+   "file": "raw_extras/owner_00023.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 2122741548,
+   "backend": "replicate",
+   "sha256": "e284ae6191334cf6",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, fade haircut, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00027",
+   "file": "raw_extras/owner_00027.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 1860416665,
+   "backend": "replicate",
+   "sha256": "15c1c8ad0c161421",
+   "prompt": "white American man in his late sixties, gray hair, heavyset build, short straight hair, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00028",
+   "file": "raw_extras/owner_00028.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "female",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1624675133,
+   "backend": "replicate",
+   "sha256": "073323f31203dbfb",
+   "prompt": "white American woman in her mid fifties, trim build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00029",
+   "file": "raw_extras/owner_00029.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 5453606,
+   "backend": "replicate",
+   "sha256": "b8bea6a28a421ab4",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, short straight hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00006",
+   "file": "raw_extras/owner_00006.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1233460874,
+   "backend": "replicate",
+   "sha256": "01a6cebd876f5872",
+   "prompt": "white American man in his mid fifties, sturdy build, short cropped hair, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00030",
+   "file": "raw_extras/owner_00030.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "mixed",
+    "build": "lean"
+   },
+   "seed": 298189723,
+   "backend": "replicate",
+   "sha256": "25cab5ce8a3427e1",
+   "prompt": "mixed-race American man in his mid fifties, trim build, fade haircut, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00032",
+   "file": "raw_extras/owner_00032.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 330034803,
+   "backend": "replicate",
+   "sha256": "b792125c5249debc",
+   "prompt": "white American man in his late sixties, gray hair, trim build, short dreadlocks, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00031",
+   "file": "raw_extras/owner_00031.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 142129001,
+   "backend": "replicate",
+   "sha256": "60d002f97d2b2b8f",
+   "prompt": "white American man in his late sixties, gray hair, trim build, short cropped hair, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00033",
+   "file": "raw_extras/owner_00033.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1916431926,
+   "backend": "replicate",
+   "sha256": "16e9282b55b35c20",
+   "prompt": "Black American man in his late sixties, gray hair, sturdy build, fade haircut, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00034",
+   "file": "raw_extras/owner_00034.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 679024910,
+   "backend": "replicate",
+   "sha256": "5ee037919ec02f88",
+   "prompt": "white American man in his mid fifties, sturdy build, short straight hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00035",
+   "file": "raw_extras/owner_00035.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1712201651,
+   "backend": "replicate",
+   "sha256": "16ae9fd7544513b3",
+   "prompt": "Black American man in his late sixties, gray hair, sturdy build, buzz cut, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00036",
+   "file": "raw_extras/owner_00036.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1577719909,
+   "backend": "replicate",
+   "sha256": "6d5dbb31215d5615",
+   "prompt": "Black American man in his late sixties, gray hair, trim build, short straight hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00038",
+   "file": "raw_extras/owner_00038.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 461306811,
+   "backend": "replicate",
+   "sha256": "de1a367dd7bb999b",
+   "prompt": "white American man in his mid fifties, sturdy build, short cropped hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00037",
+   "file": "raw_extras/owner_00037.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "mixed",
+    "build": "lean"
+   },
+   "seed": 1444740873,
+   "backend": "replicate",
+   "sha256": "4002615cb08e37df",
+   "prompt": "mixed-race American man in his late sixties, gray hair, trim build, bald head, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00040",
+   "file": "raw_extras/owner_00040.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "female",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 350760395,
+   "backend": "replicate",
+   "sha256": "5f88a844fd646ccb",
+   "prompt": "white American woman in her late sixties, gray hair, sturdy build, medium wavy hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00041",
+   "file": "raw_extras/owner_00041.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "latino",
+    "build": "heavy"
+   },
+   "seed": 1356382154,
+   "backend": "replicate",
+   "sha256": "4472fe0062a9205c",
+   "prompt": "Latino American man in his late sixties, gray hair, heavyset build, short straight hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00043",
+   "file": "raw_extras/owner_00043.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1484219786,
+   "backend": "replicate",
+   "sha256": "e21c6bbfddda42f9",
+   "prompt": "Black American man in his mid fifties, trim build, medium afro, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00044",
+   "file": "raw_extras/owner_00044.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1194453667,
+   "backend": "replicate",
+   "sha256": "39591d5a4299881d",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, medium afro, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00045",
+   "file": "raw_extras/owner_00045.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1682876421,
+   "backend": "replicate",
+   "sha256": "79f8d6a427153a92",
+   "prompt": "Black American man in his late sixties, gray hair, trim build, short curly hair, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00046",
+   "file": "raw_extras/owner_00046.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1777792831,
+   "backend": "replicate",
+   "sha256": "119f09fa35402041",
+   "prompt": "white American man in his mid fifties, trim build, short curly hair, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00047",
+   "file": "raw_extras/owner_00047.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1387089711,
+   "backend": "replicate",
+   "sha256": "b5f0dee96a30662f",
+   "prompt": "white American man in his mid fifties, sturdy build, short straight hair, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00048",
+   "file": "raw_extras/owner_00048.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "female",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 563021383,
+   "backend": "replicate",
+   "sha256": "e54b1b97e3fc57cf",
+   "prompt": "white American woman in her late sixties, gray hair, sturdy build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00039",
+   "file": "raw_extras/owner_00039.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 2084808453,
+   "backend": "replicate",
+   "sha256": "eb13768143210729",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, short dreadlocks, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00049",
+   "file": "raw_extras/owner_00049.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 524562129,
+   "backend": "replicate",
+   "sha256": "9697559d482a9508",
+   "prompt": "Black American man in his late sixties, gray hair, trim build, short dreadlocks, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00050",
+   "file": "raw_extras/owner_00050.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "mixed",
+    "build": "lean"
+   },
+   "seed": 791431687,
+   "backend": "replicate",
+   "sha256": "ae3e4a80e6af916b",
+   "prompt": "mixed-race American man in his mid fifties, trim build, short straight hair, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00051",
+   "file": "raw_extras/owner_00051.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "mixed",
+    "build": "heavy"
+   },
+   "seed": 1523746869,
+   "backend": "replicate",
+   "sha256": "fdfaa998404b895f",
+   "prompt": "mixed-race American man in his mid fifties, heavyset build, short dreadlocks, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00052",
+   "file": "raw_extras/owner_00052.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1446202418,
+   "backend": "replicate",
+   "sha256": "795596716927f213",
+   "prompt": "white American man in his mid fifties, sturdy build, short dreadlocks, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00053",
+   "file": "raw_extras/owner_00053.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 44373612,
+   "backend": "replicate",
+   "sha256": "a7c395031a1ccb33",
+   "prompt": "white American man in his late sixties, gray hair, trim build, short dreadlocks, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00055",
+   "file": "raw_extras/owner_00055.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "latino",
+    "build": "lean"
+   },
+   "seed": 2032467163,
+   "backend": "replicate",
+   "sha256": "ee13c5599c562227",
+   "prompt": "Latino American man in his late sixties, gray hair, trim build, short straight hair, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00054",
+   "file": "raw_extras/owner_00054.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1183181244,
+   "backend": "replicate",
+   "sha256": "dffa0bc4c3ba6a58",
+   "prompt": "white American man in his late sixties, gray hair, trim build, medium afro, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00056",
+   "file": "raw_extras/owner_00056.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 385824556,
+   "backend": "replicate",
+   "sha256": "9b1beb6f462efb7b",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, fade haircut, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00057",
+   "file": "raw_extras/owner_00057.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1844660854,
+   "backend": "replicate",
+   "sha256": "350b0b1eeacc43fd",
+   "prompt": "white American man in his late sixties, gray hair, trim build, short straight hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00059",
+   "file": "raw_extras/owner_00059.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1126725110,
+   "backend": "replicate",
+   "sha256": "0f7401d84304f843",
+   "prompt": "Black American man in his mid fifties, sturdy build, short dreadlocks, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00060",
+   "file": "raw_extras/owner_00060.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "female",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1132475937,
+   "backend": "replicate",
+   "sha256": "369329f42c078586",
+   "prompt": "white American woman in her late sixties, gray hair, trim build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00061",
+   "file": "raw_extras/owner_00061.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "female",
+    "ageBand": "45-60",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1421448133,
+   "backend": "replicate",
+   "sha256": "1568bb0da2cc6b72",
+   "prompt": "Black American woman in her mid fifties, trim build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00058",
+   "file": "raw_extras/owner_00058.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 842945999,
+   "backend": "replicate",
+   "sha256": "d6bd5f02ee71fb90",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, fade haircut, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00042",
+   "file": "raw_extras/owner_00042.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "female",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1847104335,
+   "backend": "replicate",
+   "sha256": "78162f46df39315b",
+   "prompt": "white American woman in her late sixties, gray hair, sturdy build, curly shoulder-length hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00064",
+   "file": "raw_extras/owner_00064.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "female",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 24589751,
+   "backend": "replicate",
+   "sha256": "0fe84c524384cd8b",
+   "prompt": "white American woman in her late sixties, gray hair, heavyset build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00065",
+   "file": "raw_extras/owner_00065.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 522812842,
+   "backend": "replicate",
+   "sha256": "b29479de2be3c701",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, short cropped hair, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00062",
+   "file": "raw_extras/owner_00062.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 563025883,
+   "backend": "replicate",
+   "sha256": "aeb2f4b7d49a6207",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, short curly hair, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00066",
+   "file": "raw_extras/owner_00066.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "mixed",
+    "build": "athletic"
+   },
+   "seed": 1147465267,
+   "backend": "replicate",
+   "sha256": "c42e98184de51db2",
+   "prompt": "mixed-race American man in his mid fifties, sturdy build, short curly hair, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00063",
+   "file": "raw_extras/owner_00063.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 1823875525,
+   "backend": "replicate",
+   "sha256": "351897e127503171",
+   "prompt": "white American man in his late sixties, gray hair, heavyset build, short straight hair, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00067",
+   "file": "raw_extras/owner_00067.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "latino",
+    "build": "lean"
+   },
+   "seed": 449447561,
+   "backend": "replicate",
+   "sha256": "de75b98614a60664",
+   "prompt": "Latino American man in his late sixties, gray hair, trim build, medium afro, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00068",
+   "file": "raw_extras/owner_00068.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "female",
+    "ageBand": "45-60",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 511447454,
+   "backend": "replicate",
+   "sha256": "cd21991d4c38042c",
+   "prompt": "Black American woman in her mid fifties, sturdy build, long braids. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00069",
+   "file": "raw_extras/owner_00069.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "pacific",
+    "build": "athletic"
+   },
+   "seed": 191787223,
+   "backend": "replicate",
+   "sha256": "a17864f5d1234ab5",
+   "prompt": "Pacific Islander American man in his mid fifties, sturdy build, buzz cut, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00070",
+   "file": "raw_extras/owner_00070.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 298725859,
+   "backend": "replicate",
+   "sha256": "0e216ea537318b22",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, short cropped hair, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00072",
+   "file": "raw_extras/owner_00072.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 959196857,
+   "backend": "replicate",
+   "sha256": "7cfa02b1b4da1c3f",
+   "prompt": "white American man in his mid fifties, trim build, short straight hair, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00071",
+   "file": "raw_extras/owner_00071.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 451471831,
+   "backend": "replicate",
+   "sha256": "688dfcb9fddcc2d6",
+   "prompt": "white American man in his mid fifties, heavyset build, medium afro, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00074",
+   "file": "raw_extras/owner_00074.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 925508037,
+   "backend": "replicate",
+   "sha256": "75f3d85cf5c891ab",
+   "prompt": "white American man in his mid fifties, trim build, buzz cut, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00073",
+   "file": "raw_extras/owner_00073.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "mixed",
+    "build": "heavy"
+   },
+   "seed": 1689217417,
+   "backend": "replicate",
+   "sha256": "ab7a143f801f5318",
+   "prompt": "mixed-race American man in his mid fifties, heavyset build, fade haircut, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00075",
+   "file": "raw_extras/owner_00075.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 275149183,
+   "backend": "replicate",
+   "sha256": "8fb13b0bc12ba6e9",
+   "prompt": "white American man in his mid fifties, heavyset build, medium afro, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00077",
+   "file": "raw_extras/owner_00077.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 2016005021,
+   "backend": "replicate",
+   "sha256": "a5f1d4c1831e15b4",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, short curly hair, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00078",
+   "file": "raw_extras/owner_00078.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 795891705,
+   "backend": "replicate",
+   "sha256": "b14fd20739ca040d",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, short dreadlocks, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00079",
+   "file": "raw_extras/owner_00079.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1512017817,
+   "backend": "replicate",
+   "sha256": "6b860538b312f272",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, buzz cut, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00080",
+   "file": "raw_extras/owner_00080.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 121847186,
+   "backend": "replicate",
+   "sha256": "a715f981b5e63720",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, short curly hair, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00081",
+   "file": "raw_extras/owner_00081.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 122834921,
+   "backend": "replicate",
+   "sha256": "493595b729b10027",
+   "prompt": "Black American man in his late sixties, gray hair, trim build, buzz cut, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00082",
+   "file": "raw_extras/owner_00082.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 234253007,
+   "backend": "replicate",
+   "sha256": "7620e0d5957ad6f9",
+   "prompt": "Black American man in his mid fifties, heavyset build, fade haircut, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00083",
+   "file": "raw_extras/owner_00083.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 329371526,
+   "backend": "replicate",
+   "sha256": "f21ea6a193286aa3",
+   "prompt": "white American man in his late sixties, gray hair, trim build, bald head, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00085",
+   "file": "raw_extras/owner_00085.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1458808088,
+   "backend": "replicate",
+   "sha256": "8fbc00332048aedc",
+   "prompt": "white American man in his mid fifties, trim build, short cropped hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00084",
+   "file": "raw_extras/owner_00084.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 2045767632,
+   "backend": "replicate",
+   "sha256": "df64dbac3cbfc29a",
+   "prompt": "white American man in his mid fifties, sturdy build, buzz cut, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00086",
+   "file": "raw_extras/owner_00086.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 417483565,
+   "backend": "replicate",
+   "sha256": "6c0bca6f267f0baf",
+   "prompt": "white American man in his late sixties, gray hair, trim build, short dreadlocks, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00087",
+   "file": "raw_extras/owner_00087.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 1763112665,
+   "backend": "replicate",
+   "sha256": "01dd83377798aed5",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, short dreadlocks, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00076",
+   "file": "raw_extras/owner_00076.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "athletic"
+   },
+   "seed": 546839615,
+   "backend": "replicate",
+   "sha256": "e499416e6bbf84a2",
+   "prompt": "white American man in his late sixties, gray hair, sturdy build, short dreadlocks, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00089",
+   "file": "raw_extras/owner_00089.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 1348637691,
+   "backend": "replicate",
+   "sha256": "d8fa6d418003547d",
+   "prompt": "white American man in his late sixties, gray hair, heavyset build, short straight hair, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00090",
+   "file": "raw_extras/owner_00090.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 1519183461,
+   "backend": "replicate",
+   "sha256": "4183e63c14ef789b",
+   "prompt": "white American man in his late sixties, gray hair, heavyset build, short dreadlocks, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00091",
+   "file": "raw_extras/owner_00091.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 361861673,
+   "backend": "replicate",
+   "sha256": "9b829009d58fa12b",
+   "prompt": "white American man in his late sixties, gray hair, trim build, bald head, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00092",
+   "file": "raw_extras/owner_00092.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "60-78",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1718264857,
+   "backend": "replicate",
+   "sha256": "0f46e4c00fc67c12",
+   "prompt": "white American man in his late sixties, gray hair, trim build, buzz cut, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00093",
+   "file": "raw_extras/owner_00093.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1387031277,
+   "backend": "replicate",
+   "sha256": "42435c1bcf03d83d",
+   "prompt": "white American man in his mid fifties, trim build, short straight hair, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00094",
+   "file": "raw_extras/owner_00094.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 404334441,
+   "backend": "replicate",
+   "sha256": "9963a3a941e0be64",
+   "prompt": "white American man in his mid fifties, trim build, short cropped hair, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00095",
+   "file": "raw_extras/owner_00095.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1846349951,
+   "backend": "replicate",
+   "sha256": "8f9c23922b1eae3b",
+   "prompt": "white American man in his mid fifties, trim build, bald head, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  },
+  {
+   "id": "owner_00088",
+   "file": "raw_extras/owner_00088.png",
+   "bucket": {
+    "role": "owner",
+    "gender": "male",
+    "ageBand": "45-60",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1242116773,
+   "backend": "replicate",
+   "sha256": "47f34e01a59362d2",
+   "prompt": "Black American man in his mid fifties, sturdy build, short cropped hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, dark tailored business suit with a white dress shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame."
+  }
+ ]
+}

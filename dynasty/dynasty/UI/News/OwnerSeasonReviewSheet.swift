@@ -20,6 +20,10 @@ struct OwnerSeasonReviewSheet: View {
     let review: OwnerPersonaEngine.OwnerSeasonReview
     let ownerName: String
     let teamName: String
+    /// The owner, when the call site has one — used only to draw the portrait
+    /// next to the quote. `ownerName` stays the authority on the label so a nil
+    /// owner (the preview, a save whose team row is gone) reads exactly as before.
+    var owner: Owner? = nil
     /// Enriched, presentation-only context built at the call site from the
     /// live career/team state (see `Context.build`). Defaults to `.empty` so
     /// the preview and any legacy call site still compile.
@@ -247,11 +251,18 @@ struct OwnerSeasonReviewSheet: View {
                 .tracking(1.5)
                 .foregroundStyle(Color.accentGold)
 
-            Text("\u{201C}\(review.summary)\u{201D}")
-                .font(.subheadline)
-                .italic()
-                .foregroundStyle(Color.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: 14) {
+                // The face doing the talking, leading the quote.
+                if let owner {
+                    PersonFaceView(owner: owner, size: .medium)
+                }
+
+                Text("\u{201C}\(review.summary)\u{201D}")
+                    .font(.subheadline)
+                    .italic()
+                    .foregroundStyle(Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Text("\u{2014} \(ownerName)")
                 .font(.caption.weight(.semibold))

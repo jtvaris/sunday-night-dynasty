@@ -42,8 +42,56 @@ enum CoachAvatars {
     static let maleAvatars: [CoachAvatarInfo] = all.filter { $0.gender == .male }
     static let femaleAvatars: [CoachAvatarInfo] = all.filter { $0.gender == .female }
 
+    // MARK: - AI photo picks (ExtrasCatalog)
+
+    /// Persona labels for the AI photo headshots, in id order within each
+    /// gender. Kept apart from `all` on purpose — `avatarID(for:gender:)` picks
+    /// an AI *coach's* placeholder out of `maleAvatars`/`femaleAvatars`, and
+    /// these 20 photographs are the USER's own persona set, so they must never
+    /// leak into that draw. Labels are written in the same "The X" voice as the
+    /// illustrated set and are all distinct from it.
+    private static let malePhotoNames = [
+        "The Chairman", "The Closer", "The Grinder", "The Technician", "The Firebrand",
+        "The Realist", "The Statesman", "The Sergeant", "The Scholar", "The Bulldog",
+    ]
+
+    private static let femalePhotoNames = [
+        "The Executive", "The Negotiator", "The Chief", "The Diplomat", "The Enforcer",
+        "The Modernist", "The Recruiter", "The Competitor", "The Organizer", "The Believer",
+    ]
+
+    /// The 20 AI photo choices (`avatar_00000`…`avatar_00019`), gender-split and
+    /// id-sorted, labelled from the two lists above.
+    ///
+    /// EMPTY when the extras manifest did not ship — the picker then shows only
+    /// the illustrated set and nothing else changes. That is the whole fallback
+    /// story for this feature (`ExtrasCatalog`).
+    static let photoAvatars: [CoachAvatarInfo] = {
+        let byGender: [(FacePersonGender, [String], CoachAvatarInfo.Gender)] = [
+            (.male, malePhotoNames, .male),
+            (.female, femalePhotoNames, .female),
+        ]
+        return byGender.flatMap { gender, names, infoGender in
+            ExtrasCatalog.shared.avatars(gender: gender).enumerated().map { index, entry in
+                CoachAvatarInfo(
+                    id: entry.id,
+                    // More photos than labels would fall off the end of the list;
+                    // wrap instead, so a regenerated set of any size still shows
+                    // a name under every face.
+                    name: names.isEmpty ? "Portrait" : names[index % names.count],
+                    gender: infoGender
+                )
+            }
+        }
+    }()
+
+    static let malePhotoAvatars: [CoachAvatarInfo] = photoAvatars.filter { $0.gender == .male }
+    static let femalePhotoAvatars: [CoachAvatarInfo] = photoAvatars.filter { $0.gender == .female }
+
+    /// Looks an id up across BOTH families, so `NewCareerView` can print the
+    /// persona label of whatever the user tapped.
     static func avatar(for id: String) -> CoachAvatarInfo? {
-        all.first { $0.id == id }
+        all.first { $0.id == id } ?? photoAvatars.first { $0.id == id }
     }
 }
 
@@ -60,6 +108,14 @@ struct AvatarSelectionView: View {
             genderDivider(label: "Male")
 
             LazyVGrid(columns: columns, spacing: 12) {
+                // The AI photo headshots lead each gender group: they are the
+                // better-looking option and the illustrated set stays right
+                // below, unchanged, for anyone who prefers it. Both write the
+                // same `Career.avatarID`, so nothing downstream cares which
+                // family was picked.
+                ForEach(CoachAvatars.malePhotoAvatars) { avatar in
+                    avatarCell(avatar)
+                }
                 ForEach(CoachAvatars.maleAvatars) { avatar in
                     avatarCell(avatar)
                 }
@@ -70,6 +126,9 @@ struct AvatarSelectionView: View {
                 .padding(.top, 4)
 
             LazyVGrid(columns: columns, spacing: 12) {
+                ForEach(CoachAvatars.femalePhotoAvatars) { avatar in
+                    avatarCell(avatar)
+                }
                 ForEach(CoachAvatars.femaleAvatars) { avatar in
                     avatarCell(avatar)
                 }

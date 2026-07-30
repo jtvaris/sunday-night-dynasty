@@ -45,6 +45,15 @@ final class Owner {
     /// R31: Previous season's medical budget, for showing change in UI.
     var previousMedicalBudget: Int = 0
 
+    /// Id of this owner's AI portrait in the extras library
+    /// (`owner_00000`…`owner_00095`, see `ExtrasCatalog`). Assigned once, at
+    /// league generation / template import, as a deterministic function of `id`,
+    /// or by `ExtrasCatalog.backfillOwnerFaces` on load for careers that predate
+    /// the field. Stays `nil` when the extras did not ship, which renders the
+    /// illustrated `avatarID` portrait instead.
+    /// Optional stored property with a nil default → safe lightweight migration.
+    var faceID: String? = nil
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -59,7 +68,8 @@ final class Owner {
         scoutingBudget: Int = 4_000,
         previousScoutingBudget: Int = 0,
         medicalBudget: Int = 2_500,
-        previousMedicalBudget: Int = 0
+        previousMedicalBudget: Int = 0,
+        faceID: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -75,5 +85,6 @@ final class Owner {
         self.previousScoutingBudget = previousScoutingBudget
         self.medicalBudget = medicalBudget
         self.previousMedicalBudget = previousMedicalBudget
+        self.faceID = faceID
     }
 }

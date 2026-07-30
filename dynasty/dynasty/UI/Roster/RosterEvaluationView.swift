@@ -197,11 +197,9 @@ struct RosterEvaluationView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     // Owner quote header
                     HStack(alignment: .top, spacing: 14) {
-                        // Owner avatar
-                        Image(systemName: "person.crop.square.fill")
-                            .font(.system(size: 36))
-                            .foregroundStyle(Color.accentGold)
-                            .frame(width: 44, height: 44)
+                        // Owner portrait, leading the quote — replaces the
+                        // generic glyph this header used to draw.
+                        PersonFaceView(owner: owner, size: .medium)
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text(owner.name)

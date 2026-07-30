@@ -33,6 +33,11 @@ tools/league-data/__pycache__/
 tools/faces/raw/
 tools/faces/out/
 tools/faces/__pycache__/
+# raw_extras/ = ~120 MB of source PNG renders for the AI-portrait extras (the 20
+# user personas + 96 owner executives). Same deal as raw/: the culled, packaged
+# HEICs + extra_faces_manifest.json are committed under
+# dynasty/dynasty/Resources/Faces/ instead.
+tools/faces/raw_extras/
 
 # league-data source scrape cache (tools/league-data/build_raw.py) — 725 MB of
 # HTML/CSV snapshots, a fetch cache and a nested Xcode build dir. The refined

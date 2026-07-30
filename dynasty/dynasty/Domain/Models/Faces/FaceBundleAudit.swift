@@ -33,6 +33,16 @@ import Foundation
 //     synthesized catalog would hide a broken packaging step;
 //   * HEICs in the bundle the catalog does not list — a stale manifest,
 //     i.e. images that ship and can never be shown.
+//
+// Since the AI-portrait EXTRAS ship into the same folder (`avatar_*` user
+// personas + `owner_*` executives, listed by `extra_faces_manifest.json`), the
+// orphan cross-check has to know about them too: their HEICs are physically in
+// the bundle but no main-pool id claims them. They are resolved against
+// `ExtrasCatalog` and reported separately (`extrasImages=`), so an extras
+// packaging mistake reads as an extras failure and the main-pool numbers keep
+// meaning exactly what they meant before. Extras HEICs with NO extras manifest
+// still FAIL as orphans — that is the same "images that can never be shown"
+// defect, one pool over.
 @MainActor
 enum FaceBundleAudit {
 
@@ -69,6 +79,13 @@ enum FaceBundleAudit {
         /// is missing renders the `coach_f*` placeholder — the same fallback a nil
         /// `faceID` gets, so it is invisible in the other counters.
         var femaleImagesResolved = 0
+        /// Ids in the extras manifest (`avatar_*` + `owner_*`), 0 when it is absent.
+        var extrasCatalogCount = 0
+        /// Of `extrasCatalogCount`, how many resolve to a bundled HEIC.
+        var extrasImagesResolved = 0
+        /// Where `extra_faces_manifest.json` resolved: "absent", "bundle-root" or
+        /// "Faces/".
+        var extrasManifestLocation = "absent"
         var failures: [String] = []
 
         var isPass: Bool { failures.isEmpty }
@@ -119,6 +136,31 @@ enum FaceBundleAudit {
             result.bytes += (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         }
 
+        // --- Extras (avatar_* + owner_*), resolved the same way ------------
+        // Claimed into the SAME set as the main pool so the orphan check below
+        // stays one subtraction: an extras HEIC the extras manifest lists is not
+        // an orphan, and one it does not list still is.
+        if let extrasURL = ExtrasCatalog.manifestURL() {
+            let parent = extrasURL.deletingLastPathComponent().lastPathComponent
+            result.extrasManifestLocation = parent == FaceGeneratorConstants.facesFolder
+                ? "\(FaceGeneratorConstants.facesFolder)/"
+                : "bundle-root"
+        }
+        let extras = ExtrasCatalog.shared
+        let extraEntries = extras.avatars + extras.owners
+        result.extrasCatalogCount = extraEntries.count
+        for entry in extraEntries {
+            guard let url = FaceImageCache.bundleURL(for: entry.id) else { continue }
+            result.extrasImagesResolved += 1
+            claimed.insert(url.lastPathComponent)
+        }
+        if result.extrasManifestLocation != "absent", result.extrasCatalogCount == 0 {
+            result.failures.append(
+                "extra_faces_manifest.json IS bundled (\(result.extrasManifestLocation)) but the "
+                + "extras catalog is EMPTY — the file did not decode, or lists no faces"
+            )
+        }
+
         // --- Cross-check: what is physically there vs. what the catalog knows
         let bundled = physicalHEICs()
         result.heicsInBundle = bundled.count
@@ -126,8 +168,16 @@ enum FaceBundleAudit {
         result.orphanImages = orphans.count
         if !orphans.isEmpty {
             let examples = orphans.sorted().prefix(3).joined(separator: ", ")
+            // Which manifest to go and look at: an `avatar_*`/`owner_*` orphan means
+            // the extras HEICs were copied without `extra_faces_manifest.json`.
+            let extrasOrphans = orphans.filter { ExtrasCatalog.isExtraID($0) }.count
+            let culprit = extrasOrphans == orphans.count
+                ? "extra_faces_manifest.json is missing or stale"
+                : (extrasOrphans > 0
+                    ? "stale faces_manifest.json, plus \(extrasOrphans) extras with no extras manifest"
+                    : "stale faces_manifest.json")
             result.failures.append(
-                "\(orphans.count) bundled .heic files are not in the catalog (stale manifest — "
+                "\(orphans.count) bundled .heic files are not in any catalog (\(culprit) — "
                 + "these images can never be shown): \(examples)"
             )
         }
@@ -166,6 +216,12 @@ enum FaceBundleAudit {
                 ? 0 : 100 * Double(result.imagesResolved) / Double(result.catalogCount),
             result.imageLocation, missing, result.heicsInBundle, result.orphanImages, mib
         ))
+        // The extras are a separate pool with a separate manifest, so they get a
+        // separate line: `heicsInBundle` above counts them (it is a directory
+        // listing) but `catalog=` above never will.
+        print("FACEBUNDLE: extrasManifest=\(result.extrasManifestLocation) "
+              + "extrasImages=\(result.extrasImagesResolved)/\(result.extrasCatalogCount) "
+              + "(avatar_* user personas + owner_* executives)")
         if result.imagesResolved == 0 {
             print("FACEBUNDLE: no face images in this build — every portrait renders the "
                   + "placeholder silhouette. This is the DESIGNED pre-shipment state.")

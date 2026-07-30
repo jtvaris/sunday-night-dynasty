@@ -1563,6 +1563,12 @@ private struct CandidateDetailSheet: View {
         VStack(spacing: 12) {
             // Name + role badge
             HStack(spacing: 10) {
+                // A candidate already carries a preview portrait
+                // (`CoachingEngine.generateCoachCandidates` → `previewFace`), and
+                // `CoachDetailView` shows one for a hired coach — this header was
+                // the only coach detail screen still opening on a name alone.
+                PersonFaceView(coach: candidate, size: .large, ringColor: .accentGold)
+
                 Text(candidate.role.abbreviation)
                     .font(.system(size: 14, weight: .black))
                     .foregroundStyle(Color.backgroundPrimary)

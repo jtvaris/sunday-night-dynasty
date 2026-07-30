@@ -132,6 +132,8 @@ struct OwnerBudgetView: View {
             Divider().overlay(Color.surfaceBorder)
 
             HStack(spacing: 8) {
+                // Whose envelope this is — leading-edge portrait, like a coach row.
+                PersonFaceView(owner: owner, size: .small)
                 Image(systemName: archetype.icon)
                     .font(.system(size: 12))
                     .foregroundStyle(Color.accentGold)

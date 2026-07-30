@@ -59,14 +59,9 @@ struct OwnerGoalsView: View {
 
     private func ownerHeaderCard(owner: Owner, team: Team) -> some View {
         HStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(Color.backgroundTertiary)
-                    .frame(width: 64, height: 64)
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 40))
-                    .foregroundStyle(Color.accentGold)
-            }
+            // The owner's portrait, in place of the generic person glyph this
+            // header used to draw.
+            PersonFaceView(owner: owner, size: .medium)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(owner.name)

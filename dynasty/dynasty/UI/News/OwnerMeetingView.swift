@@ -61,8 +61,9 @@ struct OwnerMeetingView: View {
 
     private func ownerProfileCard(_ owner: Owner) -> some View {
         HStack(spacing: 16) {
-            // Avatar
-            OwnerAvatarImageView(avatarID: owner.avatarID, size: 64)
+            // Avatar — AI executive photograph when the extras shipped, the
+            // illustrated `owner_m*` art otherwise (`PersonFaceView.init(owner:)`).
+            PersonFaceView(owner: owner, size: .medium)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(owner.name)

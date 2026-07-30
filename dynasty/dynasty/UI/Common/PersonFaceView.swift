@@ -23,6 +23,11 @@ enum PersonFacePlaceholder {
     /// One of the 20 bundled `coach_m*`/`coach_f*` photographs, picked stably
     /// from a person id.
     case coachAvatar(String)
+    /// One of the illustrated `owner_m*`/`owner_f*` portraits — what every owner
+    /// surface drew before the AI executive photographs existed, and therefore
+    /// the natural fallback for an owner whose `faceID` is nil (a career created
+    /// before the field, or a build without the extras).
+    case ownerAvatar(String)
     /// Initials on a per-person tinted disc — for people with no `Player` row
     /// and no bundled asset (draft prospects).
     case monogram(initials: String, seed: UUID)
@@ -168,6 +173,8 @@ struct PersonFaceView: View {
             PlayerAvatarView(player: player, size: size.diameter)
         case .coachAvatar(let avatarID):
             CoachAvatarImageView(avatarID: avatarID, size: size.diameter)
+        case .ownerAvatar(let avatarID):
+            OwnerAvatarImageView(avatarID: avatarID, size: size.diameter)
         case .monogram(let initials, let seed):
             monogram(initials: initials, seed: seed)
         }
@@ -390,13 +397,41 @@ extension PersonFaceView {
     /// The user's own head-coach portrait: the avatar they picked in the new-
     /// career wizard, so the person they created is not the only face-less row
     /// on their own staff screen.
+    ///
+    /// `Career.avatarID` holds whatever the picker wrote, and the picker offers
+    /// two families (`AvatarSelectionView`): the illustrated `coach_m*`/`coach_f*`
+    /// asset-catalog art and the 20 AI photo headshots
+    /// (`avatar_00000`…`avatar_00019`, `ExtrasCatalog`). Only the first kind is an
+    /// asset — a photo id has to travel the ordinary face path, through
+    /// `FaceImageCache`, so it is decoded off the main thread, downscaled once and
+    /// shared with every other portrait on screen. Hence the split: a photo id
+    /// becomes the `faceID` (and falls back to the neutral silhouette if the HEICs
+    /// did not ship), an illustrated id stays a placeholder.
+    ///
+    /// The prefix test is manifest-independent on purpose — a saved career must
+    /// not render a missing asset-catalog image in a build whose extras manifest
+    /// failed to load.
     init(careerAvatarID: String, size: Size = .medium, ringColor: Color? = nil, name: String? = nil) {
+        let isPhoto = ExtrasCatalog.isAvatarID(careerAvatarID)
         self.init(
-            faceID: nil,
+            faceID: isPhoto ? careerAvatarID : nil,
             size: size,
             ringColor: ringColor,
             accessibilityName: name,
-            placeholder: .coachAvatar(careerAvatarID)
+            placeholder: isPhoto ? .silhouette : .coachAvatar(careerAvatarID)
+        )
+    }
+
+    /// A league owner's portrait: the AI executive photograph when the extras
+    /// shipped, otherwise the illustrated `owner_m*`/`owner_f*` avatar the owner
+    /// screens have always shown.
+    init(owner: Owner, size: Size = .medium, ringColor: Color? = nil) {
+        self.init(
+            faceID: owner.faceID,
+            size: size,
+            ringColor: ringColor,
+            accessibilityName: owner.name,
+            placeholder: .ownerAvatar(owner.avatarID)
         )
     }
 
@@ -428,6 +463,8 @@ extension PersonFaceView {
             HStack(alignment: .center, spacing: 16) {
                 PersonFaceView(careerAvatarID: "coach_m3", size: .small, ringColor: .accentGold)
                 PersonFaceView(careerAvatarID: "coach_f4", size: .medium, ringColor: .accentGold)
+                // AI photo pick — travels the FaceImageCache path, not the assets.
+                PersonFaceView(careerAvatarID: "avatar_00000", size: .medium, ringColor: .accentGold)
                 PersonFaceView(
                     faceID: nil, size: .medium, ringColor: .accentBlue,
                     placeholder: .monogram(initials: "JV", seed: UUID())

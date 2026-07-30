@@ -294,10 +294,7 @@ private struct OwnerMeetingStep: View {
 
                     VStack(spacing: 12) {
                         if let owner = owner {
-                            OwnerAvatarImageView(
-                                avatarID: owner.avatarID,
-                                size: 96
-                            )
+                            PersonFaceView(owner: owner, size: .large)
                         } else {
                             Image(systemName: "person.crop.rectangle")
                                 .font(.system(size: 36))
