@@ -89,6 +89,16 @@ struct CareerDashboardView: View {
     /// Encoded as "<group>:S" or "<group>:D" (e.g. "QB:S" for QB starter grade).
     @State private var positionGradePopoverID: String?
 
+    /// Guard rail for the "Advance skips the game" trap: raised when the user
+    /// taps Advance while their own game for this week is still unplayed.
+    @State private var showSkipGameConfirm = false
+
+    /// Unresolved camp position battles involving the user's roster. Real rows
+    /// from `PositionBattleTracker` — the tile used to hard-code "0 active".
+    @State private var openPositionBattles: [PositionBattle] = []
+    /// Battle whose detail sheet is presented.
+    @State private var selectedBattle: PositionBattle?
+
     /// Camp Phase 1 wire-up: latest Hard Knocks event surfaced as a bottom toast.
     @State private var latestHardKnocksEvent: HardKnocksEvent?
     /// Tracks which Hard Knocks event IDs have already been displayed so the
@@ -180,11 +190,66 @@ struct CareerDashboardView: View {
         return false
     }
 
+    /// True while the user's own game for this week is still on the board.
+    /// Same fixture the hero card offers to coach (`currentWeekPlayerGame`).
+    private var weeklyGameUnplayed: Bool { currentWeekPlayerGame != nil }
+
+    /// Opponent abbreviation of that unplayed game, for confirmation copy.
+    private var unplayedGameOpponentAbbr: String? {
+        guard let game = currentWeekPlayerGame, let teamID = career.teamID else { return nil }
+        let opponentID = game.homeTeamID == teamID ? game.awayTeamID : game.homeTeamID
+        return allTeamsByID[opponentID]?.abbreviation
+    }
+
+    /// Optional tasks still open this week. The "All tasks complete!" banner
+    /// used to claim victory over a list with four unchecked optional rows.
+    private var openOptionalTaskCount: Int {
+        TimelineTasksPanel.actionableTasks(tasks)
+            .filter { !$0.isRequired && $0.status != .done }
+            .count
+    }
+
+    /// What the pre-advance banner is honestly allowed to say.
+    private enum AdvanceReadiness {
+        case gameUnplayed
+        case optionalOpen(Int)
+        case ready
+    }
+
+    private var advanceReadiness: AdvanceReadiness {
+        if weeklyGameUnplayed { return .gameUnplayed }
+        let open = openOptionalTaskCount
+        return open > 0 ? .optionalOpen(open) : .ready
+    }
+
+    /// Advance owns the screen's single gold CTA only once this week's game is
+    /// resolved (coached or simmed).
+    private var advanceIsPrimaryCTA: Bool { canAdvance && !weeklyGameUnplayed }
+
+    private var skipGameConfirmTitle: String {
+        let opponent = unplayedGameOpponentAbbr.map { " vs \($0)" } ?? ""
+        return "Skip your Week \(career.currentWeek) game\(opponent)? It will be simulated."
+    }
+
     /// Use horizontalSizeClass instead of GeometryReader for layout switching.
 
     // MARK: - Advance Logic
 
     private func performAdvance() {
+        guard canAdvance else { return }
+
+        // The user's own game is still unplayed: never let one tap eat it
+        // silently. Confirm, then `runAdvance` sims it as part of the week.
+        if weeklyGameUnplayed {
+            showSkipGameConfirm = true
+            return
+        }
+
+        runAdvance()
+    }
+
+    /// The actual week advance, past the unplayed-game guard rail.
+    private func runAdvance() {
         guard canAdvance else { return }
 
         // During coaching changes, show the review sheet instead of advancing directly
@@ -399,6 +464,24 @@ struct CareerDashboardView: View {
         .sheet(isPresented: $showInjuryReport) {
             InjuryReportView(players: players, career: career)
         }
+        // Position Battles tile → the real battle, not a dead roster jump.
+        .sheet(item: $selectedBattle) { battle in
+            PositionBattleSheet(
+                battle: battle,
+                competitors: competitors(for: battle)
+            )
+        }
+        // Advance-with-unplayed-game guard rail.
+        .confirmationDialog(
+            skipGameConfirmTitle,
+            isPresented: $showSkipGameConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Sim & Advance") { runAdvance() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("You haven't coached this game yet. Advancing plays it for you and the result is final.")
+        }
         .sheet(isPresented: $showCoachingStaffReview) {
             CoachingStaffReviewSheet(
                 career: career,
@@ -452,7 +535,7 @@ struct CareerDashboardView: View {
                     debugSkipToFABanner
                     #endif
                     if canAdvance {
-                        allTasksCompleteBanner
+                        advanceReadinessBanner
                     }
                     coachingBudgetBlockerBanner
                     TimelineTasksPanel(
@@ -460,7 +543,8 @@ struct CareerDashboardView: View {
                         tasks: $tasks,
                         onTaskSelected: onTaskSelected,
                         onAdvance: { performAdvance() },
-                        canAdvance: canAdvance
+                        canAdvance: canAdvance,
+                        advanceIsPrimary: !weeklyGameUnplayed
                     )
                 }
                 .padding(.leading, 8)
@@ -524,7 +608,7 @@ struct CareerDashboardView: View {
                 #endif
                 // Fix #64: Clear guidance when all tasks complete
                 if canAdvance {
-                    allTasksCompleteBanner
+                    advanceReadinessBanner
                 }
                 coachingBudgetBlockerBanner
                 TimelineTasksPanel(
@@ -532,7 +616,8 @@ struct CareerDashboardView: View {
                     tasks: $tasks,
                     onTaskSelected: onTaskSelected,
                     onAdvance: { performAdvance() },
-                    canAdvance: canAdvance
+                    canAdvance: canAdvance,
+                    advanceIsPrimary: !weeklyGameUnplayed
                 )
             }
             .frame(width: 300)
@@ -579,7 +664,7 @@ struct CareerDashboardView: View {
                     #endif
                     // Fix #64: Clear guidance when all tasks complete
                     if canAdvance {
-                        allTasksCompleteBanner
+                        advanceReadinessBanner
                     }
                     coachingBudgetBlockerBanner
                     TimelineTasksPanel(
@@ -587,16 +672,21 @@ struct CareerDashboardView: View {
                         tasks: $tasks,
                         onTaskSelected: onTaskSelected,
                         onAdvance: { performAdvance() },
-                        canAdvance: canAdvance
+                        canAdvance: canAdvance,
+                        advanceIsPrimary: !weeklyGameUnplayed
                     )
                 }
                 .frame(minWidth: 320, minHeight: 280, maxHeight: 460)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
+                // Gold glow only when Advance is genuinely the next step. With
+                // the weekly game unplayed the hero card owns the gold.
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(canAdvance ? Color.accentGold : Color.surfaceBorder, lineWidth: canAdvance ? 2 : 1)
+                        .strokeBorder(advanceIsPrimaryCTA ? Color.accentGold : Color.surfaceBorder,
+                                      lineWidth: advanceIsPrimaryCTA ? 2 : 1)
                 )
-                .shadow(color: canAdvance ? Color.accentGold.opacity(advancePulse ? 0.4 : 0.1) : .clear, radius: canAdvance ? 8 : 0)
+                .shadow(color: advanceIsPrimaryCTA ? Color.accentGold.opacity(advancePulse ? 0.4 : 0.1) : .clear,
+                        radius: advanceIsPrimaryCTA ? 8 : 0)
                 .padding(.horizontal, 16)
                 .onAppear {
                     withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
@@ -1319,22 +1409,93 @@ struct CareerDashboardView: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - Position Battles Tile
+
+    /// Unresolved battles whose competitors are on the user's roster. Queried
+    /// straight from the `PositionBattle` rows `PositionBattleTracker` writes
+    /// during camp — the tile previously printed a hard-coded "0 active".
+    ///
+    /// Deliberately NOT filtered by `seasonYear`: `detectBattles` stamps rows
+    /// with the real-world calendar year while the career runs on its own
+    /// season counter, so a year filter would silently drop every row.
+    private func loadPositionBattles() {
+        let cid = career.id
+        let descriptor = FetchDescriptor<PositionBattle>(
+            predicate: #Predicate<PositionBattle> {
+                $0.careerID == cid && $0.winnerID == nil
+            }
+        )
+        let rosterIDs = Set(players.map(\.id))
+        openPositionBattles = ((try? modelContext.fetch(descriptor)) ?? [])
+            .filter { battle in battle.competitorIDs.contains { rosterIDs.contains($0) } }
+            .sorted { $0.positionRaw < $1.positionRaw }
+    }
+
+    /// Roster players taking part in a battle, in depth-chart order.
+    private func competitors(for battle: PositionBattle) -> [Player] {
+        let ids = Set(battle.competitorIDs)
+        return players.filter { ids.contains($0.id) }
+            .sorted { $0.overall > $1.overall }
+    }
+
     private var positionBattlesTile: some View {
-        Button {
-            onTaskSelected(.roster)
-        } label: {
-            DashboardTile(icon: "person.2.fill", title: "Position Battles") {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("0 active")
-                        .font(.system(size: 12, weight: .bold).monospacedDigit())
-                        .foregroundStyle(Color.accentGold)
-                    Text("Camp competitions")
+        DashboardTile(icon: "person.2.fill", title: "Position Battles") {
+            VStack(alignment: .leading, spacing: 4) {
+                if openPositionBattles.isEmpty {
+                    Text("None active")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.textSecondary)
+                    Text("Camp competitions open in Training Camp")
                         .font(.system(size: 10))
                         .foregroundStyle(Color.textSecondary)
+                        .lineLimit(2)
+                } else {
+                    Text("\(openPositionBattles.count) active")
+                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .foregroundStyle(Color.accentGold)
+                    ForEach(openPositionBattles.prefix(3), id: \.id) { battle in
+                        Button {
+                            selectedBattle = battle
+                        } label: {
+                            positionBattleRow(battle)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if openPositionBattles.count > 3 {
+                        Text("+ \(openPositionBattles.count - 3) more")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(Color.textTertiary)
+                    }
                 }
             }
         }
-        .buttonStyle(.plain)
+    }
+
+    private func positionBattleRow(_ battle: PositionBattle) -> some View {
+        let roster = competitors(for: battle)
+        let names = roster.prefix(2).map(\.lastName).joined(separator: " vs ")
+        let leader = battle.currentLeaderID.flatMap { id in roster.first { $0.id == id } }
+        return HStack(spacing: 4) {
+            Text(battle.positionRaw)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Color.accentGold)
+                .frame(width: 24, alignment: .leading)
+            Text(names.isEmpty ? "Open spot" : names)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 2)
+            if let leader {
+                Text(leader.lastName)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color.success)
+                    .lineLimit(1)
+            }
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .contentShape(Rectangle())
     }
 
     private var campGradesTile: some View {
@@ -2199,9 +2360,11 @@ struct CareerDashboardView: View {
                             }
                         }
                     }
-                    Text("Tap a grade for details")
+                    // Key first: "S: A / D: B-" was unreadable without it.
+                    Text("S = starters \u{00B7} D = depth \u{00B7} tap a grade for details")
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(Color.textTertiary)
+                        .lineLimit(2)
                         .padding(.top, 2)
                 }
             }
@@ -2343,83 +2506,137 @@ struct CareerDashboardView: View {
 
     // MARK: - Expiring Contracts Tile (#19)
 
+    /// Phases in which the user can actually do something about an expiring
+    /// deal (extend, tag, or let him hit the market). Alarming a Week 1 coach
+    /// about 17 contracts he cannot touch for four months is noise.
+    private var isContractActionWindow: Bool {
+        switch career.currentPhase.group {
+        case .postseason, .offseason, .preDraft:
+            return true
+        case .preSeason, .regularSeason:
+            return false
+        }
+    }
+
     /// True when expiring contracts warrant a HIGH PRIORITY callout on the Contracts tile.
     /// Triggers when there are 5+ expiring deals or when the average annual salary
-    /// of expiring players is high (>= $5M, indicating expensive tag/extension cost).
+    /// of expiring players is high (>= $5M, indicating expensive tag/extension cost)
+    /// — and only inside the window where the user can act on them.
     private var contractsHighPriority: Bool {
         let count = expiringContractPlayers.count
-        guard count > 0 else { return false }
+        guard count > 0, isContractActionWindow else { return false }
         if count >= 5 { return true }
         let avgSalaryThousands = expiringContractPlayers.reduce(0) { $0 + $1.annualSalary } / count
         return avgSalaryThousands >= 5_000  // $5M average — tag/extension cost will be steep
     }
 
     private var expiringContractsTile: some View {
-        NavigationLink {
-            CapOverviewView(career: career)
-        } label: {
-            DashboardTile(icon: "clock.badge.exclamationmark", title: "Contracts", highlighted: contractsHighPriority) {
-                VStack(alignment: .leading, spacing: 6) {
-                    if contractsHighPriority {
-                        HStack(spacing: 4) {
-                            Image(systemName: "exclamationmark.octagon.fill")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.white)
-                            Text("HIGH PRIORITY")
-                                .font(.system(size: 9, weight: .black))
-                                .foregroundStyle(.white)
-                                .tracking(0.5)
-                        }
+        // The whole card used to be one NavigationLink, which made every name
+        // on it an unreachable label. Rows are their own links now; the footer
+        // link keeps the card-level jump.
+        DashboardTile(icon: "clock.badge.exclamationmark", title: "Contracts", highlighted: contractsHighPriority) {
+            VStack(alignment: .leading, spacing: 6) {
+                if contractsHighPriority {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.octagon.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white)
+                        Text("HIGH PRIORITY")
+                            .font(.system(size: 9, weight: .black))
+                            .foregroundStyle(.white)
+                            .tracking(0.5)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.danger))
+                } else if !expiringContractPlayers.isEmpty {
+                    // Outside the window: an amber chip, not a red alarm.
+                    Text("\(expiringContractPlayers.count) expiring")
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundStyle(Color.warning)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Capsule().fill(Color.danger))
-                    }
+                        .background(Capsule().fill(Color.warning.opacity(0.15)))
+                }
 
-                    if expiringContractPlayers.isEmpty {
-                        Text("No expiring contracts")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.textSecondary)
-                    } else {
+                if expiringContractPlayers.isEmpty {
+                    Text("No expiring contracts")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.textSecondary)
+                } else {
+                    if contractsHighPriority {
                         HStack(alignment: .firstTextBaseline) {
                             Text("\(expiringContractPlayers.count)")
                                 .font(.system(size: 20, weight: .bold).monospacedDigit())
-                                .foregroundStyle(contractsHighPriority ? Color.danger : Color.warning)
+                                .foregroundStyle(Color.danger)
                             Text("expiring contract\(expiringContractPlayers.count == 1 ? "" : "s")")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(Color.textSecondary)
                         }
-
-                        // Show top 3 names sorted by OVR, with star alert (#145)
-                        let topExpiring = Array(expiringContractPlayers.sorted { $0.overall > $1.overall }.prefix(3))
-                        ForEach(topExpiring, id: \.id) { player in
-                            let isStar = player.overall >= 80
-                            HStack(spacing: 4) {
-                                if isStar {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .font(.system(size: 8))
-                                        .foregroundStyle(Color.warning)
-                                }
-                                Text(player.position.rawValue)
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(isStar ? Color.warning : Color.accentGold)
-                                Text(player.lastName)
-                                    .font(.system(size: 10, weight: isStar ? .bold : .medium))
-                                    .foregroundStyle(Color.textPrimary)
-                                    .lineLimit(1)
-                                Spacer()
-                                Text("\(player.overall)")
-                                    .font(.system(size: 10, weight: .bold).monospacedDigit())
-                                    .foregroundStyle(Color.forRating(player.overall))
-                                Text(formatCap(player.annualSalary))
-                                    .font(.system(size: 9, weight: .semibold).monospacedDigit())
-                                    .foregroundStyle(Color.textTertiary)
-                            }
-                        }
+                    } else {
+                        Text("Re-sign window opens in the offseason")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.textSecondary)
+                            .lineLimit(2)
                     }
+
+                    // Show top 3 names sorted by OVR, with star alert (#145).
+                    // Each row deep-links into the Cap screen.
+                    let topExpiring = Array(expiringContractPlayers.sorted { $0.overall > $1.overall }.prefix(3))
+                    ForEach(topExpiring, id: \.id) { player in
+                        NavigationLink {
+                            CapOverviewView(career: career)
+                        } label: {
+                            expiringContractRow(player)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    NavigationLink {
+                        CapOverviewView(career: career)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text("View all in Salary Cap")
+                                .font(.system(size: 9, weight: .heavy))
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        .foregroundStyle(Color.accentGold)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
-        .buttonStyle(.plain)
+    }
+
+    private func expiringContractRow(_ player: Player) -> some View {
+        let isStar = player.overall >= 80
+        return HStack(spacing: 4) {
+            if isStar {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(Color.warning)
+            }
+            Text(player.position.rawValue)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(isStar ? Color.warning : Color.accentGold)
+            Text(player.lastName)
+                .font(.system(size: 10, weight: isStar ? .bold : .medium))
+                .foregroundStyle(Color.textPrimary)
+                .lineLimit(1)
+            Spacer()
+            Text("\(player.overall)")
+                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .foregroundStyle(Color.forRating(player.overall))
+            Text(formatCap(player.annualSalary))
+                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .foregroundStyle(Color.textTertiary)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .contentShape(Rectangle())
     }
 
     // MARK: - Owner Expectations Tile (#20, R31: job security + goals)
@@ -2675,20 +2892,48 @@ struct CareerDashboardView: View {
     // NOTE: advanceWeekButton and advanceWeekButtonCompact removed --
     // advance UI is now part of TimelineTasksPanel.
 
-    // MARK: - All Tasks Complete Banner (Fix #64)
+    // MARK: - Advance Readiness Banner (Fix #64)
 
-    private var allTasksCompleteBanner: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "checkmark.seal.fill")
+    /// Sits above the tasks panel whenever `canAdvance` is true. It used to
+    /// always read "All tasks complete! · Ready to advance" — over a list with
+    /// four unchecked optional rows, and over an unplayed Week 1 game. It now
+    /// states whichever of those is actually true.
+    private var advanceReadinessBanner: some View {
+        let state = advanceReadiness
+        let icon: String
+        let headline: String
+        let hint: String
+        let tint: Color
+
+        switch state {
+        case .gameUnplayed:
+            icon = "sportscourt.fill"
+            headline = "Week \(career.currentWeek) game not played"
+            hint = "Advance will sim it"
+            tint = .warning
+        case .optionalOpen(let count):
+            icon = "circle.dashed"
+            headline = "\(count) optional task\(count == 1 ? "" : "s") open"
+            hint = "Ready to advance"
+            tint = .accentGold
+        case .ready:
+            icon = "checkmark.seal.fill"
+            headline = "All tasks complete!"
+            hint = "Ready to advance"
+            tint = .success
+        }
+
+        return HStack(spacing: 6) {
+            Image(systemName: icon)
                 .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(Color.success)
-            Text("All tasks complete!")
+                .foregroundStyle(tint)
+            Text(headline)
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(Color.success)
+                .foregroundStyle(tint)
                 .lineLimit(1)
                 .fixedSize()
             Spacer(minLength: 6)
-            Text("Ready to advance")
+            Text(hint)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Color.accentGold)
                 .lineLimit(1)
@@ -2696,7 +2941,7 @@ struct CareerDashboardView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color.success.opacity(0.1))
+        .background(tint.opacity(0.1))
     }
 
     // MARK: - Debug Skip-to-FA (DEBUG only)
@@ -3245,6 +3490,9 @@ struct CareerDashboardView: View {
 
         // Expiring contracts (#19)
         expiringContractPlayers = players.filter { $0.contractYearsRemaining <= 1 }
+
+        // Camp position battles (real rows, see `loadPositionBattles`).
+        loadPositionBattles()
 
         // Team morale (#82) — average of all player morale
         if !players.isEmpty {

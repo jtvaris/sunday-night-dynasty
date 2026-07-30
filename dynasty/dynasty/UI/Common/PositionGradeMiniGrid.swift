@@ -60,6 +60,10 @@ struct PositionGradeMiniGrid: View {
     var style: Style = .twoColumn
     var showHeader: Bool = false
     var headerText: String = "Position Grades"
+    /// Spells out what the `S:` / `D:` prefixes mean. On by default — the grid
+    /// shipped with two bare initials and no key anywhere in the app, so a new
+    /// user read "S: A / D: B-" as noise.
+    var showLegend: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -77,7 +81,18 @@ struct PositionGradeMiniGrid: View {
             case .horizontalPills:
                 pillsLayout
             }
+
+            if showLegend {
+                Self.legend
+            }
         }
+    }
+
+    /// One-line key under the grid: `S = starters · D = depth`.
+    static var legend: some View {
+        Text("S = starters \u{00B7} D = depth")
+            .font(.system(size: 9, weight: .medium))
+            .foregroundStyle(Color.textTertiary)
     }
 
     // MARK: - Layouts

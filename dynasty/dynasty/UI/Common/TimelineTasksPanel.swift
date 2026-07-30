@@ -11,6 +11,11 @@ struct TimelineTasksPanel: View {
     let onTaskSelected: (TaskDestination) -> Void
     let onAdvance: () -> Void
     let canAdvance: Bool
+    /// False while the user's own game for this week is still unplayed. Advance
+    /// then renders as a secondary/outline button so the screen keeps exactly
+    /// ONE gold call-to-action — the hero card's "Coach the Game". Advancing is
+    /// still allowed (it sims the game), it just stops competing for the eye.
+    var advanceIsPrimary: Bool = true
 
     /// How many upcoming phases (beyond current) to show fully expanded.
     private let upcomingPhaseCount = 3
@@ -485,21 +490,52 @@ struct TimelineTasksPanel: View {
                     Text(advanceButtonLabel)
                         .font(.system(size: 14, weight: .bold))
                 }
-                .foregroundStyle(canAdvance ? Color.backgroundPrimary : Color.textTertiary)
+                .foregroundStyle(advanceForeground)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(canAdvance ? Color.accentGold : Color.backgroundTertiary)
+                        .fill(advanceFill)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(
+                                    isSecondaryAdvance ? Color.accentGold.opacity(0.55) : Color.clear,
+                                    lineWidth: 1.5
+                                )
+                        )
                         .shadow(
-                            color: canAdvance ? Color.accentGold.opacity(0.3) : Color.clear,
+                            color: (canAdvance && advanceIsPrimary) ? Color.accentGold.opacity(0.3) : Color.clear,
                             radius: 8, x: 0, y: 2
                         )
                 )
             }
             .disabled(!canAdvance)
             .animation(.spring(duration: 0.3), value: canAdvance)
+
+            // Honest footnote for the secondary state: the user is one tap away
+            // from having their own game played for them.
+            if isSecondaryAdvance {
+                Label("Your game is still unplayed — advancing sims it.",
+                      systemImage: "info.circle")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
+    }
+
+    /// Advance is available but shouldn't wear the gold: the weekly game is
+    /// still on the board and "Coach the Game" owns the primary slot.
+    private var isSecondaryAdvance: Bool { canAdvance && !advanceIsPrimary }
+
+    private var advanceFill: Color {
+        guard canAdvance else { return Color.backgroundTertiary }
+        return advanceIsPrimary ? Color.accentGold : Color.accentGold.opacity(0.10)
+    }
+
+    private var advanceForeground: Color {
+        guard canAdvance else { return Color.textTertiary }
+        return advanceIsPrimary ? Color.backgroundPrimary : Color.accentGold
     }
 
     private var advanceButtonLabel: String {
