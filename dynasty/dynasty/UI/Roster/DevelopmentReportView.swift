@@ -67,14 +67,100 @@ struct DevelopmentReportView: View {
         activeConversions.count < VersatilityDevelopmentEngine.maxActiveConversions
     }
 
-    /// Candidates for a new focus slot: unfocused, young-first.
-    private var focusCandidates: [Player] {
+    // MARK: - Focus Candidates (the math, surfaced)
+
+    /// One unfocused player scored with the SAME numbers the weekly tick uses.
+    ///
+    /// Both figures come straight out of `TrainingFocusEngine` — no parallel
+    /// formula lives here — so the picker can never rank players differently
+    /// from the engine that will actually develop them.
+    private struct FocusCandidate: Identifiable {
+        let player: Player
+        /// `TrainingFocusEngine.weeklyGainChance` — probability of a +1 this week.
+        let weeklyChance: Double
+        /// Points left under `TrainingFocusEngine.potentialCeiling`, floored at 0.
+        let headroom: Int
+
+        var id: UUID { player.id }
+
+        /// "31%/wk" — the engine's own roll, printed.
+        var chanceLabel: String { "\(Int((weeklyChance * 100).rounded()))%/wk" }
+
+        var headroomLabel: String { headroom > 0 ? "+\(headroom) headroom" : "at ceiling" }
+
+        /// A slot spent here is money burned: he cannot gain a point.
+        var isCapped: Bool { headroom <= 0 }
+    }
+
+    /// Candidates for a new focus slot, best expected gain first.
+    ///
+    /// Was: youngest-first, showing OVR only — which is a proxy for the real
+    /// answer, and a bad one for a 22-year-old who is already at his ceiling.
+    /// Now ranked on the two numbers that decide the outcome: a player who
+    /// cannot gain sinks to the bottom regardless of age, and above that line
+    /// the weekly roll leads.
+    private var focusCandidates: [FocusCandidate] {
         players
             .filter { $0.trainingFocusArea == nil }
-            .sorted {
-                if $0.age != $1.age { return $0.age < $1.age }
-                return $0.overall > $1.overall
+            .map { player in
+                FocusCandidate(
+                    player: player,
+                    weeklyChance: TrainingFocusEngine.weeklyGainChance(player: player, coaches: coaches),
+                    headroom: max(0, TrainingFocusEngine.potentialCeiling(for: player) - player.overall)
+                )
             }
+            .sorted {
+                if $0.isCapped != $1.isCapped { return !$0.isCapped }
+                if abs($0.weeklyChance - $1.weeklyChance) > 0.0005 {
+                    return $0.weeklyChance > $1.weeklyChance
+                }
+                if $0.headroom != $1.headroom { return $0.headroom > $1.headroom }
+                return $0.player.overall > $1.player.overall
+            }
+    }
+
+    /// The three the staff would take, used to pre-populate the empty state.
+    private var suggestedCandidates: [FocusCandidate] {
+        Array(focusCandidates.prefix(TrainingFocusEngine.maxFocusPlayersPerTeam))
+    }
+
+    // MARK: - Focus Payoff History
+
+    /// What the focus slots have actually produced lately.
+    ///
+    /// NOTE: a full previous-season tally is NOT retrievable. `FocusGain` is
+    /// transient (it lives only inside the weekly tick), the persisted
+    /// `Career.developmentReports` log is capped at the last 10 weeks, and
+    /// `TrainingFocusEngine.SeasonBreakoutCounts` only ever holds the CURRENT
+    /// season's cap usage. So this counts the reports that do survive and says
+    /// exactly what window it covers rather than inventing a season total.
+    private struct FocusPayoff {
+        let focusGains: Int
+        let breakouts: Int
+        let reportCount: Int
+        let seasonLabel: String
+    }
+
+    private var focusPayoff: FocusPayoff? {
+        let log = reports.filter { $0.week != DevelopmentReportBuilder.campReportWeek }
+        guard !log.isEmpty else { return nil }
+        let gains = log.reduce(0) { $0 + $1.risers.filter { $0.reason == .focus }.count }
+        let breakouts = log.reduce(0) { $0 + $1.breakouts.count }
+        guard gains > 0 || breakouts > 0 else { return nil }
+
+        let seasons = Set(log.map(\.season)).sorted()
+        let label: String
+        if let first = seasons.first, let last = seasons.last {
+            label = first == last ? "Season \(String(first))" : "Seasons \(String(first))–\(String(last))"
+        } else {
+            label = ""
+        }
+        return FocusPayoff(
+            focusGains: gains,
+            breakouts: breakouts,
+            reportCount: log.count,
+            seasonLabel: label
+        )
     }
 
     // MARK: - Body
@@ -139,8 +225,13 @@ struct DevelopmentReportView: View {
                     .foregroundStyle(Color.textSecondary)
             }
 
+            if let payoff = focusPayoff {
+                focusPayoffStrip(payoff)
+            }
+
             if focusedPlayers.isEmpty {
                 emptyStateText("No focus players set. Extra reps go unused every week they sit idle.")
+                suggestionBlock
             }
 
             ForEach(focusedPlayers, id: \.id) { player in
@@ -172,6 +263,171 @@ struct DevelopmentReportView: View {
         }
         .padding(16)
         .cardBackground()
+    }
+
+    // MARK: - Suggested Focus Players (empty state)
+
+    /// The staff's three picks, one tap each.
+    ///
+    /// An empty screen that only offers "Add Focus Player" makes the manager
+    /// open a 53-man list and guess. These are the same three the ranking
+    /// above would put on top, with the reasons printed.
+    @ViewBuilder
+    private var suggestionBlock: some View {
+        if !suggestedCandidates.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.eliteGreen)
+                    Text("THE STAFF WOULD START HERE")
+                        .font(.system(size: 9, weight: .bold))
+                        .tracking(0.7)
+                        .foregroundStyle(Color.textTertiary)
+                }
+
+                ForEach(suggestedCandidates) { candidate in
+                    suggestionRow(candidate)
+                }
+
+                if suggestedCandidates.count > 1 {
+                    Button {
+                        for candidate in suggestedCandidates {
+                            setFocus(
+                                player: candidate.player,
+                                area: TrainingFocusArea.defaultArea(for: candidate.player.position)
+                            )
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                            Text("Accept all \(suggestedCandidates.count)")
+                                .font(.caption.weight(.bold))
+                        }
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(
+                            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                                .fill(Color.eliteGreen)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Accept all \(suggestedCandidates.count) suggested focus players")
+                }
+            }
+            .padding(.bottom, 2)
+        }
+    }
+
+    private func suggestionRow(_ candidate: FocusCandidate) -> some View {
+        HStack(spacing: 10) {
+            positionBadge(candidate.player.position)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(candidate.player.fullName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                candidateReasonChips(candidate)
+            }
+
+            Spacer(minLength: 6)
+
+            Button {
+                setFocus(
+                    player: candidate.player,
+                    area: TrainingFocusArea.defaultArea(for: candidate.player.position)
+                )
+            } label: {
+                Text("Accept")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color.eliteGreen))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Give \(candidate.player.fullName) a focus slot")
+            .accessibilityHint(candidateReasonText(candidate))
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(Color.backgroundTertiary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                        .strokeBorder(Color.eliteGreen.opacity(0.35), lineWidth: 1)
+                )
+        )
+    }
+
+    /// Age · headroom · weekly chance — the whole case for a slot in one line.
+    private func candidateReasonChips(_ candidate: FocusCandidate) -> some View {
+        HStack(spacing: 4) {
+            reasonChip("Age \(candidate.player.age)", color: .textSecondary)
+            reasonChip(
+                candidate.headroomLabel,
+                color: candidate.isCapped ? .warning : .accentBlue
+            )
+            reasonChip(
+                candidate.chanceLabel,
+                color: candidate.weeklyChance >= 0.25
+                    ? .eliteGreen
+                    : (candidate.weeklyChance >= 0.12 ? .accentGold : .warning)
+            )
+        }
+    }
+
+    private func candidateReasonText(_ candidate: FocusCandidate) -> String {
+        "Age \(candidate.player.age), \(candidate.headroomLabel), \(candidate.chanceLabel) gain chance"
+    }
+
+    private func reasonChip(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(color.opacity(0.14)))
+    }
+
+    // MARK: - Focus Payoff Strip
+
+    private func focusPayoffStrip(_ payoff: FocusPayoff) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.eliteGreen)
+                Text("\(payoff.focusGains) focus gain\(payoff.focusGains == 1 ? "" : "s")")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.eliteGreen)
+                Text("·")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                Text("\(payoff.breakouts) breakout\(payoff.breakouts == 1 ? "" : "s")")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.draftStealGold)
+                Spacer(minLength: 4)
+                Text(payoff.seasonLabel)
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+            }
+            // Full-season totals genuinely do not exist in the save — say so
+            // rather than let "10 reports" read as "the whole year".
+            Text("Across the last \(payoff.reportCount) weekly report\(payoff.reportCount == 1 ? "" : "s") — the log keeps 10, so this is a rolling window, not a season total.")
+                .font(.system(size: 9))
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(Color.backgroundTertiary.opacity(0.6))
+        )
+        .accessibilityElement(children: .combine)
     }
 
     private func focusSlotRow(_ player: Player) -> some View {
@@ -617,15 +873,17 @@ struct DevelopmentReportView: View {
 
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(focusCandidates, id: \.id) { player in
+                        pickerLegend
+
+                        ForEach(focusCandidates) { candidate in
                             Button {
                                 setFocus(
-                                    player: player,
-                                    area: TrainingFocusArea.defaultArea(for: player.position)
+                                    player: candidate.player,
+                                    area: TrainingFocusArea.defaultArea(for: candidate.player.position)
                                 )
                                 showFocusPicker = false
                             } label: {
-                                candidateRow(player)
+                                candidateRow(candidate)
                             }
                             .buttonStyle(.plain)
                         }
@@ -645,12 +903,32 @@ struct DevelopmentReportView: View {
         }
     }
 
-    private func candidateRow(_ player: Player) -> some View {
+    /// Explains the two numbers the rows are sorted on, once, at the top.
+    private var pickerLegend: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.accentBlue)
+            Text("Ranked by expected gain. **%/wk** is the chance one week's extra reps produce a +1; **headroom** is how many points he still has under his ceiling. Age, work ethic, his position coach and his mood all move the weekly number.")
+                .font(.caption2)
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(Color.backgroundTertiary.opacity(0.6))
+        )
+    }
+
+    private func candidateRow(_ candidate: FocusCandidate) -> some View {
+        let player = candidate.player
         let pastPeak = player.age > player.position.peakAgeRange.upperBound
 
         return HStack(spacing: 10) {
             positionBadge(player.position)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(player.fullName)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.textPrimary)
@@ -667,13 +945,28 @@ struct DevelopmentReportView: View {
                             .foregroundStyle(Color.accentGold)
                     }
                 }
+                candidateReasonChips(candidate)
             }
-            Spacer()
-            Text(pastPeak ? "Low gains" : "Add")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(pastPeak ? Color.warning : Color.accentGold)
+            Spacer(minLength: 6)
+
+            // The two numbers that decide the slot, stacked and legible.
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(candidate.chanceLabel)
+                    .font(.subheadline.weight(.bold).monospacedDigit())
+                    .foregroundStyle(
+                        candidate.isCapped
+                            ? Color.textTertiary
+                            : (candidate.weeklyChance >= 0.25 ? Color.eliteGreen : Color.accentGold)
+                    )
+                Text(candidate.isCapped ? "At ceiling" : (pastPeak ? "Low gains" : "Add"))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(
+                        candidate.isCapped || pastPeak ? Color.warning : Color.accentGold
+                    )
+            }
         }
         .padding(12)
+        .opacity(candidate.isCapped ? 0.65 : 1.0)
         .background(
             RoundedRectangle(cornerRadius: DSCornerRadius.inline)
                 .fill(Color.backgroundSecondary)
@@ -682,6 +975,8 @@ struct DevelopmentReportView: View {
                         .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                 )
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(player.fullName), \(player.position.rawValue), overall \(player.overall). \(candidateReasonText(candidate))")
     }
 
     // MARK: - Shared Bits

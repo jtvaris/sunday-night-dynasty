@@ -22,6 +22,12 @@ struct DepthChartView: View {
     @State private var collapsedSlots: Set<String> = []
     /// Tracks which position groups are collapsed (e.g. "DL", "LB").
     @State private var collapsedGroups: Set<String> = []
+    /// One-line confirmation of what Auto-Set actually did, e.g. "Filled 6
+    /// empty slots". Without it the wand looked like it had done nothing —
+    /// the chart it fills is mostly below the fold.
+    @State private var autoSetMessage: String?
+    /// Guards the auto-dismiss timer so a second tap cannot hide the newer toast.
+    @State private var autoSetFlashID = 0
 
     // MARK: - Derived roster
 
@@ -132,6 +138,17 @@ struct DepthChartView: View {
                     .padding(.vertical, 16)
                     .frame(maxWidth: DSLayout.contentMeasure)
                     .frame(maxWidth: .infinity)
+                }
+            }
+
+            // Auto-Set confirmation toast
+            if let message = autoSetMessage {
+                VStack {
+                    autoSetToast(message)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    Spacer()
                 }
             }
         }
@@ -289,8 +306,14 @@ struct DepthChartView: View {
 
     // MARK: - Tab Bar
 
+    /// Offense / Defense / Special Teams filter.
+    ///
+    /// Deliberately identical to `RosterView.filterPicker` — blue selection
+    /// fill, not gold. A full-width saturated gold bar made the biggest,
+    /// loudest element on the screen a mere view filter, out-shouting the
+    /// starter rows and the gold accents that mark real decisions.
     private var tabBar: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 8) {
             ForEach([PositionSide.offense, .defense, .specialTeams], id: \.self) { side in
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) {
@@ -298,42 +321,144 @@ struct DepthChartView: View {
                     }
                 } label: {
                     Text(side.rawValue)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.subheadline)
+                        .fontWeight(selectedTab == side ? .heavy : .medium)
                         .foregroundStyle(selectedTab == side ? Color.backgroundPrimary : Color.textSecondary)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 8)
                         .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(selectedTab == side ? Color.accentGold : Color.clear)
+                            selectedTab == side ? Color.accentBlue : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 10)
+                        )
+                        .overlay(
+                            selectedTab == side
+                                ? nil
+                                : RoundedRectangle(cornerRadius: 10)
+                                    .strokeBorder(Color.surfaceBorder, lineWidth: 1)
                         )
                 }
-                .buttonStyle(.plain)
+                .contentShape(RoundedRectangle(cornerRadius: 10))
             }
         }
-        .padding(4)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.backgroundSecondary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
-                )
-        )
+        .padding(5)
+        .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: 14))
     }
 
     // MARK: - Auto-Fill Button
 
+    /// The one-tap way out of an empty chart.
+    ///
+    /// `.labelStyle(.titleAndIcon)` is load-bearing: a toolbar `Label` collapses
+    /// to icon-only by default, and a bare wand glyph in the corner is not a
+    /// discoverable action for a first-time manager staring at eleven empty
+    /// slots.
     private var autoFillButton: some View {
         Button {
-            withAnimation {
-                depthChart.autoGenerate(players: rosterPlayers)
-            }
-            persistDepthChart()
+            applyAutoSet()
         } label: {
-            Label("Auto-Set", systemImage: "wand.and.stars")
+            Label("Auto-Set Lineup", systemImage: "wand.and.stars")
+                .labelStyle(.titleAndIcon)
+                .font(.subheadline.weight(.semibold))
         }
         .foregroundStyle(Color.accentGold)
-        .accessibilityLabel("Auto-fill depth chart by overall rating")
+        .accessibilityLabel("Auto-set lineup")
+        .accessibilityHint("Fills every depth slot with the best available player by overall rating")
+    }
+
+    // MARK: - Auto-Set
+
+    /// Runs the auto-generator and reports what it changed.
+    ///
+    /// `autoGenerate` rebuilds the whole chart, so "did anything happen?" is
+    /// answered by diffing occupancy before and after rather than by trusting
+    /// the call: filling six holes and re-ordering three rooms are different
+    /// outcomes and read as different sentences.
+    private func applyAutoSet() {
+        let before = occupancySnapshot()
+        withAnimation {
+            depthChart.autoGenerate(players: rosterPlayers)
+        }
+        persistDepthChart()
+        let after = occupancySnapshot()
+
+        var filled = 0
+        var replaced = 0
+        for (key, newValue) in after {
+            switch before[key] {
+            case .none:
+                filled += 1
+            case .some(let oldValue) where oldValue != newValue:
+                replaced += 1
+            default:
+                break
+            }
+        }
+        flashAutoSetMessage(autoSetSummary(filled: filled, replaced: replaced))
+    }
+
+    /// `slot|index` → player for every assignable slot on the whole chart.
+    private func occupancySnapshot() -> [String: UUID] {
+        var snapshot: [String: UUID] = [:]
+        for slot in DepthChartSlot.allCases {
+            let depth = depthChart.depthOrder(for: slot)
+            for index in 0..<slot.maxDepth {
+                if let playerID = depth[safe: index] {
+                    snapshot["\(slot.rawValue)|\(index)"] = playerID
+                }
+            }
+        }
+        return snapshot
+    }
+
+    private func autoSetSummary(filled: Int, replaced: Int) -> String {
+        switch (filled, replaced) {
+        case (0, 0):
+            return "Lineup already optimal — nothing to change."
+        case (0, let changed):
+            return "Re-ordered \(changed) slot\(changed == 1 ? "" : "s") by overall."
+        case (let empty, 0):
+            return "Filled \(empty) empty slot\(empty == 1 ? "" : "s")."
+        case (let empty, let changed):
+            return "Filled \(empty) empty slot\(empty == 1 ? "" : "s") · re-ordered \(changed)."
+        }
+    }
+
+    private func flashAutoSetMessage(_ message: String) {
+        autoSetFlashID += 1
+        let flashID = autoSetFlashID
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            autoSetMessage = message
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
+            if flashID == autoSetFlashID {
+                withAnimation(.easeOut(duration: 0.3)) { autoSetMessage = nil }
+            }
+        }
+    }
+
+    private func autoSetToast(_ message: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "wand.and.stars")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.success)
+            Text(message)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.textPrimary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.backgroundSecondary)
+                .overlay(RoundedRectangle(cornerRadius: 12).fill(Color.success.opacity(0.12)))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.success.opacity(0.4), lineWidth: 1)
+                )
+        )
+        .accessibilityAddTraits(.isStaticText)
     }
 
     // MARK: - Group Collapse Controls

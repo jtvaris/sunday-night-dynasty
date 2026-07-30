@@ -27,6 +27,30 @@ struct GamePlanView: View {
     @State private var showSavedIndicator = false
     @State private var savedFlashID = 0
 
+    /// Sliders the recommended preset just moved — highlighted for a couple of
+    /// seconds so the plan doesn't silently rewrite itself under the coach.
+    @State private var highlightedSliders: Set<PlanSlider> = []
+    @State private var highlightFlashID = 0
+
+    /// The five game-plan dials, used to name what a preset changed.
+    enum PlanSlider: String, CaseIterable {
+        case offensiveAggression
+        case runPassRatio
+        case fourthDown
+        case defensiveAggression
+        case blitzFrequency
+
+        var shortLabel: String {
+            switch self {
+            case .offensiveAggression: return "Off. Style"
+            case .runPassRatio:        return "Play Mix"
+            case .fourthDown:          return "4th Down"
+            case .defensiveAggression: return "Def. Style"
+            case .blitzFrequency:      return "Blitz"
+            }
+        }
+    }
+
     // MARK: - Context
 
     /// Optional situational data supplied by the career shell. Every field is
@@ -135,19 +159,23 @@ struct GamePlanView: View {
                     }
 
                     if horizontalSizeClass == .regular {
+                        // Mental Readiness rides in the RIGHT column under the
+                        // Defense card. The two slider cards are short, so the
+                        // right column used to bottom out ~320pt above the left
+                        // one — a stranded void beside a scrolling list.
                         HStack(alignment: .top, spacing: DSSpacing.md) {
                             VStack(spacing: DSSpacing.md) {
                                 summaryChips
                                 presetsCard
                                 if practice != nil { practiceCard }
                                 if hasOpponentData { opponentCard }
-                                if hasMentalData { mentalReadinessCard }
                             }
                             .frame(width: 340)
 
                             VStack(spacing: DSSpacing.md) {
                                 offensiveSection
                                 defensiveSection
+                                if hasMentalData { mentalReadinessCard }
                             }
                             .frame(maxWidth: .infinity)
                         }
@@ -354,11 +382,257 @@ struct GamePlanView: View {
                 ForEach(presets, id: \.label) { preset in
                     presetRow(preset)
                 }
+                if let recommendation {
+                    recommendedPresetRow(recommendation)
+                }
             }
         }
         .padding(DSSpacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardBackground()
+    }
+
+    // MARK: - Recommended Preset
+
+    /// A game plan the staff derives from THIS week's scouting report, plus the
+    /// reasons behind it.
+    ///
+    /// Everything here comes from data already printed on the screen — the two
+    /// defense grades and the two coordinator personas — so the card can never
+    /// recommend something the scouting panel above it contradicts.
+    struct Recommendation {
+        let opponentName: String
+        let plan: GamePlan
+        /// One short clause per input that moved a slider, e.g. "weak secondary
+        /// — lean pass".
+        let reasons: [String]
+        /// Which dials this plan would move away from the current one.
+        let changedSliders: Set<PlanSlider>
+    }
+
+    private var recommendation: Recommendation? {
+        guard let opponent = context?.opponentName else { return nil }
+        let passD = context?.passDefense
+        let runD = context?.runDefense
+        let dc = context?.opponentDCPersona
+        let oc = context?.opponentOCPersona
+        // Nothing scouted = nothing to recommend; a "recommendation" built from
+        // four nils is just the Balanced preset wearing the opponent's name.
+        guard passD != nil || runD != nil || dc != nil || oc != nil else { return nil }
+
+        var plan = GamePlan.balanced
+        var reasons: [String] = []
+
+        // --- Their pass defense decides how much we throw ---
+        switch passD {
+        case .weak:
+            plan.runPassRatio += 0.18
+            plan.offensiveAggression += 0.12
+            reasons.append("Weak secondary — lean pass and take shots")
+        case .strong:
+            plan.runPassRatio -= 0.12
+            plan.offensiveAggression -= 0.08
+            reasons.append("Strong secondary — fewer throws into coverage")
+        case .average, nil:
+            break
+        }
+
+        // --- Their run defense decides how much we hand it off ---
+        switch runD {
+        case .weak:
+            plan.runPassRatio -= 0.18
+            plan.offensiveAggression -= 0.05
+            reasons.append("Soft front seven — run at them and shorten the game")
+        case .strong:
+            plan.runPassRatio += 0.10
+            reasons.append("Stout front — the run is not there")
+        case .average, nil:
+            break
+        }
+
+        // --- Both levels soft: press it. Both stout: protect the ball. ---
+        if passD == .weak && runD == .weak {
+            plan.fourthDownAggressiveness += 0.20
+            plan.offensiveAggression += 0.05
+            reasons.append("Weak on both levels — stay on the field on 4th")
+        } else if passD == .strong && runD == .strong {
+            plan.fourthDownAggressiveness -= 0.20
+            reasons.append("No soft spot — win field position, punt on 4th")
+        }
+
+        // --- Their DC: how much risk the 4th-down sheet can carry ---
+        switch dc {
+        case .exotic:
+            plan.fourthDownAggressiveness -= 0.20
+            plan.offensiveAggression -= 0.05
+            reasons.append("Exotic DC — don't hand him a 4th-down look")
+        case .aggressive:
+            plan.offensiveAggression -= 0.05
+            plan.runPassRatio += 0.05
+            reasons.append("Blitz-happy DC — get the ball out quick")
+        case .conservative:
+            plan.fourthDownAggressiveness += 0.10
+            reasons.append("Conservative DC — he'll bend before he breaks")
+        case .balanced, nil:
+            break
+        }
+
+        // --- Their OC: what our defense has to stop ---
+        switch oc {
+        case .groundAndPound:
+            plan.defensiveAggression += 0.10
+            plan.blitzFrequency += 0.12
+            reasons.append("Run-first OC — crowd the box")
+        case .airRaid:
+            plan.blitzFrequency += 0.15
+            plan.defensiveAggression -= 0.10
+            reasons.append("Air Raid OC — pressure him, keep it in front")
+        case .westCoast:
+            plan.defensiveAggression += 0.15
+            plan.blitzFrequency -= 0.05
+            reasons.append("Timing passer — press and break the rhythm")
+        case .balanced, nil:
+            break
+        }
+
+        plan = Self.snapped(plan)
+
+        var changed: Set<PlanSlider> = []
+        if !approxEqual(plan.offensiveAggression, gamePlan.offensiveAggression) { changed.insert(.offensiveAggression) }
+        if !approxEqual(plan.runPassRatio, gamePlan.runPassRatio) { changed.insert(.runPassRatio) }
+        if !approxEqual(plan.fourthDownAggressiveness, gamePlan.fourthDownAggressiveness) { changed.insert(.fourthDown) }
+        if !approxEqual(plan.defensiveAggression, gamePlan.defensiveAggression) { changed.insert(.defensiveAggression) }
+        if !approxEqual(plan.blitzFrequency, gamePlan.blitzFrequency) { changed.insert(.blitzFrequency) }
+
+        return Recommendation(
+            opponentName: opponent,
+            plan: plan,
+            reasons: reasons,
+            changedSliders: changed
+        )
+    }
+
+    /// Clamps every dial into the usable band and rounds to the slider's own
+    /// 0.05 step, so applying a preset and then nudging a slider by hand does
+    /// not jump the value.
+    private static func snapped(_ plan: GamePlan) -> GamePlan {
+        func snap(_ value: Double) -> Double {
+            let clamped = min(0.95, max(0.05, value))
+            return (clamped * 20).rounded() / 20
+        }
+        return GamePlan(
+            offensiveAggression: snap(plan.offensiveAggression),
+            defensiveAggression: snap(plan.defensiveAggression),
+            runPassRatio: snap(plan.runPassRatio),
+            blitzFrequency: snap(plan.blitzFrequency),
+            fourthDownAggressiveness: snap(plan.fourthDownAggressiveness)
+        )
+    }
+
+    private func approxEqual(_ a: Double, _ b: Double) -> Bool { abs(a - b) <= 0.01 }
+
+    private func recommendedPresetRow(_ recommendation: Recommendation) -> some View {
+        let isActive = gamePlan.matches(recommendation.plan)
+
+        return Button {
+            let moved = recommendation.changedSliders
+            withAnimation(.easeInOut(duration: 0.25)) {
+                gamePlan = recommendation.plan
+            }
+            flashHighlight(moved)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: DSSpacing.sm) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.eliteGreen)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Color.eliteGreen.opacity(0.12)))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Recommended vs \(recommendation.opponentName)")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.textPrimary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        Text(isActive
+                             ? "Your plan already matches the staff's read."
+                             : "Built from this week's scouting report.")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if isActive {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.eliteGreen)
+                    }
+                }
+
+                ForEach(recommendation.reasons, id: \.self) { reason in
+                    HStack(alignment: .top, spacing: 5) {
+                        Image(systemName: "arrow.turn.down.right")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(Color.eliteGreen.opacity(0.8))
+                            .padding(.top, 3)
+                        Text(reason)
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+
+                if !isActive && !recommendation.changedSliders.isEmpty {
+                    HStack(spacing: 4) {
+                        Text("MOVES")
+                            .font(.system(size: 8, weight: .bold))
+                            .tracking(0.6)
+                            .foregroundStyle(Color.textTertiary)
+                        ForEach(PlanSlider.allCases.filter { recommendation.changedSliders.contains($0) }, id: \.self) { slider in
+                            Text(slider.shortLabel)
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(Color.eliteGreen)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color.eliteGreen.opacity(0.12)))
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, DSSpacing.sm)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                    .fill(isActive ? Color.eliteGreen.opacity(0.10) : Color.backgroundTertiary.opacity(0.55))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                            .strokeBorder(
+                                isActive ? Color.eliteGreen : Color.eliteGreen.opacity(0.45),
+                                lineWidth: isActive ? 1.5 : 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Apply the recommended plan against \(recommendation.opponentName)\(isActive ? ", currently active" : "")")
+        .accessibilityHint(recommendation.reasons.joined(separator: ". "))
+    }
+
+    /// Marks the sliders a preset just moved, clearing after a beat.
+    private func flashHighlight(_ sliders: Set<PlanSlider>) {
+        guard !sliders.isEmpty else { return }
+        highlightFlashID += 1
+        let flashID = highlightFlashID
+        withAnimation(.easeInOut(duration: 0.25)) { highlightedSliders = sliders }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.8) {
+            if flashID == highlightFlashID {
+                withAnimation(.easeOut(duration: 0.4)) { highlightedSliders = [] }
+            }
+        }
     }
 
     private func presetRow(_ preset: PresetInfo) -> some View {
@@ -776,7 +1050,8 @@ struct GamePlanView: View {
                 rightLabel: "Aggressive",
                 riskReward: "Shots downfield open up — sacks and turnovers follow.",
                 value: $gamePlan.offensiveAggression,
-                color: .accentBlue
+                color: .accentBlue,
+                slider: .offensiveAggression
             )
 
             sliderRow(
@@ -785,7 +1060,8 @@ struct GamePlanView: View {
                 rightLabel: "Pass Heavy",
                 riskReward: "Passing gains chunks fast — running protects the ball and clock.",
                 value: $gamePlan.runPassRatio,
-                color: .accentBlue
+                color: .accentBlue,
+                slider: .runPassRatio
             )
 
             sliderRow(
@@ -794,7 +1070,8 @@ struct GamePlanView: View {
                 rightLabel: "Go For It",
                 riskReward: "More TDs on the table — more turnovers on downs.",
                 value: $gamePlan.fourthDownAggressiveness,
-                color: .accentBlue
+                color: .accentBlue,
+                slider: .fourthDown
             )
         }
         .padding(DSSpacing.md + 4)
@@ -816,7 +1093,8 @@ struct GamePlanView: View {
                 rightLabel: "Press Man",
                 riskReward: "Press coverage forces mistakes — beaten corners give up big plays.",
                 value: $gamePlan.defensiveAggression,
-                color: .danger
+                color: .danger,
+                slider: .defensiveAggression
             )
 
             sliderRow(
@@ -825,7 +1103,8 @@ struct GamePlanView: View {
                 rightLabel: "Full Blitz",
                 riskReward: "More sacks and hurried throws — open field behind the rush.",
                 value: $gamePlan.blitzFrequency,
-                color: .danger
+                color: .danger,
+                slider: .blitzFrequency
             )
         }
         .padding(DSSpacing.md + 4)
@@ -841,13 +1120,26 @@ struct GamePlanView: View {
         rightLabel: String,
         riskReward: String,
         value: Binding<Double>,
-        color: Color
+        color: Color,
+        slider: PlanSlider
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let isHighlighted = highlightedSliders.contains(slider)
+
+        return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(label)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.textPrimary)
+                if isHighlighted {
+                    Text("ADJUSTED")
+                        .font(.system(size: 8, weight: .bold))
+                        .tracking(0.6)
+                        .foregroundStyle(Color.eliteGreen)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.eliteGreen.opacity(0.15)))
+                        .transition(.opacity.combined(with: .scale))
+                }
                 Spacer()
                 Text(percentLabel(value.wrappedValue))
                     .font(.subheadline.monospacedDigit().weight(.semibold))
@@ -880,6 +1172,16 @@ struct GamePlanView: View {
                 .foregroundStyle(Color.textTertiary)
                 .italic()
         }
+        .padding(.horizontal, isHighlighted ? 8 : 0)
+        .padding(.vertical, isHighlighted ? 6 : 0)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(Color.eliteGreen.opacity(isHighlighted ? 0.07 : 0))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                        .strokeBorder(Color.eliteGreen.opacity(isHighlighted ? 0.4 : 0), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - Section Header

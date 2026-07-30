@@ -73,6 +73,13 @@ struct CoachingStaffView: View {
     @AppStorage("staff_isMedicalExpanded") private var isMedicalExpanded: Bool = true
     @AppStorage("staff_isScoutingExpanded") private var isScoutingExpanded: Bool = true
 
+    // MARK: - Auto-Hire State (Batch 2E)
+    /// True while the bulk hiring pass is running (it generates a candidate
+    /// pool per vacancy on the main actor, so the button has to show work).
+    @State private var isAutoHiring = false
+    /// "Hiring Defensive Coordinator…" — which vacancy the pass is on.
+    @State private var autoHireStatus: String?
+
     // MARK: - Navigation State
     @State private var activeHireSheet: HireSheetType?  // Single sheet for all hire flows
     @State private var detailCoachID: UUID?             // Pushes CoachDetailView via navigationDestination
@@ -383,6 +390,326 @@ struct CoachingStaffView: View {
         let coachCost = vacantCoachRoles.reduce(0) { $0 + estimatedMinimumSalary(for: $1) }
         let scoutCost = vacantScoutRoles.reduce(0) { $0 + estimatedMinimumScoutSalary(for: $1) }
         return coachCost + scoutCost
+    }
+
+    // MARK: - Auto-Hire (Batch 2E)
+    //
+    // A fresh front office opens this screen on 21+ vacancies, each behind its
+    // own full-screen hire sheet with a 25-man table in it. Filling the staff
+    // by hand is a 21-sheet errand before the first snap is ever played, and
+    // it is where a casual manager quits. This fills every hole in one tap
+    // from the SAME candidate generator the manual sheets use — no parallel
+    // pool, no invented coaches — while respecting all three budget pots.
+    // Manual hiring is untouched; this is the escape hatch, not the flow.
+
+    /// One open job, coach or scout.
+    enum StaffVacancy: Identifiable, Hashable {
+        case coach(CoachRole)
+        case scout(ScoutRole)
+
+        var id: String {
+            switch self {
+            case .coach(let role): return "coach-\(role.rawValue)"
+            case .scout(let role): return "scout-\(role.rawValue)"
+            }
+        }
+
+        var displayName: String {
+            switch self {
+            case .coach(let role): return role.displayName
+            case .scout(let role): return role.displayName
+            }
+        }
+
+        var abbreviation: String {
+            switch self {
+            case .coach(let role): return role.abbreviation
+            case .scout(let role): return role.abbreviation
+            }
+        }
+    }
+
+    /// Which of the three budgets a job is paid from.
+    private enum StaffPot: Hashable { case coaching, medical, scouting }
+
+    private func pot(for vacancy: StaffVacancy) -> StaffPot {
+        switch vacancy {
+        case .coach(let role): return Self.medicalRoles.contains(role) ? .medical : .coaching
+        case .scout:           return .scouting
+        }
+    }
+
+    private func remaining(_ pot: StaffPot) -> Int {
+        switch pot {
+        case .coaching: return remainingBudget
+        case .medical:  return remainingMedicalBudget
+        case .scouting: return remainingScoutBudget
+        }
+    }
+
+    private func total(_ pot: StaffPot) -> Int {
+        switch pot {
+        case .coaching: return coachingBudget
+        case .medical:  return medicalBudget
+        case .scouting: return scoutingBudget
+        }
+    }
+
+    /// Hiring order, most decisive job first.
+    ///
+    /// Head coach and the two coordinators set the schemes everything else
+    /// hangs off; the position coaches that drive development come next, then
+    /// the medical room, and the assistant HC last because he is optional.
+    private static let autoHireCoachOrder: [CoachRole] = [
+        .headCoach,
+        .offensiveCoordinator, .defensiveCoordinator, .specialTeamsCoordinator,
+        .qbCoach, .olCoach, .dlCoach, .dbCoach, .wrCoach, .lbCoach, .rbCoach, .strengthCoach,
+        .headTrainer, .teamDoctor, .physio,
+        .assistantHeadCoach
+    ]
+
+    private static let autoHireScoutOrder: [ScoutRole] = [
+        .chiefScout,
+        .regionalScout1, .regionalScout2, .regionalScout3, .regionalScout4, .regionalScout5,
+        .extraScout1, .extraScout2
+    ]
+
+    /// Every open job in hiring order.
+    private var orderedVacancies: [StaffVacancy] {
+        let vacantCoaches = Set(vacantCoachRoles)
+        let vacantScouts = Set(vacantScoutRoles)
+        return Self.autoHireCoachOrder.filter { vacantCoaches.contains($0) }.map { StaffVacancy.coach($0) }
+            + Self.autoHireScoutOrder.filter { vacantScouts.contains($0) }.map { StaffVacancy.scout($0) }
+    }
+
+    /// The three highest-impact holes — what "Hire these first" points at.
+    private var topPriorityVacancies: [StaffVacancy] {
+        Array(orderedVacancies.prefix(3))
+    }
+
+    /// Planned spend band per job, in thousands.
+    ///
+    /// Coach figures are the authored `CoachRole.salaryRange`; the scout band
+    /// mirrors the asking prices `CoachingEngine.generateScoutCandidates`
+    /// actually rolls (chief 650-2000, everyone else 150-1000), so the
+    /// projection in the button subtitle matches the pool the pass will read.
+    private func plannedSalaryBand(for vacancy: StaffVacancy) -> (min: Int, avg: Int) {
+        switch vacancy {
+        case .coach(let role):
+            let range = role.salaryRange
+            return (range.min, range.avg)
+        case .scout(let role):
+            return role == .chiefScout ? (650, 1_325) : (150, 575)
+        }
+    }
+
+    /// Spend target per vacancy, scaled so each pot's whole plan fits its
+    /// budget. Planning the pass up front is what stops a $16M head coach from
+    /// eating the money the eight position coaches need.
+    private var autoHireAllocations: [String: Int] {
+        var result: [String: Int] = [:]
+        for pot in [StaffPot.coaching, .medical, .scouting] {
+            let jobs = orderedVacancies.filter { self.pot(for: $0) == pot }
+            guard !jobs.isEmpty else { continue }
+            let available = max(0, remaining(pot))
+            let bands = jobs.map { plannedSalaryBand(for: $0) }
+            let totalAvg = bands.reduce(0) { $0 + $1.avg }
+            let totalMin = bands.reduce(0) { $0 + $1.min }
+
+            if totalAvg <= available {
+                // Comfortable: everyone gets the going rate for the job.
+                for (job, band) in zip(jobs, bands) { result[job.id] = band.avg }
+            } else if totalMin <= available {
+                // Tight: pay the floor everywhere, split what is left over the
+                // floor-to-average gap proportionally.
+                let slack = Double(available - totalMin) / Double(max(1, totalAvg - totalMin))
+                for (job, band) in zip(jobs, bands) {
+                    result[job.id] = band.min + Int((Double(band.avg - band.min) * slack).rounded())
+                }
+            } else {
+                // Broke: fund floors in priority order until the pot runs dry —
+                // the tail simply stays vacant rather than pushing it over.
+                var left = available
+                for (job, band) in zip(jobs, bands) {
+                    let take = min(band.min, left)
+                    result[job.id] = take
+                    left -= take
+                }
+            }
+        }
+        return result
+    }
+
+    /// Projected spend per pot, for the button subtitle.
+    private func projectedSpend(_ pot: StaffPot) -> Int {
+        let allocations = autoHireAllocations
+        return orderedVacancies
+            .filter { self.pot(for: $0) == pot }
+            .reduce(0) { $0 + (allocations[$1.id] ?? 0) }
+    }
+
+    /// "spends ~$31.0M of $38.4M coaching · ~$1.7M of $2.5M medical"
+    private var autoHireSpendSubtitle: String {
+        var parts: [String] = []
+        for (pot, name) in [(StaffPot.coaching, "coaching"), (.medical, "medical"), (.scouting, "scouting")] {
+            let projected = projectedSpend(pot)
+            guard projected > 0 else { continue }
+            parts.append("~$\(formatBudget(projected))M of $\(formatBudget(total(pot)))M \(name)")
+        }
+        return parts.isEmpty ? "" : "Spends " + parts.joined(separator: " · ")
+    }
+
+    // MARK: - Auto-Hire Execution
+
+    /// Fills every open job with the best candidate its allocation can buy.
+    ///
+    /// Runs on the main actor because `generateCoachCandidates` touches
+    /// SwiftData-backed models; the `Task.yield()` between jobs is what lets
+    /// the progress line repaint instead of freezing for a whole second.
+    @MainActor
+    private func runAutoHire() async {
+        guard let teamID = career.teamID, !isAutoHiring else { return }
+        let plan = orderedVacancies
+        guard !plan.isEmpty else { return }
+
+        isAutoHiring = true
+        let allocations = autoHireAllocations
+        var wallet: [StaffPot: Int] = [
+            .coaching: max(0, remainingBudget),
+            .medical:  max(0, remainingMedicalBudget),
+            .scouting: max(0, remainingScoutBudget)
+        ]
+        // Money a job did not need rolls forward to the rest of its own pot.
+        var carry: [StaffPot: Int] = [.coaching: 0, .medical: 0, .scouting: 0]
+        var hires = 0
+        var spent = 0
+
+        for vacancy in plan {
+            autoHireStatus = "Hiring \(vacancy.displayName)…"
+            await Task.yield()
+
+            let potKey = pot(for: vacancy)
+            let allocation = (allocations[vacancy.id] ?? 0) + (carry[potKey] ?? 0)
+            let cap = min(wallet[potKey] ?? 0, allocation)
+            guard cap > 0 else { continue }
+
+            switch vacancy {
+            case .coach(let role):
+                let pool = CoachingEngine.generateCoachCandidates(
+                    role: role,
+                    count: 20,
+                    teamBudget: coachingBudget,
+                    teamWins: team?.wins ?? 8,
+                    teamReputation: career.reputation
+                )
+                guard let pick = bestAffordableCoach(in: pool, cap: cap) else { continue }
+                hire(coach: pick, teamID: teamID)
+                wallet[potKey] = (wallet[potKey] ?? 0) - pick.salary
+                carry[potKey] = max(0, allocation - pick.salary)
+                spent += pick.salary
+                hires += 1
+
+            case .scout(let role):
+                // Same seeded pool the manual sheet shows for this team/role/season.
+                let pool = CoachingEngine.generateScoutCandidates(
+                    role: role,
+                    count: 20,
+                    seed: CoachingEngine.scoutPoolSeed(
+                        teamID: teamID,
+                        role: role,
+                        season: career.currentSeason
+                    )
+                )
+                guard let pick = bestAffordableScout(in: pool, cap: cap) else { continue }
+                hire(scout: pick, teamID: teamID)
+                wallet[potKey] = (wallet[potKey] ?? 0) - pick.salary
+                carry[potKey] = max(0, allocation - pick.salary)
+                spent += pick.salary
+                hires += 1
+            }
+        }
+
+        try? modelContext.save()
+        autoHireStatus = nil
+        isAutoHiring = false
+
+        // Keep every section open so the newly filled rows are visible.
+        isCoordinatorsExpanded = true
+        isPositionCoachesExpanded = true
+        isMedicalExpanded = true
+        isScoutingExpanded = true
+
+        let stillOpen = plan.count - hires
+        var message = hires == 0
+            ? "No affordable candidates — nothing hired."
+            : "Hired \(hires) staff for $\(formatBudget(spent))M."
+        if hires > 0 && stillOpen > 0 {
+            message += " \(stillOpen) role\(stillOpen == 1 ? "" : "s") left open — no room in the budget."
+        }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            recentHireMessage = message
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+            withAnimation(.easeOut(duration: 0.4)) { recentHireMessage = nil }
+        }
+    }
+
+    /// Best man the allocation can buy: highest overall inside the cap, and
+    /// the cheaper of two equals — the same ranking the hire sheet's default
+    /// OVR sort puts on top.
+    private func bestAffordableCoach(in pool: [Coach], cap: Int) -> Coach? {
+        pool.filter { $0.salary <= cap }
+            .max { a, b in
+                let (oa, ob) = (coachOverall(a), coachOverall(b))
+                if oa != ob { return oa < ob }
+                return a.salary > b.salary
+            }
+    }
+
+    /// Scouts rank on evaluation accuracy — the hire sheet's default sort.
+    private func bestAffordableScout(in pool: [Scout], cap: Int) -> Scout? {
+        pool.filter { $0.salary <= cap }
+            .max { a, b in
+                if a.accuracy != b.accuracy { return a.accuracy < b.accuracy }
+                if a.potentialRead != b.potentialRead { return a.potentialRead < b.potentialRead }
+                return a.salary > b.salary
+            }
+    }
+
+    /// Signs a generated coach. Mirrors `HireCoachView.hire` — including the
+    /// face claim, without which the next hire in this very pass could be
+    /// handed the same portrait — minus the role-clearing delete, since every
+    /// job the pass touches is vacant by construction.
+    private func hire(coach candidate: Coach, teamID: UUID) {
+        candidate.teamID = teamID
+        candidate.careerID = career.id
+        candidate.hireSeasonYear = career.currentSeason
+        candidate.contractYearsRemaining = 3
+        candidate.faceID = FaceLibrary.shared.claimFace(
+            candidate.faceID, personID: candidate.id,
+            role: .coach, age: candidate.age, position: nil,
+            gender: FacePersonGender(tag: candidate.gender)
+        )
+        modelContext.insert(candidate)
+
+        // R30: every coaching hire joins the tree (medical staff sit outside it,
+        // exactly as `syncCoachingTree` treats them).
+        guard !Self.medicalRoles.contains(candidate.role) else { return }
+        var tree = career.coachingTree
+        CoachRelationshipEngine.updateCoachingTree(
+            tree: &tree.entries,
+            coach: candidate,
+            event: "hired",
+            season: career.currentSeason
+        )
+        career.coachingTree = tree
+    }
+
+    /// Signs a generated scout. Mirrors `HireScoutView.hire`.
+    private func hire(scout candidate: Scout, teamID: UUID) {
+        candidate.teamID = teamID
+        candidate.careerID = career.id
+        modelContext.insert(candidate)
     }
 
     // MARK: - #270: Salary range summaries per section
@@ -857,6 +1184,17 @@ struct CoachingStaffView: View {
                     Text("Staff Budget")
                 }
                 .listRowBackground(Color.backgroundSecondary)
+
+                // MARK: - Fill Your Staff (Batch 2E): bulk hire + priority strip
+                if !orderedVacancies.isEmpty {
+                    Section {
+                        hirePriorityStrip
+                        autoHireButton
+                    } header: {
+                        Text("Fill Your Staff")
+                    }
+                    .listRowBackground(Color.backgroundSecondary)
+                }
 
                 // MARK: - R30: Pending HC interview request for a user coordinator
                 if let request = pendingInterview {
@@ -2261,6 +2599,161 @@ struct CoachingStaffView: View {
             career.coachingTree = tree
             try? modelContext.save()
         }
+    }
+
+    // MARK: - Auto-Hire UI (Batch 2E)
+
+    /// "Hire these first" — the three jobs that decide the most, in order,
+    /// each opening its normal hire sheet. A flat list of 21 identical dashed
+    /// vacancy cards gives no answer to "where do I even start".
+    @ViewBuilder
+    private var hirePriorityStrip: some View {
+        let priorities = topPriorityVacancies
+        if !priorities.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "flag.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.warning)
+                    Text("HIRE THESE FIRST")
+                        .font(.system(size: 9, weight: .bold))
+                        .tracking(0.7)
+                        .foregroundStyle(Color.textTertiary)
+                    Spacer()
+                    Text("\(orderedVacancies.count) vacancies")
+                        .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
+
+                HStack(spacing: 8) {
+                    ForEach(Array(priorities.enumerated()), id: \.element.id) { index, vacancy in
+                        priorityVacancyChip(rank: index + 1, vacancy: vacancy)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func priorityVacancyChip(rank: Int, vacancy: StaffVacancy) -> some View {
+        Button {
+            openHireSheet(for: vacancy)
+        } label: {
+            HStack(spacing: 6) {
+                Text("\(rank)")
+                    .font(.system(size: 9, weight: .black))
+                    .foregroundStyle(Color.backgroundPrimary)
+                    .frame(width: 15, height: 15)
+                    .background(Circle().fill(Color.warning))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(vacancy.abbreviation)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text(autoHireAllocations[vacancy.id].map { "~$\(formatBudget($0))M" } ?? "")
+                        .font(.system(size: 8).monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.warning.opacity(0.10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.warning.opacity(0.4), lineWidth: 1)
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isAutoHiring)
+        .accessibilityLabel("Priority \(rank): hire a \(vacancy.displayName)")
+    }
+
+    /// Routes a vacancy to the hire flow it already had — coordinators and
+    /// position coaches to the negotiation table, medical to the simple sheet,
+    /// scouts to the scouting board.
+    private func openHireSheet(for vacancy: StaffVacancy) {
+        switch vacancy {
+        case .coach(let role) where Self.medicalRoles.contains(role):
+            let candidates = CoachingEngine.generateCoachCandidates(
+                role: role,
+                count: Int.random(in: 8...12),
+                teamBudget: coachingBudget,
+                teamWins: team?.wins ?? 8,
+                teamReputation: career.reputation
+            )
+            activeHireSheet = .medical(role, candidates)
+        case .coach(let role):
+            activeHireSheet = .coach(role)
+        case .scout(let role):
+            activeHireSheet = .scout(role)
+        }
+    }
+
+    private var autoHireButton: some View {
+        Button {
+            Task { await runAutoHire() }
+        } label: {
+            HStack(spacing: 12) {
+                if isAutoHiring {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .tint(Color.accentGold)
+                        .frame(width: 22, height: 22)
+                } else {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.accentGold)
+                        .frame(width: 22, height: 22)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isAutoHiring ? "Hiring…" : "Auto-Hire Recommended Staff")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text(isAutoHiring
+                         ? (autoHireStatus ?? "Working through the vacancies…")
+                         : "Fills all \(orderedVacancies.count) vacant roles with the best affordable candidate for each.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                    if !isAutoHiring && !autoHireSpendSubtitle.isEmpty {
+                        Text(autoHireSpendSubtitle)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.accentGold)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                if !isAutoHiring {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.textTertiary)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.accentGold.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(Color.accentGold.opacity(0.45), lineWidth: 1)
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isAutoHiring)
+        .accessibilityLabel("Auto-hire recommended staff")
+        .accessibilityHint("Fills all \(orderedVacancies.count) vacant roles. \(autoHireSpendSubtitle). You can still hire or replace anyone by hand afterwards.")
     }
 
     // MARK: - Hiring Toast Trigger (#49)
