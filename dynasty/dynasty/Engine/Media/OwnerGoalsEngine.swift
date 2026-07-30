@@ -84,7 +84,7 @@ enum OwnerGoalsEngine {
             goals.append(
                 SeasonGoal(
                     title: "Make the Playoffs",
-                    description: "\(owner.name) expects a playoff berth this season. Don't leave him waiting.",
+                    description: "\(owner.name) expects a playoff berth this season. Don't keep the boss waiting.",
                     type: .playoffs,
                     priority: .primary
                 )

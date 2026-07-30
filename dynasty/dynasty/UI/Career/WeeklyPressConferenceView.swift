@@ -818,7 +818,7 @@ struct WeeklyPressConferenceView: View {
                 conference: .AFC,
                 division: .west,
                 mediaMarket: .large,
-                owner: Owner(name: "Clark Hunt")
+                owner: Owner(name: "Merrill Ashford")
             ),
             lastGameResult: true,
             week: 5

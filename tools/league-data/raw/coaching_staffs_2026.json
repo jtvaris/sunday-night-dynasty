@@ -762,5 +762,19 @@
  "abbrNormalization": [
   "LAR->LA (already normalised in the file on disk)"
  ],
- "teamAbbrConvention": "nflverse (LA = Rams, LAC = Chargers)"
+ "teamAbbrConvention": "nflverse (LA = Rams, LAC = Chargers)",
+ "staffVerification": {
+  "verifiedOn": "2026-07-30",
+  "scope": "all 32 headCoach / offensiveCoordinator / defensiveCoordinator rows: name AND sinceYear",
+  "result": "0 corrections. Every row still matches its source, including the five that read as implausible and were re-checked first (ARI HC Mike LaFleur, BAL HC Jesse Minter, KC OC Eric Bieniemy, PHI OC Sean Mannion, SF OC Klay Kubiak).",
+  "method": [
+   "Re-fetched the three Wikipedia 'current' list pages on 2026-07-30 (not the February snapshot this file was compiled from) and diffed all 96 rows: 32/32 head coaches, 32/32 offensive coordinators, 31/31 defensive coordinators + TB identical in name and sinceYear.",
+   "Cross-checked every 2026 hire against a source family INDEPENDENT of Wikipedia — club sites (chiefs.com, philadelphiaeagles.com, azcardinals.com, clevelandbrowns.com, steelers.com, newyorkjets.com), ESPN, NFL.com, CBS Sports, FOX Sports and the 1075thefan 2026 hire tracker.",
+   "Spot-checked the play-caller claims the notes carry (PIT: McCarthy calls the offense with Angelichio as OC; WAS: both first-time coordinators call their own units; KC: Reid calls the offense) — all confirmed."
+  ],
+  "knownModelling": [
+   "TB `defensiveCoordinator` stays null: Bowles has held the DC title since 2019 and calls the defense himself, so a row here would duplicate the head coach as a second person in the importer. The Wikipedia DC list does show 'Todd Bowles - since 2019' for Tampa Bay; the null is a modelling choice, not a missing fact (see caveats).",
+   "LA OC is recorded as 'Nathan Scheelhaase'; therams.com and ESPN call him 'Nate'. Same person, formal given name kept."
+  ]
+ }
 }

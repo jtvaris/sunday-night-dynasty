@@ -163,6 +163,16 @@ final class ExtrasCatalog {
         avatars.filter { FacePersonGender(tag: $0.bucket.gender) == gender }
     }
 
+    /// The owner portraits of one gender, id-sorted: 84 male, 12 female.
+    ///
+    /// Normalised through `FacePersonGender` rather than compared as raw strings
+    /// for the reason that type documents — an unknown tag has to land on male
+    /// rather than silently matching nothing, or one bad manifest row would take
+    /// a portrait away from an owner instead of just mis-sorting it.
+    func owners(gender: FacePersonGender) -> [FaceEntry] {
+        owners.filter { FacePersonGender(tag: $0.bucket.gender) == gender }
+    }
+
     // MARK: - Id classification
 
     /// Whether an id names a user-avatar portrait, by PREFIX — independent of
@@ -195,14 +205,23 @@ final class ExtrasCatalog {
     ///   - ownerID: The owner's UUID. `FaceLibrary.stableHash` (FNV-1a over the
     ///     raw bytes) is used rather than `hashValue`, which is seeded per
     ///     process and would move the portrait on every launch.
+    ///   - gender: Restricts the draw to that gender's portraits, and the probe
+    ///     never leaves them. Gender-strict, exactly like the coach half of
+    ///     `FaceLibrary`: handing a female owner a male photograph is a visible
+    ///     defect, so an exhausted female pool degrades to `nil` — the
+    ///     illustrated `owner_f*` avatar — rather than crossing over. There are
+    ///     12 female ids against at most a handful of female owners in a league,
+    ///     so the fallback is theory, not a case anybody meets.
     ///   - taken: Ids already assigned in this league. Collisions resolve by
     ///     linear probing forward over the id-sorted list, so the result stays a
-    ///     pure function of (ownerID, taken) — no RNG, no ordering surprises.
-    /// - Returns: `nil` only when the extras did not ship or every id is taken
-    ///   (impossible at 32 owners against 96 ids, but handled rather than
-    ///   trapped).
-    func ownerFaceID(for ownerID: UUID, taken: Set<String>) -> String? {
-        let ids = owners.map(\.id)
+    ///     pure function of (ownerID, gender, taken) — no RNG, no ordering
+    ///     surprises. Shared across both genders because the two id sets are
+    ///     disjoint anyway; one set keeps the caller's bookkeeping to one line.
+    /// - Returns: `nil` only when the extras did not ship or every id of that
+    ///   gender is taken (impossible at 32 owners against 84 + 12 ids, but
+    ///   handled rather than trapped).
+    func ownerFaceID(for ownerID: UUID, gender: FacePersonGender, taken: Set<String>) -> String? {
+        let ids = owners(gender: gender).map(\.id)
         guard !ids.isEmpty else { return nil }
         let start = Int(FaceLibrary.stableHash(ownerID) % UInt64(ids.count))
         for offset in 0..<ids.count {
@@ -212,13 +231,24 @@ final class ExtrasCatalog {
         return nil
     }
 
-    /// Fills in `faceID` for every owner that has none, and returns how many it
-    /// assigned.
+    /// Fills in `faceID` for every owner that has none, re-draws any that is the
+    /// wrong gender, and returns how many portraits it wrote.
     ///
     /// The load-time repair for careers created before owners carried a portrait
-    /// — the owner half of `FaceLibrary.backfill`. Idempotent: ids already set
-    /// seed `taken` and are never re-drawn, so a second pass assigns nothing and
-    /// nobody's portrait moves.
+    /// — the owner half of `FaceLibrary.backfill`. Reads each owner's own
+    /// `gender`, which is why the signature never needed one: a save written
+    /// before that field existed decodes as male, and male is what those owners'
+    /// names have always been.
+    ///
+    /// The gender re-draw covers a real window rather than a hypothetical one.
+    /// The extras shipped one commit before `Owner.gender` did, and in between
+    /// the draw ran over all 96 ids — so a career created in that window handed
+    /// roughly one owner in eight a photograph of the wrong sex. Same repair the
+    /// coach half performs for the same reason (`FaceLibrary.backfill`).
+    ///
+    /// Still idempotent: a matching id seeds `taken` and is never re-drawn, and
+    /// an id the manifest does not know is left alone (it cannot be classified,
+    /// so churning it would be guessing), so a second pass writes nothing.
     @discardableResult
     func backfillOwnerFaces(_ ownerList: [Owner]) -> Int {
         guard isAvailable else { return 0 }
@@ -227,8 +257,18 @@ final class ExtrasCatalog {
         let ordered = ownerList.sorted { $0.id.uuidString < $1.id.uuidString }
         var taken = Set(ordered.compactMap(\.faceID))
         var assigned = 0
-        for owner in ordered where owner.faceID == nil {
-            guard let faceID = ownerFaceID(for: owner.id, taken: taken) else { continue }
+        for owner in ordered {
+            let gender = FacePersonGender(tag: owner.gender)
+            if let current = owner.faceID {
+                guard let entry = entry(id: current),
+                      FacePersonGender(tag: entry.bucket.gender) != gender
+                else { continue }
+                // Freed before the re-draw: nobody else can be holding it, so it
+                // goes straight back to the owners of the gender it belongs to.
+                taken.remove(current)
+                owner.faceID = nil
+            }
+            guard let faceID = ownerFaceID(for: owner.id, gender: gender, taken: taken) else { continue }
             owner.faceID = faceID
             taken.insert(faceID)
             assigned += 1

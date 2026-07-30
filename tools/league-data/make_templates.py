@@ -651,59 +651,76 @@ REAL_NICKNAMES = {
 # compiled for the 2026 league year. The importer uses `identity.ownerName` when
 # a template supplies it and falls back to `LeagueGenerator.generateOwner`'s
 # fictional pools otherwise — the publish profile carries no `ownerName` key at
-# all, so publish behaviour is byte-for-byte unchanged (gate 1 asserts that).
+# all (gate 1 asserts that).
 #
-# Every entry was web-verified for the 2026 league year on 2026-07-30 (the
-# six once marked UNSURE included); the annotated ones carry the succession
-# fact that makes the name non-obvious.
+# The SECOND element is the owner's gender, and unlike the name it is emitted in
+# BOTH profiles as `identity.ownerGender`. Two reasons it has to be a template
+# field rather than a runtime coin flip:
+#   * the publish league's owners are drawn on the importer's SEEDED stream, and
+#     a draw for gender there would shift every owner attribute after it (see
+#     `LeagueGenerator.generateOwner`) — so the gender cannot be rolled, it has
+#     to be stated;
+#   * stating it keeps the shipped league's five female owners female. That is a
+#     kept fact about the club, like the scheme it runs and the record it had —
+#     the anonymization is about NAMES (spec section 1), and a publish file that
+#     silently made every owner a man would be a worse artifact, not a safer one.
+#
+# Every name was web-verified for the 2026 league year on 2026-07-30 (the six
+# once marked UNSURE included) and the genders re-verified on 2026-07-30 against
+# the league's own female-ownership reporting; the annotated ones carry the
+# succession fact that makes the entry non-obvious.
 DEV_OWNERS = {
-    "ARI": "Michael Bidwill",
-    "ATL": "Arthur Blank",
-    "BAL": "Steve Bisciotti",
-    "BUF": "Terry Pegula",
-    "CAR": "David Tepper",
+    "ARI": ("Michael Bidwill", "male"),
+    "ATL": ("Arthur Blank", "male"),
+    "BAL": ("Steve Bisciotti", "male"),
+    # Terry and Kim Pegula co-own; Terry is the controlling owner of record.
+    "BUF": ("Terry Pegula", "male"),
+    "CAR": ("David Tepper", "male"),
     # Virginia Halas McCaskey died Feb 2025; George McCaskey is chairman and
     # controlling owner.
-    "CHI": "George McCaskey",
-    "CIN": "Mike Brown",
-    "CLE": "Jimmy Haslam",
-    "DAL": "Jerry Jones",
-    "DEN": "Rob Walton",
-    "DET": "Sheila Ford Hamp",
+    "CHI": ("George McCaskey", "male"),
+    "CIN": ("Mike Brown", "male"),
+    "CLE": ("Jimmy Haslam", "male"),
+    "DAL": ("Jerry Jones", "male"),
+    "DEN": ("Rob Walton", "male"),
+    "DET": ("Sheila Ford Hamp", "female"),
     # Green Bay is publicly owned and has no principal owner; the president/CEO
     # stands in so the owner-facing screens have somebody to name. Ed Policy
     # succeeded Mark Murphy as president/CEO in July 2025.
-    "GB": "Ed Policy",
-    "HOU": "Cal McNair",
+    "GB": ("Ed Policy", "male"),
+    # Janice McNair was principal owner 2018-24 and would have made this row
+    # female; she transferred the franchise to her son in March 2024 and died
+    # July 14, 2026. Cal McNair is chair, CEO and principal owner.
+    "HOU": ("Cal McNair", "male"),
     # Jim Irsay died in May 2025; Carlie Irsay-Gordon is the principal owner/CEO.
-    "IND": "Carlie Irsay-Gordon",
-    "JAX": "Shad Khan",
-    "KC": "Clark Hunt",
-    "LA": "Stan Kroenke",
-    "LAC": "Dean Spanos",
-    "LV": "Mark Davis",
+    "IND": ("Carlie Irsay-Gordon", "female"),
+    "JAX": ("Shad Khan", "male"),
+    "KC": ("Clark Hunt", "male"),
+    "LA": ("Stan Kroenke", "male"),
+    "LAC": ("Dean Spanos", "male"),
+    "LV": ("Mark Davis", "male"),
     # Still the controlling owner after the 2024-25 minority sales; son-in-law
     # Daniel Sillman runs day-to-day operations and is the named successor.
-    "MIA": "Stephen Ross",
-    "MIN": "Zygi Wilf",
-    "NE": "Robert Kraft",
-    "NO": "Gayle Benson",
-    "NYG": "John Mara",
-    "NYJ": "Woody Johnson",
-    "PHI": "Jeffrey Lurie",
-    "PIT": "Art Rooney II",
+    "MIA": ("Stephen Ross", "male"),
+    "MIN": ("Zygi Wilf", "male"),
+    "NE": ("Robert Kraft", "male"),
+    "NO": ("Gayle Benson", "female"),
+    "NYG": ("John Mara", "male"),
+    "NYJ": ("Woody Johnson", "male"),
+    "PHI": ("Jeffrey Lurie", "male"),
+    "PIT": ("Art Rooney II", "male"),
     # The Paul Allen estate opened a formal sale process in Feb 2026 that runs
     # through the offseason; until a buyer is ratified, trustee Jody Allen
     # remains the owner of record — matching this Feb-2026 snapshot.
-    "SEA": "Jody Allen",
+    "SEA": ("Jody Allen", "female"),
     # Jed York bought equity from Denise DeBartolo York and is now formally the
     # principal owner (parents remain co-chairs).
-    "SF": "Jed York",
+    "SF": ("Jed York", "male"),
     # The Glazer family owns Tampa Bay; Joel Glazer is co-chairman and the
     # family's representative at the league level.
-    "TB": "Joel Glazer",
-    "TEN": "Amy Adams Strunk",
-    "WAS": "Josh Harris",
+    "TB": ("Joel Glazer", "male"),
+    "TEN": ("Amy Adams Strunk", "female"),
+    "WAS": ("Josh Harris", "male"),
 }
 
 # --- publish profile: fully fictional nicknames (real city kept) -----------
@@ -2471,6 +2488,7 @@ def build_templates(raw: dict, log: list):
             "baseDefense": team.get("baseDefense"),
             "picks2026": team_picks,
         }
+        owner_name, owner_gender = DEV_OWNERS[abbr]
         dev_teams.append({
             "identity": {
                 "key": abbr, "appAbbr": APP_ABBR[abbr], "city": CITY_OF[abbr],
@@ -2479,7 +2497,8 @@ def build_templates(raw: dict, log: list):
                 # DEV-ONLY key. Absent from the publish identity, where the
                 # importer keeps drawing fictional owners from
                 # `LeagueGenerator.generateOwner`.
-                "ownerName": DEV_OWNERS[abbr],
+                "ownerName": owner_name,
+                "ownerGender": owner_gender,
             },
             **common, "staff": dev_staff, "players": dev_players,
         })
@@ -2488,11 +2507,22 @@ def build_templates(raw: dict, log: list):
                 "key": abbr, "appAbbr": APP_ABBR[abbr], "city": CITY_OF[abbr],
                 "nickname": PUBLISH_NICKNAMES[abbr],
                 "fullName": f"{CITY_OF[abbr]} {PUBLISH_NICKNAMES[abbr]}",
+                # Gender WITHOUT the name: the importer draws a fictional owner
+                # from the matching-gender pool. See `DEV_OWNERS` for why this one
+                # bit crosses into the publish profile when the name does not.
+                "ownerGender": owner_gender,
             },
             **common, "staff": pub_staff, "players": pub_players,
         })
 
     log.extend(jersey_report)
+
+    female_owners = sorted(k for k, (_, g) in DEV_OWNERS.items() if g == "female")
+    log.append(
+        f"owners: {len(female_owners)} of 32 female "
+        f"({', '.join(female_owners)}) — `identity.ownerGender` in BOTH profiles; "
+        f"the real NAME stays dev-only"
+    )
 
     meta = {
         "schemaVersion": SCHEMA_VERSION,
@@ -2558,11 +2588,14 @@ REQUIRED_TEAM_KEYS = {"identity", "record2025", "conference", "division",
                       "baseDefense", "picks2026", "staff", "players"}
 # Identity keys per profile. `ownerName` is DEV-ONLY (real 2026 principal
 # owners, `DEV_OWNERS`): the publish identity must not carry the key at all, so
-# the shipped file stays byte-identical and the importer keeps drawing fictional
-# owners for it.
+# the importer keeps drawing fictional owners for it. `ownerGender` is in BOTH —
+# it is a fact about the club, not a person's name, and the importer cannot roll
+# for it on the seeded stream (see `DEV_OWNERS`).
 REQUIRED_IDENTITY_KEYS = {
-    "dev": {"key", "appAbbr", "city", "nickname", "fullName", "ownerName"},
-    "publish": {"key", "appAbbr", "city", "nickname", "fullName"},
+    "dev": {"key", "appAbbr", "city", "nickname", "fullName",
+            "ownerName", "ownerGender"},
+    "publish": {"key", "appAbbr", "city", "nickname", "fullName",
+                "ownerGender"},
 }
 
 
@@ -2614,6 +2647,13 @@ def run_gates(dev, pub, ctx, log):
                 schema_err.append(f"{label}/{t['identity']['key']}: identity keys "
                                   f"{sorted(set(t['identity'].keys()) ^ want_identity)}")
                 break
+            # Checked as a VALUE and not just a key: `FacePersonGender(tag:)` reads
+            # anything that is not "female" as male, so a typo would ship silently
+            # as a male owner instead of failing here.
+            if t["identity"]["ownerGender"] not in ("male", "female"):
+                schema_err.append(f"{label}/{t['identity']['key']}: ownerGender "
+                                  f"{t['identity']['ownerGender']!r}")
+                break
             for p in t["players"]:
                 if set(p.keys()) != REQUIRED_PLAYER_KEYS:
                     schema_err.append(f"{label}/{t['identity']['key']}/{p['name']}: player keys "
@@ -2632,7 +2672,7 @@ def run_gates(dev, pub, ctx, log):
     gate(res, "schema-validate", not schema_err,
          "dev + publish share one schema; 32 teams; ratings 40-99; potential >= rating; "
          "no null colleges; identity keys per profile (dev carries the DEV-ONLY "
-         "`ownerName`, publish carries no owner field at all)"
+         "`ownerName`; both carry `ownerGender`, publish carries no owner NAME)"
          if not schema_err else "; ".join(schema_err[:5]))
 
     # ---- G2 blocklist / Levenshtein ---------------------------------------
@@ -3229,8 +3269,9 @@ def write_qa_report(path, dev, pub, ctx, gates, log):
       "anonymized at all** (decision 2026-07-30). Real player and coach names "
       "verbatim, the real 32 club identities (the same city + nickname pairs "
       "`NFLTeamData.swift` gives the random league), the real principal owners "
-      "(`DEV_OWNERS` → `identity.ownerName`, the one field the raw scrape does "
-      "not carry), exact stat lines in `statLines`, real jerseys, real draft "
+      "(`DEV_OWNERS` → `identity.ownerName` + `identity.ownerGender`, the one "
+      "thing the raw scrape does not carry), exact stat lines in `statLines`, "
+      "real jerseys, real draft "
       "slots. It is the developer's own NFL and is filtered out of a Release "
       "product on two independent levels — `EXCLUDED_SOURCE_FILE_NAMES` and the "
       "`#if DEBUG` source guards — which `tools/league-data/check_bundle.sh` "
@@ -3287,7 +3328,10 @@ def write_qa_report(path, dev, pub, ctx, gates, log):
       "background and scheme identity kept, lineage notes dropped.")
     A("- Team identities: real cities kept (facts / the game's own setup), "
       "nicknames fully fictional. No `ownerName` key: the importer draws all 32 "
-      "owners from `LeagueGenerator`'s fictional, gate-E-checked pools.")
+      "owners from `LeagueGenerator`'s fictional, gate-E-checked pools — from the "
+      "pool matching `identity.ownerGender`, which IS kept (a fact about the club, "
+      "like its scheme; the importer cannot roll for it because the owner is built "
+      "on the seeded stream, and rolling would move every attribute after it).")
     A("- Pick trade notes reduced to the ownership chain (`from SEA via JAX`); the "
       "prose that names players is dropped.")
     A("")

@@ -45,12 +45,25 @@ final class Owner {
     /// R31: Previous season's medical budget, for showing change in UI.
     var previousMedicalBudget: Int = 0
 
+    /// `"male"` | `"female"` — the same two-value vocabulary `Coach.gender` and
+    /// `FaceBucket.gender` use, because portrait matching is gender-strict here
+    /// too: a female owner may only ever be handed one of the 12 female owner
+    /// portraits, and `avatarID` may only ever be one of the `owner_f*`
+    /// illustrations.
+    ///
+    /// The male default is load-bearing, not laziness. Every row written before
+    /// this field existed was drawn from a male-only name pool, so reading an old
+    /// save as male is not a guess — it is what the name says. Anything that is
+    /// not `"female"` reads as male, exactly like `FacePersonGender(tag:)`.
+    /// Stored property with an inline default → safe lightweight migration.
+    var gender: String = "male"
+
     /// Id of this owner's AI portrait in the extras library
     /// (`owner_00000`…`owner_00095`, see `ExtrasCatalog`). Assigned once, at
-    /// league generation / template import, as a deterministic function of `id`,
-    /// or by `ExtrasCatalog.backfillOwnerFaces` on load for careers that predate
-    /// the field. Stays `nil` when the extras did not ship, which renders the
-    /// illustrated `avatarID` portrait instead.
+    /// league generation / template import, as a deterministic function of
+    /// (`id`, `gender`), or by `ExtrasCatalog.backfillOwnerFaces` on load for
+    /// careers that predate the field. Stays `nil` when the extras did not ship,
+    /// which renders the illustrated `avatarID` portrait instead.
     /// Optional stored property with a nil default → safe lightweight migration.
     var faceID: String? = nil
 
@@ -69,6 +82,7 @@ final class Owner {
         previousScoutingBudget: Int = 0,
         medicalBudget: Int = 2_500,
         previousMedicalBudget: Int = 0,
+        gender: String = "male",
         faceID: String? = nil
     ) {
         self.id = id
@@ -85,6 +99,7 @@ final class Owner {
         self.previousScoutingBudget = previousScoutingBudget
         self.medicalBudget = medicalBudget
         self.previousMedicalBudget = previousMedicalBudget
+        self.gender = gender
         self.faceID = faceID
     }
 }

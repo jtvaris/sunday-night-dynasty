@@ -117,9 +117,17 @@ enum LeagueTemplateImporter {
             let definition = NFLTeamData.allTeams.first { $0.abbreviation == appAbbr }
             var teamRNG = SeededLeagueRandom(seed: seed &+ fnv1a(identity.key))
 
+            // `ownerGender` is present in both profiles and SUPPRESSES the gender
+            // draw, which is the whole point: the draw would consume a seeded
+            // value and move every owner attribute after it (see the coupling
+            // note in `generateOwner`). It still steers the name pool, the
+            // illustrated avatar and the AI portrait, none of which cost an extra
+            // draw. A template baked before the field reads as nil → male, which
+            // is what those files' owners always were.
             let owner = LeagueGenerator.generateOwner(
                 mediaMarket: definition?.mediaMarket ?? .medium,
                 teamAbbreviation: appAbbr,
+                genderOverride: identity.ownerGender,
                 using: &teamRNG,
                 takenFaceIDs: takenOwnerFaceIDs
             )

@@ -46,8 +46,9 @@ enum LeagueGenerator {
     // league source rendered as living people — the template import path calls
     // `generateOwner` for all 32 clubs, so the shipped Fixed 2026 league named its
     // owners after the real ones. `scan_bundle.py` gate E asserts, on this file,
-    // that each 32 × 32 / 30 × 30 cross product stays Levenshtein ≥ 3 from every
-    // real name (`docs/ANONYMIZATION_SPEC.md` §1).
+    // that every one of these cross products — 32 × 32, 16 × 32, 30 × 30 twice —
+    // stays Levenshtein ≥ 3 from every real name (`docs/ANONYMIZATION_SPEC.md`
+    // §1).
 
     private static let ownerFirstNames: [String] = [
         "Arlo", "Aurelio", "Carmine", "Corvin", "Cyprien",
@@ -68,6 +69,47 @@ enum LeagueGenerator {
         "Prudhomme", "Radcliffe", "Shackleford", "Southgate", "Stockbridge",
         "Upshaw", "Zabriskie"
     ]
+
+    /// Given names for the female owners of a GENERATED league. Crossed with the
+    /// SAME `ownerLastNames` as the male pool, so gate E checks a sixth 16 × 32
+    /// product on this file — fictional and blocklist-clean for exactly the
+    /// reasons above.
+    ///
+    /// 16 entries, and the power of two is deliberate rather than tidy: swapping
+    /// this array in for the 32-name male one must not move the seeded template
+    /// stream, and `randomElement` resolves a power-of-two count in exactly one
+    /// `next()` call (Lemire's method rejects nothing when the bound divides
+    /// 2⁶⁴). Any other count would leave a — vanishing, but real — chance of a
+    /// rejection loop consuming a second value and shifting every draw after it.
+    private static let ownerFemaleFirstNames: [String] = [
+        "Adele", "Beatrix", "Celeste", "Cordelia",
+        "Delphine", "Eleanor", "Genevieve", "Harriet",
+        "Imelda", "Josefina", "Lorraine", "Odette",
+        "Seraphina", "Theodora", "Winifred", "Yvette"
+    ]
+
+    /// Share of a generated league's 32 owners drawn female. The real league had
+    /// five female principal owners in 2026 (~16 %); the generated league sits a
+    /// little under that because its owners are invented from scratch rather than
+    /// inherited, and inheritance is what puts most of them in the chair.
+    ///
+    /// Read ONLY on the unseeded path — a template import takes the gender from
+    /// the file instead (`LeagueTemplate.Identity.ownerGender`).
+    private static let ownerFemaleShare: Double = 0.12
+
+    /// The illustrated owner avatars of one gender (`owner_m*` / `owner_f*` in
+    /// `OwnerAvatars.allIDs`).
+    ///
+    /// The draw used to run over the whole 14-id list, which handed roughly one
+    /// owner in five a portrait of the wrong sex — invisible while every owner
+    /// was male-named, a plain defect now that some are not. Falls back to the
+    /// full list if a rename ever empties a prefix, because this feeds a
+    /// force-unwrapped `randomElement`.
+    private static func ownerAvatarIDs(female: Bool) -> [String] {
+        let prefix = female ? "owner_f" : "owner_m"
+        let matching = OwnerAvatars.allIDs.filter { $0.hasPrefix(prefix) }
+        return matching.isEmpty ? OwnerAvatars.allIDs : matching
+    }
 
     private static let coachFirstNames: [String] = [
         "Cade", "Cassius", "Cedric", "Cortez", "Damir",
@@ -473,31 +515,62 @@ enum LeagueGenerator {
     /// Seeded variant of `generateOwner` — the fixed-league template import needs
     /// the same owner every time it runs (`LeagueTemplateImporter`).
     ///
-    /// - Parameter takenFaceIDs: The AI owner portraits already handed out in
-    ///   this league. Owners are created exactly once per league and never
-    ///   retired or replaced, so the caller's running set is the whole uniqueness
-    ///   story — see `ExtrasCatalog.ownerFaceID` for why no claim registry or
-    ///   cooldown is involved. Not `inout` on purpose: `inout` cannot carry a
-    ///   default value, and every existing call site should stay source-compatible.
+    /// - Parameters:
+    ///   - genderOverride: `"male"` / `"female"` from the template
+    ///     (`LeagueTemplate.Identity.ownerGender`). Non-nil SUPPRESSES the gender
+    ///     draw — see the coupling note in the body.
+    ///   - takenFaceIDs: The AI owner portraits already handed out in this
+    ///     league. Owners are created exactly once per league and never retired
+    ///     or replaced, so the caller's running set is the whole uniqueness story
+    ///     — see `ExtrasCatalog.ownerFaceID` for why no claim registry or
+    ///     cooldown is involved. Not `inout` on purpose: `inout` cannot carry a
+    ///     default value, and every existing call site should stay
+    ///     source-compatible.
     static func generateOwner<G: RandomNumberGenerator>(
         mediaMarket: MediaMarket,
         teamAbbreviation: String,
+        genderOverride: String? = nil,
         using rng: inout G,
         takenFaceIDs: Set<String> = []
     ) -> Owner {
-        let first = ownerFirstNames.randomElement(using: &rng)!
+        // COUPLING — the same shape as `generateCoach`'s gender draw, and gated
+        // for a sharper reason: this function runs on the SEEDED template stream
+        // for all 32 clubs (`LeagueTemplateImporter.build`), so one extra
+        // `Double.random` here would move every value after it — the name, the
+        // avatar, patience, spending, meddling, prefersWinNow — for the whole
+        // Fixed 2026 league. A template therefore states the gender and NO draw
+        // happens; only the generated league rolls for it.
+        //
+        // The name-pool swap below costs nothing by construction
+        // (`ownerFemaleFirstNames` documents why); the avatar swap is the one
+        // thing that intentionally moves — every owner now draws from his or her
+        // own illustration set — and all 32 template seeds were replayed to
+        // confirm the draw count, and therefore patience / spending / meddling /
+        // prefersWinNow, came out identical.
+        let isFemale: Bool
+        if let genderOverride {
+            isFemale = genderOverride == "female"
+        } else {
+            isFemale = Double.random(in: 0..<1, using: &rng) < ownerFemaleShare
+        }
+        let first = (isFemale ? ownerFemaleFirstNames : ownerFirstNames)
+            .randomElement(using: &rng)!
         let last = ownerLastNames.randomElement(using: &rng)!
-        let avatarID = OwnerAvatars.allIDs.randomElement(using: &rng)!
-        // Derived from the owner's own UUID, so it consumes NO random value — a
-        // seeded template import keeps drawing exactly the numbers it drew before
-        // this portrait existed, and the avatar/patience/spending draws above are
-        // untouched. The id itself is fresh per league (it always was: `Owner.init`
-        // defaulted it), so the portrait is fixed for the life of a save rather
-        // than identical across two imports of the same template — which is all
-        // any UI needs, and `ExtrasCatalog.ownerFaceID` explains why nothing
-        // stronger is warranted.
+        let avatarID = ownerAvatarIDs(female: isFemale).randomElement(using: &rng)!
+        // Derived from the owner's own UUID and gender, so it consumes NO random
+        // value — a seeded template import keeps drawing exactly the numbers it
+        // drew before this portrait existed, and the avatar/patience/spending
+        // draws above are untouched. The id itself is fresh per league (it always
+        // was: `Owner.init` defaulted it), so the portrait is fixed for the life
+        // of a save rather than identical across two imports of the same template
+        // — which is all any UI needs, and `ExtrasCatalog.ownerFaceID` explains
+        // why nothing stronger is warranted.
         let ownerID = UUID()
-        let faceID = ExtrasCatalog.shared.ownerFaceID(for: ownerID, taken: takenFaceIDs)
+        let faceID = ExtrasCatalog.shared.ownerFaceID(
+            for: ownerID,
+            gender: isFemale ? .female : .male,
+            taken: takenFaceIDs
+        )
 
         // Use team-specific spending willingness from preview data (with ±5 jitter)
         // so the generated budget matches what the player saw on the Team Selection screen.
@@ -521,6 +594,7 @@ enum LeagueGenerator {
             scoutingBudget: BudgetEngine.defaultScoutingBudget(spendingWillingness: spending),
             // R31: dedicated medical pot scales with spending willingness
             medicalBudget: BudgetEngine.defaultMedicalBudget(spendingWillingness: spending),
+            gender: isFemale ? "female" : "male",
             faceID: faceID
         )
     }

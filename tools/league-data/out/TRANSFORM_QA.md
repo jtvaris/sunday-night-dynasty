@@ -5,7 +5,7 @@
 > never enter an app target's resources. `league_2026_dev.json` is DEBUG-only;
 > only `league_2026_publish.json` ships in a Release build.
 
-- built: `2026-07-30T09:28:34Z` (the templates themselves are byte-identical on every rebuild — their `generated` stamp is the source snapshot's, `2026-07-29T13:59:05Z`)
+- built: `2026-07-30T11:19:08Z` (the templates themselves are byte-identical on every rebuild — their `generated` stamp is the source snapshot's, `2026-07-29T13:59:05Z`)
 - globalSeed: `20260729` (deterministic — re-running reproduces both files)
 - source: `tools/league-data/raw/league_raw_2026.json` (schemaVersion 2, snapshot 2026-02-28)
 - outputs: `out/league_2026_dev.json` (devProfile), `out/league_2026_publish.json` (publishProfile)
@@ -15,7 +15,7 @@
 
 | # | Gate | Result | Detail |
 |---:|---|:-:|---|
-| 1 | `schema-validate` | PASS | dev + publish share one schema; 32 teams; ratings 40-99; potential >= rating; no null colleges; identity keys per profile (dev carries the DEV-ONLY `ownerName`, publish carries no owner field at all) |
+| 1 | `schema-validate` | PASS | dev + publish share one schema; 32 teams; ratings 40-99; potential >= rating; no null colleges; identity keys per profile (dev carries the DEV-ONLY `ownerName`; both carry `ownerGender`, publish carries no owner NAME) |
 | 2 | `publish-name-levenshtein>=3` | PASS | 1902 generated publish names checked against a 2048-name blocklist; minimum distance >= 3 |
 | 3 | `publish-no-real-name-substring` | PASS | 5642 identity-bearing strings (player + coach names, team nicknames, pick trade notes) scanned: no real full name and no real surname (>=4 chars) appears in any of them |
 | 4 | `publish-names-unique` | PASS | 1902 names, all distinct |
@@ -130,7 +130,7 @@ Per player: `quality = (1 - w_ped) * (0.60 * production + 0.40 * role) + w_ped *
 
 ## 5. Anonymization
 
-**devProfile** (`league_2026_dev.json`, DEBUG builds only): **not anonymized at all** (decision 2026-07-30). Real player and coach names verbatim, the real 32 club identities (the same city + nickname pairs `NFLTeamData.swift` gives the random league), the real principal owners (`DEV_OWNERS` → `identity.ownerName`, the one field the raw scrape does not carry), exact stat lines in `statLines`, real jerseys, real draft slots. It is the developer's own NFL and is filtered out of a Release product on two independent levels — `EXCLUDED_SOURCE_FILE_NAMES` and the `#if DEBUG` source guards — which `tools/league-data/check_bundle.sh` check (b) proves against a built `.app`. Consequence to know: the importer's `SupportStaffNamePool` harvests the template's own name tokens, so a DEBUG career's 417 support-staff coaches carry real-adjacent recombinations. That is per-template and cannot reach the publish pools (gate 16 is publish-only by design).
+**devProfile** (`league_2026_dev.json`, DEBUG builds only): **not anonymized at all** (decision 2026-07-30). Real player and coach names verbatim, the real 32 club identities (the same city + nickname pairs `NFLTeamData.swift` gives the random league), the real principal owners (`DEV_OWNERS` → `identity.ownerName` + `identity.ownerGender`, the one thing the raw scrape does not carry), exact stat lines in `statLines`, real jerseys, real draft slots. It is the developer's own NFL and is filtered out of a Release product on two independent levels — `EXCLUDED_SOURCE_FILE_NAMES` and the `#if DEBUG` source guards — which `tools/league-data/check_bundle.sh` check (b) proves against a built `.app`. Consequence to know: the importer's `SupportStaffNamePool` harvests the template's own name tokens, so a DEBUG career's 417 support-staff coaches carry real-adjacent recombinations. That is per-template and cannot reach the publish pools (gate 16 is publish-only by design).
 
 **publishProfile** (`league_2026_publish.json`, bundled always), per `docs/ANONYMIZATION_SPEC.md`:
 
@@ -143,7 +143,7 @@ Per player: `quality = (1 - w_ped) * (0.60 * production + 0.40 * role) + w_ped *
 - Careers: OVR arcs only. `statLines` is `null` and no arc row carries games played / started.
 - `notes` is `null` for every publish player (gate 15). The dev profile keeps `undrafted` / `finished 2025 on injured reserve`; the IR flag is a real medical event for a named person, which section 3 does not ship, and against the team + position + depth rank the profile keeps by design it identified single players straight out of the bundle.
 - Coaches: fictional names, `sinceYear` ±1 with the DIRECTION chosen among the moves that survive the [1990, leagueYear] clamp (drawing first and clamping second returned the real year for every 2026 hire), offense/defense background and scheme identity kept, lineage notes dropped.
-- Team identities: real cities kept (facts / the game's own setup), nicknames fully fictional. No `ownerName` key: the importer draws all 32 owners from `LeagueGenerator`'s fictional, gate-E-checked pools.
+- Team identities: real cities kept (facts / the game's own setup), nicknames fully fictional. No `ownerName` key: the importer draws all 32 owners from `LeagueGenerator`'s fictional, gate-E-checked pools — from the pool matching `identity.ownerGender`, which IS kept (a fact about the club, like its scheme; the importer cannot roll for it because the owner is built on the seeded stream, and rolling would move every attribute after it).
 - Pick trade notes reduced to the ownership chain (`from SEA via JAX`); the prose that names players is dropped.
 
 ## 6. Recognizability spot-check — 20-player blind sample
@@ -275,5 +275,6 @@ One coupling to know about: a template coach has no age in the file — `LeagueG
 - blueprint anchor 76.44 OVR; global level shift +0.59 applied to match the random LeagueGenerator league mean
 - jersey collision BUF #23: kept by the higher-rated player; Dane Jackson reassigned to #2
 - jersey collision IND #17: kept by the higher-rated player; Philip Rivers reassigned to #3
+- owners: 5 of 32 female (DET, IND, NO, SEA, TEN) — `identity.ownerGender` in BOTH profiles; the real NAME stays dev-only
 - faces: 1902 pre-assigned per profile (1807 players + 95 coaches), 135 from the reserve range (face_02048+), 281 generated-range faces left for the career
 

@@ -1206,9 +1206,9 @@ struct PressConferenceView: View {
             conference: .AFC,
             division: .west,
             mediaMarket: .large,
-            owner: Owner(name: "Clark Hunt")
+            owner: Owner(name: "Merrill Ashford")
         ),
-        owner: Owner(name: "Clark Hunt"),
+        owner: Owner(name: "Merrill Ashford"),
         onComplete: { _ in }
     )
 }
