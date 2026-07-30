@@ -3723,3 +3723,16 @@ Decision (user 2026-07-20): keep Ochi model/rig (UE model integration ON HOLD), 
 - [x] SkeletalFigure: added "kick" pool + kick_a/b + dive hit-fractions + kick/dive target durations.
 - [x] BUILD SUCCEEDED + launches clean, 25 clips bundled.
 - Approximations to refine: pitch/handoff reuse the throw clip (overhead-ish, not a true underhand toss / low handoff); kick foot-contact fraction estimated (0.5 — measure_hit measures hands not feet).
+
+## UI-auditti (analyze-app skill) — 2026-07-31
+
+Evidenssi: 13 ruutua + coach-pelin video + motion-profiili (scratchpad/review/). Korjauserät taustalla:
+
+- **Batch A** (bugit): vuosiluku "2 027" -formatointi (LocalizedStringKey Int-interpolaatio) kaikkialla; staff-budjettirivin sekava "$0.0M/-$7.6M"; feelPlayer-lyhenne "Feel"→"Instinct"; lukittujen Schemes/Review-tabien unlock-vihje
+- **Batch B** (rosterimetriikat): roster-headerin cap $221.5M ≠ $189.4M; Mental-moodin "OV R" -rivitys + "Focu sed" -katkeamiset; team-OVR 75/79/68 -yhtenäistys; depth-badgen tyyli
+- **Batch C** (pelaajakortti): Trade Value / Versatility -korttien tyhjät rivit; sisältö vuotaa headerin alle; kotipaikka näkyviin (uusi data)
+- **Batch D** (navigaatio): Draft-nav avaa LIVE-drafthuoneen kesken kauden (kello käy!) → recap-näkymä; Injuries-chip → medical-tila; News/Trades/Inbox päänavigaatioon (käyttäjävaatimus); Big Board CTA:t; sivupalkin valmiit vaiheet kokoon; Chemistry Good vs Elite
+- **Batch E** (game feel): pre-snap-idle TÄYSIN staattinen (20–55 s nollamotionia; gate idle ≥1) → idle-loopit/micro-sway
+- **Persona-analyysit** (designer/kasuaali/tosipelaaja/game dev): käynnissä, uudet löydökset → batch 2
+
+Insinöörikohteet taustalla: #53 roster-churn-ikäkoostumus (oma smoke-sim), #54 schemeFit-unifiointi (harness), #59 ikävariantit (pilottiverdikti → täysi ajo)
