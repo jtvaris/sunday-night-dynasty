@@ -194,7 +194,14 @@ struct FAWeeklyView: View {
         }
         .sheet(item: $selectedFA) { fa in
             if let team {
-                if let milestone = MilestoneTracker.activeMilestones(player: fa.player).first {
+                if let milestone = MilestoneTracker.activeMilestones(
+                    player: fa.player,
+                    history: MilestoneTracker.history(
+                        playerID: fa.player.id,
+                        careerID: fa.player.careerID,
+                        modelContext: modelContext
+                    )
+                ).first {
                     MilestoneSigningSheet(
                         playerName: fa.player.fullName,
                         position: fa.player.position.rawValue,

@@ -23,6 +23,11 @@ import SwiftData
 /// columns; ``positionRaw`` makes the row self-describing so the categories are
 /// interpretable without joining back to `Player` (the same reason
 /// `HallOfFameEntry` snapshots its own position).
+///
+/// The POSTSEASON line is a separate blob (``postStatLine``, #20) rather than a
+/// second set of typed columns — see the note at its declaration. Nothing folds
+/// it into the regular-season totals: a career table, a milestone and a Hall of
+/// Fame résumé all mean the regular season when they say "career".
 @Model
 final class PlayerSeasonHistory {
     var id: UUID
@@ -105,6 +110,39 @@ final class PlayerSeasonHistory {
     /// is synthesized, as is every AI team's season (their games are
     /// score-only). Provenance only — nothing branches on it today.
     var statsAreSynthesized: Bool = false
+
+    // MARK: - Postseason line (#20)
+    //
+    // The playoffs are a SEPARATE line, never folded into the regular-season
+    // columns: no record book mixes the two, and the career table renders them
+    // as a sub-row under the season they belong to.
+    //
+    // Shape differs from the regular season on purpose. Up there the categories
+    // are typed columns because the legacy `keyStat1/2/3` slots are derived from
+    // them; down here nothing is derived, the line is written and read whole, and
+    // seventeen more columns on a row that already has twenty-five buys nothing.
+    // So the postseason line rides as one JSON blob — the same shape
+    // `Player.seasonStatLineData` already uses for the live accumulator, and
+    // decode-lenient for free through `SeasonStatLine.init(from:)`.
+    //
+    // All three are default-value stored properties → lightweight migration; a
+    // row written before the playoffs were persisted reads as "no postseason".
+
+    /// Playoff games this player appeared in, credited the same way as
+    /// `gamesPlayed`: one per playoff game his team played while he was
+    /// available. `0` means he watched the postseason (or there wasn't one).
+    var postGamesPlayed: Int = 0
+
+    /// JSON-encoded ``SeasonStatLine`` for the postseason. `nil` until a playoff
+    /// box score (or a template `post` bag) has been folded in — read it through
+    /// ``postStatLine``, never directly.
+    var postStatLineData: Data? = nil
+
+    /// True when the postseason line was modelled by `SeasonStatSynthesizer`
+    /// rather than accumulated from a real box score — which is every playoff
+    /// team but the user's, since AI playoff games are score-only. Provenance
+    /// only, same as `statsAreSynthesized`.
+    var postStatsAreSynthesized: Bool = false
 
     // MARK: - Legacy generic slots
 
@@ -227,5 +265,51 @@ extension PlayerSeasonHistory {
             keyStat2 = legacy.1
             keyStat3 = legacy.2
         }
+    }
+}
+
+// MARK: - Postseason bridge (#20)
+
+extension PlayerSeasonHistory {
+
+    /// The playoff line as one value. Decoding failure and "never written" are
+    /// the same answer — an empty line — which is what makes the blob safe to
+    /// widen later (`SeasonStatLine.init(from:)` reads every key with
+    /// `decodeIfPresent`).
+    ///
+    /// Unlike ``statLine`` this setter derives nothing: the legacy `keyStat1/2/3`
+    /// slots are a REGULAR-season summary and folding playoffs into them would
+    /// silently change what the template determinism fingerprint hashes.
+    var postStatLine: SeasonStatLine {
+        get {
+            guard let data = postStatLineData,
+                  let line = try? JSONDecoder().decode(SeasonStatLine.self, from: data) else {
+                return SeasonStatLine()
+            }
+            return line
+        }
+        set {
+            postStatLineData = try? JSONEncoder().encode(newValue)
+        }
+    }
+
+    /// True when this season had a postseason worth rendering. Games alone are
+    /// enough: a lineman's playoff run is real even though the box score the sim
+    /// keeps has no category for it.
+    var hasPostseason: Bool {
+        postGamesPlayed > 0 || !postStatLine.isEmpty
+    }
+
+    /// Folds one playoff box-score line into the postseason totals.
+    ///
+    /// Does NOT touch ``postGamesPlayed``: appearances are credited from the
+    /// bracket itself (every available player on a team that played this round),
+    /// which covers the 31 clubs whose playoff games are score-only. A box score
+    /// exists for the user's game alone, so tying the two together would leave
+    /// the rest of the league at zero playoff games.
+    func addPostseasonGame(_ game: PlayerGameStats) {
+        var line = postStatLine
+        line.add(game)
+        postStatLine = line
     }
 }

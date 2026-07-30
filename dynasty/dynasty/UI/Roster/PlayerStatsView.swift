@@ -187,6 +187,11 @@ enum CareerStatColumns {
 /// accumulator, so for a few phases both exist for the same year — hence the
 /// `currentSeason` guard: a year that already has a history row is never also
 /// counted from the live line.
+///
+/// Playoff sub-rows come off the SAME history row (#20). They used to be borrowed
+/// from the bundled dev template in DEBUG builds, because the store had nowhere
+/// to keep them; now `PlayerSeasonHistory` carries postseason columns and every
+/// league — dev, publish and generated — shows the playoffs it actually played.
 enum CareerTableBuilder {
 
     /// Display rows, newest first, with the career summary last.
@@ -196,13 +201,10 @@ enum CareerTableBuilder {
     ///   - currentSeason: The league's current season, or `nil` when the caller
     ///     has no career context (then the live line is only used if the player
     ///     has no history at all).
-    ///   - postseason: Playoff production by season — dev-template only today
-    ///     (see `DevPostseasonStats`), empty everywhere else.
     static func rows(
         player: Player,
         history: [PlayerSeasonHistory],
-        currentSeason: Int?,
-        postseason: [Int: LeagueTemplate.PostLine] = [:]
+        currentSeason: Int?
     ) -> [CareerSeasonRow] {
         let finished = history
             .filter { entry in currentSeason.map { entry.season <= $0 } ?? true }
@@ -242,9 +244,7 @@ enum CareerTableBuilder {
                 line: entry.statLine
             ))
             // Playoff sub-row, directly under the season it belongs to.
-            if let post = postseason[entry.season], let row = postseasonRow(
-                season: entry.season, post: post
-            ) {
+            if let row = postseasonRow(entry: entry) {
                 rows.append(row)
             }
         }
@@ -268,26 +268,22 @@ enum CareerTableBuilder {
         return rows
     }
 
-    /// A playoff sub-row, or `nil` when the postseason bag holds nothing worth
-    /// a line of its own.
-    private static func postseasonRow(
-        season: Int,
-        post: LeagueTemplate.PostLine
-    ) -> CareerSeasonRow? {
-        // Fold through the importer's single key→category table rather than a
-        // second copy of it.
-        let line = LeagueTemplateImporter.statLine(from: post.asRegularShapedLine(year: season))
-        let games = post.gp ?? 0
-        guard games > 0 || !line.isEmpty else { return nil }
+    /// A playoff sub-row, or `nil` for a season that ended in week 18.
+    ///
+    /// Games started are deliberately 0: the postseason is not tracked at that
+    /// grain (`PlayerSeasonHistory.postGamesPlayed` is the only participation
+    /// counter the playoffs keep), and the table has no GS column anyway.
+    private static func postseasonRow(entry: PlayerSeasonHistory) -> CareerSeasonRow? {
+        guard entry.hasPostseason else { return nil }
         return CareerSeasonRow(
-            id: "post-\(season)",
+            id: "post-\(entry.id.uuidString)",
             kind: .postseason,
             label: "Playoffs",
             age: nil,
             overall: nil,
-            gamesPlayed: games,
+            gamesPlayed: entry.postGamesPlayed,
             gamesStarted: 0,
-            line: line
+            line: entry.postStatLine
         )
     }
 }
@@ -391,63 +387,6 @@ struct CareerStatTable: View {
     }
 }
 
-// MARK: - Dev Postseason Bridge
-
-#if DEBUG
-/// Playoff production for the fixed-2026 **dev** league, read straight out of
-/// the bundled template.
-///
-/// Why the template and not the store: `PlayerSeasonHistory` has no postseason
-/// columns, so the import drops the `post` bag it decodes (`LeagueTemplate.
-/// PostLine`). Until those columns exist the career table borrows the numbers
-/// from the very file the league was imported from, matched on name + position.
-/// That match is safe by construction: real names only ever appear in the dev
-/// template, so a publish or generated league finds nothing and the sub-rows
-/// simply do not appear.
-///
-/// DEBUG-only for the same reason as everything else that can name the dev
-/// profile (see `LeagueTemplateLoader`'s bundling contract). The 2.6 MB decode
-/// runs at most once per app launch, off the main actor.
-@MainActor
-enum DevPostseasonStats {
-
-    /// `name|POS` → season → playoff line. `nil` until the first load.
-    private static var index: [String: [Int: LeagueTemplate.PostLine]]?
-
-    /// Playoff seasons for one player, `[:]` when this build or this league has
-    /// none.
-    static func lines(for player: Player) async -> [Int: LeagueTemplate.PostLine] {
-        let key = LeagueTemplate.postseasonKey(
-            name: player.fullName, position: player.position.rawValue
-        )
-        if index == nil {
-            index = await Task.detached(priority: .utility) { buildIndex() }.value
-        }
-        return index?[key] ?? [:]
-    }
-
-    /// Decodes the dev template and reduces it to the postseason map. Runs off
-    /// the main actor; touches nothing but the bundle.
-    ///
-    /// Locates the file itself rather than going through `LeagueTemplateLoader`:
-    /// the module defaults to `@MainActor` isolation, so the loader's entry
-    /// points are main-actor-bound, and the entire point here is to keep the
-    /// 2.6 MB decode OFF the main actor. The resource name still comes from
-    /// `Profile`, and the flat bundle lookup is the one that fires for the
-    /// synchronized Resources group (see the loader's bundling contract). A
-    /// stripped build that carries no dev template simply gets an empty map.
-    nonisolated private static func buildIndex() -> [String: [Int: LeagueTemplate.PostLine]] {
-        guard let url = Bundle.main.url(
-            forResource: LeagueTemplate.Profile.dev.resourceName, withExtension: "json"
-        ) else { return [:] }
-        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
-              let template = try? JSONDecoder().decode(LeagueTemplate.self, from: data)
-        else { return [:] }
-        return template.postseasonLinesByPlayer()
-    }
-}
-#endif
-
 // MARK: - Player Stats View
 
 /// Comprehensive player statistics: the season in progress, career totals, and
@@ -479,9 +418,6 @@ struct PlayerStatsView: View {
 
     /// Regular-season week (0 = offseason), used only to word the empty state.
     var currentWeek: Int? = nil
-
-    /// Playoff production by season — dev template only for now.
-    var postseason: [Int: LeagueTemplate.PostLine] = [:]
 
     @State private var selectedTab: StatsTab = .season
 
@@ -546,8 +482,7 @@ struct PlayerStatsView: View {
         CareerTableBuilder.rows(
             player: player,
             history: history,
-            currentSeason: currentSeason,
-            postseason: postseason
+            currentSeason: currentSeason
         )
     }
 

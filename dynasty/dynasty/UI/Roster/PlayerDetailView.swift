@@ -87,10 +87,6 @@ struct PlayerDetailView: View {
     /// THIS player's save, never "whichever career sorted first".
     private var careers: [Career] { careersUnscoped.filter { $0.id == scopeCareerID } }
 
-    /// Playoff production by season for this player. Dev-template only for now
-    /// (`DevPostseasonStats`); empty in Release and in every generated league.
-    @State private var postseasonLines: [Int: LeagueTemplate.PostLine] = [:]
-
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
@@ -221,22 +217,11 @@ struct PlayerDetailView: View {
                     player: player,
                     history: playerSeasonHistory,
                     currentSeason: currentSeason,
-                    currentWeek: currentWeek,
-                    postseason: postseasonLines
+                    currentWeek: currentWeek
                 )) {
                     Label("Stats", systemImage: "chart.bar.fill")
                 }
             }
-        }
-        .task(id: player.id) {
-            // Playoff lines: decoded off the main actor, cached for the whole app
-            // run, keyed to the player so tapping through a roster refreshes it.
-            // The body is deliberately empty in Release — the dev template is not
-            // in the product and nothing else can supply postseason production
-            // until `PlayerSeasonHistory` carries it.
-            #if DEBUG
-            postseasonLines = await DevPostseasonStats.lines(for: player)
-            #endif
         }
         .alert("Release Player", isPresented: $showCutConfirmation) {
             Button("Release", role: .destructive) {
@@ -901,13 +886,9 @@ struct PlayerDetailView: View {
             } else {
                 // #179: only shown when the season really has nothing to show —
                 // and it says why, so an offseason zero doesn't read as a bug.
-                HStack(spacing: 8) {
-                    Image(systemName: "chart.bar")
-                        .foregroundStyle(Color.textTertiary)
-                    Text(seasonEmptyNote)
-                        .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
-                }
+                // Uses the shared compact empty-state so it matches every other
+                // "nothing here yet" surface rather than being a bare line.
+                CompactEmptyStateView(icon: "chart.bar", message: seasonEmptyNote)
             }
         }
         .listRowBackground(Color.backgroundSecondary)
@@ -950,15 +931,14 @@ struct PlayerDetailView: View {
     }
 
     /// Rows of the career table for this player: the season in progress, every
-    /// finished season, the playoff sub-lines the dev template carries, and the
-    /// career-total summary. Built by `CareerTableBuilder` so this section and
-    /// `PlayerStatsView`'s "By Season" tab can never drift apart.
+    /// finished season, its playoff sub-line, and the career-total summary. Built
+    /// by `CareerTableBuilder` so this section and `PlayerStatsView`'s "By Season"
+    /// tab can never drift apart.
     private var careerTableRows: [CareerSeasonRow] {
         CareerTableBuilder.rows(
             player: player,
             history: playerSeasonHistory,
-            currentSeason: currentSeason,
-            postseason: postseasonLines
+            currentSeason: currentSeason
         )
     }
 

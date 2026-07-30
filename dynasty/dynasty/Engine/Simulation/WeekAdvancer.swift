@@ -1682,6 +1682,18 @@ enum WeekAdvancer {
                 modelContext: modelContext
             )
 
+            // #23: the round career numbers the season just produced. Runs
+            // immediately AFTER the snapshot on purpose — a crossing is measured
+            // between last season's career total and this one's, and this
+            // season's row has to exist for the "after" side to include it.
+            announceCareerMilestones(
+                career: career,
+                season: season,
+                allPlayers: allPlayers,
+                teamsByID: teamsByID,
+                modelContext: modelContext
+            )
+
             // Phase 2 (plan §2.9.1): the season-end morale settlement — record,
             // chemistry, pay vs. market and contract runway, clamped to ±8 so it
             // reads as a verdict on the year rather than a second weekly loop.
@@ -2015,19 +2027,33 @@ enum WeekAdvancer {
 
         let teamsByID = fetchTeamsByID(modelContext: modelContext)
 
-        for game in unplayedGames {
-            var score = simulateGameScore()
+        // #20: a playoff game the user COACHED is already on the board before
+        // this method runs, exactly like a coached regular-season game. Detect
+        // it here, before we play anything, so its box score can be folded into
+        // the postseason columns below.
+        let coachedResult = coachedPlayoffResult(
+            week: week,
+            career: career,
+            unplayedGames: unplayedGames,
+            modelContext: modelContext
+        )
 
-            // Playoff games cannot end in a tie — keep re-rolling until scores differ.
-            while score.home == score.away {
-                score = simulateGameScore()
-            }
+        let simulatedResult = playPlayoffGames(
+            unplayedGames,
+            career: career,
+            teamsByID: teamsByID,
+            modelContext: modelContext
+        )
 
-            game.homeScore = score.home
-            game.awayScore = score.away
-
-            // Note: no record update — playoff games don't touch W/L/T (R32).
-        }
+        // #20: fold this round into `PlayerSeasonHistory`'s postseason columns.
+        // Week 18 already wrote every player's row, so the playoffs top up rows
+        // that exist rather than creating any.
+        recordPostseasonWeek(
+            week: week,
+            career: career,
+            boxScore: (coachedResult ?? simulatedResult)?.playerStats ?? [],
+            modelContext: modelContext
+        )
 
         // R32: user's playoff exit is worth a note (win news comes via the
         // round staging below and the Super Bowl phase).
@@ -2238,15 +2264,38 @@ enum WeekAdvancer {
                 isPlayoff: true,
                 modelContext: modelContext
             )
+            // #20: same treatment as every other playoff round — the user's own
+            // final is play-by-play so it leaves a box score, the AI final stays
+            // score-only, and a final he coached live is read back out of the
+            // live engine's result.
+            let sbCoachedResult = coachedPlayoffResult(
+                week: 22,
+                career: career,
+                unplayedGames: sbGames,
+                modelContext: modelContext
+            )
+            let sbSimulatedResult = playPlayoffGames(
+                sbGames,
+                career: career,
+                teamsByID: teamsByID,
+                modelContext: modelContext
+            )
             for game in sbGames {
-                var score = simulateGameScore()
-                while score.home == score.away {
-                    score = simulateGameScore()
-                }
-                game.homeScore = score.home
-                game.awayScore = score.away
                 updateTeamRecords(game: game, teamsByID: teamsByID)
             }
+            recordPostseasonWeek(
+                week: 22,
+                career: career,
+                boxScore: (sbCoachedResult ?? sbSimulatedResult)?.playerStats ?? [],
+                modelContext: modelContext
+            )
+            // The bracket is complete: model the playoff lines for the 13 clubs
+            // the sim never box-scored, now that every game count is final.
+            finalizePostseasonHistory(
+                career: career,
+                userTeamID: career.teamID,
+                modelContext: modelContext
+            )
 
             // Generate championship news
             lastNewsItems = NewsGenerator.generateOffseasonNews(
@@ -4062,14 +4111,17 @@ enum WeekAdvancer {
         allPlayers: [Player],
         modelContext: ModelContext
     ) {
-        // Career-peak OVR per player from season-history snapshots.
-        let historyCareerID = activeCareerID
-        let historyRows = (try? modelContext.fetch(FetchDescriptor<PlayerSeasonHistory>(
-            predicate: #Predicate { $0.careerID == historyCareerID }
-        ))) ?? []
+        // Career-peak OVR per player from season-history snapshots. #21: the same
+        // rows carry the career PRODUCTION the induction now snapshots, so they
+        // are kept grouped by player rather than reduced to a peak and thrown
+        // away.
+        let historyByPlayer = seasonHistoryByPlayer(
+            careerID: activeCareerID,
+            modelContext: modelContext
+        )
         var peakByID: [UUID: Int] = [:]
-        for row in historyRows {
-            peakByID[row.playerID] = max(peakByID[row.playerID] ?? 0, row.overallAtEndOfSeason)
+        for (playerID, rows) in historyByPlayer {
+            peakByID[playerID] = rows.map(\.overallAtEndOfSeason).max() ?? 0
         }
 
         let retirements = PlayerRetirementEngine.evaluateRetirements(
@@ -4089,14 +4141,24 @@ enum WeekAdvancer {
             let wasUserPlayer = career.teamID != nil
                 && retirement.teamIDAtRetirement == career.teamID
 
+            // #21: the career the ceremony is actually about. Every number below
+            // is summed from this player's real persisted seasons — nothing here
+            // is a rating standing in for production.
+            let history = historyByPlayer[player.id] ?? []
+            let facts = MilestoneTracker.careerFacts(history: history)
+            let resume = facts.isEmpty
+                ? nil
+                : MilestoneTracker.hallOfFameSummary(position: player.position, facts: facts)
+
             PlayerRetirementEngine.retire(retirement, teamsByID: teamsByID)
 
             // Ceremony headline for league-wide stars (cap 4 per offseason).
             if retirement.isStar && starHeadlines < 4 {
                 starHeadlines += 1
+                let production = resume.map { " He leaves with \($0)." } ?? ""
                 lastNewsItems.append(NewsItem(
                     headline: "\(player.fullName) retires after \(max(1, player.yearsPro)) seasons",
-                    body: "One of the league's greats is calling it a career. \(player.fullName), the \(teamName == "Free Agent" ? "veteran" : teamName) \(player.position.rawValue) whose play peaked at a \(retirement.peakOverall) overall, announced his retirement today at age \(player.age). Teams around the league honored him with tributes\(retirement.isHallOfFamer ? " — a Hall of Fame induction awaits" : "").",
+                    body: "One of the league's greats is calling it a career. \(player.fullName), the \(teamName == "Free Agent" ? "veteran" : teamName) \(player.position.rawValue) whose play peaked at a \(retirement.peakOverall) overall, announced his retirement today at age \(player.age).\(production) Teams around the league honored him with tributes\(retirement.isHallOfFamer ? " — a Hall of Fame induction awaits" : "").",
                     category: .retirement,
                     week: 0,
                     season: season,
@@ -4108,10 +4170,11 @@ enum WeekAdvancer {
 
             // The user's own legend gets a personal farewell.
             if wasUserPlayer && (retirement.isStar || player.yearsPro >= 10) {
+                let production = resume.map { "\n\nThe career line: \($0), across \(facts.seasons) seasons and \(facts.gamesPlayed) games." } ?? ""
                 lastInboxMessages.append(InboxMessage(
                     sender: .leagueOffice,
                     subject: "\(player.fullName) Announces Retirement",
-                    body: "\(player.fullName) (\(player.position.rawValue), age \(player.age)) is hanging up his cleats after \(max(1, player.yearsPro)) pro seasons. He asked that the organization — and you personally — be thanked for the way his final chapter was handled. The locker room will feel his absence.\(retirement.isHallOfFamer ? "\n\nExpect the call from Canton: he retires as a Hall of Famer." : "")",
+                    body: "\(player.fullName) (\(player.position.rawValue), age \(player.age)) is hanging up his cleats after \(max(1, player.yearsPro)) pro seasons. He asked that the organization — and you personally — be thanked for the way his final chapter was handled. The locker room will feel his absence.\(production)\(retirement.isHallOfFamer ? "\n\nExpect the call from Canton: he retires as a Hall of Famer." : "")",
                     date: "Offseason - Coaching Changes, Season \(season)",
                     category: .leagueNotice
                 ))
@@ -4133,7 +4196,10 @@ enum WeekAdvancer {
                     inductionSeason: season,
                     retiredFromTeamName: teamName,
                     wasUserTeamPlayer: wasUserPlayer,
-                    faceID: player.faceID
+                    faceID: player.faceID,
+                    careerStatLine: history.isEmpty ? nil : MilestoneTracker.careerLine(history: history),
+                    careerGamesPlayed: facts.isEmpty ? nil : facts.gamesPlayed,
+                    careerResume: resume
                 ))
             }
         }
@@ -4141,9 +4207,14 @@ enum WeekAdvancer {
         // Annual Hall of Fame induction class.
         if !inductees.isEmpty {
             career.hallOfFame = inductees + career.hallOfFame
+            // #21: the class reads as a record book, not a name list — each bust
+            // is introduced by the number that earned it.
             let names = inductees
-                .map { "\($0.playerName) (\($0.positionRaw))" }
-                .joined(separator: ", ")
+                .map { entry in
+                    entry.careerResume.map { "\(entry.playerName) (\(entry.positionRaw), \($0))" }
+                        ?? "\(entry.playerName) (\(entry.positionRaw))"
+                }
+                .joined(separator: "; ")
             lastNewsItems.append(NewsItem(
                 headline: "Hall of Fame Class of \(season) announced",
                 body: "The league has announced this year's Hall of Fame induction class: \(names). The enshrinement ceremony will be held before the season opener.",
@@ -4182,13 +4253,16 @@ enum WeekAdvancer {
         let rostered = allPlayers.filter { $0.teamID != nil && !$0.isRetired }
         guard !rostered.isEmpty else { return }
 
-        let washoutCareerID = activeCareerID
-        let historyRows = (try? modelContext.fetch(FetchDescriptor<PlayerSeasonHistory>(
-            predicate: #Predicate { $0.careerID == washoutCareerID }
-        ))) ?? []
+        // #21: grouped by player, not reduced to a peak — a bust that turns out
+        // to be a Hall of Famer gets the same snapshotted career line as a legend
+        // who retired on his own terms.
+        let historyByPlayer = seasonHistoryByPlayer(
+            careerID: activeCareerID,
+            modelContext: modelContext
+        )
         var peakByID: [UUID: Int] = [:]
-        for row in historyRows {
-            peakByID[row.playerID] = max(peakByID[row.playerID] ?? 0, row.overallAtEndOfSeason)
+        for (playerID, rows) in historyByPlayer {
+            peakByID[playerID] = rows.map(\.overallAtEndOfSeason).max() ?? 0
         }
 
         let washouts = PlayerRetirementEngine.evaluateWashouts(
@@ -4206,6 +4280,8 @@ enum WeekAdvancer {
             // A genuinely great career that ended on the scrap heap still gets
             // its bust — the induction rule is about the career, not the exit.
             if washout.isHallOfFamer {
+                let history = historyByPlayer[player.id] ?? []
+                let facts = MilestoneTracker.careerFacts(history: history)
                 inductees.append(HallOfFameEntry(
                     playerName: player.fullName,
                     positionRaw: player.position.rawValue,
@@ -4215,7 +4291,12 @@ enum WeekAdvancer {
                     inductionSeason: career.currentSeason,
                     retiredFromTeamName: "Free Agent",
                     wasUserTeamPlayer: false,
-                    faceID: player.faceID
+                    faceID: player.faceID,
+                    careerStatLine: history.isEmpty ? nil : MilestoneTracker.careerLine(history: history),
+                    careerGamesPlayed: facts.isEmpty ? nil : facts.gamesPlayed,
+                    careerResume: facts.isEmpty
+                        ? nil
+                        : MilestoneTracker.hallOfFameSummary(position: player.position, facts: facts)
                 ))
             }
         }
@@ -4468,6 +4549,10 @@ enum WeekAdvancer {
     /// - **Everyone else**: modelled by `SeasonStatSynthesizer` from OVR,
     ///   position, GP/GS and age. A player traded away from the user's team
     ///   mid-season keeps the partial real line he earned.
+    ///
+    /// The postseason columns are left at zero here and topped up over weeks
+    /// 19-22 (`recordPostseasonWeek`), because the playoffs have not been played
+    /// yet when this runs.
     private static func recordSeasonHistory(
         players: [Player],
         season: Int,
@@ -4545,6 +4630,347 @@ enum WeekAdvancer {
         for line in stats {
             playersByID[line.playerID]?.accumulateSeasonStats(line)
         }
+    }
+
+    /// Every player's season rows for this save, keyed by player. One fetch for
+    /// the whole league — the milestone and Hall-of-Fame passes each need a
+    /// player's WHOLE career, and re-querying per player would be ~1 700 fetches.
+    static func seasonHistoryByPlayer(
+        careerID: UUID?,
+        modelContext: ModelContext
+    ) -> [UUID: [PlayerSeasonHistory]] {
+        let rows = (try? modelContext.fetch(FetchDescriptor<PlayerSeasonHistory>(
+            predicate: #Predicate { $0.careerID == careerID }
+        ))) ?? []
+        var byPlayer: [UUID: [PlayerSeasonHistory]] = [:]
+        for row in rows { byPlayer[row.playerID, default: []].append(row) }
+        return byPlayer
+    }
+
+    // MARK: - Private: Career Milestone News (#23)
+
+    /// Announces the round career numbers the finished season produced.
+    ///
+    /// The milestones are read off `PlayerSeasonHistory` — the real persisted
+    /// production, for every player in the league, not just the user's — which is
+    /// the whole reason the career-stats wave exists. `MilestoneNewsFactory` owns
+    /// the copy and the caps; this is the plumbing that hands it the history and
+    /// posts the results to the two surfaces `WeekAdvancer` already publishes.
+    private static func announceCareerMilestones(
+        career: Career,
+        season: Int,
+        allPlayers: [Player],
+        teamsByID: [UUID: Team],
+        modelContext: ModelContext
+    ) {
+        let historyByPlayer = seasonHistoryByPlayer(
+            careerID: career.id,
+            modelContext: modelContext
+        )
+        guard !historyByPlayer.isEmpty else { return }
+
+        let announcement = MilestoneNewsFactory.seasonMilestones(
+            players: allPlayers,
+            historyByPlayer: historyByPlayer,
+            teamsByID: teamsByID,
+            userTeamID: career.teamID,
+            season: season
+        )
+        lastNewsItems.append(contentsOf: announcement.news)
+        lastInboxMessages.append(contentsOf: announcement.inbox)
+    }
+
+    // MARK: - Private: Postseason Stat Accumulation (#20)
+
+    /// How many times the play-by-play simulator is allowed to hand back a level
+    /// playoff game before the round falls back to the score generator. A tie
+    /// survives overtime in well under 1 % of games, so eight attempts is a
+    /// safety net, not a loop.
+    private static let playoffTieRetryLimit = 8
+
+    /// Plays one round of playoff games and returns the USER's box score, if he
+    /// was in it.
+    ///
+    /// The 31 AI games stay score-only (`simulateGameScore`), the same bargain
+    /// the regular season strikes. The user's own game goes through the full
+    /// play-by-play simulator instead, because the postseason columns need a real
+    /// box score and his game is the only one in the league that can produce one
+    /// — the identical reason `advanceRegularSeasonWeek` runs `GameSimulator` for
+    /// exactly one game a week.
+    ///
+    /// A playoff game cannot end level: both paths re-roll until the scores
+    /// differ, and the play-by-play path caps its retries so a pathological
+    /// matchup degrades to a score-only result rather than spinning.
+    @discardableResult
+    private static func playPlayoffGames(
+        _ games: [Game],
+        career: Career,
+        teamsByID: [UUID: Team],
+        modelContext: ModelContext
+    ) -> GameSimulator.GameResult? {
+        guard !games.isEmpty else { return nil }
+        var userResult: GameSimulator.GameResult?
+        // Coaches are needed for the user's game alone — fetched at most once.
+        var coachesCache: [Coach]?
+
+        for game in games {
+            let userTeamID = career.teamID
+            let isUserGame = userTeamID != nil
+                && (game.homeTeamID == userTeamID || game.awayTeamID == userTeamID)
+
+            if isUserGame,
+               let homeTeam = teamsByID[game.homeTeamID],
+               let awayTeam = teamsByID[game.awayTeamID] {
+                let coaches = coachesCache ?? fetchAllCoaches(modelContext: modelContext)
+                coachesCache = coaches
+                // The user's saved plan shades his own side only, exactly as in
+                // the regular season. Opponent prep is deliberately NOT applied:
+                // it is a weekly regular-season activity with no playoff week to
+                // be earned in.
+                let plan = career.savedGamePlan
+                var decided: GameSimulator.GameResult?
+                for _ in 0..<playoffTieRetryLimit {
+                    let attempt = GameSimulator.simulate(
+                        homeTeam: homeTeam,
+                        awayTeam: awayTeam,
+                        homeCoaches: coaches.filter { $0.teamID == homeTeam.id },
+                        awayCoaches: coaches.filter { $0.teamID == awayTeam.id },
+                        homeGamePlan: homeTeam.id == userTeamID ? plan : nil,
+                        awayGamePlan: awayTeam.id == userTeamID ? plan : nil,
+                        weather: GameWeather.forGame(
+                            id: game.id,
+                            week: game.week,
+                            homeTeamAbbreviation: homeTeam.abbreviation
+                        )
+                    )
+                    if attempt.homeScore != attempt.awayScore {
+                        decided = attempt
+                        break
+                    }
+                }
+                if let decided {
+                    game.homeScore = decided.homeScore
+                    game.awayScore = decided.awayScore
+                    userResult = decided
+                    // The dashboard's post-advance summary sheet reads this. Left
+                    // unset it would still hold the user's WEEK 18 game and show
+                    // that instead — a stale regular-season box score under a
+                    // playoff headline.
+                    lastPlayerGameResult = decided
+                    continue
+                }
+                // Fall through: a bracket that cannot name a winner is worse than
+                // a round without a box score.
+            }
+
+            var score = simulateGameScore()
+            // Playoff games cannot end in a tie — keep re-rolling until scores differ.
+            while score.home == score.away {
+                score = simulateGameScore()
+            }
+            game.homeScore = score.home
+            game.awayScore = score.away
+
+            // Note: no record update — playoff games don't touch W/L/T (R32).
+        }
+
+        return userResult
+    }
+
+    /// The box score of a playoff game the user COACHED, when this week has one.
+    ///
+    /// A coached game is played before `advanceWeek` runs, so it never appears in
+    /// the unplayed set — the live engine leaves its result in
+    /// `lastPlayerGameResult` and that is where the numbers come from. `nil` when
+    /// the user had no playoff game this week, when he quick-simmed it (the
+    /// caller then uses what `playPlayoffGames` produced), or when the app was
+    /// relaunched between coaching the game and advancing (the static is
+    /// process-global; the postseason line is then synthesized like everyone
+    /// else's, which is the same answer the round would have given anyway).
+    private static func coachedPlayoffResult(
+        week: Int,
+        career: Career,
+        unplayedGames: [Game],
+        modelContext: ModelContext
+    ) -> GameSimulator.GameResult? {
+        guard let userTeamID = career.teamID else { return nil }
+        let alreadyUnplayed = unplayedGames.contains {
+            $0.homeTeamID == userTeamID || $0.awayTeamID == userTeamID
+        }
+        guard !alreadyUnplayed else { return nil }
+        let weekGames = fetchAllPlayoffGames(
+            week: week,
+            seasonYear: career.currentSeason,
+            modelContext: modelContext
+        )
+        let played = weekGames.contains {
+            $0.isPlayed && ($0.homeTeamID == userTeamID || $0.awayTeamID == userTeamID)
+        }
+        return played ? lastPlayerGameResult : nil
+    }
+
+    /// Folds one playoff round into the postseason columns of the season-history
+    /// rows week 18 already wrote.
+    ///
+    /// Two independent halves, for the same reason the regular season splits
+    /// them (#33):
+    /// - **Appearances** are credited from the BRACKET — every available player
+    ///   on a club that played this round gets a playoff game. This is the only
+    ///   participation signal that covers all 14 playoff teams.
+    /// - **Production** comes from the one real box score in the round, the
+    ///   user's. Everyone else's line is modelled once the bracket is finished
+    ///   (`finalizePostseasonHistory`), so a club's playoff numbers are drawn
+    ///   from its final game count rather than re-rolled every round.
+    ///
+    /// Creates no rows: a player without a week-18 snapshot (retired mid-season,
+    /// or a save that entered the playoffs before this existed) simply has no
+    /// postseason to record.
+    private static func recordPostseasonWeek(
+        week: Int,
+        career: Career,
+        boxScore: [PlayerGameStats],
+        modelContext: ModelContext
+    ) {
+        let season = career.currentSeason
+        let playedGames = fetchAllPlayoffGames(
+            week: week,
+            seasonYear: season,
+            modelContext: modelContext
+        ).filter(\.isPlayed)
+        guard !playedGames.isEmpty || !boxScore.isEmpty else { return }
+
+        let historyByPlayer = postseasonHistoryByPlayer(season: season, modelContext: modelContext)
+        guard !historyByPlayer.isEmpty else { return }
+
+        // --- Appearances ---
+        let allPlayers = fetchAllPlayers(modelContext: modelContext)
+        let playersByTeam = Dictionary(grouping: allPlayers.filter { $0.teamID != nil },
+                                       by: { $0.teamID! })
+        for game in playedGames {
+            for teamID in [game.homeTeamID, game.awayTeamID] {
+                let available = (playersByTeam[teamID] ?? [])
+                    .filter { !$0.isInjured && !$0.isHoldingOut && !$0.isRetired }
+                for player in available {
+                    historyByPlayer[player.id]?.postGamesPlayed += 1
+                }
+            }
+        }
+
+        // --- Production (user's game only) ---
+        for line in boxScore {
+            historyByPlayer[line.playerID]?.addPostseasonGame(line)
+        }
+    }
+
+    /// Closes the postseason ledger for the season that just finished.
+    ///
+    /// Runs once the Super Bowl is on the board, which is the first moment every
+    /// club's playoff game count is final. Two jobs:
+    /// 1. **Model the 13 clubs the sim never box-scored.** Their line is drawn
+    ///    from the same `SeasonStatSynthesizer` the regular season uses, at the
+    ///    playoff workload — a two-game run produces two games' worth, not a
+    ///    season's.
+    /// 2. **Fill the categories no box score carries** for the user's own team:
+    ///    punting and offensive snaps have no `PlayerGameStats` source anywhere,
+    ///    so they are modelled even on a real line (identical to
+    ///    `recordSeasonHistory`).
+    ///
+    /// Idempotent: a row that already carries a postseason line is left alone, so
+    /// re-entering the phase cannot double up or re-roll a player's playoffs.
+    private static func finalizePostseasonHistory(
+        career: Career,
+        userTeamID: UUID?,
+        modelContext: ModelContext
+    ) {
+        let season = career.currentSeason
+        let historyByPlayer = postseasonHistoryByPlayer(season: season, modelContext: modelContext)
+        guard !historyByPlayer.isEmpty else { return }
+
+        var rng = SystemRandomNumberGenerator()
+        for row in historyByPlayer.values where row.postGamesPlayed > 0 {
+            // Already closed on a previous pass — never re-roll a career.
+            guard !row.postStatsAreSynthesized else { continue }
+            guard let position = row.position else { continue }
+            var line = row.postStatLine
+            // Starts are not tracked in the playoffs; a club's postseason lineup
+            // is its regular-season lineup, so his start RATE carries over.
+            let startRate = row.gamesPlayed > 0
+                ? Double(row.gamesStarted) / Double(row.gamesPlayed)
+                : 0
+            let postStarts = Int((Double(row.postGamesPlayed) * startRate).rounded())
+            func modelled() -> SeasonStatLine {
+                SeasonStatSynthesizer.line(
+                    position: position,
+                    overall: row.overallAtEndOfSeason,
+                    gamesPlayed: row.postGamesPlayed,
+                    gamesStarted: min(row.postGamesPlayed, postStarts),
+                    age: row.ageAtEndOfSeason,
+                    using: &rng
+                )
+            }
+
+            // Exactly the rule `recordSeasonHistory` applies to the regular
+            // season: either he played for the user (so his zeros are real
+            // zeros), or he already carries a real line — which is true of the
+            // user's OPPONENTS too, since a box score covers both rosters. Their
+            // numbers must not be thrown away and re-rolled.
+            let hasRealLine = (userTeamID != nil && row.teamID == userTeamID) || !line.isEmpty
+            if !hasRealLine {
+                row.postStatLine = modelled()
+                row.postStatsAreSynthesized = true
+                continue
+            }
+            // User's own club: real numbers, with the two unsourced categories
+            // topped up once.
+            switch position {
+            case .P, .LT, .LG, .C, .RG, .RT:
+                let fill = modelled()
+                line.punts = fill.punts
+                line.puntAverage = fill.puntAverage
+                line.snapsPlayed = fill.snapsPlayed
+                row.postStatLine = line
+                row.postStatsAreSynthesized = true
+            default:
+                break
+            }
+        }
+    }
+
+    /// This season's history rows keyed by player. One fetch, one dictionary —
+    /// the postseason passes touch every playoff roster and would otherwise
+    /// re-scan ~1 700 rows per club.
+    private static func postseasonHistoryByPlayer(
+        season: Int,
+        modelContext: ModelContext
+    ) -> [UUID: PlayerSeasonHistory] {
+        let cid = activeCareerID
+        let rows = (try? modelContext.fetch(FetchDescriptor<PlayerSeasonHistory>(
+            predicate: #Predicate { $0.careerID == cid && $0.season == season }
+        ))) ?? []
+        var byPlayer: [UUID: PlayerSeasonHistory] = [:]
+        byPlayer.reserveCapacity(rows.count)
+        for row in rows { byPlayer[row.playerID] = row }
+        return byPlayer
+    }
+
+    /// Every playoff game scheduled for one week, played or not — the postseason
+    /// twin of `fetchAllRegularSeasonGames`, and needed for the same reason: a
+    /// game the user coached live is already played when the week advances.
+    private static func fetchAllPlayoffGames(
+        week: Int,
+        seasonYear: Int,
+        modelContext: ModelContext
+    ) -> [Game] {
+        let cid = activeCareerID
+        let descriptor = FetchDescriptor<Game>(
+            predicate: #Predicate { game in
+                game.careerID == cid &&
+                game.week == week &&
+                game.seasonYear == seasonYear &&
+                game.isPlayoff == true
+            }
+        )
+        return (try? modelContext.fetch(descriptor)) ?? []
     }
 
     private static func fetchAllGamesForSeason(

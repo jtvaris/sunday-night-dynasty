@@ -799,3 +799,183 @@ enum TradeNewsFactory {
         return "Both sides walked away calling it fair value."
     }
 }
+
+// MARK: - Career Milestone News Factory (#23)
+
+/// Turns the season-history rows week 18 has just written into the two surfaces
+/// a career milestone has to reach: the league news feed, and the user's inbox
+/// whenever the player is one of his own.
+///
+/// Same shape and the same reasoning as `TradeNewsFactory`. The league moves 30+
+/// players a year and a silent feed reads as a league where nothing happens —
+/// careers are the other half of that. A back passing 10 000 yards, a rusher
+/// reaching 100 sacks and a quarterback building a Canton case are the moments
+/// season-long stat tracking exists to produce, and until now the numbers were
+/// persisted and never spoken about.
+///
+/// Everything here is DERIVED from `PlayerSeasonHistory`; nothing is invented and
+/// nothing is stored. Run it twice on the same season and it says the same thing,
+/// which is what lets the week-18 handler call it without a "already announced"
+/// ledger: a crossing is measured between last season's career total and this
+/// one's, so it can only fire in the season it happened.
+enum MilestoneNewsFactory {
+
+    /// Feed items about OTHER teams' players, per season. The user's own roster
+    /// is never capped — his players' careers are the ones he is guaranteed to
+    /// care about — but the rest of the league has to stay a feed rather than a
+    /// record book dump.
+    static let maxLeagueItems = 5
+
+    struct Announcement {
+        let news: [NewsItem]
+        let inbox: [InboxMessage]
+    }
+
+    /// Every milestone the just-finished season produced.
+    ///
+    /// - Parameters:
+    ///   - players: The whole league; retired players are skipped (their story is
+    ///     the retirement ceremony, not a milestone note).
+    ///   - historyByPlayer: Season rows keyed by player, INCLUDING the row for
+    ///     `season` — the week-18 snapshot must already be written or every
+    ///     crossing measures zero against zero.
+    ///   - userTeamID: `nil` for a career with no team (the harness), which then
+    ///     produces news only.
+    static func seasonMilestones(
+        players: [Player],
+        historyByPlayer: [UUID: [PlayerSeasonHistory]],
+        teamsByID: [UUID: Team],
+        userTeamID: UUID?,
+        season: Int
+    ) -> Announcement {
+        /// One player's worth of findings, before the league-wide cap is applied.
+        struct Finding {
+            let player: Player
+            let crossing: MilestoneTracker.CareerCrossing?
+            let hallOfFameSummary: String?
+        }
+
+        var userFindings: [Finding] = []
+        var leagueFindings: [Finding] = []
+
+        for player in players where !player.isRetired {
+            guard let history = historyByPlayer[player.id], !history.isEmpty else { continue }
+            let after = MilestoneTracker.careerFacts(history: history, through: season)
+            guard !after.isEmpty else { continue }
+            let before = MilestoneTracker.careerFacts(history: history, through: season - 1)
+
+            var findings: [Finding] = []
+            // The loudest round number he passed. One a season keeps the feed
+            // readable even when a monster year clears two rungs at once.
+            if let crossing = MilestoneTracker.careerCrossings(
+                position: player.position, before: before, after: after
+            ).first {
+                findings.append(Finding(player: player, crossing: crossing, hallOfFameSummary: nil))
+            }
+            // Hall of Fame watch fires on the CROSSING of the threshold, so it
+            // reads once per career instead of every year of a great one.
+            let caseBefore = MilestoneTracker.hallOfFameCase(position: player.position, facts: before)
+            let caseAfter = MilestoneTracker.hallOfFameCase(position: player.position, facts: after)
+            if caseBefore < MilestoneTracker.hallOfFameWatchThreshold,
+               caseAfter >= MilestoneTracker.hallOfFameWatchThreshold {
+                findings.append(Finding(
+                    player: player,
+                    crossing: nil,
+                    hallOfFameSummary: MilestoneTracker.hallOfFameSummary(
+                        position: player.position, facts: after
+                    )
+                ))
+            }
+
+            guard !findings.isEmpty else { continue }
+            if userTeamID != nil && player.teamID == userTeamID {
+                userFindings.append(contentsOf: findings)
+            } else {
+                leagueFindings.append(contentsOf: findings)
+            }
+        }
+
+        // The biggest names lead, and the deepest milestone breaks a tie: a
+        // 15 000-yard back outranks a 2 500-yard one at the same rating.
+        leagueFindings.sort {
+            if $0.player.overall != $1.player.overall {
+                return $0.player.overall > $1.player.overall
+            }
+            return ($0.crossing?.milestone ?? 0) > ($1.crossing?.milestone ?? 0)
+        }
+
+        var news: [NewsItem] = []
+        var inbox: [InboxMessage] = []
+
+        for finding in userFindings + leagueFindings.prefix(maxLeagueItems) {
+            let teamName = finding.player.teamID.flatMap { teamsByID[$0]?.fullName }
+            let copy = finding.crossing.map {
+                crossingCopy(player: finding.player, crossing: $0, teamName: teamName)
+            } ?? hallOfFameCopy(
+                player: finding.player,
+                summary: finding.hallOfFameSummary ?? "",
+                teamName: teamName
+            )
+
+            news.append(NewsItem(
+                headline: copy.headline,
+                body: copy.body,
+                category: .award,
+                week: 18,
+                season: season,
+                relatedTeamID: finding.player.teamID,
+                relatedPlayerID: finding.player.id,
+                sentiment: .positive
+            ))
+
+            if userTeamID != nil, finding.player.teamID == userTeamID {
+                inbox.append(InboxMessage(
+                    sender: .leagueOffice,
+                    subject: copy.headline,
+                    body: copy.body,
+                    date: "Week 18, Season \(season)",
+                    category: .leagueNotice
+                ))
+            }
+        }
+
+        return Announcement(news: news, inbox: inbox)
+    }
+
+    // MARK: - Copy
+
+    /// Round numbers print bare, without thousands separators — the same way
+    /// every other career number in the game is written (`MilestoneTracker`'s
+    /// storyline bodies), and locale-proof by construction.
+    private static func number(_ value: Double, fractional: Bool) -> String {
+        fractional
+            ? String(format: "%.1f", value)
+            : "\(Int(value.rounded()))"
+    }
+
+    private static func crossingCopy(
+        player: Player,
+        crossing: MilestoneTracker.CareerCrossing,
+        teamName: String?
+    ) -> (headline: String, body: String) {
+        let milestone = number(crossing.milestone, fractional: false)
+        let total = number(crossing.total, fractional: crossing.isFractional)
+        let club = teamName.map { "The \($0) " } ?? "The "
+        return (
+            headline: "\(player.fullName) reaches \(milestone) career \(crossing.category)",
+            body: "\(club)\(player.position.rawValue) went past \(milestone) career \(crossing.category) this season and finished the year on \(total). It is the kind of number that turns a good career into a résumé."
+        )
+    }
+
+    private static func hallOfFameCopy(
+        player: Player,
+        summary: String,
+        teamName: String?
+    ) -> (headline: String, body: String) {
+        let club = teamName.map { "the \($0) " } ?? ""
+        return (
+            headline: "Hall of Fame watch: \(player.fullName)",
+            body: "Voters have started saying the word out loud about \(club)\(player.position.rawValue). \(summary) — at \(player.age), with the career still going, \(player.lastName) has built a case that no longer needs a qualifier."
+        )
+    }
+}

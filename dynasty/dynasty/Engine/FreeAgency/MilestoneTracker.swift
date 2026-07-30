@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 /// Tracks the personal career milestones that shape a free agent's signing
 /// demands (FA Drama brief, B7).
@@ -29,8 +30,9 @@ enum MilestoneTracker {
     // MARK: - Thresholds
 
     /// The round career-sack numbers that make a headline. A pass rusher within
-    /// `sackMilestoneWindow` of one of these is chasing history for real.
-    static let sackMilestones: [Double] = [50, 100, 150]
+    /// `sackMilestoneWindow` of one of these is chasing history for real, and
+    /// crossing one is worth a news item (`careerCrossings`).
+    static let sackMilestones: [Double] = [50, 100, 150, 200]
 
     /// How close counts as "one sack away" — a sack and a half, because the game
     /// records half-sacks.
@@ -43,17 +45,27 @@ enum MilestoneTracker {
     // MARK: - Career facts
 
     /// The career numbers the milestones ask about, summed from the persisted
-    /// season rows. Regular season only — playoff production is not persisted.
+    /// season rows.
+    ///
+    /// Regular season only — deliberately, now that the playoffs ARE persisted
+    /// (`PlayerSeasonHistory.postStatLine`, #20). No record book mixes the two,
+    /// and a milestone that counted January would put a perennial contender's
+    /// back past 10 000 yards a season ahead of an equally good one who never
+    /// made the bracket.
     struct CareerFacts {
         /// Seasons with at least one appearance.
         var seasons = 0
+        /// Regular-season games played across the whole career.
+        var gamesPlayed = 0
         var sacks: Double = 0
+        var tackles = 0
         var rushYards = 0
         var recYards = 0
         var receptions = 0
         var passYards = 0
         var passTDs = 0
         var defInts = 0
+        var fieldGoalsMade = 0
         /// Best end-of-season overall across the career.
         var peakOverall = 0
         /// Rushing yards in the most recent season he actually played.
@@ -67,22 +79,101 @@ enum MilestoneTracker {
     /// Folds a player's season-history rows into the facts the milestones need.
     /// Seasons he was not on a roster for (`gamesPlayed == 0`) are skipped: a
     /// year out of football is not a season of production.
-    static func careerFacts(history: [PlayerSeasonHistory]) -> CareerFacts {
+    ///
+    /// - Parameter through: Ignore every season AFTER this year. Passing the
+    ///   season that just ended and the one before it gives the two totals a
+    ///   round-number crossing is measured between (`careerCrossings`).
+    static func careerFacts(
+        history: [PlayerSeasonHistory],
+        through season: Int? = nil
+    ) -> CareerFacts {
         var facts = CareerFacts()
         for row in history.sorted(by: { $0.season < $1.season }) {
+            if let season, row.season > season { continue }
             facts.peakOverall = max(facts.peakOverall, row.overallAtEndOfSeason)
             guard row.gamesPlayed > 0 else { continue }
             facts.seasons += 1
+            facts.gamesPlayed += row.gamesPlayed
             facts.sacks += row.sacks
+            facts.tackles += row.tackles
             facts.rushYards += row.rushYards
             facts.recYards += row.recYards
             facts.receptions += row.receptions
             facts.passYards += row.passYards
             facts.passTDs += row.passTDs
             facts.defInts += row.defInts
+            facts.fieldGoalsMade += row.fieldGoalsMade
             facts.lastSeasonRushYards = row.rushYards
         }
         return facts
+    }
+
+    /// One player's persisted season rows (#22).
+    ///
+    /// Every entry point here takes `history` and falls back to age/rating
+    /// proxies without it, which means a call site that forgets to pass it gets
+    /// the WEAKER answer silently — and the two free-agency call sites did
+    /// exactly that. They hold a `ModelContext` but no history, so this is the
+    /// one line that turns the proxy path into the stat path:
+    ///
+    ///     MilestoneTracker.activeMilestones(
+    ///         player: player,
+    ///         history: MilestoneTracker.history(
+    ///             playerID: player.id, careerID: player.careerID, modelContext: modelContext
+    ///         )
+    ///     )
+    ///
+    /// Scoped by `careerID` like every other history query: unscoped it would
+    /// read the OTHER save's career (multi-save isolation).
+    static func history(
+        playerID: UUID,
+        careerID: UUID?,
+        modelContext: ModelContext
+    ) -> [PlayerSeasonHistory] {
+        let descriptor = FetchDescriptor<PlayerSeasonHistory>(
+            predicate: #Predicate { row in
+                row.playerID == playerID && row.careerID == careerID
+            }
+        )
+        return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    /// The whole regular-season career as one stat line — what a Hall of Fame
+    /// entry snapshots and what a retirement headline quotes (#21).
+    ///
+    /// Lives here rather than on `SeasonStatLine` because this is the career
+    /// layer's job, and the engine layer must not reach into the UI's
+    /// `CareerStatTotals` for it. Every category is additive except
+    /// `puntAverage`, which is a RATE: averaging averages would let a 4-punt
+    /// season outweigh an 80-punt one, so it is re-derived punt-weighted.
+    ///
+    /// Regular season only, like everything else in this type — the postseason
+    /// columns (#20) are a separate line and no record book mixes the two.
+    static func careerLine(history: [PlayerSeasonHistory]) -> SeasonStatLine {
+        var total = SeasonStatLine()
+        var puntYards = 0.0
+        for row in history {
+            let line = row.statLine
+            total.passYards += line.passYards
+            total.passTDs += line.passTDs
+            total.passInts += line.passInts
+            total.rushYards += line.rushYards
+            total.rushTDs += line.rushTDs
+            total.receptions += line.receptions
+            total.recYards += line.recYards
+            total.recTDs += line.recTDs
+            total.tackles += line.tackles
+            total.sacks += line.sacks
+            total.defInts += line.defInts
+            total.passesDefended += line.passesDefended
+            total.fieldGoalsMade += line.fieldGoalsMade
+            total.fieldGoalsAttempted += line.fieldGoalsAttempted
+            total.punts += line.punts
+            total.snapsPlayed += line.snapsPlayed
+            puntYards += Double(line.punts) * line.puntAverage
+        }
+        total.puntAverage = total.punts > 0 ? puntYards / Double(total.punts) : 0
+        return total
     }
 
     /// How strong this career looks as a Hall-of-Fame case, 0...1.
@@ -122,6 +213,128 @@ enum MilestoneTracker {
         let longevityShare = Double(facts.seasons) / 12.0
         let pedigree = (min(1, max(0, peakShare)) * 0.6 + min(1, longevityShare) * 0.4)
         return min(1, min(1, max(0, productionShare)) * 0.5 + pedigree * 0.5)
+    }
+
+    // MARK: - Career round numbers (#23)
+
+    /// A round career number a player went past during one season.
+    struct CareerCrossing {
+        /// Plural, lower-case category name for copy ("passing yards").
+        let category: String
+        /// The round number he crossed.
+        let milestone: Double
+        /// Where the career total stood when the season ended.
+        let total: Double
+        /// True for the categories the game records in halves (sacks), which
+        /// print with one decimal instead of as a whole number.
+        let isFractional: Bool
+    }
+
+    /// The Hall-of-Fame case score at which a career stops being good and starts
+    /// being an argument. Below `activeMilestones`' own 0.55 gate on purpose: a
+    /// free agent's asking price and a "he is going to Canton" headline are not
+    /// the same claim, and the headline should be the rarer one.
+    static let hallOfFameWatchThreshold = 0.70
+
+    /// Every round career number this player passed between two career totals.
+    ///
+    /// Measured as a CROSSING rather than a threshold so each milestone fires
+    /// exactly once in a career: pass the same before/after pair twice and the
+    /// second call still reports it, but pass next season's pair and it is gone.
+    /// A monster year that clears two levels at once reports both, loudest first.
+    ///
+    /// Positions with no counting stat the game tracks (the offensive line)
+    /// return nothing — inventing a milestone for them would mean inventing the
+    /// stat first.
+    static func careerCrossings(
+        position: Position,
+        before: CareerFacts,
+        after: CareerFacts
+    ) -> [CareerCrossing] {
+        var crossings: [CareerCrossing] = []
+        for track in careerTracks(for: position) {
+            let start = track.value(before)
+            let end = track.value(after)
+            guard end > start else { continue }
+            for milestone in track.milestones where start < milestone && end >= milestone {
+                crossings.append(CareerCrossing(
+                    category: track.category,
+                    milestone: milestone,
+                    total: end,
+                    isFractional: track.isFractional
+                ))
+            }
+        }
+        return crossings.sorted { $0.milestone > $1.milestone }
+    }
+
+    /// One category's round numbers, plus how to read it off a career.
+    private struct CareerTrack {
+        let category: String
+        let milestones: [Double]
+        let isFractional: Bool
+        let value: (CareerFacts) -> Double
+    }
+
+    /// The categories that carry a milestone at this position.
+    ///
+    /// Deliberately the same shortlist `hallOfFameSummary` argues from — one
+    /// number per position family, the one a record book would print. The rungs
+    /// are spaced so a good career hits two or three of them and a great one hits
+    /// five, rather than a headline every other season.
+    private static func careerTracks(for position: Position) -> [CareerTrack] {
+        switch position {
+        case .QB:
+            return [
+                CareerTrack(category: "passing yards",
+                            milestones: [10_000, 20_000, 30_000, 40_000, 50_000, 60_000],
+                            isFractional: false) { Double($0.passYards) },
+                CareerTrack(category: "touchdown passes",
+                            milestones: [100, 200, 300, 400, 500],
+                            isFractional: false) { Double($0.passTDs) },
+            ]
+        case .RB, .FB:
+            return [
+                CareerTrack(category: "rushing yards",
+                            milestones: [2_500, 5_000, 7_500, 10_000, 12_500, 15_000],
+                            isFractional: false) { Double($0.rushYards) },
+            ]
+        case .WR, .TE:
+            return [
+                CareerTrack(category: "receiving yards",
+                            milestones: [2_500, 5_000, 7_500, 10_000, 12_500, 15_000],
+                            isFractional: false) { Double($0.recYards) },
+                CareerTrack(category: "receptions",
+                            milestones: [250, 500, 750, 1_000],
+                            isFractional: false) { Double($0.receptions) },
+            ]
+        case .DE, .DT, .OLB, .MLB:
+            return [
+                CareerTrack(category: "sacks",
+                            milestones: sackMilestones,
+                            isFractional: true) { $0.sacks },
+                CareerTrack(category: "tackles",
+                            milestones: [500, 1_000, 1_500],
+                            isFractional: false) { Double($0.tackles) },
+            ]
+        case .CB, .FS, .SS:
+            return [
+                CareerTrack(category: "interceptions",
+                            milestones: [20, 40, 60],
+                            isFractional: false) { Double($0.defInts) },
+                CareerTrack(category: "tackles",
+                            milestones: [500, 1_000, 1_500],
+                            isFractional: false) { Double($0.tackles) },
+            ]
+        case .K:
+            return [
+                CareerTrack(category: "field goals",
+                            milestones: [100, 200, 300, 400],
+                            isFractional: false) { Double($0.fieldGoalsMade) },
+            ]
+        case .LT, .LG, .C, .RG, .RT, .P:
+            return []
+        }
     }
 
     // MARK: - Detection

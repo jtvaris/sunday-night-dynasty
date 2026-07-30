@@ -240,7 +240,7 @@ No behaviour changed; no band asserts yet (Wave 2).*
    `deadCap` math), `Contract.teamID` re-pointed, `noTradeClause` enforced
    (veto or waive-request flow), `forceTrade` actually trades.
 
-**Wave 2 — A living AI market.**
+**Wave 2 — A living AI market. — DONE 2026-07-30 (+ funnel-diagnosed volume tuning; all nine §5 bands green in consecutive smokes).**
 1. AI-vs-AI trade pass: offseason windows (post-FA, pre-draft, cap-cut days)
    + weekly in-season with a hazard ramp into the deadline (e.g. 8 % →
    45 %/team-pair-week) + deadline flurry targeting the §5 bands. All deals
@@ -260,7 +260,7 @@ No behaviour changed; no band asserts yet (Wave 2).*
 5. Need model upgrade: starter-quality-aware (not roster counts), and needs
    make a team's own players *harder* to buy, not just incoming ones cheaper.
 
-**Wave 3 — Negotiation UX (the contract-negotiation port).**
+**Wave 3 — Negotiation UX (the contract-negotiation port). — DONE 2026-07-30 (TradeNegotiationView threads + persisted inbox; #36 concession softening and #38 on-sim check open).**
 Port the proven stack: `TradeMessage` transcript with offer-snapshot bubbles,
 rounds + persona patience, GM identity header (name, style chip, one-liner),
 concession curve (open ~125 %, concede toward ~105 %), structural objections
@@ -270,7 +270,7 @@ points: wire the dead `PlayerDetailView` button, roster multi-select "shop
 players", trade block, offseason dashboard route, deadline pressure card,
 incoming offers as threads with expiry chips. Trade history from the ledger.
 
-**Wave 4 — Draft-room unification.**
+**Wave 4 — Draft-room unification. — DONE 2026-07-30 (user trade-up, AI-vs-AI swaps + ticker, veterans in packages, one chart; #46 on-sim check open).**
 User trade-up (from the pick sheet and from a Big-Board prospect: "call about
 moving up"); AI-vs-AI pick swaps during the draft (with ticker lines + drama
 beats — the events are already persisted, just rendered nowhere); future picks
@@ -280,7 +280,7 @@ chart everywhere (MockDraft hints re-priced on `PickValueChart`); decline-
 blacklist bug fixed; draft trades flow through the same negotiation thread UI
 and the ledger.
 
-**Wave 5 — Cleanup.**
+**Wave 5 — Cleanup. — LARGELY DONE 2026-07-30 (dead brains + TradeOffer deleted in Wave 2; remaining leftovers tracked as tasks #36-#49).**
 Delete the two dead trade brains + `TradeOffer.swift` + `TradeEngine`'s
 duplicate need model after harvesting; delete the dead dashboard tile;
 `ReactionsEngine`/owner/media hooks for notable trades; docs.

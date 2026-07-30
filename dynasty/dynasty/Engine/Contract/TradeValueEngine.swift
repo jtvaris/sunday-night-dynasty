@@ -426,6 +426,59 @@ enum TradeValueEngine {
         return 0.955 + step
     }
 
+    // MARK: - Negotiation Surface (Wave 3 — read-only persona exposure)
+
+    /// Everything the Wave 3 negotiation screen is allowed to know about the GM
+    /// on the other end of the phone.
+    ///
+    /// READ-ONLY BY DESIGN. This is a projection of numbers the market layer
+    /// already computes (`GMPersona`, `TradeTalkRegistry`), never a second place
+    /// they are decided — nothing here feeds a valuation, and adding a field
+    /// must never change what a deal is worth. The HIDDEN parts stay hidden: no
+    /// chart lean, no asking noise, no accept bar (decision §7.1 — the user's
+    /// screens keep quoting plain Jimmy Johnson points). What ships is what a
+    /// beat reporter would know: the man's name, how he is described around the
+    /// league, roughly how far above value he opens, and how much patience he
+    /// has left for this front office.
+    struct GMIdentity {
+        let teamID: UUID
+        /// Stable GM name (`GMPersona.name`).
+        let name: String
+        let archetype: GMArchetype
+        var archetypeLabel: String { archetype.label }
+        /// One-liner for the negotiation header.
+        var blurb: String { archetype.blurb }
+        var symbolName: String { archetype.symbolName }
+        /// Rounds of talking he tolerates before the phone stops being answered
+        /// for the rest of the league year (`GMPersona.maxRounds`).
+        let patience: Int
+        /// Strikes his front office has already logged against the user this
+        /// league year (`TradeTalkRegistry`).
+        let strikes: Int
+        /// How far above the value he sends this GM OPENS, in whole percent.
+        /// The opening premium is public posture; the accept bar it halves into
+        /// stays hidden.
+        let askingPremiumPercent: Int
+
+        /// True while he still answers the user's calls.
+        var talksOpen: Bool { strikes < patience }
+        /// Lowballs left before the freeze-out.
+        var roundsLeft: Int { max(0, patience - strikes) }
+    }
+
+    /// The negotiation-facing view of one franchise's GM.
+    static func gmIdentity(team: Team, season: Int) -> GMIdentity {
+        let persona = GMPersona.forTeam(id: team.id)
+        return GMIdentity(
+            teamID: team.id,
+            name: persona.name,
+            archetype: persona.archetype,
+            patience: persona.maxRounds,
+            strikes: TradeTalkRegistry.strikes(season: season, teamID: team.id),
+            askingPremiumPercent: Int(((persona.askingPremium - 1.0) * 100.0).rounded())
+        )
+    }
+
     // MARK: - Team Stance (Wave 2 — plan §6 Wave 2.2)
 
     /// Where a franchise thinks it is in its competitive cycle. Drives what it
@@ -619,10 +672,36 @@ enum TradeValueEngine {
         .K: 1, .P: 1
     ]
 
+    // MARK: - OVR anchors (#30)
+    //
+    // Every raw OVR number this engine compares against was picked when the
+    // league averaged **76.46 OVR with sd 8.23**. The P1 calibration wave moved
+    // the shipped league to **71.00 / 8.86** (`TODO.md`, "Mitattu jakauma"), so
+    // an untouched 82 stopped meaning "top of the contending core" and started
+    // meaning "the best player on most rosters" — the GMs quietly declared half
+    // the league untouchable and the phone stopped ringing.
+    //
+    // The anchors below are re-derived PERCENTILE-PRESERVING rather than
+    // re-guessed, the same method the wave used on `ContractEngine`'s money curve
+    // and the `CALIB_*` bands:
+    //
+    //     new = 71.00 + (old − 76.46) × (8.86 / 8.23)
+    //
+    //     58 → 51 · 60 → 53 · 62 → 55 · 72 → 66 · 76 → 70.5
+    //     78 → 73 · 80 → 75 · 82 → 77 · 84 → 79 · 86 → 81
+    //
+    // Every site that compares a raw OVR carries a `#30` marker back to this
+    // note. `positionMultiplier`, the age curve and the `32 × 1.128^(OVR − 60)`
+    // value curve are deliberately NOT touched: the value curve is anchored to
+    // the Jimmy Johnson PICK chart, not to the league's mean, and re-pivoting it
+    // would silently reprice every player against every draft pick.
+
     /// OVR a club assumes for an empty starter slot (street free agent).
-    static let replacementOVR = 58.0
+    /// #30: 58 → 51, percentile-preserving.
+    static let replacementOVR = 51.0
     /// OVR of a starter a club stops worrying about.
-    static let solidStarterOVR = 76.0
+    /// #30: 76 → 70.5, percentile-preserving.
+    static let solidStarterOVR = 70.5
 
     /// Grades every position on a roster by the quality of who would start.
     static func needProfile(roster: [Player]) -> NeedProfile {
@@ -648,10 +727,13 @@ enum TradeValueEngine {
             let average = total / Double(slots)
             starterOVR[position] = Int(average.rounded())
 
-            // 76 OVR starters are fine, 60 is a crisis; the position premium
-            // (QB 1.3 … K/P 0.5) decides how loudly the hole is felt.
+            // A 70.5 OVR starter room is fine, 53 is a crisis; the position
+            // premium (QB 1.3 … K/P 0.5) decides how loudly the hole is felt.
+            // #30: the span is the distance between those two anchors and moves
+            // with them — 76→60 was 16 points in the old league, 70.5→53.3 is
+            // 17 in the calibrated one.
             let gap = max(0, solidStarterOVR - average)
-            let weighted = gap / 16.0 * positionMultiplier(position)
+            let weighted = gap / 17.0 * positionMultiplier(position)
             severity[position] = min(1.0, weighted)
         }
 
@@ -782,21 +864,25 @@ enum TradeValueEngine {
         /// §5's user-facing promise is that GMs don't get fleeced; this is the
         /// other half of it — some players simply are not available, and the
         /// answer says why instead of quoting a number.
+        /// #30: every threshold here is the percentile-preserving re-derivation of
+        /// the old 76.4-mean anchors (78→73, 82→77, 86→81, 84→79). Left alone
+        /// they made roughly a third of the league untouchable in the calibrated
+        /// league instead of the intended handful.
         func untouchableReason(_ player: Player) -> String? {
-            if player.position == .QB, isStarter(player), player.overall >= 78, stance != .rebuild {
+            if player.position == .QB, isStarter(player), player.overall >= 73, stance != .rebuild {
                 return "\(abbreviation) aren't taking calls on their starting quarterback."
             }
             switch stance {
             case .contend:
-                if player.overall >= 82 && player.age <= 27 {
+                if player.overall >= 77 && player.age <= 27 {
                     return "\(abbreviation) hang up — \(player.lastName) is the core of a team that believes it can win now."
                 }
             case .retool:
-                if player.overall >= 86 && player.age <= 26 {
+                if player.overall >= 81 && player.age <= 26 {
                     return "\(abbreviation) aren't listening on \(player.lastName). He's the one player they're building around."
                 }
             case .rebuild:
-                if player.overall >= 84 && player.age <= 24 {
+                if player.overall >= 79 && player.age <= 24 {
                     return "\(abbreviation) are rebuilding around \(player.lastName) — he isn't going anywhere."
                 }
             }
@@ -1261,6 +1347,12 @@ enum TradeValueEngine {
         /// passes a small slack for the restructure the game does not model (see
         /// the call site in `dealIsCoherent`).
         capSlackFraction: Double = 0,
+        /// Share of the league year still unpaid (task #44 pairing for #26):
+        /// preview and execution price a midseason deal identically when the
+        /// caller passes `CapManagementEngine.leagueYearRemaining(phase:week:)`.
+        /// The 1.0 default keeps engine paths STRICTER than execution, never
+        /// looser — an unthreaded caller cannot let an illegal deal through.
+        leagueYearRemaining: Double = 1.0,
         /// Largest legal roster after the deal. In-season this is the default 75
         /// (53 active plus slack); between the draft and cutdown day the league
         /// legitimately carries 80-90 players, and applying the in-season number
@@ -1332,8 +1424,14 @@ enum TradeValueEngine {
         // dead-money split `TradeEngine.executeTrade` applies, so a deal that
         // validates here cannot push a team over the cap once executed.
         if capMode != .sandbox {
-            let offeringSide = capDeltas(for: sendingPlayers, contracts: contracts, capMode: capMode)
-            let receivingSide = capDeltas(for: receivingPlayers, contracts: contracts, capMode: capMode)
+            let offeringSide = capDeltas(
+                for: sendingPlayers, contracts: contracts, capMode: capMode,
+                leagueYearRemaining: leagueYearRemaining
+            )
+            let receivingSide = capDeltas(
+                for: receivingPlayers, contracts: contracts, capMode: capMode,
+                leagueYearRemaining: leagueYearRemaining
+            )
 
             let offeringUsageAfter = offering.currentCapUsage
                 - offeringSide.oldHit + offeringSide.deadCap + receivingSide.assumed
@@ -1362,7 +1460,8 @@ enum TradeValueEngine {
     static func capDeltas(
         for players: [Player],
         contracts: [Contract],
-        capMode: CapMode
+        capMode: CapMode,
+        leagueYearRemaining: Double = 1.0
     ) -> (oldHit: Int, deadCap: Int, assumed: Int) {
         let index = contractIndex(contracts)
         var oldHit = 0
@@ -1372,7 +1471,8 @@ enum TradeValueEngine {
             let split = CapManagementEngine.tradeCapSplit(
                 player: player,
                 contract: index[player.id],
-                capMode: capMode
+                capMode: capMode,
+                leagueYearRemaining: leagueYearRemaining
             )
             oldHit  += player.annualSalary
             deadCap += split.deadCap
@@ -1893,7 +1993,8 @@ enum TradeValueEngine {
         capMode: CapMode
     ) -> Player? {
         let candidates = seller.roster.filter { player in
-            guard player.overall >= 72, !player.isInjured, !player.isHoldingOut else { return false }
+            // #30: 72 → 66, the same percentile floor in the calibrated league.
+            guard player.overall >= 66, !player.isInjured, !player.isHoldingOut else { return false }
             guard buyer.needs.severity(player.position) >= 0.18 else { return false }
             guard seller.lastManReason(player) == nil else { return false }
             guard !hasActiveNoTradeClause(player: player, contracts: contracts) else { return false }
@@ -1931,7 +2032,8 @@ enum TradeValueEngine {
     static func saleCandidates(seller: GMMarketView, contracts: [Contract]) -> [Player] {
         seller.roster
             .filter { player in
-                guard !player.isInjured, !player.isHoldingOut, player.overall >= 72 else { return false }
+                // #30: 72 → 66, same percentile floor as `shoppingTarget`.
+                guard !player.isInjured, !player.isHoldingOut, player.overall >= 66 else { return false }
                 guard seller.untouchableReason(player) == nil,
                       seller.lastManReason(player) == nil else { return false }
                 guard !hasActiveNoTradeClause(player: player, contracts: contracts) else { return false }
@@ -2036,7 +2138,8 @@ enum TradeValueEngine {
         func fillerPool() -> [Player] {
             payer.roster.filter { player in
                 guard !player.isInjured, !player.isHoldingOut else { return false }
-                guard player.overall >= 62, player.overall <= 82 else { return false }
+                // #30: the 62-82 filler window → 55-77, percentile-preserving.
+                guard player.overall >= 55, player.overall <= 77 else { return false }
                 guard payer.untouchableReason(player) == nil,
                       payer.lastManReason(player) == nil else { return false }
                 return !hasActiveNoTradeClause(player: player, contracts: contracts)
@@ -2478,10 +2581,14 @@ enum TradeValueEngine {
         buyer: Team,
         players: [Player],
         contracts: [Contract],
-        capMode: CapMode
+        capMode: CapMode,
+        leagueYearRemaining: Double = 1.0
     ) -> Bool {
         guard capMode != .sandbox else { return true }
-        let side = capDeltas(for: players, contracts: contracts, capMode: capMode)
+        let side = capDeltas(
+            for: players, contracts: contracts, capMode: capMode,
+            leagueYearRemaining: leagueYearRemaining
+        )
         return buyer.currentCapUsage + side.assumed <= buyer.salaryCap
     }
 
@@ -2992,8 +3099,9 @@ enum TradeValueEngine {
                 let gap = Int(Double(value) * 0.95) - returnValue
                 let filler = buyerRoster
                     .filter {
+                        // #30: the 60-80 gap-filler window → 53-75.
                         !$0.isInjured && $0.position != .QB
-                            && $0.overall >= 60 && $0.overall <= 80
+                            && $0.overall >= 53 && $0.overall <= 75
                             && !hasActiveNoTradeClause(player: $0, contracts: contracts)
                     }
                     .min { abs(playerTradeValue(player: $0) - gap) < abs(playerTradeValue(player: $1) - gap) }

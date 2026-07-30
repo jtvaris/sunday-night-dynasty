@@ -229,8 +229,12 @@ enum FreeAgencyEngine {
             events.append(evt)
         }
 
-        // Milestone: player chasing a personal milestone.
-        if let milestone = MilestoneTracker.activeMilestones(player: player).first,
+        // Milestone: player chasing a personal milestone — judged on his real
+        // career line (task #22), not the OVR heuristic fallback.
+        let milestoneHistory = MilestoneTracker.history(
+            playerID: player.id, careerID: player.careerID, modelContext: modelContext
+        )
+        if let milestone = MilestoneTracker.activeMilestones(player: player, history: milestoneHistory).first,
            let evt = MilestoneTracker.generateMilestoneEvent(player: player, milestone: milestone, teamID: signingTeam.id) {
             events.append(evt)
         }
@@ -308,6 +312,26 @@ enum FreeAgencyEngine {
         let capGrowth = Double.random(in: 0.05...0.08)
         for team in allTeams {
             team.salaryCap = Int(Double(team.salaryCap) * (1.0 + capGrowth))
+        }
+
+        // League-year cap TRUE-UP (task #27). `currentCapUsage` is an
+        // incrementally maintained ledger, and the increments leak: dead money
+        // from every cut and trade stays on the books FOREVER, so a busy trade
+        // market strangles itself — measured over one smoke career, league cap
+        // room fell 22% → 3.7% → 0.8% in three seasons and the in-season
+        // market died with it. Real dead money ages off within a league year
+        // or two; until a per-year dead-cap ledger exists, the honest model is
+        // to rebuild each club's usage from its actual current liabilities
+        // (rostered salaries) at the rollover — dead cap thus bites for the
+        // league year it was incurred and then expires, and any incremental
+        // drift the season accumulated is corrected in the same pass.
+        var salaryByTeam: [UUID: Int] = [:]
+        for player in allPlayers {
+            guard let teamID = player.teamID, player.contractYearsRemaining > 0 else { continue }
+            salaryByTeam[teamID, default: 0] += player.annualSalary
+        }
+        for team in allTeams {
+            team.currentCapUsage = salaryByTeam[team.id] ?? 0
         }
 
         let capAfter = playerTeam?.currentCapUsage ?? 0

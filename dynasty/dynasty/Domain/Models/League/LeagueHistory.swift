@@ -57,4 +57,29 @@ struct HallOfFameEntry: Codable, Identifiable, Equatable {
     /// last in the list: careers inducted before faces existed decode with
     /// `nil` and render the placeholder silhouette.
     var faceID: String? = nil
+
+    // MARK: - Career production (#21)
+    //
+    // Summed from `PlayerSeasonHistory` at induction, for the same reason every
+    // other fact here is snapshotted: the bust has to survive the `Player` row.
+    // A Hall of Fame that knew a legend's peak RATING but not one thing he did on
+    // the field was a record book with the records left out.
+    //
+    // All three are OPTIONAL, not defaulted non-optionals: synthesized `Codable`
+    // ignores property defaults and throws on a missing key, so a non-optional
+    // would make every `hallOfFameData` blob written before this wave fail to
+    // decode — taking the whole Hall of Fame with it.
+
+    /// Regular-season career totals. `nil` on a class inducted before career
+    /// stats were persisted, which renders without a stat line.
+    var careerStatLine: SeasonStatLine? = nil
+
+    /// Regular-season games played across the career.
+    var careerGamesPlayed: Int? = nil
+
+    /// The one career number that carries his case, already phrased
+    /// (`MilestoneTracker.hallOfFameSummary`) — e.g. "12400 career rushing
+    /// yards". Stored rather than re-derived so the wording cannot drift away
+    /// from the numbers it was written about.
+    var careerResume: String? = nil
 }

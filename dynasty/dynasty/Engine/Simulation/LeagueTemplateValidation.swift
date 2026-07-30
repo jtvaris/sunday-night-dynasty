@@ -679,6 +679,7 @@ enum LeagueTemplateValidation {
             // (`SeasonStatSynthesizer`), so any non-deterministic draw shows up
             // here rather than shipping a league that differs run to run.
             let line = row.statLine
+            let post = row.postStatLine
             rowsByPlayer[key, default: []].append(
                 "\(row.season):\(row.overallAtEndOfSeason):\(row.gamesPlayed)/\(row.gamesStarted)"
                 + ":\(row.ageAtEndOfSeason):\(team):\(row.positionRaw)"
@@ -690,6 +691,18 @@ enum LeagueTemplateValidation {
                 + ":\(line.fieldGoalsMade)/\(line.fieldGoalsAttempted)"
                 + ":\(line.punts)/\(line.puntAverage)/\(line.snapsPlayed)"
                 + ":\(row.statsAreSynthesized)"
+                // #20: the postseason columns are inside the gate too. They are
+                // folded from the template rather than drawn, so a difference here
+                // means the IMPORT moved (a dropped `post` bag, a changed key
+                // mapping) — precisely what this check exists to catch.
+                + "|p\(row.postGamesPlayed)"
+                + ":\(post.passYards)/\(post.passTDs)/\(post.passInts)"
+                + ":\(post.rushYards)/\(post.rushTDs)"
+                + ":\(post.receptions)/\(post.recYards)/\(post.recTDs)"
+                + ":\(post.tackles)/\(post.sacks)/\(post.defInts)/\(post.passesDefended)"
+                + ":\(post.fieldGoalsMade)/\(post.fieldGoalsAttempted)"
+                + ":\(post.punts)/\(post.puntAverage)/\(post.snapsPlayed)"
+                + ":\(row.postStatsAreSynthesized)"
             )
         }
         return rowsByPlayer.mapValues { $0.sorted().joined(separator: " ") }

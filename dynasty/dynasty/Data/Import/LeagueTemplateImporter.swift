@@ -689,7 +689,7 @@ enum LeagueTemplateImporter {
                 synthesized = true
             }
 
-            return PlayerSeasonHistory(
+            let entry = PlayerSeasonHistory(
                 playerID: player.id,
                 season: arc.year,
                 overallAtEndOfSeason: arc.ovr,
@@ -701,6 +701,28 @@ enum LeagueTemplateImporter {
                 statLine: stats,
                 statsAreSynthesized: synthesized
             )
+
+            // #20: the postseason bag, when the source carries one. Dev profile
+            // only and only on the seasons that actually reached the playoffs —
+            // every other row keeps the "no postseason" default.
+            //
+            // Never synthesized: a missing `post` means the player's team did not
+            // play in January, which is a real zero, not a gap to be filled. (The
+            // live season's playoff lines ARE modelled for the 13 clubs the sim
+            // does not box-score — but there the game count is known, and here it
+            // is precisely what is absent.) The fold goes through the same ONE
+            // key→category table the regular line uses, so the two can never
+            // drift apart.
+            if let post = line?.post {
+                let postGames = post.gp ?? 0
+                let postLine = statLine(from: post.asRegularShapedLine(year: arc.year))
+                if postGames > 0 || !postLine.isEmpty {
+                    entry.postGamesPlayed = postGames
+                    entry.postStatLine = postLine
+                }
+            }
+
+            return entry
         }
     }
 
