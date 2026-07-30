@@ -36,44 +36,69 @@ enum LeagueGenerator {
         .headTrainer
     ]
 
-    // MARK: - Owner Names
+    // MARK: - Owner / Coach Names
+
+    // Fictional and blocklist-checked, for the same reason the player pools in
+    // `RandomNameGenerator` are: the first-name and surname arrays are drawn from
+    // independently, so the reachable space is the whole cross product. These two
+    // pairs used to be lists of real NFL owners and real head coaches (Kraft /
+    // Jones / Irsay / Khan; McVay / Reid / Shanahan / Belichick), which every
+    // league source rendered as living people — the template import path calls
+    // `generateOwner` for all 32 clubs, so the shipped Fixed 2026 league named its
+    // owners after the real ones. `scan_bundle.py` gate E asserts, on this file,
+    // that each 32 × 32 / 30 × 30 cross product stays Levenshtein ≥ 3 from every
+    // real name (`docs/ANONYMIZATION_SPEC.md` §1).
 
     private static let ownerFirstNames: [String] = [
-        "Robert", "Jerry", "Arthur", "Stephen", "Virginia",
-        "Terry", "Jim", "Mark", "Jeffrey", "David",
-        "Steve", "Woody", "Cal", "Jed", "Shahid",
-        "Michael", "Dan", "Clark", "Zygi", "Dean",
-        "Kim", "Gayle", "Amy", "Janice", "Stan",
-        "Tony", "Jimmy", "Walter", "Roger", "Bill",
-        "Kenneth", "Christopher"
+        "Arlo", "Aurelio", "Carmine", "Corvin", "Cyprien",
+        "Damarion", "Delmar", "Granger", "Kaeden", "Kamari",
+        "Killian", "Lachlan", "Ludovic", "Manoa", "Miles",
+        "Mordecai", "Nasir", "Obadiah", "Phineas", "Raiden",
+        "Raylan", "Rocco", "Silas", "Sullivan", "Tavian",
+        "Tomas", "Uriah", "Vincent", "Whitaker", "Yannick",
+        "Yosef", "Zander"
     ]
 
     private static let ownerLastNames: [String] = [
-        "Kraft", "Jones", "Blank", "Ross", "Halas",
-        "Pegula", "Irsay", "Davis", "Lurie", "Tepper",
-        "Bisciotti", "Brown", "Johnson", "York", "Khan",
-        "Bidwill", "Snyder", "Hunt", "Wilf", "Spanos",
-        "Pegula", "Benson", "Adams", "McNair", "Kroenke",
-        "Allen", "Glazer", "Ford", "Goodell", "Walton",
-        "Haslem", "Ballard"
+        "Adkerson", "Beckwith", "Burkhalter", "Chastain", "Cuthbertson",
+        "Danforth", "Denbrough", "Eberhardt", "Estabrook", "Fetterman",
+        "Gorsuch", "Greenhalgh", "Hawthorne", "Jessup", "Ledbetter",
+        "Longstreth", "Macalister", "Manzanares", "Maycomb", "Medlock",
+        "Merriweather", "Osgood", "Pettigrew", "Pomeroy", "Poteet",
+        "Prudhomme", "Radcliffe", "Shackleford", "Southgate", "Stockbridge",
+        "Upshaw", "Zabriskie"
     ]
 
     private static let coachFirstNames: [String] = [
-        "Mike", "Sean", "Andy", "Kevin", "Dan",
-        "Matt", "Kyle", "Nick", "Brian", "Robert",
-        "Todd", "Dennis", "Frank", "Ron", "John",
-        "Bill", "Jim", "Pete", "Doug", "Bruce",
-        "Vic", "Zac", "Brandon", "Dave", "Josh",
-        "Arthur", "Nathaniel", "Jonathan", "DeMeco", "Raheem"
+        "Cade", "Cassius", "Cedric", "Cortez", "Damir",
+        "Darian", "Emiliano", "Emrys", "Enzo", "Fenwick",
+        "Garrison", "Ivo", "Jibril", "Kellen", "Lorne",
+        "Nakoa", "Onyx", "Pell", "Riggs", "Roderick",
+        "Ruben", "Sabastian", "Saul", "Sorin", "Theo",
+        "Tiago", "Trenton", "Ulises", "Weston", "Zeke"
+    ]
+
+    /// Given names for the ~6 % of generated-league staff that come out female
+    /// (`CoachingEngine.femaleCoachShare`). Crossed with the SAME
+    /// `coachLastNames` as the male pool, so gate E checks a second 30 × 30
+    /// product on this file — fictional and blocklist-clean for exactly the
+    /// reasons above.
+    private static let coachFemaleFirstNames: [String] = [
+        "Angela", "Bridget", "Camille", "Carmen", "Colleen",
+        "Cynthia", "Danielle", "Deborah", "Denise", "Felicia",
+        "Gloria", "Ingrid", "Janelle", "Justine", "Keisha",
+        "Marisol", "Marlene", "Michelle", "Monica", "Nadia",
+        "Noelle", "Octavia", "Patrice", "Priya", "Regina",
+        "Rochelle", "Rosalind", "Sabrina", "Simone", "Vanessa"
     ]
 
     private static let coachLastNames: [String] = [
-        "McCarthy", "McVay", "Reid", "Stefanski", "Campbell",
-        "LaFleur", "Shanahan", "Sirianni", "Daboll", "Saleh",
-        "Bowles", "Allen", "Reich", "Rivera", "Harbaugh",
-        "Belichick", "Tomlin", "Carroll", "Pederson", "Arians",
-        "Fangio", "Taylor", "Staley", "Canales", "McDaniel",
-        "Smith", "Hackett", "Gannon", "Ryans", "Morris"
+        "Ansley", "Battaglia", "Bidwell", "Brimmer", "Cantwell",
+        "Dalrymple", "Falkenrath", "Fontenot", "Fullerton", "Galbraith",
+        "Harcourt", "Hardesty", "Hillenbrand", "Inglewood", "Jorgensen",
+        "Kittredge", "Milburn", "Moorcroft", "Netherton", "Ormsby",
+        "Pemberton", "Petitjean", "Selwyn", "Shirtliff", "Steadman",
+        "Swearingen", "Tillinghast", "Wetherell", "Wimberly", "Wolverton"
     ]
 
     // MARK: - 2026 NFL Draft Order (First Round)
@@ -150,6 +175,18 @@ enum LeagueGenerator {
             allTeams.append(team)
         }
 
+        // Phase 4 faces: one batched pass over the whole league so the registry
+        // is encoded once instead of ~2 000 times. Runs after every roster and
+        // staff exists, so the deterministic pick sees the final population.
+        // Idempotent — it only touches rows whose `faceID` is still nil.
+        FaceLibrary.shared.backfill(players: allPlayers, coaches: allCoaches)
+        #if DEBUG
+        // Every person in a fresh random league must own a distinct portrait.
+        FaceLibrary.shared.debugAuditActiveFaces(
+            players: allPlayers, coaches: allCoaches, label: "generated-league"
+        )
+        #endif
+
         let league = League(
             teams: allTeams,
             currentSeason: startYear
@@ -159,6 +196,44 @@ enum LeagueGenerator {
         let draftPicks = generateInitialDraftPicks(teams: allTeams, seasonYear: startYear)
 
         return (league, allTeams, allPlayers, allOwners, allCoaches, draftPicks)
+    }
+
+    // MARK: - Fixed League (Template Import)
+
+    /// Builds a league from a baked **fixed template** instead of generating a
+    /// random one (`docs/REALISTIC_LEAGUE_PLAN.md` phase 3).
+    ///
+    /// This is the second of the two league sources the new-career flow offers.
+    /// Where `generate(startYear:)` rolls 32 fresh rosters, this one replays a
+    /// constant, pre-calibrated 2026 snapshot: the same 1 807 players, the same
+    /// ratings, the same staffs, the same pick ownership on every import
+    /// (`LeagueTemplateImporter` documents the seeding).
+    ///
+    /// The result is a superset of `GeneratedLeague` — the template path also
+    /// produces `PlayerSeasonHistory` rows from each player's career arc, which
+    /// the random path has no equivalent of.
+    ///
+    /// - Parameters:
+    ///   - template: A decoded template — see `LeagueTemplateLoader.load(_:)`.
+    ///   - startYear: Season the career opens on. Defaults to the template's own
+    ///     `leagueYear`.
+    static func generateFromTemplate(
+        _ template: LeagueTemplate,
+        startYear: Int? = nil
+    ) -> LeagueTemplateImporter.ImportedLeague {
+        LeagueTemplateImporter.build(from: template, startYear: startYear)
+    }
+
+    /// Convenience: loads the bundled template for `profile` and imports it.
+    ///
+    /// Throws `LeagueTemplateLoader.LoadError` when the profile is not in this
+    /// build (the dev profile in a Release product) or the file is malformed.
+    static func generateFromTemplate(
+        profile: LeagueTemplate.Profile,
+        startYear: Int? = nil
+    ) throws -> LeagueTemplateImporter.ImportedLeague {
+        let template = try LeagueTemplateLoader.load(profile)
+        return generateFromTemplate(template, startYear: startYear)
     }
 
     // MARK: - Draft Pick Generation
@@ -237,15 +312,26 @@ enum LeagueGenerator {
     // MARK: - Private Generators
 
     private static func generateOwner(mediaMarket: MediaMarket, teamAbbreviation: String) -> Owner {
-        let first = ownerFirstNames.randomElement()!
-        let last = ownerLastNames.randomElement()!
-        let avatarID = OwnerAvatars.allIDs.randomElement()!
+        var rng = SystemRandomNumberGenerator()
+        return generateOwner(mediaMarket: mediaMarket, teamAbbreviation: teamAbbreviation, using: &rng)
+    }
+
+    /// Seeded variant of `generateOwner` — the fixed-league template import needs
+    /// the same owner every time it runs (`LeagueTemplateImporter`).
+    static func generateOwner<G: RandomNumberGenerator>(
+        mediaMarket: MediaMarket,
+        teamAbbreviation: String,
+        using rng: inout G
+    ) -> Owner {
+        let first = ownerFirstNames.randomElement(using: &rng)!
+        let last = ownerLastNames.randomElement(using: &rng)!
+        let avatarID = OwnerAvatars.allIDs.randomElement(using: &rng)!
 
         // Use team-specific spending willingness from preview data (with ±5 jitter)
         // so the generated budget matches what the player saw on the Team Selection screen.
         let preview = NFLTeamData.previews[teamAbbreviation]
         let baseSpending = preview?.spendingWillingness ?? 50
-        let spending = max(1, min(99, baseSpending + Int.random(in: -5...5)))
+        let spending = max(1, min(99, baseSpending + Int.random(in: -5...5, using: &rng)))
 
         // Coaching budget from preview (converted to thousands) — matches Team Selection display
         let coachingBudget = (preview?.coachingBudget ?? 35) * 1_000
@@ -253,10 +339,10 @@ enum LeagueGenerator {
         return Owner(
             name: "\(first) \(last)",
             avatarID: avatarID,
-            patience: Int.random(in: 2...9),
+            patience: Int.random(in: 2...9, using: &rng),
             spendingWillingness: spending,
-            meddling: Int.random(in: 5...80),
-            prefersWinNow: Bool.random(),
+            meddling: Int.random(in: 5...80, using: &rng),
+            prefersWinNow: Bool.random(using: &rng),
             coachingBudget: coachingBudget,
             // R27: dedicated scouting pot scales with spending willingness
             scoutingBudget: BudgetEngine.defaultScoutingBudget(spendingWillingness: spending),
@@ -318,7 +404,30 @@ enum LeagueGenerator {
         let name = RandomNameGenerator.randomName()
         let age = randomAge(for: position)
         let yearsPro = max(0, age - Int.random(in: 21...23))
-        let posAttrs = randomPositionAttributes(for: position, depthIndex: depthIndex)
+        let ageShift = Int(ageLevelShift(age: age, position: position).rounded())
+        let posAttrs = randomPositionAttributes(
+            for: position, depthIndex: depthIndex, ageShift: ageShift
+        )
+        // Bodies come from the shared per-position priors so veterans and draft
+        // prospects are drawn from one distribution. Previously every player at
+        // every position got `PhysicalAttributes.random()` (uniform 40...99), so
+        // a centre was as likely to be a 95-speed athlete as a cornerback.
+        let physical = PositionPhysicalProfile.sample(
+            for: position,
+            levelShift: veteranLevelShift(depthIndex: depthIndex) + Double(ageShift)
+        )
+        // Mental follows the same route as physical (phase-2 plan §2.2/§2.7):
+        // the shared position-shaped priors instead of `MentalAttributes.random()`
+        // (uniform 40...99). The level is anchored to `baseLevel` (69.5 — the
+        // uniform draw's exact mean) plus the same depth-tier shift, so a QB's
+        // awareness tilt survives while league-average mental — and therefore
+        // league-average `overall` — is unchanged. See the arithmetic in
+        // `veteranLevelShift`.
+        let mental = PositionPhysicalProfile.sampleMental(
+            for: position,
+            targetAverage: PositionPhysicalProfile.baseLevel
+                + veteranLevelShift(depthIndex: depthIndex) + Double(ageShift)
+        )
         let personality = PlayerPersonality(
             archetype: PersonalityArchetype.allCases.randomElement()!,
             motivation: Motivation.allCases.randomElement()!
@@ -334,12 +443,14 @@ enum LeagueGenerator {
             position: position
         )
 
-        return Player(
+        let player = Player(
             firstName: name.first,
             lastName: name.last,
             position: position,
             age: age,
             yearsPro: yearsPro,
+            physical: physical,
+            mental: mental,
             positionAttributes: posAttrs,
             personality: personality,
             morale: morale,
@@ -347,13 +458,141 @@ enum LeagueGenerator {
             contractYearsRemaining: contractYears,
             annualSalary: salary
         )
+        player.learning = learningValue(mental: mental)
+        player.competitiveness = competitivenessValue(
+            archetype: personality.archetype, mental: mental
+        )
+        // Realization-consistent ceiling (plan §2.7) — replaces the `Player`
+        // init's uniform `Int.random(in: 50...99)` default.
+        player.truePotential = veteranPotential(
+            overall: player.overall, age: age, position: position
+        )
+        // Anchor for the phase-2 ±8 lifetime potential-drift cap (plan §2.6).
+        player.draftTruePotential = player.truePotential
+        return player
+    }
+
+    /// Playbook-absorption rating, generated the same way `DraftClassBuilder`
+    /// generates a prospect's. Without this every generated veteran would sit on
+    /// the `Player.learning` model default (55) and the whole league would
+    /// install schemes at one flat rate.
+    ///
+    /// Phase 2 (plan §2.2): the math is `MentalAttributeModel.learning` — the
+    /// validated `0.40·awareness + 0.60·N(level, 15)` — with the veteran's own
+    /// mental average as the level, so veterans, rookies and backfilled legacy
+    /// rows all come out of one distribution. The old local
+    /// `0.6·awareness + 0.4·U[40,99]` produced a visibly tighter spread.
+    static func learningValue(mental: MentalAttributes) -> Int {
+        MentalAttributeModel.learning(
+            awareness: mental.awareness,
+            level: mental.average
+        )
+    }
+
+    /// Fighter mentality for a generated veteran (plan §2.1), from the same
+    /// shared model the draft class uses.
+    static func competitivenessValue(
+        archetype: PersonalityArchetype,
+        mental: MentalAttributes
+    ) -> Int {
+        MentalAttributeModel.competitiveness(
+            archetype: archetype,
+            workEthic: mental.workEthic,
+            clutch: mental.clutch
+        )
+    }
+
+    /// Realization-consistent potential ceiling for a generated veteran
+    /// (`docs/PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §2.7).
+    ///
+    /// The old behaviour was the `Player` init default, `Int.random(in: 50...99)`
+    /// — uncorrelated with age, tier or current ability, so a 31-year-old
+    /// 62-OVR depth man carried an expected ceiling of 83. Combined with
+    /// slot-correlated draft intake (~79.5 mean potential) that was the dominant
+    /// leg of the league **potential ratchet** (+0.9/season measured).
+    ///
+    /// The replacement mirrors the intake shape: remaining upside shrinks with
+    /// age (22yo ≈ 14 points, 28yo ≈ 2) and is gone once a player is past his
+    /// position's peak window, so the league's potential level is stationary
+    /// from season 1 instead of climbing toward the draft's.
+    static func veteranPotential(overall: Int, age: Int, position: Position) -> Int {
+        let peak = position.peakAgeRange
+        if age > peak.upperBound {
+            // Past peak: what you see is what is left.
+            return min(99, overall + Int.random(in: 0...3))
+        }
+        let mu = max(2.0, 14.0 - 2.5 * Double(max(0, age - 22)))
+        let upside = max(0.0, PositionPhysicalProfile.gaussian(mean: mu, sd: 4))
+        return min(99, overall + Int(upside.rounded()))
+    }
+
+    /// Rating level of a generated 21-year-old relative to the depth tier's
+    /// nominal ratings (plan §5 stage 6).
+    static let rookieAgeLevel: Double = -6.0
+    /// Rating level of a generated player inside his position's peak window.
+    static let primeAgeLevel: Double = 11.0
+    /// Give-back per year once a generated player is past his peak window.
+    static let pastPeakAgeDecay: Double = 1.2
+
+    /// Age-shaped rating level, so that **the league the game hands you is a
+    /// league this engine sustains** (plan §5 stage 6).
+    ///
+    /// The stage-6 gate is that `MultiSeasonSmokeTest`'s league mean must not
+    /// drift, and drift is by definition the distance between where the
+    /// generator starts and where the development / retirement / roster loop
+    /// settles. The generator used to draw a player's ratings from his DEPTH
+    /// TIER alone: a 21-year-old fourth-stringer and a 28-year-old fourth
+    /// stringer came out of the same 50-70 bucket. That is not a league this
+    /// engine sustains — measured over five seasons the loop plateaus with
+    /// cohorts at yp1 ≈ 65.5, yp2 ≈ 70, yp3 ≈ 74, yp4-7 ≈ 78.6, yp8+ ≈ 82, i.e.
+    /// exactly the growth curve `developPlayer` produces — so every generated
+    /// young player started ~8 points above where he belonged, carried a
+    /// ceiling far above his rating, and promptly grew into it. The whole
+    /// measured OVR drift is that inconsistency working itself out.
+    ///
+    /// This is a level curve, not a spread change: the depth tiers, the
+    /// position priors and the within-tier spread are all untouched, so nothing
+    /// about the game's internal balance — always one player's rating against
+    /// another's, at the same age — changes.
+    static func ageLevelShift(age: Int, position: Position) -> Double {
+        let peak = position.peakAgeRange
+        if age >= peak.lowerBound {
+            let past = max(0, age - peak.upperBound)
+            return primeAgeLevel - Double(past) * pastPeakAgeDecay
+        }
+        let entryAge = 21.0
+        let span = max(1.0, Double(peak.lowerBound) - entryAge)
+        let progress = min(1.0, max(0.0, (Double(age) - entryAge) / span))
+        return rookieAgeLevel + (primeAgeLevel - rookieAgeLevel) * progress
+    }
+
+    /// Level shift applied to the shared physical AND mental priors by depth
+    /// tier. Starters are better athletes than camp bodies, and the 53-man
+    /// blueprint holds 19 starters / 15 backups / 19 depth players, so the ±3
+    /// shifts cancel exactly (19·(+3) + 15·0 + 19·(−3) = 0) — league-average
+    /// physicals and mentals, and therefore league-average `overall`, are
+    /// unchanged by either migration.
+    ///
+    /// Mental arithmetic (plan §2.7 OVR-preservation check): the retired
+    /// `MentalAttributes.random()` drew uniform 40...99, mean exactly 69.5 =
+    /// `PositionPhysicalProfile.baseLevel`. `sampleMental(targetAverage:)`
+    /// shifts its position-shaped priors so their six-attribute mean lands ON
+    /// `targetAverage`, so passing `baseLevel + shift` reproduces 69.5 league-wide.
+    /// Mental carries 20 % of `overall` → ΔOVR ≈ 0.2 · 0 = 0.
+    static func veteranLevelShift(depthIndex: Int) -> Double {
+        switch depthIndex {
+        case 0:  return 3
+        case 1:  return 0
+        default: return -3
+        }
     }
 
     /// Creates the starting QB using the name and target overall from TeamPreview.
-    /// The preview name format is "F. Last" (e.g., "P. Mahomes") or "C.J. Stroud".
+    /// The preview name format is "F. Last" (e.g., "S. Osgood"); a multi-initial
+    /// form ("C.J. Osgood") parses the same way.
     private static func generateNamedQB(previewName: String, targetOverall: Int, teamID: UUID) -> Player {
         // Parse the preview name: split on last space to get firstName and lastName.
-        // Examples: "P. Mahomes" -> ("P.", "Mahomes"), "C.J. Stroud" -> ("C.J.", "Stroud")
+        // Examples: "S. Osgood" -> ("S.", "Osgood"), "C.J. Osgood" -> ("C.J.", "Osgood")
         let parts = previewName.split(separator: " ", maxSplits: .max, omittingEmptySubsequences: true)
         let firstName: String
         let lastName: String
@@ -366,14 +605,16 @@ enum LeagueGenerator {
         }
 
         // Generate physical and mental attributes that produce the target overall.
-        // Overall = physical.average * 0.6 + mental.average * 0.4
-        // We generate attributes centered around the target with some variance.
-        let physical = attributesForTarget(target: targetOverall, count: 6, variance: 5)
+        // Physicals come from the shared QB priors shifted so their average
+        // matches the target (a named 88-OVR QB gets an 88-average QB body, not
+        // a receiver's); mental is generated around the same target.
         let mental = attributesForTarget(target: targetOverall, count: 6, variance: 5)
 
-        let physicalAttrs = PhysicalAttributes(
-            speed: physical[0], acceleration: physical[1], strength: physical[2],
-            agility: physical[3], stamina: physical[4], durability: physical[5]
+        let qbProfile = PositionPhysicalProfile.profile(for: .QB)
+        let physicalAttrs = PositionPhysicalProfile.sample(
+            for: .QB,
+            levelShift: Double(targetOverall) - qbProfile.meanAverage,
+            spread: 0.6
         )
         let mentalAttrs = MentalAttributes(
             awareness: mental[0], decisionMaking: mental[1], clutch: mental[2],
@@ -409,7 +650,7 @@ enum LeagueGenerator {
             position: .QB
         )
 
-        return Player(
+        let player = Player(
             firstName: firstName,
             lastName: lastName,
             position: .QB,
@@ -424,6 +665,15 @@ enum LeagueGenerator {
             contractYearsRemaining: contractYears,
             annualSalary: salary
         )
+        player.learning = learningValue(mental: mentalAttrs)
+        player.competitiveness = competitivenessValue(
+            archetype: personality.archetype, mental: mentalAttrs
+        )
+        player.truePotential = veteranPotential(
+            overall: player.overall, age: age, position: .QB
+        )
+        player.draftTruePotential = player.truePotential
+        return player
     }
 
     /// Generates an array of attribute values that average to approximately the target.
@@ -446,20 +696,63 @@ enum LeagueGenerator {
     }
 
     private static func generateCoach(role: CoachRole, teamID: UUID) -> Coach {
-        let first = coachFirstNames.randomElement()!
-        let last = coachLastNames.randomElement()!
-        let age = Int.random(in: 35...68)
-        let potential = CoachDevelopmentEngine.generatePotential(forAge: age)
-        let experience = max(0, age - Int.random(in: 28...40))
+        var rng = SystemRandomNumberGenerator()
+        return generateCoach(role: role, teamID: teamID, using: &rng)
+    }
 
-        let offScheme: OffensiveScheme? = (role == .headCoach || role == .offensiveCoordinator || role == .assistantHeadCoach)
-            ? OffensiveScheme.allCases.randomElement()!
+    /// Seeded variant of `generateCoach`.
+    ///
+    /// - Parameters:
+    ///   - nameOverride: When non-nil, the coach's name is taken verbatim instead
+    ///     of drawn from the pools — the template import supplies the baked
+    ///     (anonymized) HC/OC/DC names and lets the rest of the staff generate.
+    ///   - schemeOverride: Forces the coach's scheme identity, so a template
+    ///     team really runs the scheme its source staff ran (a fact the
+    ///     anonymization deliberately keeps, `ANONYMIZATION_SPEC.md` §4).
+    static func generateCoach<G: RandomNumberGenerator>(
+        role: CoachRole,
+        teamID: UUID,
+        nameOverride: (first: String, last: String)? = nil,
+        ageOverride: Int? = nil,
+        schemeOverride: (offensive: OffensiveScheme?, defensive: DefensiveScheme?)? = nil,
+        using rng: inout G
+    ) -> Coach {
+        let last = nameOverride?.last ?? coachLastNames.randomElement(using: &rng)!
+        let age = ageOverride ?? Int.random(in: 35...68, using: &rng)
+
+        // COUPLING — the gender draw sits HERE, after the age, and only on the
+        // generated path. `LeagueTemplateImporter.makeStaff` relies on a non-nil
+        // `nameOverride` short-circuiting every pool draw so that the age is the
+        // FIRST draw of the stream, which `make_templates.py::template_coach_age`
+        // replays to pick an age-appropriate portrait for the template's named
+        // coaches. A draw ahead of the age — or any draw at all on the override
+        // path — silently moves those portraits onto the wrong age band, and
+        // gate 19 measures it. Template staff are male by construction anyway
+        // (they anonymize real male coaches), so this costs them nothing.
+        let first: String
+        let gender: String
+        if let nameOverride {
+            first = nameOverride.first
+            gender = "male"
+        } else {
+            let isFemale = Double.random(in: 0..<1, using: &rng) < CoachingEngine.femaleCoachShare
+            gender = isFemale ? "female" : "male"
+            first = (isFemale ? coachFemaleFirstNames : coachFirstNames).randomElement(using: &rng)!
+        }
+
+        let potential = CoachDevelopmentEngine.generatePotential(forAge: age, using: &rng)
+        let experience = max(0, age - Int.random(in: 28...40, using: &rng))
+
+        let wantsOffense = (role == .headCoach || role == .offensiveCoordinator || role == .assistantHeadCoach)
+        let wantsDefense = (role == .headCoach || role == .defensiveCoordinator || role == .assistantHeadCoach)
+        let offScheme: OffensiveScheme? = wantsOffense
+            ? (schemeOverride?.offensive ?? OffensiveScheme.allCases.randomElement(using: &rng)!)
             : nil
-        let defScheme: DefensiveScheme? = (role == .headCoach || role == .defensiveCoordinator || role == .assistantHeadCoach)
-            ? DefensiveScheme.allCases.randomElement()!
+        let defScheme: DefensiveScheme? = wantsDefense
+            ? (schemeOverride?.defensive ?? DefensiveScheme.allCases.randomElement(using: &rng)!)
             : nil
 
-        let personality = PersonalityArchetype.allCases.randomElement()!
+        let personality = PersonalityArchetype.allCases.randomElement(using: &rng)!
 
         // Role-aware attribute generation: proper hierarchy
         // HC: highest overall, Coordinators: mid, Position coaches: specialists
@@ -473,23 +766,23 @@ enum LeagueGenerator {
         switch role {
         case .headCoach:
             goodFloor = 70; goodCeiling = 95; weakFloor = 55; weakCeiling = 70
-            goodCount = Int.random(in: 5...8)
+            goodCount = Int.random(in: 5...8, using: &rng)
             isPositionCoach = false
         case .assistantHeadCoach:
             goodFloor = 68; goodCeiling = 90; weakFloor = 50; weakCeiling = 65
-            goodCount = Int.random(in: 4...6)
+            goodCount = Int.random(in: 4...6, using: &rng)
             isPositionCoach = false
         case .offensiveCoordinator, .defensiveCoordinator:
             goodFloor = 65; goodCeiling = 90; weakFloor = 50; weakCeiling = 65
-            goodCount = Int.random(in: 4...6)
+            goodCount = Int.random(in: 4...6, using: &rng)
             isPositionCoach = false
         case .specialTeamsCoordinator:
             goodFloor = 62; goodCeiling = 85; weakFloor = 45; weakCeiling = 58
-            goodCount = Int.random(in: 3...5)
+            goodCount = Int.random(in: 3...5, using: &rng)
             isPositionCoach = false
         default: // Position coaches: specialists
             goodFloor = 70; goodCeiling = 85; weakFloor = 40; weakCeiling = 60
-            goodCount = Int.random(in: 1...5)
+            goodCount = Int.random(in: 1...5, using: &rng)
             isPositionCoach = true
         }
 
@@ -505,7 +798,7 @@ enum LeagueGenerator {
             }
         }
         var remaining = Array(0..<12).filter { !goodIndices.contains($0) }
-        remaining.shuffle()
+        remaining.shuffle(using: &rng)
         let slotsNeeded = max(0, goodCount - goodIndices.count)
         for i in 0..<min(slotsNeeded, remaining.count) {
             goodIndices.insert(remaining[i])
@@ -513,8 +806,8 @@ enum LeagueGenerator {
 
         func genAttr(_ index: Int) -> Int {
             goodIndices.contains(index)
-                ? Int.random(in: goodFloor...goodCeiling)
-                : Int.random(in: weakFloor...weakCeiling)
+                ? Int.random(in: goodFloor...goodCeiling, using: &rng)
+                : Int.random(in: weakFloor...weakCeiling, using: &rng)
         }
 
         let tmpPlayCalling = genAttr(0)
@@ -534,7 +827,9 @@ enum LeagueGenerator {
             + tmpGamePlanning + tmpScouting + tmpRecruiting + tmpMotivation
             + tmpDiscipline + tmpMedia + tmpContract + tmpMorale) / 12
 
-        let salary = Self.salaryForCoach(role: role, ovr: ovr, yearsExperience: experience)
+        let salary = Self.salaryForCoach(
+            role: role, ovr: ovr, yearsExperience: experience, using: &rng
+        )
 
         let coach = Coach(
             firstName: first,
@@ -562,10 +857,12 @@ enum LeagueGenerator {
             teamID: teamID,
             yearsExperience: experience
         )
-        coach.background = CoachingEngine.generateBackground(for: coach)
+        // Before `generateBackground`: the blurb reads pronouns off the coach.
+        coach.gender = gender
+        coach.background = CoachingEngine.generateBackground(for: coach, using: &rng)
         // Pre-existing staff: treat as hired before career starts
         coach.hireSeasonYear = 2025
-        coach.contractYearsRemaining = Int.random(in: 1...4)
+        coach.contractYearsRemaining = Int.random(in: 1...4, using: &rng)
         return coach
     }
 
@@ -581,13 +878,30 @@ enum LeagueGenerator {
         salary: Int,
         position: Position
     ) -> Int {
+        var rng = SystemRandomNumberGenerator()
+        return initialMorale(
+            personality: personality, age: age, depthIndex: depthIndex,
+            contractYears: contractYears, salary: salary, position: position, using: &rng
+        )
+    }
+
+    /// Seeded variant of `initialMorale`.
+    static func initialMorale<G: RandomNumberGenerator>(
+        personality: PersonalityArchetype,
+        age: Int,
+        depthIndex: Int,
+        contractYears: Int,
+        salary: Int,
+        position: Position,
+        using rng: inout G
+    ) -> Int {
         // Base morale: 65-75 (not a flat 70)
-        var morale = Int.random(in: 65...75)
+        var morale = Int.random(in: 65...75, using: &rng)
 
         // Contract situation
         if contractYears <= 1 {
             // Expiring contract: anxious = lower morale
-            morale -= Int.random(in: 5...10)
+            morale -= Int.random(in: 5...10, using: &rng)
         }
 
         // Salary perception (rough market value check)
@@ -607,30 +921,30 @@ enum LeagueGenerator {
             morale += 5
         } else if depthIndex >= 1 && age >= peakStart + 2 {
             // Veteran backup: frustrated
-            morale -= Int.random(in: 5...10)
+            morale -= Int.random(in: 5...10, using: &rng)
         }
 
         // Personality variance
         switch personality {
         case .teamLeader, .mentor, .steadyPerformer:
-            morale += Int.random(in: 0...5)
+            morale += Int.random(in: 0...5, using: &rng)
         case .dramaQueen:
-            morale -= Int.random(in: 3...8)
+            morale -= Int.random(in: 3...8, using: &rng)
         case .loneWolf:
-            morale -= Int.random(in: 0...5)
+            morale -= Int.random(in: 0...5, using: &rng)
         case .fieryCompetitor:
-            morale += Int.random(in: -3...3)
+            morale += Int.random(in: -3...3, using: &rng)
         case .classClown:
-            morale += Int.random(in: -2...4)
+            morale += Int.random(in: -2...4, using: &rng)
         case .quietProfessional, .feelPlayer:
-            morale += Int.random(in: -2...2)
+            morale += Int.random(in: -2...2, using: &rng)
         }
 
         return min(99, max(30, morale))
     }
 
     /// Rough average market salary for starter vs backup at a position (in thousands).
-    private static func averageMarketSalary(for position: Position, depthIndex: Int) -> Int {
+    static func averageMarketSalary(for position: Position, depthIndex: Int) -> Int {
         if depthIndex >= 2 { return 1_500 }
         if depthIndex == 1 {
             return position == .QB ? 3_000 : 2_500
@@ -655,28 +969,49 @@ enum LeagueGenerator {
 
     // MARK: - Helpers
 
+    /// Draws a generated veteran's age from a PYRAMID over the position's
+    /// career span instead of a flat uniform (plan §5 stage 6).
+    ///
+    /// `DEVELOPMENT_NFL_REFERENCE.md` §8 puts a real roster at median age
+    /// 25.5-26.5 with **≤ ~2 %** of players 33 or older; a uniform draw over
+    /// e.g. a quarterback's 22-38 span produced a league at median 28 with
+    /// **14 %** at 33+. That is not a cosmetic difference: `MultiSeasonSmokeTest`
+    /// retired 190-210 of those players in season one alone, and every one of
+    /// them came back as a draft pick from a pipeline calibrated elsewhere,
+    /// which is a large part of the measured OVR drift. The engine's own
+    /// steady state (median 25, 33+ ≈ 1.5 %) already matches the reference —
+    /// only the generator did not.
+    ///
+    /// Taking the smaller of two uniform draws puts the mean a third of the way
+    /// up the span rather than halfway and thins the tail quadratically, which
+    /// is the shape a fixed-size league with annual intake actually has.
     private static func randomAge(for position: Position) -> Int {
+        let span = careerAgeSpan(for: position)
+        return min(Int.random(in: span), Int.random(in: span))
+    }
+
+    private static func careerAgeSpan(for position: Position) -> ClosedRange<Int> {
         switch position {
         case .QB:
-            return Int.random(in: 22...38)
+            return 22...38
         case .RB, .FB:
-            return Int.random(in: 21...31)
+            return 21...31
         case .WR:
-            return Int.random(in: 21...34)
+            return 21...34
         case .TE:
-            return Int.random(in: 22...33)
+            return 22...33
         case .LT, .LG, .C, .RG, .RT:
-            return Int.random(in: 22...35)
+            return 22...35
         case .DE, .DT:
-            return Int.random(in: 22...34)
+            return 22...34
         case .OLB, .MLB:
-            return Int.random(in: 22...33)
+            return 22...33
         case .CB:
-            return Int.random(in: 21...33)
+            return 21...33
         case .FS, .SS:
-            return Int.random(in: 22...33)
+            return 22...33
         case .K, .P:
-            return Int.random(in: 22...40)
+            return 22...40
         }
     }
 
@@ -686,6 +1021,21 @@ enum LeagueGenerator {
     /// Higher OVR coaches command salaries toward the top of their role's range.
     /// Experience adds a slight bump (up to ~10% of the range).
     static func salaryForCoach(role: CoachRole, ovr: Int, yearsExperience: Int) -> Int {
+        var rng = SystemRandomNumberGenerator()
+        return salaryForCoach(role: role, ovr: ovr, yearsExperience: yearsExperience, using: &rng)
+    }
+
+    /// Seeded variant of `salaryForCoach`.
+    ///
+    /// The ±5 % noise term used to draw from the system generator even when the
+    /// caller had passed a seeded one, which made a template import produce a
+    /// different coach salary on every run — caught by
+    /// `LeagueTemplateValidation`'s determinism check (505/512 staff slots
+    /// differed on `salary` alone). Every generation path now threads its own
+    /// generator all the way down.
+    static func salaryForCoach<G: RandomNumberGenerator>(
+        role: CoachRole, ovr: Int, yearsExperience: Int, using rng: inout G
+    ) -> Int {
         let range = role.salaryRange
         let spread = range.max - range.min
 
@@ -703,7 +1053,7 @@ enum LeagueGenerator {
         let rawSalary = Double(range.min) + Double(spread) * (curvedOvrFraction * 0.90 + expFraction)
 
         // Add +-5% noise so coaches with identical OVR don't all cost the same
-        let noise = rawSalary * Double.random(in: -0.05...0.05)
+        let noise = rawSalary * Double.random(in: -0.05...0.05, using: &rng)
         let final = Int((rawSalary + noise).rounded())
 
         return min(range.max, max(range.min, final))
@@ -714,18 +1064,27 @@ enum LeagueGenerator {
     /// Returns a salary in thousands that reflects the player's position tier and depth.
     /// - depthIndex 0 = starter, 1 = backup, 2+ = deep depth
     private static func realisticSalary(for position: Position, yearsPro: Int, depthIndex: Int) -> Int {
+        var rng = SystemRandomNumberGenerator()
+        return realisticSalary(for: position, yearsPro: yearsPro, depthIndex: depthIndex, using: &rng)
+    }
+
+    /// Seeded variant of `realisticSalary` — the fixed-league template import
+    /// approximates every contract from the same role/age bands, deterministically.
+    static func realisticSalary<G: RandomNumberGenerator>(
+        for position: Position, yearsPro: Int, depthIndex: Int, using rng: inout G
+    ) -> Int {
         // Rookies / deep backups
         if yearsPro <= 1 || depthIndex >= 2 {
-            return Int.random(in: 750...2_000)
+            return Int.random(in: 750...2_000, using: &rng)
         }
 
         // Backup tier (depthIndex == 1)
         if depthIndex == 1 {
             switch position {
             case .QB:
-                return Int.random(in: 1_000...5_000)
+                return Int.random(in: 1_000...5_000, using: &rng)
             default:
-                return Int.random(in: 1_000...4_000)
+                return Int.random(in: 1_000...4_000, using: &rng)
             }
         }
 
@@ -733,49 +1092,49 @@ enum LeagueGenerator {
         switch position {
         case .QB:
             // Franchise QBs: $30M-$55M+
-            return Int.random(in: 30_000...55_000)
+            return Int.random(in: 30_000...55_000, using: &rng)
         case .WR:
             // WR1: $18M-$35M
-            return Int.random(in: 18_000...35_000)
+            return Int.random(in: 18_000...35_000, using: &rng)
         case .DE:
             // Edge rushers: $18M-$33M
-            return Int.random(in: 18_000...33_000)
+            return Int.random(in: 18_000...33_000, using: &rng)
         case .OLB:
             // OLB: $14M-$25M
-            return Int.random(in: 14_000...25_000)
+            return Int.random(in: 14_000...25_000, using: &rng)
         case .CB:
             // Top corners: $14M-$25M
-            return Int.random(in: 14_000...25_000)
+            return Int.random(in: 14_000...25_000, using: &rng)
         case .LT:
             // Left tackles: $16M-$28M
-            return Int.random(in: 16_000...28_000)
+            return Int.random(in: 16_000...28_000, using: &rng)
         case .RT:
             // Right tackles: $12M-$22M
-            return Int.random(in: 12_000...22_000)
+            return Int.random(in: 12_000...22_000, using: &rng)
         case .DT:
             // Interior DL: $12M-$22M
-            return Int.random(in: 12_000...22_000)
+            return Int.random(in: 12_000...22_000, using: &rng)
         case .MLB:
             // MLB: $10M-$20M
-            return Int.random(in: 10_000...20_000)
+            return Int.random(in: 10_000...20_000, using: &rng)
         case .FS, .SS:
             // Safeties: $8M-$18M
-            return Int.random(in: 8_000...18_000)
+            return Int.random(in: 8_000...18_000, using: &rng)
         case .TE:
             // Tight ends: $8M-$16M
-            return Int.random(in: 8_000...16_000)
+            return Int.random(in: 8_000...16_000, using: &rng)
         case .LG, .RG, .C:
             // Interior OL: $8M-$16M
-            return Int.random(in: 8_000...16_000)
+            return Int.random(in: 8_000...16_000, using: &rng)
         case .RB:
             // RBs devalued: $4M-$14M
-            return Int.random(in: 4_000...14_000)
+            return Int.random(in: 4_000...14_000, using: &rng)
         case .FB:
             // Fullbacks: $1.5M-$4M
-            return Int.random(in: 1_500...4_000)
+            return Int.random(in: 1_500...4_000, using: &rng)
         case .K, .P:
             // Specialists: $2M-$6M
-            return Int.random(in: 2_000...6_000)
+            return Int.random(in: 2_000...6_000, using: &rng)
         }
     }
 
@@ -786,15 +1145,23 @@ enum LeagueGenerator {
     /// - Mid-career (3-6 years pro): 2-4 years
     /// - Young players on rookie deals (0-2 years pro): 3-4 years
     private static func realisticContractYears(yearsPro: Int, age: Int) -> Int {
+        var rng = SystemRandomNumberGenerator()
+        return realisticContractYears(yearsPro: yearsPro, age: age, using: &rng)
+    }
+
+    /// Seeded variant of `realisticContractYears`.
+    static func realisticContractYears<G: RandomNumberGenerator>(
+        yearsPro: Int, age: Int, using rng: inout G
+    ) -> Int {
         if yearsPro <= 2 {
             // Young players on rookie deals
-            return Int.random(in: 3...4)
+            return Int.random(in: 3...4, using: &rng)
         } else if yearsPro <= 6 {
             // Mid-career players
-            return Int.random(in: 2...4)
+            return Int.random(in: 2...4, using: &rng)
         } else {
             // Veteran stars — expiring contracts create drama
-            return Int.random(in: 1...2)
+            return Int.random(in: 1...2, using: &rng)
         }
     }
 
@@ -802,6 +1169,15 @@ enum LeagueGenerator {
 
     /// Sets initial position and scheme familiarity for generated players.
     private static func initializePlayerFamiliarity(players: [Player], coaches: [Coach]) {
+        var rng = SystemRandomNumberGenerator()
+        initializePlayerFamiliarity(players: players, coaches: coaches, using: &rng)
+    }
+
+    /// Seeded variant of `initializePlayerFamiliarity` — the fixed-league
+    /// template import runs the exact same rules through its own generator.
+    static func initializePlayerFamiliarity<G: RandomNumberGenerator>(
+        players: [Player], coaches: [Coach], using rng: inout G
+    ) {
         let oc = coaches.first { $0.role == .offensiveCoordinator }
         let dc = coaches.first { $0.role == .defensiveCoordinator }
 
@@ -814,24 +1190,24 @@ enum LeagueGenerator {
                 let viablePositions = VersatilityEngine.viablePositions(for: player)
                 for (pos, rating) in viablePositions where rating >= .unconvincing && pos != player.position {
                     let maxFam = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: pos)
-                    let startFam = Int.random(in: 10...min(maxFam, 20 + player.yearsPro * 5))
+                    let startFam = Int.random(in: 10...min(maxFam, 20 + player.yearsPro * 5), using: &rng)
                     player.positionFamiliarity[pos.rawValue] = startFam
                 }
             }
 
             // Scheme familiarity from team's current coordinator schemes
             if let offScheme = oc?.offensiveScheme, player.position.side == .offense {
-                player.schemeFamiliarity[offScheme.rawValue] = Int.random(in: 55...85)
+                player.schemeFamiliarity[offScheme.rawValue] = Int.random(in: 55...85, using: &rng)
             }
             if let defScheme = dc?.defensiveScheme, player.position.side == .defense {
-                player.schemeFamiliarity[defScheme.rawValue] = Int.random(in: 55...85)
+                player.schemeFamiliarity[defScheme.rawValue] = Int.random(in: 55...85, using: &rng)
             }
 
             // Baseline scheme familiarity from career history (based on yearsPro).
             // Veterans have played in multiple schemes over their careers, so they
             // should have non-zero familiarity in several schemes — not just the
             // current team's scheme.
-            assignCareerSchemeFamiliarity(player: player)
+            assignCareerSchemeFamiliarity(player: player, using: &rng)
         }
     }
 
@@ -841,7 +1217,9 @@ enum LeagueGenerator {
     /// the system they spent the most time in. Existing values (e.g. set by the team's
     /// current coordinator above) are preserved if they are higher than the career
     /// baseline assignment.
-    private static func assignCareerSchemeFamiliarity(player: Player) {
+    private static func assignCareerSchemeFamiliarity<G: RandomNumberGenerator>(
+        player: Player, using rng: inout G
+    ) {
         // Determine the appropriate scheme pool based on position side.
         // Offense and defense players generally only learn schemes for their side;
         // special teams (K/P) and FB are exposed to either, so we pick from both.
@@ -864,14 +1242,14 @@ enum LeagueGenerator {
         case 0...2:
             // Rookies / sophomores: 1 scheme at 30-50%, others 0%.
             // (College + brief NFL exposure to a single system.)
-            guard let primary = schemes.randomElement() else { return }
-            assignments = [(primary, Int.random(in: 30...50))]
+            guard let primary = schemes.randomElement(using: &rng) else { return }
+            assignments = [(primary, Int.random(in: 30...50, using: &rng))]
 
         case 3...5:
             // Developing veterans: 2 schemes at 30-60%, 1 expert at 60-80%.
-            var pool = schemes.shuffled()
+            var pool = schemes.shuffled(using: &rng)
             guard pool.count >= 3 else {
-                assignments = pool.map { ($0, Int.random(in: 30...60)) }
+                assignments = pool.map { ($0, Int.random(in: 30...60, using: &rng)) }
                 applyAssignments(assignments, to: player)
                 return
             }
@@ -879,17 +1257,17 @@ enum LeagueGenerator {
             let secondary1 = pool.removeFirst()
             let secondary2 = pool.removeFirst()
             assignments = [
-                (expert, Int.random(in: 60...80)),
-                (secondary1, Int.random(in: 30...60)),
-                (secondary2, Int.random(in: 30...60))
+                (expert, Int.random(in: 60...80, using: &rng)),
+                (secondary1, Int.random(in: 30...60, using: &rng)),
+                (secondary2, Int.random(in: 30...60, using: &rng))
             ]
 
         case 6...9:
             // Established veterans: 1 expert at 70-90%, 2 secondaries at 50-75%,
             // 1 weak/older exposure at 20-40%.
-            var pool = schemes.shuffled()
+            var pool = schemes.shuffled(using: &rng)
             guard pool.count >= 4 else {
-                assignments = pool.map { ($0, Int.random(in: 50...75)) }
+                assignments = pool.map { ($0, Int.random(in: 50...75, using: &rng)) }
                 applyAssignments(assignments, to: player)
                 return
             }
@@ -898,22 +1276,22 @@ enum LeagueGenerator {
             let secondary2 = pool.removeFirst()
             let weak = pool.removeFirst()
             assignments = [
-                (expert, Int.random(in: 70...90)),
-                (secondary1, Int.random(in: 50...75)),
-                (secondary2, Int.random(in: 50...75)),
-                (weak, Int.random(in: 20...40))
+                (expert, Int.random(in: 70...90, using: &rng)),
+                (secondary1, Int.random(in: 50...75, using: &rng)),
+                (secondary2, Int.random(in: 50...75, using: &rng)),
+                (weak, Int.random(in: 20...40, using: &rng))
             ]
 
         default:
             // Long veterans (10+): 1 expert at 80-95%, 3-4 secondaries at 50-80%.
-            var pool = schemes.shuffled()
-            let secondaryCount = min(Int.random(in: 3...4), max(0, pool.count - 1))
+            var pool = schemes.shuffled(using: &rng)
+            let secondaryCount = min(Int.random(in: 3...4, using: &rng), max(0, pool.count - 1))
             guard !pool.isEmpty else { return }
             let expert = pool.removeFirst()
-            var built: [(String, Int)] = [(expert, Int.random(in: 80...95))]
+            var built: [(String, Int)] = [(expert, Int.random(in: 80...95, using: &rng))]
             for _ in 0..<secondaryCount {
                 guard !pool.isEmpty else { break }
-                built.append((pool.removeFirst(), Int.random(in: 50...80)))
+                built.append((pool.removeFirst(), Int.random(in: 50...80, using: &rng)))
             }
             assignments = built
         }
@@ -937,32 +1315,42 @@ enum LeagueGenerator {
 
     /// Sets initial scheme expertise for generated coaches.
     private static func initializeSchemeExpertise(for coaches: [Coach]) {
+        var rng = SystemRandomNumberGenerator()
+        initializeSchemeExpertise(for: coaches, using: &rng)
+    }
+
+    /// Seeded variant of `initializeSchemeExpertise` — the template import uses
+    /// these EXACT veteran-coach rules (primary 75-95, family 40-65, an
+    /// adaptability-scaled baseline everywhere else).
+    static func initializeSchemeExpertise<G: RandomNumberGenerator>(
+        for coaches: [Coach], using rng: inout G
+    ) {
         for coach in coaches {
             var expertise: [String: Int] = [:]
 
             // Primary offensive scheme: high expertise
             if let offScheme = coach.offensiveScheme {
-                expertise[offScheme.rawValue] = Int.random(in: 75...95)
+                expertise[offScheme.rawValue] = Int.random(in: 75...95, using: &rng)
                 for related in schemeFamilyMembers(offScheme) where related != offScheme {
-                    expertise[related.rawValue] = Int.random(in: 40...65)
+                    expertise[related.rawValue] = Int.random(in: 40...65, using: &rng)
                 }
             }
 
             // Primary defensive scheme: high expertise
             if let defScheme = coach.defensiveScheme {
-                expertise[defScheme.rawValue] = Int.random(in: 75...95)
+                expertise[defScheme.rawValue] = Int.random(in: 75...95, using: &rng)
                 for related in schemeFamilyMembers(defScheme) where related != defScheme {
-                    expertise[related.rawValue] = Int.random(in: 40...65)
+                    expertise[related.rawValue] = Int.random(in: 40...65, using: &rng)
                 }
             }
 
             // Adaptability gives higher baseline for unknown schemes
             let baselineBonus = Int(Double(coach.adaptability) / 99.0 * 15.0)
             for scheme in OffensiveScheme.allCases where expertise[scheme.rawValue] == nil {
-                expertise[scheme.rawValue] = 15 + baselineBonus + Int.random(in: 0...10)
+                expertise[scheme.rawValue] = 15 + baselineBonus + Int.random(in: 0...10, using: &rng)
             }
             for scheme in DefensiveScheme.allCases where expertise[scheme.rawValue] == nil {
-                expertise[scheme.rawValue] = 15 + baselineBonus + Int.random(in: 0...10)
+                expertise[scheme.rawValue] = 15 + baselineBonus + Int.random(in: 0...10, using: &rng)
             }
 
             coach.schemeExpertise = expertise
@@ -992,8 +1380,9 @@ enum LeagueGenerator {
     }
 
     /// Position-attribute range based on depth tier.
-    /// Starters (0): 75-95, Backups (1): 60-80, Deep depth (2+): 50-70.
-    private static func positionAttributeRange(forDepth depthIndex: Int) -> ClosedRange<Int> {
+    /// Starters (0): 75-95, Backups (1): 60-80, Deep depth (2+): 50-70 —
+    /// shifted by `ageLevelShift` at the draw site.
+    static func positionAttributeRange(forDepth depthIndex: Int) -> ClosedRange<Int> {
         switch depthIndex {
         case 0:  return 75...95
         case 1:  return 60...80
@@ -1001,83 +1390,92 @@ enum LeagueGenerator {
         }
     }
 
-    /// Returns a single random attribute value within the depth tier's range.
-    private static func rndAttr(_ depthIndex: Int) -> Int {
-        Int.random(in: positionAttributeRange(forDepth: depthIndex))
+    /// Returns a single random attribute value within the depth tier's range,
+    /// moved by the player's `ageLevelShift` (plan §5 stage 6) and clamped to
+    /// the legal 1-99 rating scale.
+    private static func rndAttr(_ depthIndex: Int, _ shift: Int = 0) -> Int {
+        let base = positionAttributeRange(forDepth: depthIndex)
+        let low = min(99, max(1, base.lowerBound + shift))
+        let high = min(99, max(low, base.upperBound + shift))
+        return Int.random(in: low...high)
     }
 
-    private static func randomPositionAttributes(for position: Position, depthIndex: Int) -> PositionAttributes {
+    private static func randomPositionAttributes(
+        for position: Position,
+        depthIndex: Int,
+        ageShift: Int
+    ) -> PositionAttributes {
         switch position {
         case .QB:
             return .quarterback(QBAttributes(
-                armStrength: rndAttr(depthIndex),
-                accuracyShort: rndAttr(depthIndex),
-                accuracyMid: rndAttr(depthIndex),
-                accuracyDeep: rndAttr(depthIndex),
-                pocketPresence: rndAttr(depthIndex),
-                scrambling: rndAttr(depthIndex)
+                armStrength: rndAttr(depthIndex, ageShift),
+                accuracyShort: rndAttr(depthIndex, ageShift),
+                accuracyMid: rndAttr(depthIndex, ageShift),
+                accuracyDeep: rndAttr(depthIndex, ageShift),
+                pocketPresence: rndAttr(depthIndex, ageShift),
+                scrambling: rndAttr(depthIndex, ageShift)
             ))
 
         case .WR:
             return .wideReceiver(WRAttributes(
-                routeRunning: rndAttr(depthIndex),
-                catching: rndAttr(depthIndex),
-                release: rndAttr(depthIndex),
-                spectacularCatch: rndAttr(depthIndex)
+                routeRunning: rndAttr(depthIndex, ageShift),
+                catching: rndAttr(depthIndex, ageShift),
+                release: rndAttr(depthIndex, ageShift),
+                spectacularCatch: rndAttr(depthIndex, ageShift)
             ))
 
         case .RB, .FB:
             return .runningBack(RBAttributes(
-                vision: rndAttr(depthIndex),
-                elusiveness: rndAttr(depthIndex),
-                breakTackle: rndAttr(depthIndex),
-                receiving: rndAttr(depthIndex)
+                vision: rndAttr(depthIndex, ageShift),
+                elusiveness: rndAttr(depthIndex, ageShift),
+                breakTackle: rndAttr(depthIndex, ageShift),
+                receiving: rndAttr(depthIndex, ageShift)
             ))
 
         case .TE:
             return .tightEnd(TEAttributes(
-                blocking: rndAttr(depthIndex),
-                catching: rndAttr(depthIndex),
-                routeRunning: rndAttr(depthIndex),
-                speed: rndAttr(depthIndex)
+                blocking: rndAttr(depthIndex, ageShift),
+                catching: rndAttr(depthIndex, ageShift),
+                routeRunning: rndAttr(depthIndex, ageShift),
+                speed: rndAttr(depthIndex, ageShift)
             ))
 
         case .LT, .LG, .C, .RG, .RT:
             return .offensiveLine(OLAttributes(
-                runBlock: rndAttr(depthIndex),
-                passBlock: rndAttr(depthIndex),
-                pull: rndAttr(depthIndex),
-                anchor: rndAttr(depthIndex)
+                runBlock: rndAttr(depthIndex, ageShift),
+                passBlock: rndAttr(depthIndex, ageShift),
+                pull: rndAttr(depthIndex, ageShift),
+                anchor: rndAttr(depthIndex, ageShift)
             ))
 
         case .DE, .DT:
             return .defensiveLine(DLAttributes(
-                passRush: rndAttr(depthIndex),
-                blockShedding: rndAttr(depthIndex),
-                powerMoves: rndAttr(depthIndex),
-                finesseMoves: rndAttr(depthIndex)
+                passRush: rndAttr(depthIndex, ageShift),
+                blockShedding: rndAttr(depthIndex, ageShift),
+                powerMoves: rndAttr(depthIndex, ageShift),
+                finesseMoves: rndAttr(depthIndex, ageShift)
             ))
 
         case .OLB, .MLB:
             return .linebacker(LBAttributes(
-                tackling: rndAttr(depthIndex),
-                zoneCoverage: rndAttr(depthIndex),
-                manCoverage: rndAttr(depthIndex),
-                blitzing: rndAttr(depthIndex)
+                tackling: rndAttr(depthIndex, ageShift),
+                zoneCoverage: rndAttr(depthIndex, ageShift),
+                manCoverage: rndAttr(depthIndex, ageShift),
+                blitzing: rndAttr(depthIndex, ageShift)
             ))
 
         case .CB, .FS, .SS:
             return .defensiveBack(DBAttributes(
-                manCoverage: rndAttr(depthIndex),
-                zoneCoverage: rndAttr(depthIndex),
-                press: rndAttr(depthIndex),
-                ballSkills: rndAttr(depthIndex)
+                manCoverage: rndAttr(depthIndex, ageShift),
+                zoneCoverage: rndAttr(depthIndex, ageShift),
+                press: rndAttr(depthIndex, ageShift),
+                ballSkills: rndAttr(depthIndex, ageShift)
             ))
 
         case .K, .P:
             return .kicking(KickingAttributes(
-                kickPower: rndAttr(depthIndex),
-                kickAccuracy: rndAttr(depthIndex)
+                kickPower: rndAttr(depthIndex, ageShift),
+                kickAccuracy: rndAttr(depthIndex, ageShift)
             ))
         }
     }

@@ -1,0 +1,766 @@
+{
+ "asOf": "2026-02-28",
+ "description": "NFL coaching staffs as of February 2026, i.e. after every completed hire of the 2026 hiring cycle (10 head-coach changes: ARI, ATL, BAL, BUF, CLE, LV, MIA, NYG, PIT, TEN). Head coach / OC / DC names and sinceYear values are taken verbatim from the Wikipedia 'current coordinators/head coaches' list pages and the per-team Template:<Team> staff pages, which are the same source family for all 32 teams. offSchemeGuess and defSchemeGuess are inferences mapped to the closest enum value; the real scheme name and coaching lineage are in notes. Any inferred (non-quoted) claim is marked '(inferred)' or 'LOW CONFIDENCE'.",
+ "schemeEnums": {
+  "off": [
+   "WestCoast",
+   "AirRaid",
+   "Spread",
+   "PowerRun",
+   "Shanahan",
+   "ProPassing",
+   "RPO",
+   "Option"
+  ],
+  "def": [
+   "Base34",
+   "Base43",
+   "Cover3",
+   "PressMan",
+   "Tampa2",
+   "Multiple",
+   "Hybrid"
+  ],
+  "source": "dynasty/dynasty/Domain/Enums/Scheme.swift"
+ },
+ "caveats": [
+  "Snapshot fetched 2026-07-29; Wikipedia 'current' list pages reflect the July 2026 state. Every sinceYear of 2026 traces to a January/February 2026 hire, and no post-February 2026 staff change was found in the sources, so the file is treated as the February 2026 state.",
+  "Tampa Bay has no separate defensive coordinator: HC Todd Bowles has held the DC title since 2019 and calls the defense himself. defensiveCoordinator is null there.",
+  "Offensive play-caller assignments are sourced (FantasyIndex team-by-team 2026 ranking). Defensive play-caller assignments for the six defensive head coaches (BAL, MIA, NYJ, SEA, TB, TEN) are derived arithmetically from the published counts (18 offensive HC play-callers, 6 defensive HC play-callers, 8 CEO head coaches: LAC, WAS, PHI, ATL, NYG, DET, NE, HOU) and are marked '(inferred)' in the notes.",
+  "Special teams coordinators, assistant/associate head coaches and GMs were captured in the raw sources under _sources/coaches/ but are only surfaced in notes, not as schema fields."
+ ],
+ "staffs": {
+  "ARI": {
+   "headCoach": {
+    "name": "Mike LaFleur",
+    "sinceYear": 2026,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Nathaniel Hackett",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Nick Rallis",
+    "sinceYear": 2023
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "Nickel",
+   "notes": "LaFleur hired Feb 1, 2026 (replaced fired Jonathan Gannon); first HC job, previously Rams OC 2023-25. Real off scheme: Shanahan/McVay outside-zone + play-action; LaFleur calls the plays, Hackett runs the room. Real def scheme: Rallis' Fangio/Gannon-derived two-high nickel. Rallis is the lone coordinator holdover. [scheme] offScheme=Shanahan / defScheme=Multiple are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=Nickel.",
+   "offScheme": "Shanahan",
+   "defScheme": "Multiple",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "ATL": {
+   "headCoach": {
+    "name": "Kevin Stefanski",
+    "sinceYear": 2026,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Tommy Rees",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Jeff Ulbrich",
+    "sinceYear": 2025
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "CoverThree",
+   "notes": "Stefanski hired Jan 17, 2026 (replaced fired Raheem Morris); Browns HC 2020-25. Real off scheme: Kubiak/Shanahan outside-zone play-action under center. Stefanski does NOT call plays - Rees (his Cleveland play-caller, followed him from CLE) calls them. Real def scheme: Ulbrich's Saleh/Seattle 4-3 with single-high Cover 3. [scheme] offScheme=Shanahan / defScheme=Cover3 are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=CoverThree.",
+   "offScheme": "Shanahan",
+   "defScheme": "Cover3",
+   "baseDefense2025": "Base 3-4 D"
+  },
+  "BAL": {
+   "headCoach": {
+    "name": "Jesse Minter",
+    "sinceYear": 2026,
+    "background": "defense"
+   },
+   "offensiveCoordinator": {
+    "name": "Declan Doyle",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Anthony Weaver",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "ProStyle",
+   "defSchemeGuess": "Hybrid",
+   "notes": "Minter hired Jan 22, 2026 after John Harbaugh was fired following 18 seasons; Minter was Chargers DC 2024-25. Full coordinator turnover. Real off scheme: Doyle blends Sean Payton (Saints/Broncos) and Ben Johnson (Bears OC 2025) motion-heavy play-action; Doyle calls plays and is a first-time NFL play-caller. Real def scheme: Ravens/Macdonald-lineage multiple front with heavy pre-snap disguise; Minter is a defensive-HC play-caller (inferred from league-wide 2026 play-caller counts), Weaver runs the unit. [scheme] offScheme=ProPassing / defScheme=Hybrid are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=ProStyle / defSchemeGuess=Hybrid.",
+   "offScheme": "ProPassing",
+   "defScheme": "Hybrid",
+   "baseDefense2025": "Base 3-4 D"
+  },
+  "BUF": {
+   "headCoach": {
+    "name": "Joe Brady",
+    "sinceYear": 2026,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Pete Carmichael Jr.",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Jim Leonhard",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "Spread",
+   "defSchemeGuess": "Nickel",
+   "notes": "Brady promoted from OC to HC Jan 27, 2026 after Sean McDermott was fired (9 seasons, 98-50); first HC job. Real off scheme: up-tempo 11-personnel spread/quick game; Brady keeps play-calling, Carmichael (Payton/Saints tree, Broncos senior offensive assistant 2024-25) is OC. Real def scheme: Leonhard's Fangio-influenced two-high nickel (Broncos asst HC / def pass game coordinator 2025). [scheme] offScheme=Spread / defScheme=Multiple are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=Spread / defSchemeGuess=Nickel.",
+   "offScheme": "Spread",
+   "defScheme": "Multiple",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "CAR": {
+   "headCoach": {
+    "name": "Dave Canales",
+    "sinceYear": 2024,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Brad Idzik",
+    "sinceYear": 2024
+   },
+   "defensiveCoordinator": {
+    "name": "Ejiro Evero",
+    "sinceYear": 2023
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "34",
+   "notes": "Fully intact staff - no 2026 changes. Real off scheme: Canales' Seattle/Shanahan outside zone plus heavy play-action; Canales calls the plays. Real def scheme: Evero's Fangio-derived 3-4 with two-high shells. [scheme] offScheme=Shanahan / defScheme=Base34 are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=34.",
+   "offScheme": "Shanahan",
+   "defScheme": "Base34",
+   "baseDefense2025": "Base 3-4 D"
+  },
+  "CHI": {
+   "headCoach": {
+    "name": "Ben Johnson",
+    "sinceYear": 2025,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Press Taylor",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Dennis Allen",
+    "sinceYear": 2025
+   },
+   "offSchemeGuess": "ProStyle",
+   "defSchemeGuess": "ManPress",
+   "notes": "Johnson enters year 2 (11-6, NFC North title in 2025). Taylor promoted from passing game coordinator after Declan Doyle left to be Ravens OC. Real off scheme: Johnson's motion-heavy, condensed-set multiple pro-style with a gap-scheme run game; Johnson calls the plays. Real def scheme: Dennis Allen's aggressive 4-3 with man coverage and high pressure rate. [scheme] offScheme=ProPassing / defScheme=PressMan are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=ProStyle / defSchemeGuess=ManPress.",
+   "offScheme": "ProPassing",
+   "defScheme": "PressMan",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "CIN": {
+   "headCoach": {
+    "name": "Zac Taylor",
+    "sinceYear": 2019,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Dan Pitcher",
+    "sinceYear": 2024
+   },
+   "defensiveCoordinator": {
+    "name": "Al Golden",
+    "sinceYear": 2025
+   },
+   "offSchemeGuess": "Spread",
+   "defSchemeGuess": "43",
+   "notes": "Longest-tenured staff continuity in the AFC North after the division's other three teams turned over. Real off scheme: McVay-derived 11-personnel spread passing game; Taylor calls the plays, Pitcher is OC. Real def scheme: Golden's multiple 4-3 with zone-match coverage. Darrin Simmons doubles as assistant head coach / special teams coordinator. [scheme] offScheme=Spread / defScheme=Base43 are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=Spread / defSchemeGuess=43.",
+   "offScheme": "Spread",
+   "defScheme": "Base43",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "CLE": {
+   "headCoach": {
+    "name": "Todd Monken",
+    "sinceYear": 2026,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Travis Switzer",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Mike Rutenberg",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "Vertical",
+   "defSchemeGuess": "CoverThree",
+   "notes": "Monken hired Jan 28, 2026 after Kevin Stefanski was fired (6 seasons); Monken was Ravens OC 2023-25 and Southern Miss HC 2013-15. Coordinators announced Feb 20, 2026. Real off scheme: Monken's explosive vertical play-action passing game; Monken calls the plays, Switzer (Ravens run game coordinator 2024-25) is OC. Real def scheme: Rutenberg comes from the Saleh/Schwartz wide-9 front (49ers 2020, Jets LBs 2021-24, Falcons def pass game coordinator 2025) with heavy back-end coverage/blitz disguise; first-time DC. [scheme] offScheme=ProPassing / defScheme=Cover3 are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=Vertical / defSchemeGuess=CoverThree.",
+   "offScheme": "ProPassing",
+   "defScheme": "Cover3",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "DAL": {
+   "headCoach": {
+    "name": "Brian Schottenheimer",
+    "sinceYear": 2025,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Klayton Adams",
+    "sinceYear": 2025
+   },
+   "defensiveCoordinator": {
+    "name": "Christian Parker",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "Nickel",
+   "notes": "Schottenheimer enters year 2 (7-9-1). Offense intact; defense turned over to Parker (Eagles DBs coach / pass game coordinator 2024-25). Real off scheme: zone-and-gap run game with play-action; Schottenheimer calls the plays, Adams is OC. Real def scheme: Parker brings the Fangio/Eagles two-high nickel. Nick Sorensen is special teams coordinator. [scheme] offScheme=PowerRun / defScheme=Multiple are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=Nickel. Offense re-graded from the notes: notes say 'zone-and-gap run game' - Schottenheimer's gap-scheme run game is not a wide-zone offense.",
+   "offScheme": "PowerRun",
+   "defScheme": "Multiple",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "DEN": {
+   "headCoach": {
+    "name": "Sean Payton",
+    "sinceYear": 2023,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Davis Webb",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Vance Joseph",
+    "sinceYear": 2023
+   },
+   "offSchemeGuess": "WestCoast",
+   "defSchemeGuess": "ManPress",
+   "notes": "Webb promoted from QBs coach / pass game coordinator after Denver's 2025 season. Real off scheme: Payton's Saints system (West Coast/Coryell hybrid, heavy play-action); Payton calls the plays. Real def scheme: Vance Joseph's blitz-heavy 3-4 with man coverage. Darren Rizzi is assistant head coach / special teams coordinator. [scheme] offScheme=WestCoast / defScheme=PressMan are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WestCoast / defSchemeGuess=ManPress.",
+   "offScheme": "WestCoast",
+   "defScheme": "PressMan",
+   "baseDefense2025": "Base 3-4 D"
+  },
+  "DET": {
+   "headCoach": {
+    "name": "Dan Campbell",
+    "sinceYear": 2021,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Drew Petzing",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Kelvin Sheppard",
+    "sinceYear": 2025
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "43",
+   "notes": "Petzing hired to replace John Morton after a 9-8 2025 (Cardinals OC 2023-25). Real off scheme: Petzing's Stefanski/Kubiak outside-zone play-action; Petzing calls the plays - Campbell is one of eight 2026 'CEO' head coaches who call neither side. Real def scheme: Sheppard's Aaron Glenn-tree multiple 4-3 with a high blitz rate. Mike Kafka joined as passing game coordinator after his Giants interim-HC stint. [scheme] offScheme=Shanahan / defScheme=Base43 are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=43.",
+   "offScheme": "Shanahan",
+   "defScheme": "Base43",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "GB": {
+   "headCoach": {
+    "name": "Matt LaFleur",
+    "sinceYear": 2019,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Adam Stenavich",
+    "sinceYear": 2022
+   },
+   "defensiveCoordinator": {
+    "name": "Jonathan Gannon",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "Nickel",
+   "notes": "Gannon replaces Jeff Hafley (left to be Dolphins HC) after being fired as Cardinals HC. Real off scheme: LaFleur/Shanahan-tree outside zone with play-action; LaFleur calls the plays, Stenavich is OC. Real def scheme: Gannon's Fangio-derived two-high nickel. [scheme] offScheme=Shanahan / defScheme=Multiple are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=Nickel.",
+   "offScheme": "Shanahan",
+   "defScheme": "Multiple",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "HOU": {
+   "headCoach": {
+    "name": "DeMeco Ryans",
+    "sinceYear": 2023,
+    "background": "defense"
+   },
+   "offensiveCoordinator": {
+    "name": "Nick Caley",
+    "sinceYear": 2025
+   },
+   "defensiveCoordinator": {
+    "name": "Matt Burke",
+    "sinceYear": 2023
+   },
+   "offSchemeGuess": "ProStyle",
+   "defSchemeGuess": "CoverThree",
+   "notes": "Staff intact. Real off scheme: Caley blends the Patriots' Erhardt-Perkins system with McVay/Rams play-action concepts; Caley calls the plays - Ryans is a 2026 'CEO' head coach who calls neither side. Real def scheme: Ryans/Burke run the 49ers-Seattle wide-9 4-3 with single-high Cover 3 as the base. [scheme] offScheme=ProPassing / defScheme=Cover3 are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=ProStyle / defSchemeGuess=CoverThree.",
+   "offScheme": "ProPassing",
+   "defScheme": "Cover3",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "IND": {
+   "headCoach": {
+    "name": "Shane Steichen",
+    "sinceYear": 2023,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Jim Bob Cooter",
+    "sinceYear": 2023
+   },
+   "defensiveCoordinator": {
+    "name": "Lou Anarumo",
+    "sinceYear": 2025
+   },
+   "offSchemeGuess": "RPO",
+   "defSchemeGuess": "Hybrid",
+   "notes": "Staff intact. Real off scheme: Eagles/Chargers-style RPO and play-action; Steichen calls the plays, Cooter is OC. Real def scheme: Anarumo's disguise-heavy multiple coverage system. [scheme] offScheme=RPO / defScheme=Hybrid are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=RPO / defSchemeGuess=Hybrid.",
+   "offScheme": "RPO",
+   "defScheme": "Hybrid",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "JAX": {
+   "headCoach": {
+    "name": "Liam Coen",
+    "sinceYear": 2025,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Grant Udinski",
+    "sinceYear": 2025
+   },
+   "defensiveCoordinator": {
+    "name": "Anthony Campanile",
+    "sinceYear": 2025
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "43",
+   "notes": "Staff intact after a 13-4 debut season and AFC South title. Real off scheme: Coen's McVay-derived outside-zone play-action; Coen calls the plays, Udinski is OC. Real def scheme: Campanile's multiple 4-3 with man-heavy pressure. Shane Waldron is assistant HC / pass game coordinator; Heath Farwell is associate HC / special teams coordinator. [scheme] offScheme=Shanahan / defScheme=Base43 are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=43.",
+   "offScheme": "Shanahan",
+   "defScheme": "Base43",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "KC": {
+   "headCoach": {
+    "name": "Andy Reid",
+    "sinceYear": 2013,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Eric Bieniemy",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Steve Spagnuolo",
+    "sinceYear": 2019
+   },
+   "offSchemeGuess": "WestCoast",
+   "defSchemeGuess": "43",
+   "notes": "Bieniemy returns as OC (Chiefs OC 2018-22, Commanders OC 2023, UCLA 2024, Bears RBs 2025) after Matt Nagy left to be Giants OC. Real off scheme: Reid's West Coast system; Reid calls the plays. Real def scheme: Spagnuolo's multiple 4-3 with exotic simulated-pressure packages. Dave Toub is assistant head coach / special teams coordinator. [scheme] offScheme=WestCoast / defScheme=Base43 are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WestCoast / defSchemeGuess=43.",
+   "offScheme": "WestCoast",
+   "defScheme": "Base43",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "LAC": {
+   "headCoach": {
+    "name": "Jim Harbaugh",
+    "sinceYear": 2024,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Mike McDaniel",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Chris O'Leary",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "Hybrid",
+   "notes": "Both coordinator jobs turned over: McDaniel (fired Dolphins HC 2022-25) takes the offense, O'Leary (Chargers safeties coach 2024, Western Michigan DC 2025) replaces Jesse Minter, who became Ravens HC. Real off scheme: McDaniel's Shanahan-tree outside zone with heavy motion; McDaniel calls the plays - Harbaugh is a 2026 'CEO' head coach. Real def scheme: O'Leary keeps Minter's zone-heavy, communication-driven multiple defense (his stated goal is 'mastery over multiplicity') with a wider DL front. [scheme] offScheme=Shanahan / defScheme=Hybrid are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=Hybrid.",
+   "offScheme": "Shanahan",
+   "defScheme": "Hybrid",
+   "baseDefense2025": "Base 3-4 D"
+  },
+  "LV": {
+   "headCoach": {
+    "name": "Klint Kubiak",
+    "sinceYear": 2026,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Andrew Janocko",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Rob Leonard",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "Hybrid",
+   "notes": "Kubiak confirmed as HC on Feb 8, 2026, immediately after the Seahawks won Super Bowl LX where he was OC; replaced Pete Carroll (fired Jan 5 after a 3-14 season). First HC job. Real off scheme: Kubiak-family wide-zone run with bootleg/play-action; Kubiak calls the plays, Janocko (Seahawks QBs coach 2025) is OC. Real def scheme: Leonard (Raiders DL / run game coordinator 2023-25) continues Patrick Graham's multiple-front system. Mike McCoy is assistant head coach. [scheme] offScheme=Shanahan / defScheme=Hybrid are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=Hybrid.",
+   "offScheme": "Shanahan",
+   "defScheme": "Hybrid",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "MIA": {
+   "headCoach": {
+    "name": "Jeff Hafley",
+    "sinceYear": 2026,
+    "background": "defense"
+   },
+   "offensiveCoordinator": {
+    "name": "Bobby Slowik",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Sean Duggan",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "43",
+   "notes": "Hafley hired Jan 19, 2026 after Mike McDaniel was fired Jan 8; Hafley was Packers DC 2024-25 and Boston College HC 2020-23. GM also turned over (Chris Grier out, Jon-Eric Sullivan in). Real off scheme: Slowik (Dolphins senior passing game coordinator 2025, ex-Texans OC) keeps the Shanahan-tree outside-zone play-action; Slowik calls the plays. Real def scheme: Hafley's simplified, fast-playing 4-3 with two-high shells; Hafley is a defensive-HC play-caller (inferred from league-wide 2026 play-caller counts), Duggan (Packers LBs 2025) is DC. [scheme] offScheme=Shanahan / defScheme=Base43 are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=43.",
+   "offScheme": "Shanahan",
+   "defScheme": "Base43",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "MIN": {
+   "headCoach": {
+    "name": "Kevin O'Connell",
+    "sinceYear": 2022,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Wes Phillips",
+    "sinceYear": 2022
+   },
+   "defensiveCoordinator": {
+    "name": "Brian Flores",
+    "sinceYear": 2023
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "ManPress",
+   "notes": "Coaching staff intact; GM Kwesi Adofo-Mensah fired Jan 30, 2026 and replaced by Nolan Teasley. Real off scheme: O'Connell/Phillips McVay-derived outside-zone play-action; O'Connell calls the plays. Real def scheme: Flores' league-leading blitz rate with Cover 0 / man pressure behind it. [scheme] offScheme=Shanahan / defScheme=PressMan are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=ManPress.",
+   "offScheme": "Shanahan",
+   "defScheme": "PressMan",
+   "baseDefense2025": "Base 3-4 D"
+  },
+  "NE": {
+   "headCoach": {
+    "name": "Mike Vrabel",
+    "sinceYear": 2025,
+    "background": "defense"
+   },
+   "offensiveCoordinator": {
+    "name": "Josh McDaniels",
+    "sinceYear": 2025
+   },
+   "defensiveCoordinator": {
+    "name": "Zak Kuhr",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "ProStyle",
+   "defSchemeGuess": "Hybrid",
+   "notes": "Vrabel's second year after a 14-3 season and Super Bowl LX loss to Seattle. Kuhr promoted from inside linebackers coach - he had called the defense from Week 2 of 2025 onward; Terrell Williams moved to assistant HC. Real off scheme: McDaniels' Erhardt-Perkins system; McDaniels calls the plays - Vrabel is a 2026 'CEO' head coach. Real def scheme: Vrabel/Kuhr aggressive multiple front built on simulated pressures and line stunts (2nd-highest stunt rate in the NFL in 2025). [scheme] offScheme=ProPassing / defScheme=Hybrid are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=ProStyle / defSchemeGuess=Hybrid.",
+   "offScheme": "ProPassing",
+   "defScheme": "Hybrid",
+   "baseDefense2025": "Base 3-4 D"
+  },
+  "NO": {
+   "headCoach": {
+    "name": "Kellen Moore",
+    "sinceYear": 2025,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Doug Nussmeier",
+    "sinceYear": 2025
+   },
+   "defensiveCoordinator": {
+    "name": "Brandon Staley",
+    "sinceYear": 2025
+   },
+   "offSchemeGuess": "Spread",
+   "defSchemeGuess": "Nickel",
+   "notes": "Staff intact after a 6-11 debut season. Real off scheme: Moore's condensed-formation spread with heavy motion; Moore calls the plays, Nussmeier is OC. Real def scheme: Staley's Fangio-derived two-high nickel. [scheme] offScheme=Spread / defScheme=Multiple are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=Spread / defSchemeGuess=Nickel.",
+   "offScheme": "Spread",
+   "defScheme": "Multiple",
+   "baseDefense2025": "Base 3-4 D"
+  },
+  "NYG": {
+   "headCoach": {
+    "name": "John Harbaugh",
+    "sinceYear": 2026,
+    "background": "special"
+   },
+   "offensiveCoordinator": {
+    "name": "Matt Nagy",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Dennard Wilson",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "WestCoast",
+   "defSchemeGuess": "Hybrid",
+   "notes": "Harbaugh hired after being fired by Baltimore; Brian Daboll had been fired Nov 10, 2025 with Mike Kafka as interim (2-5). Harbaugh's own background is special teams (Eagles STC 1998-2006). Real off scheme: Nagy's Andy Reid West Coast tree (Chiefs OC 2023-25); Nagy calls the plays - Harbaugh is a 2026 'CEO' head coach. Real def scheme: Wilson's Ravens/Macdonald-influenced multiple defense (Titans DC 2024-25). Chris Horton is assistant head coach / special teams coordinator. [scheme] offScheme=WestCoast / defScheme=Hybrid are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WestCoast / defSchemeGuess=Hybrid.",
+   "offScheme": "WestCoast",
+   "defScheme": "Hybrid",
+   "baseDefense2025": "Base 3-4 D"
+  },
+  "NYJ": {
+   "headCoach": {
+    "name": "Aaron Glenn",
+    "sinceYear": 2025,
+    "background": "defense"
+   },
+   "offensiveCoordinator": {
+    "name": "Frank Reich",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Brian Duker",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "Vertical",
+   "defSchemeGuess": "ManPress",
+   "notes": "Both coordinators replaced after a 3-14 2025. Real off scheme: Reich's Coryell-derived vertical passing game (Colts HC 2018-22, Panthers HC 2023, Stanford interim HC 2025); Reich calls the plays. Real def scheme: Glenn's Lions-lineage man-heavy multiple front; Glenn is a defensive-HC play-caller (inferred from league-wide 2026 play-caller counts), Duker (Dolphins secondary / pass game coordinator 2024-25) is DC. [scheme] offScheme=ProPassing / defScheme=PressMan are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=Vertical / defSchemeGuess=ManPress.",
+   "offScheme": "ProPassing",
+   "defScheme": "PressMan",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "PHI": {
+   "headCoach": {
+    "name": "Nick Sirianni",
+    "sinceYear": 2021,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Sean Mannion",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Vic Fangio",
+    "sinceYear": 2024
+   },
+   "offSchemeGuess": "RPO",
+   "defSchemeGuess": "Nickel",
+   "notes": "Mannion promoted from Packers QBs coach (2025) to OC; Fangio stays. Real off scheme: the Eagles' RPO-heavy zone-run offense with the Tush Push short-yardage package; Mannion calls the plays as a first-time NFL play-caller - Sirianni is a 2026 'CEO' head coach. Real def scheme: Fangio's two-high nickel. Clint Hurtt is associate head coach / senior defensive assistant. [scheme] offScheme=RPO / defScheme=Multiple are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=RPO / defSchemeGuess=Nickel.",
+   "offScheme": "RPO",
+   "defScheme": "Multiple",
+   "baseDefense2025": "Base 3-4 D"
+  },
+  "PIT": {
+   "headCoach": {
+    "name": "Mike McCarthy",
+    "sinceYear": 2026,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Brian Angelichio",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Patrick Graham",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "WestCoast",
+   "defSchemeGuess": "Hybrid",
+   "notes": "McCarthy hired after Mike Tomlin resigned Jan 13, 2026 following 19 seasons (193-114-2). Real off scheme: McCarthy's Walsh/Holmgren West Coast system; McCarthy calls the plays, Angelichio (Vikings TEs / pass game coordinator 2022-25) is OC. Real def scheme: Graham's multiple fronts with heavy disguise (Raiders DC 2022-25). Joe Whitt Jr. is assistant head coach / secondary. [scheme] offScheme=WestCoast / defScheme=Hybrid are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WestCoast / defSchemeGuess=Hybrid.",
+   "offScheme": "WestCoast",
+   "defScheme": "Hybrid",
+   "baseDefense2025": "Base 3-4 D"
+  },
+  "SEA": {
+   "headCoach": {
+    "name": "Mike Macdonald",
+    "sinceYear": 2024,
+    "background": "defense"
+   },
+   "offensiveCoordinator": {
+    "name": "Brian Fleury",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Aden Durde",
+    "sinceYear": 2024
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "Hybrid",
+   "notes": "Defending Super Bowl LX champions. Fleury (49ers TEs / run game coordinator 2022-25) replaces Klint Kubiak, who left to be Raiders HC. Real off scheme: Shanahan-tree outside-zone run game and play-action; Fleury calls the plays as a first-time NFL play-caller. Real def scheme: Macdonald/Durde Ravens-style multiple front with heavy disguise; Macdonald is a defensive-HC play-caller (inferred from league-wide 2026 play-caller counts). Jay Harbaugh is STC. [scheme] offScheme=Shanahan / defScheme=Hybrid are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=Hybrid.",
+   "offScheme": "Shanahan",
+   "defScheme": "Hybrid",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "SF": {
+   "headCoach": {
+    "name": "Kyle Shanahan",
+    "sinceYear": 2017,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Klay Kubiak",
+    "sinceYear": 2025
+   },
+   "defensiveCoordinator": {
+    "name": "Raheem Morris",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "43",
+   "notes": "Morris returns to San Francisco as DC after being fired as Falcons HC; Matt Eberflus is assistant head coach (defense). Real off scheme: Shanahan's outside-zone play-action; Shanahan calls the plays, Klay Kubiak is OC. Real def scheme: the 49ers' wide-9 4-3 with mixed single- and split-safety structures. [scheme] offScheme=Shanahan / defScheme=Base43 are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=43.",
+   "offScheme": "Shanahan",
+   "defScheme": "Base43",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "TB": {
+   "headCoach": {
+    "name": "Todd Bowles",
+    "sinceYear": 2022,
+    "background": "defense"
+   },
+   "offensiveCoordinator": {
+    "name": "Zac Robinson",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": null,
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "ManPress",
+   "notes": "NO SEPARATE DEFENSIVE COORDINATOR: Bowles has held the DC title since 2019 and calls the defense himself; the 2026 staff lists only a defensive pass game coordinator (George Edwards) and a run game coordinator (Larry Foote). Robinson (Falcons OC 2024-25) replaces Liam Coen's successor on offense. Real off scheme: Robinson's McVay-derived outside-zone play-action; Robinson calls the plays. Real def scheme: Bowles' blitz-heavy 3-4 with amoeba fronts and Cover 1 / Cover 0 behind them. [scheme] offScheme=Shanahan / defScheme=PressMan are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=ManPress.",
+   "offScheme": "Shanahan",
+   "defScheme": "PressMan",
+   "baseDefense2025": "Base 3-4 D"
+  },
+  "TEN": {
+   "headCoach": {
+    "name": "Robert Saleh",
+    "sinceYear": 2026,
+    "background": "defense"
+   },
+   "offensiveCoordinator": {
+    "name": "Brian Daboll",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Gus Bradley",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "Spread",
+   "defSchemeGuess": "CoverThree",
+   "notes": "Saleh hired after Brian Callahan was fired Oct 13, 2025 (Mike McCoy interim). Full staff rebuild. Real off scheme: Daboll's Bills-lineage spread with RPO and designed-QB-run elements (Giants HC 2022-25); Daboll calls the plays. Real def scheme: Bradley's original Seattle 4-3 under with Cover 3 - the system Saleh himself came up in; Saleh is a defensive-HC play-caller (inferred from league-wide 2026 play-caller counts). John Fassel is assistant head coach / special teams coordinator. [scheme] offScheme=Spread / defScheme=Cover3 are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=Spread / defSchemeGuess=CoverThree.",
+   "offScheme": "Spread",
+   "defScheme": "Cover3",
+   "baseDefense2025": "Base 3-4 D"
+  },
+  "WAS": {
+   "headCoach": {
+    "name": "Dan Quinn",
+    "sinceYear": 2024,
+    "background": "defense"
+   },
+   "offensiveCoordinator": {
+    "name": "David Blough",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Daronte Jones",
+    "sinceYear": 2026
+   },
+   "offSchemeGuess": "Spread",
+   "defSchemeGuess": "CoverThree",
+   "notes": "Both coordinators new: Blough promoted from assistant QBs coach (2024-25) after Kliff Kingsbury left for the Rams; Jones arrives from Minnesota (DBs / pass game coordinator 2022-25). Real off scheme: continuity from Kingsbury's Air Raid-influenced spread - LOW CONFIDENCE, Blough is a first-time play-caller and may shift the system; Blough calls the plays - Quinn is a 2026 'CEO' head coach. Real def scheme: Quinn's Seattle-derived 4-3 with Cover 3 roots, plus Flores-influenced pressure looks from Jones. [scheme] offScheme=Spread / defScheme=Cover3 are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=Spread / defSchemeGuess=CoverThree.",
+   "offScheme": "Spread",
+   "defScheme": "Cover3",
+   "baseDefense2025": "Base 4-3 D"
+  },
+  "LA": {
+   "headCoach": {
+    "name": "Sean McVay",
+    "sinceYear": 2017,
+    "background": "offense"
+   },
+   "offensiveCoordinator": {
+    "name": "Nathan Scheelhaase",
+    "sinceYear": 2026
+   },
+   "defensiveCoordinator": {
+    "name": "Chris Shula",
+    "sinceYear": 2024
+   },
+   "offSchemeGuess": "WideZone",
+   "defSchemeGuess": "Nickel",
+   "notes": "Scheelhaase promoted from passing game coordinator after Mike LaFleur left to be Cardinals HC; Kliff Kingsbury joined as assistant head coach. Real off scheme: McVay's outside-zone play-action; McVay still calls the plays. Real def scheme: Shula's Fangio-influenced two-high nickel. [scheme] offScheme=Shanahan / defScheme=Multiple are the Domain/Enums/Scheme.swift raw values; compiled guesses were offSchemeGuess=WideZone / defSchemeGuess=Nickel.",
+   "offScheme": "Shanahan",
+   "defScheme": "Multiple",
+   "baseDefense2025": "Base 3-4 D"
+  }
+ },
+ "sources": [
+  "https://en.wikipedia.org/wiki/List_of_current_NFL_head_coaches",
+  "https://en.wikipedia.org/wiki/List_of_current_NFL_offensive_coordinators",
+  "https://en.wikipedia.org/wiki/List_of_current_NFL_defensive_coordinators",
+  "https://en.wikipedia.org/wiki/2026_NFL_season",
+  "https://en.wikipedia.org/wiki/Template:Arizona_Cardinals_staff (and the equivalent Template:<Team>_staff page for all 32 clubs; raw wikitext saved to tools/league-data/raw/_sources/coaches/staff_<ABBR>.wiki)",
+  "https://fantasyindex.com/2026/02/20/around-the-nfl/ranking-the-offensive-play-callers",
+  "https://www.acmepackingcompany.com/green-bay-packers-coaching-staff/79405/the-nfls-play-callers-are-set-for-2026-only-4-new-names-get-a-chance",
+  "https://www.nfl.com/news/browns-hiring-falcons-defensive-pass-game-coordinator-mike-rutenberg-as-defensive-coordinator",
+  "https://www.chargers.com/news/chris-oleary-jesse-minter-defensive-coordinator",
+  "https://www.patriots.com/news/analysis-patriots-promote-zak-kuhr-to-defensive-coordinator-terrell-williams-named-assistant-head-coach",
+  "https://www.cbssports.com/nfl/news/nfl-coaching-grades-2026-offensive-defensive-coordinator-hires/"
+ ],
+ "schemeGuessVocabulary": {
+  "off": [
+   "AirRaid",
+   "ProStyle",
+   "RPO",
+   "SmashMouth",
+   "Spread",
+   "Vertical",
+   "WestCoast",
+   "WideZone"
+  ],
+  "def": [
+   "34",
+   "43",
+   "CoverThree",
+   "Hybrid",
+   "ManPress",
+   "Nickel",
+   "Tampa2"
+  ],
+  "note": "the vocabulary of offSchemeGuess/defSchemeGuess, kept for traceability"
+ },
+ "schemeMapping": {
+  "off": {
+   "WideZone": "Shanahan",
+   "ProStyle": "ProPassing",
+   "Vertical": "ProPassing",
+   "SmashMouth": "PowerRun",
+   "WestCoast": "WestCoast",
+   "Spread": "Spread",
+   "RPO": "RPO",
+   "AirRaid": "AirRaid"
+  },
+  "def": {
+   "34": "Base34",
+   "43": "Base43",
+   "CoverThree": "Cover3",
+   "ManPress": "PressMan",
+   "Nickel": "Multiple",
+   "Hybrid": "Hybrid",
+   "Tampa2": "Tampa2"
+  },
+  "overrides": [
+   "DAL: Shanahan -> PowerRun (notes say 'zone-and-gap run game' - Schottenheimer's gap-scheme run game is not a wide-zone offense)"
+  ]
+ },
+ "abbrNormalization": [
+  "LAR->LA (already normalised in the file on disk)"
+ ],
+ "teamAbbrConvention": "nflverse (LA = Rams, LAC = Chargers)"
+}

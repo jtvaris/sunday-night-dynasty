@@ -26,8 +26,18 @@ enum CareerArcEngine {
         userTeamID: UUID?,
         modelContext: ModelContext
     ) -> [GemFlashback] {
+        // Provenance, not pick number. `draftPickNumber` used to be a de-facto
+        // "this career drafted him" flag because only `DraftEngine` ever set it —
+        // but a Fixed-2026 template import now stamps the (fuzzed) real pick on
+        // every imported veteran, which dragged ~1338 of them into this pass on
+        // day one: three fetches each, and a `CareerArcState` row inserted and
+        // rewritten every offseason that nothing ever reads. None of them can
+        // produce output either, because a pick grade only exists for a player
+        // this career actually drafted, and every product below is behind
+        // `if let pickGrade`. `draftedByTeamID` is written by `DraftEngine` alone,
+        // so keying on it restores parity with a generated league.
         let playerFetch = FetchDescriptor<Player>(
-            predicate: #Predicate { $0.draftPickNumber != nil && $0.yearsPro >= 1 }
+            predicate: #Predicate { $0.draftedByTeamID != nil && $0.yearsPro >= 1 }
         )
         let players = (try? modelContext.fetch(playerFetch)) ?? []
 

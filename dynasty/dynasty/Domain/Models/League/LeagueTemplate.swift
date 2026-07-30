@@ -1,0 +1,267 @@
+import Foundation
+
+/// A baked, constant league snapshot produced by `tools/league-data/make_templates.py`
+/// (`docs/REALISTIC_LEAGUE_PLAN.md` phase 3).
+///
+/// These are **plain `Codable` value types, deliberately NOT `@Model`**: the
+/// template is read-only import data, not persistence. `LeagueTemplateImporter`
+/// turns one of these into the SwiftData graph (`League` / `Team` / `Player` /
+/// `Coach` / `DraftPick` / `PlayerSeasonHistory`) exactly once, at career
+/// creation; nothing about the template survives into the save file.
+///
+/// Two profiles are baked from the same raw snapshot (`docs/ANONYMIZATION_SPEC.md`
+/// §6.1) and share this one schema:
+/// - `publish` — fictional players/coaches/team nicknames, OVR arcs only.
+///   Bundled in **every** build.
+/// - `dev` — sound-alike names and exact stat lines. Bundled in **DEBUG only**
+///   (see `LeagueTemplateLoader` for the mechanism).
+///
+/// Every field the transform emits is decoded except `calibration.teamOffsets`
+/// (a heterogeneous `[[String, Double]]` JSON array that carries no runtime
+/// meaning — the offsets are already baked into each `ratingTarget`).
+struct LeagueTemplate: Codable {
+
+    // MARK: - Profile
+
+    /// Which anonymization profile a template file was baked with.
+    enum Profile: String, Codable, CaseIterable, Identifiable {
+        /// `league_2026_publish.json` — ships in every build.
+        case publish
+        /// `league_2026_dev.json` — DEBUG builds only.
+        case dev
+
+        var id: String { rawValue }
+
+        /// Bundle resource base name (no extension).
+        var resourceName: String {
+            switch self {
+            case .publish: return "league_2026_publish"
+            case .dev:     return "league_2026_dev"
+            }
+        }
+
+        /// Label for the new-career league-source picker.
+        var displayName: String {
+            switch self {
+            case .publish: return "Fixed 2026"
+            case .dev:     return "Fixed 2026 (Dev)"
+            }
+        }
+    }
+
+    // MARK: - Header
+
+    var schemaVersion: Int
+    /// Seed the transform tool used. Every per-entity RNG in the importer is
+    /// derived from this value, so one template always imports identically.
+    var globalSeed: UInt64
+    var generated: String
+    /// Calendar year the snapshot describes (2026 — the first playable season).
+    var leagueYear: Int
+    var source: Source?
+    /// Division name (e.g. `"AFC East"`) → team keys.
+    var divisions: [String: [String]]
+    /// Round-1 order by team key. Informational: the authoritative order is the
+    /// `overallPick` on every `Pick` row.
+    var draftOrder2026: [String]
+    var calibration: Calibration?
+    var profile: Profile
+    var teams: [TeamTemplate]
+
+    struct Source: Codable {
+        var raw: String?
+        var rawSchemaVersion: Int?
+        var snapshotDate: String?
+    }
+
+    struct Calibration: Codable {
+        var decision: String?
+        var referenceSimReps: Int?
+        var teamSpreadTarget: Double?
+    }
+
+    // MARK: - Team
+
+    struct TeamTemplate: Codable {
+        var identity: Identity
+        var record2025: Record
+        /// `"AFC"` / `"NFC"`.
+        var conference: String
+        /// `"East"` / `"North"` / `"South"` / `"West"`.
+        var division: String
+        /// Human label, e.g. `"Base 4-3 D"`. Informational; the playable scheme
+        /// is `staff.defScheme`.
+        var baseDefense: String?
+        var picks2026: [Pick]
+        var staff: Staff
+        var players: [PlayerTemplate]
+    }
+
+    struct Identity: Codable {
+        /// Key used inside the template (`"LA"` for the Rams).
+        var key: String
+        /// Abbreviation the app's own `NFLTeamData` uses (`"LAR"`).
+        var appAbbr: String
+        var city: String
+        var nickname: String
+        var fullName: String
+    }
+
+    struct Record: Codable {
+        var wins: Int
+        var losses: Int
+        var ties: Int
+        var madePlayoffs: Bool?
+        var playoffResult: String?
+    }
+
+    // MARK: - Picks
+
+    struct Pick: Codable {
+        var round: Int
+        var overallPick: Int
+        /// Team key the pick originally belonged to — differs from the owning
+        /// team when the pick was traded.
+        var originalTeam: String
+        /// `"standard"`, `"compensatory"`, or a resolution slot.
+        var pickType: String?
+        /// Ownership chain, already stripped of player names by the transform
+        /// (`ANONYMIZATION_SPEC.md` §5): `"from SEA via JAX"`.
+        var via: String?
+    }
+
+    // MARK: - Staff
+
+    struct Staff: Codable {
+        var hc: StaffMember?
+        var oc: StaffMember?
+        var dc: StaffMember?
+        /// `OffensiveScheme.rawValue` — QA gate 2 verified all 32 decode.
+        var offScheme: String?
+        /// `DefensiveScheme.rawValue`.
+        var defScheme: String?
+    }
+
+    struct StaffMember: Codable {
+        var name: String
+        /// Season the coach took the job (jittered ±1 in the publish profile).
+        var sinceYear: Int?
+        /// `"offense"` / `"defense"` / `"special"`.
+        var background: String?
+        /// Pre-assigned portrait id (`FaceLibrary`), unique across the whole
+        /// template. See `PlayerTemplate.faceID` for why it is baked.
+        var faceID: String?
+    }
+
+    // MARK: - Player
+
+    struct PlayerTemplate: Codable {
+        /// 16-hex-char stable id from the transform. Drives the per-player seed.
+        var id: String
+        var name: String
+        var firstName: String?
+        var lastName: String?
+        /// `Position.rawValue`.
+        var pos: String
+        var jersey: Int?
+        var age: Int
+        var yearsPro: Int
+        var college: String?
+        var draftYear: Int?
+        var draftRound: Int?
+        /// Real overall pick — dev profile only (`null` in publish).
+        var draftPick: Int?
+        /// Fuzzed overall pick — publish profile only (`null` in dev).
+        var fuzzedPick: Int?
+        var heightIn: Int?
+        var weightLb: Int?
+        /// The OVR this player must end up with. The importer solves the game's
+        /// own attributes to hit it exactly.
+        var ratingTarget: Int
+        /// Mean-zero integer tilts (±8) on the game's own position-attribute
+        /// names — they shape the player without moving his overall.
+        var areaHints: [String: Int]?
+        /// Pre-solved ceiling (the phase-2 `veteranPotential` rule, applied by
+        /// the transform).
+        var potential: Int
+        /// Raw role from the source data. Only a hint — see `role`.
+        var roleHint: String?
+        var depthRankHint: Int?
+        /// Per-season editorial OVR arc, oldest first.
+        var careerArc: [ArcRow]?
+        /// Real per-season production. **dev profile only** — always `null` in
+        /// the publish file (`ANONYMIZATION_SPEC.md` §3).
+        var statLines: [StatLine]?
+        var notes: [String]?
+        /// 1-based depth-chart rank at this position, **re-derived from the
+        /// ratings** by the transform (QA carry-in #1).
+        var depthRank: Int?
+        /// `"starter"` / `"rotation"` / `"backup"` / `"depth"`, also re-derived.
+        var role: String?
+        /// Pre-assigned portrait id from the face library (`face_01234`),
+        /// unique across every person in the template.
+        ///
+        /// Baked by the transform rather than drawn at import because the
+        /// runtime picker (`FaceLibrary.assignFace`) hashes the person's
+        /// `UUID`, and the importer mints a fresh one on every import — a
+        /// fixed league that picked at runtime would show different portraits
+        /// each time it was created. `nil` only for a template baked before
+        /// phase 4, which `FaceLibrary.backfill` then fills in.
+        var faceID: String?
+
+        /// Overall pick of record for whichever profile this row came from.
+        var effectiveDraftPick: Int? { fuzzedPick ?? draftPick }
+
+        /// 0-based depth index, the shape `LeagueGenerator` uses everywhere.
+        var depthIndex: Int { max(0, (depthRank ?? 1) - 1) }
+    }
+
+    struct ArcRow: Codable {
+        var year: Int
+        /// Team key, or `nil` for a season not spent on an NFL roster.
+        var team: String?
+        var ovr: Int
+        var role: String?
+        /// Games played — dev profile only.
+        var gp: Int?
+        /// Games started — dev profile only.
+        var gs: Int?
+    }
+
+    struct StatLine: Codable {
+        var year: Int
+        var team: String?
+        var gp: Int?
+        var gs: Int?
+        var snapShare: Double?
+        /// Position-family stat bag; integers arrive as whole doubles.
+        ///
+        /// The values are `Double?`, not `Double`: the source data carries
+        /// explicit `null` for categories that were not tracked in a given
+        /// season (penalties before the snap-count era, passer rating for a
+        /// non-passer). Decoding them as non-optional made the whole dev
+        /// template fail to load.
+        var stats: [String: Double?]?
+
+        /// A single stat, `nil` when absent or explicitly null.
+        func stat(_ key: String) -> Double? {
+            guard let value = stats?[key] else { return nil }
+            return value
+        }
+    }
+}
+
+// MARK: - Convenience
+
+extension LeagueTemplate {
+
+    /// Total players across all 32 rosters.
+    var playerCount: Int { teams.reduce(0) { $0 + $1.players.count } }
+
+    /// Every 2026 pick in the template, paired with the team key that OWNS it.
+    var allPicks: [(ownerKey: String, pick: Pick)] {
+        teams.flatMap { team in
+            team.picks2026.map { (team.identity.key, $0) }
+        }
+    }
+}

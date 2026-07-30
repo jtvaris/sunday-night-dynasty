@@ -1,0 +1,3922 @@
+{
+ "schemaNote": "2026 NFL draft pick ownership reconstructed as of the February 2026 offseason snapshot (after the 2025 season / Super Bowl LX, before the March 2026 league year). Ownership = original team plus every trade completed on or before 2026-02-28. March 2026 league-year trades and draft-day trades are NOT applied; they are listed in postFebruaryTrades so they can be replayed if wanted. Convenient fact: no 2026 pick changed hands between the 2025 trade deadline (Nov 4, 2025) and Mar 11, 2026, so this snapshot is stable for all of Nov 2025 - Feb 2026.",
+ "snapshotDate": "2026-02-28",
+ "teamAbbrConvention": "nflverse / roster_2025.csv style. Los Angeles Rams = \"LA\", Las Vegas Raiders = \"LV\", Kansas City = \"KC\", Green Bay = \"GB\", New Orleans = \"NO\", New England = \"NE\", San Francisco = \"SF\", Tampa Bay = \"TB\", Washington = \"WAS\", Jacksonville = \"JAX\", LA Chargers = \"LAC\".",
+ "draftOrder2026": [
+  "LV",
+  "NYJ",
+  "ARI",
+  "TEN",
+  "NYG",
+  "CLE",
+  "WAS",
+  "NO",
+  "KC",
+  "CIN",
+  "MIA",
+  "DAL",
+  "ATL",
+  "BAL",
+  "TB",
+  "IND",
+  "DET",
+  "MIN",
+  "CAR",
+  "GB",
+  "PIT",
+  "LAC",
+  "PHI",
+  "JAX",
+  "CHI",
+  "BUF",
+  "SF",
+  "HOU",
+  "LA",
+  "DEN",
+  "NE",
+  "SEA"
+ ],
+ "draftOrderNote": "Round-1 slot order listed by the team that ORIGINALLY owned each slot, per final 2025 standings and playoff finish: picks 1-18 = the 18 non-playoff teams by inverse record (strength-of-schedule tiebreak among the four 3-14 teams put LV 1st, NYJ 2nd, ARI 3rd, TEN 4th); 19-24 = wild-card losers by record (CAR, GB, PIT, LAC, PHI, JAX); 25-28 = divisional losers (CHI, BUF, SF, HOU); 29-30 = conference-championship losers (LA Rams, DEN); 31 = Super Bowl LX loser (NE); 32 = Super Bowl LX champion (SEA).",
+ "records2025": {
+  "ARI": {
+   "wins": 3,
+   "losses": 14,
+   "ties": 0
+  },
+  "ATL": {
+   "wins": 8,
+   "losses": 9,
+   "ties": 0
+  },
+  "BAL": {
+   "wins": 8,
+   "losses": 9,
+   "ties": 0
+  },
+  "BUF": {
+   "wins": 12,
+   "losses": 5,
+   "ties": 0
+  },
+  "CAR": {
+   "wins": 8,
+   "losses": 9,
+   "ties": 0
+  },
+  "CHI": {
+   "wins": 11,
+   "losses": 6,
+   "ties": 0
+  },
+  "CIN": {
+   "wins": 6,
+   "losses": 11,
+   "ties": 0
+  },
+  "CLE": {
+   "wins": 5,
+   "losses": 12,
+   "ties": 0
+  },
+  "DAL": {
+   "wins": 7,
+   "losses": 9,
+   "ties": 1
+  },
+  "DEN": {
+   "wins": 14,
+   "losses": 3,
+   "ties": 0
+  },
+  "DET": {
+   "wins": 9,
+   "losses": 8,
+   "ties": 0
+  },
+  "GB": {
+   "wins": 9,
+   "losses": 7,
+   "ties": 1
+  },
+  "HOU": {
+   "wins": 12,
+   "losses": 5,
+   "ties": 0
+  },
+  "IND": {
+   "wins": 8,
+   "losses": 9,
+   "ties": 0
+  },
+  "JAX": {
+   "wins": 13,
+   "losses": 4,
+   "ties": 0
+  },
+  "KC": {
+   "wins": 6,
+   "losses": 11,
+   "ties": 0
+  },
+  "LA": {
+   "wins": 12,
+   "losses": 5,
+   "ties": 0
+  },
+  "LAC": {
+   "wins": 11,
+   "losses": 6,
+   "ties": 0
+  },
+  "LV": {
+   "wins": 3,
+   "losses": 14,
+   "ties": 0
+  },
+  "MIA": {
+   "wins": 7,
+   "losses": 10,
+   "ties": 0
+  },
+  "MIN": {
+   "wins": 9,
+   "losses": 8,
+   "ties": 0
+  },
+  "NE": {
+   "wins": 14,
+   "losses": 3,
+   "ties": 0
+  },
+  "NO": {
+   "wins": 6,
+   "losses": 11,
+   "ties": 0
+  },
+  "NYG": {
+   "wins": 4,
+   "losses": 13,
+   "ties": 0
+  },
+  "NYJ": {
+   "wins": 3,
+   "losses": 14,
+   "ties": 0
+  },
+  "PHI": {
+   "wins": 11,
+   "losses": 6,
+   "ties": 0
+  },
+  "PIT": {
+   "wins": 10,
+   "losses": 7,
+   "ties": 0
+  },
+  "SEA": {
+   "wins": 14,
+   "losses": 3,
+   "ties": 0
+  },
+  "SF": {
+   "wins": 12,
+   "losses": 5,
+   "ties": 0
+  },
+  "TB": {
+   "wins": 8,
+   "losses": 9,
+   "ties": 0
+  },
+  "TEN": {
+   "wins": 3,
+   "losses": 14,
+   "ties": 0
+  },
+  "WAS": {
+   "wins": 5,
+   "losses": 12,
+   "ties": 0
+  }
+ },
+ "picks": {
+  "ARI": [
+   {
+    "round": 1,
+    "overallPick": 3,
+    "originalTeam": "ARI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "ARI"
+   },
+   {
+    "round": 2,
+    "overallPick": 34,
+    "originalTeam": "ARI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "ARI"
+   },
+   {
+    "round": 3,
+    "overallPick": 65,
+    "originalTeam": "ARI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "ARI"
+   },
+   {
+    "round": 4,
+    "overallPick": 104,
+    "originalTeam": "ARI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "ARI"
+   },
+   {
+    "round": 5,
+    "overallPick": 143,
+    "originalTeam": "ARI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "ARI"
+   },
+   {
+    "round": 6,
+    "overallPick": 183,
+    "originalTeam": "ARI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "ARI"
+   },
+   {
+    "round": 7,
+    "overallPick": 217,
+    "originalTeam": "ARI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "ARI"
+   }
+  ],
+  "ATL": [
+   {
+    "round": 2,
+    "overallPick": 48,
+    "originalTeam": "ATL",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "ATL"
+   },
+   {
+    "round": 3,
+    "overallPick": 79,
+    "originalTeam": "ATL",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "ATL"
+   },
+   {
+    "round": 4,
+    "overallPick": 114,
+    "originalTeam": "ATL",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DAL"
+   },
+   {
+    "round": 6,
+    "overallPick": 197,
+    "originalTeam": "ATL",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LA"
+   },
+   {
+    "round": 7,
+    "overallPick": 231,
+    "originalTeam": "ATL",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "ATL"
+   }
+  ],
+  "BAL": [
+   {
+    "round": 1,
+    "overallPick": 14,
+    "originalTeam": "BAL",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BAL"
+   },
+   {
+    "round": 2,
+    "overallPick": 45,
+    "originalTeam": "BAL",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BAL"
+   },
+   {
+    "round": 3,
+    "overallPick": 80,
+    "originalTeam": "BAL",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BAL"
+   },
+   {
+    "round": 4,
+    "overallPick": 115,
+    "originalTeam": "BAL",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BAL"
+   },
+   {
+    "round": 5,
+    "overallPick": 154,
+    "originalTeam": "BAL",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "SF"
+   },
+   {
+    "round": 5,
+    "overallPick": 162,
+    "originalTeam": "LAC",
+    "viaTradeNote": "from LAC (October 7, 2025): LA Chargers traded a fifth-round selection (162nd overall) and S Alohi Gilman to Baltimore in exchange for a 2027 seventh-round selection and LB Odafe Oweh.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BAL"
+   },
+   {
+    "round": 5,
+    "overallPick": 173,
+    "originalTeam": "BAL",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "BAL"
+   },
+   {
+    "round": 5,
+    "overallPick": 174,
+    "originalTeam": "BAL",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "BAL"
+   },
+   {
+    "round": 6,
+    "overallPick": 211,
+    "originalTeam": "DEN",
+    "viaTradeNote": "from DEN via NYJ via MIN via PHI (November 1, 2025): Philadelphia traded a sixth-round selection (211th overall) to Baltimore in exchange for a 2027 seventh-round selection and CB Jaire Alexander.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BAL"
+   },
+   {
+    "round": 7,
+    "overallPick": 250,
+    "originalTeam": "BAL",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "BAL"
+   },
+   {
+    "round": 7,
+    "overallPick": 253,
+    "originalTeam": "BAL",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "BAL"
+   }
+  ],
+  "BUF": [
+   {
+    "round": 1,
+    "overallPick": 26,
+    "originalTeam": "BUF",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "HOU"
+   },
+   {
+    "round": 2,
+    "overallPick": 60,
+    "originalTeam": "BUF",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TEN"
+   },
+   {
+    "round": 3,
+    "overallPick": 91,
+    "originalTeam": "BUF",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LV"
+   },
+   {
+    "round": 4,
+    "overallPick": 126,
+    "originalTeam": "BUF",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BUF"
+   },
+   {
+    "round": 5,
+    "overallPick": 168,
+    "originalTeam": "BUF",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DET"
+   },
+   {
+    "round": 7,
+    "overallPick": 220,
+    "originalTeam": "NYJ",
+    "viaTradeNote": "from NYJ (August 27, 2024)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BUF"
+   },
+   {
+    "round": 7,
+    "overallPick": 228,
+    "originalTeam": "DAL",
+    "viaTradeNote": "from DAL (March 12, 2025): Dallas traded a seventh-round selection (228th overall) and a 2025 fifth-round selection to Buffalo in exchange for a 2025 sixth-round selection and CB Kaiir Elam.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYJ"
+   }
+  ],
+  "CAR": [
+   {
+    "round": 1,
+    "overallPick": 19,
+    "originalTeam": "CAR",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CAR"
+   },
+   {
+    "round": 2,
+    "overallPick": 51,
+    "originalTeam": "CAR",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIN"
+   },
+   {
+    "round": 3,
+    "overallPick": 83,
+    "originalTeam": "CAR",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CAR"
+   },
+   {
+    "round": 4,
+    "overallPick": 119,
+    "originalTeam": "CAR",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "JAX"
+   },
+   {
+    "round": 5,
+    "overallPick": 158,
+    "originalTeam": "MIN",
+    "viaTradeNote": "from MIN (August 27, 2025): Minnesota traded a fifth-round selection (158th overall) and a 2027 fourth-round selection to Carolina in exchange for a conditional seventh-round selection (235th overall), a 2027 fifth-round selection and WR Adam Thielen.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIA"
+   },
+   {
+    "round": 5,
+    "overallPick": 159,
+    "originalTeam": "CAR",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIN"
+   },
+   {
+    "round": 6,
+    "overallPick": 200,
+    "originalTeam": "CAR",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIA"
+   }
+  ],
+  "CHI": [
+   {
+    "round": 1,
+    "overallPick": 25,
+    "originalTeam": "CHI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CHI"
+   },
+   {
+    "round": 2,
+    "overallPick": 57,
+    "originalTeam": "CHI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CHI"
+   },
+   {
+    "round": 3,
+    "overallPick": 89,
+    "originalTeam": "CHI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CHI"
+   },
+   {
+    "round": 4,
+    "overallPick": 129,
+    "originalTeam": "LA",
+    "viaTradeNote": "from LA (April 26, 2025): The LA Rams traded a fourth-round selection (129th overall) and a 2025 sixth-round selection to Chicago in exchange for a 2025 fifth-round selection.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CAR"
+   },
+   {
+    "round": 5,
+    "overallPick": 165,
+    "originalTeam": "CHI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TEN"
+   },
+   {
+    "round": 7,
+    "overallPick": 239,
+    "originalTeam": "PHI",
+    "viaTradeNote": "from PHI via JAX via CLE (November 4, 2025)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BUF"
+   },
+   {
+    "round": 7,
+    "overallPick": 241,
+    "originalTeam": "CHI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BUF"
+   }
+  ],
+  "CIN": [
+   {
+    "round": 1,
+    "overallPick": 10,
+    "originalTeam": "CIN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYG"
+   },
+   {
+    "round": 2,
+    "overallPick": 41,
+    "originalTeam": "CIN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CIN"
+   },
+   {
+    "round": 3,
+    "overallPick": 72,
+    "originalTeam": "CIN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CIN"
+   },
+   {
+    "round": 4,
+    "overallPick": 110,
+    "originalTeam": "CIN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYJ"
+   },
+   {
+    "round": 6,
+    "overallPick": 189,
+    "originalTeam": "CIN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CIN"
+   },
+   {
+    "round": 6,
+    "overallPick": 199,
+    "originalTeam": "DET",
+    "viaTradeNote": "from DET via CLE (October 7, 2025)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "SEA"
+   },
+   {
+    "round": 7,
+    "overallPick": 221,
+    "originalTeam": "NYG",
+    "viaTradeNote": "from NYG via DAL (November 4, 2025): Dallas traded a seventh-round selection (221st overall) to Cincinnati in exchange for LB Logan Wilson.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CIN"
+   },
+   {
+    "round": 7,
+    "overallPick": 226,
+    "originalTeam": "CIN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CIN"
+   }
+  ],
+  "CLE": [
+   {
+    "round": 1,
+    "overallPick": 6,
+    "originalTeam": "CLE",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "KC"
+   },
+   {
+    "round": 1,
+    "overallPick": 24,
+    "originalTeam": "JAX",
+    "viaTradeNote": "from JAX (April 24, 2025): Jacksonville traded a first-round selection (24th overall), and 2025 first-, second- and fourth-round selections to Cleveland in exchange for 2025 first-, fourth- and sixth-round selections.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CLE"
+   },
+   {
+    "round": 2,
+    "overallPick": 39,
+    "originalTeam": "CLE",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CLE"
+   },
+   {
+    "round": 3,
+    "overallPick": 70,
+    "originalTeam": "CLE",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "SF"
+   },
+   {
+    "round": 4,
+    "overallPick": 107,
+    "originalTeam": "CLE",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "SF"
+   },
+   {
+    "round": 5,
+    "overallPick": 141,
+    "originalTeam": "LV",
+    "viaTradeNote": "from LV (August 25, 2025): Las Vegas traded a fifth-round selection (141st overall) to Cleveland in exchange for QB Kenny Pickett.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "HOU"
+   },
+   {
+    "round": 5,
+    "overallPick": 146,
+    "originalTeam": "CLE",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CLE"
+   },
+   {
+    "round": 5,
+    "overallPick": 149,
+    "originalTeam": "CIN",
+    "viaTradeNote": "from CIN (October 7, 2025): Cincinnati traded a fifth-round selection (149th overall) to Cleveland in exchange for a sixth-round selection (199th overall) and QB Joe Flacco.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CLE"
+   },
+   {
+    "round": 6,
+    "overallPick": 206,
+    "originalTeam": "CHI",
+    "viaTradeNote": "from CHI (November 4, 2025): Chicago traded a sixth-round selection (206th overall) to Cleveland in exchange for a seventh-round selection (239th overall) and DE Joe Tryon-Shoyinka.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LAC"
+   },
+   {
+    "round": 7,
+    "overallPick": 248,
+    "originalTeam": "SEA",
+    "viaTradeNote": "from SEA (August 11, 2024)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CLE"
+   }
+  ],
+  "DAL": [
+   {
+    "round": 1,
+    "overallPick": 12,
+    "originalTeam": "DAL",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIA"
+   },
+   {
+    "round": 1,
+    "overallPick": 20,
+    "originalTeam": "GB",
+    "viaTradeNote": "from GB (August 28, 2025): Green Bay traded a first-round selection (20th overall), a 2027 first-round selection and DT Kenny Clark to Dallas in exchange for DE Micah Parsons.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PHI"
+   },
+   {
+    "round": 4,
+    "overallPick": 112,
+    "originalTeam": "DAL",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DAL"
+   },
+   {
+    "round": 5,
+    "overallPick": 152,
+    "originalTeam": "DAL",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DEN"
+   },
+   {
+    "round": 5,
+    "overallPick": 177,
+    "originalTeam": "DAL",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "MIA"
+   },
+   {
+    "round": 5,
+    "overallPick": 180,
+    "originalTeam": "DAL",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "MIA"
+   },
+   {
+    "round": 7,
+    "overallPick": 225,
+    "originalTeam": "KC",
+    "viaTradeNote": "from KC (August 27, 2024): Kansas City traded a conditional seventh-round selection (225th overall) to Dallas in exchange for TE Peyton Hendershot.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TEN"
+   }
+  ],
+  "DEN": [
+   {
+    "round": 1,
+    "overallPick": 30,
+    "originalTeam": "DEN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYJ"
+   },
+   {
+    "round": 2,
+    "overallPick": 62,
+    "originalTeam": "DEN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BUF"
+   },
+   {
+    "round": 3,
+    "overallPick": 94,
+    "originalTeam": "DEN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIA"
+   },
+   {
+    "round": 4,
+    "overallPick": 108,
+    "originalTeam": "NO",
+    "viaTradeNote": "from NO (August 20, 2025): New Orleans traded a fourth-round selection (108th overall) and a 2027 seventh-round selection to Denver in exchange for WR Devaughn Vele.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DEN"
+   },
+   {
+    "round": 4,
+    "overallPick": 130,
+    "originalTeam": "DEN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIA"
+   },
+   {
+    "round": 5,
+    "overallPick": 170,
+    "originalTeam": "DEN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CLE"
+   },
+   {
+    "round": 7,
+    "overallPick": 246,
+    "originalTeam": "DEN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DEN"
+   },
+   {
+    "round": 7,
+    "overallPick": 256,
+    "originalTeam": "DEN",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "DEN"
+   },
+   {
+    "round": 7,
+    "overallPick": 257,
+    "originalTeam": "DEN",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "DEN"
+   }
+  ],
+  "DET": [
+   {
+    "round": 1,
+    "overallPick": 17,
+    "originalTeam": "DET",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DET"
+   },
+   {
+    "round": 2,
+    "overallPick": 50,
+    "originalTeam": "DET",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYJ"
+   },
+   {
+    "round": 4,
+    "overallPick": 118,
+    "originalTeam": "DET",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DET"
+   },
+   {
+    "round": 5,
+    "overallPick": 157,
+    "originalTeam": "DET",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DET"
+   },
+   {
+    "round": 5,
+    "overallPick": 181,
+    "originalTeam": "DET",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "BUF"
+   },
+   {
+    "round": 6,
+    "overallPick": 205,
+    "originalTeam": "JAX",
+    "viaTradeNote": "from JAX (August 27, 2025): Jacksonville traded a sixth-round selection (205th overall) to Detroit in exchange for WR Tim Patrick.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DET"
+   },
+   {
+    "round": 6,
+    "overallPick": 213,
+    "originalTeam": "SEA",
+    "viaTradeNote": "from SEA via JAX (April 25, 2025)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CHI"
+   },
+   {
+    "round": 7,
+    "overallPick": 222,
+    "originalTeam": "CLE",
+    "viaTradeNote": "from CLE (November 5, 2024)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DET"
+   }
+  ],
+  "GB": [
+   {
+    "round": 2,
+    "overallPick": 52,
+    "originalTeam": "GB",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "GB"
+   },
+   {
+    "round": 3,
+    "overallPick": 84,
+    "originalTeam": "GB",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TB"
+   },
+   {
+    "round": 4,
+    "overallPick": 120,
+    "originalTeam": "GB",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "GB"
+   },
+   {
+    "round": 5,
+    "overallPick": 160,
+    "originalTeam": "GB",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TB"
+   },
+   {
+    "round": 6,
+    "overallPick": 201,
+    "originalTeam": "GB",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "GB"
+   },
+   {
+    "round": 7,
+    "overallPick": 236,
+    "originalTeam": "GB",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "SEA"
+   },
+   {
+    "round": 7,
+    "overallPick": 255,
+    "originalTeam": "GB",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "SEA"
+   }
+  ],
+  "HOU": [
+   {
+    "round": 1,
+    "overallPick": 28,
+    "originalTeam": "HOU",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NE"
+   },
+   {
+    "round": 2,
+    "overallPick": 38,
+    "originalTeam": "WAS",
+    "viaTradeNote": "from WAS (March 10, 2025): Washington traded second- and fourth-round selections (38th and 106th overall), and 2025 third- and seventh-round selections to Houston in exchange for a 2025 fourth-round selection and OT Laremy Tunsil.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LV"
+   },
+   {
+    "round": 2,
+    "overallPick": 59,
+    "originalTeam": "HOU",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "HOU"
+   },
+   {
+    "round": 3,
+    "overallPick": 69,
+    "originalTeam": "NYG",
+    "viaTradeNote": "from NYG (April 24, 2025): The NY Giants traded a third-round selection (69th overall), and 2025 second- and third-round selections to Houston in exchange for a 2025 first-round selection.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CHI"
+   },
+   {
+    "round": 4,
+    "overallPick": 106,
+    "originalTeam": "WAS",
+    "viaTradeNote": "from WAS (March 10, 2025)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "HOU"
+   },
+   {
+    "round": 4,
+    "overallPick": 128,
+    "originalTeam": "HOU",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CIN"
+   },
+   {
+    "round": 5,
+    "overallPick": 167,
+    "originalTeam": "HOU",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BUF"
+   },
+   {
+    "round": 7,
+    "overallPick": 243,
+    "originalTeam": "SF",
+    "viaTradeNote": "from SF (November 5, 2024): San Francisco traded a seventh-round selection (243rd overall) to Houston in exchange for DT Khalil Davis.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "HOU"
+   }
+  ],
+  "IND": [
+   {
+    "round": 2,
+    "overallPick": 47,
+    "originalTeam": "IND",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PIT"
+   },
+   {
+    "round": 3,
+    "overallPick": 78,
+    "originalTeam": "IND",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "IND"
+   },
+   {
+    "round": 4,
+    "overallPick": 113,
+    "originalTeam": "IND",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "IND"
+   },
+   {
+    "round": 5,
+    "overallPick": 156,
+    "originalTeam": "IND",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "IND"
+   },
+   {
+    "round": 7,
+    "overallPick": 230,
+    "originalTeam": "IND",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PIT"
+   },
+   {
+    "round": 7,
+    "overallPick": 249,
+    "originalTeam": "IND",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "KC"
+   },
+   {
+    "round": 7,
+    "overallPick": 254,
+    "originalTeam": "IND",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "IND"
+   }
+  ],
+  "JAX": [
+   {
+    "round": 2,
+    "overallPick": 56,
+    "originalTeam": "JAX",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "JAX"
+   },
+   {
+    "round": 3,
+    "overallPick": 81,
+    "originalTeam": "DET",
+    "viaTradeNote": "from DET (April 25, 2025): Detroit traded two third-round selections (81st and 100th overall) and a 2025 third-round selection to Jacksonville in exchange for a sixth-round selection (213th overall), and 2025 third- and sixth-round selections.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "JAX"
+   },
+   {
+    "round": 3,
+    "overallPick": 88,
+    "originalTeam": "JAX",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "JAX"
+   },
+   {
+    "round": 3,
+    "overallPick": 100,
+    "originalTeam": "DET",
+    "viaTradeNote": "from DET (April 25, 2025) | uncertain: resolution-JC-2A selection - Resolution JC-2A picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "resolution-JC-2A",
+    "ownerAtDraftApril2026": "JAX"
+   },
+   {
+    "round": 4,
+    "overallPick": 124,
+    "originalTeam": "JAX",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CHI"
+   },
+   {
+    "round": 5,
+    "overallPick": 164,
+    "originalTeam": "JAX",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "JAX"
+   },
+   {
+    "round": 5,
+    "overallPick": 166,
+    "originalTeam": "SF",
+    "viaTradeNote": "from SF via PHI (September 9, 2025): Philadelphia traded fifth- and sixth-round selections (166th and 203rd overall) to Jacksonville in exchange for RB/KR Tank Bigsby.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CHI"
+   },
+   {
+    "round": 6,
+    "overallPick": 203,
+    "originalTeam": "PHI",
+    "viaTradeNote": "from PHI via HOU via PHI (September 9, 2025)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "JAX"
+   },
+   {
+    "round": 7,
+    "overallPick": 233,
+    "originalTeam": "DET",
+    "viaTradeNote": "from DET (May 25, 2023): Detroit traded a conditional seventh-round selection (233rd overall) to Jacksonville in exchange for K Riley Patterson.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "JAX"
+   },
+   {
+    "round": 7,
+    "overallPick": 240,
+    "originalTeam": "JAX",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "JAX"
+   },
+   {
+    "round": 7,
+    "overallPick": 245,
+    "originalTeam": "LA",
+    "viaTradeNote": "from LA via HOU (March 12, 2025): Houston traded a seventh-round selection (245th overall) to Jacksonville in exchange for WR Christian Kirk.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NE"
+   }
+  ],
+  "KC": [
+   {
+    "round": 1,
+    "overallPick": 9,
+    "originalTeam": "KC",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CLE"
+   },
+   {
+    "round": 2,
+    "overallPick": 40,
+    "originalTeam": "KC",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "KC"
+   },
+   {
+    "round": 3,
+    "overallPick": 74,
+    "originalTeam": "KC",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYG"
+   },
+   {
+    "round": 4,
+    "overallPick": 109,
+    "originalTeam": "KC",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "KC"
+   },
+   {
+    "round": 5,
+    "overallPick": 148,
+    "originalTeam": "KC",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "SEA"
+   },
+   {
+    "round": 5,
+    "overallPick": 176,
+    "originalTeam": "KC",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "KC"
+   }
+  ],
+  "LA": [
+   {
+    "round": 1,
+    "overallPick": 13,
+    "originalTeam": "ATL",
+    "viaTradeNote": "from ATL (April 24, 2025): Atlanta traded a first-round selection (13th overall), and 2025 second- and seventh-round selections to the LA Rams in exchange for 2025 first- and third-round selections.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LA"
+   },
+   {
+    "round": 1,
+    "overallPick": 29,
+    "originalTeam": "LA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "KC"
+   },
+   {
+    "round": 2,
+    "overallPick": 61,
+    "originalTeam": "LA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LA"
+   },
+   {
+    "round": 3,
+    "overallPick": 93,
+    "originalTeam": "LA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LA"
+   },
+   {
+    "round": 5,
+    "overallPick": 169,
+    "originalTeam": "LA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PIT"
+   },
+   {
+    "round": 6,
+    "overallPick": 207,
+    "originalTeam": "HOU",
+    "viaTradeNote": "from HOU via LA via TEN (October 27, 2025)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PHI"
+   },
+   {
+    "round": 6,
+    "overallPick": 210,
+    "originalTeam": "LA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PIT"
+   },
+   {
+    "round": 7,
+    "overallPick": 232,
+    "originalTeam": "BAL",
+    "viaTradeNote": "from BAL (November 5, 2024): Baltimore traded a seventh-round selection (232nd overall) to the LA Rams in exchange for a 2027 seventh-round selection and CB Tre'Davious White.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LA"
+   },
+   {
+    "round": 7,
+    "overallPick": 251,
+    "originalTeam": "LA",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "PHI"
+   },
+   {
+    "round": 7,
+    "overallPick": 252,
+    "originalTeam": "LA",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "PHI"
+   }
+  ],
+  "LAC": [
+   {
+    "round": 1,
+    "overallPick": 22,
+    "originalTeam": "LAC",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LAC"
+   },
+   {
+    "round": 2,
+    "overallPick": 55,
+    "originalTeam": "LAC",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NE"
+   },
+   {
+    "round": 3,
+    "overallPick": 86,
+    "originalTeam": "LAC",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CLE"
+   },
+   {
+    "round": 4,
+    "overallPick": 123,
+    "originalTeam": "LAC",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "HOU"
+   },
+   {
+    "round": 6,
+    "overallPick": 204,
+    "originalTeam": "LAC",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "HOU"
+   }
+  ],
+  "LV": [
+   {
+    "round": 1,
+    "overallPick": 1,
+    "originalTeam": "LV",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LV"
+   },
+   {
+    "round": 2,
+    "overallPick": 36,
+    "originalTeam": "LV",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "HOU"
+   },
+   {
+    "round": 3,
+    "overallPick": 67,
+    "originalTeam": "LV",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LV"
+   },
+   {
+    "round": 4,
+    "overallPick": 102,
+    "originalTeam": "LV",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BUF"
+   },
+   {
+    "round": 4,
+    "overallPick": 117,
+    "originalTeam": "MIN",
+    "viaTradeNote": "from MIN via JAX (November 4, 2025): Jacksonville traded fourth- and sixth-round selections (117th and 182nd overall) to Las Vegas in exchange for WR Jakobi Meyers.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LAC"
+   },
+   {
+    "round": 4,
+    "overallPick": 134,
+    "originalTeam": "LV",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "ATL"
+   },
+   {
+    "round": 5,
+    "overallPick": 175,
+    "originalTeam": "LV",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "LV"
+   },
+   {
+    "round": 6,
+    "overallPick": 182,
+    "originalTeam": "NYJ",
+    "viaTradeNote": "from NYJ via CLE via JAX (November 4, 2025)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CLE"
+   },
+   {
+    "round": 6,
+    "overallPick": 185,
+    "originalTeam": "LV",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TB"
+   },
+   {
+    "round": 7,
+    "overallPick": 219,
+    "originalTeam": "LV",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NO"
+   }
+  ],
+  "MIA": [
+   {
+    "round": 1,
+    "overallPick": 11,
+    "originalTeam": "MIA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DAL"
+   },
+   {
+    "round": 2,
+    "overallPick": 43,
+    "originalTeam": "MIA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIA"
+   },
+   {
+    "round": 3,
+    "overallPick": 75,
+    "originalTeam": "MIA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIA"
+   },
+   {
+    "round": 3,
+    "overallPick": 87,
+    "originalTeam": "PHI",
+    "viaTradeNote": "from PHI (November 3, 2025): Philadelphia traded a third-round selection (87th overall) to Miami in exchange for LB Jaelan Phillips.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIA"
+   },
+   {
+    "round": 3,
+    "overallPick": 90,
+    "originalTeam": "HOU",
+    "viaTradeNote": "from HOU (April 26, 2025): Houston traded a third-round selection (90th overall) and a 2025 sixth-round selection to Miami in exchange for 2025 fourth- and seventh-round selections.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "SF"
+   },
+   {
+    "round": 4,
+    "overallPick": 111,
+    "originalTeam": "MIA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DEN"
+   },
+   {
+    "round": 5,
+    "overallPick": 151,
+    "originalTeam": "MIA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CAR"
+   },
+   {
+    "round": 7,
+    "overallPick": 227,
+    "originalTeam": "MIA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CAR"
+   }
+  ],
+  "MIN": [
+   {
+    "round": 1,
+    "overallPick": 18,
+    "originalTeam": "MIN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIN"
+   },
+   {
+    "round": 2,
+    "overallPick": 49,
+    "originalTeam": "MIN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CAR"
+   },
+   {
+    "round": 3,
+    "overallPick": 82,
+    "originalTeam": "MIN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIN"
+   },
+   {
+    "round": 3,
+    "overallPick": 97,
+    "originalTeam": "MIN",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "MIN"
+   },
+   {
+    "round": 5,
+    "overallPick": 163,
+    "originalTeam": "PHI",
+    "viaTradeNote": "from PHI (August 24, 2025): Philadelphia traded a fifth-round selection (163rd overall) and a 2027 seventh-round selection to Minnesota in exchange for a sixth-round selection (211th overall) and QB Sam Howell.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIN"
+   },
+   {
+    "round": 6,
+    "overallPick": 196,
+    "originalTeam": "IND",
+    "viaTradeNote": "from IND (August 25, 2025): Indianapolis traded a sixth-round selection (196th overall) to Minnesota in exchange for CB Mekhi Blackmon.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NE"
+   },
+   {
+    "round": 7,
+    "overallPick": 234,
+    "originalTeam": "MIN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NE"
+   },
+   {
+    "round": 7,
+    "overallPick": 235,
+    "originalTeam": "CAR",
+    "viaTradeNote": "from CAR (August 27, 2025)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIN"
+   },
+   {
+    "round": 7,
+    "overallPick": 244,
+    "originalTeam": "HOU",
+    "viaTradeNote": "from HOU (October 15, 2024)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PHI"
+   }
+  ],
+  "NE": [
+   {
+    "round": 1,
+    "overallPick": 31,
+    "originalTeam": "NE",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TEN"
+   },
+   {
+    "round": 2,
+    "overallPick": 63,
+    "originalTeam": "NE",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LAC"
+   },
+   {
+    "round": 3,
+    "overallPick": 95,
+    "originalTeam": "NE",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NE"
+   },
+   {
+    "round": 4,
+    "overallPick": 125,
+    "originalTeam": "CHI",
+    "viaTradeNote": "from CHI via KC (April 25, 2025): Kansas City traded a fourth-round selection (125th overall) and a 2025 third-round selection to New England in exchange for a 2025 third-round selection.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BUF"
+   },
+   {
+    "round": 4,
+    "overallPick": 131,
+    "originalTeam": "NE",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LAC"
+   },
+   {
+    "round": 5,
+    "overallPick": 171,
+    "originalTeam": "NE",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NE"
+   },
+   {
+    "round": 6,
+    "overallPick": 191,
+    "originalTeam": "KC",
+    "viaTradeNote": "from KC (October 28, 2024): Kansas City traded a sixth-round selection (191st overall) to New England in exchange for LB Joshua Uche.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "JAX"
+   },
+   {
+    "round": 6,
+    "overallPick": 198,
+    "originalTeam": "MIN",
+    "viaTradeNote": "from MIN via HOU via MIN via SF (October 29, 2025): San Francisco traded a sixth-round selection (198th overall) to New England in exchange for a conditional seventh-round selection and DE Keion White. The condition \u2013 which would return the seventh-round selection to New England if White was active for seven games \u2013 was met on December 22, 2025.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIN"
+   },
+   {
+    "round": 6,
+    "overallPick": 202,
+    "originalTeam": "PIT",
+    "viaTradeNote": "from PIT (October 30, 2025): Pittsburgh traded a sixth-round selection (202nd overall) to New England in exchange for a seventh-round selection (224th overall) and S Kyle Dugger.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LAC"
+   },
+   {
+    "round": 6,
+    "overallPick": 212,
+    "originalTeam": "NE",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NE"
+   },
+   {
+    "round": 7,
+    "overallPick": 247,
+    "originalTeam": "NE",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NE"
+   }
+  ],
+  "NO": [
+   {
+    "round": 1,
+    "overallPick": 8,
+    "originalTeam": "NO",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NO"
+   },
+   {
+    "round": 2,
+    "overallPick": 42,
+    "originalTeam": "NO",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NO"
+   },
+   {
+    "round": 3,
+    "overallPick": 73,
+    "originalTeam": "NO",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NO"
+   },
+   {
+    "round": 4,
+    "overallPick": 132,
+    "originalTeam": "SEA",
+    "viaTradeNote": "from SEA (November 4, 2025): Seattle traded fourth- and fifth-round selections (132nd and 172nd overall) to New Orleans in exchange for WR/RS Rashid Shaheed.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NO"
+   },
+   {
+    "round": 4,
+    "overallPick": 136,
+    "originalTeam": "NO",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "NO"
+   },
+   {
+    "round": 5,
+    "overallPick": 150,
+    "originalTeam": "NO",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LV"
+   },
+   {
+    "round": 5,
+    "overallPick": 172,
+    "originalTeam": "SEA",
+    "viaTradeNote": "from SEA (November 4, 2025)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NO"
+   },
+   {
+    "round": 6,
+    "overallPick": 190,
+    "originalTeam": "NO",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NO"
+   }
+  ],
+  "NYG": [
+   {
+    "round": 1,
+    "overallPick": 5,
+    "originalTeam": "NYG",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYG"
+   },
+   {
+    "round": 2,
+    "overallPick": 37,
+    "originalTeam": "NYG",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYG"
+   },
+   {
+    "round": 4,
+    "overallPick": 105,
+    "originalTeam": "NYG",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LAC"
+   },
+   {
+    "round": 5,
+    "overallPick": 145,
+    "originalTeam": "NYG",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LAC"
+   },
+   {
+    "round": 6,
+    "overallPick": 186,
+    "originalTeam": "NYG",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYG"
+   },
+   {
+    "round": 6,
+    "overallPick": 192,
+    "originalTeam": "MIA",
+    "viaTradeNote": "from MIA (July 9, 2025): Miami traded a sixth-round selection (192nd overall) to the NY Giants in exchange for a conditional 2027 seventh-round selection and TE Darren Waller.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYG"
+   },
+   {
+    "round": 6,
+    "overallPick": 193,
+    "originalTeam": "DAL",
+    "viaTradeNote": "from DAL (August 14, 2024): Dallas traded a sixth-round selection (193rd overall) to the NY Giants in exchange for a seventh-round selection (221st overall) and DL Jordan Phillips.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYG"
+   }
+  ],
+  "NYJ": [
+   {
+    "round": 1,
+    "overallPick": 2,
+    "originalTeam": "NYJ",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYJ"
+   },
+   {
+    "round": 1,
+    "overallPick": 16,
+    "originalTeam": "IND",
+    "viaTradeNote": "from IND (November 4, 2025): Indianapolis traded a first-round selection (16th overall), a 2027 first-round selection and WR Adonai Mitchell to the NY Jets in exchange for CB Sauce Gardner.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYJ"
+   },
+   {
+    "round": 2,
+    "overallPick": 33,
+    "originalTeam": "NYJ",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "SF"
+   },
+   {
+    "round": 2,
+    "overallPick": 44,
+    "originalTeam": "DAL",
+    "viaTradeNote": "from DAL (November 4, 2025): Dallas traded a second-round selection (44th overall), a 2027 first-round selection and DT Mazi Smith to the NY Jets in exchange for DT Quinnen Williams.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DET"
+   },
+   {
+    "round": 4,
+    "overallPick": 103,
+    "originalTeam": "NYJ",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYJ"
+   },
+   {
+    "round": 4,
+    "overallPick": 140,
+    "originalTeam": "NYJ",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "CIN"
+   },
+   {
+    "round": 5,
+    "overallPick": 179,
+    "originalTeam": "NYJ",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "SF"
+   },
+   {
+    "round": 6,
+    "overallPick": 208,
+    "originalTeam": "BUF",
+    "viaTradeNote": "from BUF (August 27, 2024): Buffalo traded a sixth-round selection (208th overall) to the NY Jets in exchange for a seventh-round selection (220th overall) and CB Brandon Codrington.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "ATL"
+   },
+   {
+    "round": 7,
+    "overallPick": 238,
+    "originalTeam": "LAC",
+    "viaTradeNote": "from LAC via TEN (September 23, 2025)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIA"
+   },
+   {
+    "round": 7,
+    "overallPick": 242,
+    "originalTeam": "BUF",
+    "viaTradeNote": "from BUF via CLE (August 20, 2025)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "SEA"
+   }
+  ],
+  "PHI": [
+   {
+    "round": 1,
+    "overallPick": 23,
+    "originalTeam": "PHI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DAL"
+   },
+   {
+    "round": 2,
+    "overallPick": 54,
+    "originalTeam": "PHI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PHI"
+   },
+   {
+    "round": 3,
+    "overallPick": 68,
+    "originalTeam": "NYJ",
+    "viaTradeNote": "from NYJ (April 1, 2024): The NY Jets traded a third-round selection (68th overall) to Philadelphia in exchange for LB Haason Reddick.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PHI"
+   },
+   {
+    "round": 3,
+    "overallPick": 98,
+    "originalTeam": "PHI",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "MIN"
+   },
+   {
+    "round": 4,
+    "overallPick": 122,
+    "originalTeam": "PHI",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LV"
+   },
+   {
+    "round": 4,
+    "overallPick": 137,
+    "originalTeam": "PHI",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "DAL"
+   },
+   {
+    "round": 5,
+    "overallPick": 153,
+    "originalTeam": "ATL",
+    "viaTradeNote": "from ATL (April 25, 2025): Atlanta traded a fifth-round selection (153rd overall) and a 2025 third-round selection to Philadelphia in exchange for a 2025 third-round selection.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "GB"
+   },
+   {
+    "round": 5,
+    "overallPick": 178,
+    "originalTeam": "PHI",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "PHI"
+   },
+   {
+    "round": 6,
+    "overallPick": 215,
+    "originalTeam": "PHI",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "ATL"
+   }
+  ],
+  "PIT": [
+   {
+    "round": 1,
+    "overallPick": 21,
+    "originalTeam": "PIT",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PIT"
+   },
+   {
+    "round": 2,
+    "overallPick": 53,
+    "originalTeam": "PIT",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "IND"
+   },
+   {
+    "round": 3,
+    "overallPick": 76,
+    "originalTeam": "DAL",
+    "viaTradeNote": "from DAL (May 7, 2025): Dallas traded a third-round selection (76th overall) and a 2027 fifth-round selection to Pittsburgh in exchange for a 2027 sixth-round selection and WR George Pickens.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PIT"
+   },
+   {
+    "round": 3,
+    "overallPick": 85,
+    "originalTeam": "PIT",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PIT"
+   },
+   {
+    "round": 3,
+    "overallPick": 99,
+    "originalTeam": "PIT",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "SEA"
+   },
+   {
+    "round": 4,
+    "overallPick": 121,
+    "originalTeam": "PIT",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PIT"
+   },
+   {
+    "round": 4,
+    "overallPick": 135,
+    "originalTeam": "PIT",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "IND"
+   },
+   {
+    "round": 5,
+    "overallPick": 161,
+    "originalTeam": "PIT",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "KC"
+   },
+   {
+    "round": 6,
+    "overallPick": 214,
+    "originalTeam": "PIT",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "IND"
+   },
+   {
+    "round": 6,
+    "overallPick": 216,
+    "originalTeam": "PIT",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "GB"
+   },
+   {
+    "round": 7,
+    "overallPick": 224,
+    "originalTeam": "NO",
+    "viaTradeNote": "from NO via NE (October 30, 2025)",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PIT"
+   },
+   {
+    "round": 7,
+    "overallPick": 237,
+    "originalTeam": "PIT",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "IND"
+   }
+  ],
+  "SEA": [
+   {
+    "round": 1,
+    "overallPick": 32,
+    "originalTeam": "SEA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "SEA"
+   },
+   {
+    "round": 2,
+    "overallPick": 64,
+    "originalTeam": "SEA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "SEA"
+   },
+   {
+    "round": 3,
+    "overallPick": 96,
+    "originalTeam": "SEA",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "PIT"
+   },
+   {
+    "round": 6,
+    "overallPick": 188,
+    "originalTeam": "CLE",
+    "viaTradeNote": "from CLE (August 11, 2024): Cleveland traded a sixth-round selection (188th overall) to Seattle in exchange for a seventh-round selection (248th overall) and C Nick Harris.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "NYJ"
+   }
+  ],
+  "SF": [
+   {
+    "round": 1,
+    "overallPick": 27,
+    "originalTeam": "SF",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "MIA"
+   },
+   {
+    "round": 2,
+    "overallPick": 58,
+    "originalTeam": "SF",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CLE"
+   },
+   {
+    "round": 3,
+    "overallPick": 92,
+    "originalTeam": "SF",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DAL"
+   },
+   {
+    "round": 4,
+    "overallPick": 127,
+    "originalTeam": "SF",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "SF"
+   },
+   {
+    "round": 4,
+    "overallPick": 133,
+    "originalTeam": "SF",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "BAL"
+   },
+   {
+    "round": 4,
+    "overallPick": 138,
+    "originalTeam": "SF",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "MIA"
+   },
+   {
+    "round": 4,
+    "overallPick": 139,
+    "originalTeam": "SF",
+    "viaTradeNote": "uncertain: compensatory selection - compensatory picks were not officially awarded until March 2026, so this pick did not formally exist in the February 2026 snapshot; slot and awardee are taken from the final 2026 draft",
+    "pickType": "compensatory",
+    "ownerAtDraftApril2026": "SF"
+   }
+  ],
+  "TB": [
+   {
+    "round": 1,
+    "overallPick": 15,
+    "originalTeam": "TB",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TB"
+   },
+   {
+    "round": 2,
+    "overallPick": 46,
+    "originalTeam": "TB",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TB"
+   },
+   {
+    "round": 3,
+    "overallPick": 77,
+    "originalTeam": "TB",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "GB"
+   },
+   {
+    "round": 4,
+    "overallPick": 116,
+    "originalTeam": "TB",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TB"
+   },
+   {
+    "round": 5,
+    "overallPick": 155,
+    "originalTeam": "TB",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TB"
+   },
+   {
+    "round": 6,
+    "overallPick": 195,
+    "originalTeam": "TB",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LV"
+   },
+   {
+    "round": 7,
+    "overallPick": 229,
+    "originalTeam": "TB",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LV"
+   }
+  ],
+  "TEN": [
+   {
+    "round": 1,
+    "overallPick": 4,
+    "originalTeam": "TEN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TEN"
+   },
+   {
+    "round": 2,
+    "overallPick": 35,
+    "originalTeam": "TEN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "BUF"
+   },
+   {
+    "round": 3,
+    "overallPick": 66,
+    "originalTeam": "TEN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DEN"
+   },
+   {
+    "round": 4,
+    "overallPick": 101,
+    "originalTeam": "TEN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "LV"
+   },
+   {
+    "round": 5,
+    "overallPick": 142,
+    "originalTeam": "NYJ",
+    "viaTradeNote": "from NYJ via BAL (November 4, 2025): Baltimore traded a conditional fifth-round selection (142nd overall) to Tennessee in exchange for DE Dre'Mont Jones. This selection would have become a fourth-round selection if Baltimore made the playoffs and Jones logged at least two sacks in 2025, but this condition was not met.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TEN"
+   },
+   {
+    "round": 5,
+    "overallPick": 144,
+    "originalTeam": "TEN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "CAR"
+   },
+   {
+    "round": 6,
+    "overallPick": 184,
+    "originalTeam": "TEN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TEN"
+   },
+   {
+    "round": 6,
+    "overallPick": 194,
+    "originalTeam": "BAL",
+    "viaTradeNote": "from BAL via NYJ (September 23, 2025): The NY Jets traded a sixth-round selection (194th overall) to Tennessee in exchange for a seventh-round selection (238th overall) and CB Jarvis Brownlee Jr.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "TEN"
+   },
+   {
+    "round": 7,
+    "overallPick": 218,
+    "originalTeam": "TEN",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "DAL"
+   }
+  ],
+  "WAS": [
+   {
+    "round": 1,
+    "overallPick": 7,
+    "originalTeam": "WAS",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "WAS"
+   },
+   {
+    "round": 3,
+    "overallPick": 71,
+    "originalTeam": "WAS",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "WAS"
+   },
+   {
+    "round": 5,
+    "overallPick": 147,
+    "originalTeam": "WAS",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "WAS"
+   },
+   {
+    "round": 6,
+    "overallPick": 187,
+    "originalTeam": "WAS",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "WAS"
+   },
+   {
+    "round": 6,
+    "overallPick": 209,
+    "originalTeam": "SF",
+    "viaTradeNote": "from SF (August 24, 2025): San Francisco traded a sixth-round selection (209th overall) to Washington in exchange for RB Brian Robinson Jr.",
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "WAS"
+   },
+   {
+    "round": 7,
+    "overallPick": 223,
+    "originalTeam": "WAS",
+    "viaTradeNote": null,
+    "pickType": "standard",
+    "ownerAtDraftApril2026": "WAS"
+   }
+  ]
+ },
+ "pickCounts": {
+  "february2026": {
+   "ARI": 7,
+   "ATL": 5,
+   "BAL": 11,
+   "BUF": 7,
+   "CAR": 7,
+   "CHI": 7,
+   "CIN": 8,
+   "CLE": 10,
+   "DAL": 7,
+   "DEN": 9,
+   "DET": 8,
+   "GB": 7,
+   "HOU": 8,
+   "IND": 7,
+   "JAX": 11,
+   "KC": 6,
+   "LA": 10,
+   "LAC": 5,
+   "LV": 10,
+   "MIA": 8,
+   "MIN": 9,
+   "NE": 11,
+   "NO": 8,
+   "NYG": 7,
+   "NYJ": 10,
+   "PHI": 9,
+   "PIT": 12,
+   "SEA": 4,
+   "SF": 7,
+   "TB": 7,
+   "TEN": 9,
+   "WAS": 6
+  },
+  "atDraftApril2026": {
+   "ARI": 7,
+   "ATL": 6,
+   "BAL": 11,
+   "BUF": 10,
+   "CAR": 7,
+   "CHI": 7,
+   "CIN": 7,
+   "CLE": 10,
+   "DAL": 7,
+   "DEN": 7,
+   "DET": 7,
+   "GB": 6,
+   "HOU": 8,
+   "IND": 8,
+   "JAX": 10,
+   "KC": 7,
+   "LA": 5,
+   "LAC": 8,
+   "LV": 10,
+   "MIA": 13,
+   "MIN": 9,
+   "NE": 9,
+   "NO": 8,
+   "NYG": 7,
+   "NYJ": 8,
+   "PHI": 8,
+   "PIT": 10,
+   "SEA": 8,
+   "SF": 8,
+   "TB": 7,
+   "TEN": 8,
+   "WAS": 6
+  }
+ },
+ "notableTrades": [
+  {
+   "date": "April 1, 2024",
+   "from": "NYJ",
+   "to": "PHI",
+   "pick": "2026 R3 #68",
+   "detail": "The NY Jets traded a third-round selection (68th overall) to Philadelphia in exchange for LB Haason Reddick.",
+   "inFebruary2026Snapshot": true
+  },
+  {
+   "date": "March 10, 2025",
+   "from": "WAS",
+   "to": "HOU",
+   "pick": "2026 R2 #38",
+   "detail": "Washington traded second- and fourth-round selections (38th and 106th overall), and 2025 third- and seventh-round selections to Houston in exchange for a 2025 fourth-round selection and OT Laremy Tunsil.",
+   "inFebruary2026Snapshot": true
+  },
+  {
+   "date": "April 24, 2025",
+   "from": "ATL",
+   "to": "LA",
+   "pick": "2026 R1 #13",
+   "detail": "Atlanta traded a first-round selection (13th overall), and 2025 second- and seventh-round selections to the LA Rams in exchange for 2025 first- and third-round selections.",
+   "inFebruary2026Snapshot": true
+  },
+  {
+   "date": "April 24, 2025",
+   "from": "JAX",
+   "to": "CLE",
+   "pick": "2026 R1 #24",
+   "detail": "Jacksonville traded a first-round selection (24th overall), and 2025 first-, second- and fourth-round selections to Cleveland in exchange for 2025 first-, fourth- and sixth-round selections.",
+   "inFebruary2026Snapshot": true
+  },
+  {
+   "date": "April 24, 2025",
+   "from": "NYG",
+   "to": "HOU",
+   "pick": "2026 R3 #69",
+   "detail": "The NY Giants traded a third-round selection (69th overall), and 2025 second- and third-round selections to Houston in exchange for a 2025 first-round selection.",
+   "inFebruary2026Snapshot": true
+  },
+  {
+   "date": "April 25, 2025",
+   "from": "DET",
+   "to": "JAX",
+   "pick": "2026 R3 #81",
+   "detail": "Detroit traded two third-round selections (81st and 100th overall) and a 2025 third-round selection to Jacksonville in exchange for a sixth-round selection (213th overall), and 2025 third- and sixth-round selections.",
+   "inFebruary2026Snapshot": true
+  },
+  {
+   "date": "April 25, 2025",
+   "from": "DET",
+   "to": "JAX",
+   "pick": "2026 R3 #100",
+   "detail": "",
+   "inFebruary2026Snapshot": true
+  },
+  {
+   "date": "April 26, 2025",
+   "from": "HOU",
+   "to": "MIA",
+   "pick": "2026 R3 #90",
+   "detail": "Houston traded a third-round selection (90th overall) and a 2025 sixth-round selection to Miami in exchange for 2025 fourth- and seventh-round selections.",
+   "inFebruary2026Snapshot": true
+  },
+  {
+   "date": "May 7, 2025",
+   "from": "DAL",
+   "to": "PIT",
+   "pick": "2026 R3 #76",
+   "detail": "Dallas traded a third-round selection (76th overall) and a 2027 fifth-round selection to Pittsburgh in exchange for a 2027 sixth-round selection and WR George Pickens.",
+   "inFebruary2026Snapshot": true
+  },
+  {
+   "date": "August 28, 2025",
+   "from": "GB",
+   "to": "DAL",
+   "pick": "2026 R1 #20",
+   "detail": "Green Bay traded a first-round selection (20th overall), a 2027 first-round selection and DT Kenny Clark to Dallas in exchange for DE Micah Parsons.",
+   "inFebruary2026Snapshot": true
+  },
+  {
+   "date": "November 3, 2025",
+   "from": "PHI",
+   "to": "MIA",
+   "pick": "2026 R3 #87",
+   "detail": "Philadelphia traded a third-round selection (87th overall) to Miami in exchange for LB Jaelan Phillips.",
+   "inFebruary2026Snapshot": true
+  },
+  {
+   "date": "November 4, 2025",
+   "from": "IND",
+   "to": "NYJ",
+   "pick": "2026 R1 #16",
+   "detail": "Indianapolis traded a first-round selection (16th overall), a 2027 first-round selection and WR Adonai Mitchell to the NY Jets in exchange for CB Sauce Gardner.",
+   "inFebruary2026Snapshot": true
+  },
+  {
+   "date": "November 4, 2025",
+   "from": "DAL",
+   "to": "NYJ",
+   "pick": "2026 R2 #44",
+   "detail": "Dallas traded a second-round selection (44th overall), a 2027 first-round selection and DT Mazi Smith to the NY Jets in exchange for DT Quinnen Williams.",
+   "inFebruary2026Snapshot": true
+  },
+  {
+   "date": "March 11, 2026",
+   "from": "LA",
+   "to": "KC",
+   "pick": "2026 R1 #29",
+   "detail": "The LA Rams traded first-, fifth- and sixth-round selections (29th, 169th and 210th overall), and a 2027 third-round selection to Kansas City in exchange for CB Trent McDuffie.",
+   "inFebruary2026Snapshot": false,
+   "note": "completed AFTER the February snapshot but BEFORE the draft"
+  },
+  {
+   "date": "March 11, 2026",
+   "from": "BUF",
+   "to": "CHI",
+   "pick": "2026 R2 #60",
+   "detail": "Buffalo traded a second-round selection (60th overall) to Chicago in exchange for a fifth-round selection (165th overall) and WR D. J. Moore.",
+   "inFebruary2026Snapshot": false,
+   "note": "completed AFTER the February snapshot but BEFORE the draft"
+  },
+  {
+   "date": "March 18, 2026",
+   "from": "DEN",
+   "to": "MIA",
+   "pick": "2026 R1 #30",
+   "detail": "Denver traded first-, third- and fourth-round selections (30th, 94th and 130th overall) to Miami in exchange for a fourth-round selection (111th overall) and WR Jaylen Waddle.",
+   "inFebruary2026Snapshot": false,
+   "note": "completed AFTER the February snapshot but BEFORE the draft"
+  },
+  {
+   "date": "April 19, 2026",
+   "from": "CIN",
+   "to": "NYG",
+   "pick": "2026 R1 #10",
+   "detail": "Cincinnati traded a first-round selection (10th overall) to the NY Giants in exchange for DT Dexter Lawrence.",
+   "inFebruary2026Snapshot": false,
+   "note": "completed AFTER the February snapshot but BEFORE the draft"
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "NYJ",
+   "to": "DET",
+   "pick": "2026 R2 #44",
+   "detail": "The NY Jets traded a second-round selection (44th overall) to Detroit in exchange for second- and fourth- round selections (50th and 128th overall).",
+   "inFebruary2026Snapshot": false,
+   "note": "completed AFTER the February snapshot but BEFORE the draft"
+  }
+ ],
+ "postFebruaryTrades": [
+  {
+   "date": "March 11, 2026",
+   "from": "LA",
+   "to": "KC",
+   "pick": "2026 R1 #29",
+   "phase": "pre-draft",
+   "detail": "The LA Rams traded first-, fifth- and sixth-round selections (29th, 169th and 210th overall), and a 2027 third-round selection to Kansas City in exchange for CB Trent McDuffie."
+  },
+  {
+   "date": "March 11, 2026",
+   "from": "BUF",
+   "to": "CHI",
+   "pick": "2026 R2 #60",
+   "phase": "pre-draft",
+   "detail": "Buffalo traded a second-round selection (60th overall) to Chicago in exchange for a fifth-round selection (165th overall) and WR D. J. Moore."
+  },
+  {
+   "date": "March 11, 2026",
+   "from": "HOU",
+   "to": "DET",
+   "pick": "2026 R4 #128",
+   "phase": "pre-draft",
+   "detail": "Houston traded a fourth-round selection (128th overall), a 2027 seventh-round selection and C Juice Scruggs to Detroit in exchange for RB David Montgomery."
+  },
+  {
+   "date": "March 11, 2026",
+   "from": "CLE",
+   "to": "HOU",
+   "pick": "2026 R5 #141",
+   "phase": "pre-draft",
+   "detail": "Cleveland traded a fifth-round selection (141st overall) to Houston in exchange for OT Tytus Howard."
+  },
+  {
+   "date": "March 11, 2026",
+   "from": "CHI",
+   "to": "BUF",
+   "pick": "2026 R5 #165",
+   "phase": "pre-draft",
+   "detail": ""
+  },
+  {
+   "date": "March 11, 2026",
+   "from": "LA",
+   "to": "KC",
+   "pick": "2026 R5 #169",
+   "phase": "pre-draft",
+   "detail": ""
+  },
+  {
+   "date": "March 11, 2026",
+   "from": "LV",
+   "to": "BUF",
+   "pick": "2026 R6 #182",
+   "phase": "pre-draft",
+   "detail": "Las Vegas traded a sixth-round selection (182nd overall) to Buffalo in exchange for a seventh-round selection (228th overall) and CB Taron Johnson."
+  },
+  {
+   "date": "March 11, 2026",
+   "from": "NYJ",
+   "to": "LV",
+   "pick": "2026 R6 #208",
+   "phase": "pre-draft",
+   "detail": "The NY Jets traded a sixth-round selection (208th overall) to Las Vegas in exchange for a seventh-round selection (228th overall) and QB Geno Smith."
+  },
+  {
+   "date": "March 11, 2026",
+   "from": "LA",
+   "to": "KC",
+   "pick": "2026 R6 #210",
+   "phase": "pre-draft",
+   "detail": ""
+  },
+  {
+   "date": "March 11, 2026",
+   "from": "BUF",
+   "to": "LV",
+   "pick": "2026 R7 #228",
+   "phase": "pre-draft",
+   "detail": ""
+  },
+  {
+   "date": "March 11, 2026",
+   "from": "LV",
+   "to": "NYJ",
+   "pick": "2026 R7 #228",
+   "phase": "pre-draft",
+   "detail": ""
+  },
+  {
+   "date": "March 11, 2026",
+   "from": "NYJ",
+   "to": "MIA",
+   "pick": "2026 R7 #238",
+   "phase": "pre-draft",
+   "detail": "The NY Jets traded a seventh-round selection (238th overall) to Miami in exchange for S Minkah Fitzpatrick."
+  },
+  {
+   "date": "March 12, 2026",
+   "from": "SF",
+   "to": "DAL",
+   "pick": "2026 R3 #92",
+   "phase": "pre-draft",
+   "detail": "San Francisco traded a third-round selection (92nd overall) to Dallas in exchange for DT Osa Odighizuwa."
+  },
+  {
+   "date": "March 12, 2026",
+   "from": "TEN",
+   "to": "DAL",
+   "pick": "2026 R7 #218",
+   "phase": "pre-draft",
+   "detail": "Tennessee traded a seventh-round selection (218th overall) to Dallas in exchange for a seventh-round selection (225th overall) and DT Solomon Thomas."
+  },
+  {
+   "date": "March 12, 2026",
+   "from": "DAL",
+   "to": "TEN",
+   "pick": "2026 R7 #225",
+   "phase": "pre-draft",
+   "detail": ""
+  },
+  {
+   "date": "March 13, 2026",
+   "from": "PIT",
+   "to": "IND",
+   "pick": "2026 R6 #214",
+   "phase": "pre-draft",
+   "detail": "Pittsburgh traded a sixth-round selection (214th overall) to Indianapolis in exchange for a seventh-round selection (230th overall) and WR Michael Pittman Jr."
+  },
+  {
+   "date": "March 13, 2026",
+   "from": "IND",
+   "to": "PIT",
+   "pick": "2026 R7 #230",
+   "phase": "pre-draft",
+   "detail": ""
+  },
+  {
+   "date": "March 18, 2026",
+   "from": "DEN",
+   "to": "MIA",
+   "pick": "2026 R1 #30",
+   "phase": "pre-draft",
+   "detail": "Denver traded first-, third- and fourth-round selections (30th, 94th and 130th overall) to Miami in exchange for a fourth-round selection (111th overall) and WR Jaylen Waddle."
+  },
+  {
+   "date": "March 18, 2026",
+   "from": "DEN",
+   "to": "MIA",
+   "pick": "2026 R3 #94",
+   "phase": "pre-draft",
+   "detail": ""
+  },
+  {
+   "date": "March 18, 2026",
+   "from": "MIA",
+   "to": "DEN",
+   "pick": "2026 R4 #111",
+   "phase": "pre-draft",
+   "detail": ""
+  },
+  {
+   "date": "March 18, 2026",
+   "from": "DEN",
+   "to": "MIA",
+   "pick": "2026 R4 #130",
+   "phase": "pre-draft",
+   "detail": ""
+  },
+  {
+   "date": "March 21, 2026",
+   "from": "ATL",
+   "to": "PHI",
+   "pick": "2026 R4 #114",
+   "phase": "pre-draft",
+   "detail": "Atlanta traded fourth- and sixth-round selections (114th and 197th overall) to Philadelphia in exchange for fourth- and sixth-round selections (122nd and 215th overall) and S Sydney Brown."
+  },
+  {
+   "date": "March 21, 2026",
+   "from": "PHI",
+   "to": "ATL",
+   "pick": "2026 R4 #122",
+   "phase": "pre-draft",
+   "detail": ""
+  },
+  {
+   "date": "March 21, 2026",
+   "from": "ATL",
+   "to": "PHI",
+   "pick": "2026 R6 #197",
+   "phase": "pre-draft",
+   "detail": ""
+  },
+  {
+   "date": "March 21, 2026",
+   "from": "PHI",
+   "to": "ATL",
+   "pick": "2026 R6 #215",
+   "phase": "pre-draft",
+   "detail": ""
+  },
+  {
+   "date": "April 11, 2026",
+   "from": "PHI",
+   "to": "GB",
+   "pick": "2026 R5 #153",
+   "phase": "pre-draft",
+   "detail": "Philadelphia traded a fifth-round selection (153rd overall) and a 2027 sixth-round selection to Green Bay in exchange for WR Dontayvion Wicks."
+  },
+  {
+   "date": "April 19, 2026",
+   "from": "CIN",
+   "to": "NYG",
+   "pick": "2026 R1 #10",
+   "phase": "pre-draft",
+   "detail": "Cincinnati traded a first-round selection (10th overall) to the NY Giants in exchange for DT Dexter Lawrence."
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "CLE",
+   "to": "KC",
+   "pick": "2026 R1 #6",
+   "phase": "draft-day",
+   "detail": "Cleveland traded a first-round selection (6th overall) to Kansas City in exchange for first-, third- and fifth round selections (9th, 74th and 148th overall)."
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "KC",
+   "to": "CLE",
+   "pick": "2026 R1 #9",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "MIA",
+   "to": "DAL",
+   "pick": "2026 R1 #11",
+   "phase": "draft-day",
+   "detail": "Miami traded a first-round selection (11th overall) to Dallas in exchange for a first-round selection and two fifth-round selections (12th, 177th and 180th overall)."
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "DAL",
+   "to": "MIA",
+   "pick": "2026 R1 #12",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "DAL",
+   "to": "PHI",
+   "pick": "2026 R1 #20",
+   "phase": "draft-day",
+   "detail": "Dallas traded a first-round selection (20th overall) and a 2027 seventh-round selection to Philadelphia in exchange for a first- and two fourth-round selections (23rd, 114th and 137th overall)."
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "PHI",
+   "to": "DAL",
+   "pick": "2026 R1 #23",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "BUF",
+   "to": "HOU",
+   "pick": "2026 R1 #26",
+   "phase": "draft-day",
+   "detail": "Buffalo traded first- and third-round selections (26th and 91st overall) to Houston in exchange for first-, third- and fifth-round selections (28th, 69th and 167th overall)."
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "SF",
+   "to": "MIA",
+   "pick": "2026 R1 #27",
+   "phase": "draft-day",
+   "detail": "San Francisco traded first- and fourth-round selections (27th and 138th overall) to Miami in exchange for first- and third-round selections (30th and 90th overall)."
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "HOU",
+   "to": "BUF",
+   "pick": "2026 R1 #28",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "BUF",
+   "to": "NE",
+   "pick": "2026 R1 #28",
+   "phase": "draft-day",
+   "detail": "Buffalo traded a first-round selection (28th overall) to New England in exchange for first- and fourth-round selections (31st and 125th overall)."
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "MIA",
+   "to": "SF",
+   "pick": "2026 R1 #30",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "SF",
+   "to": "NYJ",
+   "pick": "2026 R1 #30",
+   "phase": "draft-day",
+   "detail": "San Francisco traded a first-round selection (30th overall) to the NY Jets in exchange for second- and fifth-round selections (33rd and 179th overall)."
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "NE",
+   "to": "BUF",
+   "pick": "2026 R1 #31",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "BUF",
+   "to": "TEN",
+   "pick": "2026 R1 #31",
+   "phase": "draft-day",
+   "detail": "Buffalo traded first-, third- and fifth-round selections (31st, 69th and 165th overall) to Tennessee in exchange for second-, third- and fourth-round selections (35th, 66th and 101st overall)."
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "NYJ",
+   "to": "SF",
+   "pick": "2026 R2 #33",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "TEN",
+   "to": "BUF",
+   "pick": "2026 R2 #35",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "TEN",
+   "to": "BUF",
+   "pick": "2026 R3 #66",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "HOU",
+   "to": "BUF",
+   "pick": "2026 R3 #69",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "BUF",
+   "to": "TEN",
+   "pick": "2026 R3 #69",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "KC",
+   "to": "CLE",
+   "pick": "2026 R3 #74",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "MIA",
+   "to": "SF",
+   "pick": "2026 R3 #90",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "BUF",
+   "to": "HOU",
+   "pick": "2026 R3 #91",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "TEN",
+   "to": "BUF",
+   "pick": "2026 R4 #101",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "PHI",
+   "to": "DAL",
+   "pick": "2026 R4 #114",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "NE",
+   "to": "BUF",
+   "pick": "2026 R4 #125",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "PHI",
+   "to": "DAL",
+   "pick": "2026 R4 #137",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "SF",
+   "to": "MIA",
+   "pick": "2026 R4 #138",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "KC",
+   "to": "CLE",
+   "pick": "2026 R5 #148",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "BUF",
+   "to": "TEN",
+   "pick": "2026 R5 #165",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "HOU",
+   "to": "BUF",
+   "pick": "2026 R5 #167",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "DAL",
+   "to": "MIA",
+   "pick": "2026 R5 #177",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "NYJ",
+   "to": "SF",
+   "pick": "2026 R5 #179",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 23, 2026",
+   "from": "DAL",
+   "to": "MIA",
+   "pick": "2026 R5 #180",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "LV",
+   "to": "HOU",
+   "pick": "2026 R2 #36",
+   "phase": "draft-day",
+   "detail": "Las Vegas traded second- and fourth-round selections (36th and 117th overall) to Houston in exchange for second- and third-round selections (38th and 91st overall)."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "HOU",
+   "to": "LV",
+   "pick": "2026 R2 #38",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "NYJ",
+   "to": "DET",
+   "pick": "2026 R2 #44",
+   "phase": "pre-draft",
+   "detail": "The NY Jets traded a second-round selection (44th overall) to Detroit in exchange for second- and fourth- round selections (50th and 128th overall)."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "IND",
+   "to": "PIT",
+   "pick": "2026 R2 #47",
+   "phase": "draft-day",
+   "detail": "Indianapolis traded second- and seventh- round selections (47th and 249th overall) to Pittsburgh in exchange for second-, fourth- and seventh- round selections (53rd, 135th and 237th overall)."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "MIN",
+   "to": "CAR",
+   "pick": "2026 R2 #49",
+   "phase": "draft-day",
+   "detail": "Minnesota traded second- and sixth- round selections (49th and 196th overall) to Carolina in exchange for second- and fifth- round selections (51st and 159th overall)."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "DET",
+   "to": "NYJ",
+   "pick": "2026 R2 #50",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "CAR",
+   "to": "MIN",
+   "pick": "2026 R2 #51",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "PIT",
+   "to": "IND",
+   "pick": "2026 R2 #53",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "LAC",
+   "to": "NE",
+   "pick": "2026 R2 #55",
+   "phase": "draft-day",
+   "detail": "The LA Chargers traded a second-round selection (55th overall) to New England in exchange for second-, fourth- and sixth- round selections (63rd, 131st and 202nd overall)."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "SF",
+   "to": "CLE",
+   "pick": "2026 R2 #58",
+   "phase": "draft-day",
+   "detail": "San Francisco traded second- and fifth- round selections (58th and 152nd overall) to Cleveland in exchange for third- and fourth-round selections (70th and 107th overall)."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "CHI",
+   "to": "TEN",
+   "pick": "2026 R2 #60",
+   "phase": "draft-day",
+   "detail": "Chicago traded a second-round selection (60th overall) to Tennessee in exchange for third- and fifth-round selections (69th and 144th overall)."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "DEN",
+   "to": "BUF",
+   "pick": "2026 R2 #62",
+   "phase": "draft-day",
+   "detail": "Denver traded a second-round selection (62nd overall) to Buffalo in exchange for third- and sixth-round selections (66th and 182nd overall)."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "NE",
+   "to": "LAC",
+   "pick": "2026 R2 #63",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "BUF",
+   "to": "DEN",
+   "pick": "2026 R3 #66",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "TEN",
+   "to": "CHI",
+   "pick": "2026 R3 #69",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "CLE",
+   "to": "SF",
+   "pick": "2026 R3 #70",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "CLE",
+   "to": "NYG",
+   "pick": "2026 R3 #74",
+   "phase": "draft-day",
+   "detail": "Cleveland traded a third-round selection (74th overall) to the NY Giants in exchange for fourth- and fifth- round selections (105th and 145th overall) and a 2027 fourth-round selection."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "TB",
+   "to": "GB",
+   "pick": "2026 R3 #77",
+   "phase": "draft-day",
+   "detail": "Tampa Bay traded a third-round selection (77th overall) to Green Bay in exchange for third- and fifth-round selections (84th and 160th overall)."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "GB",
+   "to": "TB",
+   "pick": "2026 R3 #84",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "LAC",
+   "to": "CLE",
+   "pick": "2026 R3 #86",
+   "phase": "draft-day",
+   "detail": "The LA Chargers traded a third-round selection (86th overall) to Cleveland in exchange for fourth-, fifth- and sixth-round selections (105th, 145th and 206th overall)."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "HOU",
+   "to": "LV",
+   "pick": "2026 R3 #91",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "SEA",
+   "to": "PIT",
+   "pick": "2026 R3 #96",
+   "phase": "draft-day",
+   "detail": "Seattle traded a third-round selection (96th overall) to Pittsburgh in exchange for third- and sixth-round selections (99th and 216th overall)."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "PHI",
+   "to": "MIN",
+   "pick": "2026 R3 #98",
+   "phase": "draft-day",
+   "detail": "Philadelphia traded a third-round selection (98th overall) and 2027 third-round selection to Minnesota in exchange for a seventh-round selection (244th overall) and LB Jonathan Greenard."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "PIT",
+   "to": "SEA",
+   "pick": "2026 R3 #99",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "NYG",
+   "to": "CLE",
+   "pick": "2026 R4 #105",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "CLE",
+   "to": "LAC",
+   "pick": "2026 R4 #105",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "CLE",
+   "to": "SF",
+   "pick": "2026 R4 #107",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "LV",
+   "to": "HOU",
+   "pick": "2026 R4 #117",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "DET",
+   "to": "NYJ",
+   "pick": "2026 R4 #128",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "NE",
+   "to": "LAC",
+   "pick": "2026 R4 #131",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "PIT",
+   "to": "IND",
+   "pick": "2026 R4 #135",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "TEN",
+   "to": "CHI",
+   "pick": "2026 R5 #144",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "NYG",
+   "to": "CLE",
+   "pick": "2026 R5 #145",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "CLE",
+   "to": "LAC",
+   "pick": "2026 R5 #145",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "DAL",
+   "to": "SF",
+   "pick": "2026 R5 #152",
+   "phase": "draft-day",
+   "detail": "Dallas traded a fifth-round selection (152nd overall) to San Francisco in exchange for LB Dee Winters."
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "SF",
+   "to": "CLE",
+   "pick": "2026 R5 #152",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "CAR",
+   "to": "MIN",
+   "pick": "2026 R5 #159",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "GB",
+   "to": "TB",
+   "pick": "2026 R5 #160",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "BUF",
+   "to": "DEN",
+   "pick": "2026 R6 #182",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "MIN",
+   "to": "CAR",
+   "pick": "2026 R6 #196",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "NE",
+   "to": "LAC",
+   "pick": "2026 R6 #202",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "CLE",
+   "to": "LAC",
+   "pick": "2026 R6 #206",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "PIT",
+   "to": "SEA",
+   "pick": "2026 R6 #216",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "PIT",
+   "to": "IND",
+   "pick": "2026 R7 #237",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "MIN",
+   "to": "PHI",
+   "pick": "2026 R7 #244",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 24, 2026",
+   "from": "IND",
+   "to": "PIT",
+   "pick": "2026 R7 #249",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "BUF",
+   "to": "LV",
+   "pick": "2026 R4 #101",
+   "phase": "draft-day",
+   "detail": "Buffalo traded a fourth-round selection (101st overall) to Las Vegas in exchange for a fourth-round selection (102nd overall) and a 2027 seventh-round selection."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "LV",
+   "to": "BUF",
+   "pick": "2026 R4 #102",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CIN",
+   "to": "NYJ",
+   "pick": "2026 R4 #110",
+   "phase": "draft-day",
+   "detail": "Cincinnati traded fourth- and sixth-round selections (110th and 199th overall) to the NY Jets in exchange for two fourth-round selections (128th and 140th overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "HOU",
+   "to": "LAC",
+   "pick": "2026 R4 #117",
+   "phase": "draft-day",
+   "detail": "Houston traded a fourth-round selection (117th overall) to the LA Chargers in exchange for fourth- and sixth-round selections (123rd and 204th overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CAR",
+   "to": "JAX",
+   "pick": "2026 R4 #119",
+   "phase": "draft-day",
+   "detail": "Carolina traded fourth- and sixth-round selections (119th and 196th overall) to Jacksonville in exchange for fourth- and fifth- round selections (124th and 166th overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "ATL",
+   "to": "LV",
+   "pick": "2026 R4 #122",
+   "phase": "draft-day",
+   "detail": "Atlanta traded a fourth-round selection (122nd overall) to Las Vegas in exchange for fourth- and sixth-round selections (134th and 208th overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "LAC",
+   "to": "HOU",
+   "pick": "2026 R4 #123",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "JAX",
+   "to": "CAR",
+   "pick": "2026 R4 #124",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CAR",
+   "to": "CHI",
+   "pick": "2026 R4 #124",
+   "phase": "draft-day",
+   "detail": "Carolina traded fourth- and fifth-round selections (124th and 166th overall) to Chicago in exchange for fourth- and fifth-round selections (129th and 144th overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "NYJ",
+   "to": "CIN",
+   "pick": "2026 R4 #128",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CHI",
+   "to": "CAR",
+   "pick": "2026 R4 #129",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "SF",
+   "to": "BAL",
+   "pick": "2026 R4 #133",
+   "phase": "draft-day",
+   "detail": "San Francisco traded a fourth-round selection (133rd overall) to Baltimore in exchange for a fifth-round selection (154th overall) and a 2027 sixth-round selection."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "LV",
+   "to": "ATL",
+   "pick": "2026 R4 #134",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "NYJ",
+   "to": "CIN",
+   "pick": "2026 R4 #140",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CHI",
+   "to": "CAR",
+   "pick": "2026 R5 #144",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CLE",
+   "to": "SEA",
+   "pick": "2026 R5 #148",
+   "phase": "draft-day",
+   "detail": "Cleveland traded a fifth-round selection (148th overall) to Seattle in exchange for a 2027 fourth-round selection."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "NO",
+   "to": "LV",
+   "pick": "2026 R5 #150",
+   "phase": "draft-day",
+   "detail": "New Orleans traded a fifth-round selection (150th overall) to Las Vegas in exchange for a seventh-round selection (219th overall) and DE Tyree Wilson."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "MIA",
+   "to": "CAR",
+   "pick": "2026 R5 #151",
+   "phase": "draft-day",
+   "detail": "Miami traded fifth- and seventh-round selections (151st and 227th overall) to Carolina in exchange for fifth- and sixth-round selections (158th and 200th overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CLE",
+   "to": "DEN",
+   "pick": "2026 R5 #152",
+   "phase": "draft-day",
+   "detail": "Cleveland traded a fifth-round selection (152nd overall) to Denver in exchange for fifth- and sixth-round selections (170th and 182nd overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "BAL",
+   "to": "SF",
+   "pick": "2026 R5 #154",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CAR",
+   "to": "MIA",
+   "pick": "2026 R5 #158",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "PIT",
+   "to": "KC",
+   "pick": "2026 R5 #161",
+   "phase": "draft-day",
+   "detail": "Pittsburgh traded fifth- and seventh-round selections (161st and 249th overall) to Kansas City in exchange for fifth- and sixth-round selections (169th and 210th overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "JAX",
+   "to": "CAR",
+   "pick": "2026 R5 #166",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CAR",
+   "to": "CHI",
+   "pick": "2026 R5 #166",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "BUF",
+   "to": "DET",
+   "pick": "2026 R5 #168",
+   "phase": "draft-day",
+   "detail": "Buffalo traded a fifth-round selection (168th overall) to Detroit in exchange for fifth- and sixth-round selections (181st and 213th overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "KC",
+   "to": "PIT",
+   "pick": "2026 R5 #169",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "DEN",
+   "to": "CLE",
+   "pick": "2026 R5 #170",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "DET",
+   "to": "BUF",
+   "pick": "2026 R5 #181",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "DEN",
+   "to": "CLE",
+   "pick": "2026 R6 #182",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "LV",
+   "to": "TB",
+   "pick": "2026 R6 #185",
+   "phase": "draft-day",
+   "detail": "Las Vegas traded a sixth-round selection (185th overall) to Tampa Bay in exchange for sixth- and seventh-round selections (195th and 229th overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "SEA",
+   "to": "NYJ",
+   "pick": "2026 R6 #188",
+   "phase": "draft-day",
+   "detail": "Seattle traded a sixth-round selection (188th overall) to the NY Jets in exchange for sixth- and seventh-round selections (199th and 242nd overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "NE",
+   "to": "JAX",
+   "pick": "2026 R6 #191",
+   "phase": "draft-day",
+   "detail": "New England traded a sixth-round selection (191st overall) to Jacksonville in exchange for sixth- and seventh-round selections (196th and 245th overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "TB",
+   "to": "LV",
+   "pick": "2026 R6 #195",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CAR",
+   "to": "JAX",
+   "pick": "2026 R6 #196",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "JAX",
+   "to": "NE",
+   "pick": "2026 R6 #196",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "PHI",
+   "to": "LA",
+   "pick": "2026 R6 #197",
+   "phase": "draft-day",
+   "detail": "Philadelphia traded a sixth-round selection (197th overall) to the LA Rams in exchange for a sixth- and two seventh-round selections (207th, 251st and 252nd overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "NE",
+   "to": "MIN",
+   "pick": "2026 R6 #198",
+   "phase": "draft-day",
+   "detail": "New England traded a sixth-round selection (198th overall) to Minnesota in exchange for a seventh-round selection (234th overall) and a 2027 sixth-round selection."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CIN",
+   "to": "NYJ",
+   "pick": "2026 R6 #199",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "NYJ",
+   "to": "SEA",
+   "pick": "2026 R6 #199",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CAR",
+   "to": "MIA",
+   "pick": "2026 R6 #200",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "LAC",
+   "to": "HOU",
+   "pick": "2026 R6 #204",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "LA",
+   "to": "PHI",
+   "pick": "2026 R6 #207",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "LV",
+   "to": "ATL",
+   "pick": "2026 R6 #208",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "KC",
+   "to": "PIT",
+   "pick": "2026 R6 #210",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "DET",
+   "to": "BUF",
+   "pick": "2026 R6 #213",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "BUF",
+   "to": "CHI",
+   "pick": "2026 R6 #213",
+   "phase": "draft-day",
+   "detail": "Buffalo traded a sixth-round selection (213th overall) to Chicago in exchange for two seventh-round selections (239th and 241st overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "SEA",
+   "to": "GB",
+   "pick": "2026 R6 #216",
+   "phase": "draft-day",
+   "detail": "Seattle traded a sixth-round selection (216th overall) to Green Bay in exchange for two seventh-round selections (236th and 255th overall)."
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "LV",
+   "to": "NO",
+   "pick": "2026 R7 #219",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "MIA",
+   "to": "CAR",
+   "pick": "2026 R7 #227",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "TB",
+   "to": "LV",
+   "pick": "2026 R7 #229",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "MIN",
+   "to": "NE",
+   "pick": "2026 R7 #234",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "GB",
+   "to": "SEA",
+   "pick": "2026 R7 #236",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CHI",
+   "to": "BUF",
+   "pick": "2026 R7 #239",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "CHI",
+   "to": "BUF",
+   "pick": "2026 R7 #241",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "NYJ",
+   "to": "SEA",
+   "pick": "2026 R7 #242",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "JAX",
+   "to": "NE",
+   "pick": "2026 R7 #245",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "PIT",
+   "to": "KC",
+   "pick": "2026 R7 #249",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "LA",
+   "to": "PHI",
+   "pick": "2026 R7 #251",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "LA",
+   "to": "PHI",
+   "pick": "2026 R7 #252",
+   "phase": "draft-day",
+   "detail": ""
+  },
+  {
+   "date": "April 25, 2026",
+   "from": "GB",
+   "to": "SEA",
+   "pick": "2026 R7 #255",
+   "phase": "draft-day",
+   "detail": ""
+  }
+ ],
+ "validation": {
+  "totalPicks": 257,
+  "structural": "Exactly 224 non-compensatory picks = 7 per team, one per round for all 32 teams; 32 compensatory picks (max 4 for any team: BAL, PHI, PIT) + 1 Resolution JC-2A pick (Detroit, overall #100).",
+  "recordsSum": "271 W / 271 L / 2 T = 544 team-games = 32 x 17. Self-consistent.",
+  "csvReconciliation": "ownerAtDraftApril2026 matches all 257 season=2026 rows of _sources/draft_picks.csv - 0 mismatches.",
+  "februaryOwnershipSpotChecks": "Compared against 12 archived Feb-2026 tankathon.com team pages via the Wayback Machine (CLE 2026-01-09, MIA 2026-01-19, JAX 2026-01-19, PIT 2026-02-02, WAS 2026-02-03, SEA 2026-02-08, LA 2026-02-08, SF 2026-02-14, DEN/NYG 2026-02-18, LV 2026-02-16, NE 2026-01-22). 6 teams matched exactly (CLE, MIA, NYG, LV, LA, PIT). The 6 differences are listed in caveats and none of them changes a team pick COUNT except the compensatory projections."
+ },
+ "caveats": [
+  "SOURCE CONFLICT (net-zero on counts): San Francisco held two 2026 sixth-rounders in 2025 (its own, slot #209, and Minnesota's, slot #198) and traded one to Washington (Aug 24, 2025, Brian Robinson Jr.) and one to New England (Oct 29, 2025, Keion White). Wikipedia says WAS got SF's own (#209) and NE got MIN's (#198); the Feb-2026 Tankathon pages say the opposite. Wikipedia's version is used because it reconciles with the actual draft (NE traded #198 to MIN mid-draft and WAS drafted at #209). Either way WAS and NE each hold exactly one extra sixth-rounder in February.",
+  "SOURCE CONFLICT (net-zero on counts): Seattle holds exactly one sixth-round pick in February in both sources, but Wikipedia says it is Cleveland's #188 (acquired Aug 11, 2024, Nick Harris trade) with Seattle's own #213 having gone to Jacksonville (Oct 14, 2024, Roy Robertson-Harris) and on to Detroit (Apr 25, 2025), while Tankathon shows Seattle holding its own late-round-6 slot. Wikipedia is used - it reconciles with the final draft (#188 was ultimately drafted by NYJ via Seattle, #213 by CHI via Detroit).",
+  "SOURCE CONFLICT: the Jan 19, 2026 Tankathon page shows Jacksonville with 9 picks, missing JAX's own seventh (#240) and Philadelphia's sixth (#203, acquired Sept 9, 2025 in the Tank Bigsby trade). The final draft confirms JAX owned both (JAX drafted at #203 and #240 with no intervening trade), so both are kept. Treat JAX = 11 February picks as the better-supported number.",
+  "The 32 compensatory picks and the 1 Resolution JC-2A pick (overall #100) were not officially awarded until March 2026. They ARE included here (needed to run a full 257-pick draft) but each carries an \"uncertain: ... not officially awarded until March 2026\" note in viaTradeNote. Their February owner is the team later awarded them, except #100 which Detroit had already traded to Jacksonville on April 25, 2025.",
+  "Source annotation limit: Wikipedia annotates a pick only when its FINAL owner differs from the original owner. A pick traded away and then re-acquired by its original team before February 2026 would leave no trace and would show here as untraded. No such case is known, but it cannot be ruled out from these sources.",
+  "Overall pick numbers for rounds 3-7 reflect the final April 2026 slotting, which depends on the March 2026 compensatory award. In a strict February snapshot only the 224 non-compensatory slots were fixed.",
+  "Wikipedia labels the NY Jets -> Detroit trade of pick #44 as \"(PD)\" but dates it April 24, 2026 (mid-draft). Treated as post-February either way.",
+  "The January 2026 NFL.com order article lists round-1 slots 19-32 in inverse-record order (published before the playoffs finished, so JAX shows at 29 and NE/DEN at 30/31). The order used here is the final post-playoff order confirmed by ESPN (March 2026) and Wikipedia, and it reconciles 257/257 with draft_picks.csv."
+ ],
+ "sources": [
+  {
+   "url": "https://en.wikipedia.org/wiki/2026_NFL_draft",
+   "used_for": "All 257 picks: slot, original owner, and the full trade chain per pick with (PD) prior-to-draft vs (D) during-draft markers plus a dated citation for every hop. This is what makes February-vs-April disambiguation possible."
+  },
+  {
+   "url": "https://en.wikipedia.org/wiki/2025_NFL_season",
+   "used_for": "2025 final regular-season records for all 32 teams and playoff results."
+  },
+  {
+   "url": "https://www.espn.com/nfl/draft2026/story/_/id/47444785/2026-nfl-draft-order-first-round-top-32-picks-needs",
+   "used_for": "Independent confirmation of the final round-1 slot order, per-slot original team, per-team 2025 records, and the pre-draft round-1 trade set."
+  },
+  {
+   "url": "https://media.nfl.com/football-information/2025/news/las-vegas-raiders-hold-first-pick-in-2026-nfl-draft",
+   "used_for": "January 2026 order article: confirms picks 1-18 and that only ATL, GB, IND and JAX lacked a 2026 first-rounder before the March 2026 league year (i.e. the LA Rams still owned pick 29 in February)."
+  },
+  {
+   "url": "https://www.nbcsports.com/nfl/profootballtalk/news/2026-nfl-draft-order-updated-first-round-picks-after-raiders-secure-no-1-pick",
+   "used_for": "Second confirmation of the round-1 order and the four traded first-rounders."
+  },
+  {
+   "path": "tools/league-data/raw/_sources/draft_picks.csv",
+   "used_for": "Cross-check: the 257 season=2026 rows give the April draft-day owner of every slot; reconciled 257/257 against the Wikipedia table (field ownerAtDraftApril2026)."
+  },
+  {
+   "url": "https://web.archive.org/web/2026*/tankathon.com/nfl/*",
+   "used_for": "Independent February-2026 ownership spot-check for 12 teams via Wayback Machine snapshots of the Tankathon team pages (see validation section). Snapshots used: browns 20260109, dolphins 20260119, jaguars 20260119, patriots 20260122, steelers 20260202163306, commanders 20260203181710, seahawks 20260208132413, rams 20260208081559, 49ers 20260214104209, raiders 20260216112025, broncos 20260218024309, giants 20260218191541."
+  }
+ ]
+}

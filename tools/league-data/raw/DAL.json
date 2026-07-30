@@ -1,0 +1,5276 @@
+{
+ "team": "Dallas Cowboys",
+ "abbr": "DAL",
+ "conference": "NFC",
+ "division": "East",
+ "baseDefense": "Base 4-3 D",
+ "record2025": {
+  "wins": 7,
+  "losses": 9,
+  "ties": 1,
+  "madePlayoffs": false,
+  "playoffResult": null
+ },
+ "schemaNotes": {
+  "schemaVersion": 2,
+  "role": "Depth order ENTERING 2026, not a week-21 photograph. Players are ranked inside (team, position) by season-long 2025 primacy -- regular-season snaps on their own side of the ball, then position volume (pass attempts / carries+targets / targets / tackles / kicks / punts), then days held ESPN pos_rank 1 in the closing 35 days. The top `starterQuota[pos]` at each position are `starter`; the rest fall to rotation / backup / depth by snap share. A franchise starter who finished the year on IR outranks the fill-in who replaced him, because the season totals say so.",
+  "depthChartRank": "1..n inside (team, position), 1 = the projected 2026 starter.",
+  "injuredAtSeasonEnd": "true if the player was on reserve/injured (roster status RES) at his team's final 2025 game. This replaces the old `role: \"ir\"`, which conflated availability with depth.",
+  "roleVocabulary": [
+   "starter",
+   "rotation",
+   "backup",
+   "depth"
+  ],
+  "seasons": "REGULAR SEASON only (nflverse season_type REG). Postseason production, where it exists, is a separate optional `post` sub-object on the same row, derived as (REG+POST) - REG. Up to 8 most recent seasons in which the player actually appeared, anywhere in 2010-2025.",
+  "gp": "Games played. Source precedence: PFR team roster table G (2010-2022) -> games with >=1 recorded snap in PFR snap counts (2013-2025) -> nflverse `games` (non-OL only; it counts games with a recorded STAT and undercounts linemen by ~10-12 a season) -> null.",
+  "gs": "Games started. Source precedence recorded per row in `gsSrc`: `pfrRoster` = PFR team roster table GS (2010-2022, authoritative, all positions); `pfrAdvStats` = PFR advanced season tables GS (2018-2025, skill + defense only); `snapStart50` = DERIVED PROXY, offensive linemen only, counting regular-season games in which the player took >=50% of his team's offensive snaps -- an OL is on the field for either ~all or ~none of a game, so this is near-exact, but it is a proxy and is labelled as one; `pfrConventionKP` = 0 for a kicker or punter who played, which is what PFR records for every one of the 1827 K/P team-seasons on disk without exception; null = genuinely underivable from the sources on disk.",
+  "snapShare": "Mean share of his side's snaps in the regular-season games he appeared in, 0-1, from PFR snap counts. null before 2013.",
+  "statKeys": {
+   "QB": "att comp yds td int sacked rating rushAtt rushYds rushTd -- on a QB row `int` is INTERCEPTIONS THROWN and `td` is PASSING touchdowns.",
+   "RB/FB": "rushAtt rushYds rushTd rec recYds recTd fum",
+   "WR/TE": "rec tgt recYds recTd rushAtt rushYds",
+   "DE/DT/OLB/MLB": "tackles tfl sacks ff pd defInt defTd -- `defInt` is INTERCEPTIONS CAUGHT and `defTd` is a DEFENSIVE touchdown. The polysemous `int`/`td` keys of v1 are gone.",
+   "CB/FS/SS": "tackles defInt pd defTd sacks",
+   "LT/LG/C/RG/RT": "snaps pen penYds fum -- linemen record almost nothing in the play-by-play, so the production signal for them is snaps and the row-level gp/gs/snapShare.",
+   "K": "fgm fga long xpm xpa",
+   "P": "punts avg in20"
+  },
+  "scheme": "coaching_staffs_2026.json carries both the original compiled guess (offSchemeGuess / defSchemeGuess, its own vocabulary) and offScheme / defScheme, which are raw values of OffensiveScheme / DefensiveScheme in dynasty/Domain/Enums/Scheme.swift and decode 32/32.",
+  "anonymisation": "Real names. Per docs/ANONYMIZATION_SPEC.md 6.5 this tree must never enter a shipping target's resources."
+ },
+ "players": [
+  {
+   "name": "Cooper Beebe",
+   "pos": "C",
+   "jersey": 56,
+   "age": 24,
+   "yearsPro": 2,
+   "college": "Kansas State",
+   "draft": {
+    "year": 2024,
+    "round": 3,
+    "pick": 73
+   },
+   "heightIn": 76,
+   "weightLb": 335,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 15,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.961,
+     "stats": {
+      "snaps": 1061,
+      "pen": 3,
+      "penYds": 24,
+      "fum": 1
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 11,
+     "gs": 11,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.977,
+     "stats": {
+      "snaps": 767,
+      "pen": 1,
+      "penYds": 5,
+      "fum": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "DaRon Bland",
+   "pos": "CB",
+   "jersey": 26,
+   "age": 26,
+   "yearsPro": 4,
+   "college": "Fresno State",
+   "draft": {
+    "year": 2022,
+    "round": 5,
+    "pick": 167
+   },
+   "heightIn": 72,
+   "weightLb": 206,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": true,
+   "seasons": [
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 8,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.732,
+     "stats": {
+      "tackles": 53,
+      "defInt": 5,
+      "pd": 7,
+      "defTd": 0,
+      "sacks": 0.0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 1.0,
+      "stats": {
+       "tackles": 16,
+       "defInt": 0,
+       "pd": 1,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 15,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.898,
+     "stats": {
+      "tackles": 64,
+      "defInt": 9,
+      "pd": 15,
+      "defTd": 5,
+      "sacks": 0.0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 1.0,
+      "stats": {
+       "tackles": 5,
+       "defInt": 0,
+       "pd": 0,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 7,
+     "gs": 7,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.961,
+     "stats": {
+      "tackles": 41,
+      "defInt": 0,
+      "pd": 5,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 12,
+     "gs": 12,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.941,
+     "stats": {
+      "tackles": 72,
+      "defInt": 1,
+      "pd": 6,
+      "defTd": 1,
+      "sacks": 0.0
+     }
+    }
+   ],
+   "notes": "On reserve/injured (roster status RES) at the team's final 2025 game week 18."
+  },
+  {
+   "name": "Reddy Steward",
+   "pos": "CB",
+   "jersey": 27,
+   "age": 24,
+   "yearsPro": 2,
+   "college": "Troy",
+   "draft": null,
+   "heightIn": 71,
+   "weightLb": 178,
+   "role": "starter",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2024,
+     "team": "CHI",
+     "gp": 1,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.31,
+     "stats": {
+      "tackles": 1,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 5,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.535,
+     "stats": {
+      "tackles": 62,
+      "defInt": 0,
+      "pd": 3,
+      "defTd": 0,
+      "sacks": 1.5
+     }
+    }
+   ],
+   "notes": "No entry in nflverse draft_picks (1980-2026); treated as undrafted."
+  },
+  {
+   "name": "Donovan Ezeiruaku",
+   "pos": "DE",
+   "jersey": 41,
+   "age": 22,
+   "yearsPro": 1,
+   "college": "Boston College",
+   "draft": {
+    "year": 2025,
+    "round": 2,
+    "pick": 44
+   },
+   "heightIn": 74,
+   "weightLb": 247,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 9,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.551,
+     "stats": {
+      "tackles": 39,
+      "tfl": 9,
+      "sacks": 2.0,
+      "ff": 1,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Sam Williams",
+   "pos": "DE",
+   "jersey": 54,
+   "age": 26,
+   "yearsPro": 4,
+   "college": "Mississippi",
+   "draft": {
+    "year": 2022,
+    "round": 2,
+    "pick": 56
+   },
+   "heightIn": 76,
+   "weightLb": 265,
+   "role": "starter",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 15,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.277,
+     "stats": {
+      "tackles": 20,
+      "tfl": 9,
+      "sacks": 4.0,
+      "ff": 1,
+      "pd": 1,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.284,
+     "stats": {
+      "tackles": 23,
+      "tfl": 4,
+      "sacks": 4.5,
+      "ff": 1,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.14,
+      "stats": {
+       "tackles": 0,
+       "tfl": 0,
+       "sacks": 0.0,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 5,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.426,
+     "stats": {
+      "tackles": 35,
+      "tfl": 7,
+      "sacks": 1.0,
+      "ff": 1,
+      "pd": 2,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Kenny Clark",
+   "pos": "DT",
+   "jersey": 95,
+   "age": 30,
+   "yearsPro": 10,
+   "college": "UCLA",
+   "draft": {
+    "year": 2016,
+    "round": 1,
+    "pick": 27
+   },
+   "heightIn": 75,
+   "weightLb": 314,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2018,
+     "team": "GB",
+     "gp": 13,
+     "gs": 13,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.831,
+     "stats": {
+      "tackles": 50,
+      "tfl": 8,
+      "sacks": 6.0,
+      "ff": 1,
+      "pd": 3,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2019,
+     "team": "GB",
+     "gp": 16,
+     "gs": 16,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.841,
+     "stats": {
+      "tackles": 60,
+      "tfl": 8,
+      "sacks": 6.0,
+      "ff": 1,
+      "pd": 1,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 0.89,
+      "stats": {
+       "tackles": 5,
+       "tfl": 1,
+       "sacks": 1.0,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2020,
+     "team": "GB",
+     "gp": 13,
+     "gs": 13,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.703,
+     "stats": {
+      "tackles": 38,
+      "tfl": 3,
+      "sacks": 2.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 0.9,
+      "stats": {
+       "tackles": 10,
+       "tfl": 2,
+       "sacks": 2.5,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2021,
+     "team": "GB",
+     "gp": 16,
+     "gs": 16,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.772,
+     "stats": {
+      "tackles": 44,
+      "tfl": 5,
+      "sacks": 4.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.87,
+      "stats": {
+       "tackles": 4,
+       "tfl": 1,
+       "sacks": 1.0,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2022,
+     "team": "GB",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.783,
+     "stats": {
+      "tackles": 45,
+      "tfl": 4,
+      "sacks": 4.0,
+      "ff": 1,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2023,
+     "team": "GB",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.731,
+     "stats": {
+      "tackles": 40,
+      "tfl": 9,
+      "sacks": 7.5,
+      "ff": 2,
+      "pd": 3,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 0.695,
+      "stats": {
+       "tackles": 6,
+       "tfl": 1,
+       "sacks": 0.5,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "GB",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.623,
+     "stats": {
+      "tackles": 31,
+      "tfl": 4,
+      "sacks": 1.0,
+      "ff": 0,
+      "pd": 2,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.67,
+      "stats": {
+       "tackles": 5,
+       "tfl": 0,
+       "sacks": 0.0,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.678,
+     "stats": {
+      "tackles": 36,
+      "tfl": 6,
+      "sacks": 3.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Osa Odighizuwa",
+   "pos": "DT",
+   "jersey": 97,
+   "age": 27,
+   "yearsPro": 5,
+   "college": "UCLA",
+   "draft": {
+    "year": 2021,
+    "round": 3,
+    "pick": 75
+   },
+   "heightIn": 74,
+   "weightLb": 280,
+   "role": "starter",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2021,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 12,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.57,
+     "stats": {
+      "tackles": 30,
+      "tfl": 3,
+      "sacks": 2.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.45,
+      "stats": {
+       "tackles": 5,
+       "tfl": 0,
+       "sacks": 0.0,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.535,
+     "stats": {
+      "tackles": 40,
+      "tfl": 7,
+      "sacks": 4.0,
+      "ff": 1,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 0.615,
+      "stats": {
+       "tackles": 7,
+       "tfl": 2,
+       "sacks": 1.0,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.595,
+     "stats": {
+      "tackles": 35,
+      "tfl": 8,
+      "sacks": 3.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.73,
+      "stats": {
+       "tackles": 2,
+       "tfl": 0,
+       "sacks": 0.0,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.776,
+     "stats": {
+      "tackles": 46,
+      "tfl": 5,
+      "sacks": 4.5,
+      "ff": 1,
+      "pd": 1,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 13,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.626,
+     "stats": {
+      "tackles": 43,
+      "tfl": 6,
+      "sacks": 3.5,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Malik Hooker",
+   "pos": "FS",
+   "jersey": 28,
+   "age": 29,
+   "yearsPro": 9,
+   "college": "Ohio State",
+   "draft": {
+    "year": 2017,
+    "round": 1,
+    "pick": 15
+   },
+   "heightIn": 73,
+   "weightLb": 212,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2018,
+     "team": "IND",
+     "gp": 14,
+     "gs": 14,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.972,
+     "stats": {
+      "tackles": 42,
+      "defInt": 2,
+      "pd": 4,
+      "defTd": 0,
+      "sacks": 0.0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.93,
+      "stats": {
+       "tackles": 2,
+       "defInt": 0,
+       "pd": 0,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2019,
+     "team": "IND",
+     "gp": 13,
+     "gs": 13,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.932,
+     "stats": {
+      "tackles": 49,
+      "defInt": 2,
+      "pd": 3,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2020,
+     "team": "IND",
+     "gp": 2,
+     "gs": 2,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.685,
+     "stats": {
+      "tackles": 7,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2021,
+     "team": "DAL",
+     "gp": 15,
+     "gs": 3,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.427,
+     "stats": {
+      "tackles": 42,
+      "defInt": 1,
+      "pd": 2,
+      "defTd": 0,
+      "sacks": 0.0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.45,
+      "stats": {
+       "tackles": 3,
+       "defInt": 0,
+       "pd": 0,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 6,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.799,
+     "stats": {
+      "tackles": 57,
+      "defInt": 3,
+      "pd": 3,
+      "defTd": 0,
+      "sacks": 0.0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 1.0,
+      "stats": {
+       "tackles": 13,
+       "defInt": 0,
+       "pd": 0,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 15,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.825,
+     "stats": {
+      "tackles": 47,
+      "defInt": 1,
+      "pd": 3,
+      "defTd": 0,
+      "sacks": 0.0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.68,
+      "stats": {
+       "tackles": 1,
+       "defInt": 0,
+       "pd": 0,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.964,
+     "stats": {
+      "tackles": 72,
+      "defInt": 2,
+      "pd": 5,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 12,
+     "gs": 12,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.792,
+     "stats": {
+      "tackles": 49,
+      "defInt": 0,
+      "pd": 1,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Brandon Aubrey",
+   "pos": "K",
+   "jersey": 17,
+   "age": 30,
+   "yearsPro": 4,
+   "college": "Notre Dame",
+   "draft": null,
+   "heightIn": 75,
+   "weightLb": 218,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrConventionKP",
+     "snapShare": null,
+     "stats": {
+      "fgm": 36,
+      "fga": 38,
+      "long": 60,
+      "xpm": 49,
+      "xpa": 52
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": null,
+      "stats": {
+       "fgm": 1,
+       "fga": 1,
+       "long": null,
+       "xpm": 1,
+       "xpa": 2
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrConventionKP",
+     "snapShare": null,
+     "stats": {
+      "fgm": 40,
+      "fga": 47,
+      "long": 65,
+      "xpm": 30,
+      "xpa": 30
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": null,
+     "stats": {
+      "fgm": 36,
+      "fga": 42,
+      "long": 64,
+      "xpm": 47,
+      "xpa": 48
+     }
+    }
+   ],
+   "notes": "No entry in nflverse draft_picks (1980-2026); treated as undrafted."
+  },
+  {
+   "name": "Hakeem Adeniji",
+   "pos": "LG",
+   "jersey": 75,
+   "age": 28,
+   "yearsPro": 6,
+   "college": "Kansas",
+   "draft": {
+    "year": 2020,
+    "round": 6,
+    "pick": 180
+   },
+   "heightIn": 76,
+   "weightLb": 300,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2020,
+     "team": "CIN",
+     "gp": 15,
+     "gs": 5,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.38,
+     "stats": {
+      "snaps": 232,
+      "pen": 2,
+      "penYds": 10,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2021,
+     "team": "CIN",
+     "gp": 9,
+     "gs": 9,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.887,
+     "stats": {
+      "snaps": 556,
+      "pen": 2,
+      "penYds": 20,
+      "fum": 0
+     },
+     "post": {
+      "gp": 4,
+      "snapShare": 0.873,
+      "stats": {
+       "snaps": 221,
+       "pen": 1,
+       "penYds": 5,
+       "fum": 0
+      }
+     }
+    },
+    {
+     "year": 2022,
+     "team": "CIN",
+     "gp": 15,
+     "gs": 2,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.237,
+     "stats": {
+      "snaps": 220,
+      "pen": 2,
+      "penYds": 15,
+      "fum": 0
+     },
+     "post": {
+      "gp": 3,
+      "snapShare": 1.0,
+      "stats": {
+       "snaps": 199,
+       "pen": 1,
+       "penYds": 5,
+       "fum": 0
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": null,
+     "gp": 4,
+     "gs": null,
+     "gsSrc": null,
+     "snapShare": null,
+     "stats": {
+      "snaps": 0,
+      "pen": null,
+      "penYds": null,
+      "fum": null
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 12,
+     "gs": 1,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.205,
+     "stats": {
+      "snaps": 76,
+      "pen": 1,
+      "penYds": 10,
+      "fum": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Tyler Smith",
+   "pos": "LT",
+   "jersey": 73,
+   "age": 24,
+   "yearsPro": 4,
+   "college": "Tulsa",
+   "draft": {
+    "year": 2022,
+    "round": 1,
+    "pick": 24
+   },
+   "heightIn": 77,
+   "weightLb": 332,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.985,
+     "stats": {
+      "snaps": 1144,
+      "pen": 9,
+      "penYds": 70,
+      "fum": 0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 1.0,
+      "stats": {
+       "snaps": 130,
+       "pen": 2,
+       "penYds": 15,
+       "fum": 0
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 14,
+     "gs": 14,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.971,
+     "stats": {
+      "snaps": 941,
+      "pen": 10,
+      "penYds": 80,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 16,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.956,
+     "stats": {
+      "snaps": 1055,
+      "pen": 4,
+      "penYds": 40,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 16,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.984,
+     "stats": {
+      "snaps": 1109,
+      "pen": 7,
+      "penYds": 50,
+      "fum": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Logan Wilson",
+   "pos": "MLB",
+   "jersey": 55,
+   "age": 29,
+   "yearsPro": 6,
+   "college": "Wyoming",
+   "draft": {
+    "year": 2020,
+    "round": 3,
+    "pick": 65
+   },
+   "heightIn": 74,
+   "weightLb": 245,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2020,
+     "team": "CIN",
+     "gp": 12,
+     "gs": 2,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.424,
+     "stats": {
+      "tackles": 33,
+      "tfl": 4,
+      "sacks": 1.0,
+      "ff": 0,
+      "pd": 3,
+      "defInt": 2,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2021,
+     "team": "CIN",
+     "gp": 13,
+     "gs": 13,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.833,
+     "stats": {
+      "tackles": 93,
+      "tfl": 5,
+      "sacks": 1.0,
+      "ff": 1,
+      "pd": 4,
+      "defInt": 4,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 4,
+      "snapShare": 1.0,
+      "stats": {
+       "tackles": 35,
+       "tfl": 2,
+       "sacks": 0.0,
+       "ff": 0,
+       "pd": 3,
+       "defInt": 1,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2022,
+     "team": "CIN",
+     "gp": 15,
+     "gs": 15,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.959,
+     "stats": {
+      "tackles": 111,
+      "tfl": 3,
+      "sacks": 2.5,
+      "ff": 1,
+      "pd": 4,
+      "defInt": 1,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 3,
+      "snapShare": 1.0,
+      "stats": {
+       "tackles": 22,
+       "tfl": 0,
+       "sacks": 0.0,
+       "ff": 1,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "CIN",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.972,
+     "stats": {
+      "tackles": 120,
+      "tfl": 1,
+      "sacks": 1.0,
+      "ff": 3,
+      "pd": 9,
+      "defInt": 4,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2024,
+     "team": "CIN",
+     "gp": 11,
+     "gs": 11,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.99,
+     "stats": {
+      "tackles": 97,
+      "tfl": 2,
+      "sacks": 0.0,
+      "ff": 2,
+      "pd": 1,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 15,
+     "gs": 8,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.585,
+     "stats": {
+      "tackles": 69,
+      "tfl": 0,
+      "sacks": 0.0,
+      "ff": 1,
+      "pd": 5,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Kenneth Murray, Jr.",
+   "pos": "OLB",
+   "jersey": 59,
+   "age": 27,
+   "yearsPro": 6,
+   "college": "Oklahoma",
+   "draft": {
+    "year": 2020,
+    "round": 1,
+    "pick": 23
+   },
+   "heightIn": 74,
+   "weightLb": 234,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2020,
+     "team": "LAC",
+     "gp": 16,
+     "gs": 16,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.917,
+     "stats": {
+      "tackles": 101,
+      "tfl": 4,
+      "sacks": 1.0,
+      "ff": 0,
+      "pd": 3,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2021,
+     "team": "LAC",
+     "gp": 11,
+     "gs": 6,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.483,
+     "stats": {
+      "tackles": 28,
+      "tfl": 2,
+      "sacks": 0.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2022,
+     "team": "LAC",
+     "gp": 17,
+     "gs": 16,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.689,
+     "stats": {
+      "tackles": 63,
+      "tfl": 6,
+      "sacks": 1.0,
+      "ff": 1,
+      "pd": 3,
+      "defInt": 1,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.89,
+      "stats": {
+       "tackles": 8,
+       "tfl": 0,
+       "sacks": 0.5,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "LAC",
+     "gp": 15,
+     "gs": 15,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.944,
+     "stats": {
+      "tackles": 96,
+      "tfl": 6,
+      "sacks": 3.0,
+      "ff": 0,
+      "pd": 4,
+      "defInt": 1,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2024,
+     "team": "TEN",
+     "gp": 14,
+     "gs": 14,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.929,
+     "stats": {
+      "tackles": 89,
+      "tfl": 8,
+      "sacks": 3.5,
+      "ff": 1,
+      "pd": 2,
+      "defInt": 1,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 16,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.786,
+     "stats": {
+      "tackles": 81,
+      "tfl": 4,
+      "sacks": 1.0,
+      "ff": 0,
+      "pd": 2,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "DeMarvion Overshown",
+   "pos": "OLB",
+   "jersey": 0,
+   "age": 25,
+   "yearsPro": 3,
+   "college": "Texas",
+   "draft": {
+    "year": 2023,
+    "round": 3,
+    "pick": 90
+   },
+   "heightIn": 75,
+   "weightLb": 217,
+   "role": "starter",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 13,
+     "gs": 12,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.833,
+     "stats": {
+      "tackles": 87,
+      "tfl": 8,
+      "sacks": 5.0,
+      "ff": 1,
+      "pd": 4,
+      "defInt": 1,
+      "defTd": 1
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 6,
+     "gs": 5,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.598,
+     "stats": {
+      "tackles": 28,
+      "tfl": 1,
+      "sacks": 0.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Bryan Anger",
+   "pos": "P",
+   "jersey": 5,
+   "age": 37,
+   "yearsPro": 14,
+   "college": "California",
+   "draft": {
+    "year": 2012,
+    "round": 3,
+    "pick": 70
+   },
+   "heightIn": 75,
+   "weightLb": 205,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2018,
+     "team": "TB",
+     "gp": 16,
+     "gs": 0,
+     "gsSrc": "pfrRoster",
+     "snapShare": null,
+     "stats": {
+      "punts": 57,
+      "avg": 45.0,
+      "in20": 15
+     }
+    },
+    {
+     "year": 2019,
+     "team": "HOU",
+     "gp": 14,
+     "gs": 0,
+     "gsSrc": "pfrRoster",
+     "snapShare": null,
+     "stats": {
+      "punts": 45,
+      "avg": 46.5,
+      "in20": 24
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": null,
+      "stats": {
+       "punts": 8,
+       "avg": 44.1,
+       "in20": 5
+      }
+     }
+    },
+    {
+     "year": 2020,
+     "team": "HOU",
+     "gp": 16,
+     "gs": 0,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.02,
+     "stats": {
+      "punts": 54,
+      "avg": 46.4,
+      "in20": 19
+     }
+    },
+    {
+     "year": 2021,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrRoster",
+     "snapShare": null,
+     "stats": {
+      "punts": 65,
+      "avg": 48.4,
+      "in20": 24
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": null,
+      "stats": {
+       "punts": 5,
+       "avg": 53.6,
+       "in20": 3
+      }
+     }
+    },
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": null,
+     "stats": {
+      "punts": 68,
+      "avg": 48.4,
+      "in20": 27
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": null,
+      "stats": {
+       "punts": 8,
+       "avg": 47.0,
+       "in20": 4
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrConventionKP",
+     "snapShare": null,
+     "stats": {
+      "punts": 44,
+      "avg": 51.4,
+      "in20": 17
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": null,
+      "stats": {
+       "punts": 2,
+       "avg": 40.0,
+       "in20": 2
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrConventionKP",
+     "snapShare": null,
+     "stats": {
+      "punts": 62,
+      "avg": 48.5,
+      "in20": 24
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrConventionKP",
+     "snapShare": null,
+     "stats": {
+      "punts": 41,
+      "avg": 48.6,
+      "in20": 14
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Dak Prescott",
+   "pos": "QB",
+   "jersey": 4,
+   "age": 32,
+   "yearsPro": 10,
+   "college": "Mississippi State",
+   "draft": {
+    "year": 2016,
+    "round": 4,
+    "pick": 135
+   },
+   "heightIn": 74,
+   "weightLb": 238,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2018,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 16,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.995,
+     "stats": {
+      "att": 526,
+      "comp": 356,
+      "yds": 3885,
+      "td": 22,
+      "int": 8,
+      "sacked": 56,
+      "rushAtt": 75,
+      "rushYds": 305,
+      "rushTd": 6,
+      "rating": 96.9
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 1.0,
+      "stats": {
+       "att": 65,
+       "comp": 42,
+       "yds": 492,
+       "td": 2,
+       "int": 1,
+       "sacked": 2,
+       "rushAtt": 8,
+       "rushYds": 32,
+       "rushTd": 2,
+       "rating": 91.3
+      }
+     }
+    },
+    {
+     "year": 2019,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 16,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.995,
+     "stats": {
+      "att": 596,
+      "comp": 388,
+      "yds": 4902,
+      "td": 30,
+      "int": 11,
+      "sacked": 23,
+      "rushAtt": 52,
+      "rushYds": 277,
+      "rushTd": 3,
+      "rating": 99.7
+     }
+    },
+    {
+     "year": 2020,
+     "team": "DAL",
+     "gp": 5,
+     "gs": 5,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.93,
+     "stats": {
+      "att": 222,
+      "comp": 151,
+      "yds": 1856,
+      "td": 9,
+      "int": 4,
+      "sacked": 10,
+      "rushAtt": 18,
+      "rushYds": 93,
+      "rushTd": 3,
+      "rating": 99.6
+     }
+    },
+    {
+     "year": 2021,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 16,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.964,
+     "stats": {
+      "att": 596,
+      "comp": 410,
+      "yds": 4449,
+      "td": 37,
+      "int": 10,
+      "sacked": 30,
+      "rushAtt": 48,
+      "rushYds": 146,
+      "rushTd": 1,
+      "rating": 104.2
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 1.0,
+      "stats": {
+       "att": 43,
+       "comp": 23,
+       "yds": 254,
+       "td": 1,
+       "int": 1,
+       "sacked": 5,
+       "rushAtt": 4,
+       "rushYds": 27,
+       "rushTd": 1,
+       "rating": 69.3
+      }
+     }
+    },
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 12,
+     "gs": 12,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.961,
+     "stats": {
+      "att": 394,
+      "comp": 261,
+      "yds": 2860,
+      "td": 23,
+      "int": 15,
+      "sacked": 20,
+      "rushAtt": 45,
+      "rushYds": 182,
+      "rushTd": 1,
+      "rating": 91.1
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 1.0,
+      "stats": {
+       "att": 70,
+       "comp": 48,
+       "yds": 511,
+       "td": 5,
+       "int": 2,
+       "sacked": 2,
+       "rushAtt": 11,
+       "rushYds": 46,
+       "rushTd": 1,
+       "rating": 101.5
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.939,
+     "stats": {
+      "att": 590,
+      "comp": 410,
+      "yds": 4516,
+      "td": 36,
+      "int": 9,
+      "sacked": 39,
+      "rushAtt": 55,
+      "rushYds": 242,
+      "rushTd": 2,
+      "rating": 105.9
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 1.0,
+      "stats": {
+       "att": 60,
+       "comp": 41,
+       "yds": 403,
+       "td": 3,
+       "int": 2,
+       "sacked": 4,
+       "rushAtt": 6,
+       "rushYds": 45,
+       "rushTd": 0,
+       "rating": 89.8
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 8,
+     "gs": 8,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.911,
+     "stats": {
+      "att": 286,
+      "comp": 185,
+      "yds": 1978,
+      "td": 11,
+      "int": 8,
+      "sacked": 21,
+      "rushAtt": 13,
+      "rushYds": 54,
+      "rushTd": 1,
+      "rating": 86.0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.951,
+     "stats": {
+      "att": 600,
+      "comp": 404,
+      "yds": 4552,
+      "td": 30,
+      "int": 10,
+      "sacked": 31,
+      "rushAtt": 53,
+      "rushYds": 177,
+      "rushTd": 2,
+      "rating": 99.5
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Javonte Williams",
+   "pos": "RB",
+   "jersey": 33,
+   "age": 25,
+   "yearsPro": 5,
+   "college": "North Carolina",
+   "draft": {
+    "year": 2021,
+    "round": 2,
+    "pick": 35
+   },
+   "heightIn": 70,
+   "weightLb": 220,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": true,
+   "seasons": [
+    {
+     "year": 2021,
+     "team": "DEN",
+     "gp": 17,
+     "gs": 1,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.507,
+     "stats": {
+      "rushAtt": 203,
+      "rushYds": 903,
+      "rushTd": 4,
+      "rec": 43,
+      "recYds": 316,
+      "recTd": 3,
+      "fum": 2
+     }
+    },
+    {
+     "year": 2022,
+     "team": "DEN",
+     "gp": 4,
+     "gs": 4,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.532,
+     "stats": {
+      "rushAtt": 47,
+      "rushYds": 204,
+      "rushTd": 0,
+      "rec": 16,
+      "recYds": 76,
+      "recTd": 0,
+      "fum": 1
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DEN",
+     "gp": 16,
+     "gs": 13,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.481,
+     "stats": {
+      "rushAtt": 217,
+      "rushYds": 774,
+      "rushTd": 3,
+      "rec": 47,
+      "recYds": 228,
+      "recTd": 2,
+      "fum": 1
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DEN",
+     "gp": 17,
+     "gs": 11,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.522,
+     "stats": {
+      "rushAtt": 139,
+      "rushYds": 513,
+      "rushTd": 4,
+      "rec": 52,
+      "recYds": 346,
+      "recTd": 0,
+      "fum": 2
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.74,
+      "stats": {
+       "rushAtt": 7,
+       "rushYds": 29,
+       "rushTd": 0,
+       "rec": 2,
+       "recYds": 14,
+       "recTd": 0,
+       "fum": 0
+      }
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 16,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.69,
+     "stats": {
+      "rushAtt": 252,
+      "rushYds": 1201,
+      "rushTd": 11,
+      "rec": 35,
+      "recYds": 137,
+      "recTd": 2,
+      "fum": 2
+     }
+    }
+   ],
+   "notes": "On reserve/injured (roster status RES) at the team's final 2025 game week 18."
+  },
+  {
+   "name": "Tyler Booker",
+   "pos": "RG",
+   "jersey": 52,
+   "age": 21,
+   "yearsPro": 1,
+   "college": "Alabama",
+   "draft": {
+    "year": 2025,
+    "round": 1,
+    "pick": 12
+   },
+   "heightIn": 76,
+   "weightLb": 325,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 14,
+     "gs": 14,
+     "gsSrc": "snapStart50",
+     "snapShare": 1.0,
+     "stats": {
+      "snaps": 1002,
+      "pen": 5,
+      "penYds": 60,
+      "fum": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Terence Steele",
+   "pos": "RT",
+   "jersey": 78,
+   "age": 28,
+   "yearsPro": 6,
+   "college": "Texas Tech",
+   "draft": null,
+   "heightIn": 78,
+   "weightLb": 310,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2020,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 14,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.851,
+     "stats": {
+      "snaps": 970,
+      "pen": 4,
+      "penYds": 25,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2021,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 13,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.848,
+     "stats": {
+      "snaps": 912,
+      "pen": 8,
+      "penYds": 60,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 13,
+     "gs": 12,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.947,
+     "stats": {
+      "snaps": 818,
+      "pen": 6,
+      "penYds": 35,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.994,
+     "stats": {
+      "snaps": 1177,
+      "pen": 6,
+      "penYds": 39,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "snapStart50",
+     "snapShare": 1.0,
+     "stats": {
+      "snaps": 1171,
+      "pen": 7,
+      "penYds": 34,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.979,
+     "stats": {
+      "snaps": 1162,
+      "pen": 3,
+      "penYds": 25,
+      "fum": 0
+     }
+    }
+   ],
+   "notes": "No entry in nflverse draft_picks (1980-2026); treated as undrafted."
+  },
+  {
+   "name": "Donovan Wilson",
+   "pos": "SS",
+   "jersey": 6,
+   "age": 30,
+   "yearsPro": 7,
+   "college": "Texas A&M",
+   "draft": {
+    "year": 2019,
+    "round": 6,
+    "pick": 213
+   },
+   "heightIn": 72,
+   "weightLb": 204,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2019,
+     "team": "DAL",
+     "gp": 11,
+     "gs": 0,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.077,
+     "stats": {
+      "tackles": 2,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2020,
+     "team": "DAL",
+     "gp": 14,
+     "gs": 10,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.889,
+     "stats": {
+      "tackles": 71,
+      "defInt": 2,
+      "pd": 3,
+      "defTd": 0,
+      "sacks": 3.5
+     }
+    },
+    {
+     "year": 2021,
+     "team": "DAL",
+     "gp": 9,
+     "gs": 3,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.569,
+     "stats": {
+      "tackles": 29,
+      "defInt": 0,
+      "pd": 1,
+      "defTd": 0,
+      "sacks": 0.0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.65,
+      "stats": {
+       "tackles": 6,
+       "defInt": 0,
+       "pd": 0,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.837,
+     "stats": {
+      "tackles": 97,
+      "defInt": 1,
+      "pd": 2,
+      "defTd": 0,
+      "sacks": 5.0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 0.96,
+      "stats": {
+       "tackles": 11,
+       "defInt": 0,
+       "pd": 2,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 15,
+     "gs": 13,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.761,
+     "stats": {
+      "tackles": 78,
+      "defInt": 2,
+      "pd": 3,
+      "defTd": 0,
+      "sacks": 0.0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.8,
+      "stats": {
+       "tackles": 4,
+       "defInt": 0,
+       "pd": 0,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.915,
+     "stats": {
+      "tackles": 77,
+      "defInt": 1,
+      "pd": 5,
+      "defTd": 0,
+      "sacks": 4.5
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 15,
+     "gs": 15,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.939,
+     "stats": {
+      "tackles": 71,
+      "defInt": 2,
+      "pd": 5,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Jake Ferguson",
+   "pos": "TE",
+   "jersey": 87,
+   "age": 27,
+   "yearsPro": 4,
+   "college": "Wisconsin",
+   "draft": {
+    "year": 2022,
+    "round": 4,
+    "pick": 129
+   },
+   "heightIn": 77,
+   "weightLb": 244,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 8,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.406,
+     "stats": {
+      "rec": 19,
+      "tgt": 22,
+      "recYds": 174,
+      "recTd": 2,
+      "rushAtt": 0,
+      "rushYds": 0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 0.38,
+      "stats": {
+       "rec": 1,
+       "tgt": 1,
+       "recYds": 34,
+       "recTd": 0,
+       "rushAtt": 0,
+       "rushYds": 0
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 16,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.746,
+     "stats": {
+      "rec": 71,
+      "tgt": 102,
+      "recYds": 761,
+      "recTd": 5,
+      "rushAtt": 0,
+      "rushYds": 0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.79,
+      "stats": {
+       "rec": 10,
+       "tgt": 12,
+       "recYds": 93,
+       "recTd": 3,
+       "rushAtt": 0,
+       "rushYds": 0
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 14,
+     "gs": 14,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.653,
+     "stats": {
+      "rec": 59,
+      "tgt": 86,
+      "recYds": 494,
+      "recTd": 0,
+      "rushAtt": 0,
+      "rushYds": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 10,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.667,
+     "stats": {
+      "rec": 82,
+      "tgt": 102,
+      "recYds": 600,
+      "recTd": 8,
+      "rushAtt": 1,
+      "rushYds": 1
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "George Pickens",
+   "pos": "WR",
+   "jersey": 3,
+   "age": 24,
+   "yearsPro": 4,
+   "college": "Georgia",
+   "draft": {
+    "year": 2022,
+    "round": 2,
+    "pick": 52
+   },
+   "heightIn": 75,
+   "weightLb": 200,
+   "role": "starter",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2022,
+     "team": "PIT",
+     "gp": 17,
+     "gs": 12,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.76,
+     "stats": {
+      "rec": 52,
+      "tgt": 84,
+      "recYds": 801,
+      "recTd": 4,
+      "rushAtt": 3,
+      "rushYds": 24
+     }
+    },
+    {
+     "year": 2023,
+     "team": "PIT",
+     "gp": 17,
+     "gs": 16,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.87,
+     "stats": {
+      "rec": 63,
+      "tgt": 106,
+      "recYds": 1140,
+      "recTd": 5,
+      "rushAtt": 3,
+      "rushYds": 18
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.91,
+      "stats": {
+       "rec": 5,
+       "tgt": 11,
+       "recYds": 50,
+       "recTd": 0,
+       "rushAtt": 1,
+       "rushYds": 15
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "PIT",
+     "gp": 14,
+     "gs": 12,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.802,
+     "stats": {
+      "rec": 59,
+      "tgt": 103,
+      "recYds": 900,
+      "recTd": 3,
+      "rushAtt": 2,
+      "rushYds": -6
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.78,
+      "stats": {
+       "rec": 5,
+       "tgt": 5,
+       "recYds": 87,
+       "recTd": 1,
+       "rushAtt": 0,
+       "rushYds": 0
+      }
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 15,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.811,
+     "stats": {
+      "rec": 93,
+      "tgt": 137,
+      "recYds": 1429,
+      "recTd": 9,
+      "rushAtt": 0,
+      "rushYds": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "CeeDee Lamb",
+   "pos": "WR",
+   "jersey": 88,
+   "age": 26,
+   "yearsPro": 6,
+   "college": "Oklahoma",
+   "draft": {
+    "year": 2020,
+    "round": 1,
+    "pick": 17
+   },
+   "heightIn": 74,
+   "weightLb": 200,
+   "role": "starter",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2020,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 14,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.631,
+     "stats": {
+      "rec": 74,
+      "tgt": 111,
+      "recYds": 935,
+      "recTd": 5,
+      "rushAtt": 10,
+      "rushYds": 82
+     }
+    },
+    {
+     "year": 2021,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 13,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.768,
+     "stats": {
+      "rec": 79,
+      "tgt": 120,
+      "recYds": 1102,
+      "recTd": 6,
+      "rushAtt": 9,
+      "rushYds": 76
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.83,
+      "stats": {
+       "rec": 1,
+       "tgt": 5,
+       "recYds": 21,
+       "recTd": 0,
+       "rushAtt": 1,
+       "rushYds": 5
+      }
+     }
+    },
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.875,
+     "stats": {
+      "rec": 107,
+      "tgt": 156,
+      "recYds": 1359,
+      "recTd": 9,
+      "rushAtt": 10,
+      "rushYds": 47
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 0.87,
+      "stats": {
+       "rec": 14,
+       "tgt": 19,
+       "recYds": 185,
+       "recTd": 1,
+       "rushAtt": 2,
+       "rushYds": 6
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.837,
+     "stats": {
+      "rec": 135,
+      "tgt": 181,
+      "recYds": 1749,
+      "recTd": 12,
+      "rushAtt": 14,
+      "rushYds": 113
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.92,
+      "stats": {
+       "rec": 9,
+       "tgt": 17,
+       "recYds": 110,
+       "recTd": 0,
+       "rushAtt": 1,
+       "rushYds": 5
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 15,
+     "gs": 15,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.802,
+     "stats": {
+      "rec": 101,
+      "tgt": 152,
+      "recYds": 1194,
+      "recTd": 6,
+      "rushAtt": 14,
+      "rushYds": 70
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 14,
+     "gs": 13,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.729,
+     "stats": {
+      "rec": 75,
+      "tgt": 117,
+      "recYds": 1077,
+      "recTd": 3,
+      "rushAtt": 1,
+      "rushYds": 2
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Ryan Flournoy",
+   "pos": "WR",
+   "jersey": 19,
+   "age": 26,
+   "yearsPro": 2,
+   "college": "Southeast Missouri State; Iowa Western CC",
+   "draft": {
+    "year": 2024,
+    "round": 6,
+    "pick": 216
+   },
+   "heightIn": 73,
+   "weightLb": 197,
+   "role": "starter",
+   "depthChartRank": 3,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 11,
+     "gs": 1,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.2,
+     "stats": {
+      "rec": 10,
+      "tgt": 14,
+      "recYds": 102,
+      "recTd": 0,
+      "rushAtt": 0,
+      "rushYds": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 4,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.477,
+     "stats": {
+      "rec": 40,
+      "tgt": 56,
+      "recYds": 475,
+      "recTd": 4,
+      "rushAtt": 4,
+      "rushYds": 25
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Brock Hoffman",
+   "pos": "C",
+   "jersey": 67,
+   "age": 26,
+   "yearsPro": 4,
+   "college": "Virginia Tech; Coastal Carolina",
+   "draft": null,
+   "heightIn": 76,
+   "weightLb": 302,
+   "role": "rotation",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2022,
+     "team": null,
+     "gp": 3,
+     "gs": null,
+     "gsSrc": null,
+     "snapShare": null,
+     "stats": {
+      "snaps": 0,
+      "pen": null,
+      "penYds": null,
+      "fum": null
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 2,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.385,
+     "stats": {
+      "snaps": 221,
+      "pen": 2,
+      "penYds": 20,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 7,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.632,
+     "stats": {
+      "snaps": 517,
+      "pen": 3,
+      "penYds": 30,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 7,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.806,
+     "stats": {
+      "snaps": 474,
+      "pen": 1,
+      "penYds": 5,
+      "fum": 0
+     }
+    }
+   ],
+   "notes": "No entry in nflverse draft_picks (1980-2026); treated as undrafted."
+  },
+  {
+   "name": "Shavon Revel Jr.",
+   "pos": "CB",
+   "jersey": 34,
+   "age": 23,
+   "yearsPro": 1,
+   "college": "East Carolina; Louisburg",
+   "draft": {
+    "year": 2025,
+    "round": 3,
+    "pick": 76
+   },
+   "heightIn": 74,
+   "weightLb": 193,
+   "role": "rotation",
+   "depthChartRank": 3,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 7,
+     "gs": 5,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.811,
+     "stats": {
+      "tackles": 34,
+      "defInt": 0,
+      "pd": 3,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Trikweze Bridges",
+   "pos": "CB",
+   "jersey": 25,
+   "age": 25,
+   "yearsPro": 1,
+   "college": "Florida; Oregon",
+   "draft": {
+    "year": 2025,
+    "round": 7,
+    "pick": 256
+   },
+   "heightIn": 74,
+   "weightLb": 200,
+   "role": "rotation",
+   "depthChartRank": 4,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 2,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.375,
+     "stats": {
+      "tackles": 23,
+      "defInt": 1,
+      "pd": 3,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Caelen Carson",
+   "pos": "CB",
+   "jersey": 21,
+   "age": 23,
+   "yearsPro": 2,
+   "college": "Wake Forest",
+   "draft": {
+    "year": 2024,
+    "round": 5,
+    "pick": 174
+   },
+   "heightIn": 72,
+   "weightLb": 195,
+   "role": "rotation",
+   "depthChartRank": 5,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 6,
+     "gs": 5,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.782,
+     "stats": {
+      "tackles": 26,
+      "defInt": 0,
+      "pd": 4,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 8,
+     "gs": 3,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.542,
+     "stats": {
+      "tackles": 17,
+      "defInt": 0,
+      "pd": 2,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Josh Butler",
+   "pos": "CB",
+   "jersey": 31,
+   "age": 29,
+   "yearsPro": 3,
+   "college": "Michigan State",
+   "draft": null,
+   "heightIn": 72,
+   "weightLb": 182,
+   "role": "rotation",
+   "depthChartRank": 6,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 5,
+     "gs": 3,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.603,
+     "stats": {
+      "tackles": 21,
+      "defInt": 0,
+      "pd": 5,
+      "defTd": 0,
+      "sacks": 1.0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 1,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.35,
+     "stats": {
+      "tackles": 5,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    }
+   ],
+   "notes": "No entry in nflverse draft_picks (1980-2026); treated as undrafted."
+  },
+  {
+   "name": "Jadeveon Clowney",
+   "pos": "DE",
+   "jersey": 42,
+   "age": 33,
+   "yearsPro": 12,
+   "college": "South Carolina",
+   "draft": {
+    "year": 2014,
+    "round": 1,
+    "pick": 1
+   },
+   "heightIn": 77,
+   "weightLb": 255,
+   "role": "rotation",
+   "depthChartRank": 3,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2018,
+     "team": "HOU",
+     "gp": 15,
+     "gs": 14,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.892,
+     "stats": {
+      "tackles": 44,
+      "tfl": 15,
+      "sacks": 9.0,
+      "ff": 1,
+      "pd": 1,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.93,
+      "stats": {
+       "tackles": 5,
+       "tfl": 0,
+       "sacks": 0.0,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2019,
+     "team": "SEA",
+     "gp": 13,
+     "gs": 11,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.705,
+     "stats": {
+      "tackles": 27,
+      "tfl": 5,
+      "sacks": 3.0,
+      "ff": 4,
+      "pd": 3,
+      "defInt": 1,
+      "defTd": 1
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 0.845,
+      "stats": {
+       "tackles": 12,
+       "tfl": 3,
+       "sacks": 1.5,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2020,
+     "team": "TEN",
+     "gp": 8,
+     "gs": 8,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.758,
+     "stats": {
+      "tackles": 17,
+      "tfl": 4,
+      "sacks": 0.0,
+      "ff": 1,
+      "pd": 4,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2021,
+     "team": "CLE",
+     "gp": 14,
+     "gs": 14,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.741,
+     "stats": {
+      "tackles": 33,
+      "tfl": 9,
+      "sacks": 9.0,
+      "ff": 2,
+      "pd": 2,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2022,
+     "team": "CLE",
+     "gp": 12,
+     "gs": 10,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.636,
+     "stats": {
+      "tackles": 25,
+      "tfl": 2,
+      "sacks": 2.0,
+      "ff": 1,
+      "pd": 3,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2023,
+     "team": "BAL",
+     "gp": 17,
+     "gs": 15,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.568,
+     "stats": {
+      "tackles": 40,
+      "tfl": 8,
+      "sacks": 9.5,
+      "ff": 2,
+      "pd": 5,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 0.72,
+      "stats": {
+       "tackles": 4,
+       "tfl": 1,
+       "sacks": 1.0,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "CAR",
+     "gp": 14,
+     "gs": 14,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.639,
+     "stats": {
+      "tackles": 42,
+      "tfl": 9,
+      "sacks": 5.5,
+      "ff": 0,
+      "pd": 4,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 13,
+     "gs": 6,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.445,
+     "stats": {
+      "tackles": 38,
+      "tfl": 12,
+      "sacks": 8.5,
+      "ff": 1,
+      "pd": 4,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Dante Fowler Jr.",
+   "pos": "DE",
+   "jersey": 13,
+   "age": 31,
+   "yearsPro": 11,
+   "college": "Florida",
+   "draft": {
+    "year": 2015,
+    "round": 1,
+    "pick": 3
+   },
+   "heightIn": 75,
+   "weightLb": 255,
+   "role": "rotation",
+   "depthChartRank": 4,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2018,
+     "team": "LA",
+     "gp": 15,
+     "gs": 6,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.584,
+     "stats": {
+      "tackles": 28,
+      "tfl": 5,
+      "sacks": 4.0,
+      "ff": 2,
+      "pd": 1,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 3,
+      "snapShare": 0.957,
+      "stats": {
+       "tackles": 10,
+       "tfl": 3,
+       "sacks": 1.5,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2019,
+     "team": "LA",
+     "gp": 16,
+     "gs": 14,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.798,
+     "stats": {
+      "tackles": 53,
+      "tfl": 13,
+      "sacks": 11.5,
+      "ff": 2,
+      "pd": 6,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2020,
+     "team": "ATL",
+     "gp": 14,
+     "gs": 13,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.646,
+     "stats": {
+      "tackles": 23,
+      "tfl": 4,
+      "sacks": 3.0,
+      "ff": 1,
+      "pd": 1,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2021,
+     "team": "ATL",
+     "gp": 14,
+     "gs": 6,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.536,
+     "stats": {
+      "tackles": 31,
+      "tfl": 4,
+      "sacks": 4.5,
+      "ff": 3,
+      "pd": 1,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.298,
+     "stats": {
+      "tackles": 25,
+      "tfl": 7,
+      "sacks": 6.0,
+      "ff": 2,
+      "pd": 2,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 0.22,
+      "stats": {
+       "tackles": 0,
+       "tfl": 0,
+       "sacks": 0.0,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.256,
+     "stats": {
+      "tackles": 11,
+      "tfl": 4,
+      "sacks": 4.0,
+      "ff": 1,
+      "pd": 3,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2024,
+     "team": "WAS",
+     "gp": 17,
+     "gs": 7,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.525,
+     "stats": {
+      "tackles": 38,
+      "tfl": 14,
+      "sacks": 10.5,
+      "ff": 2,
+      "pd": 1,
+      "defInt": 1,
+      "defTd": 1
+     },
+     "post": {
+      "gp": 3,
+      "snapShare": 0.43,
+      "stats": {
+       "tackles": 5,
+       "tfl": 1,
+       "sacks": 0.0,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 11,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.32,
+     "stats": {
+      "tackles": 15,
+      "tfl": 4,
+      "sacks": 3.0,
+      "ff": 0,
+      "pd": 3,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "James Houston",
+   "pos": "DE",
+   "jersey": 53,
+   "age": 27,
+   "yearsPro": 4,
+   "college": "Jackson State University",
+   "draft": {
+    "year": 2022,
+    "round": 6,
+    "pick": 217
+   },
+   "heightIn": 73,
+   "weightLb": 241,
+   "role": "rotation",
+   "depthChartRank": 5,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2022,
+     "team": "DET",
+     "gp": 7,
+     "gs": 2,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.333,
+     "stats": {
+      "tackles": 11,
+      "tfl": 7,
+      "sacks": 8.0,
+      "ff": 1,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DET",
+     "gp": 2,
+     "gs": 1,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.235,
+     "stats": {
+      "tackles": 1,
+      "tfl": 0,
+      "sacks": 0.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DET",
+     "gp": 11,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.199,
+     "stats": {
+      "tackles": 7,
+      "tfl": 1,
+      "sacks": 1.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.276,
+     "stats": {
+      "tackles": 35,
+      "tfl": 6,
+      "sacks": 5.5,
+      "ff": 1,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Quinnen Williams",
+   "pos": "DT",
+   "jersey": 92,
+   "age": 28,
+   "yearsPro": 7,
+   "college": "Alabama",
+   "draft": {
+    "year": 2019,
+    "round": 1,
+    "pick": 3
+   },
+   "heightIn": 75,
+   "weightLb": 303,
+   "role": "rotation",
+   "depthChartRank": 3,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2019,
+     "team": "NYJ",
+     "gp": 13,
+     "gs": 9,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.569,
+     "stats": {
+      "tackles": 28,
+      "tfl": 4,
+      "sacks": 2.5,
+      "ff": 0,
+      "pd": 1,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2020,
+     "team": "NYJ",
+     "gp": 13,
+     "gs": 13,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.641,
+     "stats": {
+      "tackles": 53,
+      "tfl": 10,
+      "sacks": 7.0,
+      "ff": 2,
+      "pd": 3,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2021,
+     "team": "NYJ",
+     "gp": 15,
+     "gs": 15,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.589,
+     "stats": {
+      "tackles": 47,
+      "tfl": 5,
+      "sacks": 6.0,
+      "ff": 0,
+      "pd": 3,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2022,
+     "team": "NYJ",
+     "gp": 16,
+     "gs": 16,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.642,
+     "stats": {
+      "tackles": 51,
+      "tfl": 12,
+      "sacks": 12.0,
+      "ff": 2,
+      "pd": 4,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2023,
+     "team": "NYJ",
+     "gp": 17,
+     "gs": 17,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.683,
+     "stats": {
+      "tackles": 55,
+      "tfl": 10,
+      "sacks": 5.5,
+      "ff": 1,
+      "pd": 3,
+      "defInt": 1,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2024,
+     "team": "NYJ",
+     "gp": 16,
+     "gs": 16,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.66,
+     "stats": {
+      "tackles": 33,
+      "tfl": 8,
+      "sacks": 6.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 15,
+     "gs": 15,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.687,
+     "stats": {
+      "tackles": 52,
+      "tfl": 10,
+      "sacks": 2.5,
+      "ff": 3,
+      "pd": 1,
+      "defInt": 1,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Solomon Thomas",
+   "pos": "DT",
+   "jersey": 90,
+   "age": 30,
+   "yearsPro": 9,
+   "college": "Stanford",
+   "draft": {
+    "year": 2017,
+    "round": 1,
+    "pick": 3
+   },
+   "heightIn": 75,
+   "weightLb": 285,
+   "role": "rotation",
+   "depthChartRank": 4,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2018,
+     "team": "SF",
+     "gp": 16,
+     "gs": 13,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.6,
+     "stats": {
+      "tackles": 26,
+      "tfl": 3,
+      "sacks": 1.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2019,
+     "team": "SF",
+     "gp": 16,
+     "gs": 3,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.406,
+     "stats": {
+      "tackles": 21,
+      "tfl": 3,
+      "sacks": 2.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 3,
+      "snapShare": 0.323,
+      "stats": {
+       "tackles": 4,
+       "tfl": 2,
+       "sacks": 1.0,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2020,
+     "team": "SF",
+     "gp": 2,
+     "gs": 2,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.315,
+     "stats": {
+      "tackles": 2,
+      "tfl": 0,
+      "sacks": 0.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2021,
+     "team": "LV",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.472,
+     "stats": {
+      "tackles": 32,
+      "tfl": 3,
+      "sacks": 3.5,
+      "ff": 2,
+      "pd": 2,
+      "defInt": 0,
+      "defTd": 0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.69,
+      "stats": {
+       "tackles": 1,
+       "tfl": 0,
+       "sacks": 0.0,
+       "ff": 0,
+       "pd": 0,
+       "defInt": 0,
+       "defTd": 0
+      }
+     }
+    },
+    {
+     "year": 2022,
+     "team": "NYJ",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.332,
+     "stats": {
+      "tackles": 24,
+      "tfl": 2,
+      "sacks": 0.5,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2023,
+     "team": "NYJ",
+     "gp": 17,
+     "gs": 3,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.431,
+     "stats": {
+      "tackles": 28,
+      "tfl": 6,
+      "sacks": 5.0,
+      "ff": 0,
+      "pd": 1,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2024,
+     "team": "NYJ",
+     "gp": 16,
+     "gs": 1,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.425,
+     "stats": {
+      "tackles": 24,
+      "tfl": 5,
+      "sacks": 3.5,
+      "ff": 1,
+      "pd": 2,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 2,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.395,
+     "stats": {
+      "tackles": 25,
+      "tfl": 3,
+      "sacks": 0.0,
+      "ff": 0,
+      "pd": 1,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Jay Toia",
+   "pos": "DT",
+   "jersey": 93,
+   "age": 22,
+   "yearsPro": 1,
+   "college": "UCLA; USC",
+   "draft": {
+    "year": 2025,
+    "round": 7,
+    "pick": 217
+   },
+   "heightIn": 74,
+   "weightLb": 342,
+   "role": "rotation",
+   "depthChartRank": 5,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 5,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.278,
+     "stats": {
+      "tackles": 3,
+      "tfl": 0,
+      "sacks": 0.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Perrion Winfrey",
+   "pos": "DT",
+   "jersey": 99,
+   "age": 25,
+   "yearsPro": 4,
+   "college": "Oklahoma; Iowa Western CC",
+   "draft": {
+    "year": 2022,
+    "round": 4,
+    "pick": 108
+   },
+   "heightIn": 76,
+   "weightLb": 290,
+   "role": "rotation",
+   "depthChartRank": 6,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2022,
+     "team": "CLE",
+     "gp": 13,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.403,
+     "stats": {
+      "tackles": 19,
+      "tfl": 1,
+      "sacks": 0.5,
+      "ff": 0,
+      "pd": 2,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2023,
+     "team": "NYJ",
+     "gp": 1,
+     "gs": null,
+     "gsSrc": null,
+     "snapShare": 0.19,
+     "stats": {
+      "tackles": 3,
+      "tfl": 0,
+      "sacks": 0.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 1,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.53,
+     "stats": {
+      "tackles": 2,
+      "tfl": 0,
+      "sacks": 0.0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Hunter Luepke",
+   "pos": "FB",
+   "jersey": 40,
+   "age": 25,
+   "yearsPro": 3,
+   "college": "North Dakota State",
+   "draft": null,
+   "heightIn": 73,
+   "weightLb": 236,
+   "role": "rotation",
+   "depthChartRank": 1,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.127,
+     "stats": {
+      "rushAtt": 6,
+      "rushYds": 19,
+      "rushTd": 1,
+      "rec": 3,
+      "recYds": 18,
+      "recTd": 0,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 4,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.303,
+     "stats": {
+      "rushAtt": 12,
+      "rushYds": 38,
+      "rushTd": 0,
+      "rec": 12,
+      "recYds": 111,
+      "recTd": 0,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 5,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.211,
+     "stats": {
+      "rushAtt": 16,
+      "rushYds": 71,
+      "rushTd": 0,
+      "rec": 13,
+      "recYds": 109,
+      "recTd": 1,
+      "fum": 0
+     }
+    }
+   ],
+   "notes": "No entry in nflverse draft_picks (1980-2026); treated as undrafted."
+  },
+  {
+   "name": "Tyler Guyton",
+   "pos": "LT",
+   "jersey": 60,
+   "age": 23,
+   "yearsPro": 2,
+   "college": "Oklahoma; TCU",
+   "draft": {
+    "year": 2024,
+    "round": 1,
+    "pick": 29
+   },
+   "heightIn": 79,
+   "weightLb": 322,
+   "role": "rotation",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": true,
+   "seasons": [
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 15,
+     "gs": 10,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.686,
+     "stats": {
+      "snaps": 670,
+      "pen": 14,
+      "penYds": 100,
+      "fum": 1
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 10,
+     "gs": 10,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.935,
+     "stats": {
+      "snaps": 650,
+      "pen": 7,
+      "penYds": 49,
+      "fum": 0
+     }
+    }
+   ],
+   "notes": "On reserve/injured (roster status RES) at the team's final 2025 game week 18."
+  },
+  {
+   "name": "Nathan Thomas",
+   "pos": "LT",
+   "jersey": 71,
+   "age": 24,
+   "yearsPro": 2,
+   "college": "Louisiana-Lafayette",
+   "draft": {
+    "year": 2024,
+    "round": 7,
+    "pick": 233
+   },
+   "heightIn": 77,
+   "weightLb": 334,
+   "role": "rotation",
+   "depthChartRank": 3,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 4,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.536,
+     "stats": {
+      "snaps": 341,
+      "pen": 4,
+      "penYds": 35,
+      "fum": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Shemar James",
+   "pos": "MLB",
+   "jersey": 50,
+   "age": 21,
+   "yearsPro": 1,
+   "college": "Florida",
+   "draft": {
+    "year": 2025,
+    "round": 5,
+    "pick": 152
+   },
+   "heightIn": 73,
+   "weightLb": 222,
+   "role": "rotation",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 14,
+     "gs": 6,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.632,
+     "stats": {
+      "tackles": 91,
+      "tfl": 2,
+      "sacks": 1.5,
+      "ff": 1,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Joe Milton III",
+   "pos": "QB",
+   "jersey": 10,
+   "age": 25,
+   "yearsPro": 2,
+   "college": "Tennessee; Michigan",
+   "draft": {
+    "year": 2024,
+    "round": 6,
+    "pick": 193
+   },
+   "heightIn": 77,
+   "weightLb": 235,
+   "role": "rotation",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2024,
+     "team": "NE",
+     "gp": 1,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.95,
+     "stats": {
+      "att": 29,
+      "comp": 22,
+      "yds": 241,
+      "td": 1,
+      "int": 0,
+      "sacked": 0,
+      "rushAtt": 10,
+      "rushYds": 16,
+      "rushTd": 1,
+      "rating": 111.4
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 4,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.21,
+     "stats": {
+      "att": 24,
+      "comp": 15,
+      "yds": 183,
+      "td": 1,
+      "int": 2,
+      "sacked": 0,
+      "rushAtt": 5,
+      "rushYds": 50,
+      "rushTd": 0,
+      "rating": 65.1
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Jaydon Blue",
+   "pos": "RB",
+   "jersey": 23,
+   "age": 22,
+   "yearsPro": 1,
+   "college": "Texas",
+   "draft": {
+    "year": 2025,
+    "round": 5,
+    "pick": 149
+   },
+   "heightIn": 69,
+   "weightLb": 200,
+   "role": "rotation",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 5,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.256,
+     "stats": {
+      "rushAtt": 38,
+      "rushYds": 129,
+      "rushTd": 1,
+      "rec": 1,
+      "recYds": 5,
+      "recTd": 0,
+      "fum": 1
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Markquese Bell",
+   "pos": "SS",
+   "jersey": 14,
+   "age": 27,
+   "yearsPro": 4,
+   "college": "Florida A&M",
+   "draft": null,
+   "heightIn": 75,
+   "weightLb": 205,
+   "role": "rotation",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 5,
+     "gs": null,
+     "gsSrc": null,
+     "snapShare": 0.097,
+     "stats": {
+      "tackles": 1,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 8,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.606,
+     "stats": {
+      "tackles": 84,
+      "defInt": 0,
+      "pd": 4,
+      "defTd": 0,
+      "sacks": 0.0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.93,
+      "stats": {
+       "tackles": 8,
+       "defInt": 0,
+       "pd": 0,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 9,
+     "gs": null,
+     "gsSrc": null,
+     "snapShare": 0.065,
+     "stats": {
+      "tackles": 6,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 3,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.399,
+     "stats": {
+      "tackles": 40,
+      "defInt": 1,
+      "pd": 3,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    }
+   ],
+   "notes": "No entry in nflverse draft_picks (1980-2026); treated as undrafted."
+  },
+  {
+   "name": "Luke Schoonmaker",
+   "pos": "TE",
+   "jersey": 86,
+   "age": 27,
+   "yearsPro": 3,
+   "college": "Michigan",
+   "draft": {
+    "year": 2023,
+    "round": 2,
+    "pick": 58
+   },
+   "heightIn": 77,
+   "weightLb": 250,
+   "role": "rotation",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.314,
+     "stats": {
+      "rec": 8,
+      "tgt": 15,
+      "recYds": 65,
+      "recTd": 2,
+      "rushAtt": 0,
+      "rushYds": 0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.2,
+      "stats": {
+       "rec": 1,
+       "tgt": 1,
+       "recYds": 7,
+       "recTd": 0,
+       "rushAtt": 0,
+       "rushYds": 0
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 6,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.345,
+     "stats": {
+      "rec": 27,
+      "tgt": 36,
+      "recYds": 241,
+      "recTd": 1,
+      "rushAtt": 0,
+      "rushYds": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 7,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.329,
+     "stats": {
+      "rec": 14,
+      "tgt": 23,
+      "recYds": 132,
+      "recTd": 0,
+      "rushAtt": 0,
+      "rushYds": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Brevyn Spann-Ford",
+   "pos": "TE",
+   "jersey": 89,
+   "age": 26,
+   "yearsPro": 2,
+   "college": "Minnesota",
+   "draft": null,
+   "heightIn": 79,
+   "weightLb": 270,
+   "role": "rotation",
+   "depthChartRank": 3,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.255,
+     "stats": {
+      "rec": 9,
+      "tgt": 14,
+      "recYds": 88,
+      "recTd": 0,
+      "rushAtt": 0,
+      "rushYds": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 5,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.249,
+     "stats": {
+      "rec": 9,
+      "tgt": 13,
+      "recYds": 90,
+      "recTd": 1,
+      "rushAtt": 0,
+      "rushYds": 0
+     }
+    }
+   ],
+   "notes": "No entry in nflverse draft_picks (1980-2026); treated as undrafted."
+  },
+  {
+   "name": "Jalen Tolbert",
+   "pos": "WR",
+   "jersey": 1,
+   "age": 26,
+   "yearsPro": 4,
+   "college": "South Alabama",
+   "draft": {
+    "year": 2022,
+    "round": 3,
+    "pick": 88
+   },
+   "heightIn": 73,
+   "weightLb": 195,
+   "role": "rotation",
+   "depthChartRank": 4,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 8,
+     "gs": 1,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.17,
+     "stats": {
+      "rec": 2,
+      "tgt": 3,
+      "recYds": 12,
+      "recTd": 0,
+      "rushAtt": 0,
+      "rushYds": 0
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 6,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.399,
+     "stats": {
+      "rec": 22,
+      "tgt": 36,
+      "recYds": 268,
+      "recTd": 2,
+      "rushAtt": 0,
+      "rushYds": 0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.38,
+      "stats": {
+       "rec": 0,
+       "tgt": 2,
+       "recYds": 0,
+       "recTd": 0,
+       "rushAtt": 0,
+       "rushYds": 0
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 15,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.758,
+     "stats": {
+      "rec": 49,
+      "tgt": 79,
+      "recYds": 610,
+      "recTd": 7,
+      "rushAtt": 0,
+      "rushYds": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 13,
+     "gs": 8,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.513,
+     "stats": {
+      "rec": 18,
+      "tgt": 34,
+      "recYds": 203,
+      "recTd": 1,
+      "rushAtt": 0,
+      "rushYds": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "KaVontae Turpin",
+   "pos": "WR",
+   "jersey": 9,
+   "age": 29,
+   "yearsPro": 7,
+   "college": "TCU",
+   "draft": null,
+   "heightIn": 69,
+   "weightLb": 153,
+   "role": "rotation",
+   "depthChartRank": 5,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.059,
+     "stats": {
+      "rec": 1,
+      "tgt": 2,
+      "recYds": 9,
+      "recTd": 0,
+      "rushAtt": 3,
+      "rushYds": 17
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 0.025,
+      "stats": {
+       "rec": 1,
+       "tgt": 1,
+       "recYds": 8,
+       "recTd": 0,
+       "rushAtt": 0,
+       "rushYds": 0
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.123,
+     "stats": {
+      "rec": 12,
+      "tgt": 18,
+      "recYds": 127,
+      "recTd": 3,
+      "rushAtt": 11,
+      "rushYds": 110
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": 0.16,
+      "stats": {
+       "rec": 0,
+       "tgt": 0,
+       "recYds": 0,
+       "recTd": 0,
+       "rushAtt": 0,
+       "rushYds": 0
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 2,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.267,
+     "stats": {
+      "rec": 31,
+      "tgt": 52,
+      "recYds": 420,
+      "recTd": 2,
+      "rushAtt": 16,
+      "rushYds": 92
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 15,
+     "gs": 2,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.355,
+     "stats": {
+      "rec": 26,
+      "tgt": 38,
+      "recYds": 396,
+      "recTd": 2,
+      "rushAtt": 17,
+      "rushYds": 89
+     }
+    }
+   ],
+   "notes": "No entry in nflverse draft_picks (1980-2026); treated as undrafted."
+  },
+  {
+   "name": "Jonathan Mingo",
+   "pos": "WR",
+   "jersey": 81,
+   "age": 24,
+   "yearsPro": 3,
+   "college": "Mississippi",
+   "draft": {
+    "year": 2023,
+    "round": 2,
+    "pick": 39
+   },
+   "heightIn": 74,
+   "weightLb": 225,
+   "role": "rotation",
+   "depthChartRank": 6,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2023,
+     "team": "CAR",
+     "gp": 15,
+     "gs": 14,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.897,
+     "stats": {
+      "rec": 43,
+      "tgt": 85,
+      "recYds": 418,
+      "recTd": 0,
+      "rushAtt": 0,
+      "rushYds": 0
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 6,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.424,
+     "stats": {
+      "rec": 17,
+      "tgt": 42,
+      "recYds": 167,
+      "recTd": 0,
+      "rushAtt": 2,
+      "rushYds": 5
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 6,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.207,
+     "stats": {
+      "rec": 1,
+      "tgt": 5,
+      "recYds": 25,
+      "recTd": 0,
+      "rushAtt": 0,
+      "rushYds": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Corey Ballentine",
+   "pos": "CB",
+   "jersey": 36,
+   "age": 29,
+   "yearsPro": 7,
+   "college": "Washburn",
+   "draft": {
+    "year": 2019,
+    "round": 6,
+    "pick": 180
+   },
+   "heightIn": 72,
+   "weightLb": 196,
+   "role": "backup",
+   "depthChartRank": 7,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2019,
+     "team": "NYG",
+     "gp": 13,
+     "gs": 2,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.536,
+     "stats": {
+      "tackles": 26,
+      "defInt": 0,
+      "pd": 2,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2020,
+     "team": "NYJ",
+     "gp": 15,
+     "gs": 2,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.403,
+     "stats": {
+      "tackles": 18,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2021,
+     "team": "DET",
+     "gp": 4,
+     "gs": 0,
+     "gsSrc": "pfrRoster",
+     "snapShare": null,
+     "stats": {
+      "tackles": 0,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2022,
+     "team": "GB",
+     "gp": 8,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.09,
+     "stats": {
+      "tackles": 5,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2023,
+     "team": "GB",
+     "gp": 14,
+     "gs": 6,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.746,
+     "stats": {
+      "tackles": 40,
+      "defInt": 1,
+      "pd": 7,
+      "defTd": 0,
+      "sacks": 0.0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": 0.25,
+      "stats": {
+       "tackles": 4,
+       "defInt": 0,
+       "pd": 0,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2024,
+     "team": "GB",
+     "gp": 15,
+     "gs": 1,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.12,
+     "stats": {
+      "tackles": 5,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 6,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.17,
+     "stats": {
+      "tackles": 3,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "C.J. Goodwin",
+   "pos": "CB",
+   "jersey": 29,
+   "age": 36,
+   "yearsPro": 12,
+   "college": "California (PA); Bethany West; Fairmont State",
+   "draft": null,
+   "heightIn": 75,
+   "weightLb": 190,
+   "role": "backup",
+   "depthChartRank": 8,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2018,
+     "team": "DAL",
+     "gp": 3,
+     "gs": 0,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.025,
+     "stats": {
+      "tackles": 1,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": null,
+      "stats": {
+       "tackles": 1,
+       "defInt": 0,
+       "pd": 0,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2019,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 0,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.107,
+     "stats": {
+      "tackles": 9,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2020,
+     "team": "DAL",
+     "gp": 16,
+     "gs": 0,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.083,
+     "stats": {
+      "tackles": 9,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2021,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.01,
+     "stats": {
+      "tackles": 10,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     },
+     "post": {
+      "gp": 1,
+      "snapShare": null,
+      "stats": {
+       "tackles": 1,
+       "defInt": 0,
+       "pd": 0,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2022,
+     "team": "DAL",
+     "gp": 17,
+     "gs": null,
+     "gsSrc": null,
+     "snapShare": null,
+     "stats": {
+      "tackles": 8,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     },
+     "post": {
+      "gp": 2,
+      "snapShare": null,
+      "stats": {
+       "tackles": 1,
+       "defInt": 0,
+       "pd": 0,
+       "defTd": 0,
+       "sacks": 0.0
+      }
+     }
+    },
+    {
+     "year": 2023,
+     "team": "DAL",
+     "gp": 5,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.23,
+     "stats": {
+      "tackles": 3,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.05,
+     "stats": {
+      "tackles": 9,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": null,
+     "gsSrc": null,
+     "snapShare": null,
+     "stats": {
+      "tackles": 18,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    }
+   ],
+   "notes": "No entry in nflverse draft_picks (1980-2026); treated as undrafted."
+  },
+  {
+   "name": "Alijah Clark",
+   "pos": "FS",
+   "jersey": 38,
+   "age": 22,
+   "yearsPro": 1,
+   "college": "Syracuse; Rutgers",
+   "draft": null,
+   "heightIn": 73,
+   "weightLb": 187,
+   "role": "backup",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 11,
+     "gs": 1,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.158,
+     "stats": {
+      "tackles": 18,
+      "defInt": 0,
+      "pd": 0,
+      "defTd": 0,
+      "sacks": 0.0
+     }
+    }
+   ],
+   "notes": "No entry in nflverse draft_picks (1980-2026); treated as undrafted."
+  },
+  {
+   "name": "Nick Leverett",
+   "pos": "LG",
+   "jersey": 61,
+   "age": 28,
+   "yearsPro": 6,
+   "college": "Rice; North Carolina Central",
+   "draft": null,
+   "heightIn": 76,
+   "weightLb": 310,
+   "role": "backup",
+   "depthChartRank": 2,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2021,
+     "team": "TB",
+     "gp": 2,
+     "gs": 0,
+     "gsSrc": "pfrRoster",
+     "snapShare": 0.445,
+     "stats": {
+      "snaps": 60,
+      "pen": 1,
+      "penYds": 5,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2022,
+     "team": "TB",
+     "gp": 11,
+     "gs": 10,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.936,
+     "stats": {
+      "snaps": 760,
+      "pen": 2,
+      "penYds": 20,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2023,
+     "team": "TB",
+     "gp": 3,
+     "gs": null,
+     "gsSrc": null,
+     "snapShare": null,
+     "stats": {
+      "snaps": 0,
+      "pen": 1,
+      "penYds": 15,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2024,
+     "team": "NE",
+     "gp": 6,
+     "gs": 2,
+     "gsSrc": "snapStart50",
+     "snapShare": 0.493,
+     "stats": {
+      "snaps": 122,
+      "pen": 2,
+      "penYds": 14,
+      "fum": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 1,
+     "gs": null,
+     "gsSrc": null,
+     "snapShare": null,
+     "stats": {
+      "snaps": 0,
+      "pen": null,
+      "penYds": null,
+      "fum": null
+     }
+    }
+   ],
+   "notes": "No entry in nflverse draft_picks (1980-2026); treated as undrafted."
+  },
+  {
+   "name": "Justin Barron",
+   "pos": "MLB",
+   "jersey": 45,
+   "age": 24,
+   "yearsPro": 1,
+   "college": "Syracuse",
+   "draft": null,
+   "heightIn": 76,
+   "weightLb": 231,
+   "role": "backup",
+   "depthChartRank": 3,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 2,
+     "gs": null,
+     "gsSrc": null,
+     "snapShare": null,
+     "stats": {
+      "tackles": 0,
+      "tfl": 0,
+      "sacks": 0,
+      "ff": 0,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": "No entry in nflverse draft_picks (1980-2026); treated as undrafted."
+  },
+  {
+   "name": "Marist Liufau",
+   "pos": "OLB",
+   "jersey": 35,
+   "age": 25,
+   "yearsPro": 2,
+   "college": "Notre Dame",
+   "draft": {
+    "year": 2024,
+    "round": 3,
+    "pick": 87
+   },
+   "heightIn": 74,
+   "weightLb": 239,
+   "role": "backup",
+   "depthChartRank": 3,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2024,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 9,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.478,
+     "stats": {
+      "tackles": 46,
+      "tfl": 4,
+      "sacks": 1.5,
+      "ff": 2,
+      "pd": 3,
+      "defInt": 0,
+      "defTd": 0
+     }
+    },
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 17,
+     "gs": 5,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.179,
+     "stats": {
+      "tackles": 30,
+      "tfl": 1,
+      "sacks": 1.0,
+      "ff": 1,
+      "pd": 0,
+      "defInt": 0,
+      "defTd": 0
+     }
+    }
+   ],
+   "notes": null
+  },
+  {
+   "name": "Phil Mafah",
+   "pos": "RB",
+   "jersey": 37,
+   "age": 23,
+   "yearsPro": 1,
+   "college": "Clemson",
+   "draft": {
+    "year": 2025,
+    "round": 7,
+    "pick": 239
+   },
+   "heightIn": 73,
+   "weightLb": 230,
+   "role": "backup",
+   "depthChartRank": 3,
+   "injuredAtSeasonEnd": false,
+   "seasons": [
+    {
+     "year": 2025,
+     "team": "DAL",
+     "gp": 1,
+     "gs": 0,
+     "gsSrc": "pfrAdvStats",
+     "snapShare": 0.18,
+     "stats": {
+      "rushAtt": 5,
+      "rushYds": 18,
+      "rushTd": 1,
+      "rec": 2,
+      "recYds": 11,
+      "recTd": 0,
+      "fum": 0
+     }
+    }
+   ],
+   "notes": null
+  }
+ ],
+ "sources": [
+  "https://github.com/nflverse/nflverse-data/releases/download/weekly_rosters/roster_weekly_2025.csv",
+  "https://github.com/nflverse/nflverse-data/releases/download/rosters/roster_2025.csv",
+  "https://github.com/nflverse/nflverse-data/releases/download/players/players.csv",
+  "https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_2025.csv",
+  "https://github.com/nflverse/nflverse-data/releases/download/snap_counts/snap_counts_<2013-2025>.csv",
+  "https://github.com/nflverse/nflverse-data/releases/download/pfr_advstats/pfr_rosters.csv",
+  "https://github.com/nflverse/nflverse-data/releases/download/pfr_advstats/advstats_season_def.csv",
+  "https://github.com/nflverse/nflverse-data/releases/download/pfr_advstats/advstats_season_rush.csv",
+  "https://github.com/nflverse/nflverse-data/releases/download/pfr_advstats/advstats_season_rec.csv",
+  "https://github.com/nflverse/nflverse-data/releases/download/draft_picks/draft_picks.csv",
+  "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_reg_<2010-2025>.csv",
+  "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_regpost_<2010-2025>.csv",
+  "https://en.wikipedia.org/wiki/2025_NFL_season"
+ ]
+}

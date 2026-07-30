@@ -29,6 +29,9 @@ struct NewCareerView: View {
 
     @State private var flowMode: FlowMode = .quickStart
     @State private var playerName: String = ""
+    /// Which league the career is built from. `.generated` keeps the classic
+    /// random path, so an untouched flow behaves exactly as before.
+    @State private var leagueSource: LeagueSource = .generated
     @State private var selectedAvatarID: String = "coach_m1"
     @State private var selectedCoachingStyle: CoachingStyle = .tactician
     @State private var selectedRole: CareerRole = .gmAndHeadCoach
@@ -203,17 +206,21 @@ struct NewCareerView: View {
             VStack(spacing: 0) {
                 VStack(spacing: 24) {
                     if flowMode == .quickStart {
-                        // Quick Start: only the name section is needed; defaults
-                        // cover the rest of the configuration surface.
+                        // Quick Start: name plus the league source — defaults
+                        // cover the rest of the configuration surface, but which
+                        // league you play is too fundamental to hide behind one.
                         nameSection
+                        leagueSourceSection
                     } else if isLandscape {
                         nameSection
+                        leagueSourceSection
                         HStack(alignment: .top, spacing: 16) {
                             roleSection
                             capModeSection
                         }
                     } else {
                         nameSection
+                        leagueSourceSection
                         roleSection
                         capModeSection
                     }
@@ -336,6 +343,39 @@ struct NewCareerView: View {
                         .font(.subheadline)
                         .foregroundStyle(Color.textSecondary)
                 }
+            }
+        }
+    }
+
+    // MARK: - League Source (realistic-league phase 3)
+
+    /// Which league the career is built from: the fixed 2026 snapshot or a
+    /// freshly generated one. `LeagueSource.available` hides the dev template
+    /// outside DEBUG builds, so Release only ever sees two options.
+    private var leagueSourceSection: some View {
+        cardSection(icon: "globe.americas.fill", title: "League") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Which league do you want to take over?")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textSecondary)
+
+                ForEach(LeagueSource.available) { option in
+                    LeagueSourceCard(source: option, isSelected: leagueSource == option)
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3)) {
+                                leagueSource = option
+                            }
+                        }
+                }
+
+                Label(
+                    leagueSource.isTemplate
+                        ? "Fixed leagues are identical in every career — the same rosters, records and traded picks."
+                        : "Generated leagues are rolled from scratch, so no two careers start the same.",
+                    systemImage: "info.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(Color.textTertiary)
             }
         }
     }
@@ -730,7 +770,8 @@ struct NewCareerView: View {
             selectedCapMode: capSelection.capMode,
             gameMode: selectedSetup.mode,
             scenario: selectedSetup.scenario,
-            injuryFrequency: injuryFrequency
+            injuryFrequency: injuryFrequency,
+            leagueSource: leagueSource
         )) {
             HStack(spacing: 10) {
                 Image(systemName: "sportscourt.fill")
@@ -769,7 +810,8 @@ struct NewCareerView: View {
             selectedCapMode: capSelection.capMode,
             gameMode: selectedSetup.mode,
             scenario: selectedSetup.scenario,
-            injuryFrequency: injuryFrequency
+            injuryFrequency: injuryFrequency,
+            leagueSource: leagueSource
         )) {
             HStack(spacing: 10) {
                 Image(systemName: "sportscourt.fill")
@@ -912,6 +954,80 @@ private struct CareerSetupCard: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(setup.displayName), \(setup.badge.lowercased()). \(setup.blurb)")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+// MARK: - League Source Card (realistic-league phase 3)
+
+/// Single-select card for the league picker: the fixed 2026 templates and the
+/// classic generated league, each with its one-line description.
+private struct LeagueSourceCard: View {
+    let source: LeagueSource
+    let isSelected: Bool
+
+    /// Gold marks the fixed leagues (the curated content), blue the random one —
+    /// the same split `CareerSetupCard` uses for scenarios vs. modes.
+    private var accent: Color {
+        source.isTemplate ? Color.accentGold : Color.accentBlue
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(isSelected ? accent.opacity(0.2) : Color.backgroundSecondary)
+                    .frame(width: 34, height: 34)
+                Image(systemName: source.icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(isSelected ? accent : Color.textSecondary)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(source.displayName)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+
+                    Text(source.badge)
+                        .font(.system(size: 8, weight: .heavy))
+                        .tracking(0.8)
+                        .foregroundStyle(isSelected ? Color.backgroundPrimary : Color.textSecondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule().fill(isSelected ? accent : Color.backgroundSecondary)
+                        )
+                }
+
+                Text(source.blurb)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(isSelected ? Color.textSecondary : Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 4)
+
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(isSelected ? accent : Color.textTertiary.opacity(0.5))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isSelected ? accent.opacity(0.08) : Color.backgroundPrimary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(
+                    isSelected ? accent : Color.surfaceBorder,
+                    lineWidth: isSelected ? 2 : 1
+                )
+        )
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(source.displayName), \(source.badge.lowercased()). \(source.blurb)")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }

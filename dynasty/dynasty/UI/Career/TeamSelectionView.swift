@@ -15,6 +15,10 @@ struct TeamSelectionView: View {
     var scenario: CareerScenario? = nil
     var injuryFrequency: InjuryFrequency = .normal
 
+    /// Which league to browse and start (realistic-league phase 3). The default
+    /// keeps every existing call site on the classic random path.
+    var leagueSource: LeagueSource = .generated
+
     @Environment(\.modelContext) private var modelContext
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var selectedCareer: Career?
@@ -34,19 +38,35 @@ struct TeamSelectionView: View {
     // inserted into the model context yet) while the draft screen runs.
     @State private var pendingFantasy: PendingFantasyDraft? = nil
 
+    // MARK: - League source state (phase 3)
+
+    /// The team list being browsed. Starts on the static table and is replaced
+    /// once a chosen template has decoded.
+    @State private var catalog: TeamBrowseCatalog = .generated
+    /// The decoded template, kept so career creation imports the very file the
+    /// picker was browsing instead of decoding 1.5 MB of JSON a second time.
+    @State private var template: LeagueTemplate? = nil
+    @State private var isLoadingTemplate = false
+    /// Set when a template could not be loaded; the screen then falls back to
+    /// the generated league and says so rather than dead-ending.
+    @State private var templateLoadError: String? = nil
+
     /// Un-persisted league snapshot passed into the fantasy draft cover.
     private struct PendingFantasyDraft: Identifiable {
         let id = UUID()
         let career: Career
         let result: LeagueGenerator.GeneratedLeague
         let chosenTeamID: UUID
+        /// Career-history rows from a template import (empty for random leagues),
+        /// held until the draft finishes and the graph is inserted.
+        let seasonHistory: [PlayerSeasonHistory]
     }
 
     /// iPad always reports .regular for both size classes, so use actual width
     private var isLandscape: Bool { viewWidth > 900 }
 
-    /// All 32 NFL teams from static data.
-    private let allTeams = NFLTeamData.allTeams
+    /// The 32 franchises of the league being browsed.
+    private var allTeams: [NFLTeamDefinition] { catalog.teams }
 
     /// Available situation filters.
     private let situationOptions = ["All", "Rebuilding", "Rising", "Contender", "Win Now", "Dynasty"]
@@ -56,7 +76,7 @@ struct TeamSelectionView: View {
         let conferenceTeams = allTeams.filter { $0.conference == selectedConference }
         let filtered = situationFilter == "All"
             ? conferenceTeams
-            : conferenceTeams.filter { $0.preview.situation == situationFilter }
+            : conferenceTeams.filter { catalog.preview(for: $0).situation == situationFilter }
         return Division.allCases.compactMap { division in
             let teams: [NFLTeamDefinition]
             let divTeams = filtered.filter { $0.division == division }
@@ -64,13 +84,13 @@ struct TeamSelectionView: View {
             case .division:
                 teams = divTeams.sorted { $0.city < $1.city }
             case .capSpace:
-                teams = divTeams.sorted { $0.preview.estimatedCapSpace > $1.preview.estimatedCapSpace }
+                teams = divTeams.sorted { catalog.preview(for: $0).estimatedCapSpace > catalog.preview(for: $1).estimatedCapSpace }
             case .difficulty:
-                teams = divTeams.sorted { $0.preview.difficulty < $1.preview.difficulty }
+                teams = divTeams.sorted { catalog.preview(for: $0).difficulty < catalog.preview(for: $1).difficulty }
             case .overall:
-                teams = divTeams.sorted { $0.preview.estimatedOVR > $1.preview.estimatedOVR }
+                teams = divTeams.sorted { catalog.preview(for: $0).estimatedOVR > catalog.preview(for: $1).estimatedOVR }
             case .wins:
-                teams = divTeams.sorted { $0.preview.lastSeasonWins > $1.preview.lastSeasonWins }
+                teams = divTeams.sorted { catalog.preview(for: $0).lastSeasonWins > catalog.preview(for: $1).lastSeasonWins }
             }
             guard !teams.isEmpty else { return nil }
             return (division: division, teams: teams)
@@ -106,6 +126,11 @@ struct TeamSelectionView: View {
             .ignoresSafeArea(edges: .top)
 
             VStack(spacing: 0) {
+                // Which league these 32 teams belong to (phase 3).
+                leagueSourceBanner
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+
                 // Conference tab picker
                 conferencePicker
                     .padding(.top, 8)
@@ -155,7 +180,8 @@ struct TeamSelectionView: View {
                     }
                 }
             }
-            .disabled(isLoading)
+            // Nothing is selectable until the chosen league is ready to browse.
+            .disabled(isLoading || isLoadingTemplate)
 
             // Floating "Compare (n)" button when compare mode is active
             if compareModeOn && selectedForCompare.count >= 2 {
@@ -184,20 +210,23 @@ struct TeamSelectionView: View {
                 }
             }
 
-            if isLoading {
+            if isLoading || isLoadingTemplate {
                 ZStack {
                     Color.backgroundPrimary.opacity(0.85).ignoresSafeArea()
                     VStack(spacing: 16) {
                         ProgressView()
                             .controlSize(.large)
                             .tint(Color.accentBlue)
-                        Text("Generating League...")
+                        Text(isLoadingTemplate
+                             ? "Loading \(leagueSource.displayName) League..."
+                             : (catalog.source.isTemplate ? "Building League..." : "Generating League..."))
                             .font(.headline)
                             .foregroundStyle(Color.textPrimary)
                     }
                 }
             }
         }
+        .task { await prepareLeagueSource() }
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
         } action: { newWidth in
@@ -210,6 +239,7 @@ struct TeamSelectionView: View {
             NavigationStack {
                 TeamDetailSheet(
                     team: team,
+                    catalog: catalog,
                     setupSummary: setupSummary,
                     selectTitle: gameMode == .fantasyDraft ? "START FANTASY DRAFT" : "SELECT THIS TEAM"
                 ) {
@@ -243,7 +273,8 @@ struct TeamSelectionView: View {
         }
         .sheet(isPresented: $showCompareSheet) {
             CompareTeamsSheet(
-                teams: allTeams.filter { selectedForCompare.contains($0.abbreviation) }
+                teams: allTeams.filter { selectedForCompare.contains($0.abbreviation) },
+                catalog: catalog
             )
         }
     }
@@ -261,11 +292,66 @@ struct TeamSelectionView: View {
         } label: {
             CompactTeamRow(
                 team: team,
+                preview: catalog.preview(for: team),
                 compareModeOn: compareModeOn,
                 isSelectedForCompare: selectedForCompare.contains(team.abbreviation)
             )
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - League Source Banner (phase 3)
+
+    /// Names the league being browsed, and explains the fallback when a fixed
+    /// template could not be loaded.
+    @ViewBuilder
+    private var leagueSourceBanner: some View {
+        if let templateLoadError {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.warning)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(leagueSource.displayName) league unavailable — starting a Generated league instead.")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text(templateLoadError)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.warning.opacity(0.1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.warning.opacity(0.3), lineWidth: 1)
+                    )
+            )
+        } else {
+            // The requested source, not the catalog's: during the template
+            // decode the catalog is still the static one, and the banner should
+            // already name the league the screen is about to show.
+            HStack(spacing: 6) {
+                Image(systemName: leagueSource.icon)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(leagueSource.summaryLabel)
+                    .font(.system(size: 12, weight: .bold))
+                    .tracking(0.5)
+                Text(leagueSource.isTemplate
+                     ? "Real 2025 records and rosters"
+                     : "Freshly rolled rosters")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.textTertiary)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(leagueSource.isTemplate ? Color.accentGold : Color.accentBlue)
+            .accessibilityElement(children: .combine)
+        }
     }
 
     private func toggleCompare(_ team: NFLTeamDefinition) {
@@ -480,6 +566,7 @@ struct TeamSelectionView: View {
     /// team confirmation sheet so the final step confirms the full setup.
     private var setupSummary: String {
         var parts: [String] = []
+        parts.append(catalog.source.summaryLabel)
         switch gameMode {
         case .standard:
             parts.append(scenario.map { "\($0.displayName) Scenario" } ?? "Standard Career")
@@ -489,6 +576,41 @@ struct TeamSelectionView: View {
         parts.append("\(selectedCapMode.rawValue) Cap")
         parts.append(injuryFrequency == .off ? "Injuries Off" : "\(injuryFrequency.displayName) Injuries")
         return parts.joined(separator: " \u{2022} ")
+    }
+
+    // MARK: - League Source (phase 3)
+
+    /// Decodes the chosen fixed template, once, before the list is browsable.
+    ///
+    /// The decode (1.5 MB publish / 2.6 MB dev) runs off the main actor so the
+    /// picker never stalls mid-animation. A failure is not fatal: the screen
+    /// falls back to the generated league, says so in the banner, and career
+    /// creation follows `catalog.source` — never the requested source — so what
+    /// gets persisted is always what was actually built.
+    private func prepareLeagueSource() async {
+        guard let profile = leagueSource.templateProfile else {
+            catalog = .generated
+            return
+        }
+        // Already decoded (the view can re-appear after the detail cover).
+        guard template == nil else { return }
+
+        isLoadingTemplate = true
+        let outcome: Result<LeagueTemplate, Error> = await Task.detached(priority: .userInitiated) {
+            Result { try LeagueTemplateLoader.load(profile) }
+        }.value
+        isLoadingTemplate = false
+
+        switch outcome {
+        case .success(let loaded):
+            template = loaded
+            catalog = .template(loaded, source: leagueSource)
+            templateLoadError = nil
+        case .failure(let error):
+            template = nil
+            catalog = .generated
+            templateLoadError = error.localizedDescription
+        }
     }
 
     // MARK: - Start Career
@@ -508,7 +630,32 @@ struct TeamSelectionView: View {
         career.scenario = scenario
         career.injuryFrequency = injuryFrequency
 
-        let result = LeagueGenerator.generate(startYear: career.currentSeason)
+        // Phase 4 faces: bind the library to the new career with an EMPTY
+        // registry BEFORE the league is built, so every player and coach
+        // created below is reserved against this career and nothing leaks in
+        // from a previously played one.
+        FaceLibrary.shared.beginNewCareer(career)
+
+        // Fixed template vs. random roll. Either way the whole graph is built
+        // here and inserted here only: a template career is imported exactly
+        // once and then lives in the save file like any other, so nothing is
+        // regenerated on later launches. `leagueSource` is written inside the
+        // branch that actually ran, so the persisted provenance can never claim
+        // a template the screen failed to load.
+        let result: LeagueGenerator.GeneratedLeague
+        let seasonHistory: [PlayerSeasonHistory]
+        if catalog.source.isTemplate, let template {
+            let imported = LeagueGenerator.generateFromTemplate(
+                template, startYear: career.currentSeason
+            )
+            result = imported.generated
+            seasonHistory = imported.seasonHistory
+            career.leagueSource = catalog.source
+        } else {
+            result = LeagueGenerator.generate(startYear: career.currentSeason)
+            seasonHistory = []
+            career.leagueSource = .generated
+        }
 
         // Find the team matching the selected definition.
         let chosenTeam = result.teams.first { $0.abbreviation == teamDef.abbreviation }
@@ -541,7 +688,8 @@ struct TeamSelectionView: View {
             let pending = PendingFantasyDraft(
                 career: career,
                 result: result,
-                chosenTeamID: chosenTeam.id
+                chosenTeamID: chosenTeam.id,
+                seasonHistory: seasonHistory
             )
             // Deferred: the team-detail cover is still dismissing — presenting
             // a second fullScreenCover in the same transaction can be dropped.
@@ -551,7 +699,12 @@ struct TeamSelectionView: View {
             return
         }
 
-        finalizeCareer(career: career, result: result, chosenTeamID: chosenTeam?.id)
+        finalizeCareer(
+            career: career,
+            result: result,
+            chosenTeamID: chosenTeam?.id,
+            seasonHistory: seasonHistory
+        )
     }
 
     /// R40 — Fantasy Draft completion: assign rosters, regenerate OVR-based
@@ -580,7 +733,8 @@ struct TeamSelectionView: View {
         finalizeCareer(
             career: pending.career,
             result: pending.result,
-            chosenTeamID: pending.chosenTeamID
+            chosenTeamID: pending.chosenTeamID,
+            seasonHistory: pending.seasonHistory
         )
     }
 
@@ -590,7 +744,8 @@ struct TeamSelectionView: View {
     private func finalizeCareer(
         career: Career,
         result: LeagueGenerator.GeneratedLeague,
-        chosenTeamID: UUID?
+        chosenTeamID: UUID?,
+        seasonHistory: [PlayerSeasonHistory] = []
     ) {
         // Bug fix #2: Player's team starts with NO coaches — the wizard guides
         // them to hire staff first. Remove all coaches from the chosen team only.
@@ -599,6 +754,22 @@ struct TeamSelectionView: View {
                 coach.teamID = nil
             }
         }
+
+        // Phase 4 faces: the random generator already assigned inside
+        // `LeagueGenerator.generate`; this idempotent pass is what gives a
+        // TEMPLATE-imported league its portraits (and covers the fantasy-draft
+        // detour, which re-enters here after the draft screen).
+        FaceLibrary.shared.backfill(players: result.players, coaches: result.coaches)
+        #if DEBUG
+        // Uniqueness gate on the league that is about to be persisted — this is
+        // the one call site both league sources (and the fantasy-draft detour)
+        // funnel through, so it covers the template import too.
+        FaceLibrary.shared.debugAuditActiveFaces(
+            players: result.players,
+            coaches: result.coaches,
+            label: "career-start/\(career.leagueSource.rawValue)"
+        )
+        #endif
 
         // Insert all generated objects into the model context.
         modelContext.insert(career)
@@ -618,6 +789,12 @@ struct TeamSelectionView: View {
         }
         for pick in result.draftPicks {
             modelContext.insert(pick)
+        }
+        // Template leagues arrive with career history: the per-season OVR arcs
+        // the transform baked, so player cards and HOF logic have a past from
+        // day one. Empty for a generated league.
+        for history in seasonHistory {
+            modelContext.insert(history)
         }
 
         // Reset per-career AppStorage flags
@@ -646,10 +823,11 @@ extension NFLTeamDefinition: Identifiable {
 
 private struct CompactTeamRow: View {
     let team: NFLTeamDefinition
+    /// Scouting numbers for the league being browsed — static table for a
+    /// generated league, template-derived for a fixed one.
+    let preview: TeamPreview
     var compareModeOn: Bool = false
     var isSelectedForCompare: Bool = false
-
-    private var preview: TeamPreview { team.preview }
 
     private var difficultyColor: Color {
         switch preview.difficulty {
@@ -1006,6 +1184,8 @@ enum TeamColors {
 
 private struct TeamDetailSheet: View {
     let team: NFLTeamDefinition
+    /// The league being browsed — supplies this team's preview and its rivals.
+    let catalog: TeamBrowseCatalog
     /// R40 — one-line mode + league-settings recap above the confirm button.
     var setupSummary: String = ""
     /// R40 — confirm-button title (fantasy draft changes the next step).
@@ -1017,7 +1197,7 @@ private struct TeamDetailSheet: View {
 
     private var isLandscape: Bool { viewWidth > 900 }
 
-    private var preview: TeamPreview { team.preview }
+    private var preview: TeamPreview { catalog.preview(for: team) }
 
     private var situationColor: Color {
         // 3-tier color system (persona audit): blue = building, green = ascending,
@@ -1312,11 +1492,7 @@ private struct TeamDetailSheet: View {
     // MARK: - Division Rivals Card
 
     private var divisionRivals: [NFLTeamDefinition] {
-        NFLTeamData.allTeams.filter {
-            $0.conference == team.conference
-            && $0.division == team.division
-            && $0.abbreviation != team.abbreviation
-        }
+        catalog.divisionRivals(of: team)
     }
 
     private var divisionRivalsCard: some View {
@@ -1325,7 +1501,7 @@ private struct TeamDetailSheet: View {
 
             VStack(spacing: 6) {
                 ForEach(divisionRivals, id: \.abbreviation) { rival in
-                    let rivalPreview = rival.preview
+                    let rivalPreview = catalog.preview(for: rival)
                     HStack(spacing: 10) {
                         TeamLogoPlaceholder(abbreviation: rival.abbreviation, size: 28)
 
@@ -1369,12 +1545,10 @@ private struct TeamDetailSheet: View {
         .cardBackground()
     }
 
-    /// League-average coaching budget across all 32 static team definitions —
-    /// gives the raw "$NNM" figure a comparison anchor (audit).
+    /// League-average coaching budget across the 32 teams of the league being
+    /// browsed — gives the raw "$NNM" figure a comparison anchor (audit).
     private var leagueAvgCoachingBudget: Int {
-        let all = NFLTeamData.allTeams
-        guard !all.isEmpty else { return 0 }
-        return all.reduce(0) { $0 + $1.preview.coachingBudget } / all.count
+        catalog.averageCoachingBudget
     }
 
     private var coachingBudgetCard: some View {
@@ -1497,6 +1671,8 @@ private enum TeamSortMode: String, CaseIterable {
 
 private struct CompareTeamsSheet: View {
     let teams: [NFLTeamDefinition]
+    /// The league being compared — supplies each column's preview numbers.
+    let catalog: TeamBrowseCatalog
 
     @Environment(\.dismiss) private var dismiss
 
@@ -1534,55 +1710,55 @@ private struct CompareTeamsSheet: View {
                         comparisonRow(label: "Difficulty") { team in
                             HStack(spacing: 1) {
                                 ForEach(1...5, id: \.self) { star in
-                                    Image(systemName: star <= team.preview.difficulty ? "star.fill" : "star")
+                                    Image(systemName: star <= catalog.preview(for: team).difficulty ? "star.fill" : "star")
                                         .font(.system(size: 9))
-                                        .foregroundStyle(star <= team.preview.difficulty ? Color.warning : Color.textTertiary.opacity(0.4))
+                                        .foregroundStyle(star <= catalog.preview(for: team).difficulty ? Color.warning : Color.textTertiary.opacity(0.4))
                                 }
                             }
                         }
 
                         comparisonRow(label: "Situation") { team in
-                            Text(team.preview.situation.uppercased())
+                            Text(catalog.preview(for: team).situation.uppercased())
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundStyle(Color.textPrimary)
                         }
 
                         comparisonRow(label: "Last Season") { team in
-                            Text(team.preview.lastSeasonRecord)
+                            Text(catalog.preview(for: team).lastSeasonRecord)
                                 .font(.system(size: 13, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(Color.textPrimary)
                         }
 
                         comparisonRow(label: "Roster OVR") { team in
-                            Text("\(team.preview.estimatedOVR)")
+                            Text("\(catalog.preview(for: team).estimatedOVR)")
                                 .font(.system(size: 14, weight: .bold).monospacedDigit())
-                                .foregroundStyle(Color.forRating(team.preview.estimatedOVR))
+                                .foregroundStyle(Color.forRating(catalog.preview(for: team).estimatedOVR))
                         }
 
                         comparisonRow(label: "Cap Space") { team in
-                            Text("$\(team.preview.estimatedCapSpace)M")
+                            Text("$\(catalog.preview(for: team).estimatedCapSpace)M")
                                 .font(.system(size: 13, weight: .bold).monospacedDigit())
-                                .foregroundStyle(team.preview.estimatedCapSpace > 30 ? Color.success : team.preview.estimatedCapSpace > 15 ? Color.accentBlue : Color.warning)
+                                .foregroundStyle(catalog.preview(for: team).estimatedCapSpace > 30 ? Color.success : catalog.preview(for: team).estimatedCapSpace > 15 ? Color.accentBlue : Color.warning)
                         }
 
                         comparisonRow(label: "Coaching Budget") { team in
-                            Text("$\(team.preview.coachingBudget)M")
+                            Text("$\(catalog.preview(for: team).coachingBudget)M")
                                 .font(.system(size: 13, weight: .semibold).monospacedDigit())
-                                .foregroundStyle(team.preview.coachingBudget >= 40 ? Color.success : team.preview.coachingBudget >= 30 ? Color.accentBlue : Color.warning)
+                                .foregroundStyle(catalog.preview(for: team).coachingBudget >= 40 ? Color.success : catalog.preview(for: team).coachingBudget >= 30 ? Color.accentBlue : Color.warning)
                         }
 
                         comparisonRow(label: "Draft Picks") { team in
-                            Text("\(team.preview.estimatedDraftPicks)")
+                            Text("\(catalog.preview(for: team).estimatedDraftPicks)")
                                 .font(.system(size: 13, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(Color.textPrimary)
                         }
 
                         comparisonRow(label: "Owner Patience") { team in
                             VStack(spacing: 2) {
-                                Text(team.preview.ownerPatience)
+                                Text(catalog.preview(for: team).ownerPatience)
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(Color.textPrimary)
-                                Text("\(team.preview.patienceSeasons)yr")
+                                Text("\(catalog.preview(for: team).patienceSeasons)yr")
                                     .font(.system(size: 10))
                                     .foregroundStyle(Color.textTertiary)
                             }
@@ -1590,13 +1766,13 @@ private struct CompareTeamsSheet: View {
 
                         comparisonRow(label: "Starting QB") { team in
                             VStack(spacing: 2) {
-                                Text(team.preview.startingQBName)
+                                Text(catalog.preview(for: team).startingQBName)
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(Color.textPrimary)
                                     .lineLimit(1)
-                                Text("\(team.preview.startingQBOverall) OVR")
+                                Text("\(catalog.preview(for: team).startingQBOverall) OVR")
                                     .font(.system(size: 10, weight: .bold).monospacedDigit())
-                                    .foregroundStyle(Color.forRating(team.preview.startingQBOverall))
+                                    .foregroundStyle(Color.forRating(catalog.preview(for: team).startingQBOverall))
                             }
                         }
 

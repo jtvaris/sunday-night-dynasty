@@ -164,6 +164,14 @@ final class Career {
     /// Default → lightweight migration (normal = today's exact rates).
     var injuryFrequencyRaw: String = InjuryFrequency.normal.rawValue
 
+    // MARK: - League Source (realistic-league phase 3)
+    /// Raw `LeagueSource` — which league this career was built from: the random
+    /// generator or one of the fixed 2026 templates. Provenance only: the whole
+    /// league graph is persisted at career creation, so nothing is ever
+    /// re-imported or re-rolled on a later launch.
+    /// Default → lightweight migration (existing careers were all generated).
+    var leagueSourceRaw: String = LeagueSource.generated.rawValue
+
     // MARK: - Training-Focus Breakout Cap (R26 jämä)
     /// JSON-encoded `TrainingFocusEngine.SeasonBreakoutCounts` — how many
     /// training-focus breakout events each team has consumed in the CURRENT
@@ -188,6 +196,14 @@ final class Career {
     /// The season `bonusInstalledPlaysRaw` belongs to; a new season starts
     /// from an empty practiced playbook. Default → lightweight migration.
     var bonusInstalledSeason: Int = 0
+
+    // MARK: - Face Library (phase 4)
+    /// JSON-encoded `FaceAssignmentRegistry` — which library face each person
+    /// in THIS career wears, plus the retirement cooldown that keeps a freed
+    /// face out of circulation for two seasons. Career-scoped on purpose: two
+    /// careers may hand the same face to different people.
+    /// Optional new attribute → lightweight migration.
+    var faceRegistryData: Data? = nil
 
     // MARK: - Locker Room (R25)
     /// JSON-encoded `[LockerRoomEvent]` — resolved locker-room happenings,
@@ -258,6 +274,14 @@ extension Career {
     var injuryFrequency: InjuryFrequency {
         get { InjuryFrequency(rawValue: injuryFrequencyRaw) ?? .normal }
         set { injuryFrequencyRaw = newValue.rawValue }
+    }
+
+    /// Typed accessor for the league source this career was built from.
+    /// Unknown raw values (a Release build reading a DEBUG save) fall back to
+    /// `.generated`; the persisted league itself is unaffected either way.
+    var leagueSource: LeagueSource {
+        get { LeagueSource(rawValue: leagueSourceRaw) ?? .generated }
+        set { leagueSourceRaw = newValue.rawValue }
     }
 }
 

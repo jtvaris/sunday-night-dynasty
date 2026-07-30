@@ -3719,7 +3719,7 @@ struct CareerDashboardView: View {
 
         return phaseCardBase(icon: "figure.run", accent: .accentGold) {
             heroHeader("NFL Combine · 42% scouted")
-            heroStatRow("Top prospect", value: "C. Williams (QB) · OVR 88")
+            heroStatRow("Top prospect", value: "T. Hanneman (QB) · OVR 88")
             heroStatRow("Risers today", value: "5")
             heroStatRow("Scouts deployed", value: "\(scoutCount) / \(max(scoutCount, 6))")
             heroActionLink(title: ctaTitle, destination: .scouting)
