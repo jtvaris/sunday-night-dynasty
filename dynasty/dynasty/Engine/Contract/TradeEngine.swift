@@ -154,7 +154,7 @@ enum TradeEngine {
         allPlayers: [Player],
         allPicks: [DraftPick]
     ) -> [TradeProposal] {
-        guard !playerTeam.players.isEmpty else { return [] }
+        guard allPlayers.contains(where: { $0.teamID == playerTeam.id }) else { return [] }
 
         let aiTeams = allTeams.filter { $0.id != playerTeam.id }
         var proposals: [TradeProposal] = []
@@ -239,16 +239,46 @@ enum TradeEngine {
 
     // MARK: - Execute Trade
 
+    /// Dead money each side ate to get the deal done, in thousands.
+    /// Returned so the caller can report it (inbox notice, cap screens) without
+    /// re-deriving the split.
+    struct TradeCapOutcome {
+        /// Dead cap the OFFERING team keeps for the players it sent away.
+        var offeringDeadCap: Int = 0
+        /// Dead cap the RECEIVING team keeps for the players it sent away.
+        var receivingDeadCap: Int = 0
+
+        var totalDeadCap: Int { offeringDeadCap + receivingDeadCap }
+    }
+
     /// Applies a trade proposal to the data store:
-    /// - Swaps `teamID` on each player.
+    /// - Writes the `TradeRecord` ledger row (Wave 0 instrumentation).
+    /// - Swaps `teamID` on each player and re-points his `Contract` row.
     /// - Swaps `currentTeamID` on each draft pick.
-    /// - Updates `currentCapUsage` on both teams.
+    /// - Updates `currentCapUsage` on both teams, dead money included.
+    ///
+    /// `ledger` is required, not optional, on purpose: this is the one
+    /// primitive that moves trade assets, so making the calendar/provenance
+    /// stamp part of its signature means no execution path can move players
+    /// without leaving a measurable row behind (`docs/TRADE_OVERHAUL_PLAN.md`
+    /// finding S9). The row is written before the mutation so the asset
+    /// summaries describe the deal as it was struck.
+    ///
+    /// Wave 1 cap truth (finding S3): salary no longer moves 1:1. The signing-
+    /// bonus proration accelerates onto the team that paid it
+    /// (`CapManagementEngine.tradeCapSplit`, the same model as a release), the
+    /// acquiring team takes only the base salary, and the traded player's
+    /// `Contract` row follows him with the bonus stripped so next season's cap
+    /// hits and any later cut price him correctly on his new team.
+    @discardableResult
     static func executeTrade(
         proposal: TradeProposal,
         allPlayers: [Player],
         allPicks: [DraftPick],
+        capMode: CapMode,
+        ledger: TradeLedger.Context,
         modelContext: ModelContext
-    ) {
+    ) -> TradeCapOutcome {
         let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
         let pickLookup   = Dictionary(uniqueKeysWithValues: allPicks.map   { ($0.id, $0) })
 
@@ -262,24 +292,52 @@ enum TradeEngine {
 
         guard let offeringTeam  = teamLookup[offeringTeamID],
               let receivingTeam = teamLookup[receivingTeamID]
-        else { return }
+        else { return TradeCapOutcome() }
+
+        // Detailed contracts are fetched here rather than passed in so EVERY
+        // execution path (Trade Center, deadline pass, forced holdout trade)
+        // gets identical cap treatment — a caller cannot forget them.
+        let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>())) ?? []
+        var contractByPlayer: [UUID: Contract] = [:]
+        for contract in contracts where contractByPlayer[contract.playerID] == nil {
+            contractByPlayer[contract.playerID] = contract
+        }
+
+        // --- Ledger row, before any asset moves ---
+        TradeLedger.record(
+            proposal: proposal,
+            context: ledger,
+            allPlayers: allPlayers,
+            allPicks: allPicks,
+            modelContext: modelContext
+        )
+
+        var outcome = TradeCapOutcome()
 
         // --- Move sending players: offering → receiving ---
         for playerID in proposal.sendingPlayers {
             guard let player = playerLookup[playerID] else { continue }
-            let salary = player.annualSalary
-            offeringTeam.currentCapUsage  -= salary
-            receivingTeam.currentCapUsage += salary
-            player.teamID = receivingTeamID
+            let dead = movePlayer(
+                player,
+                from: offeringTeam,
+                to: receivingTeam,
+                contract: contractByPlayer[playerID],
+                capMode: capMode
+            )
+            outcome.offeringDeadCap += dead
         }
 
         // --- Move receiving players: receiving → offering ---
         for playerID in proposal.receivingPlayers {
             guard let player = playerLookup[playerID] else { continue }
-            let salary = player.annualSalary
-            receivingTeam.currentCapUsage -= salary
-            offeringTeam.currentCapUsage  += salary
-            player.teamID = offeringTeamID
+            let dead = movePlayer(
+                player,
+                from: receivingTeam,
+                to: offeringTeam,
+                contract: contractByPlayer[playerID],
+                capMode: capMode
+            )
+            outcome.receivingDeadCap += dead
         }
 
         // --- Move sending picks: offering → receiving ---
@@ -293,6 +351,50 @@ enum TradeEngine {
             guard let pick = pickLookup[pickID] else { continue }
             pick.currentTeamID = offeringTeamID
         }
+
+        return outcome
+    }
+
+    /// Moves one player between teams with NFL cap consequences and returns the
+    /// dead cap `from` is left holding.
+    ///
+    /// The old team drops his full cap hit and picks the accelerated bonus back
+    /// up; the new team is charged base salary only. `player.annualSalary` is
+    /// rewritten to that base so it keeps matching what the new team is charged
+    /// — every other engine (contract-year processing, cuts, valuation) reads
+    /// `annualSalary` as the cap hit, and leaving it stale would let cap usage
+    /// drift on the next expiry.
+    private static func movePlayer(
+        _ player: Player,
+        from oldTeam: Team,
+        to newTeam: Team,
+        contract: Contract?,
+        capMode: CapMode
+    ) -> Int {
+        let split = CapManagementEngine.tradeCapSplit(
+            player: player,
+            contract: contract,
+            capMode: capMode
+        )
+
+        oldTeam.currentCapUsage = max(0, oldTeam.currentCapUsage - player.annualSalary) + split.deadCap
+        newTeam.currentCapUsage += split.salaryAssumed
+
+        player.annualSalary = split.salaryAssumed
+        player.teamID = newTeam.id
+
+        // Contract re-point (finding S3): the row followed nobody before, so the
+        // new team's contract screens showed an empty deal and a later cut
+        // priced dead money against the wrong franchise. The bonus is zeroed
+        // because its remaining proration just accelerated onto `oldTeam` — it
+        // must not be chargeable twice.
+        if let contract {
+            contract.teamID = newTeam.id
+            contract.signingBonus = 0
+            contract.guaranteedMoney = 0
+        }
+
+        return split.deadCap
     }
 
     // MARK: - Private Helpers

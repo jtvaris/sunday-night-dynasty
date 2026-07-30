@@ -523,6 +523,15 @@ final class LiveGameEngine: ObservableObject {
         (livePlayerByID[playerID]?.rushBackWeeksRemaining ?? 0) > 0
     }
 
+    // MARK: Holdouts
+
+    /// The user's players who did not report over their contract, resolved from
+    /// the same kickoff roster query as the squads (S3: the sim never reads the
+    /// stale `Team.players` relationship). They are absent from every field
+    /// unit; the Coaches Board lists them so the reason a starter is missing is
+    /// legible. Presentation only — the simulation never reads this.
+    let playerTeamHoldouts: [Player]
+
     // MARK: Rookie watch
 
     /// Draft slot per rookie (`yearsPro == 0`) on either roster; a stored
@@ -1266,8 +1275,16 @@ final class LiveGameEngine: ObservableObject {
         // play-by-play hot path is far too slow. Live models are kept in a
         // lookup so fatigue can be written back after the game.
         // R22: a player holding out over his contract does not suit up.
-        let homeRoster = homeTeam.players.filter { !$0.isHoldingOut }
-        let awayRoster = awayTeam.players.filter { !$0.isHoldingOut }
+        // S3 (TRADE_OVERHAUL_PLAN §4/§7.5): rosters come from the `teamID`
+        // query, never the creation-time `Team.players` relationship — two
+        // fetches per GAME, here in the init, outside every play path.
+        let homeSquad = homeTeam.currentRoster()
+        let awaySquad = awayTeam.currentRoster()
+        let homeRoster = homeSquad.filter { !$0.isHoldingOut }
+        let awayRoster = awaySquad.filter { !$0.isHoldingOut }
+        // The Coaches Board lists the men who did NOT report, so the holdouts
+        // are kept from that same single fetch (see `playerTeamHoldouts`).
+        playerTeamHoldouts = (playerTeamIsHome ? homeSquad : awaySquad).filter(\.isHoldingOut)
         homePlayers = homeRoster.map(SimPlayer.init(from:))
         awayPlayers = awayRoster.map(SimPlayer.init(from:))
         // R40: pre-game coaching morale bump on the snapshots (same shared
@@ -2659,6 +2676,17 @@ final class LiveGameEngine: ObservableObject {
         game.awayScore = result.awayScore
         WeekAdvancer.updateTeamRecords(game: game, teamsByID: teamsByID)
         WeekAdvancer.lastPlayerGameResult = result
+
+        // Career stats: a coached game is played BEFORE `advanceWeek`, so it
+        // never reaches the weekly sim's accumulation pass — fold its box score
+        // into both rosters' running season lines here instead. Regular season
+        // only, matching the games-played tally (#33) and the week-18 snapshot.
+        if !game.isPlayoff {
+            WeekAdvancer.accumulateSeasonStats(
+                result.playerStats,
+                players: Array(livePlayerByID.values)
+            )
+        }
 
         // Matchup-driven morale: the player's best battle winners come out of
         // a coached game buoyed; players who kept losing their one-on-ones

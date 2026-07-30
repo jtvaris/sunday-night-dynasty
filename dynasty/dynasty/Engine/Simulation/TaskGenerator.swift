@@ -274,7 +274,20 @@ enum TaskGenerator {
                 ownerSatisfaction: ownerSatisfaction
             )
         case .tradeDeadline:
-            phaseTasks = tradeDeadlineTasks(hasPendingTradeOffers: hasPendingTradeOffers)
+            // The deadline week is still a game week — it has an opponent, a game
+            // plan and an injury report like any other. Its own tasks are an
+            // OVERLAY on the weekly list, not a replacement for it, or the user
+            // would lose game prep on the week the phase finally became real.
+            // `hasPendingTradeOffers: false` on the weekly half so the offers row
+            // is emitted once, by the deadline half, whose copy carries the
+            // urgency ("…that expire at the deadline").
+            phaseTasks = regularSeasonTasks(
+                opponentName: opponentName,
+                hasPendingTradeOffers: false,
+                hasScoutsAssigned: hasScoutsAssigned,
+                hasPendingEvents: hasPendingEvents,
+                ownerSatisfaction: ownerSatisfaction
+            ) + tradeDeadlineTasks(hasPendingTradeOffers: hasPendingTradeOffers)
         case .playoffs:
             phaseTasks = playoffTasks(
                 playoffRoundName: playoffRoundName,

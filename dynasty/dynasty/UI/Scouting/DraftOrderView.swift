@@ -6,6 +6,9 @@ struct DraftOrderView: View {
 
     @Environment(\.modelContext) private var modelContext
     @State private var draftPicks: [DraftPick] = []
+    /// Draft year the list is showing — the current season whenever it has rows,
+    /// otherwise the nearest year that does (see `loadData`).
+    @State private var displayedSeason: Int = 0
     @State private var teams: [Team] = []
     @State private var expandedRounds: Set<Int> = [1]
     @State private var isLoading: Bool = true
@@ -133,7 +136,7 @@ struct DraftOrderView: View {
                     .font(.title3.weight(.heavy))
                     .foregroundStyle(Color.textPrimary)
 
-                Text("Season \(String(career.currentSeason)) \u{2022} \(draftPicks.count) total picks")
+                Text("Season \(String(displayedSeason == 0 ? career.currentSeason : displayedSeason)) \u{2022} \(draftPicks.count) total picks")
                     .font(.caption)
                     .foregroundStyle(Color.accentGold)
             }
@@ -431,11 +434,22 @@ struct DraftOrderView: View {
         )
         draftPicks = (try? modelContext.fetch(pickDesc)) ?? []
 
-        // Filter to current season's picks if we have season info
+        // Filter to current season's picks if we have season info.
+        //
+        // The fallback matters now that future-year rows (seasons N+1…N+3) exist
+        // at all times: showing "everything" would stack three projected boards
+        // that share pick numbers into one unreadable list. Scope to the earliest
+        // year that has rows instead — always exactly one draft on screen.
         let currentYear = career.currentSeason
         let seasonPicks = draftPicks.filter { $0.seasonYear == currentYear }
         if !seasonPicks.isEmpty {
             draftPicks = seasonPicks
+            displayedSeason = currentYear
+        } else if let earliest = draftPicks.map(\.seasonYear).min() {
+            draftPicks = draftPicks.filter { $0.seasonYear == earliest }
+            displayedSeason = earliest
+        } else {
+            displayedSeason = currentYear
         }
 
         let teamDesc = FetchDescriptor<Team>()

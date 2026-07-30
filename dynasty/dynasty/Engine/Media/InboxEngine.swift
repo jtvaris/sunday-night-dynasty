@@ -942,6 +942,10 @@ enum InboxEngine {
 
     // MARK: - Trade Deadline
 
+    /// Delivered once, when the career ENTERS the deadline week (end of the
+    /// previous advance), so "the deadline is approaching" is still true and the
+    /// user has the whole week to act. Dead code until the phase became real —
+    /// plan finding S2.
     private static func tradeDeadlineMessages(
         ownerName: String, teamName: String,
         dateString: String
@@ -984,6 +988,33 @@ enum InboxEngine {
                 ]
             )
         ]
+    }
+
+    /// The league office confirming that unanswered offers died with the deadline.
+    ///
+    /// `WeekAdvancer` has always wiped `career.pendingTradeOffers` when the
+    /// deadline passed, silently — an offer the user was still thinking about just
+    /// disappeared from the Trade Center (plan finding S2). Now the wipe leaves a
+    /// receipt.
+    static func tradeOffersExpiredMessage(
+        count: Int,
+        week: Int,
+        season: Int
+    ) -> InboxMessage {
+        let plural = count == 1 ? "offer" : "offers"
+        return InboxMessage(
+            sender: .leagueOffice,
+            subject: "Trade deadline passed — \(count) \(plural) expired",
+            body: """
+            The trade deadline has passed. \(count) outstanding \(plural) on your desk \(count == 1 ? "was" : "were") withdrawn and no further trades can be completed until the season ends.
+
+            Any deal you still want to make waits for the offseason.
+
+            NFL League Office
+            """,
+            date: "Week \(week), Season \(season)",
+            category: .leagueNotice
+        )
     }
 
     // MARK: - Helpers

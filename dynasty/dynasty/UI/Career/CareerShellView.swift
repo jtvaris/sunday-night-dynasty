@@ -212,6 +212,7 @@ struct CareerShellView: View {
                 review: review,
                 ownerName: team?.owner?.name ?? "The Owner",
                 teamName: team?.fullName ?? "your team",
+                owner: team?.owner,
                 context: OwnerSeasonReviewSheet.Context.build(
                     review: review,
                     career: career,
@@ -377,7 +378,10 @@ struct CareerShellView: View {
     private func performShellAdvance() {
         // #38: remember whether this was a regular-season game week — the round
         // recap only makes sense after one (power rankings are regular-season).
+        // The deadline week is such a week: its phase is `.tradeDeadline`, but it
+        // has a full slate and must still get its recap.
         let wasRegularSeason = career.currentPhase == .regularSeason
+            || career.currentPhase == .tradeDeadline
 
         PerfLog.time("advance_week") {
             WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
@@ -828,7 +832,7 @@ struct CareerShellView: View {
         // NEXT unplayed game's week so the label matches the opponent shown
         // (after this week's game is played, the plan targets next week).
         switch career.currentPhase {
-        case .regularSeason:
+        case .regularSeason, .tradeDeadline:
             let week = upcomingGames.first?.week ?? career.currentWeek
             ctx.weekLabel = "Week \(week)"
         case .playoffs:
@@ -852,8 +856,15 @@ struct CareerShellView: View {
             if let opponent = allTeamsByID[opponentID] {
                 ctx.opponentName = opponent.fullName
                 ctx.opponentRecord = opponent.record
-                ctx.passDefense = Self.defenseStrength(of: opponent, positions: [.CB, .FS, .SS])
-                ctx.runDefense = Self.defenseStrength(of: opponent, positions: [.DE, .DT, .MLB, .OLB])
+                // S3 (TRADE_OVERHAUL_PLAN §4/§7.5): the opponent's roster comes
+                // from one `teamID` fetch, shared by both defense readouts —
+                // `Team.players` is a creation-time snapshot, so a team that
+                // has traded/signed/cut anybody scouted wrong here.
+                let opponentRoster = (try? modelContext.fetch(
+                    FetchDescriptor<Player>(predicate: #Predicate<Player> { $0.teamID == opponentID })
+                )) ?? []
+                ctx.passDefense = Self.defenseStrength(roster: opponentRoster, positions: [.CB, .FS, .SS])
+                ctx.runDefense = Self.defenseStrength(roster: opponentRoster, positions: [.DE, .DT, .MLB, .OLB])
 
                 // R33: coordinator persona intel — the exact personas the
                 // live game's AI will call with (deterministic derivation).
@@ -875,7 +886,11 @@ struct CareerShellView: View {
         // overall. Derived through the very same `SimPlayer` the engine reads,
         // so the temperament and ego flags never drift from the live model, and
         // nothing new is persisted (morale/personality already live on Player).
-        if let roster = team?.players {
+        // S3: `teamRoster` is the `teamID` query (one fetch), not the stale
+        // `Team.players` relationship — a player traded away or just signed
+        // used to show up in, or be missing from, this readout.
+        if team != nil {
+            let roster = teamRoster
             let skillSlots: [(Position, Int)] = [(.QB, 1), (.RB, 1), (.WR, 3), (.TE, 1)]
             var readouts: [GamePlanView.MentalReadout] = []
             for (position, count) in skillSlots {
@@ -927,11 +942,13 @@ struct CareerShellView: View {
     }
 
     /// Buckets a defensive unit's average overall into weak / average / strong.
+    /// Takes the roster (not the team) so the caller resolves it once by
+    /// `teamID` — see the `Team.players` doc.
     private static func defenseStrength(
-        of team: Team,
+        roster: [Player],
         positions: Set<Position>
     ) -> GamePlanView.DefenseStrength? {
-        let unit = team.players.filter { positions.contains($0.position) }
+        let unit = roster.filter { positions.contains($0.position) }
         guard !unit.isEmpty else { return nil }
         let average = unit.reduce(0) { $0 + $1.overall } / unit.count
         switch average {
@@ -1507,6 +1524,13 @@ struct CareerShellView: View {
                 age: prospect.age, position: prospect.position
             )
         }
+
+        // Owners draw from their own 96-portrait pool, not the face library, and
+        // are created exactly once per league — so unlike players and coaches they
+        // need no per-advance pass, only this one-shot repair for careers that
+        // predate `Owner.faceID` (`ExtrasCatalog.backfillOwnerFaces`).
+        let owners = (try? modelContext.fetch(FetchDescriptor<Owner>())) ?? []
+        ExtrasCatalog.shared.backfillOwnerFaces(owners)
     }
 
     private func syncProspectGrades() {

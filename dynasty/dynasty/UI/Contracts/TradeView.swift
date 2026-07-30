@@ -17,6 +17,9 @@ struct TradeView: View {
     @State private var allTeams: [Team] = []
     @State private var allPlayers: [Player] = []
     @State private var allPicks: [DraftPick] = []
+    /// Detailed contracts, for the Wave 1 cap-truth rules: dead money on trades
+    /// and no-trade-clause vetoes both live on the `Contract` row.
+    @State private var allContracts: [Contract] = []
 
     // MARK: Propose Trade state
     @State private var selectedPartner: Team?
@@ -115,6 +118,7 @@ struct TradeView: View {
                 aiWillingnessRow(partner: partner)
                 Divider().overlay(Color.surfaceBorder)
                 capImpactSection(partner: partner)
+                hardBlockersRow(partner: partner)
                 Divider().overlay(Color.surfaceBorder)
                 proposeButton(partner: partner)
             }
@@ -365,7 +369,8 @@ struct TradeView: View {
             aiTeam: partner,
             allPlayers: allPlayers,
             allPicks: allPicks,
-            currentSeason: career.currentSeason
+            currentSeason: career.currentSeason,
+            contracts: allContracts
         )
     }
 
@@ -747,6 +752,60 @@ struct TradeView: View {
         }
     }
 
+    // MARK: - Hard Blockers
+
+    /// League rules that will refuse this package — no-trade clauses, injured
+    /// players, roster bounds, the cap — shown live instead of only in the
+    /// alert after tapping Propose, so the preview equals the outcome
+    /// (`docs/TRADE_OVERHAUL_PLAN.md` G7).
+    @ViewBuilder
+    private func hardBlockersRow(partner: Team) -> some View {
+        let blockers = currentBlockers(partner: partner)
+        if !blockers.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(blockers, id: \.self) { blocker in
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.danger)
+                        Text(blocker)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.danger.opacity(0.10))
+            )
+        }
+    }
+
+    private func currentBlockers(partner: Team) -> [String] {
+        guard let myTeam = playerTeam else { return [] }
+        let hasAssets = !mySelectedPlayers.isEmpty || !mySelectedPicks.isEmpty ||
+                        !theirSelectedPlayers.isEmpty || !theirSelectedPicks.isEmpty
+        guard hasAssets else { return [] }
+
+        return TradeValueEngine.validationErrors(
+            proposal: TradeProposal(
+                offeringTeamID: myTeam.id,
+                receivingTeamID: partner.id,
+                sendingPlayers: Array(mySelectedPlayers),
+                receivingPlayers: Array(theirSelectedPlayers),
+                sendingPicks: Array(mySelectedPicks),
+                receivingPicks: Array(theirSelectedPicks)
+            ),
+            allPlayers: allPlayers,
+            teams: allTeams,
+            capMode: career.capMode,
+            contracts: allContracts
+        )
+    }
+
     // MARK: - Cap Impact
 
     @ViewBuilder
@@ -754,6 +813,7 @@ struct TradeView: View {
         if let myTeam = playerTeam {
             let impact = computeCapImpact(myTeam: myTeam, partner: partner)
             let hasAny = impact.yourDelta != 0 || impact.theirDelta != 0
+                || impact.yourDeadCap != 0 || impact.theirDeadCap != 0
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
@@ -769,15 +829,28 @@ struct TradeView: View {
                         teamLabel: myTeam.abbreviation,
                         beforeRoom: myTeam.salaryCap - myTeam.currentCapUsage,
                         afterRoom: (myTeam.salaryCap - myTeam.currentCapUsage) - impact.yourDelta,
-                        delta: -impact.yourDelta
+                        delta: -impact.yourDelta,
+                        deadCap: impact.yourDeadCap
                     )
                     Divider().overlay(Color.surfaceBorder).frame(maxHeight: 70)
                     capImpactColumn(
                         teamLabel: partner.abbreviation,
                         beforeRoom: partner.salaryCap - partner.currentCapUsage,
                         afterRoom: (partner.salaryCap - partner.currentCapUsage) - impact.theirDelta,
-                        delta: -impact.theirDelta
+                        delta: -impact.theirDelta,
+                        deadCap: impact.theirDeadCap
                     )
+                }
+
+                // Wave 1 cap truth: trades are no longer free salary dumps. The
+                // signing-bonus proration accelerates onto whoever paid it, so
+                // the money you keep for a player you just traded needs to be
+                // on screen BEFORE you tap Propose.
+                if impact.yourDeadCap > 0 || impact.theirDeadCap > 0 {
+                    Text("Dead money stays with the team trading the player away — his bonus proration can't follow him.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if !hasAny {
@@ -793,7 +866,8 @@ struct TradeView: View {
         teamLabel: String,
         beforeRoom: Int,
         afterRoom: Int,
-        delta: Int
+        delta: Int,
+        deadCap: Int
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(teamLabel)
@@ -827,22 +901,44 @@ struct TradeView: View {
                     .font(.system(size: 11).weight(.bold).monospacedDigit())
                     .foregroundStyle(delta > 0 ? Color.success : (delta < 0 ? Color.warning : Color.textTertiary))
             }
+            if deadCap > 0 {
+                HStack {
+                    Text("Dead:")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                    Spacer()
+                    Text(formatMillions(deadCap))
+                        .font(.system(size: 11).weight(.semibold).monospacedDigit())
+                        .foregroundStyle(Color.danger)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func computeCapImpact(myTeam: Team, partner: Team) -> (yourDelta: Int, theirDelta: Int) {
+    /// Cap consequences of the current builder selection, using the exact split
+    /// `TradeEngine.executeTrade` will apply: the team trading a player away
+    /// keeps his accelerated signing bonus as dead money, the other team is
+    /// charged base salary only.
+    private func computeCapImpact(
+        myTeam: Team,
+        partner: Team
+    ) -> (yourDelta: Int, theirDelta: Int, yourDeadCap: Int, theirDeadCap: Int) {
         // yourDelta = net cap added to your team (positive = more salary on books)
         let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
-        let outgoingSalary = mySelectedPlayers
-            .compactMap { playerLookup[$0]?.annualSalary }
-            .reduce(0, +)
-        let incomingSalary = theirSelectedPlayers
-            .compactMap { playerLookup[$0]?.annualSalary }
-            .reduce(0, +)
-        let yourDelta = incomingSalary - outgoingSalary
-        let theirDelta = outgoingSalary - incomingSalary
-        return (yourDelta, theirDelta)
+        let outgoing = mySelectedPlayers.compactMap { playerLookup[$0] }
+        let incoming = theirSelectedPlayers.compactMap { playerLookup[$0] }
+
+        let mine = TradeValueEngine.capDeltas(
+            for: outgoing, contracts: allContracts, capMode: career.capMode
+        )
+        let theirs = TradeValueEngine.capDeltas(
+            for: incoming, contracts: allContracts, capMode: career.capMode
+        )
+
+        let yourDelta  = theirs.assumed - mine.oldHit + mine.deadCap
+        let theirDelta = mine.assumed - theirs.oldHit + theirs.deadCap
+        return (yourDelta, theirDelta, mine.deadCap, theirs.deadCap)
     }
 
     // MARK: - Picks-Only Wizard
@@ -1251,7 +1347,8 @@ struct TradeView: View {
             proposal: proposal,
             allPlayers: allPlayers,
             teams: allTeams,
-            capMode: career.capMode
+            capMode: career.capMode,
+            contracts: allContracts
         )
         if !blockers.isEmpty {
             tradeResultMessage = "Trade blocked:\n" + blockers.joined(separator: "\n")
@@ -1266,7 +1363,8 @@ struct TradeView: View {
             aiTeam: partner,
             allPlayers: allPlayers,
             allPicks: allPicks,
-            currentSeason: career.currentSeason
+            currentSeason: career.currentSeason,
+            contracts: allContracts
         )
 
         switch response {
@@ -1306,10 +1404,21 @@ struct TradeView: View {
             counterpartyAbbr: counterparty.abbreviation,
             userIsOfferingTeam: userIsOfferingTeam
         )
-        TradeEngine.executeTrade(
+        // Wave 0 ledger: `.userProposal` when the user built the deal, and
+        // `.aiWeeklyOffer` when the user accepted an AI-initiated offer — the
+        // two are counted separately so "does the phone ever ring?" (finding
+        // S5) can be measured. `TradeEngine.executeTrade` writes the row.
+        let capOutcome = TradeEngine.executeTrade(
             proposal: proposal,
             allPlayers: allPlayers,
             allPicks: allPicks,
+            capMode: career.capMode,
+            ledger: TradeLedger.Context(
+                kind: userIsOfferingTeam ? .userProposal : .aiWeeklyOffer,
+                season: career.currentSeason,
+                week: career.currentWeek,
+                phase: career.currentPhase
+            ),
             modelContext: modelContext
         )
         // Any stored offers touching the moved assets are now void.
@@ -1319,11 +1428,15 @@ struct TradeView: View {
         }
         try? modelContext.save()
 
-        // Surface the completed deal in the inbox.
+        // Surface the completed deal in the inbox, dead money included — the
+        // user needs to see the bill for the players he just shipped out.
         onInboxMessage?(completedTradeInboxMessage(
             proposal: proposal,
             counterparty: counterparty,
-            userIsOfferingTeam: userIsOfferingTeam
+            userIsOfferingTeam: userIsOfferingTeam,
+            deadCapRetained: userIsOfferingTeam
+                ? capOutcome.offeringDeadCap
+                : capOutcome.receivingDeadCap
         ))
 
         clearSelections()
@@ -1338,7 +1451,8 @@ struct TradeView: View {
             proposal: offer,
             allPlayers: allPlayers,
             teams: allTeams,
-            capMode: career.capMode
+            capMode: career.capMode,
+            contracts: allContracts
         )
         if !blockers.isEmpty {
             tradeResultMessage = "Trade blocked:\n" + blockers.joined(separator: "\n")
@@ -1377,7 +1491,8 @@ struct TradeView: View {
     private func completedTradeInboxMessage(
         proposal: TradeProposal,
         counterparty: Team,
-        userIsOfferingTeam: Bool
+        userIsOfferingTeam: Bool,
+        deadCapRetained: Int
     ) -> InboxMessage {
         let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
         let pickLookup   = Dictionary(uniqueKeysWithValues: allPicks.map   { ($0.id, $0) })
@@ -1400,7 +1515,7 @@ struct TradeView: View {
 
             You receive: \(inNames.isEmpty ? "—" : inNames.joined(separator: ", "))
             You send: \(outNames.isEmpty ? "—" : outNames.joined(separator: ", "))
-
+            \(deadCapRetained > 0 ? "Dead money retained: \(formatMillions(deadCapRetained)) — the signing-bonus proration stays on our cap.\n" : "")
             All roster and cap adjustments have been processed.
             """,
             date: "Week \(career.currentWeek), Season \(career.currentSeason)",
@@ -1426,6 +1541,8 @@ struct TradeView: View {
             predicate: #Predicate { !$0.isComplete }
         )
         allPicks = (try? modelContext.fetch(pickDescriptor)) ?? []
+
+        allContracts = (try? modelContext.fetch(FetchDescriptor<Contract>())) ?? []
 
         // R21: incoming offers are persisted on the career (generated weekly
         // by WeekAdvancer). Show only offers whose assets are still where the
@@ -1519,6 +1636,12 @@ struct TradeView: View {
         case 2: suffix = "2nd"
         case 3: suffix = "3rd"
         default: suffix = "\(pick.round)th"
+        }
+        // A future pick's number is a round-midpoint placeholder until
+        // `adoptFuturePicks` renumbers it from real standings — quoting it
+        // would invent precision the league doesn't have yet.
+        if pick.isProvisionalOrder {
+            return "\(pick.seasonYear) \(suffix) Rd"
         }
         return "\(pick.seasonYear) \(suffix) Rd (#\(pick.pickNumber))"
     }
@@ -1654,6 +1777,9 @@ struct TradeView: View {
         case 3: suffix = "3rd"
         default: suffix = "\(pick.round)th"
         }
+        if pick.isProvisionalOrder {
+            return "\(pick.seasonYear) \(suffix)"
+        }
         return "\(pick.seasonYear) \(suffix) (#\(pick.pickNumber))"
     }
 
@@ -1766,5 +1892,8 @@ private struct WizardSuggestion {
             capMode: .simple
         ))
     }
-    .modelContainer(for: [Career.self, Player.self, Team.self, DraftPick.self], inMemory: true)
+    .modelContainer(
+        for: [Career.self, Player.self, Team.self, DraftPick.self, TradeRecord.self],
+        inMemory: true
+    )
 }

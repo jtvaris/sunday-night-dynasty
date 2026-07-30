@@ -189,7 +189,11 @@ struct MainMenuView: View {
         // a String so locale digit grouping never renders "2 026".
         let seasonText = String(career.currentSeason)
         let progressFragment: String
-        if career.currentPhase == .regularSeason && career.currentWeek > 0 {
+        // `.tradeDeadline` is a real regular-season week (the deadline one), so it
+        // reads as "Week 9, 2027 season" rather than as a phase name.
+        let isGameWeek = career.currentPhase == .regularSeason
+            || career.currentPhase == .tradeDeadline
+        if isGameWeek && career.currentWeek > 0 {
             progressFragment = String(localized: "Week \(career.currentWeek), \(seasonText) season")
         } else {
             progressFragment = "\(phaseLabel(career.currentPhase)) — \(String(localized: "\(seasonText) season"))"

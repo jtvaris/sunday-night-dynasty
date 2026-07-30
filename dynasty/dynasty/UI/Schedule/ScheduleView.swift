@@ -7,13 +7,19 @@ import SwiftData
 /// every team to ~70 OVR, so the color thresholds never fire and the badge
 /// carries no matchup signal. Averaging the projected starters (top 22 by
 /// overall ≈ 11 offense + 11 defense) restores a meaningful spread.
+///
+/// Rosters arrive as `teamID`-keyed player arrays, never as `Team.players`:
+/// that relationship is a creation-time snapshot, so every badge on this
+/// screen quietly described the league as it looked on day one — a traded,
+/// signed, drafted or cut player was counted for the wrong club
+/// (`docs/TRADE_OVERHAUL_PLAN.md` §4 S3 / §7.5).
 enum TeamStrength {
     /// Number of starters approximated for the OVR average.
     private static let starterCount = 22
 
-    static func startersOVR(_ team: Team?) -> Int {
-        guard let team, !team.players.isEmpty else { return 0 }
-        let starters = team.players
+    /// Starters OVR of ONE roster (the team's players, unfiltered).
+    static func startersOVR(_ roster: [Player]) -> Int {
+        let starters = roster
             .sorted { $0.overall > $1.overall }
             .prefix(starterCount)
         guard !starters.isEmpty else { return 0 }
@@ -21,11 +27,19 @@ enum TeamStrength {
         return total / starters.count
     }
 
+    /// Starters OVR for every team in one pass, keyed by `teamID`. Feed it the
+    /// league's players from a single fetch; the result is what the rows read,
+    /// so no row ever touches a roster (or a query) itself.
+    static func startersOVRByTeam(players: [Player]) -> [UUID: Int] {
+        let rosters = Dictionary(grouping: players.filter { $0.teamID != nil }) { $0.teamID! }
+        return rosters.mapValues { startersOVR($0) }
+    }
+
     /// League-wide mean of the starters OVR — the pivot the schedule badge
-    /// colors hang off. Compute it once per view appearance (32 roster sorts)
-    /// and pass it down; don't recompute per row.
-    static func leagueAverageStartersOVR(_ teams: [Team]) -> Int {
-        let values = teams.map { startersOVR($0) }.filter { $0 > 0 }
+    /// colors hang off. Derived from the ``startersOVRByTeam(players:)`` index
+    /// computed once per view appearance; don't recompute per row.
+    static func leagueAverageStartersOVR(_ ovrByTeam: [UUID: Int]) -> Int {
+        let values = ovrByTeam.values.filter { $0 > 0 }
         guard !values.isEmpty else { return 0 }
         return values.reduce(0, +) / values.count
     }
@@ -50,6 +64,8 @@ struct ScheduleView: View {
 
     let career: Career
 
+    @Environment(\.modelContext) private var modelContext
+
     @Query private var allGames: [Game]
     @Query private var allTeams: [Team]
 
@@ -58,6 +74,10 @@ struct ScheduleView: View {
     /// League mean of starters OVR — computed once when the view appears so
     /// the badge colors compare opponents against the actual league spread.
     @State private var leagueAvgOVR = 0
+    /// Starters OVR per `teamID`, from ONE roster fetch per appearance (S3:
+    /// rosters are queried by `teamID`, never read off `Team.players`). The
+    /// rows only ever do a dictionary lookup.
+    @State private var ovrByTeam: [UUID: Int] = [:]
 
     // MARK: - Init
 
@@ -126,7 +146,8 @@ struct ScheduleView: View {
                                         teams: allTeams,
                                         playerTeamID: playerTeamID,
                                         teamRecords: teamRecords,
-                                        leagueAvgOVR: leagueAvgOVR
+                                        leagueAvgOVR: leagueAvgOVR,
+                                        ovrByTeam: ovrByTeam
                                     )
                                     .onTapGesture { previewGame = game }
                                 }
@@ -144,9 +165,17 @@ struct ScheduleView: View {
         .navigationTitle("Week \(selectedWeek) Schedule")
         .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear {
-            if leagueAvgOVR == 0 {
-                leagueAvgOVR = TeamStrength.leagueAverageStartersOVR(allTeams)
-            }
+            // One roster fetch per appearance, then pure lookups. Recomputed on
+            // every appearance (not just the first) so a week advance, a trade
+            // or a signing is reflected the next time the schedule opens.
+            // Rostered players only — free agents and the retired archive (which
+            // grows every season) never contribute to a team's OVR.
+            let descriptor = FetchDescriptor<Player>(
+                predicate: #Predicate<Player> { $0.teamID != nil }
+            )
+            let players = (try? modelContext.fetch(descriptor)) ?? []
+            ovrByTeam = TeamStrength.startersOVRByTeam(players: players)
+            leagueAvgOVR = TeamStrength.leagueAverageStartersOVR(ovrByTeam)
         }
         .sheet(item: $previewGame) { game in
             GamePreviewSheet(
@@ -236,7 +265,8 @@ struct ScheduleView: View {
                         playerTeamID: playerTeamID,
                         teamRecords: teamRecords,
                         isCurrentWeek: game.week == career.currentWeek,
-                        leagueAvgOVR: leagueAvgOVR
+                        leagueAvgOVR: leagueAvgOVR,
+                        ovrByTeam: ovrByTeam
                     )
                     .onTapGesture { previewGame = game }
                 }
@@ -339,6 +369,8 @@ private struct NextGamePill: View {
     let teamRecords: [UUID: StandingsRecord]
     let isCurrentWeek: Bool
     let leagueAvgOVR: Int
+    /// Starters OVR per `teamID`, resolved once by the parent (S3).
+    let ovrByTeam: [UUID: Int]
 
     private var opponentID: UUID? {
         guard let pid = playerTeamID else { return nil }
@@ -358,7 +390,8 @@ private struct NextGamePill: View {
     }
 
     private var opponentOVR: Int {
-        TeamStrength.startersOVR(opponent)
+        guard let oid = opponentID else { return 0 }
+        return ovrByTeam[oid] ?? 0
     }
 
     var body: some View {
@@ -424,6 +457,8 @@ private struct GameCard: View {
     let playerTeamID: UUID?
     let teamRecords: [UUID: StandingsRecord]
     let leagueAvgOVR: Int
+    /// Starters OVR per `teamID`, resolved once by the parent (S3).
+    let ovrByTeam: [UUID: Int]
 
     private var homeTeam: Team? { teams.first { $0.id == game.homeTeamID } }
     private var awayTeam: Team? { teams.first { $0.id == game.awayTeamID } }
@@ -582,7 +617,7 @@ private struct GameCard: View {
     }
 
     private func teamOVR(_ team: Team) -> Int {
-        TeamStrength.startersOVR(team)
+        ovrByTeam[team.id] ?? 0
     }
 
     private func ovrColor(_ ovr: Int) -> Color {
@@ -638,12 +673,29 @@ private struct GamePreviewSheet: View {
     let teamRecords: [UUID: StandingsRecord]
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+
+    /// Both squads for this matchup, keyed by `teamID` — ONE fetch when the
+    /// sheet appears (S3: never `Team.players`, which is frozen at league
+    /// creation). Both the OVR line and the key-player lists read it.
+    @State private var rosters: [UUID: [Player]] = [:]
 
     private var homeTeam: Team? { teams.first { $0.id == game.homeTeamID } }
     private var awayTeam: Team? { teams.first { $0.id == game.awayTeamID } }
 
     private func teamOVR(_ team: Team?) -> Int {
-        TeamStrength.startersOVR(team)
+        guard let team else { return 0 }
+        return TeamStrength.startersOVR(rosters[team.id] ?? [])
+    }
+
+    private func loadRosters() {
+        let homeID = game.homeTeamID
+        let awayID = game.awayTeamID
+        let descriptor = FetchDescriptor<Player>(
+            predicate: #Predicate<Player> { $0.teamID == homeID || $0.teamID == awayID }
+        )
+        let players = (try? modelContext.fetch(descriptor)) ?? []
+        rosters = Dictionary(grouping: players.filter { $0.teamID != nil }) { $0.teamID! }
     }
 
     private func recordString(for team: Team?) -> String {
@@ -655,7 +707,7 @@ private struct GamePreviewSheet: View {
     /// Top 3 players by overall.
     private func keyPlayers(_ team: Team?) -> [Player] {
         guard let team else { return [] }
-        return team.players
+        return (rosters[team.id] ?? [])
             .sorted { $0.overall > $1.overall }
             .prefix(3)
             .map { $0 }
@@ -695,6 +747,7 @@ private struct GamePreviewSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .onAppear { loadRosters() }
         }
     }
 

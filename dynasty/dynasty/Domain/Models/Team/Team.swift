@@ -14,8 +14,27 @@ final class Team {
 
     @Relationship(deleteRule: .nullify) var owner: Owner?
 
-    // NOTE: The players relationship will be added once the Player model is available.
-    // @Relationship(deleteRule: .nullify) var players: [Player]
+    /// Creation-time roster hand-off — **NOT a source of truth, and never
+    /// maintained.** Read a roster with ``currentRoster()`` (a `teamID` query)
+    /// instead; treat this array as write-only.
+    ///
+    /// It is assigned wholesale exactly three times, all while a league is
+    /// being built and before a single transaction has run: `LeagueGenerator`,
+    /// `LeagueTemplateImporter`, and the fantasy-draft bootstrap
+    /// (`TeamSelectionView` / `MultiSeasonSmokeTest`). Nothing has ever updated
+    /// it afterwards, because every transaction in the game moves a player by
+    /// writing `Player.teamID`: trades (`TradeEngine.executeTrade`), free-agent
+    /// signings, draft picks, cuts and retirements all do exactly that and
+    /// leave this relationship alone. From the first transaction on it
+    /// describes a league that no longer exists — the traded player kept
+    /// suiting up for his old team, the cut player stayed in the sim's roster,
+    /// the signed free agent never showed up, the drafted rookie was invisible.
+    ///
+    /// `docs/TRADE_OVERHAUL_PLAN.md` §4 S3 (finding) and §7.5 (locked
+    /// decision: "teamID-reads everywhere"). The staleness was found through
+    /// trades, but the bug class was never trade-specific: routing every
+    /// roster read through the `teamID` query fixes trades, free agency, the
+    /// draft and cuts in one move.
     @Relationship(deleteRule: .nullify) var players: [Player]
 
     var wins: Int
@@ -94,6 +113,34 @@ final class Team {
     /// Remaining cap space in thousands of dollars.
     var availableCap: Int {
         salaryCap - currentCapUsage
+    }
+
+    // MARK: - Roster Query
+
+    /// The live roster: every ``Player`` whose `teamID` is this franchise,
+    /// queried from the team's own model context. THIS is the roster read —
+    /// see ``players`` for why the relationship is not.
+    ///
+    /// Deliberately unfiltered, exactly like the relationship it replaces:
+    /// holdout / injury / retirement filtering stays with the caller (retired
+    /// players drop out for free, since `PlayerRetirementEngine` clears
+    /// `teamID`).
+    ///
+    /// Costs one fetch, so resolve it ONCE per game, per week advance or per
+    /// view refresh and hold the array — never call it inside a per-player
+    /// loop, and never per play.
+    ///
+    /// Falls back to ``players`` only when the team has no model context: a
+    /// league that was generated in memory and never inserted (the DEBUG
+    /// balance harness). Nothing has moved in that state, so the creation-time
+    /// hand-off is still the truth there.
+    func currentRoster() -> [Player] {
+        guard let context = modelContext else { return players }
+        let ownID = id
+        let descriptor = FetchDescriptor<Player>(
+            predicate: #Predicate<Player> { $0.teamID == ownID }
+        )
+        return (try? context.fetch(descriptor)) ?? players
     }
 
     init(

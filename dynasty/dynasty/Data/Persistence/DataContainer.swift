@@ -33,6 +33,7 @@ enum DataContainer {
             OpponentPrepWeek.self,
             VoluntaryWorkout.self,
             HardKnocksEvent.self,
+            TradeRecord.self,
         ])
         let config = ModelConfiguration(isStoredInMemoryOnly: false)
         do {

@@ -655,9 +655,13 @@ struct CareerDashboardView: View {
         let phase = career.currentPhase
         let week = career.currentWeek
 
+        // The week nodes are all tagged `.regularSeason`, so the deadline week —
+        // a real `.tradeDeadline` phase now — has to match them as one of its own
+        // or the strip would highlight node 0 (Pro Bowl) for a week.
+        let nodeMatchPhase: SeasonPhase = phase == .tradeDeadline ? .regularSeason : phase
         for (i, node) in timelineNodes.enumerated() {
             if let nodePhase = node.phase {
-                if nodePhase == phase {
+                if nodePhase == nodeMatchPhase {
                     if phase == .regularSeason || phase == .tradeDeadline {
                         if let wk = node.weekNum, wk == week {
                             return i
@@ -1418,18 +1422,25 @@ struct CareerDashboardView: View {
         .buttonStyle(.plain)
     }
 
+    /// Live for exactly one week now that `.tradeDeadline` is a real persisted
+    /// phase (trade plan finding S2). Replaces the old always-dead `tradeTile`,
+    /// which claimed "trade window open" from a code path nothing rendered.
     private var tradeDeadlineTile: some View {
-        Button {
+        let pendingOffers = career.pendingTradeOffers.count
+        return Button {
             onTaskSelected(.trades)
         } label: {
             DashboardTile(icon: "clock.fill", title: "TRADE DEADLINE", highlighted: true) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Deadline approaching")
+                    Text("Passes after Week \(WeekAdvancer.tradeDeadlineWeek)")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(Color.danger)
-                    Text("Last chance for deals")
+                    Text(pendingOffers > 0
+                         ? "\(pendingOffers) offer\(pendingOffers == 1 ? "" : "s") expire\(pendingOffers == 1 ? "s" : "") — answer them"
+                         : "Last chance for deals this season")
                         .font(.system(size: 10))
-                        .foregroundStyle(Color.textSecondary)
+                        .foregroundStyle(pendingOffers > 0 ? Color.accentGold : Color.textSecondary)
+                        .lineLimit(2)
                 }
             }
         }
@@ -2398,6 +2409,8 @@ struct CareerDashboardView: View {
                         let security = OwnerPersonaEngine.jobSecurity(owner: owner, career: career)
 
                         HStack(spacing: 6) {
+                            // Leading-edge portrait, same rhythm as a coach row.
+                            PersonFaceView(owner: owner, size: .small)
                             Text(owner.name)
                                 .font(.system(size: 13, weight: .bold))
                                 .foregroundStyle(Color.textPrimary)
@@ -2622,23 +2635,9 @@ struct CareerDashboardView: View {
         .buttonStyle(.plain)
     }
 
-    private var tradeTile: some View {
-        NavigationLink {
-            TradeView(career: career)
-        } label: {
-            DashboardTile(icon: "arrow.left.arrow.right", title: "Trade") {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Trade window open")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color.success)
-                    Text("Review potential deals")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.textSecondary)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
+    // NOTE: `tradeTile` deleted (trade plan finding S8) — it had zero call sites
+    // and its copy was a lie ("Trade window open" regardless of phase). The
+    // deadline week's real entry point is `tradeDeadlineTile`.
 
     // NOTE: advanceWeekButton and advanceWeekButtonCompact removed --
     // advance UI is now part of TimelineTasksPanel.
@@ -2695,8 +2694,11 @@ struct CareerDashboardView: View {
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
+            // Disabled in-season (both regular-season phases): from here the skip
+            // would grind a whole season of play-by-play on the main actor.
             .disabled(debugSkipRunning
-                      || career.currentPhase == .regularSeason)
+                      || career.currentPhase == .regularSeason
+                      || career.currentPhase == .tradeDeadline)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)

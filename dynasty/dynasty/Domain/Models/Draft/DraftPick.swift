@@ -21,6 +21,23 @@ final class DraftPick {
     var teamAbbreviation: String?
     var isComplete: Bool
 
+    /// `true` while `pickNumber` is only a PLACEHOLDER slot.
+    ///
+    /// Future-year picks (seasons N+1…N+3) exist from league creation so they can
+    /// be traded, but their real slot depends on standings nobody has played yet.
+    /// Those rows are minted at the midpoint of their round (`round × 32 − 16`) —
+    /// "a 2029 second" is one commodity, not 32 differently-priced ones — and this
+    /// flag marks them as projections. `WeekAdvancer.prepareDraftOrder` adopts the
+    /// rows of the year that just became current: it renumbers them from the final
+    /// standings (keeping `currentTeamID`, so traded ownership and the "via ABC"
+    /// badge survive) and clears the flag. Rows whose order is real from birth —
+    /// the template's 2026 board, `DraftEngine.generateDraftOrder`, compensatory
+    /// awards — are created with `false` and are never renumbered.
+    ///
+    /// Inline default = lightweight SwiftData migration: every pick row an
+    /// existing save already holds reads back as a real, non-provisional order.
+    var isProvisionalOrder: Bool = false
+
     /// Media draft grade for this pick (e.g. "A+", "B-", "D").
     var mediaGrade: String?
     /// Media headline for this pick (e.g. "Lions steal Smith in Round 2!").
@@ -44,6 +61,7 @@ final class DraftPick {
         scoutGrade: String? = nil,
         teamAbbreviation: String? = nil,
         isComplete: Bool = false,
+        isProvisionalOrder: Bool = false,
         mediaGrade: String? = nil,
         mediaHeadline: String? = nil,
         mediaComment: String? = nil
@@ -61,6 +79,7 @@ final class DraftPick {
         self.scoutGrade = scoutGrade
         self.teamAbbreviation = teamAbbreviation
         self.isComplete = isComplete
+        self.isProvisionalOrder = isProvisionalOrder
         self.mediaGrade = mediaGrade
         self.mediaHeadline = mediaHeadline
         self.mediaComment = mediaComment

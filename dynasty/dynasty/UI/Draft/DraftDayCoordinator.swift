@@ -329,6 +329,25 @@ final class DraftDayCoordinator: ObservableObject {
             pendingPickOffer = nil
             return
         }
+        // Wave 0 ledger (`docs/TRADE_OVERHAUL_PLAN.md`): pick swaps bypass
+        // `TradeEngine.executeTrade` — they move `DraftPick` rows directly —
+        // so the row is written here, before ownership flips. The offer already
+        // carries both sides' JJ points from `TradeValueEngine`.
+        TradeLedger.recordPickSwap(
+            initiatorTeamID: teamID,
+            partnerTeamID: offer.partnerTeamID,
+            picksSent: offer.userGives,
+            picksReceived: offer.userGets,
+            sentValue: offer.userGivesValue,
+            receivedValue: offer.userGetsValue,
+            context: TradeLedger.Context(
+                kind: .draftDay,
+                season: career.currentSeason,
+                week: career.currentWeek,
+                phase: career.currentPhase
+            ),
+            modelContext: modelContext
+        )
         for pick in offer.userGives {
             pick.currentTeamID = offer.partnerTeamID
             pick.teamAbbreviation = teamsByID[offer.partnerTeamID]?.abbreviation

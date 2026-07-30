@@ -133,6 +133,83 @@ enum CapManagementEngine {
         }
     }
 
+    // MARK: - Trade Cap Split (Wave 1 — `docs/TRADE_OVERHAUL_PLAN.md`, finding S3)
+
+    /// How one traded player's money divides between the two teams.
+    ///
+    /// Trades used to be free salary dumps: `TradeEngine.executeTrade` moved
+    /// `annualSalary` 1:1, so a team could hand a bloated contract to the AI
+    /// and pocket every dollar (plan finding S3). Real NFL rules — and the
+    /// game's own cut path — say the signing-bonus proration cannot follow the
+    /// player: it accelerates onto the team that paid it.
+    struct TradeCapSplit {
+        /// Signing-bonus acceleration the TRADING team keeps on its books,
+        /// in thousands. Identical model to a release (`calculateDeadCap`).
+        let deadCap: Int
+        /// Cap hit the ACQUIRING team takes on, in thousands: the player's base
+        /// salary, i.e. his old cap hit minus this year's bonus proration.
+        let salaryAssumed: Int
+        /// This year's prorated bonus slice — the part that stays behind.
+        let proratedPerYear: Int
+
+        /// Cap space the trading team actually frees up (can be negative when
+        /// the acceleration is larger than the salary relief — a real and
+        /// deliberately painful outcome for bonus-heavy deals).
+        var traderRelief: Int { salaryAssumed + proratedPerYear - deadCap }
+    }
+
+    /// Splits a traded player's money the same way a release does.
+    ///
+    /// The dead-cap figure is exactly the cut path's: `Contract.deadCap`
+    /// (remaining prorated bonus for every year still on the deal) when a
+    /// detailed contract row exists, and `RosterCutEvaluator.deadCap` — the
+    /// 15 %-of-salary-per-year proxy — when it does not. Most players have no
+    /// `Contract` row (they are only minted for realistic-mode FA signings),
+    /// so the proxy is the common path and must agree with what the cut screens
+    /// already quote.
+    ///
+    /// The base salary the receiver assumes is derived from `player.annualSalary`
+    /// rather than `Contract.baseSalary`, because `annualSalary` is the unit the
+    /// rest of the game charges against `Team.currentCapUsage`; deriving the
+    /// split from it keeps one cap unit and stops the two ledgers drifting.
+    ///
+    /// Sandbox keeps the old 1:1 behaviour: cap rules are off, so there is no
+    /// dead money to eat and the receiver takes the full salary.
+    static func tradeCapSplit(
+        player: Player,
+        contract: Contract?,
+        capMode: CapMode
+    ) -> TradeCapSplit {
+        let salary = max(0, player.annualSalary)
+
+        guard capMode != .sandbox else {
+            return TradeCapSplit(deadCap: 0, salaryAssumed: salary, proratedPerYear: 0)
+        }
+
+        // Remaining years drive the acceleration, same as a mid-contract cut.
+        let years: Int
+        let rawDead: Int
+        if let contract, contract.totalYears > 0 {
+            years = max(1, contract.totalYears - contract.currentYear)
+            // Exactly what `calculateDeadCap(for:team:)` returns for a release.
+            rawDead = contract.deadCap
+        } else {
+            years = max(1, player.contractYearsRemaining)
+            rawDead = RosterCutEvaluator.deadCap(player: player)
+        }
+
+        // Never let the accelerated bonus exceed the money actually left on the
+        // deal — a runaway charge would make the AI market unsolvable.
+        let deadCap = max(0, min(rawDead, salary * years))
+        let proratedPerYear = deadCap / years
+
+        return TradeCapSplit(
+            deadCap: deadCap,
+            salaryAssumed: max(0, salary - proratedPerYear),
+            proratedPerYear: proratedPerYear
+        )
+    }
+
     // MARK: - Cap Growth
 
     /// Grows the salary cap by the specified annual rate (default ~5% per year in the NFL).

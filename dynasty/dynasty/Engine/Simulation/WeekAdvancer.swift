@@ -5,6 +5,23 @@ import SwiftData
 /// simulating games, and managing season/phase transitions.
 enum WeekAdvancer {
 
+    // MARK: - Season Calendar
+
+    /// The regular-season week the trade deadline falls on. Real NFL: the
+    /// Tuesday after the week-9 games, i.e. just past the halfway mark of an
+    /// 18-week season — the previous week 8 cut the market off too early
+    /// (trade plan finding S2).
+    ///
+    /// This is the calendar authority: `.tradeDeadline` is the career's phase for
+    /// the WHOLE of this week (set at the end of the previous advance, restored to
+    /// `.regularSeason` once the deadline passes at the end of it), so the tasks,
+    /// inbox letters and dashboard tile written for that phase are finally
+    /// reachable. `TradeValueEngine.deadlineWeek` is the *window* rule
+    /// (`isTradeWindowOpen`); reading it here keeps the calendar and the window
+    /// on one authority — they drifted apart once already (8 vs 9) during the
+    /// Wave 1 merge.
+    static let tradeDeadlineWeek = TradeValueEngine.deadlineWeek
+
     /// The result of the last player team game simulation (available after advanceWeek)
     static var lastPlayerGameResult: GameSimulator.GameResult?
 
@@ -47,6 +64,19 @@ enum WeekAdvancer {
     /// R24: seasons whose UDFA signing was already handled interactively at
     /// the end of Draft Day — the OTAs bulk-signing fallback must skip these.
     static var udfaStageCompletedSeasons: Set<Int> = []
+
+    /// Wave 0 trade instrumentation (`docs/TRADE_OVERHAUL_PLAN.md` §6): how many
+    /// AI-initiated weekly trade offers have actually reached the user's inbox
+    /// since this process started.
+    ///
+    /// WHY a counter and not a `TradeRecord`: the ledger records EXECUTED
+    /// trades, but the §5 band "AI offers reaching the user: 3-8/season" is
+    /// about the phone ringing, accepted or not — and a headless harness never
+    /// accepts anything. `career.pendingTradeOffers` cannot stand in for it:
+    /// it is capped at 5, de-duplicated per team, and wiped at the deadline, so
+    /// by season end it always reads 0. Monotonic; the smoke harness diffs it
+    /// per season and resets it with the other statics at bootstrap.
+    static var aiTradeOffersGenerated: Int = 0
 
     /// Historical mock draft snapshots, keyed by phase tag (e.g. "Mid-Season",
     /// "Combine", "Post-FA", "Pre-Draft"). Each value is a copy of
@@ -274,9 +304,12 @@ enum WeekAdvancer {
     /// Advances the career state by exactly one week.
     ///
     /// Behavior depends on the current phase:
-    /// - **.regularSeason**: Simulates all unplayed games for the current week,
-    ///   updates team records, increments the week counter, and handles the
-    ///   trade deadline marker at week 9 and the transition to playoffs after week 18.
+    /// - **.regularSeason / .tradeDeadline**: Simulates all unplayed games for the
+    ///   current week, updates team records, increments the week counter, and
+    ///   handles the trade deadline (week `tradeDeadlineWeek`, which the career
+    ///   spends in the `.tradeDeadline` phase) and the transition to playoffs
+    ///   after week 18. The deadline week is an ordinary game week — same games,
+    ///   same practice/injury/XP passes — so it routes to the same function.
     /// - **.playoffs**: Advances through wild card (week 19) → divisional (week 20)
     ///   → conference championship (week 21) → super bowl (week 22), then
     ///   transitions to the `.proBowl` offseason phase.
@@ -297,7 +330,7 @@ enum WeekAdvancer {
 
         switch career.currentPhase {
 
-        case .regularSeason:
+        case .regularSeason, .tradeDeadline:
             PerfLog.time("advance.regularSeason") {
                 advanceRegularSeasonWeek(career: career, modelContext: modelContext)
             }
@@ -447,6 +480,11 @@ enum WeekAdvancer {
         for player in allPlayersForReset where player.gamesStartedThisSeason != 0 {
             player.gamesStartedThisSeason = 0
         }
+        // Career stats: same lifecycle for the accumulated season statline —
+        // week 18 already snapshotted it into PlayerSeasonHistory.
+        for player in allPlayersForReset where player.seasonStatLineData != nil {
+            player.seasonStatLineData = nil
+        }
 
         // 0c. R22: a new season reopens every negotiation an insulted agent
         // froze last offseason.
@@ -537,6 +575,11 @@ enum WeekAdvancer {
         // (retirements + expiries) re-sign veteran-minimum free agents by
         // need, or street free agents when the pool is dry.
         refillAIRosters(career: career, teams: teams, modelContext: modelContext)
+
+        // 9. Plan finding S1: the pick horizon rolls with the calendar. The
+        // draft one year out was consumed this offseason, so year N+3 is minted
+        // now and the shelf holds three tradable future drafts again.
+        ensureFuturePickHorizon(career: career, teams: teams, modelContext: modelContext)
     }
 
     // MARK: - Private: Per-team staff lookup (R39 perf)
@@ -623,6 +666,14 @@ enum WeekAdvancer {
         backfillLegacyCompetitiveness(players: allPlayers)
         backfillLegacyFaces(career: career, players: allPlayers, coaches: allCoaches)
         migrateLegacyDraftClassIfNeeded(career: career, modelContext: modelContext)
+        // Trade plan finding S1: a save from before future picks existed would
+        // keep an EMPTY tradable pick pool until its next season rollover — mint
+        // the horizon here so the deadline market works on this season already.
+        ensureFuturePickHorizon(
+            career: career,
+            teams: Array(teamsByID.values),
+            modelContext: modelContext
+        )
 
         // Simulate every unplayed game.
         // Player's team game uses full play-by-play simulation;
@@ -695,6 +746,14 @@ enum WeekAdvancer {
             updateTeamRecords(game: game, teamsByID: teamsByID)
         }
         perf.lap("games")
+
+        // Career stats: the user's game is the only one that produces a real box
+        // score (every other game is score-only), so fold it into the players'
+        // running season lines. A game coached live via `LiveGameEngine` never
+        // reaches this loop — that path accumulates inside `LiveGameEngine.persist`.
+        if let result = playerGameResult {
+            accumulateSeasonStats(result.playerStats, players: allPlayers)
+        }
 
         // #33: per-player games-played bookkeeping. A player is credited an
         // appearance when his team plays a regular-season game this week and he
@@ -887,10 +946,18 @@ enum WeekAdvancer {
                 }
             }
 
-            // 4b. Generate weekly inbox messages
+            // 4b. Generate weekly inbox messages.
+            //
+            // The deadline week asks for REGULAR-SEASON mail on purpose: its two
+            // `.tradeDeadline` letters were already delivered when the phase was
+            // entered (end of the previous advance), and `generatePhaseMessages`
+            // documents itself as "the phase that just became active" — asking it
+            // again here would repeat them a week late, after the deadline.
             let teamCoaches = allCoaches.filter { $0.teamID == playerTeamID }
+            let mailPhase: SeasonPhase =
+                career.currentPhase == .tradeDeadline ? .regularSeason : career.currentPhase
             lastInboxMessages = InboxEngine.generatePhaseMessages(
-                phase: career.currentPhase,
+                phase: mailPhase,
                 career: career,
                 team: playerTeam,
                 coaches: teamCoaches,
@@ -907,24 +974,32 @@ enum WeekAdvancer {
                 )
             }
 
-            // 4c. R21: AI-initiated trade offer (~15 % chance per week until
-            // the Week 8 deadline). Contenders buy, rebuilders sell — the
-            // offer is persisted on the career and lands as an inbox message.
-            if week <= TradeValueEngine.deadlineWeek, Int.random(in: 1...100) <= 15 {
+            // 4c. R21: AI-initiated trade offer (~15 % chance per week through
+            // the deadline week itself — the busiest week of the real market must
+            // not be the one week the phone stays silent). Contenders buy,
+            // rebuilders sell — the offer is persisted on the career and lands as
+            // an inbox message.
+            if week <= tradeDeadlineWeek, Int.random(in: 1...100) <= 15 {
                 let activePicks = fetchActiveDraftPicks(modelContext: modelContext)
+                // Contracts make the offer builder no-trade-clause-aware; without
+                // them the Trade Center would veto on accept what the AI just
+                // offered (preview ≢ outcome).
+                let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>())) ?? []
                 if let offer = TradeValueEngine.generateWeeklyAIOffer(
                     userTeam: playerTeam,
                     allTeams: Array(teamsByID.values),
                     allPlayers: allPlayers,
                     allPicks: activePicks,
                     capMode: career.capMode,
-                    currentSeason: season
+                    currentSeason: season,
+                    contracts: contracts
                 ) {
                     var pending = career.pendingTradeOffers
                     // Never stack duplicate offers from the same team.
                     pending.removeAll { $0.offeringTeamID == offer.proposal.offeringTeamID }
                     pending.append(offer.proposal)
                     career.pendingTradeOffers = Array(pending.suffix(5))
+                    aiTradeOffersGenerated += 1        // Wave 0 instrumentation
                     lastInboxMessages.append(
                         TradeValueEngine.offerInboxMessage(offer: offer, week: week, season: season)
                     )
@@ -1318,11 +1393,36 @@ enum WeekAdvancer {
         // Advance the week counter.
         career.currentWeek += 1
 
-        // Handle trade deadline at the end of week 8 (before week 9 begins).
-        // The phase is momentarily tagged then immediately restored so that
-        // any UI or future systems can observe the transition.
-        if week == 8 {
+        // Deadline week OPENS here: the week just advanced into is the deadline
+        // week, so the career enters the `.tradeDeadline` phase and stays there
+        // for the whole week. Trade plan finding S2 — this used to be tagged and
+        // untagged on consecutive lines, which made the phase unobservable and
+        // left its tasks, owner letter and dashboard tile permanently dead.
+        //
+        // The letters are delivered NOW, with this advance's other mail, so the
+        // user reads "are we buyers or sellers?" while there is still a week to
+        // act. (The deadline-week advance itself deliberately keeps generating
+        // ordinary regular-season mail — see the `generatePhaseMessages` call
+        // above — or these two would arrive again after the deadline had passed.)
+        if career.currentWeek == tradeDeadlineWeek {
             career.currentPhase = .tradeDeadline
+            if let playerTeamID = career.teamID,
+               let playerTeam = teamsByID[playerTeamID] {
+                lastInboxMessages.append(contentsOf: InboxEngine.generatePhaseMessages(
+                    phase: .tradeDeadline,
+                    career: career,
+                    team: playerTeam,
+                    coaches: allCoaches.filter { $0.teamID == playerTeamID },
+                    owner: playerTeam.owner
+                ))
+            }
+        }
+
+        // Deadline week CLOSES here: the deadline passes once the week's games
+        // are in the books (real NFL: the Tuesday after them). Runs on the week
+        // number rather than the phase so an in-flight save that entered week
+        // `tradeDeadlineWeek` under the old code still gets its deadline.
+        if week == tradeDeadlineWeek {
             career.currentPhase = .regularSeason
 
             // R21: Deadline drama — 2-4 AI-vs-AI trades (contenders buy
@@ -1351,8 +1451,17 @@ enum WeekAdvancer {
                 )
             }
 
-            // Any offers the user sat on expire at the deadline.
+            // Any offers the user sat on expire at the deadline — and now the
+            // user is told so instead of watching them vanish (finding S2).
+            let expiredOffers = career.pendingTradeOffers.count
             career.pendingTradeOffers = []
+            if expiredOffers > 0 {
+                lastInboxMessages.append(InboxEngine.tradeOffersExpiredMessage(
+                    count: expiredOffers,
+                    week: week,
+                    season: season
+                ))
+            }
         }
 
         // 9b. Midseason mock draft at week 9 (generate draft class early for projections)
@@ -1386,6 +1495,7 @@ enum WeekAdvancer {
             recordSeasonHistory(
                 players: allPlayers,
                 season: season,
+                userTeamID: career.teamID,
                 modelContext: modelContext
             )
 
@@ -1928,6 +2038,9 @@ enum WeekAdvancer {
         backfillLegacyCompetitiveness(players: allPlayers)
         backfillLegacyFaces(career: career, players: allPlayers, coaches: allCoaches)
         migrateLegacyDraftClassIfNeeded(career: career, modelContext: modelContext)
+        // Same self-heal as the in-season path: the offseason trade windows read
+        // the same pick pool (trade plan finding S1).
+        ensureFuturePickHorizon(career: career, teams: teams, modelContext: modelContext)
 
         // --- Run engine logic for the CURRENT phase before transitioning ---
         switch currentPhase {
@@ -2815,8 +2928,12 @@ enum WeekAdvancer {
     /// - Season 1 reuses the league-generation pool (the real first-round
     ///   order) — including any comp picks already slotted into it at the
     ///   close of free agency.
-    /// - Season 2+ generates a fresh 224-pick order from the just-finished
-    ///   season's standings and attaches comp picks stashed at FA close.
+    /// - Season 2+ ADOPTS the future-pick rows minted years earlier: they are
+    ///   renumbered from the just-finished season's standings (see
+    ///   `adoptFuturePicks`) instead of being replaced, because by now they may
+    ///   have been traded. Comp picks stashed at FA close attach on top.
+    /// - Only a pool that is missing entirely (a pre-future-picks save) is built
+    ///   from scratch by `DraftEngine.generateDraftOrder`.
     ///
     /// The pool is exposed via `currentDraftPicks` and the final pre-draft
     /// mock projection is computed here so the war room, dashboards, and
@@ -2836,7 +2953,8 @@ enum WeekAdvancer {
         var draftPicks = (try? modelContext.fetch(existingDescriptor)) ?? []
 
         if draftPicks.isEmpty {
-            // Season 2+: build the order from the season that just ended.
+            // Legacy save (no future picks were ever minted): build the order
+            // from the season that just ended.
             let allGames = fetchAllGamesForSeason(
                 seasonYear: season,
                 modelContext: modelContext
@@ -2849,6 +2967,18 @@ enum WeekAdvancer {
             for pick in draftPicks {
                 modelContext.insert(pick)
             }
+        } else if draftPicks.contains(where: { $0.isProvisionalOrder }) {
+            // The normal path from season 2 on: this year's rows already exist
+            // as projections (and some now belong to other teams).
+            let allGames = fetchAllGamesForSeason(
+                seasonYear: season,
+                modelContext: modelContext
+            )
+            adoptFuturePicks(
+                draftPicks,
+                teams: teams,
+                games: allGames
+            )
         }
 
         // R23 — attach compensatory picks awarded at the close of free
@@ -2892,6 +3022,95 @@ enum WeekAdvancer {
         mockDraftHistory["Pre-Draft"] = currentMockDraft
     }
 
+    // MARK: - Private: Future Draft Picks (plan finding S1)
+
+    /// Turns this year's projected pick rows into the real board.
+    ///
+    /// The rows were minted 1-3 seasons ago at the midpoint of their round so they
+    /// could be traded; now the standings that decide the slots exist. Each row is
+    /// renumbered by the SLOT ITS ORIGINAL TEAM EARNED — `currentTeamID` is never
+    /// touched, so a pick acquired in a trade lands where the team it came from
+    /// finished and keeps rendering "via ABC". Rows that were never provisional
+    /// (compensatory awards, which belong at the END of their round) keep that
+    /// position and are numbered after the round's base picks.
+    ///
+    /// Mutates in place: these are the persisted rows, identity and all, which is
+    /// the whole point — regenerating the board would orphan every traded pick.
+    private static func adoptFuturePicks(
+        _ picks: [DraftPick],
+        teams: [Team],
+        games: [Game]
+    ) {
+        let slotOrder = DraftEngine.draftSlotOrder(teams: teams, games: games)
+        var slotByTeam: [UUID: Int] = [:]
+        for (index, teamID) in slotOrder.enumerated() { slotByTeam[teamID] = index }
+        // `TradeEngine.executeTrade` swaps `currentTeamID` but not the cached
+        // abbreviation, so a pick that changed hands years ago would still carry
+        // its old owner's tag into the war room. Re-stamp it here, once.
+        var abbrByTeam: [UUID: String] = [:]
+        for team in teams { abbrByTeam[team.id] = team.abbreviation }
+        // A team missing from the standings (shouldn't happen) sorts last rather
+        // than colliding with slot 0.
+        let unknownSlot = slotOrder.count
+
+        var overall = 1
+        for round in 1...7 {
+            let inRound = picks.filter { $0.round == round }
+            let base = inRound
+                .filter { $0.isProvisionalOrder }
+                .sorted { lhs, rhs in
+                    let ls = slotByTeam[lhs.originalTeamID] ?? unknownSlot
+                    let rs = slotByTeam[rhs.originalTeamID] ?? unknownSlot
+                    if ls != rs { return ls < rs }
+                    // Two rows from the same original team (only possible if a
+                    // trade duplicated ownership) — keep a stable, id-based order.
+                    return lhs.id.uuidString < rhs.id.uuidString
+                }
+            let extras = inRound
+                .filter { !$0.isProvisionalOrder }
+                .sorted { $0.pickNumber < $1.pickNumber }
+
+            for pick in base + extras {
+                pick.pickNumber = overall
+                pick.isProvisionalOrder = false
+                if let abbr = abbrByTeam[pick.currentTeamID] {
+                    pick.teamAbbreviation = abbr
+                }
+                overall += 1
+            }
+        }
+    }
+
+    /// Keeps three future drafts on the shelf at all times.
+    ///
+    /// Idempotent and self-healing: it mints only the years that have no rows at
+    /// all, so calling it every advance costs three cheap count fetches, a save
+    /// created before future picks existed grows its horizon the first time it
+    /// advances, and the rollover (`startNewSeason`) simply adds year N+3.
+    private static func ensureFuturePickHorizon(
+        career: Career,
+        teams: [Team],
+        modelContext: ModelContext
+    ) {
+        guard teams.count >= 2 else { return }
+        let season = career.currentSeason
+        for year in (season + 1)...(season + LeagueGenerator.futurePickHorizon) {
+            var descriptor = FetchDescriptor<DraftPick>(
+                predicate: #Predicate<DraftPick> { $0.seasonYear == year }
+            )
+            descriptor.fetchLimit = 1
+            let existing = (try? modelContext.fetch(descriptor)) ?? []
+            guard existing.isEmpty else { continue }
+            for pick in LeagueGenerator.futureDraftPicks(
+                teams: teams,
+                afterSeason: year - 1,
+                horizon: 1
+            ) {
+                modelContext.insert(pick)
+            }
+        }
+    }
+
     // MARK: - Private: Compensatory Picks (R23)
 
     /// Settles the FA departure ledger into compensatory picks at the close of
@@ -2930,7 +3149,14 @@ enum WeekAdvancer {
             predicate: #Predicate<DraftPick> { $0.seasonYear == season && $0.isComplete == false }
         )
         let existingPool = (try? modelContext.fetch(poolDescriptor)) ?? []
-        if existingPool.count >= 32 {
+        // A pool whose order is still PROVISIONAL (future-pick rows whose year has
+        // come up but whose slots resolve at the proDays → draft boundary) is not
+        // something to slot into: `applyAwards` renumbers the whole pool
+        // sequentially, and doing that to 32 identical midpoint numbers would
+        // invent an order that `adoptFuturePicks` then overwrites anyway. Stash
+        // instead — `prepareDraftOrder` attaches the awards right after adoption.
+        if existingPool.count >= 32,
+           !existingPool.contains(where: { $0.isProvisionalOrder }) {
             let compPicks = CompensatoryPickEngine.applyAwards(
                 awards,
                 toPickPool: existingPool,
@@ -3810,13 +4036,24 @@ enum WeekAdvancer {
     /// the player was available. It is captured here at week 18 before
     /// `startNewSeason` resets the counter.
     ///
-    /// NOTE: per-season aggregated stats (`keyStat1/2/3`) are not yet populated
-    /// because per-game `PlayerGameStats` aren't persisted league-wide. They
-    /// remain 0 until that pipeline lands. The OVR snapshot alone is enough to
-    /// drive the Career Trend chart (#36 follow-up).
+    /// ## Where the statline comes from
+    ///
+    /// Only the user's own games produce a box score — the other 31 teams are
+    /// score-only — so the source depends on the player:
+    ///
+    /// - **User's team**: the numbers the sim really accumulated
+    ///   (`Player.seasonStatLine`), zeros included; a scrub who never touched the
+    ///   ball genuinely produced nothing and is not handed invented stats. The
+    ///   two categories `PlayerGameStats` does not track at all — punting and
+    ///   offensive snaps — are modelled even here, because there is no box-score
+    ///   source for them anywhere.
+    /// - **Everyone else**: modelled by `SeasonStatSynthesizer` from OVR,
+    ///   position, GP/GS and age. A player traded away from the user's team
+    ///   mid-season keeps the partial real line he earned.
     private static func recordSeasonHistory(
         players: [Player],
         season: Int,
+        userTeamID: UUID?,
         modelContext: ModelContext
     ) {
         // Fetch any history rows already written for this season so we don't dupe.
@@ -3825,8 +4062,40 @@ enum WeekAdvancer {
         )
         let existing = (try? modelContext.fetch(existingDescriptor)) ?? []
         let existingPlayerIDs = Set(existing.map(\.playerID))
+        var rng = SystemRandomNumberGenerator()
 
         for player in players where !existingPlayerIDs.contains(player.id) && !player.isRetired {
+            var statLine = player.seasonStatLine
+            // Either he played for the user (so his zeros are real zeros), or he
+            // has a partial line from before a mid-season trade off the roster.
+            let hasRealLine = (userTeamID != nil && player.teamID == userTeamID)
+                || !statLine.isEmpty
+            var needsSynthesis = !hasRealLine
+            // The modelled line for this player, drawn at most once.
+            func modelled() -> SeasonStatLine {
+                SeasonStatSynthesizer.line(
+                    position: player.position,
+                    overall: player.overall,
+                    gamesPlayed: player.gamesPlayedThisSeason,
+                    gamesStarted: player.gamesStartedThisSeason,
+                    age: player.age,
+                    using: &rng
+                )
+            }
+            if needsSynthesis {
+                statLine = modelled()
+            } else {
+                switch player.position {
+                case .P, .LT, .LG, .C, .RG, .RT:
+                    let fill = modelled()
+                    statLine.punts = fill.punts
+                    statLine.puntAverage = fill.puntAverage
+                    statLine.snapsPlayed = fill.snapsPlayed
+                    needsSynthesis = true
+                default:
+                    break
+                }
+            }
             let entry = PlayerSeasonHistory(
                 playerID: player.id,
                 season: season,
@@ -3835,11 +4104,26 @@ enum WeekAdvancer {
                 gamesStarted: player.gamesStartedThisSeason, // #40: real per-player starts
                 ageAtEndOfSeason: player.age,
                 teamID: player.teamID,
-                keyStat1: 0,               // TODO: position-appropriate season totals
-                keyStat2: 0,
-                keyStat3: 0
+                position: player.position,
+                statLine: statLine,
+                statsAreSynthesized: needsSynthesis
             )
             modelContext.insert(entry)
+        }
+    }
+
+    /// Folds one game's box score into every listed player's running season line.
+    ///
+    /// Internal so `LiveGameEngine.persist` can use the same path for a coached
+    /// game — the two are the only producers of a real box score in the whole
+    /// league, and both must credit the same accumulator.
+    static func accumulateSeasonStats(_ stats: [PlayerGameStats], players: [Player]) {
+        guard !stats.isEmpty else { return }
+        var playersByID: [UUID: Player] = [:]
+        playersByID.reserveCapacity(players.count)
+        for player in players { playersByID[player.id] = player }
+        for line in stats {
+            playersByID[line.playerID]?.accumulateSeasonStats(line)
         }
     }
 

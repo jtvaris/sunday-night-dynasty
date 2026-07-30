@@ -131,10 +131,18 @@ enum LeagueGenerator {
         var allPlayers: [Player] = []
         var allOwners: [Owner] = []
         var allCoaches: [Coach] = []
+        /// AI owner portraits already handed out — 32 picks from 96 ids, so no two
+        /// owners in the same league share a face (`ExtrasCatalog.ownerFaceID`).
+        var takenOwnerFaceIDs: Set<String> = []
 
         for teamDef in NFLTeamData.allTeams {
             // Create owner (budget matches team preview data)
-            let owner = generateOwner(mediaMarket: teamDef.mediaMarket, teamAbbreviation: teamDef.abbreviation)
+            let owner = generateOwner(
+                mediaMarket: teamDef.mediaMarket,
+                teamAbbreviation: teamDef.abbreviation,
+                takenFaceIDs: takenOwnerFaceIDs
+            )
+            if let ownerFaceID = owner.faceID { takenOwnerFaceIDs.insert(ownerFaceID) }
             allOwners.append(owner)
 
             // Create team
@@ -192,10 +200,102 @@ enum LeagueGenerator {
             currentSeason: startYear
         )
 
-        // Bug fix #3: Generate draft picks for all teams
+        // Bug fix #3: Generate draft picks for all teams — the upcoming draft's
+        // real board plus the next three years of tradable future picks (plan
+        // finding S1: without them the trade market has nothing to deal in).
         let draftPicks = generateInitialDraftPicks(teams: allTeams, seasonYear: startYear)
+            + futureDraftPicks(teams: allTeams, afterSeason: startYear)
 
         return (league, allTeams, allPlayers, allOwners, allCoaches, draftPicks)
+    }
+
+    // MARK: - Career Backstory (random league)
+
+    /// How many prior seasons a generated player's backstory covers. Matches the
+    /// template's own window (the 2018-2025 scrape), so a random career table and
+    /// a fixed-league one are the same shape.
+    private static let backstorySeasonCap = 8
+
+    /// Builds `PlayerSeasonHistory` rows for a freshly *generated* league, so a
+    /// random career opens with the same kind of past a template career has.
+    ///
+    /// The generator rolls rosters but no history, which left the Career Stats
+    /// table empty for every veteran on a random league — and left the
+    /// development / retirement / draft-grade engines reading a league where
+    /// nobody had ever played a game. Each prior season gets an OVR walked
+    /// backwards along the position's own aging curve (a 33-year-old corner was
+    /// better at 27; a 23-year-old receiver was worse at 21), participation from
+    /// the implied role, and a statline from `SeasonStatSynthesizer`.
+    ///
+    /// Unlike the template path this is **not** determinism-constrained — the
+    /// random generator already draws from `SystemRandomNumberGenerator`
+    /// throughout — so a fresh league gets a fresh past.
+    ///
+    /// - Parameters:
+    ///   - players: every player in the generated league.
+    ///   - startYear: the season the career opens on; backstory covers the years
+    ///     strictly before it.
+    static func syntheticCareerHistory(
+        players: [Player],
+        startYear: Int
+    ) -> [PlayerSeasonHistory] {
+        var rng = SystemRandomNumberGenerator()
+        var rows: [PlayerSeasonHistory] = []
+
+        for player in players {
+            let seasons = min(player.yearsPro, backstorySeasonCap)
+            guard seasons > 0 else { continue }
+            let ceiling = min(99, max(player.overall, player.truePotential))
+            let nowRatio = abilityRatio(age: player.age, position: player.position)
+
+            for offset in 1...seasons {
+                let age = max(20, player.age - offset)
+                let ratio = abilityRatio(age: age, position: player.position)
+                let overall = min(ceiling, max(40, Int((Double(player.overall) * ratio / nowRatio).rounded())))
+                let participation = SeasonStatSynthesizer.participation(
+                    position: player.position, role: nil,
+                    overall: overall, using: &rng
+                )
+                let stats = SeasonStatSynthesizer.line(
+                    position: player.position,
+                    overall: overall,
+                    gamesPlayed: participation.gamesPlayed,
+                    gamesStarted: participation.gamesStarted,
+                    age: age,
+                    using: &rng
+                )
+                rows.append(PlayerSeasonHistory(
+                    playerID: player.id,
+                    season: startYear - offset,
+                    overallAtEndOfSeason: overall,
+                    gamesPlayed: participation.gamesPlayed,
+                    gamesStarted: participation.gamesStarted,
+                    ageAtEndOfSeason: age,
+                    // The generator has no trade/free-agency past to replay, so
+                    // the whole backstory sits on the player's current club.
+                    teamID: player.teamID,
+                    position: player.position,
+                    statLine: stats,
+                    statsAreSynthesized: true
+                ))
+            }
+        }
+        return rows
+    }
+
+    /// Fraction of his own peak ability a player of `age` holds at `position`.
+    /// Inside the peak window it is 1.0; the pre-peak climb is steeper than the
+    /// post-peak decline, which is the shape every aging curve in
+    /// `docs/DEVELOPMENT_NFL_REFERENCE.md` §1 shows.
+    private static func abilityRatio(age: Int, position: Position) -> Double {
+        let peak = position.peakAgeRange
+        if age < peak.lowerBound {
+            return max(0.62, 1.0 - 0.045 * Double(peak.lowerBound - age))
+        }
+        if age > peak.upperBound {
+            return max(0.70, 1.0 - 0.030 * Double(age - peak.upperBound))
+        }
+        return 1.0
     }
 
     // MARK: - Fixed League (Template Import)
@@ -210,8 +310,9 @@ enum LeagueGenerator {
     /// (`LeagueTemplateImporter` documents the seeding).
     ///
     /// The result is a superset of `GeneratedLeague` — the template path also
-    /// produces `PlayerSeasonHistory` rows from each player's career arc, which
-    /// the random path has no equivalent of.
+    /// produces `PlayerSeasonHistory` rows from each player's baked career arc.
+    /// The random path's equivalent is the separate
+    /// `syntheticCareerHistory(players:startYear:)` backstory pass.
     ///
     /// - Parameters:
     ///   - template: A decoded template — see `LeagueTemplateLoader.load(_:)`.
@@ -309,23 +410,94 @@ enum LeagueGenerator {
         return picks
     }
 
+    /// How many future draft years exist as tradable `DraftPick` rows at any
+    /// moment. Three is the NFL's own horizon (the Ted Thompson rule: you may
+    /// trade picks up to three drafts out), and it is what makes a "2029 first"
+    /// something a rebuilder can actually ask for.
+    static let futurePickHorizon = 3
+
+    /// Mints the pick rows for the `horizon` drafts AFTER `season` — the whole
+    /// point of plan finding S1: during a regular season the current draft's board
+    /// is either unbuilt or already spent, so without these the tradable pick pool
+    /// is empty and every pick-for-player deal dies on a `guard !picks.isEmpty`.
+    ///
+    /// Each row is owned by the team that earned it (`original == current`), so a
+    /// later trade shows provenance for free. `pickNumber` is the midpoint of the
+    /// round and `isProvisionalOrder` is `true` — see `DraftPick.isProvisionalOrder`
+    /// for why a future pick is priced as a round, not as a slot.
+    ///
+    /// No RNG: teams are walked in abbreviation order, so the output depends only
+    /// on the roster of teams and the year. The template import calls this too and
+    /// its determinism gate (TVAL) must stay green.
+    static func futureDraftPicks(
+        teams: [Team],
+        afterSeason season: Int,
+        horizon: Int = futurePickHorizon
+    ) -> [DraftPick] {
+        let ordered = teams.sorted { $0.abbreviation < $1.abbreviation }
+        var picks: [DraftPick] = []
+        for year in (season + 1)...(season + max(1, horizon)) {
+            for round in 1...7 {
+                for team in ordered {
+                    picks.append(DraftPick(
+                        seasonYear: year,
+                        round: round,
+                        pickNumber: round * 32 - 16,
+                        originalTeamID: team.id,
+                        currentTeamID: team.id,
+                        teamAbbreviation: team.abbreviation,
+                        isProvisionalOrder: true
+                    ))
+                }
+            }
+        }
+        return picks
+    }
+
     // MARK: - Private Generators
 
-    private static func generateOwner(mediaMarket: MediaMarket, teamAbbreviation: String) -> Owner {
+    private static func generateOwner(
+        mediaMarket: MediaMarket,
+        teamAbbreviation: String,
+        takenFaceIDs: Set<String> = []
+    ) -> Owner {
         var rng = SystemRandomNumberGenerator()
-        return generateOwner(mediaMarket: mediaMarket, teamAbbreviation: teamAbbreviation, using: &rng)
+        return generateOwner(
+            mediaMarket: mediaMarket,
+            teamAbbreviation: teamAbbreviation,
+            using: &rng,
+            takenFaceIDs: takenFaceIDs
+        )
     }
 
     /// Seeded variant of `generateOwner` — the fixed-league template import needs
     /// the same owner every time it runs (`LeagueTemplateImporter`).
+    ///
+    /// - Parameter takenFaceIDs: The AI owner portraits already handed out in
+    ///   this league. Owners are created exactly once per league and never
+    ///   retired or replaced, so the caller's running set is the whole uniqueness
+    ///   story — see `ExtrasCatalog.ownerFaceID` for why no claim registry or
+    ///   cooldown is involved. Not `inout` on purpose: `inout` cannot carry a
+    ///   default value, and every existing call site should stay source-compatible.
     static func generateOwner<G: RandomNumberGenerator>(
         mediaMarket: MediaMarket,
         teamAbbreviation: String,
-        using rng: inout G
+        using rng: inout G,
+        takenFaceIDs: Set<String> = []
     ) -> Owner {
         let first = ownerFirstNames.randomElement(using: &rng)!
         let last = ownerLastNames.randomElement(using: &rng)!
         let avatarID = OwnerAvatars.allIDs.randomElement(using: &rng)!
+        // Derived from the owner's own UUID, so it consumes NO random value — a
+        // seeded template import keeps drawing exactly the numbers it drew before
+        // this portrait existed, and the avatar/patience/spending draws above are
+        // untouched. The id itself is fresh per league (it always was: `Owner.init`
+        // defaulted it), so the portrait is fixed for the life of a save rather
+        // than identical across two imports of the same template — which is all
+        // any UI needs, and `ExtrasCatalog.ownerFaceID` explains why nothing
+        // stronger is warranted.
+        let ownerID = UUID()
+        let faceID = ExtrasCatalog.shared.ownerFaceID(for: ownerID, taken: takenFaceIDs)
 
         // Use team-specific spending willingness from preview data (with ±5 jitter)
         // so the generated budget matches what the player saw on the Team Selection screen.
@@ -337,6 +509,7 @@ enum LeagueGenerator {
         let coachingBudget = (preview?.coachingBudget ?? 35) * 1_000
 
         return Owner(
+            id: ownerID,
             name: "\(first) \(last)",
             avatarID: avatarID,
             patience: Int.random(in: 2...9, using: &rng),
@@ -347,7 +520,8 @@ enum LeagueGenerator {
             // R27: dedicated scouting pot scales with spending willingness
             scoutingBudget: BudgetEngine.defaultScoutingBudget(spendingWillingness: spending),
             // R31: dedicated medical pot scales with spending willingness
-            medicalBudget: BudgetEngine.defaultMedicalBudget(spendingWillingness: spending)
+            medicalBudget: BudgetEngine.defaultMedicalBudget(spendingWillingness: spending),
+            faceID: faceID
         )
     }
 

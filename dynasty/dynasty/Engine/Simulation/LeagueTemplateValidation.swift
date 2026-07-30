@@ -566,6 +566,7 @@ enum LeagueTemplateValidation {
             FAStorylineEvent.self, Holdout.self, TrainingPlan.self,
             WorkloadEvent.self, PositionBattle.self, RosterCut.self,
             OpponentPrepWeek.self, VoluntaryWorkout.self, HardKnocksEvent.self,
+            TradeRecord.self,
         ])
         guard let container = try? ModelContainer(
             for: schema,
@@ -662,10 +663,22 @@ enum LeagueTemplateValidation {
         for row in run.history {
             guard let key = keyByPlayerID[row.playerID] else { continue }
             let team = row.teamID.flatMap { run.abbrByTeamID[$0] } ?? "-"
+            // The statline is part of the fingerprint on purpose: the publish
+            // profile's per-season stats are SYNTHESIZED at import
+            // (`SeasonStatSynthesizer`), so any non-deterministic draw shows up
+            // here rather than shipping a league that differs run to run.
+            let line = row.statLine
             rowsByPlayer[key, default: []].append(
                 "\(row.season):\(row.overallAtEndOfSeason):\(row.gamesPlayed)/\(row.gamesStarted)"
-                + ":\(row.ageAtEndOfSeason):\(team)"
+                + ":\(row.ageAtEndOfSeason):\(team):\(row.positionRaw)"
                 + ":\(row.keyStat1)/\(row.keyStat2)/\(row.keyStat3)"
+                + ":\(line.passYards)/\(line.passTDs)/\(line.passInts)"
+                + ":\(line.rushYards)/\(line.rushTDs)"
+                + ":\(line.receptions)/\(line.recYards)/\(line.recTDs)"
+                + ":\(line.tackles)/\(line.sacks)/\(line.defInts)/\(line.passesDefended)"
+                + ":\(line.fieldGoalsMade)/\(line.fieldGoalsAttempted)"
+                + ":\(line.punts)/\(line.puntAverage)/\(line.snapsPlayed)"
+                + ":\(row.statsAreSynthesized)"
             )
         }
         return rowsByPlayer.mapValues { $0.sorted().joined(separator: " ") }
@@ -780,7 +793,10 @@ enum LeagueTemplateValidation {
             lastSeasonWins = team.lastSeasonWins
             lastSeasonLosses = team.lastSeasonLosses
             capUsage = team.currentCapUsage
-            rosterCount = team.players.count
+            // S3: counted by `teamID` query, not the creation-time
+            // `Team.players` relationship (see its doc). Identical right after
+            // an import; correct forever after.
+            rosterCount = team.currentRoster().count
         }
 
         func differences(from other: TeamFingerprint) -> [String] {

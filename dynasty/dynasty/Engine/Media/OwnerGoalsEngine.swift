@@ -52,7 +52,10 @@ enum OwnerGoalsEngine {
     /// Generates 3–4 season goals tailored to the team's strength,
     /// the owner's personality, and the current career context.
     static func generateSeasonGoals(team: Team, owner: Owner, career: Career) -> [SeasonGoal] {
-        let avgOverall = averageOverall(team: team)
+        // S3 (TRADE_OVERHAUL_PLAN §4/§7.5): roster strength off the `teamID`
+        // query, one fetch per goal-generation pass (once a season / once per
+        // owner screen), never the stale `Team.players` relationship.
+        let avgOverall = averageOverall(roster: team.currentRoster())
         var goals: [SeasonGoal] = []
 
         if avgOverall > 75 {
@@ -203,7 +206,14 @@ enum OwnerGoalsEngine {
     /// Re-evaluates each goal's progress against current team state and marks
     /// goals achieved or failed where applicable.
     static func evaluateGoalProgress(goals: [SeasonGoal], team: Team, career: Career) -> [SeasonGoal] {
-        goals.map { goal in
+        // S3: the roster is resolved by `teamID` ONCE per evaluation pass
+        // (once per week advance / owner screen) — never inside the map, so a
+        // four-goal slate never fetches four times, and a slate with no
+        // roster-shaped goal never fetches at all.
+        let roster = goals.contains { $0.type == .developRookies }
+            ? team.currentRoster()
+            : []
+        return goals.map { goal in
             var updated = goal
 
             switch goal.type {
@@ -236,7 +246,7 @@ enum OwnerGoalsEngine {
                 updated.isAchieved = career.championships > 0
 
             case .developRookies:
-                let rookieCount = team.players.filter { $0.yearsPro <= 1 && $0.overall >= 60 }.count
+                let rookieCount = roster.filter { $0.yearsPro <= 1 && $0.overall >= 60 }.count
                 updated.progress = rookieCount
                 if let target = goal.target {
                     updated.isAchieved = rookieCount >= target
@@ -270,10 +280,12 @@ enum OwnerGoalsEngine {
 
     // MARK: - Private Helpers
 
-    private static func averageOverall(team: Team) -> Double {
-        guard !team.players.isEmpty else { return 0 }
-        let total = team.players.reduce(0) { $0 + $1.overall }
-        return Double(total) / Double(team.players.count)
+    /// Takes the roster (not the team) so the caller resolves it once — see
+    /// `Team.currentRoster()`.
+    private static func averageOverall(roster: [Player]) -> Double {
+        guard !roster.isEmpty else { return 0 }
+        let total = roster.reduce(0) { $0 + $1.overall }
+        return Double(total) / Double(roster.count)
     }
 
     private static func contenderPrimaryGoal(owner: Owner) -> SeasonGoal {

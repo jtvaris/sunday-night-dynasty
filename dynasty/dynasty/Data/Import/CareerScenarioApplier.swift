@@ -72,9 +72,11 @@ enum CareerScenarioApplier {
         // upcoming draft from three distinct AI teams (modeled as past trades,
         // so pick numbers stay coherent).
         var donorIDs = Set<UUID>()
+        let upcoming = upcomingDraftYear(in: draftPicks)
         for round in 1...3 {
             let candidates = draftPicks.filter {
                 $0.round == round
+                    && $0.seasonYear == upcoming
                     && $0.currentTeamID != chosenTeam.id
                     && !donorIDs.contains($0.currentTeamID)
             }
@@ -115,8 +117,11 @@ enum CareerScenarioApplier {
         // The bill for the stars: this year's own round 1-2 picks were
         // shipped out. Each goes to a random other franchise.
         let otherTeams = allTeams.filter { $0.id != chosenTeam.id }
+        let upcoming = upcomingDraftYear(in: draftPicks)
         for pick in draftPicks
-        where pick.currentTeamID == chosenTeam.id && pick.round <= 2 {
+        where pick.currentTeamID == chosenTeam.id
+            && pick.seasonYear == upcoming
+            && pick.round <= 2 {
             if let receiver = otherTeams.randomElement() {
                 pick.currentTeamID = receiver.id
             }
@@ -157,6 +162,16 @@ enum CareerScenarioApplier {
 
         // A measured owner: neither savior nor executioner.
         owner.patience = Int.random(in: 4...6)
+    }
+
+    // MARK: - Pick Scoping
+
+    /// The year of the draft a scenario talks about ("extra premium picks",
+    /// "this year's 1st is gone") — the earliest year in the pool. The pool also
+    /// carries three years of future picks now, and a scenario must not silently
+    /// mortgage or gift those: winNow would ship out four firsts, not one.
+    private static func upcomingDraftYear(in picks: [DraftPick]) -> Int {
+        picks.map(\.seasonYear).min() ?? 0
     }
 
     // MARK: - Attribute Shifting

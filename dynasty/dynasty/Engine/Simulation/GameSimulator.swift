@@ -107,8 +107,13 @@ enum GameSimulator {
         // @Model property is far too slow for that hot path. The live models
         // are kept in a lookup so fatigue can be written back after the sim.
         // R22: a player holding out over his contract does not suit up.
-        let homeRoster = homeTeam.players.filter { !$0.isHoldingOut }
-        let awayRoster = awayTeam.players.filter { !$0.isHoldingOut }
+        // S3 (TRADE_OVERHAUL_PLAN §4/§7.5): the roster comes from the `teamID`
+        // query, never `Team.players` — that relationship is a creation-time
+        // snapshot, so a traded / signed / drafted / cut player used to suit up
+        // for the wrong team here. Two fetches per GAME (this is the per-game
+        // setup, outside the play-by-play loop).
+        let homeRoster = homeTeam.currentRoster().filter { !$0.isHoldingOut }
+        let awayRoster = awayTeam.currentRoster().filter { !$0.isHoldingOut }
         var homePlayers = homeRoster.map(SimPlayer.init(from:))
         var awayPlayers = awayRoster.map(SimPlayer.init(from:))
         var livePlayerByID: [UUID: Player] = [:]
@@ -576,6 +581,11 @@ enum GameSimulator {
         // Two mid-table teams, no coaches (neutral schemes), no boosts.
         let home = teams[10]
         let away = teams[21]
+        // S3: rosters by `teamID`, not `Team.players` (see the `Team.players`
+        // doc). This league only lives in memory, so the index is built once
+        // from the generation result instead of a context fetch.
+        let homeRoster = generated.players.filter { $0.teamID == home.id }
+        let awayRoster = generated.players.filter { $0.teamID == away.id }
 
         func stats(_ values: [Double]) -> (mean: Double, std: Double, min: Double, max: Double) {
             guard !values.isEmpty else { return (0, 0, 0, 0) }
@@ -601,8 +611,8 @@ enum GameSimulator {
                 // the fatigue mechanic (only bites above 70) actually fires —
                 // fresh generated leagues never cross the threshold in one game.
                 if let f = fatiguePreload {
-                    for p in home.players { p.fatigue = f }
-                    for p in away.players { p.fatigue = f }
+                    for p in homeRoster { p.fatigue = f }
+                    for p in awayRoster { p.fatigue = f }
                 }
                 let result = simulate(homeTeam: home, awayTeam: away)
                 points.append(Double(result.homeScore))
@@ -656,8 +666,8 @@ enum GameSimulator {
         // (it needs an explicit live call), so its gate is measured directly:
         // repeated 1st-and-10 playActionDeep snaps, bite roll OFF vs ON,
         // same two rosters. The relative effect must stay inside ±10%.
-        let paOffense = home.players.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
-        let paDefense = away.players.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
+        let paOffense = homeRoster.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
+        let paDefense = awayRoster.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
         func measurePlayAction(label: String, snaps: Int = 4000) {
             var totalYards = 0
             var completions = 0
@@ -745,8 +755,8 @@ enum GameSimulator {
         // Mech 4: WR release vs DB press — live-only (needs a man-press
         // package, which the quick sim never sends), so measured directly:
         // repeated SHORT snaps vs a Man-Press look, off vs on. Near-zero mean.
-        let pressOffense = home.players.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
-        let pressDefense = away.players.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
+        let pressOffense = homeRoster.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
+        let pressDefense = awayRoster.filter { !$0.isHoldingOut }.map(SimPlayer.init(from:))
         let manPress = DefensiveCall.manPress.package
         func measurePress(label: String, snaps: Int = 6000) {
             var completions = 0
@@ -929,14 +939,14 @@ enum GameSimulator {
         // neutral scheme fit, not only through the fit deviation.
         setR40(coord: true, plan: true, scheme: true, disc: true, morale: true, motiv: true)
         let midStaff = makeStaff(strong: false)
-        func setSchemeFam(_ team: Team, off: Int, def: Int) {
-            for p in team.players {
+        func setSchemeFam(_ roster: [Player], off: Int, def: Int) {
+            for p in roster {
                 p.schemeFamiliarity[OffensiveScheme.westCoast.rawValue] = off
                 p.schemeFamiliarity[DefensiveScheme.pressMan.rawValue] = def
             }
         }
-        setSchemeFam(home, off: 95, def: 95)
-        setSchemeFam(away, off: 40, def: 40)
+        setSchemeFam(homeRoster, off: 95, def: 95)
+        setSchemeFam(awayRoster, off: 40, def: 40)
 
         func measureFam(label: String) {
             var homePts: [Double] = []

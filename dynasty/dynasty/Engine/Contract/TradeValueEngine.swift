@@ -10,18 +10,30 @@ import SwiftData
 // - Pick value  = Jimmy Johnson chart, future-year picks discounted 20 %/year.
 //
 // Also owns:
-// - The trade window rule (regular season through the Week 8 deadline + offseason).
+// - The trade window rule (regular season through the Week 9 deadline + offseason).
 // - AI accept / reject / counter logic (accept ≥ 105 %, reject < 90 %, else counter).
 // - Weekly AI-initiated offers to the user (contenders buy, rebuilders sell).
 // - Deadline-day AI-vs-AI trades that really move players and picks.
-// - Roster-size and salary-cap validation (CapMode-aware).
+// - Roster-size, salary-cap, injury and no-trade-clause validation (CapMode-aware).
 enum TradeValueEngine {
 
     // MARK: - Trade Window
 
     /// Last regular-season week during which trades may be made.
-    /// The phase machine tags `.tradeDeadline` at the end of week 8.
-    static let deadlineWeek = 8
+    /// The phase machine tags `.tradeDeadline` at the end of this week.
+    ///
+    /// Wave 1 moved this from 8 to 9 to match the real NFL deadline (Tuesday
+    /// after week 9, i.e. past the halfway mark of the season) — the plan's
+    /// finding S2. This is the single source of truth: the Trade Center's
+    /// closed-window copy and the offer-expiry text already read it.
+    ///
+    /// PAIRED CHANGE: `WeekAdvancer` still gates its deadline pass on a
+    /// hardcoded `if week == 8`; the Wave 1 phase work replaces that literal
+    /// with this constant (and stops overwriting `.tradeDeadline` on the next
+    /// line). Until it does, the AI-vs-AI deadline pass fires after week 8
+    /// while the window stays open through week 9 — trades remain legal, the
+    /// league's own flurry just lands a week early.
+    static let deadlineWeek = 9
 
     /// Trading is open in every offseason phase and during the regular season
     /// up to and including the Week 8 deadline. Closed for playoffs and the
@@ -192,13 +204,28 @@ enum TradeValueEngine {
 
     /// Verdict from the AI partner's need-adjusted perspective.
     /// Assumes the AI team is the proposal's `receivingTeamID`.
+    ///
+    /// `contracts` lets the hard rules fold into the verdict so the preview the
+    /// user reads equals the outcome he gets (plan §6 Wave 2.4 / G7): a package
+    /// containing a no-trade-clause player reads `.hangUp` in the builder
+    /// instead of "They love it" followed by a rejection alert.
     static func partnerVerdict(
         proposal: TradeProposal,
         aiTeam: Team,
         allPlayers: [Player],
         allPicks: [DraftPick],
-        currentSeason: Int
+        currentSeason: Int,
+        contracts: [Contract] = []
     ) -> PartnerVerdict {
+        if noTradeClauseBlocker(
+            proposal: proposal,
+            allPlayers: allPlayers,
+            teams: [aiTeam],
+            contracts: contracts
+        ) != nil {
+            return .hangUp
+        }
+
         let (gives, gets) = aiPerspectiveValues(
             proposal: proposal,
             aiTeam: aiTeam,
@@ -225,14 +252,31 @@ enum TradeValueEngine {
 
     /// Deterministic, rule-based response so previews match outcomes.
     /// Assumes the AI team is the proposal's `receivingTeamID`.
+    ///
+    /// Pass `contracts` to enforce no-trade clauses; without them the clause is
+    /// unreadable and the deal is priced on value alone (the pre-Wave-1
+    /// behaviour, plan finding S3: the clause was negotiated, stored and never
+    /// read by anything).
     static func respond(
         to proposal: TradeProposal,
         aiTeam: Team,
         allPlayers: [Player],
         allPicks: [DraftPick],
-        currentSeason: Int
+        currentSeason: Int,
+        contracts: [Contract] = []
     ) -> AIResponse {
         let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
+
+        // Hard rule: a no-trade clause vetoes the deal from either side — the
+        // user cannot ship his own protected star and cannot pry the AI's loose.
+        if let blocker = noTradeClauseBlocker(
+            proposal: proposal,
+            allPlayers: allPlayers,
+            teams: [aiTeam],
+            contracts: contracts
+        ) {
+            return .rejected(reason: blocker)
+        }
 
         // Hard rule: an AI team never trades away its only quarterback.
         let aiRoster = allPlayers.filter { $0.teamID == aiTeam.id }
@@ -402,13 +446,23 @@ enum TradeValueEngine {
     // MARK: - Validation
 
     /// Returns human-readable blockers for a proposal (empty = valid).
-    /// Checks roster-size bounds for both teams and, unless sandbox,
-    /// that both teams stay under their salary cap after the swap.
+    ///
+    /// Checks, in order: no-trade clauses, injured players, roster-size bounds
+    /// for both teams and — unless sandbox — that both teams stay under their
+    /// salary cap after the swap, dead money included.
+    ///
+    /// Every rule here is symmetric on purpose (plan finding S5f / G7): the
+    /// stored-offer invalidator (`isProposalStillValid`) already voided offers
+    /// built on injured players, but the user's own proposals were never
+    /// checked, so the builder happily shipped an injured player the AI would
+    /// never have offered. Same for the clause: a rule the preview does not
+    /// know about is a rule that reads as a bug.
     static func validationErrors(
         proposal: TradeProposal,
         allPlayers: [Player],
         teams: [Team],
-        capMode: CapMode
+        capMode: CapMode,
+        contracts: [Contract] = []
     ) -> [String] {
         var errors: [String] = []
         let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
@@ -421,6 +475,25 @@ enum TradeValueEngine {
 
         let sendingPlayers = proposal.sendingPlayers.compactMap { playerLookup[$0] }
         let receivingPlayers = proposal.receivingPlayers.compactMap { playerLookup[$0] }
+
+        // No-trade clause: a hard veto in both directions.
+        if let blocker = noTradeClauseBlocker(
+            proposal: proposal,
+            allPlayers: allPlayers,
+            teams: teams,
+            contracts: contracts
+        ) {
+            errors.append(blocker)
+        }
+
+        // Injured players cannot be traded — the same rule that voids a stored
+        // AI offer the moment one of its assets goes down.
+        for player in sendingPlayers where player.isInjured {
+            errors.append("\(player.fullName) is injured — \(offering.abbreviation) can't trade him until he's cleared.")
+        }
+        for player in receivingPlayers where player.isInjured {
+            errors.append("\(player.fullName) is injured — \(receiving.abbreviation) won't move him until he's cleared.")
+        }
 
         // Roster-size bounds (keep both squads playable).
         let minRoster = 40
@@ -443,13 +516,17 @@ enum TradeValueEngine {
             errors.append("\(receiving.abbreviation) roster would exceed \(maxRoster) players.")
         }
 
-        // Salary-cap check (skipped entirely in sandbox mode).
+        // Salary-cap check (skipped entirely in sandbox mode). Uses the same
+        // dead-money split `TradeEngine.executeTrade` applies, so a deal that
+        // validates here cannot push a team over the cap once executed.
         if capMode != .sandbox {
-            let sendingSalary = sendingPlayers.reduce(0) { $0 + $1.annualSalary }
-            let receivingSalary = receivingPlayers.reduce(0) { $0 + $1.annualSalary }
+            let offeringSide = capDeltas(for: sendingPlayers, contracts: contracts, capMode: capMode)
+            let receivingSide = capDeltas(for: receivingPlayers, contracts: contracts, capMode: capMode)
 
-            let offeringUsageAfter = offering.currentCapUsage - sendingSalary + receivingSalary
-            let receivingUsageAfter = receiving.currentCapUsage - receivingSalary + sendingSalary
+            let offeringUsageAfter = offering.currentCapUsage
+                - offeringSide.oldHit + offeringSide.deadCap + receivingSide.assumed
+            let receivingUsageAfter = receiving.currentCapUsage
+                - receivingSide.oldHit + receivingSide.deadCap + offeringSide.assumed
 
             if offeringUsageAfter > offering.salaryCap {
                 let over = offeringUsageAfter - offering.salaryCap
@@ -462,6 +539,93 @@ enum TradeValueEngine {
         }
 
         return errors
+    }
+
+    /// Cap totals for one side of a trade: the cap hits leaving the books, the
+    /// dead money staying behind, and the base salary the other team assumes.
+    static func capDeltas(
+        for players: [Player],
+        contracts: [Contract],
+        capMode: CapMode
+    ) -> (oldHit: Int, deadCap: Int, assumed: Int) {
+        let index = contractIndex(contracts)
+        var oldHit = 0
+        var deadCap = 0
+        var assumed = 0
+        for player in players {
+            let split = CapManagementEngine.tradeCapSplit(
+                player: player,
+                contract: index[player.id],
+                capMode: capMode
+            )
+            oldHit  += player.annualSalary
+            deadCap += split.deadCap
+            assumed += split.salaryAssumed
+        }
+        return (oldHit, deadCap, assumed)
+    }
+
+    /// Reason string when any player in the package carries an ACTIVE no-trade
+    /// clause, otherwise `nil`.
+    ///
+    /// "Active" means the clause sits on the contract the player is currently
+    /// playing under for his current team — a stale row from a previous deal
+    /// never blocks anything. The clause was dead data before Wave 1 (finding
+    /// S3): `ContractNegotiationEngine` hands it to ~50 % of 90+ OVR players
+    /// who ask for it, stores it, and nothing ever read it back.
+    ///
+    /// `teams` only supplies the partner's abbreviation for the message; an
+    /// unknown team degrades to "That team" rather than dropping the veto. The
+    /// user-side message names no team on purpose, so it reads correctly from
+    /// `respond`, which only knows the AI side.
+    static func noTradeClauseBlocker(
+        proposal: TradeProposal,
+        allPlayers: [Player],
+        teams: [Team],
+        contracts: [Contract]
+    ) -> String? {
+        guard !contracts.isEmpty else { return nil }
+
+        let index = contractIndex(contracts)
+        let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
+        let abbr: (UUID) -> String = { id in
+            teams.first { $0.id == id }?.abbreviation ?? "That team"
+        }
+
+        func isProtected(_ player: Player) -> Bool {
+            guard let contract = index[player.id] else { return false }
+            return contract.noTradeClause && contract.teamID == player.teamID
+        }
+
+        for id in proposal.sendingPlayers {
+            guard let player = playerLookup[id], isProtected(player) else { continue }
+            return "\(player.fullName) holds a no-trade clause — he has to waive it before he can be included in any deal."
+        }
+        for id in proposal.receivingPlayers {
+            guard let player = playerLookup[id], isProtected(player) else { continue }
+            return "\(abbr(proposal.receivingTeamID)) can't move \(player.fullName) — his no-trade clause blocks any deal."
+        }
+        return nil
+    }
+
+    /// True when this player's current deal carries an active no-trade clause.
+    /// The offer builders call it so the AI never SHOPS a protected player and
+    /// never asks for one — an offer the validator would veto anyway is worse
+    /// than no offer at all.
+    static func hasActiveNoTradeClause(player: Player, contracts: [Contract]) -> Bool {
+        guard !contracts.isEmpty else { return false }
+        guard let contract = contracts.first(where: { $0.playerID == player.id }) else { return false }
+        return contract.noTradeClause && contract.teamID == player.teamID
+    }
+
+    /// First contract per player, keyed by `playerID`. Contract rows are only
+    /// minted for realistic-mode signings, so most players have none.
+    private static func contractIndex(_ contracts: [Contract]) -> [UUID: Contract] {
+        var index: [UUID: Contract] = [:]
+        for contract in contracts where index[contract.playerID] == nil {
+            index[contract.playerID] = contract
+        }
+        return index
     }
 
     /// A stored pending offer is still valid only while every asset is still
@@ -511,13 +675,20 @@ enum TradeValueEngine {
     ///   player if needed) for a good player at one of their need positions.
     /// - Rebuilders (losses − wins ≥ 2) SELL: they offer a veteran at one of
     ///   the user's need positions and ask for the user's picks.
+    ///
+    /// `contracts` is optional so the weekly `WeekAdvancer` roll keeps
+    /// compiling untouched, but SHOULD be supplied: without it the generator
+    /// cannot see no-trade clauses and may build an offer for a protected
+    /// player that the Trade Center then refuses to execute (preview ≡ outcome,
+    /// plan G7). One-line fix at the call site: pass the fetched `[Contract]`.
     static func generateWeeklyAIOffer(
         userTeam: Team,
         allTeams: [Team],
         allPlayers: [Player],
         allPicks: [DraftPick],
         capMode: CapMode,
-        currentSeason: Int
+        currentSeason: Int,
+        contracts: [Contract] = []
     ) -> AIOffer? {
         let aiTeams = allTeams.filter { $0.id != userTeam.id }.shuffled()
         let userRoster = allPlayers.filter { $0.teamID == userTeam.id }
@@ -529,7 +700,8 @@ enum TradeValueEngine {
                 if let offer = buildContenderBuyOffer(
                     contender: aiTeam, userTeam: userTeam, userRoster: userRoster,
                     allPlayers: allPlayers, allPicks: allPicks,
-                    allTeams: allTeams, capMode: capMode, currentSeason: currentSeason
+                    allTeams: allTeams, capMode: capMode, currentSeason: currentSeason,
+                    contracts: contracts
                 ) {
                     return offer
                 }
@@ -537,7 +709,8 @@ enum TradeValueEngine {
                 if let offer = buildRebuilderSellOffer(
                     rebuilder: aiTeam, userTeam: userTeam, userNeeds: userNeeds,
                     allPlayers: allPlayers, allPicks: allPicks,
-                    allTeams: allTeams, capMode: capMode, currentSeason: currentSeason
+                    allTeams: allTeams, capMode: capMode, currentSeason: currentSeason,
+                    contracts: contracts
                 ) {
                     return offer
                 }
@@ -556,7 +729,8 @@ enum TradeValueEngine {
         allPicks: [DraftPick],
         allTeams: [Team],
         capMode: CapMode,
-        currentSeason: Int
+        currentSeason: Int,
+        contracts: [Contract]
     ) -> AIOffer? {
         let contenderRoster = allPlayers.filter { $0.teamID == contender.id }
         let needs = Set(DraftEngine.topTeamNeeds(roster: contenderRoster, limit: 4))
@@ -568,6 +742,8 @@ enum TradeValueEngine {
             .filter { player in
                 guard player.overall >= 74, !player.isInjured, needs.contains(player.position) else { return false }
                 if player.position == .QB && userQBCount <= 1 { return false }
+                // Never call about a player his contract protects.
+                if hasActiveNoTradeClause(player: player, contracts: contracts) { return false }
                 return true
             }
             .sorted { playerTradeValue(player: $0) > playerTradeValue(player: $1) }
@@ -617,7 +793,8 @@ enum TradeValueEngine {
             receivingPicks: []
         )
         guard validationErrors(
-            proposal: proposal, allPlayers: allPlayers, teams: allTeams, capMode: capMode
+            proposal: proposal, allPlayers: allPlayers, teams: allTeams,
+            capMode: capMode, contracts: contracts
         ).isEmpty else { return nil }
 
         let assetText = offerAssetText(
@@ -641,13 +818,16 @@ enum TradeValueEngine {
         allPicks: [DraftPick],
         allTeams: [Team],
         capMode: CapMode,
-        currentSeason: Int
+        currentSeason: Int,
+        contracts: [Contract]
     ) -> AIOffer? {
         let rebuilderRoster = allPlayers.filter { $0.teamID == rebuilder.id }
 
         // Veteran on the block, ideally at a position the user needs.
         let vets = rebuilderRoster
             .filter { $0.age >= 28 && $0.overall >= 75 && !$0.isInjured && $0.position != .QB }
+            // A protected veteran is not on the block.
+            .filter { !hasActiveNoTradeClause(player: $0, contracts: contracts) }
             .sorted { playerTradeValue(player: $0) > playerTradeValue(player: $1) }
         let preferred = vets.filter { userNeeds.contains($0.position) }
         guard let vet = (preferred.first ?? vets.first) else { return nil }
@@ -681,7 +861,8 @@ enum TradeValueEngine {
             receivingPicks: askPicks.map(\.id)
         )
         guard validationErrors(
-            proposal: proposal, allPlayers: allPlayers, teams: allTeams, capMode: capMode
+            proposal: proposal, allPlayers: allPlayers, teams: allTeams,
+            capMode: capMode, contracts: contracts
         ).isEmpty else { return nil }
 
         let askText = offerAssetText(players: [], picks: askPicks, currentSeason: currentSeason)
@@ -752,6 +933,11 @@ enum TradeValueEngine {
         var summaries: [LeagueTradeSummary] = []
         let targetCount = Int.random(in: 2...4)
 
+        // Contracts are fetched here rather than threaded in from `WeekAdvancer`
+        // so this pass enforces no-trade clauses and dead-money cap limits with
+        // no change to its call site.
+        let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>())) ?? []
+
         // Track ownership changes locally so consecutive trades stay coherent.
         var pickOwner: [UUID: UUID] = Dictionary(uniqueKeysWithValues: allPicks.map { ($0.id, $0.currentTeamID) })
 
@@ -759,6 +945,7 @@ enum TradeValueEngine {
             let sellerRoster = allPlayers.filter { $0.teamID == seller.id }
             let vets = sellerRoster
                 .filter { $0.age >= 27 && $0.overall >= 75 && !$0.isInjured && $0.position != .QB }
+                .filter { !hasActiveNoTradeClause(player: $0, contracts: contracts) }
                 .sorted { playerTradeValue(player: $0) > playerTradeValue(player: $1) }
             guard let vet = vets.prefix(3).randomElement() else { continue }
             let vetValue = playerTradeValue(player: vet)
@@ -797,13 +984,26 @@ enum TradeValueEngine {
                     receivingPicks: packagePicks.map(\.id)
                 )
                 guard validationErrors(
-                    proposal: proposal, allPlayers: allPlayers, teams: teams, capMode: capMode
+                    proposal: proposal, allPlayers: allPlayers, teams: teams,
+                    capMode: capMode, contracts: contracts
                 ).isEmpty else { continue }
 
+                // Wave 0 ledger. `week`/`phase` are stamped from the deadline
+                // constants rather than the live career: this pass runs only at
+                // the end of `deadlineWeek`, and `.tradeDeadline` is the phase
+                // the deal semantically belongs to even though `WeekAdvancer`
+                // reassigns `.regularSeason` on the next line (finding S2).
                 TradeEngine.executeTrade(
                     proposal: proposal,
                     allPlayers: allPlayers,
                     allPicks: allPicks,
+                    capMode: capMode,
+                    ledger: TradeLedger.Context(
+                        kind: .aiDeadline,
+                        season: currentSeason,
+                        week: deadlineWeek,
+                        phase: .tradeDeadline
+                    ),
                     modelContext: modelContext
                 )
                 for pick in packagePicks { pickOwner[pick.id] = seller.id }
@@ -870,6 +1070,135 @@ enum TradeValueEngine {
             category: .leagueNotice,
             actionDestination: .news
         )
+    }
+
+    // MARK: - Forced Trade (holdout capitulation)
+
+    /// A ready-to-execute package for shipping one specific player out.
+    struct ForcedTradePackage {
+        let proposal: TradeProposal
+        let partner: Team
+        /// "a 2027 round 2 pick and CB Ray Voss (72 OVR)" — for inbox/news copy.
+        let returnDescription: String
+    }
+
+    /// Prices a fair return for a player the front office has decided to move
+    /// and picks the best-fit partner for him.
+    ///
+    /// Used by `HoldoutEngine.forceTrade`, which used to mark a holdout
+    /// `.traded` while the player stayed on the roster (plan finding S3). The
+    /// return is deliberately aimed slightly BELOW the player's market value
+    /// (0.85–1.0×): a team trading a disgruntled star under duress does not get
+    /// full price, and the discount is what makes an AI GM say yes.
+    ///
+    /// Partner order is best-fit first: teams with a top-4 positional need,
+    /// then the rest, so the player lands somewhere he would actually start.
+    /// Every candidate package is run through `validationErrors` AND `respond`
+    /// before it is offered, so the caller can execute the returned proposal
+    /// without re-asking — preview ≡ outcome (plan G7).
+    ///
+    /// Returns `nil` when no partner can put together a believable package
+    /// (e.g. no tradable picks exist yet — finding S1); the caller must treat
+    /// that as "no market" and leave the roster alone.
+    static func buildForcedTradePackage(
+        player: Player,
+        sellingTeam: Team,
+        allTeams: [Team],
+        allPlayers: [Player],
+        allPicks: [DraftPick],
+        contracts: [Contract],
+        capMode: CapMode,
+        currentSeason: Int
+    ) -> ForcedTradePackage? {
+        guard player.teamID == sellingTeam.id else { return nil }
+
+        let value = playerTradeValue(player: player)
+        guard value > 0 else { return nil }
+
+        // Best-fit first: does the buyer have a top-4 need at his position?
+        let candidates = allTeams
+            .filter { $0.id != sellingTeam.id }
+            .map { team -> (team: Team, needsHim: Bool) in
+                let roster = allPlayers.filter { $0.teamID == team.id }
+                let needs = Set(DraftEngine.topTeamNeeds(roster: roster, limit: 4))
+                return (team, needs.contains(player.position))
+            }
+            .sorted { lhs, rhs in
+                if lhs.needsHim != rhs.needsHim { return lhs.needsHim }
+                return lhs.team.availableCap > rhs.team.availableCap
+            }
+
+        for candidate in candidates {
+            let buyer = candidate.team
+            let buyerRoster = allPlayers.filter { $0.teamID == buyer.id }
+
+            // Picks first, best-first, capped at 3 — a holdout return is picks
+            // and a young body, not a franchise-altering haul.
+            let goal = Int(Double(value) * 0.95)
+            var returnPicks: [DraftPick] = []
+            var returnValue = 0
+            let buyerPicks = allPicks
+                .filter { $0.currentTeamID == buyer.id && !$0.isComplete }
+                .sorted { pickTradeValue(pick: $0, currentSeason: currentSeason) >
+                          pickTradeValue(pick: $1, currentSeason: currentSeason) }
+            for pick in buyerPicks {
+                guard returnValue < goal, returnPicks.count < 3 else { break }
+                let pickValue = pickTradeValue(pick: pick, currentSeason: currentSeason)
+                if returnValue == 0 && Double(pickValue) > Double(value) * 1.1 { continue }
+                returnPicks.append(pick)
+                returnValue += pickValue
+            }
+
+            // Young player to close the gap when the picks fall short.
+            var returnPlayers: [Player] = []
+            if returnValue < Int(Double(value) * 0.85) {
+                let gap = Int(Double(value) * 0.95) - returnValue
+                let filler = buyerRoster
+                    .filter {
+                        !$0.isInjured && $0.position != .QB
+                            && $0.overall >= 60 && $0.overall <= 80
+                            && !hasActiveNoTradeClause(player: $0, contracts: contracts)
+                    }
+                    .min { abs(playerTradeValue(player: $0) - gap) < abs(playerTradeValue(player: $1) - gap) }
+                if let filler {
+                    returnPlayers.append(filler)
+                    returnValue += playerTradeValue(player: filler)
+                }
+            }
+
+            guard returnValue > 0 else { continue }
+            let ratio = Double(returnValue) / Double(value)
+            guard ratio >= 0.6 && ratio <= 1.0 else { continue }
+
+            let proposal = TradeProposal(
+                offeringTeamID: sellingTeam.id,
+                receivingTeamID: buyer.id,
+                sendingPlayers: [player.id],
+                receivingPlayers: returnPlayers.map(\.id),
+                sendingPicks: [],
+                receivingPicks: returnPicks.map(\.id)
+            )
+
+            guard validationErrors(
+                proposal: proposal, allPlayers: allPlayers, teams: allTeams,
+                capMode: capMode, contracts: contracts
+            ).isEmpty else { continue }
+
+            guard case .accepted = respond(
+                to: proposal, aiTeam: buyer, allPlayers: allPlayers,
+                allPicks: allPicks, currentSeason: currentSeason, contracts: contracts
+            ) else { continue }
+
+            return ForcedTradePackage(
+                proposal: proposal,
+                partner: buyer,
+                returnDescription: offerAssetText(
+                    players: returnPlayers, picks: returnPicks, currentSeason: currentSeason
+                )
+            )
+        }
+
+        return nil
     }
 
     // MARK: - Helpers

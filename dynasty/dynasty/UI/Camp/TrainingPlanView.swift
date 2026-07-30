@@ -81,8 +81,11 @@ struct TrainingPlanView: View {
     /// "Week 0" reads like a bug during the offseason — use the phase name
     /// until the regular season gives weeks real meaning.
     private var headerTitle: String {
-        if career.currentPhase == .regularSeason || career.currentPhase == .playoffs {
+        switch career.currentPhase {
+        case .regularSeason, .tradeDeadline, .playoffs:
             return "Week \(max(1, career.currentWeek)) Focus"
+        default:
+            break
         }
         return "\(career.currentPhase.displayName) Focus"
     }

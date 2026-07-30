@@ -38,6 +38,7 @@ enum MultiSeasonSmokeTest {
             FAStorylineEvent.self, Holdout.self, TrainingPlan.self,
             WorkloadEvent.self, PositionBattle.self, RosterCut.self,
             OpponentPrepWeek.self, VoluntaryWorkout.self, HardKnocksEvent.self,
+            TradeRecord.self,
         ])
         guard let container = try? ModelContainer(
             for: schema,
@@ -53,6 +54,7 @@ enum MultiSeasonSmokeTest {
         WeekAdvancer.currentDraftPicks = []
         WeekAdvancer.draftClassGenerated = false
         WeekAdvancer.udfaStageCompletedSeasons = []
+        WeekAdvancer.aiTradeOffersGenerated = 0
 
         // League + career bootstrap (mirrors TeamSelectionView.startCareer,
         // except the user's team KEEPS its generated coaching staff — the
@@ -89,6 +91,11 @@ enum MultiSeasonSmokeTest {
             }
         } else {
             generated = LeagueGenerator.generate(startYear: career.currentSeason)
+            // Same career backstory a real random career now opens with, so the
+            // harness keeps simulating what the app actually ships.
+            seasonHistory = LeagueGenerator.syntheticCareerHistory(
+                players: generated.players, startYear: career.currentSeason
+            )
         }
 
         career.leagueID = generated.league.id
@@ -131,6 +138,7 @@ enum MultiSeasonSmokeTest {
         var firedNotes = 0
         var retiredTotalPrev = 0
         var seenRetiredIDs = Set<UUID>()      // OVR-drift diag: newly retired per cycle
+        var offersGeneratedPrev = 0           // Wave 0 trade diag: per-season delta
         var hcSnapshot = headCoachByTeam(context: context)
         let maxAdvances = seasons * 60 + 60   // watchdog: infinite-loop guard
 
@@ -165,7 +173,14 @@ enum MultiSeasonSmokeTest {
 
             // A new regular season just started → the previous cycle is fully
             // closed (offseason ran). Emit the summary row for it.
-            if career.currentPhase == .regularSeason && phaseBefore != .regularSeason {
+            //
+            // Keyed on the SEASON YEAR, not on "the phase changed to
+            // regularSeason": the trade deadline is now a real phase for one week
+            // (`.regularSeason` → `.tradeDeadline` → `.regularSeason`), and the
+            // phase test would have counted that mid-season flip back as a whole
+            // new season — a bogus summary row and an early end to the run.
+            // `startNewSeason` is the only thing that increments the year.
+            if career.currentPhase == .regularSeason && career.currentSeason != seasonBefore {
                 // AI stand-in for the user's offseason roster management runs
                 // FIRST (cutdown to 53 + refill to 53) so the row below
                 // measures a managed league: refillAIRosters skips the user's
@@ -209,6 +224,14 @@ enum MultiSeasonSmokeTest {
                 // `freeFemale=0` with within-gender reuse shows up here long
                 // before the male half runs out.
                 auditFaces(seasonLabel: finishedSeason, context: context)
+
+                // Wave 0 trade instrumentation.
+                printTradeDiagnostics(
+                    seasonLabel: finishedSeason,
+                    userTeamID: career.teamID,
+                    offersGeneratedPrev: &offersGeneratedPrev,
+                    context: context
+                )
 
                 // OVR-drift diagnostics: who left, who arrived, and how the
                 // yearsPro cohorts are trending.
@@ -295,7 +318,9 @@ enum MultiSeasonSmokeTest {
                 cap: team.salaryCap
             )
         }
-        let sizes = generated.teams.map { $0.players.count }
+        // S3: sizes from the draft result, not `Team.players` (that relationship
+        // is the creation-time hand-off assigned just above — see its doc).
+        let sizes = generated.teams.map { (rosters[$0.id] ?? []).count }
         print("SMOKE: fantasy draft complete — picks=\(pickIndex) roster min=\(sizes.min() ?? 0) max=\(sizes.max() ?? 0)")
     }
 
@@ -382,6 +407,77 @@ enum MultiSeasonSmokeTest {
         }
         try? context.save()
         return drafted
+    }
+
+    // MARK: - Trade diagnostics (Wave 0 — docs/TRADE_OVERHAUL_PLAN.md §6)
+
+    /// One `SMOKE: diag trades` line per completed season, aggregated from the
+    /// `TradeRecord` ledger.
+    ///
+    /// WHY this exists: `grep -i trade audit_smoke.log` returned 0 matches in
+    /// 672 lines / 3 seasons, and that silence had TWO causes — the harness
+    /// measured nothing, and the code paths genuinely produce nothing (plan
+    /// finding S9). This line separates those two forever.
+    ///
+    /// EXPECTED WAVE 0 BASELINE: **all counters zero**. That is the point, not
+    /// a bug — it is the proof of findings S1 (no future-year `DraftPick` rows
+    /// exist, so `guard !packagePicks.isEmpty` / `guard !askPicks.isEmpty` kill
+    /// the deadline pass and every rebuilder sell-offer) and S5 (a 15 %/week
+    /// roll over weeks 1-8 ≈ 1.2 attempts/season, both productive sub-paths
+    /// dead). `userOffers` is the only counter that may be non-zero, and only
+    /// via the filler-player fallback.
+    ///
+    /// WAVE 1 CHANGES THAT BASELINE. Future-year `DraftPick` rows now exist from
+    /// league creation and the deadline is a real week, so `aiVsAi` / `deadline` /
+    /// `picksMoved` / `futurePickShare` are expected OFF zero from season 1 (the
+    /// deadline pass finally clears its `guard !packagePicks.isEmpty`). A run that
+    /// still prints all zeros means the pick pool never reached the deadline pass.
+    ///
+    /// NO BAND ASSERTS HERE YET. The §5 NFL reference bands (30-70 player
+    /// trades/year, 12-35 draft-weekend pick swaps, ≥50 % involving a future
+    /// pick, 3-8 AI offers reaching the user in-season) become warn-level
+    /// asserts in Wave 2, once Wave 1 has made a market structurally possible.
+    /// Asserting them now would only fail on a known, documented baseline.
+    private static func printTradeDiagnostics(
+        seasonLabel: Int,
+        userTeamID: UUID?,
+        offersGeneratedPrev: inout Int,
+        context: ModelContext
+    ) {
+        let descriptor = FetchDescriptor<TradeRecord>(
+            predicate: #Predicate<TradeRecord> { $0.season == seasonLabel }
+        )
+        let rows = (try? context.fetch(descriptor)) ?? []
+
+        // AI-vs-AI offers to the user are counted at GENERATION, not execution:
+        // the harness has no UI and never accepts one, so the ledger cannot see
+        // them (see `WeekAdvancer.aiTradeOffersGenerated`).
+        let offersTotal = WeekAdvancer.aiTradeOffersGenerated
+        let offersThisSeason = offersTotal - offersGeneratedPrev
+        offersGeneratedPrev = offersTotal
+
+        // `futurePickShare` is the share of TRADES that include at least one
+        // future-year pick — the shape §5 states its band in ("~60-70 % of
+        // player trades", target ≥50 %), not a share of the picks themselves.
+        let picksMoved = rows.reduce(0) { $0 + $1.picksMovedCount }
+        let withFuturePick = rows.filter { $0.futurePicksCount > 0 }.count
+        let futureShare = rows.isEmpty
+            ? 0
+            : Double(withFuturePick) / Double(rows.count) * 100
+
+        print(String(
+            format: "SMOKE: diag trades season=%d total=%d aiVsAi=%d deadline=%d userOffers=%d "
+                  + "draftSwaps=%d playersMoved=%d picksMoved=%d futurePickShare=%.1f%%",
+            seasonLabel,
+            rows.count,
+            rows.filter { $0.isAIvsAI(userTeamID: userTeamID) }.count,
+            rows.filter { $0.kind == .aiDeadline }.count,
+            offersThisSeason,
+            rows.filter { $0.kind == .draftDay }.count,
+            rows.reduce(0) { $0 + $1.playersMovedCount },
+            picksMoved,
+            futureShare
+        ))
     }
 
     // MARK: - OVR-drift diagnostics

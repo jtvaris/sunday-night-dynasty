@@ -520,8 +520,10 @@ struct CoachedGameView: View {
             CoachesBoardView(
                 engine: engine,
                 teamAbbr: playerAbbr,
-                holdouts: playerTeamModel.players
-                    .filter(\.isHoldingOut)
+                // S3: holdouts come off the engine's kickoff roster query, not
+                // the stale `Team.players` relationship — and resolving them
+                // once at kickoff keeps this presentation closure fetch-free.
+                holdouts: engine.playerTeamHoldouts
                     .map { CoachesBoardView.HoldoutLine(id: $0.id, name: $0.fullName, position: $0.position) },
                 initialUnitIsOffense: engine.playerIsOnOffense,
                 subsDisabled: isAnimating || engine.isGameOver

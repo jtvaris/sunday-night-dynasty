@@ -18,6 +18,36 @@ enum DraftEngine {
     ///   - seasonYear: The year of the draft.
     /// - Returns: An array of 224 `DraftPick` objects ordered by overall pick number.
     static func generateDraftOrder(teams: [Team], games: [Game], seasonYear: Int) -> [DraftPick] {
+        let orderedTeamIDs = draftSlotOrder(teams: teams, games: games)
+
+        // Generate 7 rounds of 32 picks each.
+        var picks: [DraftPick] = []
+        for round in 1...7 {
+            for (index, teamID) in orderedTeamIDs.enumerated() {
+                let overall = (round - 1) * 32 + (index + 1)
+                let pick = DraftPick(
+                    seasonYear: seasonYear,
+                    round: round,
+                    pickNumber: overall,
+                    originalTeamID: teamID,
+                    currentTeamID: teamID
+                )
+                picks.append(pick)
+            }
+        }
+
+        return picks
+    }
+
+    /// The 32 team IDs in slot order for a draft that follows `games`: worst
+    /// record first, then playoff teams by record, then the Super Bowl loser,
+    /// then the champion. Index 0 owns pick #1 of every round.
+    ///
+    /// Split out of `generateDraftOrder` because the future-pick rows minted years
+    /// earlier (`LeagueGenerator.futureDraftPicks`) need exactly this ordering to
+    /// be renumbered against when their year comes up, WITHOUT building a second
+    /// set of pick rows that would duplicate the traded ones.
+    static func draftSlotOrder(teams: [Team], games: [Game]) -> [UUID] {
         let records = StandingsCalculator.calculate(games: games, teams: teams)
 
         // Determine playoff teams for each conference (top 7 seeds).
@@ -72,23 +102,7 @@ enum DraftEngine {
             orderedTeamIDs = fallback.map(\.teamID)
         }
 
-        // Generate 7 rounds of 32 picks each.
-        var picks: [DraftPick] = []
-        for round in 1...7 {
-            for (index, teamID) in orderedTeamIDs.enumerated() {
-                let overall = (round - 1) * 32 + (index + 1)
-                let pick = DraftPick(
-                    seasonYear: seasonYear,
-                    round: round,
-                    pickNumber: overall,
-                    originalTeamID: teamID,
-                    currentTeamID: teamID
-                )
-                picks.append(pick)
-            }
-        }
-
-        return picks
+        return orderedTeamIDs
     }
 
     // MARK: - AI Draft Logic
