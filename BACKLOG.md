@@ -1,5 +1,17 @@
 # Dynasty - Backlog (Completed)
 
+## 2026-07-30 — Velkalistan loppusiivous (erät 5-6): talous, kalibrointi, naiskasvot 163, trade-jatkot
+
+- [x] **#27 cap-romahdus juurisyytetty ja korjattu** SigningLedger-virtausdiagilla: markkina hinnoitteli liigan 150,7 %:iin capista ilman rosterirajaa tai reserviä → `leagueAffordabilityScale 0.75` + `faRosterCeiling 46` + `capReservePercent 0.15` → capRoom vakaa ~13 %, 32/32 capin alla, capRoom-bandi asserttina. Lisäksi rollover-true-up (dead money vanhenee liigavuoden mukana) ja #45: `proratedFullBaseSalary` palautetaan rolloverissa (mitattu 36-39/kausi).
+- [x] **#28 eläköitymisen rakenteellinen bugi**: 30+-seinä oli `yearsPastPeak`-guardin takana saavuttamaton QB/K/P/OL-positioille → seinä kalenteri-ikään (+0.18/+0.25/+0.30 @ 33/35/37) + washout-pohjakerroin (pooli 209→185→12, ei enää ikuista laatureserviä).
+- [x] **#29 peliaikaportaikko kokonaan**: syvyysjärjestyspohjainen rooli (starter 1.0 / rotation 0.50 / backup 0.18 / depth 0.08) sekä viikkokreditiin että `realPlayingTimeShare`-termiin; harness-driver ajaa samaa mallia.
+- [x] **#32 intake-ratchet kuollut**: draft-luokkien potentiaali kiitoratamallilla (`drawUpside` = LeagueGeneratorin veteranPotential toisesta päästä; kyttyrämuotoinen bandProjection — monotoninen TODISTETTU riittämättömäksi sweep-taululla) + `rawnessPivot` 76→69 uudelleenjohdettuna. leaguePot konvergoi (+1,5/kausi-marssi → kääntyy kaudella 3-4); career 26/26 + draftclass 32/32 ILMAN bandien siirtoa. Uusi löydös #51: smoke ylittää harnessin ~2 OVR:llä → WeekAdvancerin viikkopassit (rajattu, mitattu, erä 7 agentti F).
+- [x] **#31 naiskasvot 35 → 163**: female-only-alue `face_03584..03711` (128 kuvaa, pakotetut faktat eivät kuluta RNG:tä — id-gatattu; vanhat alueet replay-verifioitu bittiin), pooli 3712, FACEBUNDLE 3712/3712 + 163/163 PASS.
+- [x] **Trade-jatkot**: #36 vastatarjoukset pehmenevät kierroksittain persona-concessionilla · #37 neuvottelulanka domain-kerrokseen · #39 AI-GM:t liikkuvat avoimissa langoissa viikkojen välissä (inbox-ilmoituksella) · #44 cap-esikatselu ≡ toteutus (`leagueYearRemaining` läpi) · #41 koutsattu playoff-peli persistoi box scorensa heti (yksi kirjoittaja).
+- [x] **UI/stats-rippeet**: #40 HOF-riveihin uran statsit · #42 kuollut template-silta pois · #47 Cap-otsikko · #48 yhtenäiset headerit · #49 DSLayout-mittatokenit (36 käyttöä) · #22 milestone-kutsupisteet oikeaan historiaan.
+- Portit lopputilassa: buildi exit 0 · make_templates 19/19 + cmp-clean · TVAL publish+dev PASS · FACEBUNDLE PASS · harness 32/26/10 · 2×4 kauden smoket bandeissa (leaguePot konvergoi, trade+capRoom vihreät; 90+-bandin tilastokysymys ja #51 kirjattu erä 7:ään).
+
+
 ## 2026-07-30 — Monisave-erottelu: `careerID` koko datamalliin (TODO §3, oma aalto)
 
 **Ongelma:** kaikki moottorin ja UI:n haut olivat store-laajuisia. Toinen ura samaan SwiftData-storeen sekoitti populaatiot (64 joukkuetta standingsissa, toisen saven vapaat agentit FA-listalla, liigatilastot kahden liigan yli), kasvorekisterin `backfill` NOLLASI toisen uran pelaajien `faceID`:t törmäyksessä ja kaatoi koko törmäyskorjauksen kapasiteettiportin, ja uran poisto poisti VAIN `Career`-rivin → pysyvästi orvot ~9 000 riviä per save.
