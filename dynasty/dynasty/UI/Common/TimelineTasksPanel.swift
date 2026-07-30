@@ -81,7 +81,7 @@ struct TimelineTasksPanel: View {
                 .padding(.bottom, 16)
             }
         }
-        .frame(minWidth: 280)
+        .frame(minWidth: 300)
         .background(Color.backgroundSecondary)
     }
 
@@ -225,8 +225,8 @@ struct TimelineTasksPanel: View {
                     currentTaskRow(task, isRequired: false)
                 }
             }
-            .padding(.leading, 36) // Align with text after timeline dot
-            .padding(.trailing, 14)
+            .padding(.leading, 30) // Align with text after timeline dot
+            .padding(.trailing, 10)
             .padding(.top, 4)
             .padding(.bottom, 4)
         }
@@ -250,31 +250,31 @@ struct TimelineTasksPanel: View {
                 // Status dot
                 taskStatusIcon(task, isRequired: isRequired, isLocked: locked)
 
-                // Task text
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 5) {
-                        Text(task.title)
-                            .font(.system(size: 13, weight: task.status == .done ? .regular : (locked ? .regular : .medium)))
-                            .foregroundStyle(task.status == .done ? Color.textTertiary : (locked ? Color.textTertiary : Color.textPrimary))
-                            .strikethrough(task.status == .done, color: Color.textTertiary)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
+                // Task text. Baseline alignment keeps the status pill on the
+                // title's *first* line — centered, it floated mid-block on a
+                // title that wrapped, reading as if it belonged to neither line.
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(task.title)
+                        .font(.system(size: 13, weight: task.status == .done ? .regular : (locked ? .regular : .medium)))
+                        .foregroundStyle(task.status == .done ? Color.textTertiary : (locked ? Color.textTertiary : Color.textPrimary))
+                        .strikethrough(task.status == .done, color: Color.textTertiary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                        if locked {
-                            Text("Locked")
-                                .font(.system(size: 8, weight: .heavy))
-                                .foregroundStyle(Color.textTertiary)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.backgroundTertiary))
-                        } else if isRequired && task.status != .done {
-                            Text("Required")
-                                .font(.system(size: 8, weight: .heavy))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.danger))
-                        }
+                    if locked {
+                        Text("Locked")
+                            .font(.system(size: 8, weight: .heavy))
+                            .foregroundStyle(Color.textTertiary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.backgroundTertiary))
+                    } else if isRequired && task.status != .done {
+                        Text("Required")
+                            .font(.system(size: 8, weight: .heavy))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.danger))
                     }
                 }
 
@@ -524,8 +524,8 @@ struct TimelineTasksPanel: View {
                     previewTaskRow(task)
                 }
             }
-            .padding(.leading, 36)
-            .padding(.trailing, 14)
+            .padding(.leading, 30)
+            .padding(.trailing, 10)
             .padding(.top, 2)
             .padding(.bottom, 2)
         }

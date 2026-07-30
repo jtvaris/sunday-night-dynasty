@@ -114,16 +114,9 @@ struct NewCareerView: View {
         .navigationTitle(stepTitle(currentStep))
         .navigationBarTitleDisplayMode(.large)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .onAppear {
-            UISegmentedControl.appearance().selectedSegmentTintColor = UIColor(Color.accentBlue)
-            UISegmentedControl.appearance().setTitleTextAttributes(
-                [.foregroundColor: UIColor(Color.backgroundPrimary)], for: .selected
-            )
-            UISegmentedControl.appearance().setTitleTextAttributes(
-                [.foregroundColor: UIColor(Color.textSecondary)], for: .normal
-            )
-            UISegmentedControl.appearance().backgroundColor = UIColor(Color.backgroundPrimary)
-        }
+        // Segmented-control palette is applied app-wide by DSAppearance.apply()
+        // at launch; doing it here (.onAppear) was a frame too late to catch
+        // the pickers this screen had already built.
     }
 
     // MARK: - Step Indicator (#98: larger progress bar)

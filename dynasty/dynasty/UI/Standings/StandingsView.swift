@@ -65,6 +65,11 @@ struct StandingsView: View {
             VStack(spacing: 0) {
                 conferencePicker
                     .padding(16)
+                    // Same 800pt measure as the division tables below, so the
+                    // picker's edges line up with the cards instead of running
+                    // the full iPad width while the content sits inset.
+                    .frame(maxWidth: 800)
+                    .frame(maxWidth: .infinity)
                     .background(Color.backgroundSecondary)
 
                 ScrollView {
@@ -106,22 +111,9 @@ struct StandingsView: View {
         }
         .pickerStyle(.segmented)
         .tint(Color.accentBlue)
-        // Force tab-style selection tint via UISegmentedControl appearance
-        .onAppear { applySegmentAppearance() }
-    }
-
-    private func applySegmentAppearance() {
-        let blue = UIColor(Color.accentBlue)
-        let navy = UIColor(Color.backgroundPrimary)
-        UISegmentedControl.appearance().selectedSegmentTintColor = blue
-        UISegmentedControl.appearance().setTitleTextAttributes(
-            [.foregroundColor: navy],
-            for: .selected
-        )
-        UISegmentedControl.appearance().setTitleTextAttributes(
-            [.foregroundColor: UIColor(Color.textSecondary)],
-            for: .normal
-        )
+        // Palette comes from DSAppearance.apply() at launch — setting the
+        // appearance proxy from here (.onAppear) ran a frame too late and the
+        // picker rendered in stock grey.
     }
 
     // MARK: - Wild Card Race Banner
@@ -427,6 +419,15 @@ private struct StandingsTeamRow: View {
                 Text(team?.abbreviation ?? "???")
                     .font(.system(size: 14, weight: isLeader ? .heavy : .semibold))
                     .foregroundStyle(isLeader ? Color.accentGold : Color.textPrimary)
+                    .frame(width: 42, alignment: .leading)
+
+                // The team column ran ~600pt wide holding a 3-letter code and
+                // nothing else. The full name fills that void and saves the
+                // reader translating "LAC" in their head.
+                Text(team?.fullName ?? "Unknown")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(isLeader ? Color.textPrimary : Color.textSecondary)
+                    .lineLimit(1)
 
                 if isPlayerTeam {
                     Image(systemName: "star.fill")

@@ -9,6 +9,12 @@ struct DynastyApp: App {
 
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        // UIKit appearance proxies only affect views created after they're set,
+        // so this has to run before the first screen is built.
+        DSAppearance.apply()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

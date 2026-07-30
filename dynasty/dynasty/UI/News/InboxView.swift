@@ -98,6 +98,11 @@ struct InboxView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
+        // Same 720pt measure as the message list, so "All" starts on the same
+        // vertical as the message cards rather than out at the screen edge.
+        // The band behind it still spans full width.
+        .frame(maxWidth: 720)
+        .frame(maxWidth: .infinity)
         .background(Color.backgroundSecondary)
         .overlay(alignment: .bottom) {
             Divider().overlay(Color.surfaceBorder)
@@ -209,10 +214,16 @@ struct InboxView: View {
                         .foregroundStyle(Color.textPrimary)
                         .lineLimit(1)
 
-                    Text(message.body)
+                    // Message bodies open with a salutation on its own line
+                    // ("Coach,\n\n…"), so a raw single-line preview rendered as
+                    // the useless "Coach,…". Flatten the newlines first and
+                    // allow two lines so the preview carries real content.
+                    Text(message.body.replacingOccurrences(of: "\n", with: " ")
+                        .trimmingCharacters(in: .whitespacesAndNewlines))
                         .font(.caption)
-                        .foregroundStyle(Color.textTertiary)
-                        .lineLimit(1)
+                        .foregroundStyle(Color.textTertiaryReadable)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
                 }
 
                 Image(systemName: "chevron.right")

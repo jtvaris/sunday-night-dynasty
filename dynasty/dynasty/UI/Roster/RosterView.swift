@@ -602,6 +602,11 @@ struct RosterView: View {
         }
         .scrollContentBackground(.hidden)
         .listStyle(.insetGrouped)
+        // insetGrouped's stock top inset and section gaps left a wide band of
+        // empty navy between the analysis pills and the first position group —
+        // roughly a third of a screen before any player was visible.
+        .listSectionSpacing(12)
+        .contentMargins(.top, 0, for: .scrollContent)
     }
 
     // MARK: - Group Assessment Sheet (#283)
@@ -736,11 +741,16 @@ struct RosterView: View {
                     }
                 }
             }
-            HStack(spacing: 0) {
+            // spacing 6 mirrors PlayerRowView's HStack: at spacing 0 the header
+            // block was 42pt narrower than the data block it labels, so every
+            // column header sat right of its own values.
+            HStack(spacing: 6) {
                 sortButton("POS", sort: .position, width: isWideLayout ? 56 : 44)
                 sortButton("NAME", sort: .name, width: nil)
                 Spacer()
                 analysisHeaderColumns
+                // Matches the disclosure chevron on the player rows below.
+                Color.clear.frame(width: Self.disclosureGutter, height: 1)
             }
             .font(.caption2)
             .fontWeight(.semibold)
@@ -762,8 +772,8 @@ struct RosterView: View {
                 headerLabel("↗", width: 20)
                 sortButton("Salary", sort: .salary, width: 52)
                 headerLabel("Yrs", width: 30)
-                headerLabel("😊", width: 24)
-                headerLabel("❤️", width: 28)
+                headerIcon("face.smiling", width: 24)
+                headerIcon("cross.case.fill", width: 28)
             }
         case .contracts:
             Group {
@@ -817,6 +827,21 @@ struct RosterView: View {
             .frame(width: width, alignment: .center)
             .foregroundStyle(Color.textTertiary)
     }
+
+    /// Icon column header — for columns whose cells are SF Symbols rather than
+    /// text (morale, health). Emoji were used here, which rendered in full
+    /// colour at a different optical weight than every neighbouring header.
+    private func headerIcon(_ systemName: String, width: CGFloat) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 10, weight: .semibold))
+            .frame(width: width, alignment: .center)
+            .foregroundStyle(Color.textTertiary)
+    }
+
+    /// Width the `NavigationLink` disclosure chevron occupies on every player
+    /// row. The header row has no chevron, so without reserving the same gutter
+    /// its columns sit ~21pt right of the values they label.
+    private static let disclosureGutter: CGFloat = 21
 
     private func sortButton(_ title: String, sort: RosterSort, width: CGFloat?) -> some View {
         Button {

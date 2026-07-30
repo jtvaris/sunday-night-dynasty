@@ -230,6 +230,42 @@ struct CoachingStaffView: View {
         return ScoutRole.allCases.filter { !filledRoles.contains($0) }
     }
 
+    // MARK: - Staff Tier Headers
+    //
+    // Every staff section leads with the same 18pt disc so the hiring hierarchy
+    // reads as one column. Numbered discs mark the 1-2-3 priority ladder; the
+    // hollow variant marks a section that sits outside it (assistant HC).
+
+    enum StaffTierBadge {
+        case tier(Int)
+        case optional(icon: String)
+    }
+
+    @ViewBuilder
+    private func staffTierBadge(_ badge: StaffTierBadge) -> some View {
+        switch badge {
+        case .tier(let n):
+            Text("\(n)")
+                .font(.system(size: 10, weight: .black))
+                .foregroundStyle(Color.backgroundPrimary)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(Color.accentGold))
+        case .optional(let icon):
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Color.accentGold)
+                .frame(width: 18, height: 18)
+                .background(Circle().strokeBorder(Color.accentGold.opacity(0.5), lineWidth: 1.5))
+        }
+    }
+
+    private func staffTierHeader(badge: StaffTierBadge, title: String) -> some View {
+        HStack(spacing: 6) {
+            staffTierBadge(badge)
+            Text(title)
+        }
+    }
+
     // MARK: - Hiring priority & budget helpers
 
     /// Whether any staff budget is over (negative remaining). (R27/R31: split pots)
@@ -825,14 +861,7 @@ struct CoachingStaffView: View {
                         headCoachVacantRow
                     }
                 } header: {
-                    HStack(spacing: 6) {
-                        Text("1")
-                            .font(.system(size: 10, weight: .black))
-                            .foregroundStyle(Color.backgroundPrimary)
-                            .frame(width: 18, height: 18)
-                            .background(Circle().fill(Color.accentGold))
-                        Text("Head Coach")
-                    }
+                    staffTierHeader(badge: .tier(1), title: "Head Coach")
                 }
                 .listRowBackground(
                     RoundedRectangle(cornerRadius: 8)
@@ -852,12 +881,11 @@ struct CoachingStaffView: View {
                         vacantRow(role: .assistantHeadCoach)
                     }
                 } header: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "person.2.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color.accentGold)
-                        Text("Assistant Head Coach")
-                    }
+                    // Hollow badge, same 18pt disc as the numbered tiers: the
+                    // assistant sits outside the 1-2-3 hiring ladder, but a bare
+                    // inline icon made this header the odd one out in a column
+                    // of otherwise identical section heads.
+                    staffTierHeader(badge: .optional(icon: "person.2.fill"), title: "Assistant Head Coach")
                 }
                 .listRowBackground(Color.backgroundSecondary)
 
@@ -874,11 +902,7 @@ struct CoachingStaffView: View {
                         }
                     } label: {
                         HStack(spacing: 6) {
-                            Text("2")
-                                .font(.system(size: 10, weight: .black))
-                                .foregroundStyle(Color.backgroundPrimary)
-                                .frame(width: 18, height: 18)
-                                .background(Circle().fill(Color.accentGold))
+                            staffTierBadge(.tier(2))
                             Text("Coordinators")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(Color.textPrimary)
@@ -924,11 +948,7 @@ struct CoachingStaffView: View {
                         .padding(.vertical, 4)
                     } label: {
                         HStack(spacing: 6) {
-                            Text("3")
-                                .font(.system(size: 10, weight: .black))
-                                .foregroundStyle(Color.backgroundPrimary)
-                                .frame(width: 18, height: 18)
-                                .background(Circle().fill(Color.accentGold))
+                            staffTierBadge(.tier(3))
                             Text("Position Coaches")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(Color.textPrimary)

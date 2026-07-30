@@ -105,6 +105,11 @@ struct TopNavigationBar: View {
                     VStack(spacing: 3) {
                         Image(systemName: bookmark.icon)
                             .font(.system(size: 16))
+                            // Fixed glyph band: SF Symbols differ in cap height
+                            // (list.clipboard.fill is noticeably taller than
+                            // person.3.fill), which pushed "Draft" a couple of
+                            // points below its neighbours' baseline.
+                            .frame(height: 18)
                         Text(bookmark.label)
                             .font(.system(size: 9, weight: .medium))
                             .lineLimit(1)

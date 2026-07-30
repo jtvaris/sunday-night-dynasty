@@ -128,6 +128,10 @@ struct ScheduleView: View {
             Color.backgroundPrimary.ignoresSafeArea()
 
             VStack(spacing: 0) {
+                // Deliberately full-bleed rather than clamped to the 720pt card
+                // measure below: at 720 only ~13 of the 18 week chips fit, so
+                // the strip started scrolling and clipped a chip mid-glyph.
+                // Seeing the whole season at once beats edge alignment here.
                 weekSelector
                     .padding(.vertical, 12)
                     .background(Color.backgroundSecondary)

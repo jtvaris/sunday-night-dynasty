@@ -171,6 +171,37 @@ enum DraftAnimation {
     static let clockTickInterval: Double = 1.0
 }
 
+// MARK: - UIKit Appearance
+//
+// SwiftUI's `.pickerStyle(.segmented)` is a wrapped `UISegmentedControl`, and
+// the only way to recolor it is the UIKit appearance proxy. That proxy applies
+// at *view-creation* time, so calling it from a view's `.onAppear` — as several
+// screens used to — lands one frame too late and the control renders in the
+// stock iOS grey before snapping to the app palette (or never, if the view
+// never re-creates it). Applying it once at launch fixes every segmented
+// control in the app, including screens that never knew to ask.
+
+enum DSAppearance {
+
+    /// Applies app-wide UIKit appearance overrides. Call once, at app launch,
+    /// before any UI is built.
+    static func apply() {
+        let control = UISegmentedControl.appearance()
+        control.selectedSegmentTintColor = UIColor(Color.accentBlue)
+        control.backgroundColor = UIColor(Color.backgroundSecondary)
+        control.setTitleTextAttributes(
+            [.foregroundColor: UIColor(Color.backgroundPrimary),
+             .font: UIFont.systemFont(ofSize: 14, weight: .semibold)],
+            for: .selected
+        )
+        control.setTitleTextAttributes(
+            [.foregroundColor: UIColor(Color.textSecondary),
+             .font: UIFont.systemFont(ofSize: 14, weight: .medium)],
+            for: .normal
+        )
+    }
+}
+
 // MARK: - Section Header
 
 /// Uniform section header — uppercase, semibold, accent gold, tracked.

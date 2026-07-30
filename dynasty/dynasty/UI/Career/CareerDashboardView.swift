@@ -452,7 +452,14 @@ struct CareerDashboardView: View {
                 }
                 .padding(.leading, 8)
             }
-            .frame(width: 280)
+            // 300 (matching the landscape rail) rather than 280: at 280 the
+            // longest real task titles — "Set game plan for your opponent" —
+            // wrapped to a second line, which made the list scan ragged.
+            .frame(width: 300)
+            // The panel paints its own background only as far as its content
+            // reaches; on a short task list that left the bottom of the rail
+            // showing the darker page color. Paint the whole column instead.
+            .background(Color.backgroundSecondary)
 
             Divider().overlay(Color.surfaceBorder)
 
@@ -460,8 +467,10 @@ struct CareerDashboardView: View {
             ScrollView {
                 LazyVStack(spacing: 12) {
                     centerTilesGrid
+                    // No minHeight: with a single message the 240pt floor left
+                    // ~180pt of empty panel under it. The empty state carries
+                    // its own height when there is genuinely nothing to show.
                     messagesPanel
-                        .frame(minHeight: 240)
                         .background(Color.backgroundSecondary)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         .overlay(
@@ -522,7 +531,6 @@ struct CareerDashboardView: View {
                 LazyVStack(spacing: 12) {
                     centerTilesGrid
                     messagesPanel
-                        .frame(minHeight: 280)
                         .background(Color.backgroundSecondary)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         .overlay(
@@ -825,16 +833,14 @@ struct CareerDashboardView: View {
                 LazyVStack(spacing: 0) {
                     let filtered = filteredInboxMessages
                     if filtered.isEmpty {
-                        VStack(spacing: 8) {
-                            Image(systemName: "tray")
-                                .font(.system(size: 24))
-                                .foregroundStyle(Color.textTertiary)
-                            Text("No messages")
-                                .font(.caption)
-                                .foregroundStyle(Color.textTertiary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 30)
+                        // Shared empty-state component rather than a bare
+                        // icon + "No messages", and it now says what will
+                        // eventually land here.
+                        EmptyStateView(
+                            icon: "tray",
+                            title: "No messages",
+                            message: "Weekly recaps, owner notes and league news arrive here as the season plays out."
+                        )
                     } else {
                         let displayMessages = Array(filtered.reversed().prefix(5))
                         ForEach(displayMessages) { message in
@@ -948,88 +954,71 @@ struct CareerDashboardView: View {
             // Satisfaction/Reputation scores row
             satisfactionScoresRow
 
-            // Always-visible core tiles (Team + Roster)
-            HStack(spacing: 12) {
-                teamTile
-                rosterTile
+            // Every tile — core *and* phase-adaptive — flows through one grid.
+            // Fixed HStack pairs used to hard-code which two tiles shared a row,
+            // so an absent optional tile (no previous season yet) left a dead
+            // hole in the right column. In a single grid the next tile closes
+            // the gap instead.
+            LazyVGrid(columns: tileColumns, spacing: 12) {
+                coreTiles
+                adaptiveTiles
             }
-
-            // Always-visible core tiles (Staff + Cap)
-            HStack(spacing: 12) {
-                staffTile
-                capTile
-            }
-
-            // Always-visible core tiles (Locker Room + Key Players)
-            HStack(spacing: 12) {
-                lockerRoomTile
-                keyPlayersTile
-            }
-
-            // Always-visible core tiles (Position Strengths + Expiring Contracts)
-            HStack(spacing: 12) {
-                positionStrengthsTile
-                expiringContractsTile
-            }
-
-            // Always-visible core tile (Owner Expectations + previous season if available)
-            HStack(spacing: 12) {
-                ownerExpectationsTile
-                if previousSeasonRecord != nil {
-                    previousSeasonTile
-                } else {
-                    // Reserve right slot when previous season unavailable
-                    Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
-                }
-            }
-
-            // Adaptive phase-group tiles
-            adaptiveTileGrid
         }
     }
 
-    // MARK: - Adaptive Tile Grid (per Phase Group)
+    /// Tiles shown in every phase, in reading order.
+    @ViewBuilder
+    private var coreTiles: some View {
+        teamTile
+        rosterTile
+        staffTile
+        capTile
+        lockerRoomTile
+        keyPlayersTile
+        positionStrengthsTile
+        expiringContractsTile
+        ownerExpectationsTile
+        if previousSeasonRecord != nil { previousSeasonTile }
+    }
+
+    // MARK: - Adaptive Tiles (per Phase Group)
 
     @ViewBuilder
-    private var adaptiveTileGrid: some View {
-        let group = career.currentPhase.group
+    private var adaptiveTiles: some View {
+        switch career.currentPhase.group {
+        case .postseason:
+            awardsHubTile
+            teamAccoladesTile
+            seasonRecapTile
 
-        LazyVGrid(columns: tileColumns, spacing: 12) {
-            switch group {
-            case .postseason:
-                awardsHubTile
-                teamAccoladesTile
-                seasonRecapTile
+        case .offseason:
+            cap3yearForecastTile
+            offseasonGoalsTile
+            inboxTile
 
-            case .offseason:
-                cap3yearForecastTile
-                offseasonGoalsTile
-                inboxTile
+        case .preDraft:
+            scoutingTile
+            if career.currentPhase == .freeAgency { freeAgencyTile }
+            if career.currentPhase == .proDays { proDaysTile }
+            if career.currentPhase == .draft { draftTile }
+            mockDraftTile
+            teamNeedsTile
 
-            case .preDraft:
-                scoutingTile
-                if career.currentPhase == .freeAgency { freeAgencyTile }
-                if career.currentPhase == .proDays { proDaysTile }
-                if career.currentPhase == .draft { draftTile }
-                mockDraftTile
-                teamNeedsTile
+        case .preSeason:
+            trainingPlanTile
+            workloadTile
+            positionBattlesTile
+            campGradesTile
+            if career.currentPhase == .rosterCuts { rosterCutsTile }
+            if career.currentPhase == .preseason { preseasonGamesTile }
 
-            case .preSeason:
-                trainingPlanTile
-                workloadTile
-                positionBattlesTile
-                campGradesTile
-                if career.currentPhase == .rosterCuts { rosterCutsTile }
-                if career.currentPhase == .preseason { preseasonGamesTile }
-
-            case .regularSeason:
-                gameWeekPrepTile
-                depthChartTile
-                injuryReportTile
-                opponentScoutTile
-                if career.currentPhase == .tradeDeadline { tradeDeadlineTile }
-                if career.currentPhase == .playoffs { playoffBracketTile }
-            }
+        case .regularSeason:
+            gameWeekPrepTile
+            depthChartTile
+            injuryReportTile
+            opponentScoutTile
+            if career.currentPhase == .tradeDeadline { tradeDeadlineTile }
+            if career.currentPhase == .playoffs { playoffBracketTile }
         }
     }
 
@@ -1649,9 +1638,17 @@ struct CareerDashboardView: View {
                             Text(t?.abbreviation ?? "???")
                                 .font(.system(size: 11, weight: isMyTeam ? .heavy : .medium))
                                 .foregroundStyle(isMyTeam ? Color.accentGold : Color.textSecondary)
+                                .frame(width: 34, alignment: .leading)
+
+                            // Fills what was ~600pt of empty row between the
+                            // abbreviation and the W-L column, and matches the
+                            // full Standings screen's team column.
+                            Text(t?.fullName ?? "")
+                                .font(.system(size: 11, weight: .regular))
+                                .foregroundStyle(isMyTeam ? Color.textSecondary : Color.textTertiaryReadable)
+                                .lineLimit(1)
                         }
-                        .frame(width: 54, alignment: .leading)
-                        Spacer()
+                        Spacer(minLength: 8)
                         Text(wl)
                             .font(.system(size: 11, weight: .semibold).monospacedDigit())
                             .foregroundStyle(isMyTeam ? Color.textPrimary : Color.textSecondary)
@@ -2655,10 +2652,14 @@ struct CareerDashboardView: View {
             Text("All tasks complete!")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(Color.success)
-            Spacer()
+                .lineLimit(1)
+                .fixedSize()
+            Spacer(minLength: 6)
             Text("Ready to advance")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Color.accentGold)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -3506,7 +3507,10 @@ struct CareerDashboardView: View {
             Spacer(minLength: 0)
         }
         .padding(DSSpacing.lg)
-        .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
+        // A floor, not a fixed height: 220 padded the sparser cards (regular
+        // season carries two stat rows, not four) with a visible void under
+        // the buttons. 160 keeps a hero presence while letting the card hug.
+        .frame(maxWidth: .infinity, minHeight: 160, alignment: .topLeading)
         .background(
             LinearGradient(
                 colors: [accent.opacity(0.18), Color.backgroundSecondary],
@@ -3844,7 +3848,10 @@ private struct DashboardTile<Content: View>: View {
             content()
         }
         .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // maxHeight stretches every tile to its grid row's height, so a short
+        // tile (Roster) no longer floats vertically centered beside a tall one
+        // (Team) — paired cards share a top edge *and* a bottom edge.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color.backgroundSecondary)
