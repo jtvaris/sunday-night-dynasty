@@ -242,6 +242,17 @@ final class Player {
     /// safe lightweight migration.
     var gamesStartedThisSeason: Int = 0
 
+    /// JSON-encoded `SeasonStatLine` — the production the SIM actually recorded
+    /// for this player so far this regular season, accumulated game by game.
+    ///
+    /// Only the user's own games produce a box score (the other 31 teams are
+    /// score-only), so this stays `nil` for most of the league; `WeekAdvancer`
+    /// then synthesizes those seasons at week 18. Snapshotted into
+    /// `PlayerSeasonHistory` at week 18 and cleared in `startNewSeason`, the same
+    /// lifecycle as `gamesPlayedThisSeason` (#33).
+    /// Optional new attribute → lightweight migration.
+    var seasonStatLineData: Data? = nil
+
     /// Pair partner — when this veteran is signed, the protégé rookie may be brought in at a discount.
     var mentorOfPlayerID: UUID?
 
@@ -414,5 +425,35 @@ final class Player {
         self.draftSeason = draftSeason
         self.draftRound = draftRound
         self.assessedPotential = assessedPotential
+    }
+}
+
+// MARK: - Season Stat Line Codable Bridge
+
+extension Player {
+
+    /// The production the sim has recorded for this player so far this regular
+    /// season, JSON-decoded from `seasonStatLineData`. Reading an untouched
+    /// player returns an all-zero line; writing encodes it (caller saves the
+    /// context). `SeasonStatLine` decodes leniently, so a payload written by an
+    /// older build survives a new stat category.
+    var seasonStatLine: SeasonStatLine {
+        get {
+            guard let data = seasonStatLineData,
+                  let line = try? JSONDecoder().decode(SeasonStatLine.self, from: data) else {
+                return SeasonStatLine()
+            }
+            return line
+        }
+        set {
+            seasonStatLineData = try? JSONEncoder().encode(newValue)
+        }
+    }
+
+    /// Folds one game's box score into the running season line.
+    func accumulateSeasonStats(_ game: PlayerGameStats) {
+        var line = seasonStatLine
+        line.add(game)
+        seasonStatLine = line
     }
 }

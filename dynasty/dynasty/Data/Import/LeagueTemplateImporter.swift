@@ -16,6 +16,7 @@ import Foundation
 /// | Team cap sheet | `globalSeed + fnv1a("teamKey|cap")` |
 /// | Scheme expertise / familiarity | `globalSeed + fnv1a("teamKey|staff")` |
 /// | Coach | `globalSeed + fnv1a("teamKey|CoachRole")` |
+/// | Career statline (per season) | `globalSeed + player.id + statSeedOffset + year` |
 ///
 /// Nothing reads `SystemRandomNumberGenerator`, `Int.random(in:)` or
 /// `Date()`, and no seed depends on iteration order, so **two imports of the
@@ -51,7 +52,8 @@ enum LeagueTemplateImporter {
     /// Everything one template import produces.
     ///
     /// A superset of `LeagueGenerator.GeneratedLeague`: the template path also
-    /// materialises career history, which the random path has none of.
+    /// materialises career history from the baked arcs (the random path builds
+    /// its own via `LeagueGenerator.syntheticCareerHistory`).
     struct ImportedLeague {
         let league: League
         let teams: [Team]
@@ -95,11 +97,18 @@ enum LeagueTemplateImporter {
         var allOwners: [Owner] = []
         var allCoaches: [Coach] = []
         var allHistory: [PlayerSeasonHistory] = []
-        // Career rows still waiting on the complete key → Team map.
+        /// AI owner portraits already handed out in this league — see
+        /// `ExtrasCatalog.ownerFaceID`. Mirrors `LeagueGenerator.generate`.
+        var takenOwnerFaceIDs: Set<String> = []
+        // Career rows still waiting on the complete key → Team map. `seed` is the
+        // player's own entity seed, carried through so the stat synthesizer can
+        // open a deterministic sub-stream on it (the arcs are built after the
+        // roster loop, where the seed is otherwise out of scope).
         var pendingHistory: [(
             player: Player,
             arcs: [LeagueTemplate.ArcRow],
-            statLines: [LeagueTemplate.StatLine]?
+            statLines: [LeagueTemplate.StatLine]?,
+            seed: UInt64
         )] = []
 
         for teamTemplate in template.teams {
@@ -111,8 +120,18 @@ enum LeagueTemplateImporter {
             let owner = LeagueGenerator.generateOwner(
                 mediaMarket: definition?.mediaMarket ?? .medium,
                 teamAbbreviation: appAbbr,
-                using: &teamRNG
+                using: &teamRNG,
+                takenFaceIDs: takenOwnerFaceIDs
             )
+            if let ownerFaceID = owner.faceID { takenOwnerFaceIDs.insert(ownerFaceID) }
+            // A template may name its own owner (the dev profile carries the real
+            // 2026 principal owners). The draw above still runs and still consumes
+            // the same RNG values, so only the label changes — patience, spending,
+            // meddling and the avatar stay the template's deterministic ones. The
+            // publish file carries no `ownerName`, so it keeps the fictional name.
+            if let ownerName = identity.ownerName, !ownerName.isEmpty {
+                owner.name = ownerName
+            }
             allOwners.append(owner)
 
             let team = Team(
@@ -133,15 +152,16 @@ enum LeagueTemplateImporter {
             var roster: [Player] = []
             for playerTemplate in teamTemplate.players {
                 guard let position = Position(rawValue: playerTemplate.pos) else { continue }
+                let playerSeed = seed &+ entitySeed(playerTemplate.id)
                 let player = makePlayer(
                     playerTemplate,
                     position: position,
                     teamID: team.id,
-                    seed: seed &+ entitySeed(playerTemplate.id)
+                    seed: playerSeed
                 )
                 roster.append(player)
                 if let arcs = playerTemplate.careerArc, !arcs.isEmpty {
-                    pendingHistory.append((player, arcs, playerTemplate.statLines))
+                    pendingHistory.append((player, arcs, playerTemplate.statLines, playerSeed))
                 }
             }
             assignJerseyNumbers(roster)
@@ -179,15 +199,19 @@ enum LeagueTemplateImporter {
                 for: entry.player,
                 arcs: entry.arcs,
                 statLines: entry.statLines,
+                playerSeed: entry.seed,
                 snapshotYear: season - 1,
                 teamsByKey: teamsByKey
             ))
         }
 
         // --- 2026 picks, trades included ----------------------------------
+        // Plus three years of future picks. They are NOT in the template file
+        // (nothing about the import changes) and carry no RNG draw, so the
+        // determinism gate is unaffected — see `LeagueGenerator.futureDraftPicks`.
         let picks = draftPicks(
             template: template, season: season, teamsByKey: teamsByKey
-        )
+        ) + LeagueGenerator.futureDraftPicks(teams: allTeams, afterSeason: season)
 
         let league = League(teams: allTeams, currentSeason: season)
 
@@ -211,6 +235,9 @@ enum LeagueTemplateImporter {
     /// can never shift a player's personality or salary.
     private static let traitSeedOffset: UInt64 = 0x7A17_5000_0000_0001
     private static let contractSeedOffset: UInt64 = 0xC0_7AC0_0000_0002
+    /// Career stat synthesis. Its own stream so re-tuning the stat model can
+    /// never shift a player's attributes, personality, salary or face.
+    private static let statSeedOffset: UInt64 = 0x57A7_5000_0000_0003
 
     private static func makePlayer(
         _ template: LeagueTemplate.PlayerTemplate,
@@ -573,16 +600,31 @@ enum LeagueTemplateImporter {
 
     // MARK: - Career history
 
-    /// Turns a player's `careerArc` into `PlayerSeasonHistory` rows.
+    /// Turns a player's `careerArc` into `PlayerSeasonHistory` rows, statline
+    /// included.
     ///
-    /// The publish profile ships OVR arcs only (`ANONYMIZATION_SPEC.md` §3), so
-    /// `gamesPlayed` / `gamesStarted` / `keyStat*` stay 0 there. The dev profile
-    /// also carries `statLines`, which are folded into the model's generic
-    /// `keyStat1/2/3` slots and the games counters.
+    /// Two sources, in priority order:
+    ///
+    /// 1. **Dev profile** — `statLines` carries the real per-season production,
+    ///    which is folded straight into the row (`statLine(from:)`). Exact
+    ///    careers, no modelling.
+    /// 2. **Publish profile** — ships OVR arcs only (`ANONYMIZATION_SPEC.md` §3):
+    ///    `{year, team, ovr, role}`, with `gp`/`gs` stripped by the
+    ///    `publish-ovr-arcs-only` gate. Participation AND production are
+    ///    therefore modelled by `SeasonStatSynthesizer` from exactly the four
+    ///    inputs the spec names — position, OVR, role, era (age) — which is what
+    ///    §3 already prescribes ("displayable stat lines are generated by the
+    ///    game's own stat model").
+    ///
+    /// Determinism: every draw runs on `SeededLeagueRandom(seed: playerSeed +
+    /// statSeedOffset + year)`, so the whole statline is a pure function of the
+    /// template. Two imports of the same file stay byte-identical — asserted by
+    /// TVAL check 1, whose history fingerprint hashes the stat columns.
     private static func seasonHistory(
         for player: Player,
         arcs: [LeagueTemplate.ArcRow],
         statLines: [LeagueTemplate.StatLine]?,
+        playerSeed: UInt64,
         snapshotYear: Int,
         teamsByKey: [String: Team]
     ) -> [PlayerSeasonHistory] {
@@ -591,44 +633,100 @@ enum LeagueTemplateImporter {
 
         return arcs.map { arc in
             let line = linesByYear[arc.year]
-            let stats = line.map { keyStats(for: player.position, line: $0) } ?? (0, 0, 0)
+            let age = max(18, player.age - (snapshotYear - arc.year))
+            // Per-(player, year) seed: SplitMix64 is built to be seeded from a
+            // counter, so neighbouring years decorrelate and row ORDER cannot
+            // influence any draw.
+            var rng = SeededLeagueRandom(
+                seed: playerSeed &+ statSeedOffset &+ UInt64(bitPattern: Int64(arc.year))
+            )
+
+            // A season not spent on an NFL roster (227 such arc rows ship in the
+            // template) is a real zero, not a missing measurement.
+            let onRoster = arc.team != nil
+            var gamesPlayed = arc.gp ?? line?.gp ?? 0
+            var gamesStarted = arc.gs ?? line?.gs ?? 0
+            if onRoster, arc.gp == nil, line?.gp == nil {
+                let drawn = SeasonStatSynthesizer.participation(
+                    position: player.position, role: arc.role,
+                    overall: arc.ovr, using: &rng
+                )
+                gamesPlayed = drawn.gamesPlayed
+                gamesStarted = drawn.gamesStarted
+            }
+            if !onRoster {
+                gamesPlayed = 0
+                gamesStarted = 0
+            }
+
+            // Synthesis is keyed on the ABSENCE of a stat line — i.e. exactly the
+            // publish profile. A dev row is trusted even when it folds to all
+            // zeros: a receiver who dressed for three games and caught nothing
+            // really did produce nothing, and inventing numbers over a real
+            // career would be worse than showing the zero.
+            let stats: SeasonStatLine
+            let synthesized: Bool
+            if let line {
+                stats = statLine(from: line)
+                synthesized = false
+            } else {
+                stats = SeasonStatSynthesizer.line(
+                    position: player.position,
+                    overall: arc.ovr,
+                    gamesPlayed: gamesPlayed,
+                    gamesStarted: gamesStarted,
+                    age: age,
+                    using: &rng
+                )
+                synthesized = true
+            }
+
             return PlayerSeasonHistory(
                 playerID: player.id,
                 season: arc.year,
                 overallAtEndOfSeason: arc.ovr,
-                gamesPlayed: arc.gp ?? line?.gp ?? 0,
-                gamesStarted: arc.gs ?? line?.gs ?? 0,
-                ageAtEndOfSeason: max(18, player.age - (snapshotYear - arc.year)),
+                gamesPlayed: gamesPlayed,
+                gamesStarted: gamesStarted,
+                ageAtEndOfSeason: age,
                 teamID: arc.team.flatMap { teamsByKey[$0]?.id },
-                keyStat1: stats.0,
-                keyStat2: stats.1,
-                keyStat3: stats.2
+                position: player.position,
+                statLine: stats,
+                statsAreSynthesized: synthesized
             )
         }
     }
 
-    /// Folds a dev-profile stat line into the model's three generic stat slots.
-    /// Returns zeros for the publish profile, where `statLines` is always nil.
-    static func keyStats(for position: Position, line: LeagueTemplate.StatLine) -> (Int, Int, Int) {
-        func value(_ key: String) -> Int { Int((line.stat(key) ?? 0).rounded()) }
-        switch position {
-        case .QB:
-            return (value("yds"), value("td"), value("int"))
-        case .RB, .FB:
-            return (value("rushYds"), value("rushTd"), value("rec"))
-        case .WR, .TE:
-            return (value("recYds"), value("recTd"), value("rec"))
-        case .LT, .LG, .C, .RG, .RT:
-            return (value("snaps"), value("pen"), value("fum"))
-        case .DE, .DT, .OLB, .MLB:
-            return (value("tackles"), value("sacks"), value("tfl"))
-        case .CB, .FS, .SS:
-            return (value("tackles"), value("defInt"), value("pd"))
-        case .K:
-            return (value("fgm"), value("fga"), value("long"))
-        case .P:
-            return (value("punts"), value("avg"), value("in20"))
-        }
+    /// Folds a dev-profile stat line into the game's own `SeasonStatLine`.
+    ///
+    /// Reads the whole key bag unconditionally: the source only ever carries the
+    /// categories that apply to the player's position family, and no two families
+    /// share a key with a different meaning (a QB's sacks-taken is `sacked`, a
+    /// pass rusher's sacks-made is `sacks`). Categories the game does not model —
+    /// `tfl`, `ff`, `fum`, `pen`, `xpm`, `long`, `in20`, `rating` — are dropped.
+    /// Returns an empty line for the publish profile, where `statLines` is nil.
+    static func statLine(from line: LeagueTemplate.StatLine) -> SeasonStatLine {
+        func int(_ key: String) -> Int { Int((line.stat(key) ?? 0).rounded()) }
+        func double(_ key: String) -> Double { line.stat(key) ?? 0 }
+
+        var stats = SeasonStatLine()
+        stats.passYards = int("yds")
+        stats.passTDs = int("td")
+        stats.passInts = int("int")
+        stats.rushYards = int("rushYds")
+        stats.rushTDs = int("rushTd")
+        stats.receptions = int("rec")
+        stats.recYards = int("recYds")
+        stats.recTDs = int("recTd")
+        stats.tackles = int("tackles")
+        stats.sacks = double("sacks")
+        stats.defInts = int("defInt")
+        stats.passesDefended = int("pd")
+        stats.fieldGoalsMade = int("fgm")
+        stats.fieldGoalsAttempted = int("fga")
+        stats.punts = int("punts")
+        stats.puntAverage = double("avg")
+        stats.snapsPlayed = int("snaps")
+        return stats
     }
 
     // MARK: - Names

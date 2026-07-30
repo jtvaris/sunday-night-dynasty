@@ -7,15 +7,17 @@ import SwiftData
 /// is an A+; a 1st-round pick riding the bench is a bust. Purely analytical:
 /// it never mutates simulation state and persists nothing.
 ///
-/// Inputs are what the league actually records for every team (AI games are
-/// score-only, so no per-position box score exists league-wide):
+/// Inputs are what the league MEASURES for every team (AI games are score-only,
+/// so no per-position box score exists league-wide):
 ///   • career starts   — `Player.gamesStartedThisSeason` + Σ history `gamesStarted` (#40)
 ///   • career games     — `Player.gamesPlayedThisSeason`  + Σ history `gamesPlayed`  (#33)
 ///   • OVR development   — peak OVR vs rookie-year OVR
 ///   • longevity         — pro seasons played
-/// Per-position statline totals (yards/TD/sacks) are intentionally NOT part of
-/// the model: `PlayerSeasonHistory.keyStat1/2/3` stay 0 because per-game stats
-/// aren't persisted for the 31 AI teams. Starts + games + OVR growth are the
+/// Per-position statline totals stay OUT of the model on purpose. The career-stats
+/// wave does now fill `PlayerSeasonHistory`'s typed stat columns, but for 31 of 32
+/// teams those numbers are MODELLED from OVR and playing time
+/// (`SeasonStatSynthesizer`) — grading a pick on a number derived from his own OVR
+/// would just double-count the OVR term. Starts + games + OVR growth remain the
 /// documented production basis, exactly as the #40 fallback allows.
 enum DraftGradeEngine {
 

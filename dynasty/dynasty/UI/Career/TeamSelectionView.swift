@@ -653,7 +653,12 @@ struct TeamSelectionView: View {
             career.leagueSource = catalog.source
         } else {
             result = LeagueGenerator.generate(startYear: career.currentSeason)
-            seasonHistory = []
+            // The generator rolls rosters but no past, so the career table (and
+            // every engine that reads history) would open on a league where
+            // nobody had played a game. Synthesize a backstory instead.
+            seasonHistory = LeagueGenerator.syntheticCareerHistory(
+                players: result.players, startYear: career.currentSeason
+            )
             career.leagueSource = .generated
         }
 

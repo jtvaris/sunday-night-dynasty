@@ -124,7 +124,6 @@ struct PlayerDetailView: View {
                         compactOverviewContractRow
                         compactDevelopmentRow
                         seasonStatsSummarySection
-                        careerTrendSection
                         careerStatsHistorySection
                         actionButtonsSection
                         versatilitySection
@@ -154,7 +153,6 @@ struct PlayerDetailView: View {
                     compactOverviewContractRow
                     compactDevelopmentRow
                     seasonStatsSummarySection
-                    careerTrendSection
                     careerStatsHistorySection
                     tradeValueSection
                     actionButtonsSection
@@ -175,7 +173,6 @@ struct PlayerDetailView: View {
                     compactOverviewContractRow
                     compactDevelopmentRow
                     seasonStatsSummarySection
-                    careerTrendSection
                     careerStatsHistorySection
                     tradeValueSection
                     actionButtonsSection
@@ -877,59 +874,122 @@ struct PlayerDetailView: View {
         return total
     }
 
-    // MARK: - Career Trend & History (Performance Trend Phase 1)
+    // MARK: - Career Stats by Season
 
-    /// History rows for this player, oldest → newest. Empty until the player
-    /// has finished at least one regular season under the new persistence layer.
+    /// History rows for this player, oldest → newest. Empty only for a true
+    /// rookie: every veteran opens his career with a past (a template career
+    /// arc, or the random league's synthesized backstory).
     private var playerSeasonHistory: [PlayerSeasonHistory] {
         allSeasonHistory.filter { $0.playerID == player.id }
     }
 
-    /// Mini OVR-trend chart over the last up-to-5 recorded seasons.
-    /// Hidden entirely when no history exists so we don't show a dead section.
+    /// One numeric column of the career table. `width` is fixed so the header and
+    /// the body rows can never drift apart; the whole set has to fit iPhone
+    /// portrait (~300 pt of content), which is why nobody gets more than four.
+    private struct CareerStatColumn: Identifiable {
+        let header: String
+        let width: CGFloat
+        /// Renders in the "good thing happened" tint (TDs, sacks, picks).
+        let isPositive: Bool
+        let value: (PlayerSeasonHistory) -> String
+
+        var id: String { header }
+
+        init(
+            _ header: String,
+            width: CGFloat,
+            isPositive: Bool = false,
+            value: @escaping (PlayerSeasonHistory) -> String
+        ) {
+            self.header = header
+            self.width = width
+            self.isPositive = isPositive
+            self.value = value
+        }
+    }
+
+    /// The three-to-four categories that actually matter for this position.
+    /// Keyed on the player's CURRENT position so one table has one column set —
+    /// a row's own `positionRaw` records what he played that year for engines and
+    /// Hall-of-Fame snapshots, but mixing column sets mid-table would be unreadable.
+    private var careerStatColumns: [CareerStatColumn] {
+        switch player.position {
+        case .QB:
+            return [
+                CareerStatColumn("YDS", width: 48) { "\($0.passYards)" },
+                CareerStatColumn("TD", width: 30, isPositive: true) { "\($0.passTDs)" },
+                CareerStatColumn("INT", width: 32) { "\($0.passInts)" },
+            ]
+        case .RB, .FB:
+            return [
+                CareerStatColumn("YDS", width: 46) { "\($0.rushYards)" },
+                CareerStatColumn("TD", width: 30, isPositive: true) { "\($0.rushTDs)" },
+                CareerStatColumn("REC", width: 34) { "\($0.receptions)" },
+            ]
+        case .WR, .TE:
+            return [
+                CareerStatColumn("REC", width: 34) { "\($0.receptions)" },
+                CareerStatColumn("YDS", width: 46) { "\($0.recYards)" },
+                CareerStatColumn("TD", width: 30, isPositive: true) { "\($0.recTDs)" },
+            ]
+        case .LT, .LG, .C, .RG, .RT:
+            // A lineman has no counting stats — starts and snaps are the whole
+            // production record the game can honestly show.
+            return [
+                CareerStatColumn("GS", width: 32) { "\($0.gamesStarted)" },
+                CareerStatColumn("SNAP", width: 46) { "\($0.snapsPlayed)" },
+            ]
+        case .DE, .DT:
+            return [
+                CareerStatColumn("TKL", width: 36) { "\($0.tackles)" },
+                CareerStatColumn("SACK", width: 42, isPositive: true) {
+                    String(format: "%.1f", $0.sacks)
+                },
+            ]
+        case .OLB, .MLB:
+            return [
+                CareerStatColumn("TKL", width: 36) { "\($0.tackles)" },
+                CareerStatColumn("SACK", width: 42, isPositive: true) {
+                    String(format: "%.1f", $0.sacks)
+                },
+                CareerStatColumn("INT", width: 30, isPositive: true) { "\($0.defInts)" },
+            ]
+        case .CB, .FS, .SS:
+            return [
+                CareerStatColumn("TKL", width: 36) { "\($0.tackles)" },
+                CareerStatColumn("INT", width: 30, isPositive: true) { "\($0.defInts)" },
+                CareerStatColumn("PD", width: 30) { "\($0.passesDefended)" },
+            ]
+        case .K:
+            return [
+                CareerStatColumn("FGM", width: 36, isPositive: true) { "\($0.fieldGoalsMade)" },
+                CareerStatColumn("FGA", width: 36) { "\($0.fieldGoalsAttempted)" },
+                CareerStatColumn("FG%", width: 42) { entry in
+                    guard entry.fieldGoalsAttempted > 0 else { return "-" }
+                    let pct = Double(entry.fieldGoalsMade) / Double(entry.fieldGoalsAttempted) * 100
+                    return String(format: "%.0f%%", pct)
+                },
+            ]
+        case .P:
+            return [
+                CareerStatColumn("PUNT", width: 44) { "\($0.punts)" },
+                CareerStatColumn("AVG", width: 42) { String(format: "%.1f", $0.puntAverage) },
+            ]
+        }
+    }
+
+    /// Per-season career table: `Season | Age | OVR | GP | <position stats>`.
+    /// Always expanded — this is the page's main development story, not a detail
+    /// worth hiding behind a chevron, and the single OVR column carries the trend
+    /// the old bar chart used to duplicate.
     @ViewBuilder
-    private var careerTrendSection: some View {
-        let history = playerSeasonHistory.suffix(5)
-        if !history.isEmpty {
-            Section("Career Trend") {
-                let points = Array(history)
-                let ovrs = points.map(\.overallAtEndOfSeason)
-                let minOVR = max(0, (ovrs.min() ?? 0) - 2)
-                let maxOVR = min(99, (ovrs.max() ?? 99) + 2)
-                let range = max(1, maxOVR - minOVR)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .bottom, spacing: 6) {
-                        ForEach(Array(points.enumerated()), id: \.element.id) { _, entry in
-                            VStack(spacing: 4) {
-                                Text("\(entry.overallAtEndOfSeason)")
-                                    .font(.system(size: 9, weight: .semibold).monospacedDigit())
-                                    .foregroundStyle(Color.textSecondary)
-                                RoundedRectangle(cornerRadius: 3)
-                                    .fill(Color.forRating(entry.overallAtEndOfSeason))
-                                    .frame(
-                                        height: max(
-                                            4,
-                                            CGFloat(entry.overallAtEndOfSeason - minOVR) /
-                                            CGFloat(range) * 60
-                                        )
-                                    )
-                                Text("'\(String(entry.season % 100))")
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(Color.textTertiary)
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
-                    }
-                    .frame(height: 90)
-
-                    HStack(spacing: 4) {
-                        Image(systemName: trendDirectionIcon)
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(trendDirectionColor)
-                        Text(trendDirectionLabel)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(Color.textSecondary)
+    private var careerStatsHistorySection: some View {
+        if !playerSeasonHistory.isEmpty {
+            Section("Career Stats by Season") {
+                VStack(spacing: 6) {
+                    careerStatsHeaderRow
+                    ForEach(playerSeasonHistory.reversed(), id: \.id) { entry in
+                        careerStatsRow(entry)
                     }
                 }
                 .padding(.vertical, 4)
@@ -938,91 +998,61 @@ struct PlayerDetailView: View {
         }
     }
 
-    /// Direction summary based on first vs last OVR snapshot in the trend window.
-    private var trendDirectionIcon: String {
-        guard let first = playerSeasonHistory.first?.overallAtEndOfSeason,
-              let last = playerSeasonHistory.last?.overallAtEndOfSeason,
-              playerSeasonHistory.count >= 2 else { return "arrow.right" }
-        if last > first { return "arrow.up.right" }
-        if last < first { return "arrow.down.right" }
-        return "arrow.right"
-    }
-
-    private var trendDirectionColor: Color {
-        guard let first = playerSeasonHistory.first?.overallAtEndOfSeason,
-              let last = playerSeasonHistory.last?.overallAtEndOfSeason,
-              playerSeasonHistory.count >= 2 else { return Color.textSecondary }
-        if last > first { return .success }
-        if last < first { return .danger }
-        return Color.textSecondary
-    }
-
-    private var trendDirectionLabel: String {
-        guard let first = playerSeasonHistory.first?.overallAtEndOfSeason,
-              let last = playerSeasonHistory.last?.overallAtEndOfSeason,
-              playerSeasonHistory.count >= 2 else { return "Not enough seasons recorded yet" }
-        let delta = last - first
-        if delta > 0 { return "Up \(delta) OVR over last \(playerSeasonHistory.count) seasons" }
-        if delta < 0 { return "Down \(-delta) OVR over last \(playerSeasonHistory.count) seasons" }
-        return "Flat over last \(playerSeasonHistory.count) seasons"
-    }
-
-    /// Expandable per-season totals. Stats columns are placeholders (0) until
-    /// per-season aggregated stats are wired up — the row still shows season,
-    /// age, and end-of-season OVR which are recorded today.
-    @ViewBuilder
-    private var careerStatsHistorySection: some View {
-        if !playerSeasonHistory.isEmpty {
-            Section {
-                DisclosureGroup("Career Stats by Season") {
-                    VStack(spacing: 6) {
-                        // Header row
-                        HStack {
-                            Text("Season")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(Color.textTertiary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Text("Age")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(Color.textTertiary)
-                                .frame(width: 40, alignment: .trailing)
-                            Text("OVR")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(Color.textTertiary)
-                                .frame(width: 40, alignment: .trailing)
-                            Text("GP")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(Color.textTertiary)
-                                .frame(width: 40, alignment: .trailing)
-                        }
-
-                        ForEach(playerSeasonHistory.reversed(), id: \.id) { entry in
-                            HStack {
-                                Text("\(String(entry.season))")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(Color.textPrimary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                Text("\(entry.ageAtEndOfSeason)")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(Color.textSecondary)
-                                    .frame(width: 40, alignment: .trailing)
-                                Text("\(entry.overallAtEndOfSeason)")
-                                    .font(.caption.weight(.bold).monospacedDigit())
-                                    .foregroundStyle(Color.forRating(entry.overallAtEndOfSeason))
-                                    .frame(width: 40, alignment: .trailing)
-                                Text("\(entry.gamesPlayed)")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(Color.textSecondary)
-                                    .frame(width: 40, alignment: .trailing)
-                            }
-                            // TODO: render keyStat1/2/3 once season-stat aggregation is recorded.
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-                .tint(Color.accentGold)
+    /// `spacing: 0` throughout: the fixed column widths ARE the layout budget,
+    /// so the default HStack gutter would silently overflow on iPhone portrait.
+    private var careerStatsHeaderRow: some View {
+        HStack(spacing: 0) {
+            careerStatsHeaderCell("SEASON")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            careerStatsHeaderCell("AGE").frame(width: 32, alignment: .trailing)
+            careerStatsHeaderCell("OVR").frame(width: 38, alignment: .trailing)
+            careerStatsHeaderCell("GP").frame(width: 32, alignment: .trailing)
+            ForEach(careerStatColumns) { column in
+                careerStatsHeaderCell(column.header)
+                    .frame(width: column.width, alignment: .trailing)
             }
-            .listRowBackground(Color.backgroundSecondary)
+        }
+    }
+
+    private func careerStatsHeaderCell(_ title: String) -> some View {
+        Text(title)
+            .font(.caption2.weight(.semibold))
+            // textTertiary fails WCAG AA on the card surface (DSTokens §contrast),
+            // so column labels use the readable muted token instead.
+            .foregroundStyle(Color.textTertiaryReadable)
+    }
+
+    private func careerStatsRow(_ entry: PlayerSeasonHistory) -> some View {
+        // A season not spent on an NFL roster is a real gap, not a zero line.
+        let played = entry.gamesPlayed > 0
+        return HStack(spacing: 0) {
+            Text("\(String(entry.season))")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(Color.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("\(entry.ageAtEndOfSeason)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 32, alignment: .trailing)
+            Text("\(entry.overallAtEndOfSeason)")
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(Color.forRating(entry.overallAtEndOfSeason))
+                .frame(width: 38, alignment: .trailing)
+            Text("\(entry.gamesPlayed)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 32, alignment: .trailing)
+            ForEach(careerStatColumns) { column in
+                let text = played ? column.value(entry) : "-"
+                Text(text)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(
+                        !played ? Color.textTertiaryReadable :
+                        column.isPositive && text != "0" && text != "0.0" ? Color.success :
+                        Color.textPrimary
+                    )
+                    .frame(width: column.width, alignment: .trailing)
+            }
         }
     }
 
