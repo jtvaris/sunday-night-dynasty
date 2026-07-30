@@ -186,3 +186,124 @@ enum DevelopmentSourceDiag {
 
 #endif
 }
+
+// MARK: - ChurnDiag (task #53)
+
+/// Per-stage seasonal ROSTER-CHURN ledger: WHO left the league, who came back,
+/// and what they looked like.
+///
+/// `DevelopmentSourceDiag` closed the first half of the drift question — every
+/// weekly development pass sums to +0.07 mean OVR a season, so nobody is
+/// developing the league into its §8 band misses. That leaves composition, and
+/// composition is a FUNNEL: contracts expire, clubs cut, the market re-signs
+/// some of them, the rest wash out, the draft brings a class in. Each of those
+/// stages selects on something, and the league's steady state is whatever
+/// survives all five.
+///
+/// The failure mode this exists to catch is an ASYMMETRIC pair of stages —
+/// `WeekAdvancer.trimAIRosters` cutting on `RosterValue.keepScore` (which
+/// discounts age hard) while `FreeAgencyEngine.simulateAIFreeAgency` signs on
+/// raw `overall` (which does not discount it at all). Both stages look sane
+/// alone; together they are a one-way ratchet that trades young depth for old
+/// quality every league year, and no single-stage reading can see it. Hence one
+/// line with EVERY stage on it, in the same four numbers (n, mean OVR, mean
+/// age, mean yearsPro), so the asymmetry is a column comparison rather than an
+/// argument.
+///
+/// Off by default; only `MultiSeasonSmokeTest` turns it on. `#if DEBUG` only —
+/// a Release build keeps the stage names and an empty `record`.
+@MainActor
+enum ChurnDiag {
+
+    // MARK: - Stage names
+
+    /// Contract ran out at the league-year rollover (`executeNewLeagueYear`).
+    /// The funnel's DENOMINATOR: everyone below either came back or did not.
+    static let expire = "expire"
+    /// Age/decline retirement pass (`.coachingChanges`).
+    static let retire = "retire"
+    /// Unsigned after the market closed (`processWashouts`).
+    static let washout = "washout"
+    /// Released at final cutdowns (`trimAIRosters` + the harness's user stand-in).
+    static let cut = "cut"
+    /// Signed out of the pool by the AI free-agent market.
+    static let faSign = "faSign"
+    /// Signed out of the pool by the roster floor (`refillAIRosters`).
+    static let refill = "refill"
+    /// Generated on the spot because the pool was dry — inflow from nowhere.
+    static let street = "street"
+
+#if DEBUG
+
+    private static let stageOrder = [
+        expire, retire, washout, cut, faSign, refill, street,
+    ]
+
+    /// Master switch. `record` is a no-op while this is false.
+    static var isEnabled = false
+
+    private struct Bucket {
+        var n = 0
+        var ovr = 0
+        var age = 0
+        var yearsPro = 0
+    }
+
+    private static var buckets: [String: Bucket] = [:]
+
+    // MARK: - Recording
+
+    static func record(_ stage: String, _ player: Player) {
+        guard isEnabled else { return }
+        var bucket = buckets[stage] ?? Bucket()
+        bucket.n += 1
+        bucket.ovr += player.overall
+        bucket.age += player.age
+        bucket.yearsPro += player.yearsPro
+        buckets[stage] = bucket
+    }
+
+    // MARK: - Reporting
+
+    /// One line per season, then clears the ledger. `poolLeft` is the unsigned,
+    /// unretired residue the season ends with — the men the funnel neither
+    /// re-signed nor removed.
+    static func report(seasonLabel: Int, pool: [Player]) -> String? {
+        guard isEnabled else { return nil }
+        var parts: [String] = []
+        for stage in stageOrder {
+            let bucket = buckets[stage] ?? Bucket()
+            guard bucket.n > 0 else {
+                parts.append("\(stage)=0")
+                continue
+            }
+            let n = Double(bucket.n)
+            parts.append(String(
+                format: "%@=%d/ovr%.1f/age%.1f/yp%.1f",
+                stage, bucket.n,
+                Double(bucket.ovr) / n, Double(bucket.age) / n, Double(bucket.yearsPro) / n
+            ))
+        }
+        var line = "SMOKE: diag churn season=\(seasonLabel) " + parts.joined(separator: " ")
+        if !pool.isEmpty {
+            let n = Double(pool.count)
+            line += String(
+                format: " | poolLeft=%d/ovr%.1f/age%.1f/yp%.1f",
+                pool.count,
+                Double(pool.reduce(0) { $0 + $1.overall }) / n,
+                Double(pool.reduce(0) { $0 + $1.age }) / n,
+                Double(pool.reduce(0) { $0 + $1.yearsPro }) / n
+            )
+        }
+        buckets.removeAll(keepingCapacity: true)
+        return line
+    }
+
+    static func reset() { buckets.removeAll() }
+
+#else
+
+    @inline(__always) static func record(_ stage: String, _ player: Player) {}
+
+#endif
+}

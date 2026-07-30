@@ -190,8 +190,77 @@ enum PlayerRetirementEngine {
     /// Age surcharges on an unsigned player. An unsigned 30-year-old is a
     /// depth signing waiting to happen; an unsigned 33-year-old is retired and
     /// has not said so yet.
-    static let washoutAge30Chance = 0.10
-    static let washoutAge33Chance = 0.20
+    ///
+    /// Task #53 raised both (was 0.10 / 0.20). The washout pass is the league's
+    /// only real exit besides age retirement, and it was selecting the wrong
+    /// men: measured over a 4-season smoke it removed 863 players a year at a
+    /// mean age of **25.6**, because the flat `washoutBaseChance` dominated
+    /// these surcharges for everybody the market had passed over. An exit door
+    /// whose median user is 25 does not thin a 33+ tail, and the 33+ share drifted
+    /// +1.7 pp over four seasons while it ran.
+    ///
+    /// The 27 step is new, and it is the one that reaches the men the §8 80+
+    /// band is actually about. The league's excess quality does not sit in its
+    /// 33-year-olds — task #53's churn ledger cleared that tail in one wave —
+    /// it sits in a 690-man bulge of 26-to-30-year-olds averaging 76 OVR, four
+    /// to seven years into careers that nothing removes them from. Age
+    /// retirement cannot reach them (they are years short of their position's
+    /// decline window) and the quality terms above cannot either (they are well
+    /// clear of replacement level). The market passing on a 28-year-old is the
+    /// only signal the league has about that man, and 7 %/yr is what it is
+    /// worth: small enough that a good player between contracts still comes
+    /// back, large enough that the bulge drains instead of compounding.
+    static let washoutAge27Chance = 0.07
+    static let washoutAge30Chance = 0.16
+    static let washoutAge33Chance = 0.32
+
+    /// The second-contract cliff, in years of pro service.
+    ///
+    /// Age and service are not the same fact and the league's shape needs both.
+    /// Task #53's cohort ledger measured a 711-man bulge at four-to-seven years
+    /// pro — 42 % of the league, averaging 76 OVR — against a generator
+    /// cross-section that carries 29 % there. The generator's league drops
+    /// steeply after year three because that is what the NFL does: a drafted
+    /// career averages ~5 seasons (`DEVELOPMENT_NFL_REFERENCE.md` §8), which
+    /// means most men do not get a third contract. The simulated league had no
+    /// such cliff at all — a man who survived his rookie deal was in for life,
+    /// because every removal term keyed on age or on rating and he was young
+    /// enough and good enough for both.
+    ///
+    /// So: a man the market has passed over who is already four years in is not
+    /// waiting for a better offer, he is being replaced by a cheaper version of
+    /// himself. Ramped rather than stepped because the cliff is a slope in the
+    /// real data, and capped because a genuinely good player is not finished at
+    /// nine years — at that point the age terms above have him anyway.
+    static let washoutServiceFrom = 4
+    static let washoutServicePerYear = 0.045
+    static let washoutServiceCap = 0.20
+
+    /// Years of pro service over which untapped ceiling still buys a man
+    /// another camp, and how much of that ceiling counts.
+    ///
+    /// The other half of the same finding. `washoutProbability` graded a player
+    /// purely on where his CURRENT rating sat against replacement level, so a
+    /// 23-year-old former fourth-rounder at 62 OVR with an 80 ceiling faced the
+    /// same odds as a 29-year-old journeyman at 62 who is exactly what he will
+    /// always be. Clubs do not treat those two men alike — the young one is a
+    /// camp arm, a practice-squad body, a tryout in August — and the league's
+    /// own cutdown day already says so (`RosterValue.upsidePremium`, 0.45 over
+    /// three years). This is that rule applied to the exit door, expressed in
+    /// the same "OVR points against replacement" currency the quality grace
+    /// above already uses, so it fades a young prospect out of the base chance
+    /// instead of bolting on a second exemption.
+    ///
+    /// Deliberately the same 3-year window and a SMALLER credit than the
+    /// cutdown's 0.45: a man the market has already passed over is a worse bet
+    /// than one still on a 53, so his ceiling has to be worth less here than it
+    /// is there. Measured down from 0.50 — at half a point per point of
+    /// headroom the pass preserved so many developmental prospects that the
+    /// league's first-three-years share sat at 57-60 % through the middle
+    /// seasons against §8's 45-55 %, i.e. it fixed one end of the age pyramid
+    /// by breaking the other.
+    static let washoutUpsideYears = 3
+    static let washoutUpsideCredit = 0.28
 
     /// Replacement level sampled off the rostered league (see
     /// `washoutReplacementPercentile`).
@@ -246,12 +315,23 @@ enum PlayerRetirementEngine {
         // — the sliding version of the old "a good player never washes out",
         // which was true as an absolute and false as a model (see
         // `washoutBaseChance`).
-        let deficit = replacementOverall - player.overall
+        // Task #53: a developmental player is graded on what he might still be,
+        // not only on what he is today — see `washoutUpsideYears`. Folding the
+        // credit into the rating the deficit is measured from means a young man
+        // with a real ceiling fades out through the SAME quality grace an
+        // established starter does, rather than through a parallel exemption.
+        var effectiveOverall = Double(player.overall)
+        if player.yearsPro <= washoutUpsideYears {
+            effectiveOverall += Double(max(0, player.truePotential - player.overall))
+                * washoutUpsideCredit
+        }
+
+        let deficit = Double(replacementOverall) - effectiveOverall
         var chance: Double
         if deficit >= 0 {
-            chance = washoutBaseChance + Double(deficit) * washoutChancePerPoint
+            chance = washoutBaseChance + deficit * washoutChancePerPoint
         } else {
-            let surplus = Double(-deficit)
+            let surplus = -deficit
             chance = washoutBaseChance * max(0.0, 1.0 - surplus / washoutQualityGrace)
         }
 
@@ -260,7 +340,15 @@ enum PlayerRetirementEngine {
             chance += washoutAge33Chance
         } else if player.age >= 30 {
             chance += washoutAge30Chance
+        } else if player.age >= 27 {
+            chance += washoutAge27Chance
         }
+
+        // Service: the second-contract cliff (see `washoutServiceFrom`).
+        chance += min(
+            washoutServiceCap,
+            Double(max(0, player.yearsPro - washoutServiceFrom)) * washoutServicePerYear
+        )
 
         return min(washoutCeiling, max(0.0, chance))
     }
