@@ -1565,7 +1565,20 @@ enum WeekAdvancer {
                 ? 0.5 * VersatilityDevelopmentEngine.schemeInstallIntensityBonus
                 : 0.5
 
+            // Anyone who arrived after camp — a trade, a street signing, a
+            // promotion off the practice squad — has no dictionary entry for
+            // this building's systems at all, and an absent key answers 0 to
+            // every familiarity read in `PlaySimulator` (task #54). Idempotent,
+            // so the 52 players who were already here cost one lookup each.
+            let installedSchemes = Set([
+                oc?.offensiveScheme?.rawValue, dc?.defensiveScheme?.rawValue,
+            ].compactMap { $0 })
+
             for player in teamPlayers where !player.isInjured && !player.isHoldingOut {
+                VersatilityDevelopmentEngine.seedActiveSchemes(
+                    player: player, activeSchemes: installedSchemes
+                )
+
                 // Scheme learning (reduced intensity during season)
                 if let offScheme = oc?.offensiveScheme, player.position.side == .offense {
                     let gain = VersatilityDevelopmentEngine.learnScheme(
@@ -3034,6 +3047,24 @@ enum WeekAdvancer {
             // for the user's team. Full-pads camp = higher intensity baseline.
             applyCampWeeklyTick(career: career, phase: .trainingCamp, modelContext: modelContext, allPlayers: allPlayers)
 
+            // Phase 2 (plan §2.9.2-3): the team-level environment — did a
+            // coordinator swap the playbook this offseason, and has the staff
+            // been together long enough for continuity to pay? This also ages
+            // out the systems the building no longer runs, SEEDS the ones it has
+            // just installed, and files the news story for an install year.
+            //
+            // Runs BEFORE `buildOffseasonInputs` (task #54): the scheme fit that
+            // pass reports is a function of the familiarity dictionary, so the
+            // dictionary has to describe the staff that will actually coach the
+            // upcoming season before anybody reads a fit off it.
+            let schemeChanges = applySchemeChanges(
+                career: career,
+                teams: teams,
+                allPlayers: allPlayers,
+                allCoaches: allCoaches
+            )
+            let teamEnvironments = schemeChanges.environments
+
             // Phase 2 (plan §2.3-§2.6): assemble the situational inputs the
             // realization model runs on — last season's record and
             // participation, the career trend, scheme fit, health flags —
@@ -3047,19 +3078,6 @@ enum WeekAdvancer {
                 allCoaches: allCoaches,
                 modelContext: modelContext
             )
-
-            // Phase 2 (plan §2.9.2-3): the team-level environment — did a
-            // coordinator swap the playbook this offseason, and has the staff
-            // been together long enough for continuity to pay? This also ages
-            // out the systems the building no longer runs and files the news
-            // story for an install year.
-            let schemeChanges = applySchemeChanges(
-                career: career,
-                teams: teams,
-                allPlayers: allPlayers,
-                allCoaches: allCoaches
-            )
-            let teamEnvironments = schemeChanges.environments
 
             // Process offseason development for all teams
             // (R22: holdout players skip camp entirely — no development).
@@ -5542,8 +5560,11 @@ enum WeekAdvancer {
             let staff = coachesByTeam[team.id] ?? []
             let oc = staff.first { $0.role == .offensiveCoordinator }
             let dc = staff.first { $0.role == .defensiveCoordinator }
-            let offScheme = oc?.offensiveScheme?.rawValue
-            let defScheme = dc?.defensiveScheme?.rawValue
+            // Same resolution `offseasonSchemeFit` uses, so "what the club
+            // installs" is one answer everywhere: the coordinator's system, or
+            // the head coach's when that chair is empty.
+            let offScheme = installedOffensiveScheme(staff: staff)?.rawValue
+            let defScheme = installedDefensiveScheme(staff: staff)?.rawValue
 
             // A `nil` snapshot means "never recorded" (new league / legacy
             // save): record it, but never charge an install year for it.
@@ -5591,10 +5612,18 @@ enum WeekAdvancer {
             )
             environments[team.id] = environment
 
-            // Age out the systems this staff no longer runs.
+            // Age out the systems this staff no longer runs, and give the room an
+            // honest starting point in the ones it does. The seed is what stops a
+            // carousel year from reading as "nobody here has ever heard of
+            // football" — an absent dictionary key answers 0, which used to be
+            // the entire roster's scheme fit the morning after a swap (#54).
             let active = Set([offScheme, defScheme].compactMap { $0 })
             for player in playersByTeam[team.id] ?? [] {
                 VersatilityDevelopmentEngine.decayUnusedSchemes(
+                    player: player,
+                    activeSchemes: active
+                )
+                VersatilityDevelopmentEngine.seedActiveSchemes(
                     player: player,
                     activeSchemes: active
                 )
@@ -5867,28 +5896,44 @@ enum WeekAdvancer {
         return losers
     }
 
-    /// 0.0-1.0 fit between a player and the scheme his coordinator actually
-    /// runs, for the §2.6 potential drift.
+    /// 0.0-1.0 fit between a player and what his building actually runs, for the
+    /// §2.6 potential drift.
     ///
-    /// Familiarity is the honest signal the domain already carries: a player who
-    /// has installed his coordinator's scheme for years reads as a fit, one
-    /// dropped into a system he has never run does not. Rookies are held at the
-    /// neutral 0.5 — their familiarity is a seeded install-year number
-    /// (`DraftEngine.initializeRookieFamiliarity`), and a first-year playbook
-    /// gap should not push a ceiling down before he has taken a snap.
+    /// Task #54 replaced a three-way pin with one real computation. The old
+    /// version returned a hard-coded 0.5 for every rookie, every specialist and
+    /// every club without a coordinator — about a fifth of the league — and
+    /// `schemeFamiliarity / 100` for everyone else, which is a measure of tenure
+    /// rather than of fit. The consequences were both visible on the smoke's
+    /// `diag devsource` line: the median sat at EXACTLY 0.50 forever, and the
+    /// mean slid 0.52 → 0.39 as the generator's 55-85 seed was replaced by
+    /// intake that enters at 15-45 and by carousel years that dropped whole
+    /// rosters onto an absent-key 0.
+    ///
+    /// `CoachingEngine.rosterSchemeFit` is now the single definition, shared
+    /// byte-for-byte with `tools/balance-harness`.
     private static func offseasonSchemeFit(player: Player, staff: [Coach]) -> Double {
-        guard player.yearsPro >= 1 else { return 0.5 }
-        let schemeKey: String?
-        switch player.position.side {
-        case .offense:
-            schemeKey = staff.first { $0.role == .offensiveCoordinator }?.offensiveScheme?.rawValue
-        case .defense:
-            schemeKey = staff.first { $0.role == .defensiveCoordinator }?.defensiveScheme?.rawValue
-        case .specialTeams:
-            schemeKey = nil
-        }
-        guard let schemeKey else { return 0.5 }
-        return min(1.0, max(0.0, Double(player.schemeFam(for: schemeKey)) / 100.0))
+        CoachingEngine.rosterSchemeFit(
+            player: player,
+            offensiveScheme: installedOffensiveScheme(staff: staff),
+            defensiveScheme: installedDefensiveScheme(staff: staff)
+        )
+    }
+
+    /// The offensive system the building installs: the coordinator's, or the
+    /// head coach's when the OC chair is empty or the OC is a defensive hire.
+    /// A staff always runs SOMETHING; falling straight through to `nil` was
+    /// another way the old fit landed on a neutral pin.
+    private static func installedOffensiveScheme(staff: [Coach]) -> OffensiveScheme? {
+        staff.first { $0.role == .offensiveCoordinator }?.offensiveScheme
+            ?? staff.first { $0.role == .headCoach }?.offensiveScheme
+            ?? staff.first { $0.role == .assistantHeadCoach }?.offensiveScheme
+    }
+
+    /// The defensive system the building installs (see `installedOffensiveScheme`).
+    private static func installedDefensiveScheme(staff: [Coach]) -> DefensiveScheme? {
+        staff.first { $0.role == .defensiveCoordinator }?.defensiveScheme
+            ?? staff.first { $0.role == .headCoach }?.defensiveScheme
+            ?? staff.first { $0.role == .assistantHeadCoach }?.defensiveScheme
     }
 
     // MARK: - Private: Owner Demand Generation (#248)

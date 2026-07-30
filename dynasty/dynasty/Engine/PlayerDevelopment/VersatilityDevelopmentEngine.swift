@@ -133,12 +133,80 @@ enum VersatilityDevelopmentEngine {
     static func decayUnusedSchemes(player: Player, activeSchemes: Set<String>) {
         var familiarity = player.schemeFamiliarity
         var changed = false
-        for (scheme, value) in familiarity where !activeSchemes.contains(scheme) {
+        // `value > unusedSchemeFloor` is the "only values ABOVE the floor decay"
+        // clause above, and it was missing: `max(floor, value - 4)` on a player
+        // sitting at 30 returned 55, so parking a system LIFTED a half-learned
+        // playbook 25 points (task #54). The floor is a floor, not a target.
+        for (scheme, value) in familiarity
+        where !activeSchemes.contains(scheme) && value > unusedSchemeFloor {
             let decayed = max(unusedSchemeFloor, value - unusedSchemeDecayPerOffseason)
             if decayed != value {
                 familiarity[scheme] = decayed
                 changed = true
             }
+        }
+        if changed { player.schemeFamiliarity = familiarity }
+    }
+
+    // MARK: - Install Baseline (task #54)
+
+    /// Constant term of `installBaseline` — what any professional carries into
+    /// any NFL playbook simply by having played in one.
+    static let installBaselineFloor = 12.0
+
+    /// Weight `installBaseline` puts on `Player.learning`, the canonical
+    /// "picks up the install" stat (the same stat `learnScheme` ramps on).
+    static let installBaselineLearningWeight = 0.18
+
+    /// Weight `installBaseline` puts on coachability.
+    static let installBaselineCoachabilityWeight = 0.06
+
+    /// Share of the deepest system he already owns that transfers to a brand-new
+    /// one. Concepts travel between pro playbooks; the words do not.
+    static let installBaselineCarryOver = 0.30
+
+    /// Hard cap on `installBaseline`. Deliberately UNDER `unusedSchemeFloor`:
+    /// day one of an install can never leave a player knowing a new system
+    /// better than the floor he keeps under one he has actually played.
+    static let installBaselineCap = 50
+
+    /// What a player already knows about a system his building has never taught
+    /// him — film, position meetings, and the concepts that carry over from the
+    /// playbooks he has run.
+    ///
+    /// `Player.schemeFam(for:)` answers 0 for a key that is simply absent, and
+    /// until this existed that 0 was the literal state of an ENTIRE roster the
+    /// morning after a coordinator swap: the club installs a playbook nobody has
+    /// a dictionary entry for, so every player reads as knowing nothing about
+    /// football — while `decayUnusedSchemes` simultaneously guarantees that the
+    /// system he just stopped running never falls below 55. That asymmetry is
+    /// what made the shipped scheme-fit distribution slide season after season
+    /// (task #54): every carousel year dumped another cohort onto a hard 0.
+    static func installBaseline(player: Player) -> Int {
+        let aptitude = installBaselineFloor
+            + Double(player.learning) * installBaselineLearningWeight
+            + Double(player.mental.coachability) * installBaselineCoachabilityWeight
+        let deepest = Double(player.schemeFamiliarity.values.max() ?? 0)
+        let raw = aptitude + deepest * installBaselineCarryOver
+        return max(0, min(installBaselineCap, Int(raw.rounded())))
+    }
+
+    /// Gives the player an honest starting point in every system his building
+    /// currently installs that he has no entry for at all.
+    ///
+    /// Only ever writes ABSENT keys — a value already on the row (a rookie's
+    /// seeded install number, a veteran's decayed 55) is the truth and is left
+    /// alone. Idempotent, so it is safe to run on every practice week.
+    ///
+    /// - Parameters:
+    ///   - player: The player whose dictionary is seeded (mutated in place).
+    ///   - activeSchemes: The `rawValue`s his current staff actually runs.
+    static func seedActiveSchemes(player: Player, activeSchemes: Set<String>) {
+        var familiarity = player.schemeFamiliarity
+        var changed = false
+        for scheme in activeSchemes where familiarity[scheme] == nil {
+            familiarity[scheme] = installBaseline(player: player)
+            changed = true
         }
         if changed { player.schemeFamiliarity = familiarity }
     }
