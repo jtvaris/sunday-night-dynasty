@@ -89,6 +89,25 @@ final class Career {
     /// start of every new season. Optional new attribute → lightweight migration.
     var pendingTradeOffersData: Data? = nil
 
+    // MARK: - Trade Negotiation Threads (Wave 3)
+    /// JSON-encoded `[TradeNegotiationThread]` — live conversations with AI GMs,
+    /// newest first, capped at 12. An offer can sit on a desk for weeks, so the
+    /// transcript, the round count and the package on the table all have to
+    /// outlive the view (plan §6 Wave 3.2). Same inline-default pattern as
+    /// `pendingTradeOffersData` → lightweight migration.
+    var tradeThreadsData: Data? = nil
+
+    // MARK: - Inbox (Wave 3)
+    /// JSON-encoded `[InboxMessage]`, oldest first, capped at 200.
+    ///
+    /// The inbox used to be `@State` on `CareerShellView`, which meant every
+    /// message died with the view: a draft-day trade notice generated inside the
+    /// draft-room modal was gone before the shell ever read it (task #19), and
+    /// closing the career threw away the whole mailbox. `WeekAdvancer` still
+    /// publishes through `lastInboxMessages`; the shell drains that channel and
+    /// writes the result here. Optional new attribute → lightweight migration.
+    var inboxData: Data? = nil
+
     // MARK: - Development Reports (R26)
     /// JSON-encoded `[DevelopmentReport]` — weekly development digests for
     /// the user's team, newest first, capped at 10.
@@ -338,6 +357,56 @@ extension Career {
         }
         set {
             pendingTradeOffersData = try? JSONEncoder().encode(newValue)
+        }
+    }
+}
+
+// MARK: - Trade Negotiation Threads Codable Bridge (Wave 3)
+
+extension Career {
+
+    /// Live and recently-closed trade conversations, newest first (max 12).
+    /// Writing encodes and stores the trimmed list (caller saves the context).
+    var tradeThreads: [TradeNegotiationThread] {
+        get {
+            guard let data = tradeThreadsData,
+                  let threads = try? JSONDecoder().decode([TradeNegotiationThread].self, from: data) else {
+                return []
+            }
+            return threads
+        }
+        set {
+            tradeThreadsData = try? JSONEncoder().encode(Array(newValue.prefix(12)))
+        }
+    }
+
+    /// Inserts or replaces one thread, keeping the list newest-first.
+    /// Caller saves the context.
+    func upsertTradeThread(_ thread: TradeNegotiationThread) {
+        var threads = tradeThreads.filter { $0.id != thread.id }
+        threads.insert(thread, at: 0)
+        tradeThreads = threads
+    }
+}
+
+// MARK: - Inbox Codable Bridge (Wave 3)
+
+extension Career {
+
+    /// The coach's mailbox, OLDEST FIRST (max 200) — the order
+    /// `WeekAdvancer.lastInboxMessages` appends in and `InboxView` reverses for
+    /// display. Trimming from the front keeps the newest 200 (caller saves the
+    /// context).
+    var inbox: [InboxMessage] {
+        get {
+            guard let data = inboxData,
+                  let messages = try? JSONDecoder().decode([InboxMessage].self, from: data) else {
+                return []
+            }
+            return messages
+        }
+        set {
+            inboxData = try? JSONEncoder().encode(Array(newValue.suffix(200)))
         }
     }
 }

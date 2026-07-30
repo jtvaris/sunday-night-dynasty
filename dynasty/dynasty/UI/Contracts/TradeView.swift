@@ -45,6 +45,16 @@ struct TradeView: View {
     // MARK: Incoming offers
     @State private var incomingOffers: [TradeProposal] = []
 
+    // MARK: Negotiations (Wave 3)
+    /// The conversation currently on screen. `nil` = nobody is on the phone.
+    @State private var activeNegotiation: NegotiationRoute?
+    /// A package the negotiation screen agreed to, waiting for the cover to
+    /// finish dismissing so the result alert lands on the Trade Center rather
+    /// than behind a disappearing modal.
+    @State private var pendingAgreedDeal: (proposal: TradeProposal, startedByAI: Bool)?
+    /// Live threads, newest first (mirror of `career.tradeThreads`).
+    @State private var threads: [TradeNegotiationThread] = []
+
     // MARK: Feedback
     @State private var tradeResultMessage: String?
     @State private var showResultAlert = false
@@ -78,6 +88,7 @@ struct TradeView: View {
                 ScrollView {
                     VStack(spacing: 24) {
                         proposeSectionCard
+                        openNegotiationsCard
                         pickWizardCard
                         incomingSectionCard
                         tradeHistoryCard
@@ -96,6 +107,26 @@ struct TradeView: View {
         .task { loadData() }
         .alert(tradeResultMessage ?? "", isPresented: $showResultAlert) {
             Button("OK", role: .cancel) {}
+        }
+        // Wave 3: the conversation. `TradeNegotiationView` supplies its own
+        // "Close" toolbar item, so the wrapper must NOT add a second one.
+        .fullScreenCover(item: $activeNegotiation, onDismiss: negotiationDismissed) { route in
+            NavigationStack {
+                TradeNegotiationView(
+                    career: career,
+                    partnerTeamID: route.partnerTeamID,
+                    threadID: route.threadID,
+                    seed: route.seed,
+                    sourceOfferID: route.sourceOfferID,
+                    openingLine: route.openingLine,
+                    onDealAgreed: { proposal, thread in
+                        pendingAgreedDeal = (proposal, thread.startedByAI)
+                    },
+                    onInboxMessage: { message in
+                        deliver(message)
+                    }
+                )
+            }
         }
     }
 
@@ -181,6 +212,97 @@ struct TradeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
         .cardBackground()
+    }
+
+    // MARK: - Open Negotiations (Wave 3)
+
+    /// Conversations already in progress. A trade talk is not a modal that ends
+    /// when you close it — an offer can sit on a desk for weeks, so the threads
+    /// live on `Career` and get their own shelf here.
+    @ViewBuilder
+    private var openNegotiationsCard: some View {
+        let live = threads.filter { $0.status == .open }
+        if !live.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                sectionHeader(title: "Open Negotiations", icon: "bubble.left.and.bubble.right.fill")
+
+                ForEach(live) { thread in
+                    negotiationRow(thread)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+            .cardBackground()
+        }
+    }
+
+    private func negotiationRow(_ thread: TradeNegotiationThread) -> some View {
+        let partner = allTeams.first { $0.id == thread.partnerTeamID }
+        let identity = partner.map {
+            TradeValueEngine.gmIdentity(team: $0, season: career.currentSeason)
+        }
+
+        return Button {
+            activeNegotiation = NegotiationRoute(
+                partnerTeamID: thread.partnerTeamID,
+                threadID: thread.id
+            )
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(partner?.abbreviation ?? "???")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 4))
+                    if let identity {
+                        Text(identity.name)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.textPrimary)
+                        Text(identity.archetypeLabel)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    Spacer()
+                    Text("Round \(thread.round)")
+                        .font(.system(size: 10).weight(.bold).monospacedDigit())
+                        .foregroundStyle(Color.textSecondary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.textTertiary)
+                }
+
+                Text(thread.lastLine)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                HStack(spacing: 6) {
+                    Image(systemName: "clock.fill")
+                        .font(.system(size: 8))
+                    Text(TradeWindowRules.expiryNote(
+                        phase: career.currentPhase, week: career.currentWeek
+                    ))
+                    .font(.system(size: 9, weight: .semibold))
+                    if thread.pendingCounter != nil {
+                        Text("· their counter is on the table")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.success)
+                    }
+                    Spacer()
+                }
+                .foregroundStyle(Color.warning)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.backgroundTertiary)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: Partner Picker
@@ -314,6 +436,8 @@ struct TradeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Thin wrapper over the shared row (`TradeAssetViews`), which the Wave 3
+    /// mid-negotiation package editor also draws.
     private func assetToggleRow(
         label: String,
         sublabel: String,
@@ -322,36 +446,14 @@ struct TradeView: View {
         accentColor: Color,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? accentColor : Color.textTertiary)
-                    .font(.system(size: 16))
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(label)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.textPrimary)
-                        .lineLimit(1)
-                    Text(sublabel)
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.textTertiary)
-                }
-                Spacer()
-                Text(valueLabel)
-                    .font(.system(size: 10).weight(.semibold).monospacedDigit())
-                    .foregroundStyle(isSelected ? accentColor : Color.textSecondary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected
-                          ? accentColor.opacity(0.12)
-                          : Color.backgroundTertiary)
-            )
-        }
-        .buttonStyle(.plain)
+        TradeAssetToggleRow(
+            label: label,
+            sublabel: sublabel,
+            valueLabel: valueLabel,
+            isSelected: isSelected,
+            accentColor: accentColor,
+            action: action
+        )
     }
 
     // MARK: Value Meter
@@ -466,9 +568,9 @@ struct TradeView: View {
                         !theirSelectedPlayers.isEmpty || !theirSelectedPicks.isEmpty
 
         return Button {
-            submitProposal(partner: partner)
+            startNegotiation(partner: partner)
         } label: {
-            Label("Propose Trade", systemImage: "arrow.left.arrow.right")
+            Label("Propose Trade", systemImage: "bubble.left.and.bubble.right.fill")
                 .font(.system(size: 15, weight: .bold))
                 .foregroundStyle(hasAssets ? Color.backgroundPrimary : Color.textTertiary)
                 .frame(maxWidth: .infinity)
@@ -608,6 +710,9 @@ struct TradeView: View {
         )
     }
 
+    /// One side of an incoming offer. The layout moved to `TradeAssetViews` in
+    /// Wave 3 so a package quoted inside a negotiation transcript reads exactly
+    /// like the same package quoted here.
     private func offerAssetColumn(
         title: String,
         playerIDs: [UUID],
@@ -618,72 +723,13 @@ struct TradeView: View {
         let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
         let pickLookup   = Dictionary(uniqueKeysWithValues: allPicks.map   { ($0.id, $0) })
 
-        let players = playerIDs.compactMap { playerLookup[$0] }
-        let picks   = pickIDs.compactMap   { pickLookup[$0]   }
-
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.textSecondary)
-                Spacer()
-                Text(valueLabel)
-                    .font(.caption.weight(.bold).monospacedDigit())
-                    .foregroundStyle(accentColor)
-            }
-
-            // Every name in an offer is tappable: judging "is this a good deal?"
-            // means reading the player, and the offer card used to be a dead end.
-            ForEach(players) { player in
-                NavigationLink(destination: PlayerDetailView(player: player)) {
-                    HStack(spacing: 6) {
-                        Text(player.position.rawValue)
-                            .font(.system(size: 9).weight(.bold))
-                            .foregroundStyle(Color.textPrimary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(positionColor(player.position), in: RoundedRectangle(cornerRadius: 3))
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(player.fullName)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Color.textPrimary)
-                                .lineLimit(1)
-                            Text("\(player.overall) OVR · Age \(player.age)")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Color.textTertiary)
-                        }
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Color.textTertiary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-
-            ForEach(picks) { pick in
-                HStack(spacing: 6) {
-                    Text("PICK")
-                        .font(.system(size: 9).weight(.bold))
-                        .foregroundStyle(Color.backgroundPrimary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 3))
-                    Text(pickLabel(pick))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.textPrimary)
-                        .lineLimit(1)
-                }
-            }
-
-            if players.isEmpty && picks.isEmpty {
-                Text("Nothing")
-                    .font(.caption)
-                    .foregroundStyle(Color.textTertiary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        return TradeAssetColumn(
+            title: title,
+            players: playerIDs.compactMap { playerLookup[$0] },
+            picks: pickIDs.compactMap { pickLookup[$0] },
+            valueLabel: valueLabel,
+            accentColor: accentColor
+        )
     }
 
     // MARK: - Value Breakdown
@@ -813,22 +859,31 @@ struct TradeView: View {
     /// What the other GM is asking for, in words instead of point totals.
     ///
     /// Derived from the same 5-step verdict the response uses, so it can never
-    /// contradict the outcome. HANDOFF to the market layer: when
-    /// `TradeValueEngine` exposes a real asking price (persona premium + hidden
-    /// noise, plan §6 Wave 2.3), swap the source here — the copy slot and the
-    /// no-exact-numbers rule stay as they are.
+    /// contradict the outcome. Wave 3 named the man and quoted his OPENING
+    /// posture (`GMIdentity.askingPremiumPercent`) — the handoff the Wave 2
+    /// comment here asked for. The hidden half stays hidden: the accept bar, the
+    /// weekly asking noise and the chart lean are still nowhere on screen.
     private func askingPriceHint(partner: Team) -> String? {
+        let identity = TradeValueEngine.gmIdentity(
+            team: partner, season: career.currentSeason
+        )
+        let opener = "\(identity.name) (\(identity.archetypeLabel)) opens about \(identity.askingPremiumPercent)% over what he sends."
+
+        guard identity.talksOpen else {
+            return "\(identity.name) has stopped taking your calls this league year."
+        }
+
         switch currentPartnerVerdict(partner: partner) {
         case .loveIt:
-            return "They would sign this today."
+            return "\(opener) He would sign this today."
         case .likeIt:
-            return "Their ask is met — expect a yes."
+            return "\(opener) His ask is met — expect a yes."
         case .onTheFence:
-            return "Close. A late-round pick or a rotational player gets it over the line."
+            return "\(opener) Close: a late-round pick or a rotational player gets it over the line."
         case .wantMore:
-            return "They want a real piece added — a starter or early-round capital."
+            return "\(opener) He wants a real piece added — a starter or early-round capital."
         case .hangUp:
-            return "Not a conversation yet: their ask is far above what is on the table."
+            return "\(opener) Not a conversation yet: his ask is far above what is on the table."
         }
     }
 
@@ -884,20 +939,14 @@ struct TradeView: View {
                         !theirSelectedPlayers.isEmpty || !theirSelectedPicks.isEmpty
         guard hasAssets else { return [] }
 
-        return TradeValueEngine.validationErrors(
-            proposal: TradeProposal(
-                offeringTeamID: myTeam.id,
-                receivingTeamID: partner.id,
-                sendingPlayers: Array(mySelectedPlayers),
-                receivingPlayers: Array(theirSelectedPlayers),
-                sendingPicks: Array(mySelectedPicks),
-                receivingPicks: Array(theirSelectedPicks)
-            ),
-            allPlayers: allPlayers,
-            teams: allTeams,
-            capMode: career.capMode,
-            contracts: allContracts
-        )
+        return validationErrors(for: TradeProposal(
+            offeringTeamID: myTeam.id,
+            receivingTeamID: partner.id,
+            sendingPlayers: Array(mySelectedPlayers),
+            receivingPlayers: Array(theirSelectedPlayers),
+            sendingPicks: Array(mySelectedPicks),
+            receivingPicks: Array(theirSelectedPicks)
+        ))
     }
 
     // MARK: - Cap Impact
@@ -1023,11 +1072,16 @@ struct TradeView: View {
         let outgoing = mySelectedPlayers.compactMap { playerLookup[$0] }
         let incoming = theirSelectedPlayers.compactMap { playerLookup[$0] }
 
+        let remaining = CapManagementEngine.leagueYearRemaining(
+            phase: career.currentPhase, week: career.currentWeek
+        )
         let mine = TradeValueEngine.capDeltas(
-            for: outgoing, contracts: allContracts, capMode: career.capMode
+            for: outgoing, contracts: allContracts, capMode: career.capMode,
+            leagueYearRemaining: remaining
         )
         let theirs = TradeValueEngine.capDeltas(
-            for: incoming, contracts: allContracts, capMode: career.capMode
+            for: incoming, contracts: allContracts, capMode: career.capMode,
+            leagueYearRemaining: remaining
         )
 
         let yourDelta  = theirs.assumed - mine.oldHit + mine.deadCap
@@ -1424,7 +1478,16 @@ struct TradeView: View {
 
     // MARK: - Actions
 
-    private func submitProposal(partner: Team) {
+    /// Wave 3: Propose no longer fires a one-shot alert — it picks up the phone.
+    ///
+    /// The old flow evaluated once, printed the verdict in an alert and, on a
+    /// counter, silently overwrote the builder with the AI's package. Nothing
+    /// remembered that a conversation had happened (plan finding S7), so
+    /// "negotiating" was really just re-proposing from scratch every time. The
+    /// package the user built is now round one of a persisted thread, and every
+    /// AI turn inside it is the same `TradeValueEngine.respond` this used to
+    /// call — the brain is unchanged, the memory is new.
+    private func startNegotiation(partner: Team) {
         guard let myTeam = playerTeam else { return }
 
         let proposal = TradeProposal(
@@ -1436,14 +1499,9 @@ struct TradeView: View {
             receivingPicks: Array(theirSelectedPicks)
         )
 
-        // Hard validation first: roster sizes and salary cap (CapMode-aware).
-        let blockers = TradeValueEngine.validationErrors(
-            proposal: proposal,
-            allPlayers: allPlayers,
-            teams: allTeams,
-            capMode: career.capMode,
-            contracts: allContracts
-        )
+        // Hard validation still fires here, so a package the league office would
+        // refuse never becomes a phone call.
+        let blockers = validationErrors(for: proposal)
         if !blockers.isEmpty {
             tradeResultMessage = "Trade blocked:\n" + blockers.joined(separator: "\n")
             resultIsSuccess = false
@@ -1451,39 +1509,98 @@ struct TradeView: View {
             return
         }
 
-        // AI responds: accept ≥ 105 % of value, reject < 90 %, else counter.
-        let response = TradeValueEngine.respond(
-            to: proposal,
-            aiTeam: partner,
-            allPlayers: allPlayers,
-            allPicks: allPicks,
-            currentSeason: career.currentSeason,
-            contracts: allContracts,
-            week: career.currentWeek
-        )
-
-        switch response {
-        case .accepted:
-            executeUserTrade(proposal, counterparty: partner, userIsOfferingTeam: true)
-            tradeResultMessage = "\(partner.abbreviation) accepted the trade!"
-            resultIsSuccess = true
-
-        case .rejected(let reason):
-            tradeResultMessage = reason
-            resultIsSuccess = false
-
-        case .countered(let counter, let message):
-            // Pre-fill the builder with the counter so the user can accept it
-            // by tapping Propose again, or keep tweaking.
-            mySelectedPlayers = Set(counter.sendingPlayers)
-            mySelectedPicks = Set(counter.sendingPicks)
-            theirSelectedPlayers = Set(counter.receivingPlayers)
-            theirSelectedPicks = Set(counter.receivingPicks)
-            tradeResultMessage = "\(message)\n\nThe counter is loaded in the trade builder."
-            resultIsSuccess = false
+        // One conversation per GM. If talks with this club are already open, the
+        // builder's package doesn't start a second thread — it re-enters the
+        // existing one, where the package editor is a rework away.
+        if let existing = threads.first(where: { $0.partnerTeamID == partner.id && $0.status == .open }) {
+            activeNegotiation = NegotiationRoute(
+                partnerTeamID: partner.id,
+                threadID: existing.id
+            )
+            return
         }
 
+        activeNegotiation = NegotiationRoute(
+            partnerTeamID: partner.id,
+            seed: proposal
+        )
+    }
+
+    /// Cleanup after the negotiation cover closes: refresh the thread shelf
+    /// (rounds happened in there) and execute any package the conversation
+    /// agreed to.
+    private func negotiationDismissed() {
+        loadThreads()
+        executeAgreedDeal()
+    }
+
+    /// Executes the package a negotiation agreed to, once its cover has
+    /// finished dismissing (so the receipt alert lands on the Trade Center).
+    ///
+    /// Deliberately routed through the same `executeUserTrade` the incoming-offer
+    /// Accept button uses: one execution path means one ledger row, one news
+    /// item and one inbox receipt, however the deal was struck.
+    private func executeAgreedDeal() {
+        guard let agreed = pendingAgreedDeal else { return }
+        pendingAgreedDeal = nil
+
+        // A negotiated proposal always has the user's team on the offering side,
+        // so the asset directions are fixed; only the LEDGER kind depends on who
+        // picked up the phone first.
+        guard let counterparty = allTeams.first(where: { $0.id == agreed.proposal.receivingTeamID }) else { return }
+
+        let blockers = validationErrors(for: agreed.proposal)
+        if !blockers.isEmpty {
+            tradeResultMessage = "Trade blocked:\n" + blockers.joined(separator: "\n")
+            resultIsSuccess = false
+            showResultAlert = true
+            return
+        }
+
+        executeUserTrade(
+            agreed.proposal,
+            counterparty: counterparty,
+            userIsOfferingTeam: true,
+            ledgerKind: agreed.startedByAI ? .aiWeeklyOffer : .userProposal
+        )
+        tradeResultMessage = "\(counterparty.abbreviation) signed off — trade complete!"
+        resultIsSuccess = true
         showResultAlert = true
+    }
+
+    /// Roster/cap/clause blockers for THIS market window.
+    ///
+    /// Task #25: every user-facing call used to take `validationErrors`' in-season
+    /// defaults (ceiling 75, floor 40) all year round. In the offseason those are
+    /// not rules — a club legitimately carries 80-90 players between the draft
+    /// and cutdown day and empties into the low 30s before free agency — so the
+    /// Trade Center vetoed deals the AI-vs-AI market next door executed happily.
+    private func validationErrors(for proposal: TradeProposal) -> [String] {
+        let bounds = TradeWindowRules.rosterBounds(
+            phase: career.currentPhase, week: career.currentWeek
+        )
+        return TradeValueEngine.validationErrors(
+            proposal: proposal,
+            allPlayers: allPlayers,
+            teams: allTeams,
+            capMode: career.capMode,
+            contracts: allContracts,
+            leagueYearRemaining: CapManagementEngine.leagueYearRemaining(
+                phase: career.currentPhase, week: career.currentWeek
+            ),
+            rosterCeiling: bounds.ceiling,
+            rosterFloor: bounds.floor
+        )
+    }
+
+    /// Routes a message to the shell's inbox, or stages it on the
+    /// `WeekAdvancer` channel when this screen is presented outside the shell.
+    private func deliver(_ message: InboxMessage) {
+        if let onInboxMessage {
+            onInboxMessage(message)
+        } else {
+            WeekAdvancer.lastInboxMessages.append(message)
+        }
     }
 
     /// Executes an agreed trade, persists it, and drops any pending offers
@@ -1491,7 +1608,12 @@ struct TradeView: View {
     private func executeUserTrade(
         _ proposal: TradeProposal,
         counterparty: Team,
-        userIsOfferingTeam: Bool
+        userIsOfferingTeam: Bool,
+        /// Overrides the kind derived from `userIsOfferingTeam`. A Wave 3
+        /// negotiation always puts the user on the offering side of the
+        /// proposal, so the direction flag can no longer answer "who called
+        /// first?" on its own.
+        ledgerKind: TradeRecordKind? = nil
     ) {
         // Capture history before mutating rosters so lookups still resolve.
         recordCompletedTrade(
@@ -1509,7 +1631,7 @@ struct TradeView: View {
             allPicks: allPicks,
             capMode: career.capMode,
             ledger: TradeLedger.Context(
-                kind: userIsOfferingTeam ? .userProposal : .aiWeeklyOffer,
+                kind: ledgerKind ?? (userIsOfferingTeam ? .userProposal : .aiWeeklyOffer),
                 season: career.currentSeason,
                 week: career.currentWeek,
                 phase: career.currentPhase
@@ -1540,14 +1662,10 @@ struct TradeView: View {
                 ? capOutcome.offeringDeadCap
                 : capOutcome.receivingDeadCap
         )
-        if let onInboxMessage {
-            onInboxMessage(receipt)
-        } else {
-            // Presented outside the shell (league roster browser, player
-            // detail): stage the receipt where the shell drains inbox mail on
-            // the next week/phase change, so it is delayed rather than lost.
-            WeekAdvancer.lastInboxMessages.append(receipt)
-        }
+        // Presented outside the shell (league roster browser, player detail),
+        // `deliver` stages the receipt on the `WeekAdvancer` channel the shell
+        // drains, so it is delayed rather than lost.
+        deliver(receipt)
 
         clearSelections()
         selectedPartner = nil
@@ -1572,13 +1690,7 @@ struct TradeView: View {
     private func acceptOffer(_ offer: TradeProposal) {
         guard let aiTeam = allTeams.first(where: { $0.id == offer.offeringTeamID }) else { return }
 
-        let blockers = TradeValueEngine.validationErrors(
-            proposal: offer,
-            allPlayers: allPlayers,
-            teams: allTeams,
-            capMode: career.capMode,
-            contracts: allContracts
-        )
+        let blockers = validationErrors(for: offer)
         if !blockers.isEmpty {
             tradeResultMessage = "Trade blocked:\n" + blockers.joined(separator: "\n")
             resultIsSuccess = false
@@ -1592,22 +1704,57 @@ struct TradeView: View {
         showResultAlert = true
     }
 
-    /// Loads an incoming offer into the propose builder so the user can
-    /// rework the package and submit a modified version.
+    /// Wave 3: "Negotiate" finally negotiates.
+    ///
+    /// It used to dump the offer into the builder and leave — the user was on
+    /// his own, with no record that a GM had ever called. Now it opens (or
+    /// re-enters) the thread with that club, seeded with their package, so the
+    /// counter-offer machinery answers in the same conversation.
     private func negotiateOffer(_ offer: TradeProposal) {
-        guard let aiTeam = allTeams.first(where: { $0.id == offer.offeringTeamID }) else { return }
-        selectedPartner = aiTeam
-        // In the stored offer the AI is the offering team; in the builder the
-        // user is always the offering side, so the asset directions flip.
-        mySelectedPlayers = Set(offer.receivingPlayers)
-        mySelectedPicks = Set(offer.receivingPicks)
-        theirSelectedPlayers = Set(offer.sendingPlayers)
-        theirSelectedPicks = Set(offer.sendingPicks)
+        guard let aiTeam = allTeams.first(where: { $0.id == offer.offeringTeamID }),
+              let myTeam = playerTeam else { return }
+
+        if let existing = threads.first(where: { $0.sourceOfferID == offer.id && $0.status == .open })
+            ?? threads.first(where: { $0.partnerTeamID == aiTeam.id && $0.status == .open }) {
+            activeNegotiation = NegotiationRoute(
+                partnerTeamID: aiTeam.id,
+                threadID: existing.id
+            )
+            return
+        }
+
+        // In the stored offer the AI is the offering team; a thread is always
+        // written from the user's chair, so the asset directions flip. The
+        // proposal keeps the OFFER's id so accepting it prunes the same row from
+        // `career.pendingTradeOffers`.
+        let seed = TradeProposal(
+            id: offer.id,
+            offeringTeamID: myTeam.id,
+            receivingTeamID: aiTeam.id,
+            sendingPlayers: offer.receivingPlayers,
+            receivingPlayers: offer.sendingPlayers,
+            sendingPicks: offer.receivingPicks,
+            receivingPicks: offer.sendingPicks
+        )
+        activeNegotiation = NegotiationRoute(
+            partnerTeamID: aiTeam.id,
+            seed: seed,
+            sourceOfferID: offer.id
+        )
     }
 
     private func declineOffer(_ offer: TradeProposal) {
         incomingOffers.removeAll { $0.id == offer.id }
         career.pendingTradeOffers = career.pendingTradeOffers.filter { $0.id != offer.id }
+        // Declining also ends any conversation that grew out of this offer —
+        // otherwise the thread shelf keeps advertising a dead deal.
+        career.tradeThreads = career.tradeThreads.map { thread in
+            guard thread.sourceOfferID == offer.id, thread.status == .open else { return thread }
+            var closed = thread
+            closed.status = .withdrawn
+            return closed
+        }
+        threads = career.tradeThreads
         try? modelContext.save()
     }
 
@@ -1685,7 +1832,65 @@ struct TradeView: View {
         }
         incomingOffers = valid
 
+        loadThreads()
         applyPrefillIfNeeded()
+    }
+
+    /// Hydrates the negotiation shelf and closes out conversations that reality
+    /// has overtaken.
+    ///
+    /// A thread dies when its league year ends (`TradeTalkRegistry` resets every
+    /// February, so the GM on the other end is a different negotiator), when the
+    /// trade window shuts under it, or when one of its assets has moved — the
+    /// same staleness rule `isProposalStillValid` applies to stored offers. The
+    /// user gets a receipt rather than a silent disappearance.
+    private func loadThreads() {
+        let stored = career.tradeThreads
+        guard !stored.isEmpty else {
+            threads = []
+            return
+        }
+
+        let windowOpen = TradeValueEngine.isTradeWindowOpen(
+            phase: career.currentPhase, week: career.currentWeek
+        )
+        var expiredCount = 0
+        let reconciled: [TradeNegotiationThread] = stored.map { thread in
+            guard thread.status == .open else { return thread }
+            let stale = thread.season != career.currentSeason
+                || !windowOpen
+                || !TradeValueEngine.isProposalStillValid(
+                    thread.proposal, allPlayers: allPlayers, allPicks: allPicks
+                )
+            guard stale else { return thread }
+            expiredCount += 1
+            var closed = thread
+            closed.status = .expired
+            return closed
+        }
+
+        // Drop terminal threads from previous league years entirely — the shelf
+        // is a working desk, not an archive (`TradeRecord` is the archive).
+        let kept = reconciled.filter {
+            $0.season == career.currentSeason || $0.status == .open
+        }
+
+        if expiredCount > 0 || kept.count != stored.count {
+            career.tradeThreads = kept
+            try? modelContext.save()
+        }
+        threads = kept
+
+        if expiredCount > 0 {
+            deliver(InboxEngine.tradeNegotiationsExpiredMessage(
+                count: expiredCount,
+                dateString: InboxEngine.dateLabel(
+                    week: career.currentWeek,
+                    season: career.currentSeason,
+                    phase: career.currentPhase
+                )
+            ))
+        }
     }
 
     /// Points the builder at the partner the caller arrived with and ticks the
@@ -1775,28 +1980,11 @@ struct TradeView: View {
     }
 
     private func pickLabel(_ pick: DraftPick) -> String {
-        let suffix: String
-        switch pick.round {
-        case 1: suffix = "1st"
-        case 2: suffix = "2nd"
-        case 3: suffix = "3rd"
-        default: suffix = "\(pick.round)th"
-        }
-        // A future pick's number is a round-midpoint placeholder until
-        // `adoptFuturePicks` renumbers it from real standings — quoting it
-        // would invent precision the league doesn't have yet.
-        if pick.isProvisionalOrder {
-            return "\(pick.seasonYear) \(suffix) Rd"
-        }
-        return "\(pick.seasonYear) \(suffix) Rd (#\(pick.pickNumber))"
+        TradeAssetFormat.pickLabel(pick)
     }
 
     private func positionColor(_ position: Position) -> Color {
-        switch position.side {
-        case .offense:      return .accentBlue
-        case .defense:      return .danger
-        case .specialTeams: return .accentGold
-        }
+        TradeAssetFormat.positionColor(position)
     }
 
     // MARK: - vs Current Starter Card (decision support — letter-grade comparison)
@@ -1915,17 +2103,7 @@ struct TradeView: View {
     // MARK: - Breakdown helpers
 
     private func pickLabelShort(_ pick: DraftPick) -> String {
-        let suffix: String
-        switch pick.round {
-        case 1: suffix = "1st"
-        case 2: suffix = "2nd"
-        case 3: suffix = "3rd"
-        default: suffix = "\(pick.round)th"
-        }
-        if pick.isProvisionalOrder {
-            return "\(pick.seasonYear) \(suffix)"
-        }
-        return "\(pick.seasonYear) \(suffix) (#\(pick.pickNumber))"
+        TradeAssetFormat.pickLabelShort(pick)
     }
 
     private func currentProposalBreakdown(partner: Team) -> ProposalBreakdown {
@@ -2025,6 +2203,17 @@ private struct CompletedTrade: Identifiable {
 
 private struct WizardSuggestion {
     let picks: [DraftPick]
+}
+
+/// What the negotiation cover needs to know: which club, and whether we are
+/// resuming a persisted thread or opening a new one from a package.
+private struct NegotiationRoute: Identifiable {
+    let id = UUID()
+    let partnerTeamID: UUID
+    var threadID: UUID? = nil
+    var seed: TradeProposal? = nil
+    var sourceOfferID: UUID? = nil
+    var openingLine: String? = nil
 }
 
 // MARK: - Preview

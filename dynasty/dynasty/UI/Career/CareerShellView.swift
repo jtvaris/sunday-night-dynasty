@@ -31,7 +31,12 @@ struct CareerShellView: View {
     /// Tracks the last phase we generated tasks for, so we can detect phase changes.
     @State private var lastGeneratedPhase: SeasonPhase?
 
-    /// Accumulated inbox messages across all phase transitions.
+    /// Accumulated inbox messages across all phase transitions, OLDEST FIRST.
+    ///
+    /// Wave 3: this is a mirror of `career.inbox`, not the storage. It used to
+    /// be the only copy, which meant the whole mailbox died with the view — a
+    /// draft-day trade notice generated inside the draft-room modal never
+    /// reached it (task #19), and closing the career threw the rest away.
     @State var inboxMessages: [InboxMessage] = []
 
     /// Pending weekly press conference questions (shown after advancing a regular-season week).
@@ -81,7 +86,7 @@ struct CareerShellView: View {
                 CareerDashboardView(
                     career: career,
                     tasks: $currentTasks,
-                    inboxMessages: $inboxMessages,
+                    inboxMessages: inboxBinding,
                     onTaskSelected: { destination in
                         handleTaskNavigation(destination)
                     },
@@ -127,6 +132,12 @@ struct CareerShellView: View {
         }
         .onChange(of: navigationPath) { _, _ in
             refreshTaskCompletionStatus()
+            // Task #19: full-screen flows (the draft room above all) stage mail
+            // on `WeekAdvancer.lastInboxMessages` while the shell is off screen,
+            // and the next `advanceWeek` wipes that channel before the
+            // phase/week observers below ever fire. Draining on every navigation
+            // change collects it the moment the user comes back.
+            collectInboxMessages()
         }
         .onChange(of: career.currentPhase) { _, newPhase in
             regenerateTasks(for: newPhase)
@@ -359,9 +370,12 @@ struct CareerShellView: View {
             pendingHoldoutMarketValue = market
             pendingHoldout = holdout
 
-            // Inbox drama: the agent fires the opening shot.
+            // Inbox drama: the agent fires the opening shot. APPENDED, not
+            // inserted at 0 — the mailbox is stored oldest-first and `InboxView`
+            // reverses it, so an inserted message read as the OLDEST mail in the
+            // career and sank to the bottom of the list.
             let agentName = AgentPersona.agentName(for: first.id)
-            inboxMessages.insert(InboxMessage(
+            inboxMessages.append(InboxMessage(
                 sender: .playerAgent(name: agentName),
                 subject: "\(first.fullName) is holding out",
                 body: "Effective immediately, my client will not participate in team activities. He is making $\(first.annualSalary / 1000)M against a market value of $\(market / 1000)M. Until this organization shows it values him, he stays home. You know where to reach me.",
@@ -369,7 +383,8 @@ struct CareerShellView: View {
                 category: .contractRequest,
                 actionRequired: true,
                 actionDestination: .roster
-            ), at: 0)
+            ))
+            persistInbox()
         }
     }
 
@@ -383,6 +398,11 @@ struct CareerShellView: View {
         // has a full slate and must still get its recap.
         let wasRegularSeason = career.currentPhase == .regularSeason
             || career.currentPhase == .tradeDeadline
+
+        // Task #19: `advanceWeek` clears `lastInboxMessages` on entry. Anything
+        // a modal flow staged there since the last drain — the draft room's
+        // trade notices above all — has to be collected BEFORE that wipe.
+        collectInboxMessages()
 
         PerfLog.time("advance_week") {
             WeekAdvancer.advanceWeek(career: career, modelContext: modelContext)
@@ -718,7 +738,11 @@ struct CareerShellView: View {
             TradeView(
                 career: career,
                 onInboxMessage: { message in
-                    inboxMessages.insert(message, at: 0)
+                    // Appended, not inserted at 0: the mailbox is oldest-first
+                    // (`InboxView` reverses it for display), so a trade receipt
+                    // inserted at the front sorted as the career's oldest mail.
+                    inboxMessages.append(message)
+                    persistInbox()
                 }
             )
                 .onAppear {
@@ -746,7 +770,7 @@ struct CareerShellView: View {
         case .inbox:
             InboxView(
                 career: career,
-                messages: $inboxMessages,
+                messages: inboxBinding,
                 onNavigate: { destination in
                     handleTaskNavigation(destination)
                 }
@@ -1437,14 +1461,45 @@ struct CareerShellView: View {
 
     // MARK: - Inbox Collection
 
-    /// Appends any newly generated inbox messages from WeekAdvancer to the
-    /// accumulated inbox. Called after each phase/week transition.
+    /// Binding that persists on write.
+    ///
+    /// `InboxView` marks a message read through this binding and
+    /// `CareerDashboardView` reads from it; routing both through here means a
+    /// read receipt survives the trip back to the dashboard, and a message a
+    /// child view adds is save data the instant it appears.
+    private var inboxBinding: Binding<[InboxMessage]> {
+        Binding(
+            get: { inboxMessages },
+            set: { newValue in
+                inboxMessages = newValue
+                career.inbox = newValue
+                try? modelContext.save()
+            }
+        )
+    }
+
+    /// Writes the current mailbox back to the career.
+    private func persistInbox() {
+        career.inbox = inboxMessages
+        try? modelContext.save()
+    }
+
+    /// Drains newly generated inbox messages from the `WeekAdvancer` channel
+    /// into the persisted mailbox.
+    ///
+    /// The channel itself is a process-global staging area that every producer
+    /// (`WeekAdvancer`, `DraftDayCoordinator`, `TradeView` outside the shell)
+    /// appends to; this is the only consumer. Called after each phase/week
+    /// transition, on every navigation change, and immediately BEFORE an advance
+    /// — `advanceWeek` clears the channel on entry, so anything staged since the
+    /// last drain has to be collected first (task #19).
     func collectInboxMessages() {
         let newMessages = WeekAdvancer.lastInboxMessages
         guard !newMessages.isEmpty else { return }
         inboxMessages.append(contentsOf: newMessages)
         // Clear so we don't double-add on next read
         WeekAdvancer.lastInboxMessages = []
+        persistInbox()
     }
 
     // MARK: - Data Loading
@@ -1505,7 +1560,15 @@ struct CareerShellView: View {
         regenerateTasks(for: career.currentPhase)
         refreshTaskCompletionStatus()
 
-        // Generate initial inbox messages if empty (first time entering dashboard)
+        // Wave 3: the mailbox is save data. Hydrate from the career first, then
+        // drain anything a previous session staged on the `WeekAdvancer`
+        // channel, and only generate a starter set when the career has genuinely
+        // never received mail.
+        if inboxMessages.isEmpty {
+            inboxMessages = career.inbox
+        }
+        collectInboxMessages()
+
         if inboxMessages.isEmpty, let playerTeam = team {
             let coachDescriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.teamID == teamID })
             let coaches = (try? modelContext.fetch(coachDescriptor)) ?? []
@@ -1517,6 +1580,7 @@ struct CareerShellView: View {
                 owner: playerTeam.owner
             )
             inboxMessages = messages
+            persistInbox()
         }
     }
 

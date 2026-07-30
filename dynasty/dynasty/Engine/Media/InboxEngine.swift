@@ -1085,6 +1085,63 @@ enum InboxEngine {
         )
     }
 
+    // MARK: - Negotiation Threads (Wave 3 — `docs/TRADE_OVERHAUL_PLAN.md` §6)
+
+    /// The GM hanging up for the rest of the league year.
+    ///
+    /// Wave 2 already made the freeze-out real (`TradeTalkRegistry` strikes, and
+    /// `hardBlocker` refusing to price anything for a locked GM) but it only
+    /// ever surfaced as a rejection string inside one alert. A relationship
+    /// ending is mail — the same way a contract break-off ends up in the user's
+    /// face rather than in a toast.
+    static func tradeTalksBrokenOffMessage(
+        gmName: String,
+        partnerName: String,
+        partnerAbbr: String,
+        dateString: String
+    ) -> InboxMessage {
+        InboxMessage(
+            sender: .leagueOffice,
+            subject: "\(partnerAbbr) have ended trade talks",
+            body: """
+            \(gmName) called to say the \(partnerName) are done discussing trades with us for the rest of this league year.
+
+            His front office logged one lowball too many from our side. Nothing we send them will be priced until the new league year resets the relationship.
+
+            NFL League Office
+            """,
+            date: dateString,
+            category: .tradeOffer,
+            actionDestination: .trades
+        )
+    }
+
+    /// Open conversations that died when the window closed underneath them.
+    ///
+    /// The stored-offer equivalent (`tradeOffersExpiredMessage`) already exists;
+    /// a thread the user was three rounds into is worth at least the same
+    /// receipt, otherwise it simply vanishes from the Trade Center.
+    static func tradeNegotiationsExpiredMessage(
+        count: Int,
+        dateString: String
+    ) -> InboxMessage {
+        let plural = count == 1 ? "negotiation" : "negotiations"
+        return InboxMessage(
+            sender: .leagueOffice,
+            subject: "\(count) trade \(plural) closed out",
+            body: """
+            \(count) open trade \(plural) on our desk \(count == 1 ? "was" : "were") closed out — the assets involved have moved, or the window they were being worked in has shut.
+
+            Anything we still want to chase has to start as a fresh conversation.
+
+            NFL League Office
+            """,
+            date: dateString,
+            category: .tradeOffer,
+            actionDestination: .trades
+        )
+    }
+
     // MARK: - Helpers
 
     /// Creates a human-readable date string for the given phase.
