@@ -16,6 +16,10 @@ struct RosterSummaryBar: View {
     /// contract's cap hit differs from its annual average — which is why the
     /// header claimed $221.5M while every other screen said $189.4M.
     var capUsed: Int? = nil
+    /// The league phase, so the Players column can name the ceiling that
+    /// actually applies right now. `nil` (previews, call sites with no career)
+    /// prints the bare count exactly as before.
+    var phase: SeasonPhase? = nil
 
     private var totalCount: Int { players.count }
     private var healthyCount: Int { players.filter { !$0.isInjured }.count }
@@ -100,6 +104,70 @@ struct RosterSummaryBar: View {
         }
     }
 
+    // MARK: - Roster Limit
+
+    /// The roster ceiling in force this phase, named honestly.
+    ///
+    /// Both numbers come from the engine's own constants, not from a literal
+    /// retyped here: `PracticeSquadEngine.activeRosterCeiling` is the 53 a poach
+    /// has to open a spot under and the number `WeekAdvancer.trimAIRosters` cuts
+    /// AI clubs to, and `TradeValueEngine.offseasonRosterCeiling` is the 90 the
+    /// offseason trade market validates against. The bar used to print "63
+    /// Players" with no ceiling anywhere on the screen, so the user's roster
+    /// could sit 10 over the active limit with nothing to say so.
+    private struct RosterLimit {
+        let ceiling: Int
+        let caption: String
+        /// True when going over it is illegal RIGHT NOW rather than a deadline
+        /// still ahead of the user.
+        let isBinding: Bool
+    }
+
+    private var rosterLimit: RosterLimit? {
+        guard let phase else { return nil }
+        switch phase {
+        case .regularSeason, .tradeDeadline, .playoffs, .proBowl, .superBowl:
+            return RosterLimit(
+                ceiling: PracticeSquadEngine.activeRosterCeiling,
+                caption: "53 limit",
+                isBinding: true
+            )
+        case .rosterCuts:
+            // Cutdown day: still legally at 90, but 53 is the gate at the end
+            // of this phase — say which one is coming, not just which one holds.
+            return RosterLimit(
+                ceiling: TradeValueEngine.offseasonRosterCeiling,
+                caption: "cut to 53",
+                isBinding: false
+            )
+        default:
+            return RosterLimit(
+                ceiling: TradeValueEngine.offseasonRosterCeiling,
+                caption: "offseason",
+                isBinding: false
+            )
+        }
+    }
+
+    private var playersValue: String {
+        guard let limit = rosterLimit else { return "\(totalCount)" }
+        return "\(totalCount) / \(limit.ceiling)"
+    }
+
+    private var playersLabel: String {
+        guard let limit = rosterLimit else { return "Players" }
+        return "Players · \(limit.caption)"
+    }
+
+    private var playersColor: Color {
+        guard let limit = rosterLimit else { return .textPrimary }
+        if totalCount > limit.ceiling { return .danger }
+        // Cutdown day with an over-53 roster: a warning, not an error — the
+        // user still has the phase to fix it.
+        if !limit.isBinding && totalCount > PracticeSquadEngine.activeRosterCeiling { return .warning }
+        return .textPrimary
+    }
+
     private var rosterStrength: Int {
         switch averageOVR {
         case 80...: return 5
@@ -156,11 +224,51 @@ struct RosterSummaryBar: View {
                 .accessibilityLabel("Over salary cap by \(formattedCapOverage). Resolve before adding players.")
             }
 
+            // Over-limit warning — the 53-man ceiling was enforced only for AI
+            // clubs (`WeekAdvancer.trimAIRosters` skips `career.teamID`), so a
+            // user roster could carry 63 men into week 1 with nothing anywhere
+            // on the screen saying so. The advance itself is gated in
+            // `CareerShellView`; this is the standing reminder.
+            if let limit = rosterLimit, totalCount > PracticeSquadEngine.activeRosterCeiling {
+                let over = totalCount - PracticeSquadEngine.activeRosterCeiling
+                let tint: Color = limit.isBinding ? .danger : .warning
+                HStack(spacing: 6) {
+                    Image(systemName: "person.2.badge.minus.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(tint)
+                    Text(limit.isBinding ? "OVER ROSTER LIMIT" : "CUTDOWN PENDING")
+                        .font(.system(size: 11, weight: .heavy))
+                        .foregroundStyle(tint)
+                        .tracking(0.5)
+                    Text("+\(over)")
+                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .foregroundStyle(tint)
+                    Text("\u{2014} \(over) player\(over == 1 ? "" : "s") over the \(PracticeSquadEngine.activeRosterCeiling)-man active roster")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    Spacer(minLength: 4)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(tint.opacity(0.12))
+                .overlay(
+                    Rectangle()
+                        .frame(height: 1)
+                        .foregroundStyle(tint.opacity(0.4)),
+                    alignment: .bottom
+                )
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(over) players over the 53-man active roster limit.")
+            }
+
             HStack(spacing: 0) {
             summaryItem(
-                label: "Players",
-                value: "\(totalCount)",
-                color: .textPrimary
+                label: playersLabel,
+                value: playersValue,
+                color: playersColor
             )
 
             divider
@@ -270,6 +378,8 @@ struct RosterSummaryBar: View {
             Text(label)
                 .font(.system(size: 9))
                 .foregroundStyle(Color.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
         }
         .frame(maxWidth: .infinity)
     }

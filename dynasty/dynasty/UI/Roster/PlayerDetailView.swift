@@ -361,6 +361,14 @@ struct PlayerDetailView: View {
                             .fontWeight(.bold)
                             .foregroundStyle(Color.textPrimary)
 
+                        // WHOSE player this is. The league browser makes every
+                        // one of the ~1 700 players in the save reachable here,
+                        // and until this chip existed a rival's page was pixel-
+                        // identical to one of our own — same layout, same top
+                        // bar still reading our abbreviation — so the screen
+                        // silently implied Joe Burrow was on our roster.
+                        teamAffiliationChip
+
                         HStack(spacing: 12) {
                             Label("Age \(player.age)", systemImage: "calendar")
                             Label(
@@ -392,38 +400,100 @@ struct PlayerDetailView: View {
                 // when the player was actually drafted and has a persisted grade.
                 draftBadgeRow
 
-                // Quick stats row
-                HStack(spacing: 0) {
-                    quickStat(label: "Morale", value: "\(player.morale)", color: moraleColor)
-                    quickStatDivider
-                    // Motivation badge (plan §2.10) — where his head is at,
-                    // read straight off the offseason realization pass.
-                    motivationQuickStat
-                    quickStatDivider
-                    quickStat(
-                        label: "Health",
-                        value: player.isInjured ? "INJ \(player.injuryWeeksRemaining)wk" : "OK",
-                        color: player.isInjured ? .danger : .success
-                    )
-                    quickStatDivider
-                    quickStat(
-                        label: "Salary",
-                        value: formattedSalary,
-                        color: .textSecondary
-                    )
-                    quickStatDivider
-                    quickStat(
-                        label: "Contract",
-                        value: "\(player.contractYearsRemaining)yr",
-                        color: player.contractYearsRemaining <= 1 ? .warning : .textSecondary
-                    )
-                }
-                .padding(.vertical, 8)
-                .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
+                // Health is the ONLY figure left in the hero strip.
+                //
+                // Morale, motivation, salary and contract used to sit here too,
+                // and all four were restated ~35pt below in the Overview and
+                // Contract cards — in a DIFFERENT encoding (hero "68" vs card
+                // "OK"), so the same fact read as two facts that disagreed.
+                // They now live only in their cards; health is the one hero
+                // number no card repeats.
+                healthPill
             }
             .padding(.vertical, 4)
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// The club this player is actually under contract to. `nil` for a free agent.
+    private var playerTeam: Team? {
+        guard let teamID = player.teamID else { return nil }
+        return allTeams.first { $0.id == teamID }
+    }
+
+    /// True when this page is showing somebody ELSE's player — the case the
+    /// header has to say out loud. False for our own men and (deliberately)
+    /// for saves that have no team yet, where "rival" means nothing.
+    private var isRivalPlayer: Bool {
+        guard let userTeamID = careers.first?.teamID,
+              let teamID = player.teamID else { return false }
+        return teamID != userTeamID
+    }
+
+    /// Team affiliation, printed only when it is NOT the obvious one: a rival's
+    /// club (team-coloured, named in full, with their record) or free agency.
+    /// Our own players get nothing — the whole screen is already ours.
+    @ViewBuilder
+    private var teamAffiliationChip: some View {
+        if isRivalPlayer, let team = playerTeam {
+            let tint = TeamColors.color(for: team.abbreviation)
+            HStack(spacing: 6) {
+                Text(team.abbreviation)
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(tint, in: RoundedRectangle(cornerRadius: 4))
+                Text(team.fullName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                Text(team.record)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(tint.opacity(0.55), lineWidth: 1)
+            )
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Plays for \(team.fullName), record \(team.record)")
+        } else if player.teamID == nil {
+            Text("FREE AGENT")
+                .font(.system(size: 10, weight: .heavy))
+                .foregroundStyle(Color.backgroundPrimary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.accentGold, in: Capsule())
+        }
+    }
+
+    /// The hero strip's one surviving figure (see `playerHeader`).
+    private var healthPill: some View {
+        HStack(spacing: 6) {
+            Image(systemName: player.isInjured ? "cross.case.fill" : "heart.fill")
+                .font(.system(size: 10, weight: .bold))
+            Text(
+                player.isInjured
+                    ? "Injured — \(player.injuryWeeksRemaining) wk\(player.injuryWeeksRemaining == 1 ? "" : "s") out"
+                    : "Healthy"
+            )
+            .font(.caption.weight(.bold))
+            Spacer(minLength: 0)
+            Text("HEALTH")
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(Color.textTertiary)
+        }
+        .foregroundStyle(player.isInjured ? Color.danger : Color.success)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
     }
 
     /// Where the player is from, for the header identity block. Renders nothing
@@ -502,20 +572,6 @@ struct PlayerDetailView: View {
         }
     }
 
-    private func quickStat(label: String, value: String, color: Color) -> some View {
-        VStack(spacing: 2) {
-            Text(value)
-                .font(.caption)
-                .fontWeight(.bold)
-                .monospacedDigit()
-                .foregroundStyle(color)
-            Text(label)
-                .font(.system(size: 9))
-                .foregroundStyle(Color.textTertiary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
     private var quickStatDivider: some View {
         Rectangle()
             .fill(Color.surfaceBorder)
@@ -556,7 +612,7 @@ struct PlayerDetailView: View {
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
                 compactInfoPill(label: "OVR", value: "\(player.overall)", color: Color.forRating(player.overall))
-                compactInfoPill(label: "Morale", value: moraleShortLabel, color: moraleColor)
+                compactInfoPill(label: "Morale", value: moraleDisplayLabel, color: moraleColor)
                 // Motivation sits beside morale on purpose: morale is how he
                 // feels about the building, motivation is what he does about it
                 // (plan §2.10). This card renders in all three layouts.
@@ -1160,13 +1216,54 @@ struct PlayerDetailView: View {
                     Text(tradeValueLabel)
                         .font(.caption.weight(.bold))
                         .foregroundStyle(tradeValueColor)
+                        .multilineTextAlignment(.center)
+                    // The engine's actual number, in the currency the war room
+                    // and the Trade Center already quote. The bucket alone was
+                    // a translation of a figure the game refused to show, so a
+                    // package could not be checked against it by hand.
+                    Text("~\(tradeValuePoints) pts")
+                        .font(.caption2.weight(.heavy).monospacedDigit())
+                        .foregroundStyle(Color.textSecondary)
                 }
-                .frame(width: 80)
+                .frame(width: 90)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    tradeValueFactorRow(label: "Overall", detail: "\(player.overall) OVR", positive: player.overall >= 75)
-                    tradeValueFactorRow(label: "Age", detail: "\(player.age)yr", positive: player.age < player.position.peakAgeRange.upperBound)
-                    tradeValueFactorRow(label: "Contract", detail: "\(player.contractYearsRemaining)yr / \(formattedSalary)", positive: marketValueComparison != .overpaid)
+                    // Signed magnitudes, straight off the multipliers
+                    // `TradeValueEngine.playerTradeValue` actually multiplies —
+                    // the rows used to be three identical ⊕ marks that implied
+                    // equal weight for factors worth ±30 %, ±40 % and ±25 %.
+                    tradeValueFactorRow(
+                        label: "Base (OVR)",
+                        detail: "\(player.overall) OVR",
+                        magnitude: "\(tradeValueBasePoints) pts",
+                        tone: player.overall >= 75 ? .up : .flat
+                    )
+                    tradeValueFactorRow(
+                        label: "Position",
+                        detail: player.position.rawValue,
+                        magnitude: multiplierText(TradeValueEngine.positionMultiplier(player.position)),
+                        tone: tone(for: TradeValueEngine.positionMultiplier(player.position))
+                    )
+                    tradeValueFactorRow(
+                        label: "Age",
+                        detail: "\(player.age)yr",
+                        magnitude: multiplierText(tradeValueAgeMultiplier),
+                        tone: tone(for: tradeValueAgeMultiplier)
+                    )
+                    tradeValueFactorRow(
+                        label: "Contract",
+                        detail: "\(player.contractYearsRemaining)yr / \(formattedSalary)",
+                        magnitude: multiplierText(tradeValueContractMultiplier),
+                        tone: tone(for: tradeValueContractMultiplier)
+                    )
+                    if player.isInjured {
+                        tradeValueFactorRow(
+                            label: "Injury",
+                            detail: "\(player.injuryWeeksRemaining) wk out",
+                            magnitude: "untradeable",
+                            tone: .down
+                        )
+                    }
                 }
             }
             .padding(.vertical, 4)
@@ -1240,18 +1337,66 @@ struct PlayerDetailView: View {
         return "\(next.lastName) starts at \(player.position.rawValue) — \(next.overall) OVR (\(deltaText))"
     }
 
-    private func tradeValueFactorRow(label: String, detail: String, positive: Bool) -> some View {
+    /// Which way a factor pushes the player's price.
+    private enum FactorTone {
+        case up, flat, down
+
+        var icon: String {
+            switch self {
+            case .up:   return "plus.circle.fill"
+            case .flat: return "equal.circle.fill"
+            case .down: return "minus.circle.fill"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .up:   return .success
+            case .flat: return .textTertiary
+            case .down: return .danger
+            }
+        }
+    }
+
+    private static let flatMultiplierBand = 0.005
+
+    private func tone(for multiplier: Double) -> FactorTone {
+        if multiplier > 1.0 + Self.flatMultiplierBand { return .up }
+        if multiplier < 1.0 - Self.flatMultiplierBand { return .down }
+        return .flat
+    }
+
+    /// "×1.30 (+30 %)" — the multiplier AND the plain-language swing, because
+    /// the second is what a GM reads and the first is what the engine applies.
+    private func multiplierText(_ multiplier: Double) -> String {
+        let percent = Int(((multiplier - 1.0) * 100).rounded())
+        if percent == 0 { return String(format: "×%.2f", multiplier) }
+        return String(format: "×%.2f (%@%d%%)", multiplier, percent > 0 ? "+" : "\u{2212}", abs(percent))
+    }
+
+    private func tradeValueFactorRow(
+        label: String,
+        detail: String,
+        magnitude: String,
+        tone: FactorTone
+    ) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: positive ? "plus.circle.fill" : "minus.circle.fill")
+            Image(systemName: tone.icon)
                 .font(.system(size: 10))
-                .foregroundStyle(positive ? Color.success : Color.danger)
+                .foregroundStyle(tone.color)
             Text(label)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(Color.textSecondary)
-            Spacer()
             Text(detail)
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(Color.textTertiary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Text(magnitude)
+                .font(.caption2.weight(.semibold).monospacedDigit())
+                .foregroundStyle(tone.color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
     }
 
@@ -2198,6 +2343,14 @@ struct PlayerDetailView: View {
         }
     }
 
+    /// The single morale encoding this screen uses: the number AND the tier word
+    /// together. The hero strip used to print the raw figure ("68") while the
+    /// Overview card printed the tier ("OK") 35pt below it, so one fact read as
+    /// two — and neither told you which scale the other was on.
+    private var moraleDisplayLabel: String {
+        "\(player.morale) · \(moraleShortLabel)"
+    }
+
     private var moraleLabel: String {
         switch player.morale {
         case 85...: return "Excellent (\(player.morale))"
@@ -2224,29 +2377,8 @@ struct PlayerDetailView: View {
         }
     }
 
-    /// Header badge: icon + state, sitting directly beside the morale figure.
-    private var motivationQuickStat: some View {
-        VStack(spacing: 2) {
-            HStack(spacing: 3) {
-                Image(systemName: player.motivationState.icon)
-                    .font(.system(size: 9, weight: .bold))
-                Text(player.motivationState.displayName)
-                    .font(.caption)
-                    .fontWeight(.bold)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            .foregroundStyle(motivationColor)
-            Text("Motivation")
-                .font(.system(size: 9))
-                .foregroundStyle(Color.textTertiary)
-        }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Motivation: \(player.motivationState.displayName)")
-    }
-
-    /// Overview-card pill version of the same badge.
+    /// The Overview card's motivation badge — the ONE place this screen states
+    /// it, since the hero strip's duplicate copy was removed.
     private var motivationPill: some View {
         HStack(spacing: 4) {
             Text("Motivation")
@@ -2442,52 +2574,65 @@ struct PlayerDetailView: View {
 
     // MARK: - Trade Value (#37)
 
+    /// What the engine says this player is worth, on the Jimmy Johnson chart.
+    ///
+    /// This screen used to compute a private 0-100 "score" of its own — a
+    /// different formula, a different scale, and a different answer from the one
+    /// `TradeValueEngine` uses to accept or reject every offer the user makes.
+    /// The card now quotes the engine, so the bucket it names is the bucket the
+    /// AI will actually trade at.
+    private var tradeValuePoints: Int {
+        TradeValueEngine.playerTradeValue(player: player)
+    }
+
+    /// The raw OVR curve before position/age/contract, so the factor rows below
+    /// add up to `tradeValuePoints` instead of being three unweighted ticks.
+    private var tradeValueBasePoints: Int {
+        max(1, Int(32.0 * pow(1.128, Double(player.overall - 60))))
+    }
+
+    private var tradeValueAgeMultiplier: Double {
+        TradeValueEngine.ageMultiplier(age: player.age, position: player.position)
+    }
+
+    private var tradeValueContractMultiplier: Double {
+        TradeValueEngine.contractMultiplier(player: player)
+    }
+
+    /// The earliest pick those points buy on the same chart the war room reads.
+    /// `nil` only when the player outprices pick #1 (99 OVR QBs do).
+    private var tradeValuePickEquivalent: Int? {
+        let points = tradeValuePoints
+        guard points < PickValueChart.points(forPick: 1) else { return nil }
+        return (1...224).first { PickValueChart.points(forPick: $0) <= points }
+    }
+
+    /// Round bucket, derived FROM the points rather than from a parallel scale.
+    private var tradeValueRound: Int? {
+        guard let pick = tradeValuePickEquivalent else { return 1 }
+        guard pick <= 224 else { return nil }
+        return (pick - 1) / 32 + 1
+    }
+
     private var tradeValueLabel: String {
-        let score = tradeValueScore
-        switch score {
-        case 90...:  return "1st Round Pick"
-        case 75..<90: return "2nd Round Pick"
-        case 60..<75: return "3rd Round Pick"
-        case 45..<60: return "4th-5th Round Pick"
-        case 30..<45: return "Late Round Pick"
-        case 15..<30: return "Conditional Pick"
-        default:      return "Minimal Value"
+        guard let round = tradeValueRound else { return "Minimal Value" }
+        let ordinal: String
+        switch round {
+        case 1: ordinal = "1st"
+        case 2: ordinal = "2nd"
+        case 3: ordinal = "3rd"
+        default: ordinal = "\(round)th"
         }
+        return "\(ordinal) Round Pick"
     }
 
     private var tradeValueColor: Color {
-        let score = tradeValueScore
-        switch score {
-        case 75...:  return .accentGold
-        case 50..<75: return .success
-        case 25..<50: return .textSecondary
-        default:      return .textTertiary
+        switch tradeValueRound {
+        case .some(1):      return .accentGold
+        case .some(2), .some(3): return .success
+        case .some(4), .some(5): return .textSecondary
+        default:            return .textTertiary
         }
-    }
-
-    /// Score 0-100 combining OVR, age, contract value.
-    private var tradeValueScore: Int {
-        var score = Double(player.overall)
-
-        // Age factor
-        let peak = player.position.peakAgeRange
-        if peak.contains(player.age) {
-            score *= 1.0
-        } else if player.age < peak.lowerBound {
-            score *= 1.05 // Young upside
-        } else {
-            let yearsOver = player.age - peak.upperBound
-            score *= max(0.5, 1.0 - Double(yearsOver) * 0.1)
-        }
-
-        // Contract factor: bargain deals increase trade value
-        if marketValueComparison == .bargain { score *= 1.1 }
-        else if marketValueComparison == .overpaid { score *= 0.8 }
-
-        // Injury penalty
-        if player.isInjured { score *= 0.7 }
-
-        return min(100, max(0, Int(score)))
     }
 
     // MARK: - QB League Averages (#182)

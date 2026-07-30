@@ -67,6 +67,17 @@ struct CareerShellView: View {
     // once-per-opened-save job, not a per-advance one (see `loadFaceLibrary`).
     @State private var didReconcileFaces = false
 
+    /// Set when `performShellAdvance` refuses to start the season on an
+    /// over-limit roster. Presented as an alert, cleared on dismissal.
+    @State private var pendingRosterLimit: WeekAdvancer.RosterLimitViolation?
+
+    /// Rival claims on the players the user just cut, collected at the
+    /// cutdown → regular-season boundary. Drives `WaiverClaimsBanner`, which
+    /// shipped in the binary with zero call sites — the claims themselves have
+    /// always happened (`WaiverWireEngine` stamps `RosterCut.claimedByTeamID`),
+    /// they were simply never told to the user.
+    @State private var pendingWaiverClaims: [WaiverClaimsBanner.Claim] = []
+
     var body: some View {
         VStack(spacing: 0) {
             // Persistent top navigation bar
@@ -109,9 +120,41 @@ struct CareerShellView: View {
                         destinationView(for: dest)
                     }
             }
+            // Waiver results land over the content area — BELOW the persistent
+            // top bar, which is why the overlay hangs off the stack and not off
+            // the outer VStack. Self-dismisses after ~8s.
+            .overlay(alignment: .top) {
+                if !pendingWaiverClaims.isEmpty {
+                    WaiverClaimsBanner(claims: pendingWaiverClaims) {
+                        pendingWaiverClaims = []
+                    }
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(1)
+                }
+            }
         }
         .background(Color.backgroundPrimary)
         .navigationBarBackButtonHidden(true)
+        .alert(
+            "Roster Over the Limit",
+            isPresented: Binding(
+                get: { pendingRosterLimit != nil },
+                set: { if !$0 { pendingRosterLimit = nil } }
+            ),
+            presenting: pendingRosterLimit
+        ) { violation in
+            Button("Go to Cuts") {
+                pendingRosterLimit = nil
+                navigationPath.append(ShellDestination.rosterCuts)
+            }
+            Button("Cancel", role: .cancel) { pendingRosterLimit = nil }
+        } message: { violation in
+            Text(
+                "You're carrying \(violation.rosterCount) players. The season opens with a "
+                + "\(violation.ceiling)-man active roster — release \(violation.excess) more before advancing."
+            )
+        }
         .alert("Quit to Main Menu?", isPresented: $showQuitConfirmation) {
             Button("Quit", role: .destructive) {
                 // Pop to root by dismissing
@@ -397,12 +440,34 @@ struct CareerShellView: View {
 
     /// Performs the week/phase advance from the TimelineTasksPanel.
     private func performShellAdvance() {
+        // 53-man gate. `WeekAdvancer.trimAIRosters` enforces the ceiling for the
+        // other 31 clubs only — the user does his own cuts, and until now nothing
+        // checked that he had. Refuse the advance rather than start a season on an
+        // illegal roster; the letter makes the refusal findable afterwards.
+        if let violation = WeekAdvancer.userRosterLimitViolation(
+            career: career,
+            modelContext: modelContext
+        ) {
+            pendingRosterLimit = violation
+            let letter = WeekAdvancer.rosterLimitInboxMessage(violation, season: career.currentSeason)
+            if !inboxMessages.contains(where: { $0.subject == letter.subject }) {
+                inboxMessages.append(letter)
+                persistInbox()
+            }
+            return
+        }
+
         // #38: remember whether this was a regular-season game week — the round
         // recap only makes sense after one (power rankings are regular-season).
         // The deadline week is such a week: its phase is `.tradeDeadline`, but it
         // has a full slate and must still get its recap.
         let wasRegularSeason = career.currentPhase == .regularSeason
             || career.currentPhase == .tradeDeadline
+
+        // Cutdown → season is the one advance that runs the waiver window
+        // (`WeekAdvancer.processCampWaivers`), so it is the only one whose
+        // results the banner has to report.
+        let wasRosterCuts = career.currentPhase == .rosterCuts
 
         // Task #19: `advanceWeek` clears `lastInboxMessages` on entry. Anything
         // a modal flow staged there since the last drain — the draft room's
@@ -435,6 +500,16 @@ struct CareerShellView: View {
            !review.acknowledged,
            review.verdict != .fired {
             pendingOwnerReview = review
+        }
+
+        // Waiver results: who claimed the men we let go.
+        if wasRosterCuts && career.currentPhase == .regularSeason {
+            let claims = collectWaiverClaims()
+            if !claims.isEmpty {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    pendingWaiverClaims = claims
+                }
+            }
         }
 
         // #38: assemble the post-game round recap (regular-season weeks only).
@@ -470,6 +545,51 @@ struct CareerShellView: View {
         if career.currentPhase == .otas && pendingHoldout == nil {
             detectAndShowHoldout()
         }
+    }
+
+    // MARK: - Waiver Claims
+
+    /// The cuts another club claimed in the 24h window that just closed.
+    ///
+    /// Read AFTER the advance, so `career.currentSeason` has already been bumped
+    /// by `startNewSeason` — the `RosterCut` rows were written under the OLD
+    /// year, which is why this keys on the newest season present rather than on
+    /// the current one.
+    private func collectWaiverClaims() -> [WaiverClaimsBanner.Claim] {
+        guard let teamID = career.teamID else { return [] }
+        let cid = career.id
+
+        let cutsDescriptor = FetchDescriptor<RosterCut>(
+            predicate: #Predicate<RosterCut> {
+                $0.careerID == cid && $0.teamID == teamID && $0.claimedByTeamID != nil
+            }
+        )
+        let cuts = (try? modelContext.fetch(cutsDescriptor)) ?? []
+        guard let latestSeason = cuts.map(\.seasonYear).max() else { return [] }
+        let fresh = cuts.filter { $0.seasonYear == latestSeason }
+        guard !fresh.isEmpty else { return [] }
+
+        // One fetch for the claimed players rather than one per row.
+        let claimedIDs = Set(fresh.map(\.playerID))
+        let playerDescriptor = FetchDescriptor<Player>(
+            predicate: #Predicate<Player> { $0.careerID == cid }
+        )
+        let playersByID = Dictionary(
+            uniqueKeysWithValues: ((try? modelContext.fetch(playerDescriptor)) ?? [])
+                .filter { claimedIDs.contains($0.id) }
+                .map { ($0.id, $0) }
+        )
+
+        return fresh.compactMap { cut in
+            guard let player = playersByID[cut.playerID],
+                  let claimingID = cut.claimedByTeamID else { return nil }
+            return WaiverClaimsBanner.Claim(
+                id: cut.id,
+                playerName: player.fullName,
+                claimingTeamAbbrev: allTeamsByID[claimingID]?.abbreviation ?? "???"
+            )
+        }
+        .sorted { $0.playerName < $1.playerName }
     }
 
     // MARK: - Round Recap (#38)

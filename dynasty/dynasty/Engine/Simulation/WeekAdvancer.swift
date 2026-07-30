@@ -435,6 +435,67 @@ enum WeekAdvancer {
     ///   order. When reaching `.regularSeason`, a new season is started via
     ///   `startNewSeason(career:teams:modelContext:)`.
     ///
+    // MARK: - Roster-Limit Gate (user's club)
+
+    /// The user's roster sitting above the active-roster ceiling on the eve of
+    /// the season.
+    ///
+    /// WHY this exists: `trimAIRosters` cuts every club to 53 on cutdown day
+    /// `where team.id != career.teamID` — deliberately, since the user does his
+    /// own cuts — but NOTHING then checked that he did. A user who never opened
+    /// the cut flow walked into week 1 with 63 men against the league's 53,
+    /// carrying ten players no rule allowed and a cap sheet to match, and no
+    /// screen said a word about it.
+    struct RosterLimitViolation {
+        let rosterCount: Int
+        let ceiling: Int
+        var excess: Int { max(0, rosterCount - ceiling) }
+    }
+
+    /// Read-only precheck for the shell to run BEFORE `advanceWeek`.
+    ///
+    /// Deliberately a query, not a gate inside the advance itself: the advance
+    /// mutates a season's worth of state and has no way to report a refusal
+    /// halfway through, so the decision belongs to the caller — the same shape
+    /// as `TradeValueEngine.validationErrors`, which the Trade Center calls
+    /// before it commits anything. Returns `nil` (advance freely) for every
+    /// phase except the cutdown → regular-season step.
+    static func userRosterLimitViolation(
+        career: Career,
+        modelContext: ModelContext
+    ) -> RosterLimitViolation? {
+        guard career.currentPhase == .rosterCuts,
+              let teamID = career.teamID else { return nil }
+
+        let descriptor = FetchDescriptor<Player>(
+            predicate: #Predicate<Player> { $0.teamID == teamID }
+        )
+        let count = (try? modelContext.fetchCount(descriptor)) ?? 0
+        let ceiling = PracticeSquadEngine.activeRosterCeiling
+        guard count > ceiling else { return nil }
+
+        return RosterLimitViolation(rosterCount: count, ceiling: ceiling)
+    }
+
+    /// The league office's letter about it, so a blocked advance leaves a record
+    /// in the mailbox rather than only a dismissed alert.
+    static func rosterLimitInboxMessage(
+        _ violation: RosterLimitViolation,
+        season: Int
+    ) -> InboxMessage {
+        InboxMessage(
+            sender: .leagueOffice,
+            subject: "Roster not compliant — \(violation.rosterCount) under contract",
+            body: "Your club is carrying \(violation.rosterCount) players against a "
+                + "\(violation.ceiling)-man active roster. Release \(violation.excess) more "
+                + "before the season opens; the league will not certify a week-1 roster over the limit.",
+            date: "Roster Cuts, Season \(season)",
+            category: .leagueNotice,
+            actionRequired: true,
+            actionDestination: .rosterCuts
+        )
+    }
+
     /// - Parameters:
     ///   - career: The active `Career` object (mutated in place).
     ///   - modelContext: SwiftData context used to fetch and persist `Game` and `Team` objects.

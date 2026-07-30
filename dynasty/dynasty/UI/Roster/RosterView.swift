@@ -339,7 +339,15 @@ struct RosterView: View {
             )
 
             VStack(spacing: 0) {
-                RosterSummaryBar(players: players, teamSalaryCap: teamSalaryCap, capUsed: teamCapUsed)
+                RosterSummaryBar(
+                    players: players,
+                    teamSalaryCap: teamSalaryCap,
+                    capUsed: teamCapUsed,
+                    // The roster ceiling is phase-dependent (90 in the offseason,
+                    // 53 once the season starts), so the bar needs the calendar
+                    // to label the count honestly.
+                    phase: career?.currentPhase
+                )
 
                 viewModePicker
                     .padding(.horizontal)

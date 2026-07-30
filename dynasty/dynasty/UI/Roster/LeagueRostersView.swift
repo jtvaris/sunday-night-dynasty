@@ -29,6 +29,32 @@ struct LeagueRostersView: View {
     /// (his division rivals are the rosters he cares about) without an init.
     @State private var pickedConference: Conference?
 
+    // MARK: Player search (finding: "every CB 80+ with cap space")
+
+    /// What the browser is showing. The 32-roster board answers "who's on that
+    /// club"; it cannot answer "who in this league is a CB over 80" without the
+    /// user opening all 32 and reading them, which is the query a GM actually
+    /// has. `players` is that query.
+    enum BrowseMode: String, CaseIterable, Identifiable {
+        case teams = "Teams"
+        case players = "Player Search"
+        var id: String { rawValue }
+    }
+
+    @State private var mode: BrowseMode = .teams
+    @State private var searchText: String = ""
+    @State private var filterPosition: Position?
+    @State private var minOVR: Int = 0
+    @State private var maxAge: Int = 0            // 0 == any
+    @State private var maxContractYears: Int = 0  // 0 == any
+    @State private var expiringOnly: Bool = false
+
+    /// Rows rendered at once. The filter itself is a single O(roster) pass over
+    /// the population this screen ALREADY holds for the board (no extra fetch),
+    /// but a 1 700-row `ForEach` inside a `ScrollView` builds every row eagerly,
+    /// so the list is capped and the overflow is counted instead.
+    private static let searchResultCap = 120
+
     /// The user's saved depth chart, keyed by his `teamID`. Decoded once per
     /// appearance rather than per row: his OWN row must quote the lineup he
     /// actually set, the other 31 fall back to the auto-derived one.
@@ -60,26 +86,45 @@ struct LeagueRostersView: View {
 
     private func board(rosters: [UUID: [Player]]) -> some View {
         VStack(spacing: 0) {
-            conferencePicker
-                .padding(16)
-                // Same 820pt measure as the division cards below, so the
-                // picker's edges line up with them instead of spanning the
-                // full iPad width above inset content.
-                .frame(maxWidth: DSLayout.wideMeasure)
-                .frame(maxWidth: .infinity)
-                .background(Color.backgroundSecondary)
-
-            ScrollView {
-                VStack(spacing: 16) {
-                    ForEach(Division.allCases, id: \.self) { division in
-                        divisionSection(division, rosters: rosters)
-                    }
+            VStack(spacing: 12) {
+                modePicker
+                if mode == .teams {
+                    conferencePicker
                 }
-                .padding(16)
-                .frame(maxWidth: DSLayout.wideMeasure)
-                .frame(maxWidth: .infinity)
+            }
+            .padding(16)
+            // Same 820pt measure as the division cards below, so the
+            // picker's edges line up with them instead of spanning the
+            // full iPad width above inset content.
+            .frame(maxWidth: DSLayout.wideMeasure)
+            .frame(maxWidth: .infinity)
+            .background(Color.backgroundSecondary)
+
+            if mode == .teams {
+                ScrollView {
+                    VStack(spacing: 16) {
+                        ForEach(Division.allCases, id: \.self) { division in
+                            divisionSection(division, rosters: rosters)
+                        }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: DSLayout.wideMeasure)
+                    .frame(maxWidth: .infinity)
+                }
+            } else {
+                playerSearch
             }
         }
+    }
+
+    private var modePicker: some View {
+        Picker("Mode", selection: $mode) {
+            ForEach(BrowseMode.allCases) { option in
+                Text(option.rawValue).tag(option)
+            }
+        }
+        .pickerStyle(.segmented)
+        .tint(Color.accentBlue)
     }
 
     private var conferencePicker: some View {
@@ -132,6 +177,11 @@ struct LeagueRostersView: View {
     private func teamRow(_ team: Team, roster: [Player]) -> some View {
         let isUserTeam = team.id == career.teamID
         let strength = startingLineupOverall(roster, chart: userCharts[team.id])
+        // The same need model the draft room and the one-team header already
+        // use — a club's holes are what makes it a trade partner, and the board
+        // is where you decide WHICH club to open. Two chips, not five: the row
+        // is a shortlist cue, the roster screen is the detail.
+        let needs = DraftEngine.topTeamNeeds(roster: roster, limit: 2)
 
         return HStack(spacing: 12) {
             Text(team.abbreviation)
@@ -159,9 +209,21 @@ struct LeagueRostersView: View {
                             .background(Color.accentGold, in: Capsule())
                     }
                 }
-                Text("\(team.record) · \(roster.count) players · \(capLabel(team.availableCap)) cap space")
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundStyle(Color.textTertiary)
+                HStack(spacing: 6) {
+                    Text("\(team.record) · \(roster.count) players · \(capLabel(team.availableCap)) cap space")
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                        .lineLimit(1)
+
+                    ForEach(needs, id: \.self) { position in
+                        Text(position.rawValue)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Color.warning)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.warning.opacity(0.15), in: Capsule())
+                    }
+                }
             }
 
             Spacer(minLength: 4)
@@ -362,6 +424,298 @@ struct LeagueTeamRosterView: View {
                 .foregroundStyle(Color.textTertiary)
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - League Player Search
+
+extension LeagueRostersView {
+
+    /// Every player in the league who is NOT ours, narrowed by the filters.
+    ///
+    /// COST: one O(n) pass plus a sort over `allPlayers` — the array the board
+    /// already derives from the screen's existing `@Query`, so no fetch is added
+    /// and the SwiftData store is not touched again per keystroke. At 32 × ~53
+    /// that is ~1 700 comparisons, and the result is capped at
+    /// `searchResultCap` rows so the `ForEach` never builds a thousand views.
+    private var searchResults: [Player] {
+        let userTeamID = career.teamID
+        let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let matches = allPlayers.filter { player in
+            guard let teamID = player.teamID, teamID != userTeamID else { return false }
+            if player.overall < minOVR { return false }
+            if maxAge > 0 && player.age > maxAge { return false }
+            if let filterPosition, player.position != filterPosition { return false }
+            if maxContractYears > 0 && player.contractYearsRemaining > maxContractYears { return false }
+            if expiringOnly && player.contractYearsRemaining > 1 { return false }
+            if !needle.isEmpty && !player.fullName.lowercased().contains(needle) { return false }
+            return true
+        }
+
+        return matches.sorted { $0.overall > $1.overall }
+    }
+
+    private var teamsByID: [UUID: Team] {
+        Dictionary(uniqueKeysWithValues: allTeams.map { ($0.id, $0) })
+    }
+
+    private var playerSearch: some View {
+        let results = searchResults
+        let shown = Array(results.prefix(Self.searchResultCap))
+        let lookup = teamsByID
+
+        return VStack(spacing: 0) {
+            searchControls
+
+            if shown.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.title)
+                        .foregroundStyle(Color.textTertiary)
+                    Text("No player in the league matches those filters.")
+                        .font(.footnote)
+                        .foregroundStyle(Color.textSecondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 6) {
+                        HStack {
+                            Text(
+                                results.count > shown.count
+                                    ? "\(shown.count) of \(results.count) matches — narrow the filters to see the rest"
+                                    : "\(results.count) match\(results.count == 1 ? "" : "es")"
+                            )
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.textTertiary)
+                            Spacer()
+                        }
+                        .padding(.bottom, 2)
+
+                        ForEach(shown) { player in
+                            NavigationLink {
+                                PlayerDetailView(player: player)
+                            } label: {
+                                searchResultRow(player, team: player.teamID.flatMap { lookup[$0] })
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: DSLayout.wideMeasure)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    private var searchControls: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.footnote)
+                    .foregroundStyle(Color.textTertiary)
+                TextField("Search every roster in the league", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textPrimary)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    filterMenu(
+                        title: filterPosition?.rawValue ?? "Any POS",
+                        isActive: filterPosition != nil
+                    ) {
+                        Button("Any position") { filterPosition = nil }
+                        ForEach(Position.allCases, id: \.self) { position in
+                            Button(position.rawValue) { filterPosition = position }
+                        }
+                    }
+
+                    filterMenu(
+                        title: minOVR > 0 ? "\(minOVR)+ OVR" : "Any OVR",
+                        isActive: minOVR > 0
+                    ) {
+                        Button("Any OVR") { minOVR = 0 }
+                        ForEach([60, 65, 70, 75, 80, 85, 90], id: \.self) { threshold in
+                            Button("\(threshold)+ OVR") { minOVR = threshold }
+                        }
+                    }
+
+                    filterMenu(
+                        title: maxAge > 0 ? "\u{2264} \(maxAge)yr" : "Any age",
+                        isActive: maxAge > 0
+                    ) {
+                        Button("Any age") { maxAge = 0 }
+                        ForEach([24, 26, 28, 30, 32], id: \.self) { age in
+                            Button("\(age) or younger") { maxAge = age }
+                        }
+                    }
+
+                    filterMenu(
+                        title: maxContractYears > 0 ? "\u{2264} \(maxContractYears)yr deal" : "Any deal",
+                        isActive: maxContractYears > 0
+                    ) {
+                        Button("Any contract") { maxContractYears = 0 }
+                        ForEach([1, 2, 3, 4], id: \.self) { years in
+                            Button("\(years) year\(years == 1 ? "" : "s") or less") { maxContractYears = years }
+                        }
+                    }
+
+                    Button {
+                        expiringOnly.toggle()
+                    } label: {
+                        filterChipLabel(title: "Expiring", isActive: expiringOnly)
+                    }
+                    .buttonStyle(.plain)
+
+                    if hasActiveFilters {
+                        Button {
+                            filterPosition = nil
+                            minOVR = 0
+                            maxAge = 0
+                            maxContractYears = 0
+                            expiringOnly = false
+                            searchText = ""
+                        } label: {
+                            filterChipLabel(title: "Clear", isActive: false, systemImage: "arrow.counterclockwise")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+        .frame(maxWidth: DSLayout.wideMeasure)
+        .frame(maxWidth: .infinity)
+        .background(Color.backgroundSecondary)
+    }
+
+    private var hasActiveFilters: Bool {
+        filterPosition != nil || minOVR > 0 || maxAge > 0
+            || maxContractYears > 0 || expiringOnly || !searchText.isEmpty
+    }
+
+    private func filterMenu<Content: View>(
+        title: String,
+        isActive: Bool,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        Menu {
+            content()
+        } label: {
+            filterChipLabel(title: title, isActive: isActive, systemImage: "chevron.down")
+        }
+    }
+
+    private func filterChipLabel(
+        title: String,
+        isActive: Bool,
+        systemImage: String? = nil
+    ) -> some View {
+        HStack(spacing: 4) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 8, weight: .bold))
+            }
+        }
+        .foregroundStyle(isActive ? Color.backgroundPrimary : Color.textSecondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule().fill(isActive ? Color.accentGold : Color.backgroundTertiary)
+        )
+    }
+
+    /// One hit. Carries the club, the rating, the age and the money — the four
+    /// columns the "who can I get, and can they afford to move him" question
+    /// needs before the detail screen is worth opening.
+    private func searchResultRow(_ player: Player, team: Team?) -> some View {
+        HStack(spacing: 10) {
+            Text(team?.abbreviation ?? "FA")
+                .font(.system(size: 11, weight: .heavy))
+                .foregroundStyle(.white)
+                .frame(width: 40)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(TeamColors.color(for: team?.abbreviation ?? ""))
+                )
+
+            Text(player.position.rawValue)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.accentBlue)
+                .frame(width: 30)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(player.fullName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                Text(searchRowSubtitle(player, team: team))
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 4)
+
+            VStack(spacing: 0) {
+                Text("\(player.overall)")
+                    .font(.callout.weight(.bold).monospacedDigit())
+                    .foregroundStyle(Color.forRating(player.overall))
+                Text("OVR")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .frame(width: 34)
+
+            Image(systemName: "chevron.right")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.backgroundTertiary)
+        )
+    }
+
+    private func searchRowSubtitle(_ player: Player, team: Team?) -> String {
+        var parts = [
+            "Age \(player.age)",
+            player.contractYearsRemaining <= 1
+                ? "expiring"
+                : "\(player.contractYearsRemaining)yr",
+            capLabel(player.annualSalary),
+        ]
+        if let team {
+            parts.append("\(team.abbreviation) \(capLabel(team.availableCap)) cap")
+        }
+        if player.isInjured {
+            parts.append("INJ \(player.injuryWeeksRemaining)wk")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 
