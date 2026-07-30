@@ -13,8 +13,9 @@ import Foundation
 /// §6.1) and share this one schema:
 /// - `publish` — fictional players/coaches/team nicknames, OVR arcs only.
 ///   Bundled in **every** build.
-/// - `dev` — sound-alike names and exact stat lines. Bundled in **DEBUG only**
-///   (see `LeagueTemplateLoader` for the mechanism).
+/// - `dev` — real names throughout (players, coaches, club identities, owners)
+///   plus exact stat lines. Bundled in **DEBUG only** (see
+///   `LeagueTemplateLoader` for the mechanism).
 ///
 /// Every field the transform emits is decoded except `calibration.teamOffsets`
 /// (a heterogeneous `[[String, Double]]` JSON array that carries no runtime
@@ -105,6 +106,13 @@ struct LeagueTemplate: Codable {
         var city: String
         var nickname: String
         var fullName: String
+        /// Principal owner baked into the template — **dev profile only**, and
+        /// the one field the raw snapshot does not carry (it is a hand-kept
+        /// table in `make_templates.py`). `nil` in the publish file, where
+        /// `LeagueTemplateImporter` draws a fictional owner from
+        /// `LeagueGenerator`'s blocklist-checked pools instead. QA gate 1
+        /// asserts the publish identity has no such key at all.
+        var ownerName: String?
     }
 
     struct Record: Codable {

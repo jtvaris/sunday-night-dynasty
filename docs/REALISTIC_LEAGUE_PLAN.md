@@ -38,8 +38,10 @@ including trades. Random generation stays available as an alternative start.
 6. **Integration — TWO FIXED TEMPLATES, both launchable (user requirement
    2026-07-29):** the transform tool bakes two complete league templates from
    the same raw data:
-   - `league_2026_dev.json` — devProfile: sound-alike player names, real-ish
-     team identities, exact careers. Bundled in DEBUG builds only.
+   - `league_2026_dev.json` — devProfile: **real** player and coach names, the
+     real 32 club identities, the real principal owners and exact careers
+     (decision 2026-07-30 — it is the developer's own NFL). Bundled in DEBUG
+     builds only.
    - `league_2026_publish.json` — publishProfile per `ANONYMIZATION_SPEC.md`:
      fictional players/coaches/team nicknames, OVR-arc careers. Bundled always.
    Both templates contain **final, pre-solved attribute values** (the
@@ -65,7 +67,8 @@ fictional name (explicit intent to evoke the persona). NFL team names/logos and
 the "NFL" mark are trademarks — game keeps its own team branding.
 
 **Two build profiles from the same raw data:**
-- `devProfile` (never distributed): sound-alike names, exact careers — personal use.
+- `devProfile` (never distributed): real names, real club identities, real
+  owners, exact careers — personal use, DEBUG-only, bundle-gated.
 - `publishProfile`: fully fictional names (not sound-alike), bio jitter
   (same-tier college swap, age ±1, draft slot fuzzed within round, ht/wt ±),
   **no verbatim stat lines** — careers imported as per-year OVR arcs and the

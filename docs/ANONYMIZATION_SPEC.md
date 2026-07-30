@@ -105,9 +105,12 @@ realism the user experiences; none of it identifies an individual.
    `globalSeed` → emits BOTH fixed templates (user requirement: two constant,
    always-launchable league sets — nothing regenerated per career):
    - `league_2026_publish.json` (publishProfile, bundled in every build);
-   - `league_2026_dev.json` (devProfile: sound-alike names, real-ish team
-     identities, exact careers — bundled in **DEBUG builds only**, excluded
-     from Release via build configuration).
+   - `league_2026_dev.json` (devProfile: **not anonymized** since 2026-07-30 —
+     real player/coach names, the real 32 club identities, the real principal
+     owners (`identity.ownerName`) and exact careers. Bundled in **DEBUG builds
+     only**, excluded from Release via build configuration; the bundle gate
+     below is the only thing standing between it and a shipped product, so its
+     check (b) must never be softened).
    Both carry final pre-solved attributes (fixed-seed derivation inside the
    tool) so a template launch is fully deterministic.
 2. **Bundle gate** (release build phase / pre-ship script): scan the app

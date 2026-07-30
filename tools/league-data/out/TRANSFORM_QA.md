@@ -5,7 +5,7 @@
 > never enter an app target's resources. `league_2026_dev.json` is DEBUG-only;
 > only `league_2026_publish.json` ships in a Release build.
 
-- built: `2026-07-30T08:12:59Z` (the templates themselves are byte-identical on every rebuild — their `generated` stamp is the source snapshot's, `2026-07-29T13:59:05Z`)
+- built: `2026-07-30T09:28:34Z` (the templates themselves are byte-identical on every rebuild — their `generated` stamp is the source snapshot's, `2026-07-29T13:59:05Z`)
 - globalSeed: `20260729` (deterministic — re-running reproduces both files)
 - source: `tools/league-data/raw/league_raw_2026.json` (schemaVersion 2, snapshot 2026-02-28)
 - outputs: `out/league_2026_dev.json` (devProfile), `out/league_2026_publish.json` (publishProfile)
@@ -15,7 +15,7 @@
 
 | # | Gate | Result | Detail |
 |---:|---|:-:|---|
-| 1 | `schema-validate` | PASS | dev + publish share one schema; 32 teams; ratings 40-99; potential >= rating; no null colleges |
+| 1 | `schema-validate` | PASS | dev + publish share one schema; 32 teams; ratings 40-99; potential >= rating; no null colleges; identity keys per profile (dev carries the DEV-ONLY `ownerName`, publish carries no owner field at all) |
 | 2 | `publish-name-levenshtein>=3` | PASS | 1902 generated publish names checked against a 2048-name blocklist; minimum distance >= 3 |
 | 3 | `publish-no-real-name-substring` | PASS | 5642 identity-bearing strings (player + coach names, team nicknames, pick trade notes) scanned: no real full name and no real surname (>=4 chars) appears in any of them |
 | 4 | `publish-names-unique` | PASS | 1902 names, all distinct |
@@ -118,7 +118,7 @@ Per player: `quality = (1 - w_ped) * (0.60 * production + 0.40 * role) + w_ped *
 | 2 | 2 jersey collisions (BUF #23, IND #17) | Higher-rated player keeps the number, the other is reassigned to the lowest free number on that roster. |
 | 3 | 5 null colleges | Replaced by the `"No College"` sentinel; in publish they go through the same same-tier swap as everyone else, because a "No College" flag on 5 players is itself an identifier. Transfer chains (`"LSU; Ohio State"`) are reduced to the school of record, which nflverse lists FIRST. |
 | 4 | OL `gs` is a `snapStart50` proxy | OL production is scored on snap share / snaps-per-game / penalty rate — never on `gs`. |
-| 5 | Anonymization is mandatory | Both profiles are anonymized; the publish profile additionally passes gates 2-7 and 12-13 above. |
+| 5 | Anonymization is mandatory | Mandatory for the SHIPPED profile: the publish file passes gates 2-7 and 12-17 above. The dev file is real names throughout (decision 2026-07-30) and is DEBUG-only — `check_bundle.sh` proves it is absent from a Release product. |
 
 - HAND CIN QB: Joe Burrow > Joe Flacco (+6.0) — Franchise QB; led on rate (.878 snap share vs .778) but was out-volumed.
 - HAND WAS QB: Jayden Daniels > Marcus Mariota (+6.0) — Franchise QB; led on rate (.903 vs .745) but was out-volumed.
@@ -130,7 +130,7 @@ Per player: `quality = (1 - w_ped) * (0.60 * production + 0.40 * role) + w_ped *
 
 ## 5. Anonymization
 
-**devProfile** (`league_2026_dev.json`, DEBUG builds only): sound-alike names produced by swapping the onset consonant clusters between first and last name and applying one seeded phonetic texture tweak to each half — `Jared Goff` → `Gared Joff` → `Garret Joff`. Team identities are real city + real-adjacent nickname. Exact stat lines are carried in `statLines`.
+**devProfile** (`league_2026_dev.json`, DEBUG builds only): **not anonymized at all** (decision 2026-07-30). Real player and coach names verbatim, the real 32 club identities (the same city + nickname pairs `NFLTeamData.swift` gives the random league), the real principal owners (`DEV_OWNERS` → `identity.ownerName`, the one field the raw scrape does not carry), exact stat lines in `statLines`, real jerseys, real draft slots. It is the developer's own NFL and is filtered out of a Release product on two independent levels — `EXCLUDED_SOURCE_FILE_NAMES` and the `#if DEBUG` source guards — which `tools/league-data/check_bundle.sh` check (b) proves against a built `.app`. Consequence to know: the importer's `SupportStaffNamePool` harvests the template's own name tokens, so a DEBUG career's 417 support-staff coaches carry real-adjacent recombinations. That is per-template and cannot reach the publish pools (gate 16 is publish-only by design).
 
 **publishProfile** (`league_2026_publish.json`, bundled always), per `docs/ANONYMIZATION_SPEC.md`:
 
@@ -143,7 +143,7 @@ Per player: `quality = (1 - w_ped) * (0.60 * production + 0.40 * role) + w_ped *
 - Careers: OVR arcs only. `statLines` is `null` and no arc row carries games played / started.
 - `notes` is `null` for every publish player (gate 15). The dev profile keeps `undrafted` / `finished 2025 on injured reserve`; the IR flag is a real medical event for a named person, which section 3 does not ship, and against the team + position + depth rank the profile keeps by design it identified single players straight out of the bundle.
 - Coaches: fictional names, `sinceYear` ±1 with the DIRECTION chosen among the moves that survive the [1990, leagueYear] clamp (drawing first and clamping second returned the real year for every 2026 hire), offense/defense background and scheme identity kept, lineage notes dropped.
-- Team identities: real cities kept (facts / the game's own setup), nicknames fully fictional.
+- Team identities: real cities kept (facts / the game's own setup), nicknames fully fictional. No `ownerName` key: the importer draws all 32 owners from `LeagueGenerator`'s fictional, gate-E-checked pools.
 - Pick trade notes reduced to the ownership chain (`from SEA via JAX`); the prose that names players is dropped.
 
 ## 6. Recognizability spot-check — 20-player blind sample

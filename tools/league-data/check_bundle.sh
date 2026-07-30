@@ -9,7 +9,8 @@
 #       (every 2026 rostered player + every HC/OC/DC + the notable-past list) —
 #       the blocklist is rebuilt by importing `make_templates.py`, so the gate
 #       and the transform can never disagree about what "real" means;
-#   (b) `league_2026_dev.json`, the DEBUG-only sound-alike template.
+#   (b) `league_2026_dev.json`, the DEBUG-only REAL-name template (real players,
+#       coaches, club identities and owners since 2026-07-30).
 #
 # Two further checks ride along: no raw-snapshot artifact anywhere in the
 # product, and a Levenshtein >= 3 / no-real-surname re-check of every identity

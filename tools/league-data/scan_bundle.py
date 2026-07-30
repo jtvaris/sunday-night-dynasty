@@ -8,8 +8,11 @@ Enforces `docs/ANONYMIZATION_SPEC.md` §6.2 on an actual build product:
      (every 2026 rostered player + every HC/OC/DC) plus `NOTABLE_PAST` — the
      exact same blocklist `make_templates.py` gates the transform with.
   B. `league_2026_dev.json` must not be in the product. The dev profile carries
-     sound-alike names and verbatim stat lines and is DEBUG-only; Release
-     filters it out via `EXCLUDED_SOURCE_FILE_NAMES`.
+     REAL names (players, coaches, club identities, owners) and verbatim stat
+     lines and is DEBUG-only; Release filters it out via
+     `EXCLUDED_SOURCE_FILE_NAMES`. Since 2026-07-30 this check is the whole
+     safety margin for the dev file — nothing about it is anonymized any more,
+     so a `[B]` hit is a shipping blocker, not a near-miss.
   C. No raw-data artifact (the per-team files, the merged snapshot, the QA
      reports) may have been dragged into a target's resources.
   D. Near-miss guard: every identity-bearing string in the shipped publish

@@ -10,6 +10,13 @@ and bakes TWO complete, constant, always-launchable league templates:
     out/league_2026_dev.json      devProfile     (DEBUG builds only)
     out/league_2026_publish.json  publishProfile (bundled in every build)
 
+devProfile is NOT anonymized (decision 2026-07-30): real players, real coaches,
+real club identities and the real principal owners, because it is the
+developer's own build and is filtered out of a Release product by
+`EXCLUDED_SOURCE_FILE_NAMES` + `tools/league-data/check_bundle.sh`. Every
+anonymization rule in `docs/ANONYMIZATION_SPEC.md`, and every gate below whose
+name starts with `publish-`, is about publishProfile alone.
+
 Everything is deterministic: every random draw is seeded from
 SHA-256(GLOBAL_SEED | stable per-entity key), so re-running the tool byte-for-byte
 reproduces both files. Nothing is generated at career-creation time — the
@@ -619,18 +626,84 @@ def aggregate_career_rates(pos: str, seasons: list) -> dict:
 
 NAME_SUFFIXES = {"Jr.", "Jr", "Sr.", "Sr", "II", "III", "IV", "V"}
 
-# --- dev profile: real-adjacent team nicknames (real city kept) -------------
-# Close enough that a developer reads the roster as "that team", far enough that
-# no NFL trademark is reproduced. DEV BUILDS ONLY.
-DEV_NICKNAMES = {
-    "ARI": "Redbirds",   "ATL": "Falconers",  "BAL": "Blackbirds", "BUF": "Bisons",
-    "CAR": "Cougars",    "CHI": "Grizzlies",  "CIN": "Tigers",     "CLE": "Bulldogs",
-    "DAL": "Wranglers",  "DEN": "Mustangs",   "DET": "Pride",      "GB": "Packmen",
-    "HOU": "Rangers",    "IND": "Stallions",  "JAX": "Jaguarundis", "KC": "Monarchs",
-    "LA": "Bighorns",    "LAC": "Voltage",    "LV": "Marauders",   "MIA": "Porpoises",
-    "MIN": "Norsemen",   "NE": "Minutemen",   "NO": "Sinners",     "NYG": "Colossus",
-    "NYJ": "Jetstream",  "PHI": "Ospreys",    "PIT": "Ironmen",    "SEA": "Kingfishers",
-    "SF": "Miners",      "TB": "Corsairs",    "TEN": "Comets",     "WAS": "Sentinels",
+# --- dev profile: the real nicknames (real city kept) -----------------------
+# DEV BUILDS ONLY. Decision 2026-07-30: the dev template is the developer's own
+# NFL, so it carries the REAL club identities — the same 32 city + nickname pairs
+# `dynasty/Data/Import/NFLTeamData.swift` already uses for the random league, so
+# a dev career reads identically whichever league source it came from. The
+# publish profile keeps its fully fictional nicknames (`PUBLISH_NICKNAMES`).
+# Keep this table in sync with `NFLTeamData.allTeams` if the app's branding
+# changes; the keys here are the TEMPLATE keys ("LA" = the Rams).
+REAL_NICKNAMES = {
+    "ARI": "Cardinals", "ATL": "Falcons",   "BAL": "Ravens",     "BUF": "Bills",
+    "CAR": "Panthers",  "CHI": "Bears",     "CIN": "Bengals",    "CLE": "Browns",
+    "DAL": "Cowboys",   "DEN": "Broncos",   "DET": "Lions",      "GB": "Packers",
+    "HOU": "Texans",    "IND": "Colts",     "JAX": "Jaguars",    "KC": "Chiefs",
+    "LA": "Rams",       "LAC": "Chargers",  "LV": "Raiders",     "MIA": "Dolphins",
+    "MIN": "Vikings",   "NE": "Patriots",   "NO": "Saints",      "NYG": "Giants",
+    "NYJ": "Jets",      "PHI": "Eagles",    "PIT": "Steelers",   "SEA": "Seahawks",
+    "SF": "49ers",      "TB": "Buccaneers", "TEN": "Titans",     "WAS": "Commanders",
+}
+
+# --- dev profile: real principal owners -------------------------------------
+# DEV BUILDS ONLY, and the ONE piece of the dev template that is not in the raw
+# scrape (nflverse carries no ownership data), so it is a hand-maintained table
+# compiled for the 2026 league year. The importer uses `identity.ownerName` when
+# a template supplies it and falls back to `LeagueGenerator.generateOwner`'s
+# fictional pools otherwise — the publish profile carries no `ownerName` key at
+# all, so publish behaviour is byte-for-byte unchanged (gate 1 asserts that).
+#
+# Every entry was web-verified for the 2026 league year on 2026-07-30 (the
+# six once marked UNSURE included); the annotated ones carry the succession
+# fact that makes the name non-obvious.
+DEV_OWNERS = {
+    "ARI": "Michael Bidwill",
+    "ATL": "Arthur Blank",
+    "BAL": "Steve Bisciotti",
+    "BUF": "Terry Pegula",
+    "CAR": "David Tepper",
+    # Virginia Halas McCaskey died Feb 2025; George McCaskey is chairman and
+    # controlling owner.
+    "CHI": "George McCaskey",
+    "CIN": "Mike Brown",
+    "CLE": "Jimmy Haslam",
+    "DAL": "Jerry Jones",
+    "DEN": "Rob Walton",
+    "DET": "Sheila Ford Hamp",
+    # Green Bay is publicly owned and has no principal owner; the president/CEO
+    # stands in so the owner-facing screens have somebody to name. Ed Policy
+    # succeeded Mark Murphy as president/CEO in July 2025.
+    "GB": "Ed Policy",
+    "HOU": "Cal McNair",
+    # Jim Irsay died in May 2025; Carlie Irsay-Gordon is the principal owner/CEO.
+    "IND": "Carlie Irsay-Gordon",
+    "JAX": "Shad Khan",
+    "KC": "Clark Hunt",
+    "LA": "Stan Kroenke",
+    "LAC": "Dean Spanos",
+    "LV": "Mark Davis",
+    # Still the controlling owner after the 2024-25 minority sales; son-in-law
+    # Daniel Sillman runs day-to-day operations and is the named successor.
+    "MIA": "Stephen Ross",
+    "MIN": "Zygi Wilf",
+    "NE": "Robert Kraft",
+    "NO": "Gayle Benson",
+    "NYG": "John Mara",
+    "NYJ": "Woody Johnson",
+    "PHI": "Jeffrey Lurie",
+    "PIT": "Art Rooney II",
+    # The Paul Allen estate opened a formal sale process in Feb 2026 that runs
+    # through the offseason; until a buyer is ratified, trustee Jody Allen
+    # remains the owner of record — matching this Feb-2026 snapshot.
+    "SEA": "Jody Allen",
+    # Jed York bought equity from Denise DeBartolo York and is now formally the
+    # principal owner (parents remain co-chairs).
+    "SF": "Jed York",
+    # The Glazer family owns Tampa Bay; Joel Glazer is co-chairman and the
+    # family's representative at the league level.
+    "TB": "Joel Glazer",
+    "TEN": "Amy Adams Strunk",
+    "WAS": "Josh Harris",
 }
 
 # --- publish profile: fully fictional nicknames (real city kept) -----------
@@ -856,7 +929,7 @@ def college_tier(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 6. String helpers (Levenshtein, name morphing)
+# 6. String helpers (Levenshtein, name splitting)
 # ---------------------------------------------------------------------------
 
 
@@ -898,106 +971,11 @@ def split_name(full: str):
     return toks[0], " ".join(toks[1:]), suffix
 
 
-ONSET_RE = re.compile(r"^([^aeiouAEIOU]*)(.*)$")
-VOWEL_SHIFT = {"a": "e", "e": "a", "i": "y", "o": "u", "u": "o", "y": "i"}
-
-
-def _onset(word: str):
-    m = ONSET_RE.match(word)
-    return m.group(1), m.group(2)
-
-
-def _texture(word: str, rng: random.Random) -> str:
-    """One small deterministic phonetic tweak that keeps rhythm and syllable
-    count. Never creates a triple letter and never touches the first two
-    characters, so the onset that carries the sound-alike stays intact."""
-    if len(word) < 4:
-        return word + rng.choice(["n", "s", "k"])
-    roll = rng.randrange(10)                         # doubling and vowel shifts
-    choice = 0 if roll < 5 else (1 if roll < 9 else 2)   # dominate; codas are rare
-    if choice == 0:                                  # double a medial consonant
-        for i in range(2, len(word) - 1):
-            ch = word[i].lower()
-            if (ch not in "aeiouy'-." and ch != word[i - 1].lower()
-                    and ch != word[i + 1].lower()):
-                return word[:i] + word[i] + word[i:]
-        choice = 1
-    if choice == 1:                                  # shift the first inner vowel
-        for i, ch in enumerate(word):
-            if i > 0 and ch.lower() in VOWEL_SHIFT:
-                rep = VOWEL_SHIFT[ch.lower()]
-                return word[:i] + (rep.upper() if ch.isupper() else rep) + word[i + 1:]
-        choice = 2
-    if word[-1].lower() in "aeiouy":                 # alter the coda
-        return word + rng.choice(["n", "s", "th", "l"])
-    return word + rng.choice(["e", "y", "on", "en"])
-
-
-def _join_onset(onset: str, body: str) -> str:
-    """Glue a borrowed onset onto a name body without doubling its capital."""
-    if not body:
-        return onset
-    body = body[0].lower() + body[1:]
-    joined = onset + body
-    return joined[0].upper() + joined[1:]
-
-
-FALLBACK_ONSETS = ["B", "Br", "C", "Ch", "D", "Dr", "F", "Fl", "G", "Gr", "H",
-                   "J", "K", "Kr", "L", "M", "N", "P", "Pr", "R", "S", "Sh",
-                   "St", "T", "Tr", "V", "W"]
-
-
-def dev_morph(full_name: str, salt: str) -> str:
-    """devProfile sound-alike morph — the documented rule:
-
-        1. split into first / last-head / trailing tokens (suffix preserved);
-        2. SWAP the onset consonant clusters between first and last-head —
-           "Jared Goff" -> "Gared Joff" (a vowel-initial half borrows a seeded
-           onset instead, so "Amon-Ra Brown" cannot decay to "Own");
-        3. apply one seeded phonetic texture tweak to each half — double a
-           medial consonant, shift a vowel, alter the coda, or transpose the
-           final pair -> "Garret Joff";
-        4. reject anything that normalises back to the real name and re-draw.
-
-    Syllable counts and rhythm survive, so the name reads as "that guy" to the
-    developer and to nobody else. DEV BUILDS ONLY — never shipped.
-    """
-    first, last, suffix = split_name(full_name)
-    if not last:
-        last, first = first, "Ray"
-    last_tokens = last.split()
-    last_head = last_tokens[-1]
-    last_prefix = last_tokens[:-1]          # "St." in "St. Brown", "Van" in "Van Ginkel"
-
-    base_rng = seeded("devonset", salt, full_name)
-    initials_only = bool(re.fullmatch(r"(?:[A-Z]\.)+", first))
-    if initials_only:
-        letters = "ABCDEFGHJKLMRTVW"
-        first = f"{base_rng.choice(letters)}.{base_rng.choice(letters)}."
-        f_on, f_body = base_rng.choice(FALLBACK_ONSETS), ""
-    else:
-        f_on, f_body = _onset(first)
-        if not f_on:
-            f_on = base_rng.choice(FALLBACK_ONSETS)
-
-    l_on, l_body = _onset(last_head)
-    if not l_on:
-        l_on = base_rng.choice(FALLBACK_ONSETS)
-
-    new_first = _join_onset(l_on, f_body) if f_body else first
-    new_last = _join_onset(f_on, l_body) if l_body else _join_onset(f_on, last_head)
-
-    for attempt in range(24):
-        rng = seeded("devmorph", salt, full_name, attempt)
-        cand_first = _texture(new_first, rng) if f_body else new_first
-        cand_last = _texture(new_last, rng)
-        parts = [cand_first] + last_prefix + [cand_last]
-        if suffix:
-            parts.append(suffix)
-        out = " ".join(parts)
-        if norm_name(out) != norm_name(full_name):
-            return out
-    return " ".join([new_first] + last_prefix + [new_last] + ([suffix] if suffix else []))
+# NOTE (2026-07-30): the devProfile sound-alike morph that used to live here
+# ("Jared Goff" -> "Garret Joff") is gone. The dev template now passes the REAL
+# names through verbatim — it is DEBUG-only and never distributed, and a
+# recognisable roster is the whole point of it. The publish profile's own,
+# independent name generation (`NameFactory`, section 10) is untouched.
 
 
 # ---------------------------------------------------------------------------
@@ -2358,7 +2336,9 @@ def build_templates(raw: dict, log: list):
                 moves = [d for d in (-1, 1) if 1990 <= since + d <= LEAGUE_YEAR]
                 pub_since = since + crng.choice(moves) if moves else since
             dev_staff[slot] = {
-                "name": dev_morph(real, f"coach|{abbr}|{slot}"),
+                # DEV-ONLY: the real coach, verbatim. The publish row below is
+                # the anonymized one every build ships.
+                "name": real,
                 "sinceYear": since,
                 "background": s.get("background") or ("offense" if slot == "oc" else
                                                       "defense" if slot == "dc" else None),
@@ -2415,7 +2395,8 @@ def build_templates(raw: dict, log: list):
             if p.get("injuredAtSeasonEnd"):
                 notes.append("finished 2025 on injured reserve")
 
-            dev_name = dev_morph(p["name"], f"player|{abbr}")
+            # DEV-ONLY: the real player, verbatim (see `REAL_NICKNAMES`).
+            dev_name = p["name"]
             dfirst, dlast, dsuf = split_name(dev_name)
             dev_players.append({
                 "id": pid, "name": dev_name,
@@ -2493,8 +2474,12 @@ def build_templates(raw: dict, log: list):
         dev_teams.append({
             "identity": {
                 "key": abbr, "appAbbr": APP_ABBR[abbr], "city": CITY_OF[abbr],
-                "nickname": DEV_NICKNAMES[abbr],
-                "fullName": f"{CITY_OF[abbr]} {DEV_NICKNAMES[abbr]}",
+                "nickname": REAL_NICKNAMES[abbr],
+                "fullName": f"{CITY_OF[abbr]} {REAL_NICKNAMES[abbr]}",
+                # DEV-ONLY key. Absent from the publish identity, where the
+                # importer keeps drawing fictional owners from
+                # `LeagueGenerator.generateOwner`.
+                "ownerName": DEV_OWNERS[abbr],
             },
             **common, "staff": dev_staff, "players": dev_players,
         })
@@ -2571,6 +2556,14 @@ REQUIRED_PLAYER_KEYS = {
 }
 REQUIRED_TEAM_KEYS = {"identity", "record2025", "conference", "division",
                       "baseDefense", "picks2026", "staff", "players"}
+# Identity keys per profile. `ownerName` is DEV-ONLY (real 2026 principal
+# owners, `DEV_OWNERS`): the publish identity must not carry the key at all, so
+# the shipped file stays byte-identical and the importer keeps drawing fictional
+# owners for it.
+REQUIRED_IDENTITY_KEYS = {
+    "dev": {"key", "appAbbr", "city", "nickname", "fullName", "ownerName"},
+    "publish": {"key", "appAbbr", "city", "nickname", "fullName"},
+}
 
 
 def gate(results, name, ok, detail):
@@ -2616,6 +2609,11 @@ def run_gates(dev, pub, ctx, log):
                 schema_err.append(f"{label}/{t['identity']['key']}: team keys "
                                   f"{sorted(set(t.keys()) ^ REQUIRED_TEAM_KEYS)}")
                 break
+            want_identity = REQUIRED_IDENTITY_KEYS[label]
+            if set(t["identity"].keys()) != want_identity:
+                schema_err.append(f"{label}/{t['identity']['key']}: identity keys "
+                                  f"{sorted(set(t['identity'].keys()) ^ want_identity)}")
+                break
             for p in t["players"]:
                 if set(p.keys()) != REQUIRED_PLAYER_KEYS:
                     schema_err.append(f"{label}/{t['identity']['key']}/{p['name']}: player keys "
@@ -2633,7 +2631,9 @@ def run_gates(dev, pub, ctx, log):
         schema_err.append(f"header key mismatch: {sorted(dev_keys ^ pub_keys)}")
     gate(res, "schema-validate", not schema_err,
          "dev + publish share one schema; 32 teams; ratings 40-99; potential >= rating; "
-         "no null colleges" if not schema_err else "; ".join(schema_err[:5]))
+         "no null colleges; identity keys per profile (dev carries the DEV-ONLY "
+         "`ownerName`, publish carries no owner field at all)"
+         if not schema_err else "; ".join(schema_err[:5]))
 
     # ---- G2 blocklist / Levenshtein ---------------------------------------
     pub_names = []
@@ -2903,6 +2903,12 @@ def run_gates(dev, pub, ctx, log):
 
     # ---- G16 recombination of the shipped name tokens ---------------------
     # The surface the runtime `SupportStaffNamePool` actually harvests.
+    #
+    # PUBLISH ONLY, deliberately. `SupportStaffNamePool` is built per template,
+    # so the dev template's real first/last tokens recombine into real-adjacent
+    # support-staff names inside a DEBUG career — which is fine there (the whole
+    # dev profile is real names and never leaves this machine) and cannot reach
+    # the publish pools, which are generated independently by `NameFactory`.
     pub_first = sorted({p["firstName"] for t in pub["teams"] for p in t["players"]})
     pub_last = sorted({p["lastName"] for t in pub["teams"] for p in t["players"]})
     recomb = sorted(recombination_conflicts(pub_first, pub_last, blocklist["fullNorm"]))
@@ -3206,8 +3212,10 @@ def write_qa_report(path, dev, pub, ctx, gates, log):
       "lists FIRST. |")
     A("| 4 | OL `gs` is a `snapStart50` proxy | OL production is scored on snap "
       "share / snaps-per-game / penalty rate — never on `gs`. |")
-    A("| 5 | Anonymization is mandatory | Both profiles are anonymized; the publish "
-      "profile additionally passes gates 2-7 and 12-13 above. |")
+    A("| 5 | Anonymization is mandatory | Mandatory for the SHIPPED profile: the "
+      "publish file passes gates 2-7 and 12-17 above. The dev file is real names "
+      "throughout (decision 2026-07-30) and is DEBUG-only — `check_bundle.sh` "
+      "proves it is absent from a Release product. |")
     A("")
     for line in ctx["depth_fixes"][:6]:
         A(f"- {line}")
@@ -3217,11 +3225,20 @@ def write_qa_report(path, dev, pub, ctx, gates, log):
 
     A("## 5. Anonymization")
     A("")
-    A("**devProfile** (`league_2026_dev.json`, DEBUG builds only): sound-alike "
-      "names produced by swapping the onset consonant clusters between first and "
-      "last name and applying one seeded phonetic texture tweak to each half — "
-      "`Jared Goff` → `Gared Joff` → `Garret Joff`. Team identities are real city "
-      "+ real-adjacent nickname. Exact stat lines are carried in `statLines`.")
+    A("**devProfile** (`league_2026_dev.json`, DEBUG builds only): **not "
+      "anonymized at all** (decision 2026-07-30). Real player and coach names "
+      "verbatim, the real 32 club identities (the same city + nickname pairs "
+      "`NFLTeamData.swift` gives the random league), the real principal owners "
+      "(`DEV_OWNERS` → `identity.ownerName`, the one field the raw scrape does "
+      "not carry), exact stat lines in `statLines`, real jerseys, real draft "
+      "slots. It is the developer's own NFL and is filtered out of a Release "
+      "product on two independent levels — `EXCLUDED_SOURCE_FILE_NAMES` and the "
+      "`#if DEBUG` source guards — which `tools/league-data/check_bundle.sh` "
+      "check (b) proves against a built `.app`. Consequence to know: the "
+      "importer's `SupportStaffNamePool` harvests the template's own name tokens, "
+      "so a DEBUG career's 417 support-staff coaches carry real-adjacent "
+      "recombinations. That is per-template and cannot reach the publish pools "
+      "(gate 16 is publish-only by design).")
     A("")
     A("**publishProfile** (`league_2026_publish.json`, bundled always), per "
       "`docs/ANONYMIZATION_SPEC.md`:")
@@ -3269,7 +3286,8 @@ def write_qa_report(path, dev, pub, ctx, gates, log):
       "clamping second returned the real year for every 2026 hire), offense/defense "
       "background and scheme identity kept, lineage notes dropped.")
     A("- Team identities: real cities kept (facts / the game's own setup), "
-      "nicknames fully fictional.")
+      "nicknames fully fictional. No `ownerName` key: the importer draws all 32 "
+      "owners from `LeagueGenerator`'s fictional, gate-E-checked pools.")
     A("- Pick trade notes reduced to the ownership chain (`from SEA via JAX`); the "
       "prose that names players is dropped.")
     A("")
