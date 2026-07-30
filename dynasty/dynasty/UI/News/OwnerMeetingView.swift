@@ -251,6 +251,21 @@ struct OwnerMeetingView: View {
                 budgetPotColumn(label: "Medical", value: owner.medicalBudget, color: .success)
             }
 
+            // TODO §5.4: the facilities envelope is a separate pot from the three
+            // above, and the owner meeting is where he says what he thinks of the
+            // buildings he pays for.
+            Divider().overlay(Color.surfaceBorder)
+
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "quote.opening")
+                    .font(.caption2)
+                    .foregroundStyle(Color.accentGold)
+                Text(FacilityEngine.ownerMeetingLine(owner: owner))
+                    .font(.caption.italic())
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             NavigationLink {
                 OwnerBudgetView(career: career)
             } label: {

@@ -7,6 +7,12 @@ import SwiftData
 /// (coaching + scouting + medical) and the coach decides how to split it.
 /// Reallocations move money between the three pots in $250K steps; a pot can
 /// never drop below the salaries already committed to it.
+///
+/// §5.4 adds the buildings underneath the people: a second, separate envelope
+/// for the three facility tracks. It is deliberately NOT part of the staff
+/// envelope — that money is committed to salaries, and a training complex
+/// cannot be paid for by not paying the physio — so it has its own budget line
+/// and saves on the spot rather than through the allocation button.
 struct OwnerBudgetView: View {
 
     let career: Career
@@ -30,6 +36,10 @@ struct OwnerBudgetView: View {
     @State private var totalEnvelope: Int = 0
 
     @State private var showSavedConfirmation = false
+
+    // Facility tiers being edited (§5.4). Applied on the spot, not through the
+    // staff-allocation save button.
+    @State private var facilityLevels: FacilityEngine.Levels = .standard
 
     private let step = 250
     private let potFloor = 500
@@ -79,6 +89,8 @@ struct OwnerBudgetView: View {
                                     .foregroundStyle(Color.success)
                                     .transition(.opacity)
                             }
+
+                            facilitiesCard(owner)
                         }
                         .padding(24)
                         .frame(maxWidth: 620)
@@ -274,6 +286,109 @@ struct OwnerBudgetView: View {
         .disabled(!hasChanges || unallocated != 0)
     }
 
+    // MARK: - Facilities Card (§5.4)
+
+    private func facilitiesCard(_ owner: Owner) -> some View {
+        let upkeep = FacilityEngine.upkeep(levels: facilityLevels)
+        let budget = FacilityEngine.annualBudget(owner: owner)
+        let overBudget = upkeep > budget
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "building.2.fill")
+                    .foregroundStyle(Color.accentGold)
+                Text("Facilities")
+                    .font(.headline)
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+                Text("\(formatMoney(upkeep)) / \(formatMoney(budget))")
+                    .font(.subheadline.weight(.bold).monospacedDigit())
+                    .foregroundStyle(overBudget ? Color.danger : Color.success)
+            }
+
+            Text("A separate envelope from the staff budget — the owner funds the buildings, you decide which ones. League Standard is what everybody else has: it costs you nothing and buys you nothing.")
+                .font(.caption)
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(Color.surfaceBorder)
+
+            ForEach(FacilityEngine.Track.allCases) { track in
+                facilityRow(track, owner: owner)
+            }
+
+            Divider().overlay(Color.surfaceBorder)
+
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "quote.opening")
+                    .font(.caption2)
+                    .foregroundStyle(Color.accentGold)
+                Text(FacilityEngine.ownerMeetingLine(owner: owner))
+                    .font(.caption.italic())
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(20)
+        .cardBackground()
+    }
+
+    private func facilityRow(_ track: FacilityEngine.Track, owner: Owner) -> some View {
+        let tier = facilityLevels[track]
+        let canUp = tier < FacilityEngine.maxTier
+            && FacilityEngine.canAfford(owner: owner, track: track, tier: tier + 1)
+        let canDown = tier > FacilityEngine.minTier
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: track.icon)
+                    .foregroundStyle(Color.accentBlue)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(track.displayName)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text("\(FacilityEngine.tierName(tier)) · \(formatMoney(FacilityEngine.annualCost(tier: tier)))/yr")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                }
+                Spacer()
+
+                HStack(spacing: 10) {
+                    stepperButton(system: "minus.circle.fill", enabled: canDown) {
+                        setTier(track, to: tier - 1, owner: owner)
+                    }
+                    tierPips(tier)
+                    stepperButton(system: "plus.circle.fill", enabled: canUp) {
+                        setTier(track, to: tier + 1, owner: owner)
+                    }
+                }
+            }
+
+            Text("\(FacilityEngine.effectSummary(track: track, tier: tier)) · \(track.caption)")
+                .font(.caption2)
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(Color.backgroundTertiary)
+        )
+    }
+
+    /// Three pips, filled up to the current tier.
+    private func tierPips(_ tier: Int) -> some View {
+        HStack(spacing: 4) {
+            ForEach(FacilityEngine.minTier...FacilityEngine.maxTier, id: \.self) { level in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(level <= tier ? Color.accentGold : Color.backgroundSecondary)
+                    .frame(width: 14, height: 10)
+            }
+        }
+        .frame(minWidth: 56)
+        .accessibilityLabel("Tier \(tier) of \(FacilityEngine.maxTier)")
+    }
+
     // MARK: - No Owner State
 
     private var noOwnerState: some View {
@@ -308,6 +423,22 @@ struct OwnerBudgetView: View {
         }
     }
 
+    /// §5.4: facility tiers apply immediately. There is nothing to reconcile
+    /// the way the three staff pots have to be (they must sum to the envelope),
+    /// so a confirm step would only be a second tap.
+    private func setTier(_ track: FacilityEngine.Track, to tier: Int, owner: Owner) {
+        var proposed = facilityLevels
+        proposed[track] = tier
+        // Never let a tap put the club over what the owner will fund.
+        guard tier < facilityLevels[track]
+            || FacilityEngine.upkeep(levels: proposed) <= FacilityEngine.annualBudget(owner: owner)
+        else { return }
+
+        facilityLevels = proposed
+        FacilityEngine.apply(proposed, to: owner)
+        try? modelContext.save()
+    }
+
     // MARK: - Data
 
     private func loadData() {
@@ -316,6 +447,15 @@ struct OwnerBudgetView: View {
         team = try? modelContext.fetch(teamDesc).first
         owner = team?.owner
         guard let owner else { return }
+
+        // §5.4: `Team.owner` has no inverse, so the owner row cannot name its
+        // own club. Stamp it here for the user's franchise — the league-wide
+        // pass does the other 31.
+        if owner.teamID != teamID {
+            owner.teamID = teamID
+            FacilityEngine.invalidateCache()
+        }
+        facilityLevels = FacilityEngine.levels(for: owner)
 
         coachingAlloc = owner.coachingBudget
         scoutingAlloc = owner.scoutingBudget

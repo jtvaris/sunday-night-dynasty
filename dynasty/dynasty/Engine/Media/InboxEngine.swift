@@ -337,9 +337,11 @@ enum InboxEngine {
             ]
         ))
 
-        // Agent reaching out
-        let agentNames = ["Drew Rosenhaus", "Tom Condon", "Joel Segal", "Todd France", "Ben Dogra"]
-        let agentName = agentNames.randomElement() ?? "Drew Rosenhaus"
+        // Agent reaching out. Drawn from `AgentPersona.agentNamePool` — the
+        // single invented-agent pool the anonymization gate checks — rather than
+        // a local list. The list that used to live here named five real,
+        // currently-working NFL player agents.
+        let agentName = AgentPersona.randomAgentName()
         messages.append(InboxMessage(
             sender: .playerAgent(name: agentName),
             subject: "Client Interested in \(teamName)",
@@ -1139,6 +1141,65 @@ enum InboxEngine {
             date: dateString,
             category: .tradeOffer,
             actionDestination: .trades
+        )
+    }
+
+    // MARK: - Practice Squad (TODO §5.1)
+
+    /// A rival has filed interest in one of our squad players — the one piece
+    /// of mail in this file with a deadline attached.
+    ///
+    /// WHY the warning exists at all: a practice-squad signing is unblockable
+    /// by rule, so the only counter-move a club has is to promote the player to
+    /// its own 53 first. Landing the signing without notice would make that
+    /// decision invisible; landing it a week later makes it a real one.
+    static func practiceSquadPoachWarningMessage(
+        playerName: String,
+        position: String,
+        suitorName: String,
+        suitorAbbr: String,
+        dateString: String
+    ) -> InboxMessage {
+        InboxMessage(
+            sender: .developmentStaff,
+            subject: "\(suitorAbbr) are circling \(playerName)",
+            body: """
+            The \(suitorName) have asked to work out our practice-squad \(position) \(playerName). That is how these things start.
+
+            We cannot block it — any club may sign another club's squad player straight to its active roster, and he does not need our permission to take the raise. The only way to keep him is to promote him ourselves before they act, which costs us an active-roster spot and puts him on a first-team salary.
+
+            If we do nothing, expect them to sign him within the week.
+
+            Player Development
+            """,
+            date: dateString,
+            category: .rosterAnalysis,
+            actionRequired: true,
+            actionDestination: .roster
+        )
+    }
+
+    /// The receipt for a squad player another club signed away from us.
+    static func practiceSquadPoachedMessage(
+        playerName: String,
+        position: String,
+        suitorName: String,
+        suitorAbbr: String,
+        dateString: String
+    ) -> InboxMessage {
+        InboxMessage(
+            sender: .leagueOffice,
+            subject: "\(suitorAbbr) sign \(playerName) off our practice squad",
+            body: """
+            The \(suitorName) have signed \(position) \(playerName) to their active roster off our practice squad. The move is processed and final — there is no compensation and no right of refusal.
+
+            His squad spot is open. Development flagged him as one we had time invested in.
+
+            NFL League Office
+            """,
+            date: dateString,
+            category: .rosterAnalysis,
+            actionDestination: .roster
         )
     }
 

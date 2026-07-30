@@ -52,6 +52,41 @@ final class Owner {
     /// R31: Previous season's medical budget, for showing change in UI.
     var previousMedicalBudget: Int = 0
 
+    // MARK: - Facilities (§5.4)
+
+    /// The club this owner runs (`Team.id`).
+    ///
+    /// `Team.owner` is a one-way relationship with no inverse, so an `Owner`
+    /// row could not name its own franchise — which is exactly what
+    /// `FacilityEngine.developmentMultiplier(teamID:owners:)` needs, since the
+    /// offseason development pass holds a team id and a flat owner list, not a
+    /// `Team`. `FacilityEngine.linkOwners` stamps this from the team side (and
+    /// the medical resolver back-fills it lazily), so legacy saves heal
+    /// themselves on the first pass. `nil` reads as "not linked yet" and every
+    /// facility effect falls back to neutral. Default-value stored property,
+    /// never in `init` -> safe lightweight migration.
+    var teamID: UUID? = nil
+
+    /// Training complex tier, 1-3 (`FacilityEngine.Tier`). Weight room, indoor
+    /// field, sports-science staff — drives the development multiplier.
+    ///
+    /// **2 = league standard = every multiplier exactly 1.0**, which is why the
+    /// default is 2 and not 1: an existing save loads at standard and behaves
+    /// bit-for-bit as it did before facilities existed. Only a club that
+    /// deliberately lets the building rot (1) or pays for the best in the
+    /// league (3) moves off neutral. Default-value stored property, never in
+    /// `init` -> safe lightweight migration.
+    var trainingFacilityLevel: Int = 2
+
+    /// Medical wing tier, 1-3. Imaging, surgeons on call, load monitoring —
+    /// drives injury FREQUENCY (`MedicalEngine.injuryCheck`). 2 = neutral.
+    var medicalFacilityLevel: Int = 2
+
+    /// Recovery centre tier, 1-3. Cryo, hydrotherapy, sleep programme — drives
+    /// recovery SPEED (rehab weeks, rehab roll, weekly fatigue) and adds a
+    /// small share of the development multiplier. 2 = neutral.
+    var recoveryFacilityLevel: Int = 2
+
     /// `"male"` | `"female"` — the same two-value vocabulary `Coach.gender` and
     /// `FaceBucket.gender` use, because portrait matching is gender-strict here
     /// too: a female owner may only ever be handed one of the 12 female owner

@@ -3,15 +3,30 @@ import SwiftData
 
 /// R32 — League History & Hall of Fame.
 ///
-/// Two sections driven entirely by Career-persisted data:
+/// Three sections driven entirely by persisted data:
 /// - **Season History**: one row per completed season (champion, the user's
 ///   record, playoff/title badges, MVP). Written by `WeekAdvancer` during the
 ///   `.superBowl` phase, capped at the last 20 seasons.
+/// - **Franchise Archives** (TODO §5.2): any club's season-by-season record,
+///   finish, roster strength and staff, from `TeamSeasonArchive` — the league
+///   book seen from one building instead of from the commissioner's office.
 /// - **Hall of Fame**: retired legends inducted by `PlayerRetirementEngine`
 ///   each offseason, newest class first.
 struct LeagueHistoryView: View {
 
     let career: Career
+
+    @Environment(\.modelContext) private var modelContext
+
+    // `@Query` cannot take a runtime predicate built from a stored property,
+    // so the store-wide result is narrowed to THIS save here.
+    @Query(sort: \Team.abbreviation) private var teamsUnscoped: [Team]
+    private var teams: [Team] { teamsUnscoped.filter { $0.careerID == career.id } }
+
+    /// Which franchise the archive section is showing. Defaults to the user's.
+    @State private var archiveTeamID: UUID?
+    @State private var archives: [TeamSeasonArchive] = []
+    @State private var franchiseArc: LeagueNarrativeEngine.FranchiseArc?
 
     private var summaries: [SeasonSummary] { career.seasonSummaries }
     private var inductees: [HallOfFameEntry] { career.hallOfFame }
@@ -38,6 +53,8 @@ struct LeagueHistoryView: View {
                     }
                 }
 
+                franchiseArchiveSection
+
                 VStack(alignment: .leading, spacing: DSSpacing.sm) {
                     SectionHeaderText(title: "Hall of Fame")
                     if inductees.isEmpty {
@@ -59,6 +76,194 @@ struct LeagueHistoryView: View {
         .background(Color.backgroundPrimary)
         .navigationTitle("League History")
         .navigationBarTitleDisplayMode(.inline)
+        .task { loadArchives() }
+        .onChange(of: archiveTeamID) { _, _ in reloadSelectedFranchise() }
+    }
+
+    // MARK: - Franchise Archives (TODO §5.2)
+
+    private var franchiseArchiveSection: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.sm) {
+            HStack(alignment: .firstTextBaseline) {
+                SectionHeaderText(title: "Franchise Archives")
+                Spacer(minLength: DSSpacing.sm)
+                if !teams.isEmpty {
+                    Picker("Franchise", selection: $archiveTeamID) {
+                        ForEach(teams) { team in
+                            Text(team.fullName).tag(Optional(team.id))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(Color.accentGold)
+                }
+            }
+
+            if archives.isEmpty {
+                emptyCard(
+                    icon: "books.vertical.fill",
+                    text: "No archived seasons for this club yet. Each completed season files a record, a finish, a roster rating and the staff that ran it."
+                )
+            } else {
+                if let franchiseArc {
+                    franchiseArcCard(franchiseArc)
+                }
+                VStack(spacing: DSSpacing.xs) {
+                    ForEach(archives) { archive in
+                        archiveRow(archive)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The multi-season storyline the same engine puts in the news feed —
+    /// shown here so the row list has a thesis above it rather than being a
+    /// wall of records the reader has to summarise themselves.
+    private func franchiseArcCard(_ arc: LeagueNarrativeEngine.FranchiseArc) -> some View {
+        HStack(alignment: .top, spacing: DSSpacing.sm) {
+            Image(systemName: arcIcon(arc.kind))
+                .font(.title3)
+                .foregroundStyle(arcColor(arc.sentiment))
+                .frame(width: 32)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(arc.headline)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(arc.body)
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(DSSpacing.sm)
+        .cardBackground()
+    }
+
+    private func archiveRow(_ archive: TeamSeasonArchive) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: DSSpacing.sm) {
+                Text(String(archive.season))
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Color.accentGold)
+                    .frame(width: 52, alignment: .leading)
+
+                Text(archive.recordText)
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(Color.textPrimary)
+                    .frame(width: 56, alignment: .leading)
+
+                Text("\(ordinalRank(archive.divisionRank)) \(archive.conferenceRaw) \(archive.divisionRaw)")
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(1)
+
+                Spacer(minLength: DSSpacing.xs)
+
+                if archive.rosterCount > 0 {
+                    VStack(spacing: 1) {
+                        Text(String(format: "%.0f", archive.avgOverall))
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Color.forRating(Int(archive.avgOverall.rounded())))
+                        Text("OVR")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(Color.textTertiary)
+                    }
+                }
+
+                badge(archive.playoffResult.shortLabel, color: resultColor(archive.playoffResult))
+            }
+
+            // Staff + point differential: who ran it, and how it actually went.
+            Text(staffLine(archive))
+                .font(.caption)
+                .foregroundStyle(Color.textTertiary)
+                .lineLimit(1)
+
+            ForEach(Array(archive.notableEvents.enumerated()), id: \.offset) { _, event in
+                Text("• \(event)")
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(DSSpacing.sm)
+        .cardBackground()
+    }
+
+    private func staffLine(_ archive: TeamSeasonArchive) -> String {
+        let differential = archive.pointDifferential
+        let sign = differential > 0 ? "+" : ""
+        return "HC \(archive.headCoachName) · OC \(archive.offensiveCoordinatorName)"
+            + " · DC \(archive.defensiveCoordinatorName) · \(sign)\(differential) pt diff"
+    }
+
+    private func ordinalRank(_ rank: Int) -> String {
+        switch rank {
+        case 1: return "1st"
+        case 2: return "2nd"
+        case 3: return "3rd"
+        case 4: return "4th"
+        default: return "—"
+        }
+    }
+
+    private func resultColor(_ result: PlayoffResult) -> Color {
+        switch result {
+        case .champion:  return .accentGold
+        case .runnerUp:  return .accentBlue
+        case .conference, .divisional, .wildCard: return .success
+        case .missed:    return .textTertiary
+        }
+    }
+
+    private func arcIcon(_ kind: LeagueNarrativeEngine.FranchiseArc.Kind) -> String {
+        switch kind {
+        case .dynasty:    return "crown.fill"
+        case .contender:  return "target"
+        case .collapse:   return "arrow.down.right.circle.fill"
+        case .drought:    return "hourglass"
+        case .turnaround: return "arrow.up.right.circle.fill"
+        }
+    }
+
+    private func arcColor(_ sentiment: NewsSentiment) -> Color {
+        switch sentiment {
+        case .positive: return .accentGold
+        case .negative: return .danger
+        case .neutral:  return .accentBlue
+        }
+    }
+
+    /// Fills the archive in for any finished season that predates the rollover
+    /// hook, then loads the selected franchise. Idempotent and a no-op once the
+    /// archive is current, so opening this screen repeatedly costs one count
+    /// query per season on the books.
+    private func loadArchives() {
+        let written = TeamSeasonArchiveBuilder.backfill(career: career, modelContext: modelContext)
+        // Saved explicitly rather than left to autosave: the next read is the
+        // fetch three lines down, and an unsaved insert would render an empty
+        // archive on the very screen that just built it.
+        if written > 0 { try? modelContext.save() }
+        if archiveTeamID == nil {
+            archiveTeamID = career.teamID ?? teams.first?.id
+        }
+        reloadSelectedFranchise()
+    }
+
+    private func reloadSelectedFranchise() {
+        guard let teamID = archiveTeamID else {
+            archives = []
+            franchiseArc = nil
+            return
+        }
+        archives = TeamSeasonArchiveBuilder.archives(
+            careerID: career.id,
+            teamID: teamID,
+            modelContext: modelContext
+        )
+        franchiseArc = LeagueNarrativeEngine.franchiseArcs(archives: archives).first
     }
 
     // MARK: - Draft Report Card link

@@ -813,12 +813,16 @@ enum TaskGenerator {
             isRequired: false
         ))
 
+        // §5.1: the squad is STOCKED automatically when this phase ends (own
+        // cuts first, then street free agents) — the task is the heads-up that
+        // it is about to exist and that rivals can raid it all season, not a
+        // second selection screen on top of the cut flow above.
         tasks.append(GameTask(
             phase: .rosterCuts,
-            title: "Review practice squad",
-            description: "Assign recently released players to your practice squad.",
+            title: "Flag practice-squad keepers",
+            description: "Players you flag while cutting go to the 16-man practice squad when the season opens. They develop on scout-team reps — and any rival can sign them to its active roster.",
             icon: "person.3.sequence.fill",
-            destination: .roster,
+            destination: .rosterCuts,
             isRequired: false
         ))
 

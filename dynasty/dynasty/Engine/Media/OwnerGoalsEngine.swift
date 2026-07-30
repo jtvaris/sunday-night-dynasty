@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 // MARK: - Supporting Types
 
@@ -205,7 +206,39 @@ enum OwnerGoalsEngine {
 
     /// Re-evaluates each goal's progress against current team state and marks
     /// goals achieved or failed where applicable.
-    static func evaluateGoalProgress(goals: [SeasonGoal], team: Team, career: Career) -> [SeasonGoal] {
+    ///
+    /// ## TODO §5.6 — the proxies are gone
+    ///
+    /// Four of these goals used to be guesses, and two of them were wrong in a
+    /// way the player could see:
+    ///
+    /// - **Playoffs / Conference / Super Bowl** read `career.playoffAppearances`
+    ///   and `career.championships`, which are CAREER-LONG counters. One playoff
+    ///   berth in season 1 marked the playoff goal achieved in every season
+    ///   afterwards, forever, no matter how the team was actually doing. Now
+    ///   they read this season's bracket: seeded top 7, won the conference
+    ///   title game (week 21), won the Super Bowl (week 22).
+    /// - **Division title** was `wins >= 11 && playoffAppearances > 0` — a team
+    ///   could win its division at 9-8 and be told it hadn't, or go 11-6 second
+    ///   in the division and be told it had. Now it is the division rank from
+    ///   `StandingsCalculator`, the same tiebreaker chain the standings screen
+    ///   and the playoff bracket use.
+    /// - **Win streak** was `wins - losses`, which is not a streak at all: a
+    ///   team alternating W/L all year reported a "3-game streak" at 10-7. Now
+    ///   it is the longest actual run of consecutive wins in the game log.
+    ///
+    /// - Parameters:
+    ///   - leagueTeams: All teams, when the caller already holds them. `nil`
+    ///     fetches them from the team's own context.
+    ///   - seasonGames: This season's full schedule, same deal. Callers inside
+    ///     a week-advance already have both and should pass them.
+    static func evaluateGoalProgress(
+        goals: [SeasonGoal],
+        team: Team,
+        career: Career,
+        leagueTeams: [Team]? = nil,
+        seasonGames: [Game]? = nil
+    ) -> [SeasonGoal] {
         // S3: the roster is resolved by `teamID` ONCE per evaluation pass
         // (once per week advance / owner screen) — never inside the map, so a
         // four-goal slate never fetches four times, and a slate with no
@@ -213,6 +246,14 @@ enum OwnerGoalsEngine {
         let roster = goals.contains { $0.type == .developRookies }
             ? team.currentRoster()
             : []
+
+        // Same rule for the standings: derived once, and only when a goal in
+        // this slate actually asks a standings question.
+        let needsStandings = goals.contains { standingsGoalTypes.contains($0.type) }
+        let facts = needsStandings
+            ? seasonFacts(team: team, career: career, leagueTeams: leagueTeams, seasonGames: seasonGames)
+            : nil
+
         return goals.map { goal in
             var updated = goal
 
@@ -225,25 +266,32 @@ enum OwnerGoalsEngine {
                 }
 
             case .playoffs:
-                // A playoff appearance is tracked on the career object
-                updated.progress = career.playoffAppearances > 0 ? 1 : 0
-                updated.isAchieved = career.playoffAppearances > 0
+                // This season's bracket, not the career's ledger.
+                updated.progress = (facts?.madePlayoffs ?? false) ? 1 : 0
+                updated.isAchieved = facts?.madePlayoffs ?? false
 
             case .divisionTitle:
-                // Division-title detection is approximate: best record among division,
-                // represented here by a heuristic — wins lead the pack.
-                // Full detection requires standings; we track wins as a proxy.
-                updated.progress = team.wins
-                // Achieved when the career logged a playoff appearance and wins are strong
-                updated.isAchieved = team.wins >= 11 && career.playoffAppearances > 0
+                // Rank among the division, exactly as the standings screen
+                // orders it. Progress stays 1/0 like every other boolean goal —
+                // the UI's "at risk" test for a target-less goal is
+                // `progress == 0`, so "leading the division" is the only value
+                // that means anything here.
+                let rank = facts?.divisionRank ?? 0
+                updated.progress = rank == 1 ? 1 : 0
+                // Only final standings can clinch: mid-season the team can lead
+                // and still finish second, and a goal that flickers "Achieved"
+                // week to week is worse than one that waits.
+                updated.isAchieved = rank == 1 && (facts?.regularSeasonComplete ?? false)
 
             case .conference:
-                updated.progress = career.championships > 0 ? 1 : 0
-                updated.isAchieved = career.championships > 0   // championships implies conf win
+                let won = facts?.wonConference ?? false
+                updated.progress = won ? 1 : 0
+                updated.isAchieved = won
 
             case .superBowl:
-                updated.progress = career.championships > 0 ? 1 : 0
-                updated.isAchieved = career.championships > 0
+                let won = facts?.wonSuperBowl ?? false
+                updated.progress = won ? 1 : 0
+                updated.isAchieved = won
 
             case .developRookies:
                 let rookieCount = roster.filter { $0.yearsPro <= 1 && $0.overall >= 60 }.count
@@ -261,12 +309,10 @@ enum OwnerGoalsEngine {
                 updated.isAchieved = usagePct <= 0.95
 
             case .winStreak:
-                // Approximate: if wins greatly outpace losses in recent history
-                // Full streak tracking requires game log; wins-minus-losses is a proxy.
-                let recentSurplus = team.wins - team.losses
-                updated.progress = max(0, recentSurplus)
+                let longest = facts?.longestWinStreak ?? 0
+                updated.progress = longest
                 if let target = goal.target {
-                    updated.isAchieved = recentSurplus >= target
+                    updated.isAchieved = longest >= target
                 }
 
             case .improveDraft, .fanSatisfaction, .tradeAcquisition:
@@ -276,6 +322,139 @@ enum OwnerGoalsEngine {
 
             return updated
         }
+    }
+
+    // MARK: - Season Facts (TODO §5.6)
+
+    /// Goal types that need real standings or a real schedule to answer.
+    private static let standingsGoalTypes: Set<GoalType> = [
+        .playoffs, .divisionTitle, .conference, .superBowl, .winStreak,
+    ]
+
+    /// Everything the goal slate needs to know about where the team actually
+    /// stands this season. Every field is derived from the season's `Game`
+    /// rows — nothing here is an estimate.
+    struct SeasonFacts: Equatable {
+        /// 1-4 within the division (0 = unknown, e.g. no games on the board).
+        var divisionRank: Int = 0
+        /// 1-7 conference seed; 0 when outside the bracket.
+        var conferenceSeed: Int = 0
+        /// Seeded into the bracket, or already playing in it.
+        var madePlayoffs: Bool = false
+        /// Won the conference championship game (playoff week 21).
+        var wonConference: Bool = false
+        /// Won the Super Bowl (playoff week 22).
+        var wonSuperBowl: Bool = false
+        /// Longest run of consecutive regular-season wins this season.
+        var longestWinStreak: Int = 0
+        /// Every regular-season game on the schedule has been played.
+        var regularSeasonComplete: Bool = false
+    }
+
+    /// Derives this season's facts for one team.
+    ///
+    /// Memoised per (career, season, week, phase): the League/Dashboard screens
+    /// call `evaluateGoalProgress` from a computed property, so without this a
+    /// SwiftUI re-render would cost two fetches every time the body ran. The
+    /// key covers every clock that can change a standing, and holds only plain
+    /// numbers — never a model reference — so a career switch or a rollover
+    /// invalidates it on its own.
+    static func seasonFacts(
+        team: Team,
+        career: Career,
+        leagueTeams: [Team]? = nil,
+        seasonGames: [Game]? = nil
+    ) -> SeasonFacts {
+        let key = "\(career.id.uuidString)#\(career.currentSeason)#\(career.currentWeek)"
+            + "#\(career.currentPhase.rawValue)#\(team.id.uuidString)"
+        if factsCacheKey == key, let cached = factsCache { return cached }
+
+        let context = team.modelContext
+        let cid = career.id
+        let season = career.currentSeason
+
+        let teams: [Team] = leagueTeams ?? {
+            guard let context else { return [] }
+            let descriptor = FetchDescriptor<Team>(predicate: #Predicate<Team> { $0.careerID == cid })
+            return (try? context.fetch(descriptor)) ?? []
+        }()
+        let games: [Game] = seasonGames ?? {
+            guard let context else { return [] }
+            let descriptor = FetchDescriptor<Game>(
+                predicate: #Predicate<Game> { $0.careerID == cid && $0.seasonYear == season }
+            )
+            return (try? context.fetch(descriptor)) ?? []
+        }()
+
+        var facts = SeasonFacts()
+        guard !teams.isEmpty, !games.isEmpty else { return facts }
+
+        let records = StandingsCalculator.calculate(games: games, teams: teams)
+
+        let divisionStandings = StandingsCalculator.divisionStandings(
+            records: records, teams: teams,
+            conference: team.conference, division: team.division
+        )
+        if let index = divisionStandings.firstIndex(where: { $0.teamID == team.id }) {
+            facts.divisionRank = index + 1
+        }
+
+        let seeds = StandingsCalculator.playoffTeams(
+            records: records, teams: teams, conference: team.conference
+        )
+        if let index = seeds.firstIndex(where: { $0.teamID == team.id }) {
+            facts.conferenceSeed = index + 1
+        }
+
+        let regularSeason = games.filter { !$0.isPlayoff }
+        facts.regularSeasonComplete = !regularSeason.isEmpty && regularSeason.allSatisfy(\.isPlayed)
+        facts.longestWinStreak = longestWinStreak(
+            teamID: team.id,
+            games: regularSeason.filter(\.isPlayed).sorted { $0.week < $1.week }
+        )
+
+        let playoffGames = games.filter { $0.isPlayoff }
+        let inBracket = playoffGames.contains {
+            $0.homeTeamID == team.id || $0.awayTeamID == team.id
+        }
+        // A bracket game is proof. A top-7 seed is proof only once the regular
+        // season is over — the seeding is live all year, so a team sitting 6th
+        // in Week 5 has not "made the playoffs", it is merely on track.
+        facts.madePlayoffs = inBracket || (facts.conferenceSeed > 0 && facts.regularSeasonComplete)
+        facts.wonConference = playoffGames.contains {
+            $0.week == 21 && $0.isPlayed && $0.winnerID == team.id
+        }
+        facts.wonSuperBowl = playoffGames.contains {
+            $0.week == 22 && $0.isPlayed && $0.winnerID == team.id
+        }
+
+        factsCacheKey = key
+        factsCache = facts
+        return facts
+    }
+
+    private static var factsCacheKey: String?
+    private static var factsCache: SeasonFacts?
+
+    /// Longest run of consecutive wins inside one team's season. Ties and
+    /// losses both break the run — a streak is wins in a row or it is nothing.
+    private static func longestWinStreak(teamID: UUID, games: [Game]) -> Int {
+        var best = 0, run = 0
+        for game in games {
+            guard let home = game.homeScore, let away = game.awayScore else { continue }
+            let isHome = game.homeTeamID == teamID
+            let isAway = game.awayTeamID == teamID
+            guard isHome || isAway else { continue }
+            let own = isHome ? home : away
+            let opponent = isHome ? away : home
+            if own > opponent {
+                run += 1
+                best = max(best, run)
+            } else {
+                run = 0
+            }
+        }
+        return best
     }
 
     // MARK: - Private Helpers

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 // MARK: - League Narrative State (R29)
 
@@ -28,6 +29,16 @@ struct LeagueNarrativeState: Codable {
     /// a rivalry this season — each pairing gets one big rivalry story.
     var divisionRacesReported: Set<String>
 
+    /// TODO §5.2 — franchise-history arcs (`FranchiseArc.id`) already told this
+    /// season, so a dynasty is not re-announced every checkpoint.
+    ///
+    /// OPTIONAL, and last in the list, for the same reason `HallOfFameEntry`'s
+    /// career stats are: synthesized `Codable` ignores property defaults and
+    /// throws on a missing key, so a non-optional would make every narrative
+    /// blob written before this wave fail to decode — taking the whole season's
+    /// power rankings and MVP race with it.
+    var franchiseArcsReported: Set<String>? = nil
+
     init(season: Int) {
         self.season = season
         self.week = 0
@@ -38,6 +49,7 @@ struct LeagueNarrativeState: Codable {
         self.hotSeatReported = []
         self.arcCheckpointsDone = []
         self.divisionRacesReported = []
+        self.franchiseArcsReported = []
     }
 }
 
@@ -181,6 +193,17 @@ enum LeagueNarrativeEngine {
             teams: teams, career: career, state: &state, week: week, season: season
         ) {
             news.append(hotSeat)
+        }
+
+        // TODO §5.2: the long view — dynasties, droughts and collapses read off
+        // the per-team season archives. Only at two checkpoints, because a
+        // franchise arc is by definition not weekly news, and only then is the
+        // archive fetched at all.
+        if franchiseHistoryCheckpoints.contains(week),
+           let history = franchiseHistoryNews(
+               teams: teams, career: career, state: &state, week: week, season: season
+           ) {
+            news.append(history)
         }
 
         // 4. Persist the fresh rankings + streak markers.
@@ -966,6 +989,251 @@ enum LeagueNarrativeEngine {
             season: season,
             relatedTeamID: team.id,
             sentiment: .negative
+        )
+    }
+
+    // MARK: - Franchise Arcs (TODO §5.2)
+
+    /// Weeks a franchise-history story may run. Two: one early, when last
+    /// season is still the frame everyone reads the new one through, and one at
+    /// the turn, when the new season has enough evidence to break the frame.
+    private static let franchiseHistoryCheckpoints: Set<Int> = [2, 10]
+
+    /// Archived seasons a franchise arc is allowed to reason over. Long enough
+    /// for a dynasty to be a dynasty, short enough that a decade-old title does
+    /// not keep a bad team in the contender bucket.
+    static let franchiseArcWindow = 6
+
+    /// A multi-season storyline for ONE franchise, derived entirely from its
+    /// `TeamSeasonArchive` rows.
+    ///
+    /// This is the payoff for the archive: before it existed the league's only
+    /// memory was `Team.lastSeasonWins`, so the news could say "they lost last
+    /// week" and never "fourth straight losing season". Every claim here is
+    /// counted off archived records — the engine never rounds a 9-8 team up to
+    /// a contender because the sentence would read better.
+    struct FranchiseArc: Identifiable {
+
+        enum Kind: String {
+            /// Multiple titles, or a long run of Januarys with one.
+            case dynasty
+            /// Perennial playoff team still chasing the ring.
+            case contender
+            /// Fell off a cliff from one season to the next.
+            case collapse
+            /// Years of missing January with nothing to show.
+            case drought
+            /// Jumped several wins over last season.
+            case turnaround
+        }
+
+        var id: String { "\(teamID.uuidString)|\(kind.rawValue)" }
+        let teamID: UUID
+        let teamAbbr: String
+        let teamName: String
+        let kind: Kind
+        let headline: String
+        let body: String
+        let sentiment: NewsSentiment
+        /// Bigger = the better story. Used to pick one when several qualify.
+        let weight: Int
+
+        /// One-line version for a franchise-history screen.
+        var summary: String { headline }
+    }
+
+    /// Derives every franchise arc worth telling from a set of archive rows.
+    /// PURE: hand it the rows, it counts. Rows may span any number of teams and
+    /// seasons; only the most recent ``franchiseArcWindow`` per team are read.
+    ///
+    /// At most one arc per franchise — the strongest one. A team is either a
+    /// dynasty or a collapse, and a paragraph that tried to be both would be
+    /// describing two different clubs.
+    static func franchiseArcs(archives: [TeamSeasonArchive]) -> [FranchiseArc] {
+        var byTeam: [UUID: [TeamSeasonArchive]] = [:]
+        for row in archives {
+            byTeam[row.teamID, default: []].append(row)
+        }
+
+        var arcs: [FranchiseArc] = []
+        for (teamID, rows) in byTeam {
+            // Newest first, window-limited.
+            let seasons = Array(rows.sorted { $0.season > $1.season }.prefix(franchiseArcWindow))
+            guard let latest = seasons.first else { continue }
+            if let arc = arc(teamID: teamID, seasons: seasons, latest: latest) {
+                arcs.append(arc)
+            }
+        }
+        return arcs.sorted { $0.weight > $1.weight }
+    }
+
+    /// The single strongest arc for one franchise, or nil when its recent
+    /// history is unremarkable — which is most teams, most years, and saying
+    /// nothing about them is the correct output.
+    private static func arc(
+        teamID: UUID,
+        seasons: [TeamSeasonArchive],
+        latest: TeamSeasonArchive
+    ) -> FranchiseArc? {
+        let titles = seasons.filter { $0.playoffResult == .champion }.count
+        let playoffYears = seasons.filter { $0.playoffResult.madePlayoffs }.count
+        // Consecutive runs are counted from the most recent season backwards —
+        // "three straight" has to mean the three that just happened.
+        let playoffRun = leadingRun(seasons) { $0.playoffResult.madePlayoffs }
+        let missRun = leadingRun(seasons) { !$0.playoffResult.madePlayoffs }
+        let losingRun = leadingRun(seasons) { $0.wins < $0.losses }
+        let previous = seasons.count > 1 ? seasons[1] : nil
+        let winDelta = previous.map { latest.wins - $0.wins }
+
+        func make(_ kind: FranchiseArc.Kind, _ weight: Int, _ headline: String,
+                  _ body: String, _ sentiment: NewsSentiment) -> FranchiseArc {
+            FranchiseArc(
+                teamID: teamID,
+                teamAbbr: latest.teamAbbr,
+                teamName: latest.teamName,
+                kind: kind,
+                headline: headline,
+                body: body,
+                sentiment: sentiment,
+                weight: weight
+            )
+        }
+
+        if titles >= 2 {
+            return make(
+                .dynasty, 100,
+                "A dynasty in \(latest.teamName.components(separatedBy: " ").first ?? latest.teamAbbr)",
+                "\(titles) championships in \(seasons.count) seasons — the \(latest.teamName) are not "
+                    + "having a good run, they are the standard the rest of the league is measured "
+                    + "against. Last season ended \(latest.recordText), \(latest.playoffResult.label.lowercased()).",
+                .positive
+            )
+        }
+
+        if titles == 1, playoffRun >= 3 {
+            return make(
+                .dynasty, 90,
+                "\(latest.teamName) still the team to beat",
+                "A title and \(playoffRun) straight postseason trips. The window in \(latest.teamName) "
+                    + "has stayed open longer than anyone outside the building predicted, and it is "
+                    + "still open going into this year.",
+                .positive
+            )
+        }
+
+        if playoffRun >= 3 {
+            return make(
+                .contender, 70,
+                "\(playoffRun) straight Januarys, no ring yet in \(latest.teamAbbr)",
+                "The \(latest.teamName) have made the playoffs \(playoffRun) years running and gone home "
+                    + "every time — best finish in that stretch: "
+                    + "\(seasons.map(\.playoffResult).max()?.label.lowercased() ?? "a first-round exit"). "
+                    + "At some point a résumé of near misses starts reading as a ceiling.",
+                .neutral
+            )
+        }
+
+        if let delta = winDelta, delta <= -5, let previous {
+            return make(
+                .collapse, 85,
+                "The bottom fell out in \(latest.teamAbbr)",
+                "\(previous.season): \(previous.recordText). \(latest.season): \(latest.recordText). "
+                    + "A \(-delta)-win collapse in one year, and the \(latest.teamName) "
+                    + "\(latest.playoffResult.madePlayoffs ? "scraped into the bracket anyway" : "watched January from home"). "
+                    + "Nobody in that building is calling it a blip.",
+                .negative
+            )
+        }
+
+        if missRun >= 4 {
+            return make(
+                .drought, 75,
+                "\(missRun) years and counting without a playoff game in \(latest.teamAbbr)",
+                "The \(latest.teamName) have not played a postseason snap in \(missRun) seasons"
+                    + (losingRun >= 3 ? ", and \(losingRun) of those finished under .500" : "")
+                    + ". A drought that long stops being a run of bad luck and starts being an identity.",
+                .negative
+            )
+        }
+
+        if let delta = winDelta, delta >= 5, let previous {
+            return make(
+                .turnaround, 65,
+                "\(latest.teamName): \(previous.recordText) to \(latest.recordText)",
+                "A \(delta)-win jump in a single season"
+                    + (latest.playoffResult.madePlayoffs ? " and a postseason berth to go with it" : "")
+                    + ". Whatever the \(latest.teamName) changed, the rest of the league is now studying it.",
+                .positive
+            )
+        }
+
+        // Playoff regulars without a run long enough to be a story, and .500
+        // teams having a .500 decade, deliberately produce nothing.
+        _ = playoffYears
+        return nil
+    }
+
+    /// Length of the run at the FRONT of `seasons` (newest first) that
+    /// satisfies `predicate`.
+    private static func leadingRun(
+        _ seasons: [TeamSeasonArchive],
+        where predicate: (TeamSeasonArchive) -> Bool
+    ) -> Int {
+        var count = 0
+        for season in seasons {
+            guard predicate(season) else { break }
+            count += 1
+        }
+        return count
+    }
+
+    /// Picks one untold franchise arc and writes it up as a news item.
+    /// Reads the archive off the teams' own model context — the archive is a
+    /// persisted table, not something the weekly pass is handed.
+    ///
+    /// ## Why this also files the archive
+    ///
+    /// The archive's natural home is the season rollover
+    /// (`TeamSeasonArchiveBuilder.record`, `WeekAdvancer` `.superBowl`), and
+    /// once it is called there this line becomes a no-op that costs one count
+    /// query twice a season. Until then it is what keeps the table honest:
+    /// `backfill` reaches exactly as far back as the game log survives (one
+    /// season — `purgeStaleSeasonData`), so filing it here, early in the season
+    /// after, is the last moment the previous year can still be reconstructed.
+    /// A narrative engine that reads a history nobody wrote reports nothing
+    /// forever, which is a worse trade than one cheap idempotent write.
+    /// The caller saves the context after the advance, as it does for every
+    /// other row the week produces.
+    private static func franchiseHistoryNews(
+        teams: [Team],
+        career: Career,
+        state: inout LeagueNarrativeState,
+        week: Int,
+        season: Int
+    ) -> NewsItem? {
+        guard let context = teams.first?.modelContext else { return nil }
+        TeamSeasonArchiveBuilder.backfill(career: career, modelContext: context)
+        let archives = TeamSeasonArchiveBuilder.allArchives(careerID: career.id, modelContext: context)
+        guard !archives.isEmpty else { return nil }
+
+        var told = state.franchiseArcsReported ?? []
+        let candidates = franchiseArcs(archives: archives).filter { !told.contains($0.id) }
+        guard !candidates.isEmpty else { return nil }
+
+        // The user's own franchise jumps the queue when it has a story — the
+        // headline that matters most is the one about your building.
+        let pick = candidates.first { $0.teamID == career.teamID } ?? candidates[0]
+        told.insert(pick.id)
+        state.franchiseArcsReported = told
+
+        return NewsItem(
+            headline: pick.headline,
+            body: pick.body,
+            category: .teamRanking,
+            week: week,
+            season: season,
+            relatedTeamID: pick.teamID,
+            sentiment: pick.sentiment
         )
     }
 
