@@ -13,8 +13,8 @@ struct ScoutingHubView: View {
     @State private var nextYearProspects: [ScoutingEngine.NextYearProspect] = []
     @State private var showCombineReport = false
     @State private var combineMedia: [ScoutingEngine.CombineMediaMention] = []
-    @AppStorage("scoutsSentToCombine") private var scoutsSentToCombine = false
-    @AppStorage("combineResultsReviewed") private var combineResultsReviewed = false
+    @CareerScopedStorage("scoutsSentToCombine") private var scoutsSentToCombine = false
+    @CareerScopedStorage("combineResultsReviewed") private var combineResultsReviewed = false
     @State private var isLoading: Bool = true
 
     private let maxScouts = 8
@@ -76,7 +76,7 @@ struct ScoutingHubView: View {
             // Honor a pending tab hint set by CareerShellView when the user
             // tapped a task that should land them on a specific tab
             // (e.g. "Review interview report" → Interviews tab).
-            if let pending = UserDefaults.standard.string(forKey: "scoutingPendingTab"),
+            if let pending = CareerScopedDefaults.string("scoutingPendingTab"),
                !pending.isEmpty {
                 switch pending {
                 case "interviews": if career.currentPhase == .combine { selectedTab = .interviews }
@@ -86,7 +86,7 @@ struct ScoutingHubView: View {
                 case "proDays":    selectedTab = .proDays
                 default: break
                 }
-                UserDefaults.standard.removeObject(forKey: "scoutingPendingTab")
+                CareerScopedDefaults.remove("scoutingPendingTab")
             } else if career.currentPhase == .proDays {
                 // Auto-select Pro Days tab when in proDays phase
                 selectedTab = .proDays
@@ -740,8 +740,8 @@ struct ProDayListView: View {
     var onRefresh: () -> Void
 
     @Environment(\.modelContext) private var modelContext
-    @AppStorage("prospectWatchlist") private var prospectWatchlistJSON: String = "[]"
-    @AppStorage("prospectCustomBoard") private var prospectCustomBoardJSON: String = "[]"
+    @CareerScopedStorage("prospectWatchlist") private var prospectWatchlistJSON: String = "[]"
+    @CareerScopedStorage("prospectCustomBoard") private var prospectCustomBoardJSON: String = "[]"
     @State private var expandedColleges: Set<String> = []
     @State private var showSendScoutSheet = false
     @State private var selectedCollege: String?
@@ -749,7 +749,7 @@ struct ProDayListView: View {
     @State private var proDayResultSummary: ProDayResultSummary?
     @State private var showPersonalWorkouts = false
     @State private var personalWorkoutIDs: Set<UUID> = []
-    @AppStorage("personalWorkoutsUsed") private var personalWorkoutsUsed: Int = 0
+    @CareerScopedStorage("personalWorkoutsUsed") private var personalWorkoutsUsed: Int = 0
 
     // Top-30 Visits state
     @State private var showTop30Result = false

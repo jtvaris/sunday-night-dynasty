@@ -720,6 +720,14 @@ enum LeagueGenerator {
         player.competitiveness = competitivenessValue(
             archetype: personality.archetype, mental: mental
         )
+        // Where he is from. Written here because nothing else ever wrote it:
+        // the whole hometown layer (`HometownDetector`'s regional discount, the
+        // "comes home" FA storyline, `PlayerPreferenceEngine`'s family term) is
+        // guarded on `hometownState != nil` and so has never fired for a single
+        // player. See `HometownGenerator` for the distribution.
+        let hometown = HometownGenerator.randomHometown()
+        player.hometownState = hometown.state
+        player.hometownCity = hometown.city
         // Realization-consistent ceiling (plan §2.7) — replaces the `Player`
         // init's uniform `Int.random(in: 50...99)` default.
         player.truePotential = veteranPotential(
@@ -1118,6 +1126,12 @@ enum LeagueGenerator {
         player.competitiveness = competitivenessValue(
             archetype: personality.archetype, mental: mentalAttrs
         )
+        // Same hometown pass the ordinary veteran path runs — the named QB is a
+        // starter and therefore one of the likeliest players in the league to
+        // reach free agency as somebody's hometown storyline.
+        let hometown = HometownGenerator.randomHometown()
+        player.hometownState = hometown.state
+        player.hometownCity = hometown.city
         // The named starting QB is depth index 0 by construction.
         player.truePotential = veteranPotential(
             overall: player.overall, age: age, position: .QB, depthIndex: 0

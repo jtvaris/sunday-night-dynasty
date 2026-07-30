@@ -377,6 +377,13 @@ enum DraftClassBuilder {
             truePotential: potential
         )
 
+        // TODO §6 (#58): prospects carry a hometown from day one, so the
+        // FA-drama hometown storylines keep firing as the generated-veteran
+        // cohort retires out of the league.
+        let hometown = HometownGenerator.randomHometown()
+        prospect.hometownState = hometown.state
+        prospect.hometownCity = hometown.city
+
         let anthro = ScoutingEngine.generateAnthropometrics(for: position)
         prospect.handSize = anthro.handSize
         prospect.armLength = anthro.armLength

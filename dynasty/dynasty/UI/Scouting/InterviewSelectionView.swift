@@ -24,7 +24,7 @@ struct InterviewSelectionView: View {
     @State private var teamRoster: [Player] = []
     @State private var coaches: [Coach] = []
     @AppStorage("interviewBannerDismissed") private var bannerDismissed = false
-    @AppStorage("prospectWatchlist") private var prospectWatchlistJSON: String = "[]"
+    @CareerScopedStorage("prospectWatchlist") private var prospectWatchlistJSON: String = "[]"
     @ObservedObject private var userGradeStore = UserProspectGradeStore.shared
     @State private var isLoading: Bool = true
 
@@ -149,7 +149,7 @@ struct InterviewSelectionView: View {
             } else if remainingSlots == 0 && hasCompletedInterviews {
                 // All slots used and we have data — render the saved report directly.
                 InterviewReportView(results: completedInterviewResults) {
-                    UserDefaults.standard.set(true, forKey: "interviewReportReviewed")
+                    CareerScopedDefaults.set(true, "interviewReportReviewed")
                     loadProspects()
                 }
             } else if remainingSlots == 0 {
@@ -1030,7 +1030,7 @@ struct InterviewReportView: View {
             // Task 15: Complete Review button with clarity
             Button {
                 // Mark the "Review interview report" dashboard task as reviewed.
-                UserDefaults.standard.set(true, forKey: "interviewReportReviewed")
+                CareerScopedDefaults.set(true, "interviewReportReviewed")
                 onDismiss()
             } label: {
                 HStack(spacing: 8) {
@@ -1054,7 +1054,7 @@ struct InterviewReportView: View {
             // Viewing the report itself counts as "reviewing" — guarantees the
             // dashboard task can complete even if the user navigates away
             // before tapping the explicit "Complete Review" button.
-            UserDefaults.standard.set(true, forKey: "interviewReportReviewed")
+            CareerScopedDefaults.set(true, "interviewReportReviewed")
         }
     }
 

@@ -10,6 +10,7 @@ struct CombineResultsView: View {
     @State private var sortColumn: CombineColumn = .rank
     @State private var sortAscending: Bool = true
     @State private var mediaPopoverProspectID: UUID?
+    @State private var dnpPopoverProspectID: UUID?
     @State private var teamPlayers: [Player] = []
     @ObservedObject private var userGradeStore = UserProspectGradeStore.shared
     @State private var isLoading: Bool = true
@@ -27,7 +28,18 @@ struct CombineResultsView: View {
         // Fall back to the invite flag for the pre-results window.
         let withResults = prospects.filter { $0.fortyTime != nil }
         if !withResults.isEmpty {
-            return withResults
+            // The combine has run. An invitee who did not work out has NO
+            // measurements at all (`ScoutingEngine.applyCombineDNP`), so
+            // filtering on `fortyTime` alone would delete exactly the prospects
+            // the DNP mechanic exists to surface — a first-round talent with an
+            // empty card is a scouting decision, not a missing row. Specialists
+            // stay out: they never had drills, and a K with six dashes reads as
+            // a bug rather than as "kickers do not run the cone".
+            let dnps = prospects.filter {
+                $0.combineInvite && $0.fortyTime == nil
+                    && $0.position != .K && $0.position != .P
+            }
+            return withResults + dnps
         }
         let invited = prospects.filter { $0.combineInvite }
         if !invited.isEmpty {
@@ -435,7 +447,13 @@ struct CombineResultsView: View {
     // MARK: - Row
 
     private func combineRow(index: Int, prospect: CollegeProspect) -> some View {
-        HStack(spacing: 0) {
+        // An empty cell means two different things now, and the table has to say
+        // which: "-" for a drill nobody expected (a QB's bench) and "DNP" for one
+        // he chose not to run. Computed once per row — `combineParticipation` is
+        // pure, but it is also seven cells' worth of repeat work otherwise.
+        let dash = ScoutingEngine.combineParticipation(for: prospect).isDNP ? "DNP" : "--"
+        let benchDash = prospect.position == .QB ? "--" : dash
+        return HStack(spacing: 0) {
             // Star toggle using UserProspectGradeStore
             ProspectStarButton(prospectID: prospect.id)
                 .frame(width: 44)
@@ -481,6 +499,30 @@ struct CombineResultsView: View {
                         .padding(.vertical, 1)
                         .background(Capsule().fill(Color.danger))
                 }
+
+                // Why this man's card is empty. Tappable rather than always-on
+                // text: the reason is a sentence, the column is 140 pt wide, and
+                // the badge alone already answers "is this a bug or a decision".
+                if let badge = ScoutingEngine.combineParticipation(for: prospect).badge {
+                    Text(badge)
+                        .font(.system(size: 7, weight: .heavy))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.warning))
+                        .onTapGesture {
+                            dnpPopoverProspectID = dnpPopoverProspectID == prospect.id ? nil : prospect.id
+                        }
+                        .popover(isPresented: Binding(
+                            get: { dnpPopoverProspectID == prospect.id },
+                            set: { if !$0 { dnpPopoverProspectID = nil } }
+                        )) {
+                            dnpBubble(for: prospect)
+                        }
+                        .accessibilityLabel("\(badge): did not complete the combine")
+                        .accessibilityHint("Tap for the reason")
+                        .accessibilityAddTraits(.isButton)
+                }
             }
             .frame(width: 140, alignment: .leading)
 
@@ -519,30 +561,36 @@ struct CombineResultsView: View {
 
             drillCell(value: prospect.fortyTime.map { String(format: "%.2f", $0) },
                       tier: prospect.fortyTime.map { fortyTierForPosition($0, prospect.position) }, width: 60,
-                      percentile: prospect.fortyTime.map { drillPercentile($0, drill: .forty, prospect.position) })
+                      percentile: prospect.fortyTime.map { drillPercentile($0, drill: .forty, prospect.position) },
+                      emptyText: dash)
 
             drillCell(value: prospect.benchPress.map { "\($0)" },
                       tier: prospect.benchPress.map { benchTier($0) }, width: 60,
-                      percentile: prospect.benchPress.map { drillPercentile(Double($0), drill: .bench, prospect.position) })
+                      percentile: prospect.benchPress.map { drillPercentile(Double($0), drill: .bench, prospect.position) },
+                      emptyText: benchDash)
 
             drillCell(value: prospect.verticalJump.map { String(format: "%.1f\"", $0) },
                       tier: prospect.verticalJump.map { verticalTier($0) }, width: 60,
-                      percentile: prospect.verticalJump.map { drillPercentile($0, drill: .vertical, prospect.position) })
+                      percentile: prospect.verticalJump.map { drillPercentile($0, drill: .vertical, prospect.position) },
+                      emptyText: dash)
 
             drillCell(value: prospect.broadJump.map { "\($0)in" },
                       tier: prospect.broadJump.map { broadTier($0) }, width: 60,
-                      percentile: prospect.broadJump.map { drillPercentile(Double($0), drill: .broad, prospect.position) })
+                      percentile: prospect.broadJump.map { drillPercentile(Double($0), drill: .broad, prospect.position) },
+                      emptyText: dash)
 
             drillCell(value: prospect.coneDrill.map { String(format: "%.2f", $0) },
                       tier: prospect.coneDrill.map { coneTier($0) }, width: 66,
-                      percentile: prospect.coneDrill.map { drillPercentile($0, drill: .threeCone, prospect.position) })
+                      percentile: prospect.coneDrill.map { drillPercentile($0, drill: .threeCone, prospect.position) },
+                      emptyText: dash)
 
             drillCell(value: prospect.shuttleTime.map { String(format: "%.2f", $0) },
                       tier: prospect.shuttleTime.map { shuttleTier($0) }, width: 66,
-                      percentile: prospect.shuttleTime.map { drillPercentile($0, drill: .shuttle, prospect.position) })
+                      percentile: prospect.shuttleTime.map { drillPercentile($0, drill: .shuttle, prospect.position) },
+                      emptyText: dash)
 
             // Position drill grade
-            Text(prospect.positionDrillGrade ?? "--")
+            Text(prospect.positionDrillGrade ?? dash)
                 .font(.caption.weight(.bold))
                 .foregroundStyle(prospect.positionDrillGrade.map { PositionGradeCalculator.gradeColorForLetter($0) } ?? Color.textTertiary)
                 .frame(width: 66)
@@ -555,9 +603,12 @@ struct CombineResultsView: View {
         }
     }
 
-    private func drillCell(value: String?, tier: DrillTier?, width: CGFloat, percentile: Int? = nil) -> some View {
+    private func drillCell(
+        value: String?, tier: DrillTier?, width: CGFloat,
+        percentile: Int? = nil, emptyText: String = "--"
+    ) -> some View {
         VStack(spacing: 1) {
-            Text(value ?? "--")
+            Text(value ?? emptyText)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(tier?.color ?? Color.textTertiary)
 
@@ -640,6 +691,31 @@ struct CombineResultsView: View {
                 .font(.caption)
                 .foregroundStyle(Color.textPrimary)
                 .italic()
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: 260)
+        .background(Color.backgroundSecondary)
+        .presentationCompactAdaptation(.popover)
+    }
+
+    /// The sentence behind a DNP / Partial badge, plus the one line of advice the
+    /// mechanic is actually for: the numbers are not gone, they are at the pro day.
+    private func dnpBubble(for prospect: CollegeProspect) -> some View {
+        let participation = ScoutingEngine.combineParticipation(for: prospect)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(participation.badge ?? "DNP")
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundStyle(Color.warning)
+
+            Text(participation.reason ?? "")
+                .font(.caption)
+                .foregroundStyle(Color.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Send a scout to his pro day to get the missing numbers.")
+                .font(.system(size: 10))
+                .foregroundStyle(Color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(12)

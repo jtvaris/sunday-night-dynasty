@@ -82,6 +82,8 @@ struct PlayerRowView: View {
                 physicalColumns
             case .attributes:
                 attributeColumns
+            case .mental:
+                mentalColumns
             case .depth:
                 depthColumns
             }
@@ -89,6 +91,42 @@ struct PlayerRowView: View {
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
+    }
+
+    // MARK: - Mental Columns (LRN/CMP analysis — TODO §6)
+
+    /// The scouting-report trio the draft surfaces already speak (LRN/CMP/WE)
+    /// plus the live motivation state, so the roster can be read the way the
+    /// development engine reads it.
+    private var mentalColumns: some View {
+        Group {
+            Text("\(player.age)")
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 32, alignment: .center)
+
+            Text("\(player.overall)")
+                .font(.caption.monospacedDigit())
+                .fontWeight(.bold)
+                .foregroundStyle(Color.forRating(player.overall))
+                .frame(width: 32, alignment: .center)
+
+            colorCodedMiniAttribute(value: player.learning, label: "LRN")
+                .frame(width: 34, alignment: .center)
+
+            colorCodedMiniAttribute(value: player.competitiveness, label: "CMP")
+                .frame(width: 34, alignment: .center)
+
+            colorCodedMiniAttribute(value: player.mental.workEthic, label: "WE")
+                .frame(width: 34, alignment: .center)
+
+            Label(player.motivationState.displayName, systemImage: player.motivationState.icon)
+                .font(.system(size: 9, weight: .semibold))
+                .labelStyle(.titleAndIcon)
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 56, alignment: .center)
+        }
     }
 
     // MARK: - Overview Columns (default)
@@ -794,6 +832,7 @@ enum RosterAnalysisMode: String, CaseIterable, Identifiable {
     case development
     case physical
     case attributes
+    case mental
     case depth
 
     var id: String { rawValue }
@@ -805,6 +844,7 @@ enum RosterAnalysisMode: String, CaseIterable, Identifiable {
         case .development: return "Development"
         case .physical:    return "Physical"
         case .attributes:  return "Position Skills"
+        case .mental:      return "Mental"
         case .depth:       return "Depth"
         }
     }
@@ -816,6 +856,7 @@ enum RosterAnalysisMode: String, CaseIterable, Identifiable {
         case .development: return "chart.line.uptrend.xyaxis"
         case .physical:    return "figure.run"
         case .attributes:  return "figure.american.football"
+        case .mental:      return "brain.head.profile"
         case .depth:       return "person.3.sequence"
         }
     }

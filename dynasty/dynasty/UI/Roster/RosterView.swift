@@ -41,14 +41,16 @@ struct RosterView: View {
     @State private var starterPickerPosition: Position? = nil
     /// R28: Injury Report sheet.
     @State private var showInjuryReport = false
+    /// §5.1: Practice squad + league poach board sheet.
+    @State private var showPracticeSquad = false
 
     /// Track whether the user has seen the sort hint.
-    @AppStorage("rosterSortHintSeen") private var sortHintSeen: Bool = false
+    @CareerScopedStorage("rosterSortHintSeen") private var sortHintSeen: Bool = false
 
     // MARK: - Group Assessment (#283)
-    @AppStorage("rosterOwnAssessments") private var rosterOwnAssessmentsJSON: String = "{}"
-    @AppStorage("rosterNotes") private var rosterNotesJSON: String = "{}"
-    @AppStorage("rosterPriorities") private var rosterPrioritiesJSON: String = "{}"
+    @CareerScopedStorage("rosterOwnAssessments") private var rosterOwnAssessmentsJSON: String = "{}"
+    @CareerScopedStorage("rosterNotes") private var rosterNotesJSON: String = "{}"
+    @CareerScopedStorage("rosterPriorities") private var rosterPrioritiesJSON: String = "{}"
     @State private var assessmentGroup: String? = nil
     @State private var showAssessmentSheet = false
     @State private var editingAssessment: String = "none"
@@ -364,6 +366,11 @@ struct RosterView: View {
         .sheet(isPresented: $showInjuryReport) {
             InjuryReportView(players: players, career: career)
         }
+        .sheet(isPresented: $showPracticeSquad) {
+            if let career {
+                PracticeSquadView(career: career)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 filterPicker
@@ -375,7 +382,27 @@ struct RosterView: View {
                 injuryReportButton
             }
             ToolbarItem(placement: .primaryAction) {
+                practiceSquadButton
+            }
+            ToolbarItem(placement: .primaryAction) {
                 leagueRostersButton
+            }
+        }
+    }
+
+    // MARK: - Practice Squad Button (§5.1)
+
+    /// Entry point into the squad screen. The 16 men below the 53 are a roster
+    /// surface, not a camp one — they develop all season, they can be promoted
+    /// on any given week, and any rival can sign them away — so they hang off
+    /// the roster screen rather than off the cutdown flow that created them.
+    @ViewBuilder
+    private var practiceSquadButton: some View {
+        if career != nil {
+            Button {
+                showPracticeSquad = true
+            } label: {
+                Label("Practice Squad", systemImage: "person.3.sequence.fill")
             }
         }
     }
@@ -792,6 +819,15 @@ struct RosterView: View {
                 headerLabel("Phase", width: 48)
                 headerLabel("Form", width: 24)
                 headerLabel("WE", width: 32)
+            }
+        case .mental:
+            Group {
+                sortButton("Age", sort: .age, width: 32)
+                sortButton("OVR", sort: .overall, width: 32)
+                headerLabel("LRN", width: 34)
+                headerLabel("CMP", width: 34)
+                headerLabel("WE", width: 34)
+                headerLabel("Motiv", width: 56)
             }
         case .physical:
             Group {

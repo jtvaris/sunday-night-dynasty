@@ -62,13 +62,71 @@ enum UserGrade: String, CaseIterable, Codable, Identifiable {
 
 // MARK: - User Prospect Grade Store
 
-/// Persistent storage for the GM's personal prospect grades and stars using AppStorage/UserDefaults.
-/// Uses JSON-encoded dictionaries keyed by prospect UUID string.
+/// Persistent storage for the GM's personal prospect grades and stars, in
+/// `UserDefaults`, JSON-encoded and keyed by prospect UUID string.
+///
+/// ## Career scoping
+///
+/// The three keys this store owns are **career state, not app settings**: an "A+
+/// / Top 5" on a prospect belongs to the save whose draft it was written in.
+/// `CareerScopedDefaults` has listed them as scoped since the multi-save wave —
+/// it purges them on delete and migrates the legacy globals into the adopting
+/// career — but the store itself still read and wrote the *unsuffixed* keys via
+/// `@AppStorage`, so none of that reached it. Two consequences, both live:
+///
+/// * a second career opened its Big Board already covered in the first career's
+///   grades and stars (the ids never collide, but the board's "graded" filters,
+///   counts and `originalBoardPositions` all did);
+/// * worse, `migrateGlobalKeys` **moves** the global value to the scoped key and
+///   deletes the global — so the first career the app opened after that wave
+///   lost its board, because the store kept reading a key that had just been
+///   emptied.
+///
+/// Hence the direct `UserDefaults` access below: `@AppStorage`'s key is fixed at
+/// property-declaration time and the career is not known then. The key is
+/// resolved per access from `WeekAdvancer.activeCareerID` — the same binding
+/// every scoped SwiftData fetch keys on, so there is no second "which save is
+/// open" notion to keep in sync. An unbound engine (previews, the moments before
+/// the first `bind`) falls back to the unsuffixed key, which is also exactly
+/// what `migrateGlobalKeys` reads.
+///
+/// `@AppStorage` in an `ObservableObject` never published anything anyway — it is
+/// a `DynamicProperty`, which only does its work inside a `View` — so the views
+/// have always refreshed off the explicit `objectWillChange.send()` calls, and
+/// dropping it changes no update behaviour.
 final class UserProspectGradeStore: ObservableObject {
     static let shared = UserProspectGradeStore()
 
-    @AppStorage("userProspectGrades") private var gradesJSON: String = "{}"
-    @AppStorage("userProspectStars") private var starsJSON: String = "[]"
+    /// Base keys, all three of them already listed in `CareerScopedDefaults.keys`.
+    private static let gradesKey = "userProspectGrades"
+    private static let starsKey = "userProspectStars"
+    private static let originalPositionsKey = "originalBoardPositions"
+
+    /// The scoped key for the open career, or the bare key when no career is
+    /// bound. Read at every access rather than cached: a career switch inside one
+    /// launch has to be picked up without anyone remembering to notify the store.
+    private func key(_ base: String) -> String {
+        guard let careerID = WeekAdvancer.activeCareerID else { return base }
+        return CareerScopedDefaults.key(base, careerID: careerID)
+    }
+
+    private func string(_ base: String, default fallback: String) -> String {
+        UserDefaults.standard.string(forKey: key(base)) ?? fallback
+    }
+
+    private func setString(_ value: String, _ base: String) {
+        UserDefaults.standard.set(value, forKey: key(base))
+    }
+
+    private var gradesJSON: String {
+        get { string(Self.gradesKey, default: "{}") }
+        set { setString(newValue, Self.gradesKey) }
+    }
+
+    private var starsJSON: String {
+        get { string(Self.starsKey, default: "[]") }
+        set { setString(newValue, Self.starsKey) }
+    }
 
     // MARK: - Grades
 
@@ -120,7 +178,10 @@ final class UserProspectGradeStore: ObservableObject {
 
     // MARK: - Original Board Positions
 
-    @AppStorage("originalBoardPositions") private var originalBoardPositionsJSON: String = "{}"
+    private var originalBoardPositionsJSON: String {
+        get { string(Self.originalPositionsKey, default: "{}") }
+        set { setString(newValue, Self.originalPositionsKey) }
+    }
 
     private var originalBoardPositions: [String: Int] {
         (try? JSONDecoder().decode([String: Int].self, from: Data(originalBoardPositionsJSON.utf8))) ?? [:]

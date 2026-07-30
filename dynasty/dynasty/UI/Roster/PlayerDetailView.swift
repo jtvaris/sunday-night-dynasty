@@ -606,6 +606,9 @@ struct PlayerDetailView: View {
                 .padding(.top, 2)
             }
 
+            // Performance clauses and how far along they are (TODO §5.5).
+            incentiveProgressBlock
+
             if player.isFranchiseTagged {
                 HStack(spacing: 4) {
                     Image(systemName: "tag.fill")
@@ -617,6 +620,102 @@ struct PlayerDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Incentive Clauses (TODO §5.5)
+
+    /// Live tier progress for the clauses on this player's deal.
+    ///
+    /// Read straight off the season the player is currently accumulating
+    /// (`Player.seasonStatLine` plus the games counter), which is the same
+    /// source `ContractEngine.evaluateIncentives` grades at rollover — so what
+    /// the card shows in week 12 is what the settlement will pay in week 18.
+    ///
+    /// The playoff clause is passed `reachedPlayoffs: false` on purpose: this
+    /// screen has no bracket, and a berth that has not happened yet is honestly
+    /// rendered as pending rather than guessed at.
+    private var incentiveClauses: [IncentiveProgress] {
+        ContractEngine.liveIncentiveProgress(for: player)
+    }
+
+    @ViewBuilder
+    private var incentiveProgressBlock: some View {
+        let clauses = incentiveClauses
+        if !clauses.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 4) {
+                    Image(systemName: "target")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.accentGold)
+                    Text("Incentives")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.textTertiary)
+                    Spacer()
+                    let earnedK = clauses.filter(\.isEarned).reduce(0) { $0 + $1.incentive.bonusK }
+                    if earnedK > 0 {
+                        Text("\(formatCapHit(earnedK)) earned")
+                            .font(.system(size: 9, weight: .bold).monospacedDigit())
+                            .foregroundStyle(Color.success)
+                    }
+                }
+
+                ForEach(clauses) { progress in
+                    incentiveClauseRow(progress)
+                }
+
+                // The motivation link: what chasing this money does to his head.
+                if let note = MotivationState.incentiveChaseNote(for: player) {
+                    HStack(alignment: .top, spacing: 4) {
+                        Image(systemName: "flame")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Color.accentGold)
+                        Text(note)
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 1)
+                }
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private func incentiveClauseRow(_ progress: IncentiveProgress) -> some View {
+        let category = progress.incentive.category
+        let detail: String = category.isBinary
+            ? (progress.isEarned ? "Clinched" : "Pending")
+            : "\(category.format(progress.achieved)) / \(category.format(progress.incentive.threshold))"
+
+        return HStack(spacing: 4) {
+            Text(category.shortName)
+                .font(.system(size: 9))
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: 46, alignment: .leading)
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.surfaceBorder.opacity(0.4))
+                    Capsule()
+                        .fill(progress.isEarned ? Color.success : Color.accentGold.opacity(0.7))
+                        .frame(width: geo.size.width * CGFloat(progress.fraction))
+                }
+            }
+            .frame(height: 4)
+
+            Text(detail)
+                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .foregroundStyle(progress.isEarned ? Color.success : Color.textSecondary)
+                .frame(width: 72, alignment: .trailing)
+
+            Text(ContractIncentive.money(progress.incentive.bonusK))
+                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .foregroundStyle(Color.textTertiary)
+                .frame(width: 44, alignment: .trailing)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(category.displayName): \(detail), worth \(ContractIncentive.money(progress.incentive.bonusK))")
     }
 
     /// Player's salary as a percentage of the league cap (#38). Uses 2026 cap of $260M.
@@ -1398,6 +1497,11 @@ struct PlayerDetailView: View {
                         }
                     } header: {
                         Text("Convert To")
+                    } footer: {
+                        // §5.3: starting the programme is a commitment, not a
+                        // reversible depth-chart experiment.
+                        Text("Training here banks familiarity week by week. At \(VersatilityDevelopmentEngine.conversionCommitFamiliarity)% he converts PERMANENTLY — his listed position changes and his attributes are rebuilt around the new spot, with a dip for what does not carry over. He keeps what he knew at \(player.position.rawValue). Stop the programme before \(VersatilityDevelopmentEngine.conversionCommitFamiliarity)% if you only want him as cover.")
+                            .font(.caption2)
                     }
                     .listRowBackground(Color.backgroundSecondary)
                 }
@@ -1595,19 +1699,27 @@ struct PlayerDetailView: View {
 
                 // Training status
                 if let trainingPos = player.trainingPosition, trainingPos != player.position {
-                    HStack(spacing: 6) {
-                        Image(systemName: "figure.run")
-                            .font(.caption)
-                            .foregroundStyle(Color.accentGold)
-                        Text("Training: \(trainingPos.rawValue)")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.accentGold)
-                        Spacer()
-                        let familiarity = player.familiarity(at: trainingPos)
-                        let ceiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: trainingPos)
-                        Text("\(familiarity)/\(ceiling)")
-                            .font(.caption.weight(.bold).monospacedDigit())
-                            .foregroundStyle(Color.accentGold)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "figure.run")
+                                .font(.caption)
+                                .foregroundStyle(Color.accentGold)
+                            Text("Training: \(trainingPos.rawValue)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.accentGold)
+                            Spacer()
+                            let familiarity = player.familiarity(at: trainingPos)
+                            let ceiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: trainingPos)
+                            Text("\(familiarity)/\(ceiling)")
+                                .font(.caption.weight(.bold).monospacedDigit())
+                                .foregroundStyle(Color.accentGold)
+                        }
+                        // §5.3: this is a conversion programme, not just
+                        // cross-training — say so before it fires.
+                        Text("At \(VersatilityDevelopmentEngine.conversionCommitFamiliarity)% familiarity he converts to \(trainingPos.rawValue) PERMANENTLY and his ratings are rebuilt around it. Stop the programme first if you only want cover there.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(6)
                     .background(Color.accentGold.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))

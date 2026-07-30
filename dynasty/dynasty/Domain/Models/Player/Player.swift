@@ -170,6 +170,54 @@ final class Player {
     /// season-history recording. Default value → safe lightweight migration.
     var isRetired: Bool = false
 
+    // MARK: - Roster Status / Practice Squad (TODO §5.1)
+
+    /// Raw value of `RosterStatus`: is this player on one of his club's 53
+    /// ACTIVE-roster spots, or on one of its 16 practice-squad spots?
+    ///
+    /// **The invariant that makes the whole feature safe: a practice-squad
+    /// player carries `teamID == nil` and `practiceSquadTeamID == <his club>`.**
+    /// `teamID` means "occupies an active-roster spot" in ~240 places across the
+    /// engine — the weekly attendance tally, `startingLineupIDs`, the cap
+    /// ledger, depth charts, trade validation, the offseason development pass —
+    /// and a squad player must be invisible to every one of them, because he is
+    /// not eligible to dress. Hanging the squad off a SECOND id keeps all of
+    /// that correct without editing a single one of those call sites; the price
+    /// is that code which reads `teamID == nil` as "free agent" needs a second
+    /// look, which is why a squad deal always carries
+    /// `contractYearsRemaining > 0` (see `PracticeSquadEngine.contractYears`).
+    ///
+    /// Default-value stored property, never in `init` → safe lightweight
+    /// migration: every existing row reads back as `.active`, which is what it
+    /// has always been.
+    var rosterStatusRaw: String = RosterStatus.active.rawValue
+
+    /// The club whose practice squad employs this player, or `nil` when he is
+    /// not on anybody's squad. Set together with `rosterStatus` — never one
+    /// without the other — by `PracticeSquadEngine`.
+    /// Optional stored property with a nil default → safe lightweight migration.
+    var practiceSquadTeamID: UUID? = nil
+
+    /// Typed accessor for the player's roster status.
+    var rosterStatus: RosterStatus {
+        get { RosterStatus(rawValue: rosterStatusRaw) ?? .active }
+        set { rosterStatusRaw = newValue.rawValue }
+    }
+
+    /// Whether this player is currently stashed on a practice squad. Both halves
+    /// are checked so a half-written row (status set, club cleared, or the other
+    /// way round) never reads as a squad member.
+    var isOnPracticeSquad: Bool {
+        rosterStatus == .practiceSquad && practiceSquadTeamID != nil
+    }
+
+    /// The club that employs this player at all — active roster OR practice
+    /// squad. Use this wherever "which building does he walk into" is the
+    /// question; use `teamID` wherever "can he dress on Sunday" is.
+    var employerTeamID: UUID? {
+        teamID ?? (rosterStatus == .practiceSquad ? practiceSquadTeamID : nil)
+    }
+
     /// Phase 4: id of this player's portrait in the pre-generated face library
     /// (`face_00000`…`face_02047`, see `FaceLibrary`). Assigned once — at
     /// league generation, at the draft (carried over from the prospect), or by
@@ -451,6 +499,39 @@ final class Player {
         self.draftSeason = draftSeason
         self.draftRound = draftRound
         self.assessedPotential = assessedPotential
+    }
+}
+
+// MARK: - Roster Status
+
+/// Which of his club's two rosters a player occupies (TODO §5.1).
+///
+/// Deliberately only two cases. The NFL's injured-reserve / PUP / exempt lists
+/// are separate mechanics the game models through `isInjured` +
+/// `injuryWeeksRemaining`, so adding them here would give the same state two
+/// spellings.
+enum RosterStatus: String, Codable, CaseIterable {
+    /// One of the club's 53 active-roster spots — dresses, plays, counts
+    /// against the cap. The default for every row ever written.
+    case active
+    /// One of the club's 16 practice-squad spots — practices with the team,
+    /// develops on the depth rung, cannot dress, is cap-exempt, and can be
+    /// signed away by any OTHER club at any time during the season.
+    case practiceSquad
+
+    var displayName: String {
+        switch self {
+        case .active:        return "Active"
+        case .practiceSquad: return "Practice Squad"
+        }
+    }
+
+    /// Short badge label for dense roster rows.
+    var shortLabel: String {
+        switch self {
+        case .active:        return "ACT"
+        case .practiceSquad: return "PS"
+        }
     }
 }
 

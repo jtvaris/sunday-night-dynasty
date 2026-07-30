@@ -351,6 +351,15 @@ enum LeagueTemplateImporter {
         // support staff generated below and every later hire draw around them.
         player.faceID = template.faceID
 
+        // #58: template veterans get a hometown too. Drawn from a DERIVED
+        // sub-stream (seed ^ constant), never the main seeded stream — adding a
+        // draw there would shift every attribute rolled after it and churn the
+        // determinism fingerprint for no reason.
+        var hometownRNG = SeededLeagueRandom(seed: seed ^ 0x48_6F_6D_65_74_6F_77_6E)
+        let hometown = HometownGenerator.randomHometown(using: &hometownRNG)
+        player.hometownState = hometown.state
+        player.hometownCity = hometown.city
+
         return player
     }
 

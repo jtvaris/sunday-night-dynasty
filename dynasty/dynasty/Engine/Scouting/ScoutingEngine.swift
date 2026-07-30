@@ -691,12 +691,181 @@ enum ScoutingEngine {
                 attributeKind: .lateral, position: position, modifier: combineModifier)
         }
 
-        // 3. Position drill grades are graded *relative to the prospect's own
+        // 3. Not everybody works out. Applied AFTER the draws rather than
+        //    instead of them, so a prospect's real numbers still exist to be
+        //    found at his pro day (`simulateProDay` fills every field it finds
+        //    empty) — the DNP withholds information, it does not delete talent.
+        //
+        //    Nested rather than a sibling `private static func` on purpose:
+        //    `tools/balance-harness/sync_sources.sh` slices this file by an
+        //    anchor list, capturing each named member's balanced block. A helper
+        //    declared outside `generateCombineResults` would be called by the
+        //    slice and defined nowhere in it, and the draftclass gate would stop
+        //    compiling until somebody edited the harness's anchor list too.
+        //
+        //    Real combine participation is far patchier than this game modelled
+        //    it — every invitee ran every drill. At the actual event roughly a
+        //    third of invited players skip the forty (rehab, medical rechecks,
+        //    agents holding a client back for a friendlier pro-day surface) and
+        //    barely half bench. Those rates would gut the scouting information
+        //    economy here, where the combine screen *is* the pre-draft read, so
+        //    these are deliberately milder: about one invitee in eight sits out
+        //    entirely and one in six trims the card. That still leaves
+        //    ~330 × 0.12 ≈ 40 full DNPs per class — enough that "who do I burn a
+        //    personal workout on" has an answer.
+        let fullDNPRate = 0.12
+        let partialDNPRate = 0.16
+
+        /// Blanks the drills of the prospects who did not work out and returns
+        /// the indices that DID — the set the position-drill grader may rank.
+        ///
+        /// Kickers and punters are untouched: they never had drills to withhold,
+        /// and counting them as DNPs would put a rehab note on a man who did
+        /// exactly what his position does at the combine.
+        func applyCombineDNP(_ prospects: inout [CollegeProspect]) -> Set<Int> {
+            var workedOut: Set<Int> = []
+            for i in invitedIndices {
+                let position = prospects[i].position
+                if position == .K || position == .P { continue }
+
+                let roll = Double.random(in: 0..<1)
+                if roll < fullDNPRate {
+                    prospects[i].fortyTime = nil
+                    prospects[i].benchPress = nil
+                    prospects[i].verticalJump = nil
+                    prospects[i].broadJump = nil
+                    prospects[i].coneDrill = nil
+                    prospects[i].shuttleTime = nil
+                    prospects[i].positionDrillGrade = nil
+                    continue
+                }
+
+                workedOut.insert(i)
+                guard roll < fullDNPRate + partialDNPRate else { continue }
+
+                // The two things a healthy prospect actually skips: the bench (a
+                // long-armed tackle has nothing to gain) and the agility pair
+                // (the cone and the shuttle are one session, so they drop
+                // together). Split by the same roll so the two never stack — a
+                // partial DNP is one decision, not two.
+                if roll < fullDNPRate + partialDNPRate / 2 {
+                    prospects[i].benchPress = nil
+                } else {
+                    prospects[i].coneDrill = nil
+                    prospects[i].shuttleTime = nil
+                }
+            }
+            return workedOut
+        }
+
+        let workedOut = applyCombineDNP(&prospects)
+
+        // 4. Position drill grades are graded *relative to the prospect's own
         //    position*, so a class produces 1–3 A/A+ testers per position
         //    (`DRAFT_NFL_REFERENCE.md` §5) rather than grading everyone against
-        //    one league-wide scale.
-        applyPositionDrillGrades(&prospects, invited: invitedIndices, scoutingAbility: scoutingAbility)
+        //    one league-wide scale. Full DNPs are excluded: a man who never took
+        //    the field cannot be ranked against the men who did, and leaving him
+        //    in would also drag his position's mean toward a score nobody saw.
+        applyPositionDrillGrades(&prospects, invited: workedOut, scoutingAbility: scoutingAbility)
     }
+
+    // MARK: - Combine DNP
+
+    /// How much of the combine a prospect actually did.
+    ///
+    /// Derived from the *stored* measurements plus the position rules, never
+    /// from a field of its own: `CollegeProspect` has no "did not participate"
+    /// column, and it does not need one — an invited non-specialist with no forty
+    /// time is a DNP by construction, and that is the same fact a new Bool would
+    /// have carried, minus the migration.
+    enum CombineParticipation: Equatable {
+        /// Never invited — no combine line at all.
+        case notInvited
+        /// Kickers and punters: measured, weighed, interviewed, no drills.
+        case specialistMeasurementsOnly
+        /// Invited, worked out, full card (a QB's absent bench counts as full —
+        /// quarterbacks do not bench at the combine).
+        case full
+        /// Invited, ran, but sat out part of the card.
+        case partial(reason: String)
+        /// Invited, tested in nothing.
+        case didNotParticipate(reason: String)
+
+        /// Whether the UI should label the empty cells rather than dash them.
+        var isDNP: Bool {
+            switch self {
+            case .partial, .didNotParticipate: return true
+            default: return false
+            }
+        }
+
+        /// Short badge text, or `nil` when there is nothing to say.
+        var badge: String? {
+            switch self {
+            case .didNotParticipate: return "DNP"
+            case .partial:           return "Partial"
+            default:                 return nil
+            }
+        }
+
+        /// The sentence behind the badge.
+        var reason: String? {
+            switch self {
+            case .partial(let reason), .didNotParticipate(let reason): return reason
+            default: return nil
+            }
+        }
+    }
+
+    /// What a prospect's combine line means, and the sentence to show for it.
+    ///
+    /// Pure function of stored state — safe to call from a view body, and it
+    /// gives the same answer after a relaunch, which is why the flavour text is
+    /// keyed off `FaceLibrary.stableHash` (FNV-1a over the UUID bytes) rather
+    /// than `hashValue`, whose seed changes every launch.
+    static func combineParticipation(for prospect: CollegeProspect) -> CombineParticipation {
+        guard prospect.combineInvite || prospect.fortyTime != nil else { return .notInvited }
+        if prospect.position == .K || prospect.position == .P {
+            return .specialistMeasurementsOnly
+        }
+        let pick = { (pool: [String]) -> String in
+            pool[Int(FaceLibrary.stableHash(prospect.id) % UInt64(pool.count))]
+        }
+        guard prospect.fortyTime != nil else {
+            return .didNotParticipate(reason: pick(fullDNPReasons))
+        }
+        // A quarterback's missing bench is the rule, not a decision.
+        let skippedBench = prospect.benchPress == nil && prospect.position != .QB
+        let skippedAgility = prospect.coneDrill == nil || prospect.shuttleTime == nil
+        if skippedBench {
+            return .partial(reason: pick(benchSkipReasons))
+        }
+        if skippedAgility {
+            return .partial(reason: pick(agilitySkipReasons))
+        }
+        return .full
+    }
+
+    /// Why a prospect tested in nothing. All five point at the pro day, because
+    /// that is where the numbers actually turn up — `simulateProDay` fills every
+    /// measurement it finds empty, so the DNP is a delay the GM can pay to undo.
+    private static let fullDNPReasons = [
+        "Rehabbing a shoulder — medicals and interviews only, will test at his pro day",
+        "Held out of drills on his agent's advice; everything comes at the pro day",
+        "Tweaked a hamstring in prep and shut it down before the workout",
+        "Medical rechecks only — teams flagged a foot that never showed up on tape",
+        "Post-season surgery still healing; the workout waits for his pro day",
+    ]
+
+    private static let benchSkipReasons = [
+        "Skipped the bench press — long arms, and his agent saw no upside in the rep count",
+        "Sat out the bench with a wrist he says has bothered him since October",
+    ]
+
+    private static let agilitySkipReasons = [
+        "Ran, jumped, then pulled out of the agility drills with a tight groin",
+        "Skipped the cone and shuttle — will run both on his own turf at the pro day",
+    ]
 
     /// Grades each invitee's position drills against the distribution of *his own
     /// position* in this class (percentile → letter).

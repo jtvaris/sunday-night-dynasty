@@ -125,3 +125,55 @@ enum MotivationState: String, Codable, CaseIterable, Identifiable {
         return .discouraged
     }
 }
+
+// MARK: - Contract & Incentive Link (TODO §5.5)
+
+extension MotivationState {
+
+    /// The §2.3 trigger table's contribution from **money still on the table**.
+    ///
+    /// The table already has a contract-year bump (trigger 5: `+1`, gated on
+    /// `PlayerDevelopmentEngine.contractYearGate`). This is its sibling for the
+    /// other way a season can be worth money to a player — a live incentive
+    /// clause he has not banked yet.
+    ///
+    /// **It is +1, and it stays +1.** Stacked on the contract-year trigger the
+    /// contract-driven half of the table tops out at `+2`, which is exactly the
+    /// `.driven` threshold: a contract can therefore tip a player over the line
+    /// on its own, but only when nothing else about his season is negative. That
+    /// is the ceiling `DEVELOPMENT_NFL_REFERENCE.md` §3 asks for — the
+    /// contract-year effect ranges from "myth" to about +5 % in the literature,
+    /// so it is allowed to matter and not allowed to be a superpower.
+    ///
+    /// Gated the same way trigger 5 is: a player at or below the checked-out
+    /// line is not chasing anything, and a money-motivated player chases
+    /// regardless of how competitive he is.
+    ///
+    /// WIRED: `PlayerDevelopmentEngine.evaluateMotivation` calls this as
+    /// trigger 5b, immediately after the contract-year trigger.
+    static func incentiveChaseScore(for player: Player) -> Int {
+        guard !ContractIncentiveRegistry.incentives(for: player).isEmpty else { return 0 }
+        let chases = player.competitiveness >= PlayerDevelopmentEngine.contractYearGate
+            || player.personality.motivation == .money
+        return chases ? 1 : 0
+    }
+
+    /// One line for the contract card explaining what the clauses are doing to
+    /// his head — or `nil` when they are doing nothing.
+    ///
+    /// Deliberately worded as a description of his SITUATION rather than as a
+    /// promised "+1", because the size of the effect is the trigger table's to
+    /// decide and the caller cannot know whether the table has been given
+    /// ``incentiveChaseScore`` yet. The copy reads true either way.
+    static func incentiveChaseNote(for player: Player) -> String? {
+        let clauses = ContractIncentiveRegistry.incentives(for: player)
+        guard !clauses.isEmpty else { return nil }
+        let noun = clauses.count == 1 ? "clause" : "clauses"
+        guard incentiveChaseScore(for: player) > 0 else {
+            return "Carrying \(clauses.count) \(noun), but he isn't the type to chase them."
+        }
+        return player.contractYearsRemaining <= 1
+            ? "Contract year and \(clauses.count) live \(noun) — he is playing for everything this season."
+            : "Chasing \(clauses.count) live \(noun) this season."
+    }
+}

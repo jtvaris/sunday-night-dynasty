@@ -40,7 +40,7 @@ struct BigBoardView: View {
 
     // MARK: - Prospect Notes Storage
 
-    @AppStorage("prospectNotes") private var prospectNotesJSON: String = "{}"
+    @CareerScopedStorage("prospectNotes") private var prospectNotesJSON: String = "{}"
 
     private var prospectNotes: [String: String] {
         (try? JSONDecoder().decode([String: String].self, from: Data(prospectNotesJSON.utf8))) ?? [:]
@@ -61,10 +61,10 @@ struct BigBoardView: View {
 
     // MARK: - Own Assessments & Watchlist Storage
 
-    @AppStorage("prospectOwnAssessments") private var prospectOwnAssessmentsJSON: String = "{}"
-    @AppStorage("prospectWatchlist") private var prospectWatchlistJSON: String = "[]"
-    @AppStorage("prospectCustomBoard") private var prospectCustomBoardJSON: String = "[]"
-    @AppStorage("rosterPriorities") private var rosterPrioritiesJSON: String = "{}"
+    @CareerScopedStorage("prospectOwnAssessments") private var prospectOwnAssessmentsJSON: String = "{}"
+    @CareerScopedStorage("prospectWatchlist") private var prospectWatchlistJSON: String = "[]"
+    @CareerScopedStorage("prospectCustomBoard") private var prospectCustomBoardJSON: String = "[]"
+    @CareerScopedStorage("rosterPriorities") private var rosterPrioritiesJSON: String = "{}"
 
     private static let gradeOptions = ["none", "A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D", "F"]
 
