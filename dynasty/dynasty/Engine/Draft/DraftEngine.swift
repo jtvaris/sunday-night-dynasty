@@ -392,7 +392,39 @@ enum DraftEngine {
 
     /// Ceiling at which the rawness term is zero — a prospect whose eventual
     /// level is only this high is, by definition, close to it already.
-    static let rawnessPivot = 76
+    ///
+    /// **Task #32 re-derivation, 76 → 69.** This pivot is not a free constant:
+    /// it is measured against `DraftClassBuilder`'s potential distribution, and
+    /// that distribution moved when the intake ratchet was fixed (see
+    /// `DraftClassBuilder.drawUpside`). Holding 76 while the board's mean
+    /// potential fell 81.1 → 75.2 would have collapsed `rawness` toward zero for
+    /// the whole board and handed every rookie a much higher ENTRY rating —
+    /// exactly the §6 hit-rate inflation the phase-2 recalibration above was
+    /// written to remove.
+    ///
+    /// The pivot is therefore re-solved on the new band means. It is fixed by
+    /// the ONE thing it exists to control — where a rookie ENTERS — and that is
+    /// measured end-to-end by the `career` scenario's `entryOVR` column:
+    ///
+    /// | band | old pot | new pot | (pot−69)/23 | old entryOVR | new entryOVR |
+    /// |---|---|---|---|---|---|
+    /// | R1 | 95.2 | 90.5 | 0.93 | 58.3 | 57.4 |
+    /// | R2 | 89.1 | 86.9 | 0.78 | 59.0 | 58.2 |
+    /// | R3 | 84.2 | 84.7 | 0.68 | 59.3 | 58.6 |
+    /// | R4 | 80.3 | 78.2 | 0.40 | 59.3 | 58.8 |
+    /// | R5 | 78.7 | 75.3 | 0.27 | 59.1 | 58.7 |
+    /// | R6 | 76.3 | 72.5 | 0.15 | 59.0 | 58.6 |
+    /// | R7 | 74.0 | 69.2 | 0.01 | 58.9 | 58.6 |
+    /// | UDFA | 70.4 | 65.7 | 0    | 57.6 | 57.4 |
+    ///
+    /// i.e. entry is flat across the board (which is the point of the phase-2
+    /// recalibration above — the ROUND signal lives in the ceiling, not in the
+    /// day-one rating) and lands within 0.9 of where it was, so §6's hit-rate
+    /// curve is being moved by the ceilings this wave changed and by nothing
+    /// else. Holding the pivot at 76 instead would have zeroed the rawness term
+    /// for rounds 5-7 and lifted the whole board's entry — the inflation the
+    /// phase-2 note was written to remove. The `/23.0` divisor is unchanged.
+    static let rawnessPivot = 69
 
     // MARK: - Rookie Familiarity
 

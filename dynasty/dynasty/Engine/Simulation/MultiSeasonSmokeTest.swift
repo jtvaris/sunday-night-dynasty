@@ -566,7 +566,72 @@ enum MultiSeasonSmokeTest {
                 shares.reduce(0, +) / Double(shares.count),
                 shares.min() ?? 0, shares.max() ?? 0
             ))
+
+            // --- capRoom band (task #27) ---
+            //
+            // The stock number above was informational, and that is how the league
+            // quietly ran itself broke: room fell 22.9 % → 0.7 % → -1.9 % across
+            // three seasons with every other band green, because nothing asserted
+            // that a league has to be able to afford itself.
+            //
+            // The band is set from what the money is FOR. A club's cap has to
+            // cover a rookie class (~8 picks), in-season injury replacements and
+            // a deadline move; the NFL's own clubs open a league year around
+            // 6-12 % effective room after the first FA wave. `avgRoom >= 8` is the
+            // low end of that, and `underCap >= 24/32` (three quarters) allows the
+            // handful of genuinely all-in clubs the trade market needs without
+            // letting insolvency become the league's normal state.
+            //
+            // Season 1 is exempt for the same reason the trade bands are: the
+            // rollover economy has not run a full cycle yet.
+            if seasonIndex > 1 {
+                var capMisses: [String] = []
+                let avgRoom = shares.reduce(0, +) / Double(shares.count)
+                if underCap < 24 { capMisses.append("underCap=\(underCap)/32 below 24") }
+                if avgRoom < 8.0 { capMisses.append(String(format: "avgRoom=%.1f%% below 8 %%", avgRoom)) }
+                if !capMisses.isEmpty {
+                    print("SMOKE: ANOMALY season=\(seasonLabel) capRoom bands missed: "
+                          + capMisses.joined(separator: ", ")
+                          + " — see FreeAgencyEngine.marketPressure / capReservePercent")
+                }
+            }
         }
+
+        // WHERE the money went (task #27). `capRoom` is a stock; this is the flow
+        // that moves it. The wage bill the free-agent market wrote this league
+        // year, against what the same men were paid on the deals that just
+        // expired — if `wageBillDelta` outruns the 5-8 % cap growth, the league is
+        // inflating and no amount of trade tuning can hold the books.
+        //
+        // `mktDemand` is the same question asked of the WHOLE roster: what the
+        // league would cost if everyone were re-priced at market today, as a share
+        // of the league's total cap. It is structurally above 100 % (rookie deals
+        // are the discount that makes an NFL roster affordable), and watching it
+        // climb is what tells drift in player quality apart from drift in prices.
+        let salaryPlayers = (try? context.fetch(FetchDescriptor<Player>())) ?? []
+        let rosteredPaid = salaryPlayers.filter { $0.teamID != nil && !$0.isRetired }
+        if !capTeams.isEmpty && !rosteredPaid.isEmpty {
+            let capTotal = capTeams.reduce(0) { $0 + $1.salaryCap }
+            let avgCap = capTotal / capTeams.count
+            let payroll = rosteredPaid.reduce(0) { $0 + $1.annualSalary }
+            let demand = rosteredPaid.reduce(0) {
+                $0 + ContractEngine.estimateMarketValue(player: $1, salaryCap: avgCap)
+            }
+            let rookieDeal = rosteredPaid.filter { $0.yearsPro <= 3 }
+            let rookiePay = rookieDeal.reduce(0) { $0 + $1.annualSalary }
+            print(String(
+                format: "SMOKE: diag salaryInflation season=%d cap=%d payroll=%.1f%% mktDemand=%.1f%% "
+                      + "yp0to3Pay=%.1f%%ofPayroll avgSal=%d %@",
+                seasonLabel, avgCap,
+                Double(payroll) / Double(max(1, capTotal)) * 100,
+                Double(demand) / Double(max(1, capTotal)) * 100,
+                Double(rookiePay) / Double(max(1, payroll)) * 100,
+                payroll / rosteredPaid.count,
+                FreeAgencyEngine.signingLedger.summary
+            ))
+        }
+        FreeAgencyEngine.signingLedger = FreeAgencyEngine.SigningLedger()
+        FreeAgencyEngine.priorSalaryByPlayerID.removeAll()
 
         // WHERE the league market's candidate deals died this cycle, and why the
         // user's phone did or did not ring. Printed next to the volume line because
@@ -622,6 +687,57 @@ enum MultiSeasonSmokeTest {
     /// Prints, once per completed cycle: the quality of the players who just
     /// retired (what the league lost), and the rostered yearsPro cohorts
     /// (whether young classes climb fast enough to replace them).
+    ///
+    /// ## `leaguePot` is the line that explains the quality pyramid (task #32)
+    ///
+    /// The intake ratchet this line was added to expose is FIXED (see
+    /// `DraftClassBuilder.drawUpside`); what is left of the pyramid drift is a
+    /// different, still-open thing and this note names both so a future run is
+    /// not re-diagnosed from scratch.
+    ///
+    /// **The ratchet, as measured before the fix.** Every draft class entered at
+    /// ~81 mean true potential into a league averaging ~75, so ~15 % of the
+    /// roster was replaced each spring by men with ~6-10 more points of ceiling
+    /// than the men they displaced, and `leaguePot` marched:
+    ///
+    /// | season | leaguePot (old intake) | leaguePot (this wave) |
+    /// |---|---|---|
+    /// | base | 73.3 | 73.1 |
+    /// | 1 | 75.0 | 74.1 |
+    /// | 2 | 77.4 | 75.9 |
+    /// | 3 | 78.8 | 76.4 |
+    /// | 4 | 78.7 | 75.8 |
+    ///
+    /// (right column measured at the maximum intake correction; the shipped
+    /// calibration sits between the two — see the sweep on `drawUpside`).
+    /// The march is a march no longer: `leaguePot` now approaches its
+    /// equilibrium instead of climbing +1.5 a season, and `tools/balance-harness`'s
+    /// `career` scenario measures that equilibrium directly on the same line
+    /// (`leaguePot: first -> last`, +0.03/season over 21 seasons).
+    ///
+    /// **Do NOT read `leaguePot ≈ league mean OVR` as the health target.** The
+    /// equilibrium sits ~3-4 points ABOVE the class it is fed, because the men
+    /// who leave the league are the ones who did not realise: the `career`
+    /// harness measures class 78.0 → equilibrium `leaguePot` 82.4 with the §8
+    /// ability pyramid green (6.9a-g). A `leaguePot` that stops rising is the
+    /// signal; its level is not.
+    ///
+    /// **What is still open.** Two things this wave measured and did not fix,
+    /// both outside the intake:
+    ///
+    ///  1. **The 90+ band is inside the generator's own sampling spread.**
+    ///     `diag pyramid season=base` has measured 1.8 / 2.2 / 2.7 % across runs
+    ///     — before a single week is simulated, on a band whose ceiling is 2.5.
+    ///     One 1 696-man league is a ±0.5 pp sample there (`leaguegen` pools 400
+    ///     leagues to get 1.77 %). A season-4 reading of 3.1 % is therefore ~1 pp
+    ///     of real drift on top of a start that is already half a band high, and
+    ///     no draft-intake change can move season 0 at all.
+    ///  2. **The shipped season pipeline develops ~2 OVR more than the harness.**
+    ///     At identical intake the `career` scenario settles at mean 70.7 /
+    ///     80+ 15.9 % while this smoke reaches 71.7 / 20.0 % in four seasons and
+    ///     is still climbing. That gap is in `WeekAdvancer`'s camp / training /
+    ///     coaching passes, not in `PlayerDevelopmentEngine`'s constants — the
+    ///     two scenarios call the same `processOffseason`.
     private static func printDriftDiagnostics(
         seasonLabel: Int,
         seenRetiredIDs: inout Set<UUID>,
@@ -723,12 +839,23 @@ enum MultiSeasonSmokeTest {
         let a33 = share { $0.age >= 33 }
         let yp03 = share { $0.yearsPro <= 3 }
         let blueChips = Int((s90 / 100.0 * total).rounded())
+        // Task #28: WHICH rooms the 33+ crowd is sitting in. The share alone
+        // could not tell "the league ages evenly" from "two position rooms never
+        // retire", and it was the second one — quarterbacks and specialists peak
+        // to 35/38, so the mid-thirties wall never applied to them at all.
+        let old = rostered.filter { $0.age >= 33 }
+        let oldQB = old.filter { $0.position == .QB }.count
+        let oldSpec = old.filter { $0.position == .K || $0.position == .P }.count
+        let oldOL = old.filter {
+            [.LT, .LG, .C, .RG, .RT].contains($0.position)
+        }.count
         print(String(
             format: "SMOKE: diag pyramid season=%@ 90+=%.1f%% [0.8-2.5] (=%d blue chips) 80+=%.1f%% [12-19] "
                   + "75+=%.1f%% [28-40] sub65=%.1f%% [15-30] "
-                  + "ageMed=%d ageMean=%.1f a33plus=%.1f%% [<=4] yp0to3=%.1f%% [45-55] faPool=%d",
+                  + "ageMed=%d ageMean=%.1f a33plus=%.1f%% [<=4] (n=%d qb=%d spec=%d ol=%d) "
+                  + "yp0to3=%.1f%% [45-55] faPool=%d",
             seasonLabel, s90, blueChips, s80, s75, sub65,
-            medianAge, meanAge, a33, yp03, unsignedCount
+            medianAge, meanAge, a33, old.count, oldQB, oldSpec, oldOL, yp03, unsignedCount
         ))
 
         var misses: [String] = []
@@ -754,8 +881,14 @@ enum MultiSeasonSmokeTest {
         if !misses.isEmpty {
             print("SMOKE: ANOMALY season=\(seasonLabel) §8 pyramid bands missed: "
                   + misses.joined(separator: ", ")
-                  + " — see LeagueGenerator.targetQualityPyramid (intake) and"
-                  + " PlayerDevelopmentEngine.developmentCeiling (slope)")
+                  + " — compare against `season=base` FIRST: one generated league is a"
+                  + " ±0.5pp sample on the 90+ share and season 0 has measured"
+                  + " 1.8/2.2/2.7% across runs, i.e. the band's 2.5 ceiling is inside"
+                  + " the generator's own spread. The draft-intake ratchet is fixed"
+                  + " (DraftClassBuilder.drawUpside — leaguePot no longer marches);"
+                  + " what remains is that the shipped season pipeline develops ~2 OVR"
+                  + " more than the balance harness at the same intake"
+                  + " — see printDriftDiagnostics")
         }
     }
 

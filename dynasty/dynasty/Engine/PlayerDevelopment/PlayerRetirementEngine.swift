@@ -48,16 +48,6 @@ enum PlayerRetirementEngine {
         let peakRange = player.position.peakAgeRange
         let yearsPastPeak = player.age - peakRange.upperBound
 
-        // Before the position's decline window nobody walks away — the rare
-        // early retirement is out of scope for the sim.
-        //
-        // The washout ("nobody signed him") is a SEPARATE pass with a separate
-        // trigger point: see `evaluateWashouts`. It deliberately does not ride
-        // along here, because this pass runs in `.coachingChanges` — three
-        // phases BEFORE free agency opens — where `teamID == nil` still means
-        // "his contract expired at week 18", not "the phone stopped ringing".
-        guard yearsPastPeak >= 0 else { return 0.0 }
-
         // Base: 4% in the final peak year, then a steepening slope past it.
         //
         // Phase-2 calibration (plan §5 stage 5, `career` harness): at +12 %/yr
@@ -66,35 +56,77 @@ enum PlayerRetirementEngine {
         // `DEVELOPMENT_NFL_REFERENCE.md` §8's "≤ ~2 % of players 33+" and
         // "drafted-player average ~5 yrs". Steepening the slope and adding the
         // hard mid-thirties term below is what actually cycles the league.
-        var chance = 0.04 + Double(yearsPastPeak) * 0.19
+        //
+        // Before the position's decline window nobody walks away for FOOTBALL
+        // reasons — the rare early retirement is out of scope for the sim — but
+        // the calendar terms below still apply. See the wall note there.
+        //
+        // The washout ("nobody signed him") is a SEPARATE pass with a separate
+        // trigger point: see `evaluateWashouts`. It deliberately does not ride
+        // along here, because this pass runs in `.coachingChanges` — three
+        // phases BEFORE free agency opens — where `teamID == nil` still means
+        // "his contract expired at week 18", not "the phone stopped ringing".
+        var chance = 0.0
+        if yearsPastPeak >= 0 {
+            chance = 0.04 + Double(yearsPastPeak) * 0.19
 
-        // Fading play: the league has moved on.
-        if player.overall < 60 {
-            chance += 0.20
-        } else if player.overall < 68 {
-            chance += 0.08
-        }
+            // Fading play: the league has moved on.
+            if player.overall < 60 {
+                chance += 0.20
+            } else if player.overall < 68 {
+                chance += 0.08
+            }
 
-        // R28 injury history: every major injury (6+ weeks) leaves a mark.
-        let majorInjuries = player.injuryHistory.filter { $0.weeksOut >= 6 }.count
-        chance += Double(min(majorInjuries, 4)) * 0.05
+            // R28 injury history: every major injury (6+ weeks) leaves a mark.
+            let majorInjuries = player.injuryHistory.filter { $0.weeksOut >= 6 }.count
+            chance += Double(min(majorInjuries, 4)) * 0.05
 
-        // Currently rehabbing into the offseason.
-        if player.isInjured { chance += 0.10 }
+            // Currently rehabbing into the offseason.
+            if player.isInjured { chance += 0.10 }
 
-        // Body breaking down.
-        if player.physical.durability < 50 { chance += 0.08 }
+            // Body breaking down.
+            if player.physical.durability < 50 { chance += 0.08 }
 
-        // Kickers and punters age gracefully.
-        if player.position == .K || player.position == .P {
-            chance *= 0.5
+            // Kickers and punters age gracefully.
+            if player.position == .K || player.position == .P {
+                chance *= 0.5
+            }
         }
 
         // The mid-thirties wall: careers end for reasons the peak-age window
         // does not capture (money, family, accumulated wear), which is why the
         // reference's age pyramid thins so hard after 32.
-        if player.age >= 33 { chance += 0.10 }
-        if player.age >= 35 { chance += 0.15 }
+        //
+        // **Task #28 — this used to sit behind `guard yearsPastPeak >= 0`, which
+        // made it unreachable for exactly the positions it was written for.** A
+        // quarterback peaks to 35 and a kicker to 38, so a 33-year-old at either
+        // was still inside his window, took the early return, and carried a
+        // retirement probability of precisely ZERO. Those two rooms are 128 of
+        // the league's ~1 700 men and nothing could ever remove them: measured
+        // over `MultiSeasonSmokeTest` the 33+ share climbed 0.5 % → 3.2 % → 5.3 %
+        // across three seasons against §8's ≤ ~2 %, and the veterans it stacked
+        // (yp8+ averaged 79.9 OVR) dragged the 80+ band out with them.
+        //
+        // The wall is a statement about the CALENDAR, not about the position's
+        // peak, so it is now applied to everybody. A 33-year-old quarterback
+        // inside his peak window faces 12 %/yr rather than 0 %; a 36-year-old
+        // one, past it, faces 0.04 + 0.19 + 0.30 = 53 %.
+        //
+        // Rates re-derived in the same wave (was +0.10 / +0.15, and the 37 step
+        // is new). The flat pair was solved against a curve that only the
+        // early-decline positions ever reached; once the late-peak rooms are
+        // inside the wall it has to carry them on its own, and at +0.12/+0.18 it
+        // did not — the 33+ share still climbed 1.1 % → 1.9 % → 3.2 % → 5.0 %
+        // over four measured seasons, with quarterbacks, offensive linemen and
+        // specialists supplying 45 of the last 84.
+        //
+        // At these rates a 33-year-old faces 18 %/yr, a 35-year-old 43 % and a
+        // 37-year-old 73 %, which leaves him ~2.2 further seasons on average —
+        // the shape §8's pyramid describes, and still loose enough that a great
+        // quarterback can play to 38.
+        if player.age >= 33 { chance += 0.18 }
+        if player.age >= 35 { chance += 0.25 }
+        if player.age >= 37 { chance += 0.30 }
 
         // Age wall: 40+ almost always retires, 41 is the hard ceiling.
         if player.age >= 41 {
@@ -129,6 +161,37 @@ enum PlayerRetirementEngine {
     static let washoutChancePerPoint = 0.085
     /// Hard cap so even a 45-OVR body gets one more tryout cycle sometimes.
     static let washoutCeiling = 0.80
+
+    /// Baseline "a full league year went by and nobody called" chance, before
+    /// quality and age (task #32).
+    ///
+    /// The term used to be purely relative — only a player BELOW replacement
+    /// level could ever wash out — which quietly made the unsigned pool a
+    /// permanent reservoir of usable football players. Measured over
+    /// `MultiSeasonSmokeTest`, it grew 230 → 336 → 394 → 497 across four seasons
+    /// while every roster stayed at 53, and that reservoir is what inverted the
+    /// §8 quality pyramid: free agency and `WeekAdvancer.refillAIRosters` both
+    /// sign the BEST available body, so every season the league swapped its
+    /// depth tier for somebody better out of the pool. The sub-65 share fell
+    /// 25.8 % → 16.5 % and the 80+ share climbed 17.6 % → 22.4 % — not because
+    /// players developed faster, but because the bottom of the league was being
+    /// quietly filtered out of the rostered population the pyramid measures.
+    ///
+    /// §8 puts turnover at ~250-300 in and the same number out. The draft alone
+    /// brings ~250 in, so "out" has to be a real number every year, and going
+    /// unsigned through an entire market is the honest trigger for it.
+    static let washoutBaseChance = 0.30
+
+    /// How many OVR points above replacement level buy a player his way out of
+    /// the base chance entirely. A man that much better than the last roster
+    /// spot in the league is between contracts, not out of football.
+    static let washoutQualityGrace = 8.0
+
+    /// Age surcharges on an unsigned player. An unsigned 30-year-old is a
+    /// depth signing waiting to happen; an unsigned 33-year-old is retired and
+    /// has not said so yet.
+    static let washoutAge30Chance = 0.10
+    static let washoutAge33Chance = 0.20
 
     /// Replacement level sampled off the rostered league (see
     /// `washoutReplacementPercentile`).
@@ -177,9 +240,29 @@ enum PlayerRetirementEngine {
         // though the tag never re-stamps `teamID` — he is not on the market.
         guard !player.isFranchiseTagged else { return 0.0 }
         guard player.teamID == nil, player.yearsPro >= 1 else { return 0.0 }
+
+        // Quality: below replacement level the odds climb per point, exactly as
+        // before. Above it, the base fades out over `washoutQualityGrace` points
+        // — the sliding version of the old "a good player never washes out",
+        // which was true as an absolute and false as a model (see
+        // `washoutBaseChance`).
         let deficit = replacementOverall - player.overall
-        guard deficit > 0 else { return 0.0 }
-        return min(washoutCeiling, Double(deficit) * washoutChancePerPoint)
+        var chance: Double
+        if deficit >= 0 {
+            chance = washoutBaseChance + Double(deficit) * washoutChancePerPoint
+        } else {
+            let surplus = Double(-deficit)
+            chance = washoutBaseChance * max(0.0, 1.0 - surplus / washoutQualityGrace)
+        }
+
+        // Age: the market's silence means something different at 31 than at 25.
+        if player.age >= 33 {
+            chance += washoutAge33Chance
+        } else if player.age >= 30 {
+            chance += washoutAge30Chance
+        }
+
+        return min(washoutCeiling, max(0.0, chance))
     }
 
     // MARK: - Hall of Fame

@@ -18,7 +18,8 @@ import Foundation
 /// 4. **Attributes** — mental and physical sampled from the shared
 ///    `PositionPhysicalProfile` priors scaled toward the talent target, then the
 ///    position-skill average is *solved* so `trueOverall` lands on the target.
-/// 5. **Potential** — `trueOverall + band upside`, overlapping across bands.
+/// 5. **Potential** — `trueOverall +` the remaining runway to his position's
+///    peak window, scaled by what his grade still projects (`drawUpside`).
 /// 6. **Learning**, 7. **college production**, 8. **NFL readiness**.
 enum DraftClassBuilder {
 
@@ -350,11 +351,7 @@ enum DraftClassBuilder {
         let overall = Int(CollegeProspect.overallValue(
             position: positionAttributes, physical: physical, mental: mental
         ).rounded())
-        let upsideMean = bandUpsideMean(band: band)
-        let ageShift: Double = age <= 20 ? 3 : (age >= 23 ? -2 : 0)
-        let upside = min(26.0, max(0.0,
-            PositionPhysicalProfile.gaussian(mean: upsideMean, sd: 5)
-                + archetype.upsideShift + ageShift))
+        let upside = drawUpside(position: position, age: age, band: band, archetype: archetype)
         let potential = min(99, max(overall, overall + Int(upside.rounded())))
 
         // --- Body ------------------------------------------------------------
@@ -537,18 +534,138 @@ enum DraftClassBuilder {
         }
     }
 
-    // MARK: - Step 5 helper
+    // MARK: - Step 5: the remaining-runway ceiling (task #32)
 
-    private static func bandUpsideMean(band: Int) -> Double {
+    /// How much of a prospect's remaining runway the board says he has NOT yet
+    /// shown — the *projection* in his grade.
+    ///
+    /// This is the draft-board analogue of `LeagueGenerator.tierEarnedUpside`'s
+    /// depth tier, but it is deliberately NOT monotonic in the band, because
+    /// scouting is not:
+    ///
+    ///  * **Round 1 is the tier scouts can already SEE.** It is where the
+    ///    polished, four-year-starting, pro-ready player goes — he grades there
+    ///    *because* he has already converted his runway into technique. He has
+    ///    the highest ceiling on the board (his true grade is 6-9 points above
+    ///    Day 2's) and the least left to project.
+    ///  * **Rounds 2-3 are the projection tier** — the traits-and-flashes
+    ///    athlete, the one-year starter, the small-school riser. This is where a
+    ///    club is explicitly buying what a player is not yet.
+    ///  * **Rounds 4-7 and UDFA are the limited tier.** A late grade is a
+    ///    statement that scouts see a role, not a runway.
+    ///
+    /// The curve is calibrated against the ONE external anchor the game has for
+    /// this: `DRAFT_NFL_REFERENCE.md` §6's primary-starter hit rates by round
+    /// (R1 ~60 % · R2 45 % · R3 33 % · R4 25 % · R5 18 % · R6 12 % · R7 10 % ·
+    /// UDFA 4 %) and its elite shares, both asserted end-to-end by
+    /// `tools/balance-harness`'s `career` scenario (6.1a-b, 6.2a-c). A monotone
+    /// profile cannot hit that curve at a class mean potential the league can
+    /// absorb: measured over the whole sweep, a flat cut deep enough to stop the
+    /// ratchet (class mean 75.2) drops R2 to 29.7 % and R3 to 17.7 %, i.e.
+    /// 15 pp under the reference, while a monotone profile generous enough to
+    /// hold R2/R3 puts the class mean back at ~80 and the ratchet with it. The
+    /// hump does both — see the table on `drawUpside`.
+    static func bandProjection(band: Int) -> Double {
         switch band {
-        case 1:    return 14
-        case 2:    return 12
-        case 3:    return 10
-        case 4, 5: return 8
-        case 6, 7: return 7
-        default:   return 6
+        case 1:  return 1.42
+        case 2:  return 1.95
+        case 3:  return 2.05
+        case 4:  return 1.20
+        case 5:  return 0.95
+        case 6:  return 0.72
+        case 7:  return 0.56
+        default: return 0.38
         }
     }
+
+    /// Remaining upside over `trueOverall`, drawn on the SAME model
+    /// `LeagueGenerator.veteranPotential` uses for a young generated player:
+    /// `runway = min(12, 2.5 · yearsToPeakWindow)`, scaled by what the board is
+    /// still projecting, drawn at `N(0.55·μ, 0.8·μ)` and clipped at zero.
+    ///
+    /// ## Why this replaced the flat per-band mean (task #32)
+    ///
+    /// The old model was `N(bandUpsideMean, 5)` with `bandUpsideMean` 14 → 6 by
+    /// band, plus an archetype shift and an age shift. Measured over 200 classes
+    /// it produced band mean POTENTIALS of R1 95.2 · R2 89.1 · R3 84.2 · R4 80.3
+    /// · R5 78.7 · R6 76.3 · R7 74.0 — a drafted-board mean of **81.1** against a
+    /// league whose own mean potential is **75.0** (`leaguegen`, assert 8.hea:
+    /// mean headroom over OVR 2.11). Every spring replaced ~15 % of the league
+    /// with men carrying ~6 more points of ceiling than the men they displaced,
+    /// so `MultiSeasonSmokeTest`'s `diag cohorts leaguePot` marched
+    /// 75.0 → 77.4 → 78.8 → 79.6 and the §8 quality pyramid rose with it
+    /// (80+ 17.8 % → 24.3 %, 90+ to 3.3 %) with no development constant touched.
+    ///
+    /// The two generators were describing different leagues. `LeagueGenerator`
+    /// was corrected first (see its `veteranPotential` note — "the upside is now
+    /// EARNED, not granted"), and this is the same correction applied to the
+    /// other end of the same pipeline, in the same terms:
+    ///
+    ///  * **Age is the runway, not a ±3 shift.** A 20-year-old edge rusher is
+    ///    six years from his peak window and a 23-year-old back is one; the old
+    ///    `ageShift` compressed that into ±3 on top of a band constant that
+    ///    already dominated it. `min(12, 2.5·yearsToWindow)` is
+    ///    `LeagueGenerator`'s own runway, verbatim.
+    ///  * **The draft grade supplies the scaler** (`bandProjection`) the way the
+    ///    depth chart supplies it for a generated veteran.
+    ///  * **The draw is centred at 0.55·runway with sd 0.8·μ and clipped at 0**,
+    ///    so a real share of the board comes out with no headroom at all — the
+    ///    polished, pro-ready senior who is what he is. `LeagueGenerator` puts
+    ///    ~1 in 3 generated players there; the board is younger, so fewer.
+    ///
+    /// ## The sweep this landed from
+    ///
+    /// `runwayCentre` was swept with a MONOTONE profile (`career` harness, 20
+    /// leagues × 30 seasons; `class` is the drafted-board mean potential):
+    ///
+    /// | profile | class | R2 hit | R3 hit | 80+ | 75+ | asserts |
+    /// |---|---|---|---|---|---|---|
+    /// | old (pre-wave) | 81.1 | 45.6 | 30.1 | 16.9 | 29.6 | 26/26 |
+    /// | monotone ×0.55 | 75.2 | 29.7 | 17.7 | 11.6 | 22.8 | 20/26 |
+    /// | monotone ×0.90 | 77.4 | 37.2 | 21.5 | 14.2 | 26.2 | 22/26 |
+    /// | monotone ×1.15 | 78.6 | 40.9 | 23.6 | 15.8 | 28.4 | 25/26 |
+    /// | monotone ×1.40 | 79.6 | 44.9 | 26.9 | 17.5 | 30.7 | 26/26 |
+    ///
+    /// i.e. a monotone profile trades the ratchet against the reference curve
+    /// one-for-one and never fixes both. The hump breaks that trade because
+    /// rounds 2-3 are only 24 % of the graded board: buying back the 9 points of
+    /// R2/R3 ceiling that §6 needs costs the class mean just 1.2 points.
+    ///
+    /// **Shipped result** (`./run.sh draftclass`, 200 classes — band mean
+    /// potential, and `./run.sh career`, 26/26):
+    ///
+    /// | | R1 | R2 | R3 | R4 | R5 | R6 | R7 | UDFA | class |
+    /// |---|---|---|---|---|---|---|---|---|---|
+    /// | old | 95.2 | 89.1 | 84.2 | 80.3 | 78.7 | 76.3 | 74.0 | 70.4 | **81.1** |
+    /// | new | 90.5 | 86.9 | 84.7 | 78.2 | 75.3 | 72.5 | 69.2 | 65.7 | **78.0** |
+    ///
+    /// The tail is intact — R1/R2/R3 still draw p95 upsides of 17/23/25 onto an
+    /// 83/77/74 true grade, so the top of every class still lands on the 99
+    /// clamp and `career` measures R1 elite (peak OVR 90+) at 11.0 % against its
+    /// 10-18 % band. What narrows is the middle and the back: a sixth-rounder's
+    /// ceiling is now 4 points over his college grade rather than 8.
+    ///
+    /// `DraftEngine.rawnessPivot` moves 76 → 69 in the same wave so the rookie
+    /// ENTRY level is unchanged — see the derivation there.
+    static func drawUpside(
+        position: Position,
+        age: Int,
+        band: Int,
+        archetype: Archetype
+    ) -> Double {
+        let peak = position.peakAgeRange
+        let runway = min(12.0, 2.5 * Double(max(0, peak.lowerBound - age)))
+        let mu = runwayCentre * runway * bandProjection(band: band) * archetype.upsideMultiplier
+        guard mu > 0 else { return 0 }
+        let draw = PositionPhysicalProfile.gaussian(mean: mu, sd: max(1.0, mu * 0.8))
+        return min(26.0, max(0.0, draw))
+    }
+
+    /// Where the runway draw is centred, as a fraction of the runway itself —
+    /// `LeagueGenerator.veteranPotential`'s own constant, kept verbatim so the
+    /// two ends of the pipeline share one model. All board-specific calibration
+    /// lives in `bandProjection`.
+    static let runwayCentre = 0.55
 
     // MARK: - Step 7: college production
 
@@ -673,11 +790,16 @@ enum DraftClassBuilder {
             }
         }
 
-        var upsideShift: Double {
+        /// Multiplier on the remaining-runway draw (`drawUpside`). A raw prospect
+        /// is further from the player he will be, a polished one is closer —
+        /// which is a statement about the SIZE of his runway, not a fixed ±4 on
+        /// top of it. Scale-free by construction, so it survives any future
+        /// recalibration of the runway itself.
+        var upsideMultiplier: Double {
             switch self {
-            case .polished: return -4
-            case .balanced: return 0
-            case .raw:      return 5
+            case .polished: return 0.75
+            case .balanced: return 1.00
+            case .raw:      return 1.30
             }
         }
 

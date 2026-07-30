@@ -370,6 +370,11 @@ final class CRLeague {
     var measuredOffseasonPasses = 0
     var leagueOverallBySeason: [Int: [Double]] = [:]
     var leagueAgeBySeason: [Int: [Double]] = [:]
+    /// Task #32: the same `leaguePot` the shipped smoke prints on its
+    /// `diag cohorts` line — mean `truePotential` over every rostered player.
+    /// Carried here so the two harnesses can be compared on the number the
+    /// intake ratchet is diagnosed from, not only on rated ability.
+    var leaguePotBySeason: [Int: [Double]] = [:]
 
     init(cfg: CRConfig) { self.cfg = cfg }
 
@@ -820,6 +825,12 @@ final class CRLeague {
             // with the SAME shipped functions and the SAME arguments so the
             // distribution can be reported without instrumenting the engine.
             if measured {
+                // Task #29 second half: the same rungs `processOffseason` is
+                // about to derive for this roster, so the reported R distribution
+                // is the one the engine actually runs on.
+                let offseasonRoles = PlayerDevelopmentEngine.offseasonPlayingTimeRoles(
+                    roster: club.roster, inputs: inputs
+                )
                 for p in club.roster {
                     let inp = inputs[p.id] ?? PlayerDevelopmentEngine.OffseasonInputs()
                     let posCoach = club.positionCoach(for: p.position)
@@ -827,7 +838,8 @@ final class CRLeague {
                     let share = PlayerDevelopmentEngine.realPlayingTimeShare(
                         gamesStarted: inp.gamesStarted,
                         gamesPlayed: inp.gamesPlayed,
-                        positionCoach: posCoach
+                        positionCoach: posCoach,
+                        role: offseasonRoles[p.id] ?? .depth
                     )
                     let health = PlayerDevelopmentEngine.healthFactor(player: p, inputs: inp)
                     rSamples.append(PlayerDevelopmentEngine.realizationFactor(
@@ -953,6 +965,16 @@ final class CRLeague {
                 let starters = Set(startingLineup(club: club).map(\.id))
                 let qbCoach = club.coach(.qbCoach)
                 let clipboard = (qbCoach?.playerDevelopment ?? 0) >= 70
+                // Task #29: the same §6 playing-time ladder the game runs. The
+                // harness has always fielded a real lineup, but it graded
+                // everyone behind it as a flat zero; the shipped `WeekAdvancer`
+                // now spreads rotation/backup/depth credit, and the two have to
+                // model the same league or the equilibrium this scenario asserts
+                // stops being the equilibrium the game reaches.
+                let available = club.roster.filter { !$0.isInjured && !$0.isRetired }
+                let roles = PlayerDevelopmentEngine.playingTimeRoles(
+                    roster: available, starterIDs: starters
+                )
                 for p in club.roster {
                     if p.isInjured {
                         _ = PlayerDevelopmentEngine.processInjury(p)
@@ -961,11 +983,13 @@ final class CRLeague {
                     let started = starters.contains(p.id)
                     p.gamesPlayedThisSeason += 1
                     if started { p.gamesStartedThisSeason += 1 }
+                    let role = roles[p.id] ?? .depth
                     PlayerDevelopmentEngine.applyGameExperience(
                         p,
                         gamesPlayed: 1,
                         gamesStarted: started ? 1 : 0,
-                        clipboardRoom: clipboard
+                        clipboardRoom: clipboard,
+                        startCredit: role.startCreditShare
                     )
                     // Snaps carry injury risk; the shipped roll reads durability,
                     // fatigue, age past peak and the workload multiplier.
@@ -1039,6 +1063,7 @@ final class CRLeague {
         let measured = season > cfg.burnIn
         var leagueOverall: [Double] = []
         var leagueAge: [Double] = []
+        var leaguePot: [Double] = []
         for club in clubs {
             for p in club.roster {
                 history[p.id, default: []].append(CRSeasonRow(
@@ -1055,11 +1080,13 @@ final class CRLeague {
                 }
                 leagueOverall.append(Double(p.overall))
                 leagueAge.append(Double(p.age))
+                leaguePot.append(Double(p.truePotential))
             }
         }
         if measured {
             leagueOverallBySeason[season] = leagueOverall
             leagueAgeBySeason[season] = leagueAge
+            leaguePotBySeason[season] = leaguePot
         }
     }
 
@@ -1476,6 +1503,8 @@ func crReport(leagues: [CRLeague], elapsed: TimeInterval) {
     var pyramid: [Double] = []
     var pyramidAges: [Double] = []
     var driftSamples: [Double] = []
+    var potFirst: [Double] = []
+    var potLast: [Double] = []
     for lg in leagues {
         let ss = lg.leagueOverallBySeason.keys.sorted()
         guard let first = ss.first, let last = ss.last, last > first else { continue }
@@ -1484,6 +1513,8 @@ func crReport(leagues: [CRLeague], elapsed: TimeInterval) {
         let f = crMean(lg.leagueOverallBySeason[first] ?? [])
         let l = crMean(lg.leagueOverallBySeason[last] ?? [])
         driftSamples.append((l - f) / Double(last - first))
+        potFirst.append(crMean(lg.leaguePotBySeason[first] ?? []))
+        potLast.append(crMean(lg.leaguePotBySeason[last] ?? []))
     }
     let pyN = max(1, pyramid.count)
     let sh90 = crShare(pyramid.filter { $0 >= 90 }.count, pyN)
@@ -1510,6 +1541,10 @@ func crReport(leagues: [CRLeague], elapsed: TimeInterval) {
                  sh90, sh85, sh80, sh75, shSub65))
     print(String(format: "  blue chips (90+) %.1f players in a 1696-man league [25-35]   age mean %.2f [25.5-26.5]  33+ %.1f%% [<=4.0]",
                  blueChips, crMean(pyramidAges), a33))
+    let potSpan = max(1, cfg.totalSeasons - cfg.burnIn - 1)
+    print(String(format: "  leaguePot: first measured season %.2f -> last %.2f (%+.3f/season over %d seasons)",
+                 crMean(potFirst), crMean(potLast),
+                 (crMean(potLast) - crMean(potFirst)) / Double(potSpan), potSpan))
     var histLine = "  histogram: "
     for lo in stride(from: 40, through: 95, by: 5) {
         let c = pyramid.filter { $0 >= Double(lo) && $0 < Double(lo + 5) }.count

@@ -25,7 +25,7 @@ import Foundation
 /// would isolate this type's `Decodable` conformance along with everything else:
 /// a 2.6 MB decode could then only ever run ON the main actor. Read-only import
 /// data has no business holding the UI, so the whole type opts out and a caller
-/// is free to decode it from a background task (see `DevPostseasonStats`).
+/// is free to decode it from a background task.
 nonisolated struct LeagueTemplate: Codable {
 
     // MARK: - Profile
@@ -354,50 +354,6 @@ extension LeagueTemplate.PostLine {
             stats: stats,
             post: nil
         )
-    }
-}
-
-extension LeagueTemplate {
-
-    /// Every player's postseason lines, keyed by `postseasonKey(name:position:)`
-    /// → season → line. Players with no playoff data are absent, so the publish
-    /// profile returns an empty map.
-    ///
-    /// This is a template-side query, not import data: the postseason bag has no
-    /// column on `PlayerSeasonHistory` yet, so the career table reads it from
-    /// here (see `DevPostseasonStats`) until the import can persist it.
-    /// Spelled `nonisolated` again even though the type already is: an extension
-    /// member picks up the module's `@MainActor` default on its own, and this one
-    /// is called from the background decode.
-    nonisolated func postseasonLinesByPlayer() -> [String: [Int: PostLine]] {
-        var out: [String: [Int: PostLine]] = [:]
-        for team in teams {
-            for player in team.players {
-                var byYear: [Int: PostLine] = [:]
-                for line in player.statLines ?? [] {
-                    guard let post = line.post else { continue }
-                    let hasStats = !(post.stats?.isEmpty ?? true)
-                    guard (post.gp ?? 0) > 0 || hasStats else { continue }
-                    byYear[line.year] = post
-                }
-                guard !byYear.isEmpty else { continue }
-                // Exactly one name+position pair repeats in the 2026 dev
-                // template ("Jaylon Jones", CB). Merging keeps the first
-                // player's playoffs instead of letting the second silently
-                // erase them; the alternative (dropping both) would lose more.
-                out[Self.postseasonKey(name: player.name, position: player.pos), default: [:]]
-                    .merge(byYear) { first, _ in first }
-            }
-        }
-        return out
-    }
-
-    /// Lookup key for the postseason map. Name + position, because the template
-    /// carries a handful of shared names across different positions.
-    ///
-    /// `nonisolated` for the same reason as the map builder that calls it.
-    nonisolated static func postseasonKey(name: String, position: String) -> String {
-        "\(name)|\(position)"
     }
 }
 

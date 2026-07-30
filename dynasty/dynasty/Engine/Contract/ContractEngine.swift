@@ -144,6 +144,41 @@ enum ContractEngine {
         return Swift.min(12.5, top.pct + slope * (o - top.ovr))
     }
 
+    /// League affordability scalar — what makes the price ladder above a price
+    /// ladder for THIS league rather than an unbounded one (task #27).
+    ///
+    /// `marketBasePercent` was solved for a shape (monotone, correctly ordered)
+    /// and for continuity with the ladder it replaced, but never against a
+    /// budget: a salary cap is a money supply, and the sum of what a league's
+    /// players are "worth" has to be payable out of it. It was not. Measured
+    /// over `MultiSeasonSmokeTest`, pricing every rostered player at market came
+    /// to **150.7 % of the league's total cap** — a 53-man roster whose market
+    /// price is half again what a club is allowed to spend. Two things followed,
+    /// and both were logged as separate bugs before the cause was one number:
+    ///
+    /// 1. The free-agent market could not clear. Clubs bought the two or three
+    ///    men they could afford and the rest of the pool fell through to
+    ///    `WeekAdvancer.refillAIRosters`, which signs anybody at the veteran
+    ///    minimum — so the league's middle class was bought at $750k.
+    /// 2. Everything that reads a salary AGAINST market read it wrong. The
+    ///    average player sat at 0.53 of "market", which is inside
+    ///    `TradeValueEngine.contractMultiplier`'s bargain premium and past
+    ///    `HoldoutEngine`'s underpaid trigger — league-wide, permanently.
+    ///
+    /// The target is derived from the roster the league actually fields. Of ~1 700
+    /// rostered men, the ~45 % past their rookie deal take ~64 % of payroll; if a
+    /// healthy payroll is ~92 % of the cap and those veterans are paid about what
+    /// they are worth, veteran market value totals ~59 % of the cap, and the
+    /// cheaper rookie-contract population adds ~44 % — call it **~105-115 % of
+    /// cap in total**, the shape §8 describes, where rookie deals are the
+    /// discount that makes a roster affordable at all.
+    ///
+    /// 0.75 × 150.7 % ≈ 113 %. The scalar is applied to the finished valuation
+    /// rather than folded into the anchors so that `marketBasePercent`'s
+    /// derivation table stays readable as what it is — the SHAPE of the market —
+    /// and the level it is denominated in stays one auditable number.
+    static let leagueAffordabilityScale = 0.75
+
     static func estimateMarketValue(player: Player, salaryCap: Int = 265_000) -> Int {
         let overall = player.overall
         // Use the higher-paying position: current or natural (players demand pay
@@ -190,8 +225,10 @@ enum ContractEngine {
             }
         }()
 
-        // Convert cap percentage to thousands
-        var value = basePercent * positionMultiplier * Double(salaryCap) / 100.0
+        // Convert cap percentage to thousands, denominated in a league that can
+        // afford its own roster (see `leagueAffordabilityScale`).
+        var value = basePercent * positionMultiplier * leagueAffordabilityScale
+            * Double(salaryCap) / 100.0
 
         // Age adjustment: discount once the player is past peak years
         let peakRange = position.peakAgeRange

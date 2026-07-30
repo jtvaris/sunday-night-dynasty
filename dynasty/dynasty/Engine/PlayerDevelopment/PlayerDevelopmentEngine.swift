@@ -592,18 +592,108 @@ enum PlayerDevelopmentEngine {
     /// term from `DEVELOPMENT_NFL_REFERENCE.md` §6 — a player who never dresses
     /// still develops on the scout team, and a good position coach makes those
     /// reps count (±20 % on the floor).
+    ///
+    /// ## The ladder (task #29's second half, landed with the #32 intake fix)
+    ///
+    /// `gamesStarted` is a 0/1 fact per week, so without a `role` this function
+    /// is binary in practice: a starter comes out at 1.0 and everybody else at
+    /// the 0.15 floor. There is no rung between them, which is wrong for the
+    /// third receiver and the rotational end — `PlayingTimeRole` is exactly the
+    /// ladder they belong on, and the weekly experience pass already grades them
+    /// with it.
+    ///
+    /// Passing the role replaces the 0.85/0.15 start/appearance split with the
+    /// thing that split was a proxy for: **the share of his club's snaps he
+    /// actually took**, which is `PlayingTimeRole.startCreditShare` scaled by how
+    /// much of the season he was available for. The two forms agree exactly at
+    /// both ends the old one could express — a full starter is 1.0, an injured
+    /// starter who dressed 9 weeks is 9/17 either way — and only fill in the
+    /// rungs between:
+    ///
+    /// | | old | with role |
+    /// |---|---|---|
+    /// | starter, 17 games | 1.00 | 1.00 |
+    /// | rotational WR3 / DE3, 17 games | 0.15 | 0.50 |
+    /// | QB2 / swing tackle, 17 games | 0.15 | 0.18 |
+    /// | back of the roster | 0.15 | 0.15 (floor) |
+    ///
+    /// `max(startFraction, role share)` because a man who genuinely started half
+    /// the games is credited with the starts he made even if the depth chart he
+    /// finished the year on calls him a rotation player.
+    ///
+    /// **This raises the league mean share ~0.53 → ~0.61, i.e. ~+14 % offseason
+    /// development volume**, which is why it could not ship on its own: the
+    /// offseason share is the dominant development lever (0-3 of the base points)
+    /// and the league was already ratcheting. It ships in the same wave as the
+    /// `DraftClassBuilder.drawUpside` intake fix, which takes ~6 points of
+    /// ceiling out of every incoming class — the two are calibrated jointly
+    /// against `MultiSeasonSmokeTest`'s pyramid gate and `tools/balance-harness`'s
+    /// `career` §6 hit-rate curve.
     static func realPlayingTimeShare(
         gamesStarted: Int,
         gamesPlayed: Int,
-        positionCoach: Coach?
+        positionCoach: Coach?,
+        role: PlayingTimeRole? = nil
     ) -> Double {
-        let starts = Double(max(0, min(17, gamesStarted))) / 17.0
-        let appearances = Double(max(0, min(17, gamesPlayed))) / 17.0
-        let raw = min(1.0, starts * 0.85 + appearances * 0.15)
+        let played = max(0, min(17, gamesPlayed))
+        let started = max(0, min(played, gamesStarted))
+        let availability = Double(played) / 17.0
+
+        let raw: Double
+        if let role {
+            let startFraction = played > 0 ? Double(started) / Double(played) : 0
+            raw = availability * max(startFraction, role.startCreditShare)
+        } else {
+            raw = min(1.0, Double(started) / 17.0 * 0.85 + availability * 0.15)
+        }
 
         let coachDev = Double(positionCoach?.playerDevelopment ?? 50)
         let floor = 0.15 * (0.8 + coachDev / 99.0 * 0.4)
         return min(1.0, max(floor, raw))
+    }
+
+    /// Last season's depth-chart role for every man on a roster, reconstructed
+    /// from the participation record the offseason actually has.
+    ///
+    /// `processOffseason` is handed one club's roster and one `OffseasonInputs`
+    /// per player, and that is enough: a man who started the majority of the
+    /// games he dressed for WAS a starter, and `playingTimeRoles` turns the rest
+    /// of the roster into the rotation / backup / depth rungs off position and
+    /// current rating. Deriving it here rather than persisting a snap share
+    /// keeps `OffseasonInputs` (and the SwiftData schema) untouched and keeps the
+    /// game and the balance harness reading the same signal — both call
+    /// `processOffseason` with a club roster.
+    ///
+    /// Only men who actually dressed compete for the rungs. A rookie drafted
+    /// this spring is on the roster when camp opens and can out-rate the veteran
+    /// who took the club's rotational snaps last autumn — `playingTimeRoles`
+    /// ranks reserves by current OVR, so without this filter the rookie would
+    /// take the rotation rung he cannot have earned (his own share is the floor
+    /// regardless: he played no games) and push the man who DID play down to
+    /// depth. Everyone filtered out lands on `.depth`, which is what a zero-game
+    /// season means.
+    ///
+    /// Known approximation: a player who changed teams is graded against his NEW
+    /// club's chart. That is the same roster the rest of the offseason pipeline
+    /// uses for him, and the alternative (storing last season's role) buys a
+    /// second migration for a rung's worth of precision on ~5 % of the league.
+    static func offseasonPlayingTimeRoles(
+        roster: [Player],
+        inputs: [UUID: OffseasonInputs]
+    ) -> [UUID: PlayingTimeRole] {
+        var starterIDs = Set<UUID>()
+        var participants: [Player] = []
+        for player in roster {
+            let record = inputs[player.id] ?? OffseasonInputs()
+            guard record.gamesPlayed > 0 else { continue }
+            participants.append(player)
+            if record.gamesStarted > 0, record.gamesStarted * 2 >= record.gamesPlayed {
+                starterIDs.insert(player.id)
+            }
+        }
+        var roles = playingTimeRoles(roster: participants, starterIDs: starterIDs)
+        for player in roster where roles[player.id] == nil { roles[player.id] = .depth }
+        return roles
     }
 
     // MARK: Health Gate (plan §2.4)
@@ -930,7 +1020,8 @@ enum PlayerDevelopmentEngine {
         player: Player,
         inputs: OffseasonInputs,
         currentRealization: Double,
-        positionCoach: Coach?
+        positionCoach: Coach?,
+        role: PlayingTimeRole? = nil
     ) -> Bool {
         guard player.yearsPro >= 2 else { return false }
         guard currentRealization < plateauRealizationThreshold else { return false }
@@ -945,7 +1036,8 @@ enum PlayerDevelopmentEngine {
         let previousShare = realPlayingTimeShare(
             gamesStarted: inputs.previousGamesStarted,
             gamesPlayed: inputs.previousGamesPlayed,
-            positionCoach: positionCoach
+            positionCoach: positionCoach,
+            role: role
         )
         let previousRealization = realizationFactor(
             player: player,
@@ -971,6 +1063,108 @@ enum PlayerDevelopmentEngine {
 
     // MARK: - 2. In-Season Experience
 
+    // MARK: Playing-time ladder (task #29, `DEVELOPMENT_NFL_REFERENCE.md` §6)
+
+    /// Where a player sits on his club's depth chart this week, which is what
+    /// decides how much of the week's game reps he actually gets.
+    ///
+    /// §6: "game reps are the main in-season teacher" and "young players live on
+    /// scout-team/backup reps: real but reduced development without game snaps
+    /// (model a practice-reps floor, not zero)". A snap share is therefore a
+    /// LADDER, not a switch — and until this existed the game had a switch, set
+    /// at `overall >= 60`, which handed a full starter's credit to ~90 % of the
+    /// league every week. The two errors that hid it cancel in the mean and not
+    /// in the shape: the whole bench developed like starters, which is how the
+    /// smoke's 80+ share climbed 17.5 % → 21.3 % over three seasons while
+    /// `tools/balance-harness`'s `career` scenario — which has always fielded a
+    /// real depth chart — sat at a flat equilibrium.
+    enum PlayingTimeRole {
+        /// One of the 24 men the simulator actually fields.
+        case starter
+        /// The next man at a position that genuinely rotates — sub packages,
+        /// a running-back committee, the third receiver, the nickel corner.
+        case rotation
+        /// The next man at a position whose starter plays every snap (QB, the
+        /// offensive line, the specialists): he dresses and waits.
+        case backup
+        /// Everyone else — practice reps only.
+        case depth
+
+        /// Share of a starter's start credit, i.e. of the "started" half of
+        /// `applyGameExperience`'s `gamesFactor`. Calibrated to NFL snap shares:
+        /// rotational second men run ~35-55 % of snaps, a QB2/swing tackle ~5-10 %
+        /// (injury and mop-up only), and the back of the roster is the practice
+        /// floor §6 asks for rather than a zero.
+        var startCreditShare: Double {
+            switch self {
+            case .starter:  return 1.0
+            case .rotation: return 0.50
+            case .backup:   return 0.18
+            case .depth:    return 0.08
+            }
+        }
+    }
+
+    /// Whether a position's second man is on the field every week.
+    ///
+    /// Rotational: defensive line (snap counts are shared to keep rushers
+    /// fresh), the third/fourth receiver, a back committee, 12 personnel, sub
+    /// linebackers, the nickel corner and big-nickel safety. Not rotational:
+    /// quarterback, the five offensive-line spots, fullback and the specialists —
+    /// their starter takes ~100 % of the snaps and the backup only plays on an
+    /// injury.
+    static func positionRotates(_ position: Position) -> Bool {
+        switch position {
+        case .RB, .WR, .TE, .DE, .DT, .OLB, .MLB, .CB, .FS, .SS:
+            return true
+        case .QB, .FB, .LT, .LG, .C, .RG, .RT, .K, .P:
+            return false
+        }
+    }
+
+    /// Assigns every man on a roster his playing-time role for the week, given
+    /// the lineup the simulator would actually field.
+    ///
+    /// The rule below the starters is deliberately the simplest one that is
+    /// still true: the best remaining player at each exact position is that
+    /// position's next man up, and everyone behind him is depth. That gives one
+    /// rotational body per rotating position (DE3, WR4, RB2, CB3, S3 …) and one
+    /// waiting backup per non-rotating one (QB2, a swing lineman), which is the
+    /// shape of a real 53.
+    ///
+    /// - Parameters:
+    ///   - roster: The club's available players (injured/holding-out men are the
+    ///     caller's business — they are excluded before this is called).
+    ///   - starterIDs: The lineup, from whatever the caller uses to field one
+    ///     (`WeekAdvancer.startingLineupIDs` in the game, the roster template in
+    ///     the balance harness). Passing it in keeps this function free of any
+    ///     opinion about how a lineup is chosen.
+    static func playingTimeRoles(
+        roster: [Player],
+        starterIDs: Set<UUID>
+    ) -> [UUID: PlayingTimeRole] {
+        var roles: [UUID: PlayingTimeRole] = [:]
+        var bestReserveByPosition: [Position: Player] = [:]
+
+        for player in roster {
+            if starterIDs.contains(player.id) {
+                roles[player.id] = .starter
+                continue
+            }
+            roles[player.id] = .depth
+            let incumbent = bestReserveByPosition[player.position]
+            if incumbent == nil || player.overall > incumbent!.overall {
+                bestReserveByPosition[player.position] = player
+            }
+        }
+
+        for (position, reserve) in bestReserveByPosition {
+            roles[reserve.id] = positionRotates(position) ? .rotation : .backup
+        }
+
+        return roles
+    }
+
     /// Applies small mental attribute gains from regular-season game experience.
     ///
     /// - Parameters:
@@ -982,12 +1176,17 @@ enum PlayerDevelopmentEngine {
     ///   - clipboardRoom: plan §2.9.5 — this is a QB in a room that develops
     ///     backups (a QB coach rated 70+, or an active mentorship). See the
     ///     `clipboardStartShare` note below.
+    ///   - startCredit: task #29 — fractional starts, for callers that know the
+    ///     player's `PlayingTimeRole` and want the ladder's share instead of a
+    ///     0/1 answer. `nil` keeps the integer `gamesStarted`, which is what the
+    ///     season-total call sites pass.
     static func applyGameExperience(
         _ player: Player,
         gamesPlayed: Int,
         gamesStarted: Int,
         experienceBoost: Double = 1.0,
-        clipboardRoom: Bool = false
+        clipboardRoom: Bool = false,
+        startCredit: Double? = nil
     ) {
         guard gamesPlayed > 0 else { return }
 
@@ -1010,9 +1209,17 @@ enum PlayerDevelopmentEngine {
         // reps under a real QB coach or a veteran mentor. He never catches the
         // man taking the snaps (0.675 vs 1.0 of a starter's rate), but he stops
         // being frozen at the pure appearance rate.
+        //
+        // Task #29: `startCredit` is the playing-time ladder's share when the
+        // caller knows the depth chart. The clipboard term still wins for a QB2
+        // in a developing room — 0.35 is above the ladder's 0.18 backup share by
+        // design, since the whole point of §2.9.5 is that a coached QB room beats
+        // simply dressing every week.
         let creditedStarts: Double
         if clipboardRoom, player.position == .QB, gamesStarted == 0 {
-            creditedStarts = clipboardStartShare * Double(gamesPlayed)
+            creditedStarts = max(clipboardStartShare, startCredit ?? 0) * Double(gamesPlayed)
+        } else if let startCredit {
+            creditedStarts = startCredit * Double(gamesPlayed)
         } else {
             creditedStarts = Double(gamesStarted)
         }
@@ -1523,9 +1730,16 @@ enum PlayerDevelopmentEngine {
     ) -> [String] {
         var events: [String] = []
 
+        // Task #29: last season's depth-chart rung for every man on this roster,
+        // so the playing-time share below is a LADDER rather than the binary
+        // starter/floor it was. Computed once per club, off the participation
+        // record the inputs already carry.
+        let roles = offseasonPlayingTimeRoles(roster: players, inputs: inputs)
+
         // --- Motivation, aging, potential drift, development ---
         for player in players {
             let playerInputs = inputs[player.id] ?? OffseasonInputs()
+            let role = roles[player.id] ?? .depth
             let positionCoach = coaches.first { coach in
                 CoachingEngine.positionRoleMatch(coachRole: coach.role, playerPosition: player.position)
             }
@@ -1539,7 +1753,8 @@ enum PlayerDevelopmentEngine {
             let playingTimeShare = realPlayingTimeShare(
                 gamesStarted: playerInputs.gamesStarted,
                 gamesPlayed: playerInputs.gamesPlayed,
-                positionCoach: positionCoach
+                positionCoach: positionCoach,
+                role: role
             )
             let health = healthFactor(player: player, inputs: playerInputs)
 
@@ -1556,7 +1771,8 @@ enum PlayerDevelopmentEngine {
                 player: player,
                 inputs: playerInputs,
                 currentRealization: realization,
-                positionCoach: positionCoach
+                positionCoach: positionCoach,
+                role: role
             )
             if plateaued, rollsLateBloomerBreakout(player: player, inputs: playerInputs) {
                 realizationBoost = lateBloomerRealizationBoost

@@ -13,13 +13,16 @@ enum CoachingEngine {
     /// candidate the hiring market invents (`generateCoachCandidates`). Template
     /// staff are excluded: they anonymize real male coaches.
     ///
-    /// 0.06 is a budget, not a target. There are 35 female faces in the library
+    /// 0.06 is a budget, not a target. There are 163 female faces in the library
     /// and a career fills ~512 coaching slots, so E[female] ≈ 31 — comfortably
     /// under supply, because portrait matching is gender-strict and a female
     /// coach with no free female face falls through to a placeholder silhouette.
-    /// The face generator draws at 0.22 (`FaceGeneratorConstants.femaleCoachShare`)
-    /// for exactly this reason: the library carries headroom the game does not
-    /// spend.
+    /// The library deliberately carries headroom the game does not spend: the
+    /// mixed range draws female at 0.22 (`FaceGeneratorConstants.femaleCoachShare`)
+    /// and the 128-id female-only range above it draws not at all. At 35 faces
+    /// the sub-pool still emptied by season 2-3 — one league's worth of hires is
+    /// only the FIRST staff, and every carousel cycle adds more — so the budget
+    /// that matters is a whole career's, not a single opening day's.
     static let femaleCoachShare = 0.06
 
     // MARK: - Scheme Fit

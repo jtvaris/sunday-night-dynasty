@@ -459,7 +459,7 @@ enum LeagueTemplateValidation {
             players: random.players, coaches: random.coaches, label: "generated"
         )
         // Gender-aware, unlike the template branch above: a random league hires
-        // female coaches, and the female sub-pool is 35 ids against a binomial
+        // female coaches, and the female sub-pool is 163 ids (35 in the mixed range + 128 female-only) against a binomial
         // draw that averages ~31 of 512 slots (`CoachingEngine.femaleCoachShare`
         // = 0.06). Roughly one league in five therefore lands 36+ female coaches
         // and the picker legitimately hands the 36th a portrait another woman

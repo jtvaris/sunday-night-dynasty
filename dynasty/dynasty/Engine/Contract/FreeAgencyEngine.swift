@@ -17,6 +17,60 @@ enum FreeAgencyEngine {
         let marketInterest: Int
     }
 
+    // MARK: - Signing Ledger (task #27 salary-inflation diagnostic)
+
+    /// Every AI free-agent signing of the current league year, summed. The cap
+    /// collapse in task #27 is a *flow* problem — the league's books are a stock
+    /// and `SMOKE: diag capRoom` only reports the stock, so it can say the money
+    /// is gone but never where it went. This is the flow: how many contracts the
+    /// market wrote, what they cost, and what the same men were paid on the deals
+    /// that just expired. `agreed − previous` summed over the market IS the
+    /// league's annual wage bill increase, and comparing it to the 5-8 % cap
+    /// growth is the whole diagnosis in one line.
+    ///
+    /// Reset per league year by `MultiSeasonSmokeTest`; the app never reads it.
+    struct SigningLedger {
+        /// Contracts written by `simulateAIFreeAgency` this league year.
+        var signings = 0
+        /// Sum of the salaries agreed on them (thousands).
+        var agreedTotal = 0
+        /// Sum of what those same players earned on their PREVIOUS deal — the
+        /// contract that just expired (thousands). Zero for anyone who has never
+        /// been paid (rookies released into the pool, generated street bodies).
+        var previousTotal = 0
+        /// Sum of the raw `estimateMarketValue` asks behind those signings, so the
+        /// gap between what the market wanted and what it got is visible.
+        var askTotal = 0
+        /// Signings whose agreed salary came in at least 2× the previous deal —
+        /// the second-contract wave, which is where the ratchet lives.
+        var raises2x = 0
+        /// Task #45: midseason-trade prorations undone at this rollover, and the
+        /// salary put back on the books by doing so (thousands). A league that
+        /// trades at the deadline must show a non-zero count here every year the
+        /// deals carry into.
+        var prorationsRestored = 0
+        var prorationSalaryRestored = 0
+
+        var summary: String {
+            let avgAgreed = signings == 0 ? 0 : agreedTotal / signings
+            let avgPrev = signings == 0 ? 0 : previousTotal / signings
+            let avgAsk = signings == 0 ? 0 : askTotal / signings
+            return "signings=\(signings) avgAgreed=\(avgAgreed) avgPrev=\(avgPrev) "
+                + "avgAsk=\(avgAsk) wageBillDelta=\(agreedTotal - previousTotal) raises2x=\(raises2x) "
+                + "prorationRestored=\(prorationsRestored)/+\(prorationSalaryRestored)"
+        }
+    }
+
+    /// See `SigningLedger`. Diagnostic only — nothing in the game reads it.
+    static var signingLedger = SigningLedger()
+
+    /// Salary a player earned on the deal that expired at this rollover, kept
+    /// only long enough for the ledger above to read it back when he re-signs
+    /// (`executeNewLeagueYear` zeroes `annualSalary` the moment a contract runs
+    /// out, so by free agency the old number is gone). Diagnostic only — no
+    /// schema change for a measurement.
+    static var priorSalaryByPlayerID: [UUID: Int] = [:]
+
     // MARK: - Position Need Levels (for AI bidding)
 
     enum PositionNeedLevel: String {
@@ -271,6 +325,33 @@ enum FreeAgencyEngine {
 
         var newFAs: [(name: String, position: String, overall: Int, formerTeam: String)] = []
 
+        // Task #45 — undo last season's midseason proration FIRST, before any
+        // other line reads `annualSalary`.
+        //
+        // A deadline trade charges the buyer only the checks still to come and
+        // writes that prorated figure back onto the player, because
+        // `Team.currentCapUsage` is an incrementally maintained ledger and the
+        // number charged has to be the number later refunded. The discount is
+        // fully earned out the moment the league year turns, so the real base goes
+        // back on the row here and the receipt is torn up. Running ahead of the
+        // expiry loop is what makes the rest of this function correct without
+        // knowing anything about trades: the true-up below then sums the honest
+        // salary, and an expiring deal is reported at the money it was really
+        // worth instead of at its prorated stub.
+        //
+        // Players who left the roster in the meantime (cut, retired) are skipped —
+        // they are already at 0 and must stay there — but their receipt is still
+        // cleared, so a stale full base can never resurface on a later signing.
+        for player in allPlayers where player.proratedFullBaseSalary > 0 {
+            if player.teamID != nil, player.contractYearsRemaining > 0, !player.isRetired {
+                signingLedger.prorationsRestored += 1
+                signingLedger.prorationSalaryRestored +=
+                    player.proratedFullBaseSalary - player.annualSalary
+                player.annualSalary = player.proratedFullBaseSalary
+            }
+            player.proratedFullBaseSalary = 0
+        }
+
         for player in allPlayers {
             guard player.contractYearsRemaining > 0, !player.isFranchiseTagged else { continue }
 
@@ -298,6 +379,10 @@ enum FreeAgencyEngine {
                 if let team = formerTeam {
                     team.currentCapUsage -= player.annualSalary
                 }
+                // Task #27 diagnostic: remember what the expiring deal paid
+                // before the number is destroyed, so the signing ledger can
+                // price this league year's wage-bill increase.
+                priorSalaryByPlayerID[player.id] = player.annualSalary
                 player.teamID = nil
                 player.annualSalary = 0
             }
@@ -387,10 +472,13 @@ enum FreeAgencyEngine {
     struct RosterNeedIndex {
         /// team → position → (count, best overall) for that exact position.
         private var byTeam: [UUID: [Position: (count: Int, best: Int)]] = [:]
+        /// team → players currently under contract. Task #27: the market has to
+        /// know when a club has run out of ROSTER, not only out of money.
+        private var sizeByTeam: [UUID: Int] = [:]
 
         init(allPlayers: [Player]) {
             for player in allPlayers {
-                guard let teamID = player.teamID else { continue }
+                guard let teamID = player.teamID, !player.isRetired else { continue }
                 add(position: player.position, overall: player.overall, to: teamID)
             }
         }
@@ -402,7 +490,11 @@ enum FreeAgencyEngine {
             let current = teamMap[position] ?? (count: 0, best: 0)
             teamMap[position] = (count: current.count + 1, best: max(current.best, overall))
             byTeam[teamID] = teamMap
+            sizeByTeam[teamID, default: 0] += 1
         }
+
+        /// Players under contract at this club right now.
+        func rosterSize(teamID: UUID) -> Int { sizeByTeam[teamID] ?? 0 }
 
         /// Same decision table as `assessPositionNeed(team:position:allPlayers:)`.
         func need(teamID: UUID, position: Position) -> PositionNeedLevel {
@@ -425,11 +517,52 @@ enum FreeAgencyEngine {
         }
     }
 
+    // MARK: - The AI market's budget (task #27)
+
+    /// Players a club will carry out of free agency, leaving the rest of the
+    /// 53-man roster for the draft class and camp bodies.
+    ///
+    /// Free agency runs BEFORE the draft on the league calendar, so a club that
+    /// fills all 53 slots in March has spent the money and the spots its rookies
+    /// are about to need. The market used to have no roster limit at all: it
+    /// signed every expiring contract in the league to somebody — 464 deals in
+    /// one measured league year against ~212 actual holes — and
+    /// `WeekAdvancer.trimAIRosters` then released the surplus at final cutdowns.
+    /// The churn was invisible in the roster counts (they end at 53 either way)
+    /// but not in the books: those ~250 extra contracts were signed at market and
+    /// paid for out of cap room that the draft class then had to share.
+    ///
+    /// 46 = 53 − 7: an average draft class is 7-8 picks.
+    static let faRosterCeiling = 46
+
+    /// Share of the cap an AI club holds back in free agency.
+    ///
+    /// The money is not idle — it is committed to things that have not happened
+    /// yet when the market opens: the rookie class (measured at ~5-6 % of cap
+    /// across the league's ~8 picks a club), in-season injury replacements and
+    /// practice-squad churn (`WeekAdvancer.refillAIRosters`), and a deadline
+    /// move. None of those paths ask permission from the cap, so if free agency
+    /// is allowed to spend to the last dollar the league is guaranteed to end the
+    /// year over it — which is exactly what it did: room fell 22.9 % → 0.7 % →
+    /// -1.9 % over three seasons and 29 of 32 clubs finished season 3 in the red.
+    ///
+    /// Derived rather than guessed, from the two bills the market does not pay:
+    /// the draft class and the in-season refill cost a measured **6.6 % of cap**
+    /// between them (payroll ran from ~100 % straight after free agency to
+    /// 106.6 % once both had landed), and the league is asked to open a season
+    /// with **8 %** room so the trade market has something to work with. 6.6 + 8
+    /// ≈ 15.
+    static let capReservePercent = 0.15
+
     /// Let AI-controlled teams sign available free agents based on need and cap room.
     /// In sandbox cap mode the cap-room filter is dropped so any team can sign anyone.
     /// R23: when `allPlayers` is provided, teams that actually NEED the position
     /// jump the queue (critical > high > moderate) instead of pure cap-space order,
     /// so bulk-simulated FA follows the same logic as the interactive rounds.
+    ///
+    /// Task #27 adds the two budget constraints a market needs to be a market:
+    /// clubs stop at `faRosterCeiling` players and never spend below
+    /// `capReservePercent` of their cap. See both for the measurements.
     static func simulateAIFreeAgency(
         freeAgents: [FreeAgent],
         teams: [Team],
@@ -455,7 +588,17 @@ enum FreeAgencyEngine {
             switch capMode {
             case .simple, .realistic:
                 eligibleTeams = teams
-                    .filter { $0.availableCap >= agent.askingPrice }
+                    .filter { team in
+                        // Task #27: a club needs room AND a roster spot, and the
+                        // room it spends is what is left ABOVE its reserve. The
+                        // roster test only applies when a roster snapshot exists;
+                        // without one the market falls back to the old cap-only
+                        // rule rather than silently signing nobody.
+                        let reserve = Int(Double(team.salaryCap) * capReservePercent)
+                        guard team.availableCap - reserve >= agent.askingPrice else { return false }
+                        guard let needIndex else { return true }
+                        return needIndex.rosterSize(teamID: team.id) < faRosterCeiling
+                    }
                     .sorted { $0.availableCap > $1.availableCap }
             case .sandbox:
                 eligibleTeams = teams.shuffled()
@@ -492,6 +635,14 @@ enum FreeAgencyEngine {
             let minimum = max(Int(0.0028 * Double(winningTeam.salaryCap)), 750)
             let agreedSalary = max(Int(Double(agent.askingPrice) * Double.random(in: 0.85...1.0)), minimum)
             let agreedYears = agent.desiredYears
+
+            // Task #27 diagnostic: record the flow before the signing lands.
+            let priorSalary = priorSalaryByPlayerID[agent.player.id] ?? 0
+            signingLedger.signings += 1
+            signingLedger.agreedTotal += agreedSalary
+            signingLedger.previousTotal += priorSalary
+            signingLedger.askTotal += agent.askingPrice
+            if priorSalary > 0, agreedSalary >= priorSalary * 2 { signingLedger.raises2x += 1 }
 
             // Route the signing through the cap-mode-aware wrapper so sandbox
             // skips cap accounting entirely.
@@ -624,8 +775,18 @@ enum FreeAgencyEngine {
 
             for team in aiTeams {
                 // Skip cap gating entirely in sandbox mode.
+                //
+                // Task #27: the same reserve the bulk market keeps. This is the
+                // path a real career's free-agent weeks run through, so if only
+                // `simulateAIFreeAgency` budgeted, the user's league would still
+                // spend itself broke — the two are one market and have to price
+                // against one bank balance.
                 if capMode != .sandbox {
-                    guard team.availableCap >= fa.askingPrice else { continue }
+                    let reserve = Int(Double(team.salaryCap) * capReservePercent)
+                    guard team.availableCap - reserve >= fa.askingPrice else { continue }
+                    if let needIndex, needIndex.rosterSize(teamID: team.id) >= faRosterCeiling {
+                        continue
+                    }
                 }
 
                 // Assess this team's need for the player's position
@@ -658,7 +819,11 @@ enum FreeAgencyEngine {
                 if capMode == .sandbox {
                     offeredSalary = max(rawOffer, minimum)
                 } else {
-                    let maxBid = Int(Double(team.availableCap) * 0.30)
+                    // 30 % of SPENDABLE room, not of nominal room — the reserve
+                    // is not the club's to bid with (task #27).
+                    let reserve = Int(Double(team.salaryCap) * capReservePercent)
+                    let spendable = max(0, team.availableCap - reserve)
+                    let maxBid = Int(Double(spendable) * 0.30)
                     offeredSalary = max(min(rawOffer, maxBid), minimum)
                 }
 

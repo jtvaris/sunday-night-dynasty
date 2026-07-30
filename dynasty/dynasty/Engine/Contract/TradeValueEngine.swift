@@ -1145,7 +1145,15 @@ enum TradeValueEngine {
         currentSeason: Int,
         contracts: [Contract] = [],
         week: Int = 0,
-        rememberLowballs: Bool = true
+        rememberLowballs: Bool = true,
+        /// Which round of THIS conversation the package belongs to, 1-based
+        /// (task #36 — `TradeNegotiationThread.round` after the user's line is
+        /// appended). Only the COUNTER reads it: a GM holds near his opening ask
+        /// on the first call and walks down toward his accept bar as the talks
+        /// go on (`concessionTarget`). Accept, insult and hard-blocker paths are
+        /// round-blind on purpose — preview ≡ outcome (G7) is the verdict
+        /// matching the outcome, and `partnerVerdict` has no round to pass.
+        round: Int = 1
     ) -> AIResponse {
         let view = marketView(
             team: aiTeam, allPlayers: allPlayers, season: currentSeason, week: week
@@ -1196,6 +1204,7 @@ enum TradeValueEngine {
             view: view,
             gives: gives,
             gets: gets,
+            round: round,
             allPlayers: allPlayers,
             allPicks: allPicks
         ) {
@@ -1247,18 +1256,85 @@ enum TradeValueEngine {
         return (Int(gives.rounded()), Int(max(0, gets).rounded()))
     }
 
-    /// Builds a counter that lands just past the partner's accept bar:
-    /// 1) ask for one more of the user's picks, else
-    /// 2) pull the smallest AI asset out of the deal.
+    /// The ratio this GM is holding out for in `round` — the plan §6 Wave 3
+    /// concession curve ("open ~125 %, concede toward ~105 %").
+    ///
+    /// WHY (task #36): every counter used to be built against the accept bar plus
+    /// two points, so the GM's FIRST counter was already his last, best offer.
+    /// That made a multi-round thread pointless — round 3 asked for exactly what
+    /// round 1 asked for — and it left `GMPersona.concessionRate` (four tuned
+    /// archetype values) with no call site at all, the same dead-model shape as
+    /// finding S4's `GMPersonality`.
+    ///
+    /// The curve: round 1 opens at his public posture (`askingPremium`, the
+    /// number the negotiation header quotes as "opens ~16 % above value"), and
+    /// every further round hands back `concessionRate` of the REMAINING gap down
+    /// to the floor — a split-the-difference walk, geometric so it converges
+    /// without ever crossing the bar he actually signs at. An aggressive GM
+    /// (0.45) is most of the way there by round 3; an analytics GM (0.22) still
+    /// wants a real premium on his fourth call.
+    ///
+    /// The rejection memory (`+5 %` a strike) and the hidden weekly noise ride on
+    /// BOTH ends, exactly as `userAcceptBar` carries them, so a lowballer's whole
+    /// curve shifts up rather than only its floor.
+    private static func concessionTarget(view: GMMarketView, round: Int) -> Double {
+        let floor = view.userAcceptBar + 0.02
+        let memory = 1.0 + 0.05 * Double(view.strikes)
+        let opening = view.persona.askingPremium * view.noise * memory
+        guard opening > floor else { return floor }
+        let split = pow(
+            max(0.0, 1.0 - view.persona.concessionRate),
+            Double(max(0, round - 1))
+        )
+        return floor + (opening - floor) * split
+    }
+
+    /// Builds the counter this GM makes in `round`: the concession target first,
+    /// and his signing floor as the fallback.
+    ///
+    /// The fallback is load-bearing. The round-1 ask is deliberately higher than
+    /// the bar, and the user's cupboard is finite — without it, a package the GM
+    /// would have countered before #36 could turn into "they want more than you
+    /// can offer right now" and end the conversation on the opening call. He asks
+    /// high, and if nothing on the board closes THAT gap he still makes the deal
+    /// he was always willing to make.
     private static func buildCounter(
         proposal: TradeProposal,
         view: GMMarketView,
         gives: Int,
         gets: Int,
+        round: Int,
         allPlayers: [Player],
         allPicks: [DraftPick]
     ) -> (proposal: TradeProposal, message: String)? {
-        let target = view.userAcceptBar + 0.02
+        let floor = view.userAcceptBar + 0.02
+        let aim = concessionTarget(view: view, round: round)
+        if aim > floor,
+           let holding = counterOffer(
+               proposal: proposal, view: view, gives: gives, gets: gets,
+               target: aim, round: round, allPlayers: allPlayers, allPicks: allPicks
+           ) {
+            return holding
+        }
+        return counterOffer(
+            proposal: proposal, view: view, gives: gives, gets: gets,
+            target: floor, round: round, allPlayers: allPlayers, allPicks: allPicks
+        )
+    }
+
+    /// One counter aimed at `target`:
+    /// 1) ask for one more of the user's picks, else
+    /// 2) pull the smallest AI asset out of the deal.
+    private static func counterOffer(
+        proposal: TradeProposal,
+        view: GMMarketView,
+        gives: Int,
+        gets: Int,
+        target: Double,
+        round: Int,
+        allPlayers: [Player],
+        allPicks: [DraftPick]
+    ) -> (proposal: TradeProposal, message: String)? {
         let deficit = Int(Double(gives) * target) - gets
         guard deficit > 0 else { return nil }
 
@@ -1279,7 +1355,10 @@ enum TradeValueEngine {
             var counter = proposal
             counter.sendingPicks.append(addition.id)
             let label = "\(addition.seasonYear) round \(addition.round) pick"
-            return (counter, "\(view.abbreviation) counter: add your \(label) and \(view.persona.name) signs it.")
+            return (
+                counter,
+                "\(counterLead(view: view, round: round)) add your \(label) and \(view.persona.name) signs it."
+            )
         }
 
         // Option 2: AI removes its smallest outgoing asset instead.
@@ -1300,11 +1379,15 @@ enum TradeValueEngine {
             ))
         }
 
+        // The removal has to clear the same ratio the deficit was priced at, less
+        // the two points of headroom `target` carries — otherwise the two options
+        // would answer to different bars and the cheaper one would leak through.
+        let removalBar = target - 0.02
         let viable = removables
             .filter { candidate in
                 let newGives = gives - candidate.value
                 guard newGives > 0 else { return false }
-                return Double(gets) / Double(newGives) >= view.userAcceptBar
+                return Double(gets) / Double(newGives) >= removalBar
             }
             .sorted { $0.value < $1.value }
 
@@ -1316,10 +1399,26 @@ enum TradeValueEngine {
             } else {
                 counter.receivingPicks.removeAll { $0 == removal.id }
             }
-            return (counter, "\(view.abbreviation) counter: \(removal.label) stays out of the deal.")
+            return (
+                counter,
+                "\(counterLead(view: view, round: round)) \(removal.label) stays out of the deal."
+            )
         }
 
         return nil
+    }
+
+    /// Lead-in for a counter line. Round 1 is a posture; later rounds have to
+    /// READ as movement, because the softening itself is invisible — the user
+    /// sees a smaller ask, not the ratio behind it.
+    private static func counterLead(view: GMMarketView, round: Int) -> String {
+        guard round > 1 else { return "\(view.abbreviation) counter:" }
+        switch view.persona.archetype {
+        case .oldSchool:  return "\(view.abbreviation) move a little — \(view.persona.name) will meet you here:"
+        case .balanced:   return "\(view.abbreviation) come down:"
+        case .analytics:  return "\(view.abbreviation) shave the ask:"
+        case .aggressive: return "\(view.abbreviation) want this done —"
+        }
     }
 
     // MARK: - Validation

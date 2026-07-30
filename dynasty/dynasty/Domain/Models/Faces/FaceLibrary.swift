@@ -87,23 +87,27 @@ struct FaceAssignmentRegistry: Codable {
 /// exist. Measured on a full template league: 1 902 people, 1 902 distinct
 /// faces, no player wearing a coach-age face.
 ///
-/// Above the reserve sits the 1 024-id **female range**
-/// (`face_02560...face_03583`; the whole pool is `generate_faces.py --count
-/// 3584`). It is NOT a second reserve — it is first-class generated area, and
-/// the only place female coach faces exist, so tier 1 has to be able to reach
-/// it (`FaceGeneratorConstants.isReserve` is a bounded window for exactly that
-/// reason). The full 3 584-id pool holds 2 924 player-age and 660 coach-age
-/// faces, **35** of them female. Two consequences: 660 coach faces now exceed
+/// Above the reserve sit the two **female ranges**: 1 024 mixed ids
+/// (`face_02560...face_03583`, where a coach face draws its gender at 22 %) and
+/// 128 female-ONLY ids (`face_03584...face_03711`, every one of them a woman;
+/// the whole pool is `generate_faces.py --count 3712`). Neither is a second
+/// reserve — both are first-class generated area, and the only place female
+/// coach faces exist, so tier 1 has to be able to reach them
+/// (`FaceGeneratorConstants.isReserve` is a bounded window for exactly that
+/// reason). The full 3 712-id pool holds 2 924 player-age and 788 coach-age
+/// faces, **163** of them female. Two consequences: 788 coach faces now exceed
 /// the 512 coach slots of a full league, so the forced coach → player-face
 /// overflow this class used to carry is gone (`crossRole` reads ~0 at league
-/// creation); and the 35 female ids form a small, gender-strict sub-pool whose
-/// exhaustion is the normal case, not a corner case (see `pickLocked`).
+/// creation); and the female sub-pool, at 163 ids against the ~31 women a
+/// career hires, stops being the thing that runs dry first — the mixed range's
+/// 35 emptied by season 2-3 (`freeFemale=0` from 2027, duplicates by 2028),
+/// which is what bought the female-only range.
 ///
 /// ## The invariant this class actually keeps
 ///
 /// **Nobody shares a portrait while an unused one of the same gender exists.**
 /// Not "never" — a
-/// career outgrows 3 584 ids: a league starts at ~2 200 living people and every
+/// career outgrows 3 712 ids: a league starts at ~2 200 living people and every
 /// offseason persists 224 draft picks plus up to ~124 AI UDFAs, against 40-90
 /// portraits handed back by retirement. So the picker exhausts the catalog in
 /// this order before it ever duplicates: free generated → free reserve → free
@@ -352,8 +356,7 @@ final class FaceLibrary {
     /// the same person in the same registry state always draws the same face.
     ///
     /// `nil` means "no face of this role AND gender exists" — an empty catalog,
-    /// or (the realistic case) a female coach hired after the 35 female ids are
-    /// all worn. The registry is left untouched in that case, so the caller can
+    /// or a female coach hired after all 163 female ids are worn. The registry is left untouched in that case, so the caller can
     /// simply leave `faceID` nil and let `PersonFaceView` render the
     /// gender-matched placeholder photo.
     @discardableResult
@@ -406,7 +409,7 @@ final class FaceLibrary {
     /// arithmetic: the 2 560-id pool split 2 094 player / **466 coach** against a
     /// full league's 32 × 16 = **512** coaches, so 46 of them could not have a
     /// coach-age face, in a random league and an imported template alike. The
-    /// 3 584-id pool inverts that — 2 924 player / **660 coach** — so a fresh
+    /// 3 712-id pool inverts that — 2 924 player / **788 coach** — so a fresh
     /// league crosses the barrier zero times and the `crossRole` audit counter
     /// reads ~0 at creation. The tier stays because a long career still outgrows
     /// the coach half; when it is reached the overflow takes a free player-age
@@ -416,7 +419,7 @@ final class FaceLibrary {
     /// catalog is spoken for does anyone get a face twice.
     ///
     /// `gender` is a HARD constraint applied at EVERY tier, so for a female
-    /// coach the whole ladder walks a 35-id sub-pool and then terminates at nil
+    /// coach the whole ladder walks a 163-id sub-pool and then terminates at nil
     /// (stage 20) rather than handing back a male portrait — see the stage-20
     /// comment for why nil is the correct answer there.
     private func pickLocked(
@@ -439,7 +442,7 @@ final class FaceLibrary {
         //
         // Cheap for the 99 % case: players and male coaches match every
         // pre-expansion id (a bucket with no `gender` key decodes to "male"), so
-        // for them the filter only ever removes the 35 female ids.
+        // for them the filter only ever removes the 163 female ids.
         let genderOK: (FaceEntry) -> Bool = { $0.bucket.gender == gender.tag }
 
         // 1-3: free faces from the GENERATED range (the ids `--count 2048`
@@ -453,12 +456,12 @@ final class FaceLibrary {
         // 4-6: free faces from the RESERVE range. Reached by the fixed
         //      template (which pre-assigns the whole generated player half) and
         //      by any league that outgrows the pool. A reserve id renders as a
-        //      silhouette until the extended `--count 3584` run lands, which is
+        //      silhouette until the extended `--count 3712` run lands, which is
         //      still better than two active players sharing a portrait.
         //
-        //      Note the female range (2560+) is NOT in here: it is first-class
-        //      generated area and is reached at tier 1, which is what makes a
-        //      female coach's exact-bucket pick possible at all.
+        //      Note the female ranges (2560+) are NOT in here: they are
+        //      first-class generated area and are reached at tier 1, which is
+        //      what makes a female coach's exact-bucket pick possible at all.
         for tier in tiers {
             let free = tier.filter { genderOK($0) && isFreeLocked($0.id, season: season) }
             if let pick = Self.deterministicPick(free, personID: personID) { return pick.id }
@@ -467,7 +470,7 @@ final class FaceLibrary {
         //      into the other role's still-free faces, age-plausible band
         //      first, because a duplicate portrait is the worse failure. Before
         //      the 3 584-id pool this is where the last ~46 coaches of every
-        //      full league landed; with 660 coach faces against 512 slots a
+        //      full league landed; with 788 coach faces against 512 slots a
         //      fresh league no longer reaches it at all.
         //
         //      Provably EMPTY for a female coach: the generator draws gender
@@ -490,7 +493,7 @@ final class FaceLibrary {
         //        politeness ("don't re-skin a retiring legend onto a rookie").
         //
         //        This stage is what a real career runs into. The pool holds
-        //        3 584 ids and a league is ~2 200 people at kickoff, so the
+        //        3 712 ids and a league is ~2 200 people at kickoff, so the
         //        first draft + UDFA wave (224 + up to 124 new players) empties
         //        the polite free list inside the first few offseasons — while
         //        the 40-90 portraits handed back by that same offseason's
@@ -498,10 +501,10 @@ final class FaceLibrary {
         //        stage every rookie from then on drew a face an ACTIVE
         //        teammate was already wearing.
         //
-        //        Filtered by gender this is exactly right for the 35-id female
+        //        Filtered by gender this is exactly right for the 163-id female
         //        sub-pool: a retired female coach's portrait comes back to the
         //        next female hire two seasons early, which matters a great deal
-        //        more at 35 ids than it does at 2 924.
+        //        more at 163 ids than it does at 2 924.
         for tier in tiers {
             let unheld = tier.filter { genderOK($0) && registry.inUse[$0.id] == nil }
             if let pick = Self.deterministicPick(unheld, personID: personID) { return pick.id }
@@ -531,7 +534,7 @@ final class FaceLibrary {
         //        arithmetic runs out.
         //
         //        Gender-filtered, this is the tier a female coach hired past the
-        //        35-face ceiling actually lands in: she duplicates ANOTHER
+        //        163-face ceiling actually lands in: she duplicates ANOTHER
         //        FEMALE coach's portrait. That ordering is the whole point — a
         //        repeated correct-gender portrait beats a placeholder, and a
         //        placeholder beats a male portrait.
@@ -775,7 +778,7 @@ final class FaceLibrary {
             // assignment returns nil, `needsFaceLocked(nil)` stays true, and she
             // walks the whole ladder again on the NEXT advance. With the ~31
             // female coaches a 0.06 hiring share produces, that is ~20 filtered
-            // passes over ≤ 3 584 entries each, per advance — well under a
+            // passes over ≤ 3 712 entries each, per advance — well under a
             // millisecond, and deliberately not cached: the moment a female
             // portrait frees up she should pick it up.
             for coach in coaches
@@ -971,13 +974,13 @@ final class FaceLibrary {
         /// catalog, which cannot happen once either source has loaded).
         var unassigned = 0
         /// How many landed in the reserve range `face_02048...face_02559` — i.e.
-        /// how many render a silhouette until `generate_faces.py --count 3584`
-        /// finishes. Ids in the female range above it are NOT counted here: they
-        /// are first-class generated area, not a last resort.
+        /// how many render a silhouette until `generate_faces.py --count 3712`
+        /// finishes. Ids in the female ranges above it are NOT counted here:
+        /// they are first-class generated area, not a last resort.
         var reserve = 0
         /// How many took a face of the other role (the forced coach overflow;
-        /// see `pickLocked`). With the 3 584-id pool this should read ~0 at
-        /// league creation — 660 coach faces against 512 slots.
+        /// see `pickLocked`). With the 3 712-id pool this should read ~0 at
+        /// league creation — 788 coach faces against 512 slots.
         var crossRole = 0
         /// People whose face's bucket gender contradicts their own. The
         /// gender-strict invariant is absolute, so this must ALWAYS be 0 — but it
@@ -990,9 +993,9 @@ final class FaceLibrary {
         /// `> 0` with `duplicated > 0` is a real regression, because the picker
         /// had a unique portrait available and handed out a shared one anyway.
         var free = 0
-        /// Of `free`, the ids in the FEMALE half. The 35-id female sub-pool runs
-        /// dry long before the 3 549 male ids do, so this is the only number that
-        /// says whether a female duplicate was avoidable.
+        /// Of `free`, the ids in the FEMALE half. The 163-id female sub-pool
+        /// runs dry long before the 3 549 male ids do, so this is the only
+        /// number that says whether a female duplicate was avoidable.
         var freeFemale = 0
         /// A couple of offending ids, for the failure line.
         var examples: [String] = []
@@ -1009,7 +1012,7 @@ final class FaceLibrary {
         ///
         /// Split per gender on purpose. The old `duplicated > 0 && free > 0` form
         /// trapped on the normal case as soon as female coaches shipped: two
-        /// female coaches sharing one of 35 female portraits while 3 500 male
+        /// female coaches sharing one of 163 female portraits while 3 500 male
         /// ids sit free is arithmetic, not a regression, because `pickLocked`
         /// never had a female id to hand out. Each gender is therefore judged
         /// against its OWN free supply.
@@ -1121,8 +1124,8 @@ final class FaceLibrary {
             //   regression and it traps.
             // * none was free — every id that person could legally wear is on a
             //   living person. Either the whole pool is smaller than the league
-            //   (3 584 ids vs a population that grows by ~350 rookies a year) or,
-            //   far sooner, the 35-id female sub-pool is full. Reuse is then
+            //   (3 712 ids vs a population that grows by ~350 rookies a year) or,
+            //   far sooner, the 163-id female sub-pool is full. Reuse is then
             //   arithmetic: reported loudly, never trapped, because a
             //   multi-season run must not die on a capacity limit the library can
             //   only fix by generating more images.

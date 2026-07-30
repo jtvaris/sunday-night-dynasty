@@ -12,8 +12,9 @@ import CryptoKit
 struct FaceBucket: Codable, Hashable {
     let role: String        // "player" | "coach"
 
-    /// "male" | "female". Only coach faces in the female range
-    /// (`face_02560`…) can be female; everything else is male.
+    /// "male" | "female". Only coach faces at `face_02560` and above can be
+    /// female: the mixed female range draws for it, the female-ONLY range
+    /// (`face_03584`…) is female by construction. Everything else is male.
     ///
     /// Decoded with `decodeIfPresent ?? "male"` because the manifests written
     /// before the female range existed have no `gender` key at all — an absent
@@ -107,18 +108,31 @@ enum FaceGeneratorConstants {
     /// 2 560 ids only yielded 466 and forced ~46 coaches onto player faces.
     static let femaleRangeSize = 1024
 
-    /// Ids the synthesized catalog covers: `face_00000...face_03583`.
-    static let poolSize = generatedPoolSize + reservePoolSize + femaleRangeSize
+    /// The **female-only** extension `face_03584...face_03711`, produced by
+    /// `generate_faces.py --count 3712`.
+    ///
+    /// Every id in it is a female coach face. The mixed range below it yields
+    /// one woman per ~24 ids (0.22 of the 0.1875 coach share) — 35 across all
+    /// 1 024 — which a career drains by season 2-3: `freeFemale` hit 0 in 2027
+    /// and female coaches started sharing portraits in 2028. Buying the next
+    /// 128 through the same lottery would have meant ~3 100 more images, ~2 975
+    /// of them men nobody needs, so this range skips the lottery:
+    /// `bucket(forFaceID:)` forces role and gender here instead of drawing them.
+    static let femaleOnlyRangeSize = 128
+
+    /// Ids the synthesized catalog covers: `face_00000...face_03711`.
+    static let poolSize = generatedPoolSize + reservePoolSize
+        + femaleRangeSize + femaleOnlyRangeSize
 
     /// Whether an id belongs to the reserve range `face_02048...face_02559` —
     /// the band the fixed 2026 template drains its overflow into, which the
     /// runtime picker treats as a last resort.
     ///
     /// Deliberately a half-open window rather than "everything above the
-    /// generated range": the female range above it is first-class (see
-    /// `femaleRangeSize`), and folding it in here would hide 1 024 perfectly
-    /// good portraits — every female one among them — behind the last-resort
-    /// tier.
+    /// generated range": the two female ranges above it are first-class (see
+    /// `femaleRangeSize`, `femaleOnlyRangeSize`), and folding them in here
+    /// would hide 1 152 perfectly good portraits — every female one among them
+    /// — behind the last-resort tier.
     static func isReserve(_ faceID: String) -> Bool {
         guard faceID.hasPrefix("face_"),
               let index = Int(faceID.dropFirst("face_".count))
@@ -138,8 +152,15 @@ enum FaceGeneratorConstants {
     /// pool size.
     static let femaleRangeStart = 2560
 
+    /// `generate_faces.py::FEMALE_ONLY_RANGE_START` — the first id that is a
+    /// female coach face by definition. Same id-gated discipline as
+    /// `femaleRangeStart`: ids below 3 584 keep the draw sequence their shipped
+    /// picture was painted from no matter how far the pool is extended.
+    static let femaleOnlyRangeStart = 3584
+
     /// `generate_faces.py --female-coach-share` default — the share of *faces*
-    /// in the new range drawn female (35 of the 194 coach faces there).
+    /// in the mixed female range drawn female (35 of the 194 coach faces
+    /// there). It does not reach the female-only range, which draws nothing.
     ///
     /// Not to be confused with `CoachingEngine.femaleCoachShare` (0.06), which
     /// is the share of *coaches the game hires*. The generator's is deliberately
@@ -325,9 +346,9 @@ struct PythonRandom {
 
 // MARK: - Catalog synthesis
 
-/// Rebuilds the full 3 584-face id + bucket list from the generator seed
+/// Rebuilds the full 3 712-face id + bucket list from the generator seed
 /// (2 048 generated + the 512-id reserve range the fixed template draws its
-/// overflow from + the 1 024-id female range).
+/// overflow from + the 1 024-id female range + the 128-id female-only range).
 ///
 /// This is the fallback the app runs on until `faces_manifest.json` is in the
 /// bundle: the buckets are a pure function of `(seed, faceID)`, so assignment
@@ -335,12 +356,12 @@ struct PythonRandom {
 /// ships it wins — it is the authority on which ids actually made it through
 /// QA (culled ids are absent) — but the two agree on every surviving id.
 ///
-/// Verified against the live generator output: all 2 999 faces produced so far
-/// synthesize to byte-identical buckets — gender included, across the female
-/// range boundary — and `make_templates.py` gate 19 re-runs that comparison from
-/// the Python side on every template build.
+/// Verified against the live generator output: all 3 712 faces produced
+/// synthesize to byte-identical buckets — gender included, across both female
+/// range boundaries — and `make_templates.py` gate 19 re-runs that comparison
+/// from the Python side on every template build.
 ///
-/// Cost: 3 584 × (SHA-512 + `init_by_array` + one twist) ≈ 35 ms in Release,
+/// Cost: 3 712 × (SHA-512 + `init_by_array` + one twist) ≈ 36 ms in Release,
 /// ~500 ms in a Debug build, paid ONCE per app session by
 /// `FaceLibrary.ensureCatalogLoaded` — and not at all once the manifest ships.
 enum FaceCatalogSynthesizer {
@@ -364,17 +385,29 @@ enum FaceCatalogSynthesizer {
     /// so does the gender draw.
     static func bucket(forFaceID faceID: String) -> FaceBucket {
         var rng = PythonRandom(seed: FaceGeneratorConstants.rngSeed(for: faceID))
-        let role = rng.random() < FaceGeneratorConstants.coachShare ? "coach" : "player"
-        // `generate_faces.py::work` — ONE extra draw, coach-only, ids >= 2560.
-        // Gated on the id and never on the pool size, so every id below the
-        // female range keeps the bucket its shipped picture was painted from.
-        // Python emits a `"gender"` key for new-range players too, but it never
-        // draws for them: the key's presence only matters inside the Python
-        // gate, the VALUE is what has to match here.
-        var gender = "male"
         let index = FaceGeneratorConstants.poolIndex(faceID) ?? 0
-        if index >= FaceGeneratorConstants.femaleRangeStart, role == "coach" {
-            gender = rng.random() < FaceGeneratorConstants.femaleCoachShare ? "female" : "male"
+        let role: String
+        var gender = "male"
+        if index >= FaceGeneratorConstants.femaleOnlyRangeStart {
+            // `generate_faces.py::work` — the female-only range states its role
+            // and gender instead of drawing them, and consumes NO `random()`
+            // doing so, so `tone` below reads the FIRST value off this stream.
+            // Skipping the two draws is the whole point: a draw with a
+            // predetermined outcome would only shift the tone/age/build stream
+            // for nothing.
+            role = "coach"
+            gender = "female"
+        } else {
+            role = rng.random() < FaceGeneratorConstants.coachShare ? "coach" : "player"
+            // ONE extra draw, coach-only, ids 2560..3583. Gated on the id and
+            // never on the pool size, so every id below the female range keeps
+            // the bucket its shipped picture was painted from. Python emits a
+            // `"gender"` key for new-range players too, but it never draws for
+            // them: the key's presence only matters inside the Python gate, the
+            // VALUE is what has to match here.
+            if index >= FaceGeneratorConstants.femaleRangeStart, role == "coach" {
+                gender = rng.random() < FaceGeneratorConstants.femaleCoachShare ? "female" : "male"
+            }
         }
         let tone = weightedPick(&rng, FaceGeneratorConstants.tones)
         let ageBand = weightedPick(

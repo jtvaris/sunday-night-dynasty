@@ -15,10 +15,11 @@ import Foundation
 // drives every AI turn, so the transcript and the executed outcome are the same
 // numbers (G7).
 //
-// PLACEMENT NOTE: this is a pure Codable domain model living under `UI/Contracts`
-// because the Wave 3 slice owns that folder. HANDOFF: it belongs next to
-// `TradeProposal` (`Engine/Contract/TradeEngine.swift`) or in `Domain/Models`,
-// and moving it is a file move with no code change.
+// PLACEMENT (task #37): a pure Codable domain model, so it lives in the domain
+// layer next to the other things `Career` persists as a blob (`TradeRecord`,
+// `InboxMessage`) rather than under `UI/Contracts`, where Wave 3 first wrote it
+// because that slice owned the folder. The move was a file move: nothing in the
+// type changed, and the whole app target is one module, so no import churn.
 
 /// Who said it. Raw-string backed so the transcript survives enum edits, the
 /// same migration-safety rule `TradeRecord.phaseRaw` follows.

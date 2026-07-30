@@ -251,14 +251,12 @@ enum CapManagementEngine {
     /// 1530 candidate deals that had cleared both GMs' VALUE bars died on the
     /// cap check). At the Week 9 deadline the charge is now 10/18 of the base.
     ///
-    /// KNOWN SIMPLIFICATION: `TradeEngine` writes `salaryAssumed` back into
-    /// `player.annualSalary`, because `Team.currentCapUsage` is an incrementally
-    /// maintained ledger and every other engine subtracts `annualSalary` when the
-    /// deal expires — the two numbers have to agree or cap room drifts. So a
-    /// player acquired at the deadline stays booked at his REMAINING number
-    /// (≥ 56 % of base, the window bound above) in later league years too, until
-    /// he is re-signed. Restoring the full base at the league-year rollover is a
-    /// `FreeAgencyEngine.executeNewLeagueYear` change and is left as a handoff.
+    /// `TradeEngine` writes `salaryAssumed` back into `player.annualSalary`
+    /// (the cap ledger and the salary must agree within a league year), and
+    /// records the full base in `Player.proratedFullBaseSalary` so
+    /// `FreeAgencyEngine.executeNewLeagueYear` restores it at the rollover —
+    /// a deadline acquisition is booked at his real number from the next
+    /// league year on (task #45).
     static func tradeCapSplit(
         player: Player,
         contract: Contract?,

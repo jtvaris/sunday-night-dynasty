@@ -2681,7 +2681,20 @@ final class LiveGameEngine: ObservableObject {
         // never reaches the weekly sim's accumulation pass — fold its box score
         // into both rosters' running season lines here instead. Regular season
         // only, matching the games-played tally (#33) and the week-18 snapshot.
-        if !game.isPlayoff {
+        //
+        // The PLAYOFFS take the opposite route on purpose (#20): `WeekAdvancer`
+        if game.isPlayoff {
+            // #41: a coached playoff game persists its own postseason line the
+            // moment it ends — the week advance credits only APPEARANCES from
+            // the bracket, so nothing is counted twice and a relaunch between
+            // coaching and advancing no longer loses the box score to synthesis.
+            let historyByPlayer = WeekAdvancer.postseasonHistoryByPlayer(
+                season: game.seasonYear, modelContext: context
+            )
+            for line in result.playerStats {
+                historyByPlayer[line.playerID]?.addPostseasonGame(line)
+            }
+        } else {
             WeekAdvancer.accumulateSeasonStats(
                 result.playerStats,
                 players: Array(livePlayerByID.values)

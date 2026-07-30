@@ -138,6 +138,23 @@ final class Player {
     /// Annual salary in thousands (e.g., 15000 = $15M).
     var annualSalary: Int
 
+    /// Full-season base this player was on before a MIDSEASON trade prorated
+    /// `annualSalary` down to the checks the buying club still owed (task #45).
+    /// 0 = not carrying a prorated number.
+    ///
+    /// A trade at the Week 9 deadline charges the buyer 10/18 of the base, and
+    /// `TradeEngine` writes that prorated figure back into `annualSalary` because
+    /// `Team.currentCapUsage` is an incrementally maintained ledger — the number
+    /// charged and the number later refunded have to be the same one. The cost of
+    /// that is that the discount used to survive the league-year boundary: a
+    /// deadline acquisition stayed booked at ~56-94 % of his real salary for the
+    /// rest of his contract. This field is the receipt that lets
+    /// `FreeAgencyEngine.executeNewLeagueYear` put the full base back when the
+    /// new league year starts, and it is cleared in the same pass.
+    ///
+    /// Default-value attribute → safe lightweight migration.
+    var proratedFullBaseSalary: Int = 0
+
     /// Whether this player has been franchise-tagged for the current season.
     var isFranchiseTagged: Bool
 

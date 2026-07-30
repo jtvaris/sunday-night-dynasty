@@ -537,6 +537,7 @@ echo "    VersatilityExtract.swift"
 echo "==> regenerating ContractEngineExtract.swift from repo (awk keep-list slice)"
 CONTRACT_OUT="$SRC_OUT/ContractEngineExtract.swift"
 cat > "$DEVANCHORS" <<'EOF'
+static let leagueAffordabilityScale
 static func estimateMarketValue\(
 static func marketBasePercent\(
 static func naturalPositionForAttributes\(
@@ -545,6 +546,10 @@ EOF
 keeplist_slice "$CONTRACT_SOURCE" "$DEVANCHORS" "$DEVSLICE"
 verbatim_guard "$CONTRACT_SOURCE" "$DEVSLICE"
 grep -q 'basePercent \* positionMultiplier' "$DEVSLICE" || die "ContractEngine slice lost the market-value formula."
+# Task #27 put the league's price LEVEL in its own constant; the formula above
+# multiplies by it, so a slice without it compiles against a missing symbol.
+grep -q 'leagueAffordabilityScale = ' "$DEVSLICE" \
+  || die "ContractEngine slice lost leagueAffordabilityScale."
 # The P1 pyramid wave moved the OVR→money ladder into its own function, so the
 # slice has to carry it too or the harness compiles against a missing symbol.
 grep -q 'anchors: \[(ovr: Double, pct: Double)\]' "$DEVSLICE" \

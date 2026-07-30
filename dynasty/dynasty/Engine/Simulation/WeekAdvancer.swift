@@ -1161,6 +1161,18 @@ enum WeekAdvancer {
                     )
                 }
             }
+
+            // 4c-2. Task #39: the GMs the user is ALREADY talking to work the
+            // phones too. One move per open conversation per week — sweeten, walk
+            // away, or (most weeks) sit tight.
+            advanceOpenTradeThreads(
+                career: career,
+                teamsByID: teamsByID,
+                allPlayers: allPlayers,
+                week: week,
+                season: season,
+                modelContext: modelContext
+            )
         }
 
         perf.lap("news_events_inbox")
@@ -1294,48 +1306,65 @@ enum WeekAdvancer {
             player.rushBackWeeksRemaining -= 1
         }
 
-        // 7. Apply game experience for starters (approximated: high-overall rostered players)
+        // 7. Apply game experience, weighted by where each man sits on his club's
+        // REAL depth chart (task #29).
         // (R22: holdout players don't play, so they earn no experience.)
         // R25: a young player with an active mentor in his position room
         // develops slightly faster (+10 % XP, league-wide and symmetric).
         // Plan §2.9.5: teams whose QB room actually develops the backup — a QB
         // coach rated 70+ (an active mentorship counts too, per player below).
+        //
+        // **This used to be a switch at `overall >= 60`**, which handed a full
+        // starter's week to 90.6 % of the league — 24 men start a football game,
+        // so the approximation was wrong by ~45 pp, and it was wrong in the
+        // direction that inflates: the entire bench developed at a starter's
+        // rate. `tools/balance-harness`'s `career` scenario has always fielded a
+        // real lineup and sits at a flat equilibrium; the shipped league drifted
+        // +1.55 OVR and 17.5 % → 21.3 % at 80+ over three smoke seasons. The gap
+        // between the two was this line.
+        //
+        // `startingLineupIDs` is the same lineup the weekly starter tally and the
+        // 3D matchup resolver use, so the man credited with a start here is the
+        // man the simulator would field. Everyone behind him is graded by
+        // `PlayerDevelopmentEngine.playingTimeRoles` onto §6's ladder.
         let clipboardTeamIDs = Set(
             allCoaches
                 .filter { $0.role == .qbCoach && $0.playerDevelopment >= 70 }
                 .compactMap(\.teamID)
         )
         let mentoredIDs = LockerRoomEngine.mentoredProtegeIDs(allPlayers: allPlayers)
+
+        // Depth-chart roles, computed once per club off the men actually
+        // available this week — an injured starter's snaps really do promote the
+        // man behind him, which is where a backup's breakout season comes from.
+        var playingTimeRoleByPlayer: [UUID: PlayerDevelopmentEngine.PlayingTimeRole] = [:]
+        for (teamID, roster) in playersByTeam {
+            _ = teamID
+            let available = roster.filter { !$0.isInjured && !$0.isHoldingOut && !$0.isRetired }
+            guard !available.isEmpty else { continue }
+            let starterIDs = startingLineupIDs(available: available)
+            let roles = PlayerDevelopmentEngine.playingTimeRoles(
+                roster: available, starterIDs: starterIDs
+            )
+            playingTimeRoleByPlayer.merge(roles) { _, new in new }
+        }
+
         for player in allPlayers where player.teamID != nil && !player.isInjured && !player.isHoldingOut {
             let isMentored = mentoredIDs.contains(player.id)
             let mentorBoost = isMentored ? 1.1 : 1.0
             let clipboardRoom = player.position == .QB
                 && (isMentored || clipboardTeamIDs.contains(player.teamID!))
-            // Approximate starters as those with overall >= 60 or on small rosters.
-            //
-            // **Level-relative — re-derived in the P1 quality-pyramid wave (was
-            // 65), percentile-preserving on purpose.** 65 admitted 90.6 % of the
-            // old 76.5-mean league; in the recalibrated 71.0-mean league the same
-            // 90.6 % share sits at OVR 60. Holding the SHARE fixed rather than the
-            // number keeps the league's total weekly game-experience volume
-            // unchanged, which is what keeps `MultiSeasonSmokeTest`'s OVR-drift
-            // gate measuring the calibration instead of measuring this line.
-            //
-            // Note what is NOT claimed: 90 % of a league are not starters. This
-            // approximation is wrong by ~50 pp and was wrong before the wave; the
-            // honest fix is to read the real depth chart (the game already tracks
-            // `gamesStartedThisSeason` from `GameSimulator`), and it belongs in a
-            // wave that can re-measure development volume on the simulator.
-            if player.overall >= 60 {
-                PlayerDevelopmentEngine.applyGameExperience(
-                    player, gamesPlayed: 1, gamesStarted: 1, experienceBoost: mentorBoost
-                )
-            } else {
-                PlayerDevelopmentEngine.applyGameExperience(
-                    player, gamesPlayed: 1, gamesStarted: 0,
-                    experienceBoost: mentorBoost, clipboardRoom: clipboardRoom
-                )
-            }
+            // A player with no computed role (roster snapshot missed him) falls
+            // back to the practice floor rather than to a free start.
+            let role = playingTimeRoleByPlayer[player.id] ?? .depth
+            PlayerDevelopmentEngine.applyGameExperience(
+                player,
+                gamesPlayed: 1,
+                gamesStarted: role == .starter ? 1 : 0,
+                experienceBoost: mentorBoost,
+                clipboardRoom: clipboardRoom,
+                startCredit: role.startCreditShare
+            )
         }
 
         perf.lap("fatigue_injury_xp")
@@ -2031,13 +2060,6 @@ enum WeekAdvancer {
         // this method runs, exactly like a coached regular-season game. Detect
         // it here, before we play anything, so its box score can be folded into
         // the postseason columns below.
-        let coachedResult = coachedPlayoffResult(
-            week: week,
-            career: career,
-            unplayedGames: unplayedGames,
-            modelContext: modelContext
-        )
-
         let simulatedResult = playPlayoffGames(
             unplayedGames,
             career: career,
@@ -2051,7 +2073,10 @@ enum WeekAdvancer {
         recordPostseasonWeek(
             week: week,
             career: career,
-            boxScore: (coachedResult ?? simulatedResult)?.playerStats ?? [],
+            // A playoff game the user COACHED already wrote its own postseason
+            // line in `LiveGameEngine.persist` (#41) — only the quick-simmed
+            // result flows through here, so nothing can be counted twice.
+            boxScore: simulatedResult?.playerStats ?? [],
             modelContext: modelContext
         )
 
@@ -2268,12 +2293,6 @@ enum WeekAdvancer {
             // final is play-by-play so it leaves a box score, the AI final stays
             // score-only, and a final he coached live is read back out of the
             // live engine's result.
-            let sbCoachedResult = coachedPlayoffResult(
-                week: 22,
-                career: career,
-                unplayedGames: sbGames,
-                modelContext: modelContext
-            )
             let sbSimulatedResult = playPlayoffGames(
                 sbGames,
                 career: career,
@@ -2286,7 +2305,7 @@ enum WeekAdvancer {
             recordPostseasonWeek(
                 week: 22,
                 career: career,
-                boxScore: (sbCoachedResult ?? sbSimulatedResult)?.playerStats ?? [],
+                boxScore: sbSimulatedResult?.playerStats ?? [],
                 modelContext: modelContext
             )
             // The bracket is complete: model the playoff lines for the 13 clubs
@@ -3994,6 +4013,227 @@ enum WeekAdvancer {
         )
     }
 
+    // MARK: - Private: Open Trade Threads (Wave 3 follow-up — task #39)
+
+    /// Gives every open user conversation ONE AI move per week.
+    ///
+    /// WHY: Wave 3 made a trade negotiation a persisted thread that outlives the
+    /// week advance, but only the user could ever move inside it — the GM sat
+    /// exactly where the last tap left him for as long as the window stayed open,
+    /// so a thread the user let breathe was indistinguishable from a dead one.
+    /// A front office works the phones between games, and that is also what makes
+    /// the persistence worth having: a package that was two points short in week
+    /// 3 is worth re-reading in week 8, because the man on the other end has a
+    /// deadline too.
+    ///
+    /// Three outcomes per thread, checked in this order:
+    /// - WALK AWAY — the GM has stopped taking calls (the Wave 2 talk lock), or
+    ///   the conversation has gone quiet for longer than his persona's patience.
+    /// - SWEETEN — he re-prices the package one round further down his concession
+    ///   curve (task #36), leaves a standing counter and mails a note.
+    /// - HOLD — most weeks. Nothing is written, so the thread rolls again next
+    ///   week.
+    ///
+    /// The one-move-per-thread-per-week cap is `lastActivityWeek < week`: a
+    /// conversation the user worked THIS week is the user's turn, and a GM who
+    /// has already moved this week is done until the next advance.
+    ///
+    /// In-season only, deliberately. The offseason market runs per PHASE, not per
+    /// week (`runOffseasonTradeMarket` is handed a frozen `career.currentWeek`),
+    /// so the week-based cap has nothing to bite on there; offseason threads keep
+    /// waiting for the user exactly as before.
+    @discardableResult
+    private static func advanceOpenTradeThreads(
+        career: Career,
+        teamsByID: [UUID: Team],
+        allPlayers: [Player],
+        week: Int,
+        season: Int,
+        modelContext: ModelContext
+    ) -> Int {
+        let stored = career.tradeThreads
+        let hasMovable = stored.contains {
+            $0.status == .open && $0.season == season && $0.lastActivityWeek < week
+        }
+        guard hasMovable else { return 0 }
+        guard TradeValueEngine.isTradeWindowOpen(
+            phase: career.currentPhase, week: week
+        ) else { return 0 }
+
+        let activePicks = fetchActiveDraftPicks(modelContext: modelContext)
+        let contractCareerID = activeCareerID
+        let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>(
+            predicate: #Predicate { $0.careerID == contractCareerID }
+        ))) ?? []
+        let dateString = InboxEngine.dateLabel(
+            week: week, season: season, phase: career.currentPhase
+        )
+
+        var threads = stored
+        var moved = 0
+
+        for (index, thread) in stored.enumerated() {
+            guard thread.status == .open,
+                  thread.season == season,
+                  thread.lastActivityWeek < week else { continue }
+            // A thread is always written from the user's chair, so the AI is the
+            // receiving side — the shape `TradeValueEngine.respond` assumes.
+            guard let partner = teamsByID[thread.partnerTeamID],
+                  thread.proposal.receivingTeamID == thread.partnerTeamID else { continue }
+            // A conversation whose assets have already moved belongs to the Trade
+            // Center's reconcile pass (`loadThreads` expires it and mails the
+            // receipt). Re-pricing it here would quote a package that no longer
+            // exists.
+            guard TradeValueEngine.isProposalStillValid(
+                thread.proposal, allPlayers: allPlayers, allPicks: activePicks
+            ) else { continue }
+
+            let identity = TradeValueEngine.gmIdentity(team: partner, season: season)
+            var updated = thread
+
+            // 1a. He is not taking calls any more — the thread cannot just sit
+            // there advertising a live conversation.
+            if !identity.talksOpen {
+                updated.status = .brokenOff
+                updated.lastActivityWeek = week
+                updated.messages.append(TradeThreadMessage(
+                    sender: .system,
+                    text: "\(identity.name) has stopped taking calls from this front office. These talks are over until the new league year.",
+                    round: updated.round
+                ))
+                threads[index] = updated
+                moved += 1
+                continue
+            }
+
+            // 1b. Silence has a limit, and it is his patience — the same number
+            // the negotiation header shows as rounds left.
+            if week - thread.lastActivityWeek > identity.patience {
+                updated.status = .expired
+                updated.lastActivityWeek = week
+                updated.messages.append(TradeThreadMessage(
+                    sender: .system,
+                    text: "\(identity.name) moved on — \(partner.abbreviation) have taken the package off the table.",
+                    round: updated.round
+                ))
+                threads[index] = updated
+                moved += 1
+                lastInboxMessages.append(InboxMessage(
+                    sender: .leagueOffice,
+                    subject: "\(partner.abbreviation) walked away from the trade talks",
+                    body: """
+                    \(identity.name) called to say the \(partner.fullName) are done waiting on us. The package we were discussing is off the table.
+
+                    Nothing stops us starting a fresh conversation with them — this one is closed.
+
+                    NFL League Office
+                    """,
+                    date: dateString,
+                    category: .tradeOffer,
+                    actionDestination: .trades
+                ))
+                continue
+            }
+
+            // 2. Does he pick up the phone this week?
+            guard Int.random(in: 1...100) <= comebackChance(
+                identity: identity,
+                silentWeeks: week - thread.lastActivityWeek,
+                week: week
+            ) else { continue }
+
+            // `rememberLowballs: false`: this is the AI's own move on a package
+            // the user is not re-sending. A strike here would punish him for
+            // sitting still, and could lock a GM out over a conversation the user
+            // never touched.
+            let response = TradeValueEngine.respond(
+                to: thread.proposal,
+                aiTeam: partner,
+                allPlayers: allPlayers,
+                allPicks: activePicks,
+                currentSeason: season,
+                contracts: contracts,
+                week: week,
+                rememberLowballs: false,
+                round: thread.round + 1
+            )
+
+            switch response {
+            case .countered(let counter, let message):
+                updated.round += 1
+                updated.lastActivityWeek = week
+                updated.pendingCounter = counter
+                updated.proposal = counter
+                updated.messages.append(TradeThreadMessage(
+                    sender: .gm, text: message, proposal: counter, round: updated.round
+                ))
+
+            case .accepted:
+                // The week moved the market his way (needs, stance, the weekly
+                // asking noise) — the package on the table now clears his bar.
+                updated.round += 1
+                updated.lastActivityWeek = week
+                updated.pendingCounter = thread.proposal
+                updated.messages.append(TradeThreadMessage(
+                    sender: .gm,
+                    text: "\(identity.name) called back — \(partner.abbreviation) will sign the package exactly as it stands.",
+                    proposal: thread.proposal,
+                    round: updated.round
+                ))
+
+            case .rejected:
+                // Nothing he can put together this week. The thread stays live
+                // and rolls again after the next game.
+                continue
+            }
+
+            threads[index] = updated
+            moved += 1
+            lastInboxMessages.append(InboxMessage(
+                sender: .leagueOffice,
+                subject: "\(partner.abbreviation) came back: new offer in your trade talks",
+                body: """
+                \(identity.name) called back about the deal we have been working with the \(partner.fullName).
+
+                There is a fresh package waiting in the Trade Center — open the conversation to read what changed and answer him.
+
+                NFL League Office
+                """,
+                date: dateString,
+                category: .tradeOffer,
+                actionDestination: .trades
+            ))
+        }
+
+        guard moved > 0 else { return 0 }
+        career.tradeThreads = threads
+        return moved
+    }
+
+    /// Odds (percent) that a GM makes his own move in an open thread this week.
+    ///
+    /// Three pressures, all of them things the user can reason about: who the man
+    /// is, how long the line has been quiet, and how close the deadline is. The
+    /// deadline term is the loud one — it is worth nothing five weeks out and a
+    /// full 30 points in deadline week, which is exactly the shape the rest of
+    /// the market already ramps on (`TradeValueEngine.userOfferHazard`).
+    private static func comebackChance(
+        identity: TradeValueEngine.GMIdentity,
+        silentWeeks: Int,
+        week: Int
+    ) -> Int {
+        let base: Int
+        switch identity.archetype {
+        case .aggressive: base = 40      // works the phones for a living
+        case .balanced:   base = 28
+        case .oldSchool:  base = 22
+        case .analytics:  base = 18      // will happily let it sit
+        }
+        let urgency = max(0, 30 - 6 * max(0, tradeDeadlineWeek - week))
+        let staleness = 5 * max(0, silentWeeks - 1)
+        return min(75, base + urgency + staleness)
+    }
+
     // MARK: - Private: Season Summary & Career Counters (R32)
 
     /// Writes the finished season into `career.seasonSummaries` (champion,
@@ -4777,38 +5017,6 @@ enum WeekAdvancer {
         return userResult
     }
 
-    /// The box score of a playoff game the user COACHED, when this week has one.
-    ///
-    /// A coached game is played before `advanceWeek` runs, so it never appears in
-    /// the unplayed set — the live engine leaves its result in
-    /// `lastPlayerGameResult` and that is where the numbers come from. `nil` when
-    /// the user had no playoff game this week, when he quick-simmed it (the
-    /// caller then uses what `playPlayoffGames` produced), or when the app was
-    /// relaunched between coaching the game and advancing (the static is
-    /// process-global; the postseason line is then synthesized like everyone
-    /// else's, which is the same answer the round would have given anyway).
-    private static func coachedPlayoffResult(
-        week: Int,
-        career: Career,
-        unplayedGames: [Game],
-        modelContext: ModelContext
-    ) -> GameSimulator.GameResult? {
-        guard let userTeamID = career.teamID else { return nil }
-        let alreadyUnplayed = unplayedGames.contains {
-            $0.homeTeamID == userTeamID || $0.awayTeamID == userTeamID
-        }
-        guard !alreadyUnplayed else { return nil }
-        let weekGames = fetchAllPlayoffGames(
-            week: week,
-            seasonYear: career.currentSeason,
-            modelContext: modelContext
-        )
-        let played = weekGames.contains {
-            $0.isPlayed && ($0.homeTeamID == userTeamID || $0.awayTeamID == userTeamID)
-        }
-        return played ? lastPlayerGameResult : nil
-    }
-
     /// Folds one playoff round into the postseason columns of the season-history
     /// rows week 18 already wrote.
     ///
@@ -4939,7 +5147,7 @@ enum WeekAdvancer {
     /// This season's history rows keyed by player. One fetch, one dictionary —
     /// the postseason passes touch every playoff roster and would otherwise
     /// re-scan ~1 700 rows per club.
-    private static func postseasonHistoryByPlayer(
+    static func postseasonHistoryByPlayer(
         season: Int,
         modelContext: ModelContext
     ) -> [UUID: PlayerSeasonHistory] {

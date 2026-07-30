@@ -231,6 +231,17 @@ enum TradeEngine {
             + split.salaryRetained
         newTeam.currentCapUsage += split.salaryAssumed
 
+        // Task #45: a midseason deal charges the buyer only the checks still to
+        // come, so `annualSalary` drops below the real base. Keep the full number
+        // on the row — `FreeAgencyEngine.executeNewLeagueYear` restores it at the
+        // rollover, when the discount has actually been earned out. Only a genuine
+        // proration is recorded (offseason trades assume the whole year and need
+        // no receipt), and an earlier unspent receipt is never overwritten with a
+        // second, smaller one: two deadline trades in a row must still restore the
+        // salary the player was ORIGINALLY on.
+        if split.salaryAssumed < player.annualSalary, player.proratedFullBaseSalary == 0 {
+            player.proratedFullBaseSalary = player.annualSalary
+        }
         player.annualSalary = split.salaryAssumed
         player.teamID = newTeam.id
 
