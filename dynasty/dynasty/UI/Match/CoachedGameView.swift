@@ -58,6 +58,12 @@ struct CoachedGameView: View {
         self.isPlayoff = isPlayoff
         self.onFinish = onFinish
         self.onPracticeRequest = onPracticeRequest
+        // #3 (plan receipt): snapshot the user's game plan BEFORE the engine
+        // below consumes the static hand-off. `State(initialValue:)` keeps the
+        // first value across the re-inits SwiftUI performs on this struct, so
+        // the plan survives even though `pendingPlayerGamePlan` is cleared on
+        // the very first engine construction.
+        _plannedGamePlan = State(initialValue: LiveGameEngine.pendingPlayerGamePlan)
         _engine = StateObject(wrappedValue: PerfLog.time("live_engine_init") {
             LiveGameEngine(
                 homeTeam: homeTeam,
@@ -212,6 +218,15 @@ struct CoachedGameView: View {
     /// Adaptive-AI intel chip ("CHI is keying on the inside run") — shown
     /// when the opponent locks onto (or shifts) a read of your tendencies.
     @State private var adaptationNote: String? = nil
+    /// #4: the opponent's STANDING read of your tendencies. The engine
+    /// publishes a line the moment its AI locks on; that line used to live
+    /// 4.5 s over the field and then vanish, so the intel was gone by the time
+    /// the coach was actually calling the next play. It now also sticks in a
+    /// strip above the call sheet until the engine publishes a different read.
+    @State private var opponentRead: String? = nil
+    /// Play count when the standing read landed — an aging read is shown
+    /// muted rather than passed off as current intel.
+    @State private var opponentReadPlay: Int = 0
     /// Mental-game sideline note ("M. Brown wants the ball") — #36B, raised
     /// when a starved ego star demands the ball.
     @State private var mentalNote: String? = nil
@@ -230,6 +245,11 @@ struct CoachedGameView: View {
     /// AI suggestion cached per situation — the underlying hint rolls dice,
     /// so recomputing it on every body render would make the brain icon jump.
     @State private var cachedSuggestion: OffensivePlayCall? = nil
+
+    /// #3: the user's saved game plan for this match, captured in `init` from
+    /// the same static hand-off the engine consumes. Feeds the post-game
+    /// "Your plan" receipt; `nil` when the user has never set a plan.
+    @State private var plannedGamePlan: GamePlan?
 
     /// #26: the coordinator's pre-snap recommendation for the current window
     /// (the pre-selected card + the speech-bubble reasoning). Computed once
@@ -379,6 +399,15 @@ struct CoachedGameView: View {
 
     // MARK: - Body
 
+    /// Share of the screen the 3D field takes. A live play (or a replay) owns
+    /// the show at 68 %; between snaps the call sheet needs the room, and in
+    /// landscape — where the whole window is ~1030 pt tall — it needs more of
+    /// it than portrait does or the play cards cannot fit at all.
+    private func fieldFraction(in size: CGSize) -> CGFloat {
+        if fieldExpanded { return 0.68 }
+        return size.width > size.height ? 0.40 : 0.52
+    }
+
     var body: some View {
         ZStack {
             Color.backgroundPrimary.ignoresSafeArea()
@@ -389,7 +418,11 @@ struct CoachedGameView: View {
                     situationStrip
                     // The field takes over while the play is live — no dead
                     // spinner panel — and gives the space back for the call.
-                    fieldSection(height: geo.size.height * (fieldExpanded ? 0.68 : 0.52))
+                    // Landscape is only ~1030 pt tall: at the portrait 52 %
+                    // split the call panel was left with less room than its own
+                    // chrome needs, which is what clipped every play card. The
+                    // field yields that difference back while the coach calls.
+                    fieldSection(height: geo.size.height * fieldFraction(in: geo.size))
                     miniPlayFeed
                     callPanel
                         .frame(maxHeight: .infinity)
@@ -479,7 +512,12 @@ struct CoachedGameView: View {
             if let rotation { showSidelineNote("Fresh legs: \(rotation.inName) in at RB") }
         }
         .onChange(of: engine.lastAdaptationHint) { _, hint in
-            if let hint { showAdaptationNote(hint.text) }
+            guard let hint else { return }
+            // The chip over the field is the broadcast beat; the strip above
+            // the call sheet is the standing read the coach calls against (#4).
+            showAdaptationNote(hint.text)
+            opponentRead = hint.text
+            opponentReadPlay = engine.playLog.count
         }
         .onChange(of: engine.lastMentalNote) { _, note in
             if let note { showMentalNote(note.text) }
@@ -1322,12 +1360,56 @@ struct CoachedGameView: View {
         playerTeamIsHome ? awayTeam.abbreviation : homeTeam.abbreviation
     }
 
+    // MARK: Call-sheet card metrics (#1)
+
+    /// Geometry for the clipboard cards on both call sheets.
+    ///
+    /// The sheet used to sit in a `ScrollView` that split the panel's leftover
+    /// height 50/50 with a trailing `Spacer` — so the viewport was roughly half
+    /// a card tall and every card lost its play NAME, its blurb, and the bottom
+    /// half of the selection checkmark. Three things fix it for good:
+    ///   • the grid owns the leftover height outright (no competing Spacer),
+    ///   • the play name rides ABOVE the diagram, so it survives even the
+    ///     tightest panel the layout can hand out,
+    ///   • the row height is derived from the space actually available, so the
+    ///     card never overflows the row it was given.
+    private enum CallCard {
+        static let columns = 5
+        static let spacing: CGFloat = 10
+        static let hInset: CGFloat = 14
+        /// Name row (16) + blurb line (12) + the two 4 pt stack gaps + 8 pt
+        /// padding top and bottom.
+        static let textBlock: CGFloat = 16 + 12 + 8 + 16
+        /// Below this the chalkboard art stops reading as football.
+        static let diagramMin: CGFloat = 44
+        /// Above this a single card starts to dominate the panel.
+        static let diagramMax: CGFloat = 112
+
+        /// Diagram height that lets one full row of cards fit the space the
+        /// panel can spare, never taller than the art's natural 3:2 box.
+        static func diagramHeight(gridSize: CGSize) -> CGFloat {
+            let cardWidth = (gridSize.width - hInset * 2
+                             - spacing * CGFloat(columns - 1)) / CGFloat(columns)
+            let natural = max(0, cardWidth - 16) / 1.5   // 3:2 art inside 8 pt padding
+            let fitsOneRow = gridSize.height - textBlock - 2
+            return min(diagramMax, max(diagramMin, min(natural, fitsOneRow)))
+        }
+
+        static func rowHeight(gridSize: CGSize) -> CGFloat {
+            diagramHeight(gridSize: gridSize) + textBlock
+        }
+
+        static var grid: [GridItem] {
+            Array(repeating: GridItem(.flexible(), spacing: spacing), count: columns)
+        }
+    }
+
     // MARK: Offense panel
 
     private let categories = ["Run", "Short Pass", "Medium Pass", "Deep Pass", "Special"]
 
     private var offenseCallPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 9) {
             // Playbook header: the scheme decides which plays are installed.
             HStack(spacing: 8) {
                 // Going for it on 4th down keeps a way back to the special
@@ -1425,6 +1507,10 @@ struct CoachedGameView: View {
                 .animation(.spring(duration: 0.25), value: selectedCall == rec.call)
             }
 
+            // #4: the opponent's standing read on your tendencies, held here
+            // instead of flashing over the field for 4.5 s and vanishing.
+            tendencyStrip(showBoxKey: true)
+
             HStack(spacing: 6) {
                 ForEach(categories, id: \.self) { cat in
                     categoryTab(cat)
@@ -1440,16 +1526,21 @@ struct CoachedGameView: View {
             // Stable order: installed playbook plays first, original order kept.
             let plays = sectionPlays.filter { engine.playerHasInstalled($0) }
                 + sectionPlays.filter { !engine.playerHasInstalled($0) }
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 5), spacing: 10) {
-                    ForEach(plays, id: \.self) { play in
-                        playCard(play)
+            // The grid takes ALL the leftover panel height (no trailing Spacer
+            // to halve it) and sizes its rows to what it was handed, so a full
+            // card — name, art, blurb, checkmark — is always on screen.
+            GeometryReader { grid in
+                let diagramH = CallCard.diagramHeight(gridSize: grid.size)
+                ScrollView {
+                    LazyVGrid(columns: CallCard.grid, spacing: CallCard.spacing) {
+                        ForEach(plays, id: \.self) { play in
+                            playCard(play, diagramHeight: diagramH)
+                        }
                     }
+                    .padding(.horizontal, CallCard.hInset)
+                    .padding(.vertical, 1)   // keeps the selected card's border off the clip edge
                 }
-                .padding(.horizontal, 14)
             }
-
-            Spacer(minLength: 0)
 
             // R37: one-time hint the first time an audible is on the table.
             if offenseAudibleAvailable && !audibleTipDismissed && !FirstRunTip.audible.isDone {
@@ -1617,9 +1708,11 @@ struct CoachedGameView: View {
         }
     }
 
-    /// Clipboard-style play card: chalkboard art on top, name + badges, and a
-    /// one-line coach-speak description underneath.
-    private func playCard(_ play: OffensivePlayCall) -> some View {
+    /// Clipboard-style play card: the play NAME and its badges on top, the
+    /// chalkboard art beneath, one line of coach-speak at the foot. Name first
+    /// is deliberate — the panel's height varies a lot between orientations and
+    /// the one thing that must never be clipped is what you're about to call.
+    private func playCard(_ play: OffensivePlayCall, diagramHeight: CGFloat) -> some View {
         let isSelected = selectedCall == play
         let isSuggested = cachedSuggestion == play
         let installed = engine.playerHasInstalled(play)
@@ -1628,26 +1721,23 @@ struct CoachedGameView: View {
             withAnimation(.spring(duration: 0.15)) { selectedCall = play }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
-                PlayDiagramView(call: play, mirrored: play == selectedCall && mirrored)
-                    .frame(maxWidth: .infinity)
-                    .opacity(installed ? 1 : 0.45)
                 HStack(spacing: 4) {
                     Text(play.rawValue)
                         .font(.system(size: 12, weight: .heavy))
                         .foregroundStyle(isSelected ? Color.accentGold
                                          : (installed ? Color.textPrimary : Color.textTertiary))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .minimumScaleFactor(0.75)
                     Spacer(minLength: 0)
                     if !installed {
                         Image(systemName: "book.closed")
                             .font(.system(size: 9))
                             .foregroundStyle(Color.textTertiary)
                     }
+                    // #2: the OC's pick, named ON the card. The bubble says
+                    // "Coach's pick: Slant" — this is how you find Slant.
                     if isSuggested {
-                        Image(systemName: "brain")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color.accentBlue)
+                        coordinatorChip("OC", icon: "brain", accent: Color.accentBlue)
                     }
                     if isSelected {
                         Image(systemName: "checkmark.circle.fill")
@@ -1655,13 +1745,20 @@ struct CoachedGameView: View {
                             .foregroundStyle(Color.accentGold)
                     }
                 }
+                .frame(height: 16)
+                PlayDiagramView(call: play, mirrored: play == selectedCall && mirrored)
+                    .frame(height: diagramHeight)
+                    .frame(maxWidth: .infinity)
+                    .opacity(installed ? 1 : 0.45)
                 Text(play.blurb)
                     .font(.system(size: 9))
                     .foregroundStyle(Color.textTertiary)
-                    .lineLimit(2, reservesSpace: true)
+                    .lineLimit(1)
                     .multilineTextAlignment(.leading)
+                    .frame(height: 12, alignment: .top)
             }
             .padding(8)
+            .frame(height: diagramHeight + CallCard.textBlock)
             .background(
                 isSelected ? Color.accentGold.opacity(0.14) : Color.backgroundTertiary,
                 in: RoundedRectangle(cornerRadius: 11)
@@ -1675,7 +1772,9 @@ struct CoachedGameView: View {
         .buttonStyle(.plain)
         // R38: the call-sheet card reads as "play name. description" with
         // installed/selected state — play names stay English (football terms).
-        .accessibilityLabel(Text(verbatim: "\(play.rawValue). \(play.blurb)"))
+        .accessibilityLabel(Text(verbatim: isSuggested
+            ? "\(play.rawValue). \(play.blurb). Coordinator's pick."
+            : "\(play.rawValue). \(play.blurb)"))
         .accessibilityValue(installed ? Text(verbatim: "") : Text("Not installed"))
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         // R36: a dimmed card can be queued as the week's practice play —
@@ -1848,6 +1947,89 @@ struct CoachedGameView: View {
                 .accessibilityHint(Text("Re-selects the coordinator's recommended call"))
             }
         }
+    }
+
+    /// #2: the coordinator's pick echoed as a labelled chip ON the card. A bare
+    /// brain glyph was there before, but nothing said what it meant — and once
+    /// the coach browsed to another card the bubble's "Coach's pick: Slant" had
+    /// no counterpart anywhere on the sheet.
+    private func coordinatorChip(_ role: String, icon: String, accent: Color) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: icon)
+                .font(.system(size: 7.5, weight: .black))
+            Text(verbatim: role)
+                .font(.system(size: 8, weight: .black))
+                .tracking(0.3)
+        }
+        .foregroundStyle(accent)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 1.5)
+        .background(accent.opacity(0.18), in: Capsule())
+        .overlay(Capsule().strokeBorder(accent.opacity(0.5), lineWidth: 0.5))
+    }
+
+    // MARK: Opponent tendency strip (#4)
+
+    /// The opponent's standing read on your tendencies, parked above the call
+    /// sheet. Two parts, both straight from the engine:
+    ///   • the scouting line — the last read `AdaptiveOpponentAI` published
+    ///     (`lastAdaptationHint`). It stays until a new read replaces it, and
+    ///     greys out with an EARLIER tag once it's more than ten plays old, so
+    ///     an aging read is never passed off as live intel.
+    ///   • the box key — `offenseRunKeyIntensity`, recomputed by the engine on
+    ///     every snap, so this half is always current.
+    /// Presentation only: the strip reads engine state and never writes it.
+    private func tendencyStrip(showBoxKey: Bool) -> some View {
+        let hasRead = opponentRead != nil
+        let stale = hasRead && (engine.playLog.count - opponentReadPlay) > 10
+        let boxLoaded = showBoxKey && engine.playerIsOnOffense
+            && engine.offenseRunKeyIntensity >= 0.4
+        let line = opponentRead ?? "No read yet — \(opponentAbbr) is playing you straight up."
+        let tint: Color = !hasRead || stale ? Color.textTertiary : Color.warning
+        return HStack(spacing: 7) {
+            Image(systemName: "binoculars.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(tint)
+            Text(verbatim: line)   // en-only broadcast copy (documented)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(!hasRead || stale ? Color.textTertiary : Color.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if stale {
+                Text("EARLIER")
+                    .font(.system(size: 8, weight: .black))
+                    .tracking(0.6)
+                    .foregroundStyle(Color.textTertiary)
+            }
+            Spacer(minLength: 6)
+            if boxLoaded {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.stack.3d.up.fill")
+                        .font(.system(size: 9, weight: .bold))
+                    Text("STACKED BOX")
+                        .font(.system(size: 9, weight: .black))
+                        .tracking(0.5)
+                }
+                .foregroundStyle(Color.warning)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Color.warning.opacity(0.16), in: Capsule())
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.backgroundTertiary.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(tint.opacity(hasRead && !stale ? 0.3 : 0.12), lineWidth: 1)
+        )
+        .padding(.horizontal, 14)
+        .animation(.easeInOut(duration: 0.2), value: opponentRead)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(verbatim: boxLoaded
+            ? "Opponent read: \(line) They are stacking the box."
+            : "Opponent read: \(line)"))
     }
 
     /// Small filled-pip confidence meter (SURE / LEAN / HUNCH).
@@ -2176,7 +2358,7 @@ struct CoachedGameView: View {
     private let defensiveCategories = ["Coverage", "Pressure", "Man", "Packages"]
 
     private var defensePanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Image(systemName: "shield.fill")
                     .font(.system(size: 10, weight: .bold))
@@ -2224,6 +2406,10 @@ struct CoachedGameView: View {
                 .animation(.spring(duration: 0.25), value: defCall == rec.call)
             }
 
+            // #4: on this side the standing read is what their OFFENSE has
+            // figured out about your calls — no box key to show.
+            tendencyStrip(showBoxKey: false)
+
             // Same clipboard category tabs as the offensive call sheet.
             HStack(spacing: 6) {
                 ForEach(defensiveCategories, id: \.self) { cat in
@@ -2236,16 +2422,20 @@ struct CoachedGameView: View {
             let sectionCalls = DefensiveCall.allCases.filter { $0.category == defCategory }
             let calls = sectionCalls.filter { $0.isInPlaybook(of: engine.playerDefensiveScheme) }
                 + sectionCalls.filter { !$0.isInPlaybook(of: engine.playerDefensiveScheme) }
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 5), spacing: 10) {
-                    ForEach(calls) { call in
-                        defenseCallCard(call)
+            // Same deal as the offensive sheet: the grid owns the leftover
+            // height and sizes its rows to it (#1).
+            GeometryReader { grid in
+                let diagramH = CallCard.diagramHeight(gridSize: grid.size)
+                ScrollView {
+                    LazyVGrid(columns: CallCard.grid, spacing: CallCard.spacing) {
+                        ForEach(calls) { call in
+                            defenseCallCard(call, diagramHeight: diagramH)
+                        }
                     }
+                    .padding(.horizontal, CallCard.hInset)
+                    .padding(.vertical, 1)
                 }
-                .padding(.horizontal, 14)
             }
-
-            Spacer(minLength: 0)
 
             // R36: the shell strip — rotate the coverage at the line while
             // the named call keeps its blitz and front. Costs one audible.
@@ -2340,8 +2530,9 @@ struct CoachedGameView: View {
         return "\(name.uppercased()) DEFENSE · STANCE"
     }
 
-    /// Clipboard-style defensive call card: mini X&O art, name, one-line blurb.
-    private func defenseCallCard(_ call: DefensiveCall) -> some View {
+    /// Clipboard-style defensive call card: name + badges on top, mini X&O art,
+    /// one-line blurb. Same name-first construction as the offensive card (#1).
+    private func defenseCallCard(_ call: DefensiveCall, diagramHeight: CGFloat) -> some View {
         let isSelected = defCall == call
         let isSuggested = defRecommendation?.call == call
         let installed = call.isInPlaybook(of: engine.playerDefensiveScheme)
@@ -2350,27 +2541,23 @@ struct CoachedGameView: View {
             withAnimation(.easeInOut(duration: 0.15)) { defCall = call }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
-                DefenseDiagramView(coverage: call.package.coverage, blitz: call.package.blitz,
-                                   manUnder: call.category == "Man")
-                    .frame(maxWidth: .infinity)
-                    .opacity(installed ? 1 : 0.45)
                 HStack(spacing: 4) {
                     Text(call.rawValue)
                         .font(.system(size: 12, weight: .heavy))
                         .foregroundStyle(isSelected ? Color.accentGold
                                          : (installed ? Color.textPrimary : Color.textTertiary))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .minimumScaleFactor(0.75)
                     Spacer(minLength: 0)
                     if !installed {
                         Image(systemName: "book.closed")
                             .font(.system(size: 9))
                             .foregroundStyle(Color.textTertiary)
                     }
+                    // #2: the DC's pick, named on the card.
                     if isSuggested {
-                        Image(systemName: "shield.lefthalf.filled")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color.accentBlue)
+                        coordinatorChip("DC", icon: "shield.lefthalf.filled",
+                                        accent: Color.accentBlue)
                     }
                     if isSelected {
                         Image(systemName: "checkmark.circle.fill")
@@ -2378,13 +2565,21 @@ struct CoachedGameView: View {
                             .foregroundStyle(Color.accentGold)
                     }
                 }
+                .frame(height: 16)
+                DefenseDiagramView(coverage: call.package.coverage, blitz: call.package.blitz,
+                                   manUnder: call.category == "Man")
+                    .frame(height: diagramHeight)
+                    .frame(maxWidth: .infinity)
+                    .opacity(installed ? 1 : 0.45)
                 Text(call.blurb)
                     .font(.system(size: 9))
                     .foregroundStyle(Color.textTertiary)
-                    .lineLimit(2, reservesSpace: true)
+                    .lineLimit(1)
                     .multilineTextAlignment(.leading)
+                    .frame(height: 12, alignment: .top)
             }
             .padding(8)
+            .frame(height: diagramHeight + CallCard.textBlock)
             .background(
                 isSelected ? Color.accentGold.opacity(0.14) : Color.backgroundTertiary,
                 in: RoundedRectangle(cornerRadius: 11)
@@ -2396,6 +2591,11 @@ struct CoachedGameView: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(Text(verbatim: isSuggested
+            ? "\(call.rawValue). \(call.blurb). Coordinator's pick."
+            : "\(call.rawValue). \(call.blurb)"))
+        .accessibilityValue(installed ? Text(verbatim: "") : Text("Not installed"))
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     // MARK: Shell audible (R36)
@@ -2572,6 +2772,7 @@ struct CoachedGameView: View {
                 }
 
                 Button {
+                    stashPlanReceipt()
                     onFinish(engine)
                 } label: {
                     Text("Continue")
@@ -2591,6 +2792,68 @@ struct CoachedGameView: View {
             )
         }
         .transition(.opacity)
+    }
+
+    // MARK: - Plan receipt hand-off (#3)
+
+    /// Measures the game plan the coach drew up against what he actually
+    /// called, and parks it for ``GameSummaryView``.
+    ///
+    /// The summary sheet is presented by the career dashboard well after this
+    /// engine is gone, so the numbers ride a static hand-off — the same pattern
+    /// `LiveGameEngine.pendingPlayerGamePlan` uses on the way in. The receipt
+    /// is stamped with the teams and the final score so it can only ever attach
+    /// itself to the game it came from. No plan set = no receipt = no card.
+    private func stashPlanReceipt() {
+        guard let plan = plannedGamePlan else {
+            GamePlanReceipt.latest = nil
+            return
+        }
+        var passCalls = 0, runCalls = 0
+        var fourthDownsFaced = 0, fourthDownsGoneFor = 0
+        var sacksForced = 0, sacksAllowed = 0
+
+        for play in engine.playLog {
+            // `offenseWasHome` is stamped by the live engine on every play.
+            guard let offenseWasHome = play.offenseWasHome else { continue }
+            let playerHadBall = (offenseWasHome == playerTeamIsHome)
+
+            if play.outcome == .sack {
+                if playerHadBall { sacksAllowed += 1 } else { sacksForced += 1 }
+            }
+            guard playerHadBall else { continue }
+
+            switch play.playType {
+            case .pass: passCalls += 1
+            case .run:  runCalls += 1
+            default:    break
+            }
+            if play.down == 4 {
+                switch play.playType {
+                case .run, .pass:
+                    fourthDownsFaced += 1
+                    fourthDownsGoneFor += 1
+                case .punt, .fieldGoal:
+                    fourthDownsFaced += 1
+                default:
+                    break
+                }
+            }
+        }
+
+        GamePlanReceipt.latest = GamePlanReceipt(
+            plan: plan,
+            passCalls: passCalls,
+            runCalls: runCalls,
+            fourthDownsFaced: fourthDownsFaced,
+            fourthDownsGoneFor: fourthDownsGoneFor,
+            sacksForced: sacksForced,
+            sacksAllowed: sacksAllowed,
+            homeAbbreviation: homeTeam.abbreviation,
+            awayAbbreviation: awayTeam.abbreviation,
+            homeScore: engine.homeScore,
+            awayScore: engine.awayScore
+        )
     }
 
     /// The three players who won the most individual matchups this game

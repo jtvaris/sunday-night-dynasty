@@ -166,6 +166,76 @@ final class SkeletalFigure {
     /// (0 = upright, ~0.45 = deep crouch) — varies the stance by build + player.
     private let idleFraction: CGFloat
 
+    // MARK: Idle micro-motion (pre-snap life)
+    //
+    // The skeletal pose between plays is FROZEN BY DESIGN: `setMoving(false)`
+    // pins the "Hold" clip at speed 0 on a fixed frame, and `playStance` holds
+    // its final frame with `fillMode = .forwards`. Correct for the POSE (a
+    // looping hold clip made the squad squat up and down), but it left the whole
+    // field pixel-identical for 20-55 s while the user picked a play — the
+    // measured "field is completely static pre-snap" finding.
+    //
+    // Fix: two empty wrapper nodes that ride ABOVE the skeleton, between the
+    // scale/facing wrapper (`content`) and the rig. They add motion WITHOUT
+    // touching a single bone, so the clips keep 100 % ownership of the skeleton
+    // and no blend-weight conflict is possible — the key hazard when layering
+    // anything on a skinned rig.
+    //
+    // Both pivot at the wrapper's ORIGIN, which sits ON THE TURF (the wrapper is
+    // at local y = `yOffset` = −0.5 under a container at world y = +0.5, i.e.
+    // world y ≈ 0). So the motion is a LEAN ABOUT THE FEET: the soles stay
+    // planted, only the body above them moves — no foot slide by construction.
+    //
+    // Cost: 2 geometry-less nodes + 2 `repeatForever` SCNActions per figure. The
+    // action runner is SceneKit-internal (no per-frame Swift, no renderer
+    // callback), and both actions are removed the moment a play clip takes over.
+    private let idleSwayNode: SCNNode      // roll (+ a hair of yaw): weight shift
+    private let idleBreathNode: SCNNode    // pitch: breath / settle
+
+    private static let idleSwayKey = "idleSway"
+    private static let idleBreathKey = "idleBreath"
+
+    /// Peak lean of the standing idle, radians, at intensity 1.
+    ///
+    /// Deliberately at the TOP of the "subtle" band. A previous polish wave
+    /// measured (motion_profile over recorded gameplay) that on-field motion
+    /// below roughly 8 cm is sub-pixel from the coach camera and the field still
+    /// reads frozen — so a 1° twitch would have been invisible and pointless.
+    /// A 2.4° lean about the feet carries the helmet ~6.5 cm and the shoulders
+    /// ~5 cm over a 2.5-4 s half-cycle: clearly alive, far below anything that
+    /// reads as swaying. The pitch breath is half that and on its own, slower,
+    /// unrelated period so the composed motion never looks like a metronome.
+    private static let idleRollAmplitude: CGFloat = 0.09     // ~5.2° — calibrated on the coach cam: slow/small sway is per-frame sub-pixel (reads as a freeze); a ~1.5-2.5 s weight-shift at this amplitude is the smallest motion the camera actually resolves
+    private static let idlePitchAmplitude: CGFloat = 0.032   // ~1.8°
+
+    /// Per-player idle timing, derived from the stable variant seed so a squad
+    /// never breathes in sync (and the same player always breathes the same).
+    private let idleSwayPeriod: TimeInterval
+    private let idleBreathPeriod: TimeInterval
+    private let idleSwayPhase: TimeInterval
+    private let idleBreathPhase: TimeInterval
+    private let idleSwaySign: CGFloat
+    /// Whether the idle loop is currently armed. Guards `setMoving(false)` from
+    /// re-anchoring (and so visually snapping) a loop that is already running —
+    /// it fires again on every trailing idle-reset and on every `fullReset`.
+    private var idleMotionActive = false
+
+    /// How much idle motion each pre-snap stance tolerates. A lineman with a
+    /// hand in the dirt is nearly still (he'd be flagged for moving); an upright
+    /// receiver/corner rocks foot-to-foot. Keyed by the stance clip name that
+    /// `playStance` was handed. Unlisted → 0.8.
+    private static let stanceIdleIntensity: [String: CGFloat] = [
+        "stance3": 0.32,        // three-point: down hand on the turf, almost frozen
+        "stanceUC": 0.40,       // QB under center: hands in the exchange
+        "stance2": 0.70,        // two-point line stance
+        "stanceRB": 0.80,
+        "stanceQBGun": 0.85,    // shotgun QB scanning the front
+        "stanceLB": 0.95,
+        "stanceCB": 1.00,       // pressed corner, bouncing
+        "stanceSplit": 1.00,    // receiver on the line
+        "stanceUpright": 1.00,
+    ]
+
     /// The run clip's measured "treadmill speed": native units/sec of ground the
     /// planted-foot stride covers at clip speed 1.0. Measured headless with
     /// scratchpad/rig_inspect.swift (integrate the planted foot's backward travel
@@ -224,6 +294,8 @@ final class SkeletalFigure {
         let h2 = (variantSeed &* 40503 &+ 12345) & 0xffff
         let h3 = (variantSeed &* 2246822519 &+ 374761) & 0xffff
         let h4 = (variantSeed &* 3266489917 &+ 668265263) & 0xffff
+        let h5 = (variantSeed &* 1103515245 &+ 12345) & 0xffff
+        let h6 = (variantSeed &* 22695477 &+ 1) & 0xffff
         self.phase01 = CGFloat(h1) / 65535.0
         let sizeJitter = 0.97 + CGFloat(h3) / 65535.0 * 0.06     // 0.97–1.03
         // Stance (0 upright → 1 crouched) sets the frozen idle frame; a small
@@ -235,6 +307,15 @@ final class SkeletalFigure {
         self.idleFraction = max(0, min(0.17, stance * 0.16 + stanceJitter))
         // A few degrees of facing jitter so the line isn't robotically parallel.
         let facingYaw = Float(CGFloat(h2) / 65535.0 - 0.5) * 0.14   // ±~4°
+        // Idle micro-motion timing: two INCOMMENSURATE periods per player (sway
+        // 2.4-4.0 s, breath 3.1-5.1 s) plus an independent start phase for each.
+        // Different periods mean the composed lean never repeats exactly, and the
+        // per-player phase means 22 men never breathe on the same beat.
+        self.idleSwayPeriod = 1.5 + Double(h1) / 65535.0 * 1.0
+        self.idleBreathPeriod = 2.2 + Double(h2) / 65535.0 * 1.4
+        self.idleSwayPhase = Double(h5) / 65535.0 * 2.6
+        self.idleBreathPhase = Double(h6) / 65535.0 * 3.2
+        self.idleSwaySign = (h5 & 1) == 0 ? 1 : -1   // rock left-first or right-first
         guard let url = Self.rigURL,
               let scene = try? SCNScene(url: url, options: [.convertToYUp: false]),
               let skinnerNode = Self.firstNode(in: scene.rootNode, where: { $0.skinner != nil }),
@@ -263,14 +344,25 @@ final class SkeletalFigure {
         }
         let face = SCNNode()   // identity: rig already faces +Z after standup
         face.addChildNode(standup)
+        // Idle micro-motion wrappers, spliced between the scale/facing wrapper and
+        // the rig. Both sit at the wrapper's origin — which is ON THE TURF — so
+        // their rotations lean the body about the FEET (no sole translation, no
+        // foot slide). Two separate nodes because two SCNActions writing the same
+        // node's eulerAngles would fight; one axis each, one action each.
+        let sway = SCNNode(); sway.name = "idleSway"
+        let breath = SCNNode(); breath.name = "idleBreath"
+        breath.addChildNode(face)
+        sway.addChildNode(breath)
         let wrapper = SCNNode()
         wrapper.name = "skeletal"
         let s = Self.scale * bodyScale * sizeJitter
         wrapper.scale = SCNVector3(s, s, s)
         wrapper.position = SCNVector3(0, Self.yOffset, 0)
         wrapper.eulerAngles = SCNVector3(0, facingYaw, 0)   // slight per-player facing
-        wrapper.addChildNode(face)
+        wrapper.addChildNode(sway)
 
+        self.idleSwayNode = sway
+        self.idleBreathNode = breath
         self.content = wrapper
         self.skeleton = skel
         self.figureScale = s
@@ -390,6 +482,64 @@ final class SkeletalFigure {
         return SCNVector3(Float(r), Float(g), Float(b))
     }
 
+    // MARK: Idle micro-motion
+
+    /// Start (or restart) the standing/pre-snap idle lean. `intensity` scales the
+    /// amplitude (0 = off, 1 = an upright player rocking foot-to-foot); `delay`
+    /// holds it off until the man has finished travelling and settled into his
+    /// spot, so the sway never rides a formation jog.
+    ///
+    /// Idempotent: it always wipes the previous loop and re-anchors from the rest
+    /// pose, so repeated calls can't accumulate a lean offset.
+    func startIdleMotion(intensity: CGFloat = 1.0, delay: TimeInterval = 0) {
+        idleSwayNode.removeAction(forKey: Self.idleSwayKey)
+        idleBreathNode.removeAction(forKey: Self.idleBreathKey)
+        idleSwayNode.eulerAngles = SCNVector3Zero
+        idleBreathNode.eulerAngles = SCNVector3Zero
+        idleMotionActive = false
+        // Respect the system motion preference — this is pure decorative motion.
+        guard intensity > 0.01, !UIAccessibility.isReduceMotionEnabled else { return }
+        idleMotionActive = true
+
+        // Weight shift: roll about the feet with a touch of yaw so the shoulders
+        // turn INTO the lean instead of pivoting like a signpost.
+        let roll = Self.idleRollAmplitude * intensity * idleSwaySign
+        let sway = SCNAction.rotateBy(x: 0, y: roll * 0.30, z: roll,
+                                      duration: idleSwayPeriod / 2)
+        sway.timingMode = .easeInEaseOut
+        idleSwayNode.runAction(.sequence([
+            .wait(duration: delay + idleSwayPhase),
+            .repeatForever(.sequence([sway, sway.reversed()])),
+        ]), forKey: Self.idleSwayKey)
+
+        // Breath: a slower forward/back pitch on its own period.
+        let pitch = Self.idlePitchAmplitude * intensity
+        let breathe = SCNAction.rotateBy(x: pitch, y: 0, z: 0,
+                                         duration: idleBreathPeriod / 2)
+        breathe.timingMode = .easeInEaseOut
+        idleBreathNode.runAction(.sequence([
+            .wait(duration: delay + idleBreathPhase),
+            .repeatForever(.sequence([breathe, breathe.reversed()])),
+        ]), forKey: Self.idleBreathKey)
+    }
+
+    /// Drop the idle lean the instant a play clip takes the figure over. The
+    /// residual lean (up to the amplitude, whatever point of the cycle we cut on)
+    /// is eased back to rest over a beat rather than snapped, so the takeoff frame
+    /// is clean. Cheap no-op when nothing is running.
+    func stopIdleMotion() {
+        idleMotionActive = false
+        for (node, key) in [(idleSwayNode, Self.idleSwayKey), (idleBreathNode, Self.idleBreathKey)] {
+            node.removeAction(forKey: key)
+            let e = node.eulerAngles
+            guard e.x != 0 || e.y != 0 || e.z != 0 else { continue }
+            let settle = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.16,
+                                            usesShortestUnitArc: true)
+            settle.timingMode = .easeInEaseOut
+            node.runAction(settle, forKey: key)
+        }
+    }
+
     // MARK: Driving
     private func clipName(for l: Loco) -> String {
         switch l {
@@ -404,6 +554,19 @@ final class SkeletalFigure {
     /// ground speed so the feet track the turf instead of sliding, and state
     /// changes cross-fade. `speed` is world yd/s (the container's ground speed).
     func setMoving(_ moving: Bool, speed: Float, backpedal: Bool = false) {
+        // Idle life is owned by the STANDING state only. Taking off hands the
+        // figure to the run clip + foot-lock IK, so the lean comes off first
+        // (before the early-out below, which fires on a repeat setMoving). Coming
+        // to a stop re-arms it — but never on a man who is DOWN (key "fall"): a
+        // prone body leaning about a point under his feet would swing like a
+        // compass needle. A held STANCE re-arms through `playStance` instead, at
+        // that stance's own amplitude.
+        if moving {
+            stopIdleMotion()
+        } else if !idleMotionActive, !isGrounded,
+                  skeleton.animationPlayer(forKey: "stance") == nil {
+            startIdleMotion()
+        }
         // A tackled figure holds the ground pose (key "fall"); only ACTIVE motion
         // (getting up to run/backpedal) clears it. Going IDLE must NOT stand a
         // tackled man up — otherwise a tackle beat that also slides the carrier
@@ -671,6 +834,15 @@ final class SkeletalFigure {
             feet[i].maxY = -.greatestFiniteMagnitude
         }
         lastLockTime = 0
+        // Re-anchor the idle lean from the rest pose too — a loop cut mid-cycle
+        // would otherwise carry its residual lean into the next play's first
+        // frame. `setMoving(false)` below re-arms it (unless a stance follows,
+        // which re-arms it at its own amplitude).
+        idleMotionActive = false
+        idleSwayNode.removeAction(forKey: Self.idleSwayKey)
+        idleBreathNode.removeAction(forKey: Self.idleBreathKey)
+        idleSwayNode.eulerAngles = SCNVector3Zero
+        idleBreathNode.eulerAngles = SCNVector3Zero
         setMoving(false, speed: 0)
     }
 
@@ -713,6 +885,10 @@ final class SkeletalFigure {
     /// default duration compression. Mutually exclusive with `landAfter`.
     func play(action name: String, delay: TimeInterval = 0, landAfter: TimeInterval? = nil,
               beatAt: TimeInterval? = nil, hold: Bool = false) {
+        // A one-shot clip owns the figure for its whole beat — the idle lean comes
+        // off now (it is only ever pre-snap/standing dressing) and `setMoving`
+        // re-arms it when the man settles again.
+        stopIdleMotion()
         let variant = pickVariant(for: name)
         guard let base = Self.clip(variant)?.copy() as? CAAnimation else { return }
         base.repeatCount = 1
@@ -765,6 +941,13 @@ final class SkeletalFigure {
         base.fillMode = .forwards     // hold the stance's final frame
         if delay > 0 { base.beginTime = CACurrentMediaTime() + delay }
         skeleton.addAnimation(base, forKey: "stance")
+        // Pre-snap life. The stance clip freezes on its last frame, so without
+        // this the man is a statue until the user calls a play (measured: 20-55 s
+        // of zero pixel change). Amplitude is per-stance — a hand-in-the-dirt
+        // lineman barely moves, an upright corner rocks. Held off until the clip
+        // has eased in on top of `delay` so the lean never rides the settle.
+        startIdleMotion(intensity: Self.stanceIdleIntensity[clip] ?? 0.8,
+                        delay: delay + 0.35)
     }
 
     /// Drop the held pre-snap stance (the snap breaks it; also on a full reset).

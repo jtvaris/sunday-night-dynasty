@@ -28,6 +28,11 @@ struct SceneKitFieldView: UIViewRepresentable {
         #endif
         let scnView = SCNView()
         scnView.scene = scene
+        // Without isPlaying the SCNView render loop parks between "real" scene
+        // changes and the repeatForever idle actions (pre-snap sway, crowd
+        // shimmer, camera drift) never reach the screen — measured as 20-55 s
+        // of bit-identical frames on the coach cam.
+        scnView.isPlaying = true
         scnView.allowsCameraControl = allowsCameraControl
         scnView.backgroundColor = UIColor(Color.backgroundPrimary)
         scnView.antialiasingMode = .multisampling4X

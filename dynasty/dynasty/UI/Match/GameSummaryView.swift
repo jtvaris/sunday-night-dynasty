@@ -1,5 +1,50 @@
 import SwiftUI
 
+// MARK: - Game Plan Receipt
+
+/// What the coach planned, measured against what he actually called (#3).
+///
+/// `CoachedGameView` fills ``latest`` at the final whistle; this screen reads
+/// it back. A static hand-off is used because the summary sheet is presented by
+/// the career dashboard long after the live engine is gone — the same pattern
+/// `LiveGameEngine.pendingPlayerGamePlan` uses on the way into a game.
+///
+/// The receipt carries the teams and the final score so it can only attach to
+/// the game it was measured from: a quick-simmed week never inherits the last
+/// coached game's numbers.
+struct GamePlanReceipt: Equatable {
+
+    /// The sliders the coach set on the Game Plan screen before kickoff.
+    let plan: GamePlan
+    /// Scrimmage calls the PLAYER'S offense actually ran.
+    let passCalls: Int
+    let runCalls: Int
+    /// Fourth downs the player's offense faced, and how many it went for
+    /// (a punt or a field-goal attempt counts as faced, not gone for).
+    let fourthDownsFaced: Int
+    let fourthDownsGoneFor: Int
+    /// Sacks the player's defense produced / his offense gave up.
+    let sacksForced: Int
+    let sacksAllowed: Int
+
+    // Identity stamp.
+    let homeAbbreviation: String
+    let awayAbbreviation: String
+    let homeScore: Int
+    let awayScore: Int
+
+    /// The most recently coached game's receipt, awaiting its summary screen.
+    static var latest: GamePlanReceipt?
+
+    /// True when this receipt describes the game the summary was handed.
+    func describes(boxScore: BoxScore, homeTeam: Team, awayTeam: Team) -> Bool {
+        homeAbbreviation == homeTeam.abbreviation
+            && awayAbbreviation == awayTeam.abbreviation
+            && homeScore == boxScore.home.score
+            && awayScore == boxScore.away.score
+    }
+}
+
 // MARK: - GameSummaryView
 
 /// Full post-game summary screen shown after a game concludes.
@@ -13,6 +58,20 @@ struct GameSummaryView: View {
     let playerStats: [PlayerGameStats]
     /// Game weather; `nil` or `.clear` hides the header chip.
     var weather: GameWeather? = nil
+    /// #3: explicit receipt override (previews and tests). Left `nil` in the
+    /// app, where the coached game's receipt arrives through the static stash.
+    var planReceipt: GamePlanReceipt? = nil
+
+    /// The plan receipt to render, if one belongs to THIS game. Quick-simmed
+    /// results — and coached games played without a saved plan — have none,
+    /// and the card simply doesn't appear.
+    private var activeReceipt: GamePlanReceipt? {
+        if let planReceipt { return planReceipt }
+        guard let latest = GamePlanReceipt.latest,
+              latest.describes(boxScore: boxScore, homeTeam: homeTeam, awayTeam: awayTeam)
+        else { return nil }
+        return latest
+    }
 
     // MARK: - Body
 
@@ -23,6 +82,9 @@ struct GameSummaryView: View {
             ScrollView {
                 LazyVStack(spacing: 16) {
                     scoreHeaderCard
+                    if let receipt = activeReceipt {
+                        planReceiptCard(receipt)
+                    }
                     teamComparisonCard
                     topPerformersCard
                     highlightsCard
@@ -196,6 +258,173 @@ struct GameSummaryView: View {
     private func quarterScore(scores: [Int], index: Int) -> String {
         guard index < scores.count else { return "-" }
         return "\(scores[index])"
+    }
+
+    // MARK: - Plan Receipt Card (#3)
+
+    /// One line of the receipt: what the plan said, what the game did, and a
+    /// one-word read on whether the two agreed.
+    private struct PlanRow: Identifiable {
+        let id: Int
+        let label: String
+        let planned: String
+        let actual: String
+        let verdict: String
+        /// Drives the verdict chip's color — green when the game backed the
+        /// plan up, amber when it didn't.
+        let positive: Bool
+    }
+
+    /// "Your plan" — the receipt that closes the loop between the Game Plan
+    /// screen and the game the coach just called. Every actual is measured off
+    /// the plays that were actually run; nothing here is a re-simulation.
+    private func planReceiptCard(_ r: GamePlanReceipt) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            cardHeader(title: "Your Plan", systemImage: "scope")
+
+            Text("What you drew up before kickoff, against what the game actually did.")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.textTertiary)
+
+            VStack(spacing: 10) {
+                ForEach(planRows(r)) { row in
+                    planReceiptRow(row)
+                }
+            }
+        }
+        .padding(20)
+        .cardBackground()
+    }
+
+    private func planReceiptRow(_ row: PlanRow) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(row.label)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.textSecondary)
+                .frame(width: 108, alignment: .leading)
+            HStack(spacing: 6) {
+                Text(row.planned)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.textTertiary)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.textTertiary)
+                Text(row.actual)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.textPrimary)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            Spacer(minLength: 8)
+            Text(row.verdict)
+                .font(.system(size: 10, weight: .black))
+                .foregroundStyle(row.positive ? Color.success : Color.warning)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background((row.positive ? Color.success : Color.warning).opacity(0.15),
+                            in: Capsule())
+                .fixedSize()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(verbatim:
+            "\(row.label). Planned \(row.planned). Actual \(row.actual). \(row.verdict)."))
+    }
+
+    /// The four rows. Each pairs one game-plan slider with the stat that slider
+    /// was supposed to move.
+    private func planRows(_ r: GamePlanReceipt) -> [PlanRow] {
+        var rows: [PlanRow] = []
+
+        // 1 — run/pass lean vs the calls that actually went in.
+        let calls = r.passCalls + r.runCalls
+        let actualPass = calls > 0 ? Double(r.passCalls) / Double(calls) : 0
+        let leanDelta = actualPass - r.plan.runPassRatio
+        let leanOnPlan = calls > 0 && abs(leanDelta) <= 0.10
+        rows.append(PlanRow(
+            id: 0,
+            label: "Run / pass",
+            planned: "\(r.plan.runPassLabel), \(percent(r.plan.runPassRatio)) pass",
+            actual: calls > 0
+                ? "\(percent(actualPass)) pass (\(r.passCalls)/\(calls))"
+                : "no scrimmage calls",
+            verdict: calls == 0 ? "Untested"
+                : (leanOnPlan ? "On plan" : (leanDelta > 0 ? "Threw more" : "Ran more")),
+            positive: leanOnPlan
+        ))
+
+        // 2 — fourth-down nerve vs the fourth downs that came up.
+        let goRate = r.fourthDownsFaced > 0
+            ? Double(r.fourthDownsGoneFor) / Double(r.fourthDownsFaced) : 0
+        let fourthOnPlan = r.fourthDownsFaced > 0
+            && abs(goRate - r.plan.fourthDownAggressiveness) <= 0.25
+        rows.append(PlanRow(
+            id: 1,
+            label: "Fourth down",
+            planned: fourthDownLabel(r.plan.fourthDownAggressiveness),
+            actual: r.fourthDownsFaced > 0
+                ? "went for \(r.fourthDownsGoneFor) of \(r.fourthDownsFaced)"
+                : "none faced",
+            verdict: r.fourthDownsFaced == 0 ? "Untested"
+                : (fourthOnPlan ? "On plan"
+                   : (goRate > r.plan.fourthDownAggressiveness ? "Bolder" : "Safer")),
+            positive: fourthOnPlan
+        ))
+
+        // 3 — the blitz dial vs the heat it actually generated.
+        rows.append(PlanRow(
+            id: 2,
+            label: "Pressure",
+            planned: "\(blitzLabel(r.plan.blitzFrequency)) blitz",
+            actual: "\(r.sacksForced) sack\(r.sacksForced == 1 ? "" : "s") forced",
+            verdict: r.sacksForced >= 3 ? "Paid off" : (r.sacksForced >= 1 ? "Trickled" : "No heat"),
+            positive: r.sacksForced >= 3
+        ))
+
+        // 4 — the same dial from the other side: an aggressive offense holds
+        // the ball longer, and the sack count is where that bill comes due.
+        rows.append(PlanRow(
+            id: 3,
+            label: "Protection",
+            planned: "\(aggressionLabel(r.plan.offensiveAggression)) offense",
+            actual: "\(r.sacksAllowed) sack\(r.sacksAllowed == 1 ? "" : "s") allowed",
+            verdict: r.sacksAllowed <= 1 ? "Clean" : (r.sacksAllowed <= 3 ? "Holding" : "Leaky"),
+            positive: r.sacksAllowed <= 1
+        ))
+
+        return rows
+    }
+
+    private func percent(_ value: Double) -> String {
+        "\(Int((value * 100).rounded()))%"
+    }
+
+    private func fourthDownLabel(_ value: Double) -> String {
+        switch value {
+        case ..<0.2:  return "Always punt"
+        case ..<0.4:  return "Cautious"
+        case ..<0.6:  return "Situational"
+        case ..<0.8:  return "Aggressive"
+        default:      return "Go every time"
+        }
+    }
+
+    private func blitzLabel(_ value: Double) -> String {
+        switch value {
+        case ..<0.25: return "Rare"
+        case ..<0.45: return "Light"
+        case ..<0.65: return "Steady"
+        case ..<0.85: return "Heavy"
+        default:      return "Relentless"
+        }
+    }
+
+    private func aggressionLabel(_ value: Double) -> String {
+        switch value {
+        case ..<0.3:  return "Conservative"
+        case ..<0.55: return "Balanced"
+        case ..<0.75: return "Aggressive"
+        default:      return "All-out"
+        }
     }
 
     // MARK: - Team Comparison Card
@@ -848,7 +1077,15 @@ private struct PlayDescriptionRow: View {
             boxScore: boxScore,
             homeTeam: homeTeam,
             awayTeam: awayTeam,
-            playerStats: stats
+            playerStats: stats,
+            planReceipt: GamePlanReceipt(
+                plan: .aggressive,
+                passCalls: 34, runCalls: 22,
+                fourthDownsFaced: 3, fourthDownsGoneFor: 2,
+                sacksForced: 3, sacksAllowed: 1,
+                homeAbbreviation: "KC", awayAbbreviation: "PHI",
+                homeScore: 27, awayScore: 21
+            )
         )
     }
 }

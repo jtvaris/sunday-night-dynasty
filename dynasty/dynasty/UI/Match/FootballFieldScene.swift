@@ -795,6 +795,14 @@ class FootballFieldScene: SCNScene {
             // counter-roll reads as a man rocking foot-to-foot; anything
             // smaller is sub-pixel at this distance (measured via
             // motion_profile) and the field still reads frozen.
+            // Skinned figures run their OWN idle instead (SkeletalFigure's
+            // sway/breath lean, armed by playStance/setMoving). This block
+            // TRANSLATES the figure sideways, which on a skinned rig skates the
+            // planted feet across the turf; the skeletal lean pivots on the soles
+            // and never does. So the shift stays kit-only, and the ball-watch
+            // glance above (a pure yaw, no translation) still applies to both.
+            guard skeletalDriver(for: figure) == nil else { continue }
+
             let roll = Self.hash01(index * 31 + idleSweepCounter * 7 + 11)
             guard roll < 0.55 else { continue }
             let side: CGFloat = roll < 0.275 ? 1 : -1
@@ -4743,11 +4751,22 @@ class FootballFieldScene: SCNScene {
         // deck's outer edge so the bowl reads continuous.
         let lower = Self.crowdTexture(tint: UIColor(red: 0.20, green: 0.21, blue: 0.28, alpha: 1))
         let upper = Self.crowdTexture(tint: UIColor(red: 0.17, green: 0.18, blue: 0.25, alpha: 1))
-        stadium.addChildNode(tier(anchors, yInner: 1.3, yTop: 9, depth: 20,
-                                  uvRepeat: 46, tex: lower, emissive: 0.6))
+        let lowerTier = tier(anchors, yInner: 1.3, yTop: 9, depth: 20,
+                             uvRepeat: 46, tex: lower, emissive: 0.6)
+        stadium.addChildNode(lowerTier)
         let upperA = anchors.map { Anchor(x: $0.x + $0.nx * 20, z: $0.z + $0.nz * 20, nx: $0.nx, nz: $0.nz) }
-        stadium.addChildNode(tier(upperA, yInner: 9, yTop: 18, depth: 22,
-                                  uvRepeat: 46, tex: upper, emissive: 0.5))
+        let upperTier = tier(upperA, yInner: 9, yTop: 18, depth: 22,
+                             uvRepeat: 46, tex: upper, emissive: 0.5)
+        stadium.addChildNode(upperTier)
+        // Crowd shimmer: the bowl texture is baked and dead still, so the stands
+        // read as painted cardboard between plays. A slow ±5 % breath on the
+        // EMISSION intensity (the self-lit "night crowd under floodlights" term)
+        // makes the speckle of phone screens / white shirts swell and ebb like a
+        // real crowd. Two tiers on different, coprime-ish periods and opposite
+        // phase, so it never pulses as one flat flicker. Pure Core Animation on
+        // the material property — no geometry, no per-frame work, no extra draw.
+        applyCrowdShimmer(lowerTier, base: 0.6, period: 4.6, phase: 0)
+        applyCrowdShimmer(upperTier, base: 0.5, period: 6.7, phase: 3.3)
         let facadeA = upperA.map { Anchor(x: $0.x + $0.nx * 22, z: $0.z + $0.nz * 22, nx: $0.nx, nz: $0.nz) }
         let facadeTex = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { ctx in
             UIColor(red: 0.07, green: 0.075, blue: 0.095, alpha: 1).setFill()
@@ -4777,6 +4796,27 @@ class FootballFieldScene: SCNScene {
         }
 
         rootNode.addChildNode(stadium)
+    }
+
+    /// Slow emission breath on one crowd tier. `base` is the tier's authored
+    /// emission intensity; the loop swings ±5 % around it over `period`, starting
+    /// `phase` seconds in so tiers never peak together. `isRemovedOnCompletion`
+    /// false + an infinite repeat means one animation object per tier for the
+    /// lifetime of the scene (two total), evaluated by Core Animation.
+    private func applyCrowdShimmer(_ node: SCNNode, base: CGFloat,
+                                   period: TimeInterval, phase: TimeInterval) {
+        guard !UIAccessibility.isReduceMotionEnabled,
+              let emission = node.geometry?.firstMaterial?.emission else { return }
+        let breath = CABasicAnimation(keyPath: "intensity")
+        breath.fromValue = base * 0.95
+        breath.toValue = base * 1.05
+        breath.duration = period / 2
+        breath.autoreverses = true
+        breath.repeatCount = .infinity
+        breath.timeOffset = phase
+        breath.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        breath.isRemovedOnCompletion = false
+        emission.addAnimation(breath, forKey: "crowdShimmer")
     }
 
     /// Procedural distant-crowd texture: a mottled low-contrast speckle over a
@@ -5692,7 +5732,48 @@ class FootballFieldScene: SCNScene {
         cameraLookAtConstraint = lookAtConstraint
         cameraNode.constraints = [lookAtConstraint]
 
-        rootNode.addChildNode(cameraNode)
+        // Idle drift rig. Every shot in the game writes `cameraNode.position`
+        // directly or parks a follow constraint on it, so the drift CANNOT live
+        // on the camera itself — it would be stamped out (or fight the beat
+        // sheet) on the next focus/push-in. Instead the camera hangs off two
+        // geometry-less parents that oscillate by a hair; the camera's own local
+        // position keeps its exact authored value and the drift rides on top of
+        // whatever the shot does. Two nested nodes on different long periods so
+        // the float never traces a repeating line, and the look-at constraint
+        // turns the tiny translation into an equally tiny reframe.
+        //
+        // Amplitude is ~0.2 % of a typical shot radius (a few cm at player scale)
+        // — below conscious perception, but it stops the whole frame from being
+        // bit-identical while the user reads the play sheet.
+        let driftX = SCNNode(); driftX.name = "cameraDriftX"
+        let driftYZ = SCNNode(); driftYZ.name = "cameraDriftYZ"
+        driftYZ.addChildNode(cameraNode)
+        driftX.addChildNode(driftYZ)
+        rootNode.addChildNode(driftX)
+        cameraDriftNodes = (driftX, driftYZ)
+        startCameraIdleDrift()
+    }
+
+    /// Nested parents of `cameraNode` that carry the imperceptible idle drift.
+    private var cameraDriftNodes: (x: SCNNode, yz: SCNNode)?
+
+    /// Arm the camera's idle float. Two `repeatForever` SCNActions on the drift
+    /// parents (never on the camera), so no shot, beat or follow constraint is
+    /// touched. Runs for the life of the scene: it is far below the threshold
+    /// where it could read as camera shake during a play, and stopping/starting
+    /// it around plays would itself be a visible discontinuity.
+    private func startCameraIdleDrift() {
+        guard let rig = cameraDriftNodes, !UIAccessibility.isReduceMotionEnabled else { return }
+        let lateral = SCNAction.moveBy(x: 0.18, y: 0, z: 0, duration: 5.5)
+        lateral.timingMode = .easeInEaseOut
+        rig.x.runAction(.repeatForever(.sequence([lateral, lateral.reversed()])),
+                        forKey: "cameraDrift")
+        let rise = SCNAction.moveBy(x: 0, y: 0.05, z: 0.04, duration: 4.25)
+        rise.timingMode = .easeInEaseOut
+        rig.yz.runAction(.sequence([
+            .wait(duration: 2.1),
+            .repeatForever(.sequence([rise, rise.reversed()])),
+        ]), forKey: "cameraDrift")
     }
 
     // MARK: - Lighting
