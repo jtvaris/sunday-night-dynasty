@@ -3109,8 +3109,13 @@ final class LiveGameEngine: ObservableObject {
         // place burnout costs nothing. Read off the live model rather than the
         // `SimPlayer` snapshot: workload is a once-per-game constant, so it does
         // not belong in the per-play hot-path struct.
+        // TODO §5.4: the medical wing, same term `MedicalEngine.injuryCheck`
+        // applies to a quick-sim play. A club that let the building rot must
+        // break down at the same rate whether the user watched the snap or not,
+        // and it reads off the live model for the same reason workload does.
         if let live = livePlayerByID[playerID] {
             risk *= MedicalEngine.workloadRiskMultiplier(player: live)
+            risk *= MedicalEngine.facilityRiskMultiplier(player: live)
         }
         guard Double.random(in: 0...1) < risk else { return }
 

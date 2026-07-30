@@ -179,6 +179,9 @@ enum WeekAdvancer {
         CompensatoryPickEngine.resetProcessState()
         NegotiationLockRegistry.reset()
         FASigningTracker.reset()
+        // §5.1: the practice-squad poach warnings the user has open are keyed
+        // by player id, so another save's window must not be inherited.
+        PracticeSquadEngine.reset()
         PerfLog.resetProcessState()
     }
 
@@ -551,6 +554,16 @@ enum WeekAdvancer {
                 )
             }
         }
+
+        // 0-facilities. TODO §5.4: the annual facility pass, run once a season
+        // right after the envelopes are recalculated above — the pass reads
+        // `FacilityEngine.annualBudget`, which is a function of the owner's
+        // spending willingness and mood, so it belongs with the rest of the
+        // owner's money decisions. Every club first trims back to what its owner
+        // will fund, then the 31 AI clubs spend what is left; the user's club is
+        // skipped for upgrades because the facilities card is his lever. Without
+        // this call no AI owner ever invests and the league never stratifies.
+        FacilityEngine.processOffseasonInvestment(teams: teams, userTeamID: career.teamID)
 
         // 0a. R31: season-opening owner meeting for the user's team —
         // apply last review's bonus to the fresh envelope, generate this
@@ -1349,22 +1362,30 @@ enum WeekAdvancer {
             playingTimeRoleByPlayer.merge(roles) { _, new in new }
         }
 
-        for player in allPlayers where player.teamID != nil && !player.isInjured && !player.isHoldingOut {
-            let isMentored = mentoredIDs.contains(player.id)
-            let mentorBoost = isMentored ? 1.1 : 1.0
-            let clipboardRoom = player.position == .QB
-                && (isMentored || clipboardTeamIDs.contains(player.teamID!))
-            // A player with no computed role (roster snapshot missed him) falls
-            // back to the practice floor rather than to a free start.
-            let role = playingTimeRoleByPlayer[player.id] ?? .depth
-            PlayerDevelopmentEngine.applyGameExperience(
-                player,
-                gamesPlayed: 1,
-                gamesStarted: role == .starter ? 1 : 0,
-                experienceBoost: mentorBoost,
-                clipboardRoom: clipboardRoom,
-                startCredit: role.startCreditShare
-            )
+        // Task #51: `DevelopmentSourceDiag` books what this pass moves, so the
+        // ~2 OVR the shipped pipeline develops over the balance harness can be
+        // attributed to a pass instead of argued about.
+        let xpPopulation = allPlayers.filter {
+            $0.teamID != nil && !$0.isInjured && !$0.isHoldingOut
+        }
+        DevelopmentSourceDiag.measure(DevelopmentSourceDiag.gameXP, xpPopulation) {
+            for player in xpPopulation {
+                let isMentored = mentoredIDs.contains(player.id)
+                let mentorBoost = isMentored ? 1.1 : 1.0
+                let clipboardRoom = player.position == .QB
+                    && (isMentored || clipboardTeamIDs.contains(player.teamID!))
+                // A player with no computed role (roster snapshot missed him)
+                // falls back to the practice floor rather than to a free start.
+                let role = playingTimeRoleByPlayer[player.id] ?? .depth
+                PlayerDevelopmentEngine.applyGameExperience(
+                    player,
+                    gamesPlayed: 1,
+                    gamesStarted: role == .starter ? 1 : 0,
+                    experienceBoost: mentorBoost,
+                    clipboardRoom: clipboardRoom,
+                    startCredit: role.startCreditShare
+                )
+            }
         }
 
         perf.lap("fatigue_injury_xp")
@@ -1383,10 +1404,49 @@ enum WeekAdvancer {
                 TrainingFocusEngine.autoAssignFocus(roster: roster)
             }
             let teamCoaches = coachesByTeam[team.id] ?? []
-            let gains = TrainingFocusEngine.applyWeeklyFocusTick(roster: roster, coaches: teamCoaches)
+            var conversions: [VersatilityDevelopmentEngine.CompletedConversion] = []
+            let gains = DevelopmentSourceDiag.measure(DevelopmentSourceDiag.focusTick, roster) {
+                TrainingFocusEngine.applyWeeklyFocusTick(
+                    roster: roster, coaches: teamCoaches, conversions: &conversions
+                )
+            }
+
+            // §5.3: a completed conversion is a permanent change to a man's job
+            // title — he trained across, banked the familiarity, and his
+            // attribute block was rebuilt against the new spot. It was landing
+            // silently. One headline per switch, league-wide, plus a note from
+            // the staff when it is the user's own player.
+            for conversion in conversions {
+                lastNewsItems.append(NewsItem(
+                    headline: "\(conversion.playerName) moves to \(conversion.to.rawValue)",
+                    body: "\(team.fullName) have made it official: \(conversion.summary) "
+                        + "The switch had been in the works since he started taking reps there.",
+                    category: .playerPerformance,
+                    week: week,
+                    season: season,
+                    relatedTeamID: team.id,
+                    relatedPlayerID: conversion.playerID,
+                    sentiment: conversion.overallAfter >= conversion.overallBefore ? .positive : .neutral
+                ))
+                if team.id == career.teamID {
+                    lastInboxMessages.append(InboxMessage(
+                        sender: .developmentStaff,
+                        subject: "Position Change: \(conversion.playerName) is a \(conversion.to.rawValue)",
+                        body: "\(conversion.summary)\n\nHe's learned the position well enough that we've "
+                            + "moved him across for good — his depth-chart spot, his grades and his "
+                            + "development from here all read against \(conversion.to.rawValue). "
+                            + "He keeps what he knew at \(conversion.from.rawValue), so he's a genuine "
+                            + "swing man if we ever need him back there.",
+                        date: "Week \(week), Season \(season)",
+                        category: .rosterAnalysis
+                    ))
+                }
+            }
 
             // Rare breakout leap for a high-potential youngster (max 2/season/team).
-            let breakout = TrainingFocusEngine.rollBreakout(roster: roster, season: season, teamID: team.id)
+            let breakout = DevelopmentSourceDiag.measure(DevelopmentSourceDiag.breakout, roster) {
+                TrainingFocusEngine.rollBreakout(roster: roster, season: season, teamID: team.id)
+            }
             if let breakout {
                 lastNewsItems.append(NewsItem(
                     headline: "Breakout: \(breakout.player.fullName) has arrived",
@@ -1588,6 +1648,44 @@ enum WeekAdvancer {
         }
 
         perf.lap("scouting")
+
+        // --- §5.1 Practice squads: reps, rival interest, signings ---
+        //
+        // Runs on the roster the week just produced (post-injury, post-trade),
+        // because that is what makes a poach a poach: a club loses a corner on
+        // Sunday and signs somebody's squad corner on Tuesday. The pass is
+        // disjoint from every other weekly pass above — squad players carry
+        // `teamID == nil`, so the attendance tally, the game-experience pass and
+        // the training-focus tick never see them, and this is the only place
+        // they develop (`PracticeSquadEngine.applyPracticeReps`).
+        //
+        // The user's own squad is never raided without notice: a rival files
+        // interest one week and signs the following week, which is the window
+        // the "promote him first" mail is about.
+        let squadWeek = PracticeSquadEngine.runWeeklyPass(
+            career: career,
+            teams: teams,
+            allPlayers: allPlayers
+        )
+        for loss in squadWeek.userLosses {
+            lastInboxMessages.append(InboxEngine.practiceSquadPoachedMessage(
+                playerName: loss.playerName,
+                position: loss.position.rawValue,
+                suitorName: loss.toTeamName,
+                suitorAbbr: loss.toAbbreviation,
+                dateString: InboxEngine.dateLabel(week: week, season: season, phase: .regularSeason)
+            ))
+        }
+        for warning in squadWeek.warnings {
+            lastInboxMessages.append(InboxEngine.practiceSquadPoachWarningMessage(
+                playerName: warning.playerName,
+                position: warning.position.rawValue,
+                suitorName: warning.suitorName,
+                suitorAbbr: warning.suitorAbbreviation,
+                dateString: InboxEngine.dateLabel(week: week, season: season, phase: .regularSeason)
+            ))
+        }
+        perf.lap("practice_squad")
 
         // Advance the week counter.
         career.currentWeek += 1
@@ -2367,6 +2465,15 @@ enum WeekAdvancer {
                 modelContext: modelContext
             )
 
+            // TODO §5.2: freeze the 32-club season row while the staff is still
+            // the staff that coached it. Deliberately HERE and not in the
+            // catch-up pass — `TeamSeasonArchiveBuilder.backfill` can recover
+            // records and ratings from the game log, but coaches carry only
+            // their current job, so an archive written after the carousel
+            // credits last season to whoever holds the seat now. Idempotent per
+            // (career, team, season): a re-entered phase is a fetch and a return.
+            TeamSeasonArchiveBuilder.record(career: career, teams: teams, modelContext: modelContext)
+
         case .proBowl:
             // Simulate Pro Bowl game (AFC vs NFC, simple random result)
             let proBowlScore = simulateGameScore()
@@ -2749,7 +2856,8 @@ enum WeekAdvancer {
                     allPlayers: allPlayers,
                     allTeams: teams,
                     playerTeamID: career.teamID ?? UUID(),
-                    modelContext: modelContext
+                    modelContext: modelContext,
+                    career: career
                 )
                 _ = summary
 
@@ -2813,8 +2921,8 @@ enum WeekAdvancer {
 
         case .reviewRoster:
             // Reset roster evaluation flags for the new Review Roster phase
-            UserDefaults.standard.set(false, forKey: "rosterEvaluationConfirmed")
-            UserDefaults.standard.set(false, forKey: "franchiseTagVisited")
+            CareerScopedDefaults.set(false, "rosterEvaluationConfirmed")
+            CareerScopedDefaults.set(false, "franchiseTagVisited")
 
             // Generate owner demands based on weakest position groups (#248)
             if let playerTeamID = career.teamID,
@@ -2958,17 +3066,34 @@ enum WeekAdvancer {
             // The realization verdicts come back through `onOutcome` so the
             // §2.10 narrative layer (camp development report, motivation and
             // late-bloomer stories) can be assembled without a second pass.
+            // What the club has BUILT: a 0.92-1.08 development multiplier from
+            // its training complex and recovery centre (`FacilityEngine`). One
+            // fetch for the whole league — the pinned API takes a flat owner
+            // list precisely so this does not become 32 round trips.
+            let facilityCareerID = activeCareerID
+            let facilityOwners = (try? modelContext.fetch(
+                FetchDescriptor<Owner>(predicate: #Predicate { $0.careerID == facilityCareerID })
+            )) ?? []
+
             var offseasonOutcomes: [PlayerDevelopmentEngine.OffseasonOutcome] = []
             for team in teams {
                 let teamPlayers = allPlayers.filter { $0.teamID == team.id && !$0.isHoldingOut }
                 let teamCoaches = allCoaches.filter { $0.teamID == team.id }
-                _ = PlayerDevelopmentEngine.processOffseason(
-                    players: teamPlayers,
-                    coaches: teamCoaches,
-                    inputs: offseasonInputs,
-                    environment: teamEnvironments[team.id] ?? PlayerDevelopmentEngine.TeamEnvironment(),
-                    onOutcome: { offseasonOutcomes.append($0) }
-                )
+                // Task #51: this is the ONE development pass the balance
+                // harness also runs, i.e. the control the weekly passes are
+                // measured against — book it under its own source.
+                DevelopmentSourceDiag.measure(DevelopmentSourceDiag.offseasonDevelop, teamPlayers) {
+                    _ = PlayerDevelopmentEngine.processOffseason(
+                        players: teamPlayers,
+                        coaches: teamCoaches,
+                        inputs: offseasonInputs,
+                        environment: teamEnvironments[team.id] ?? PlayerDevelopmentEngine.TeamEnvironment(),
+                        facilityMultiplier: FacilityEngine.developmentMultiplier(
+                            teamID: team.id, owners: facilityOwners
+                        ),
+                        onOutcome: { offseasonOutcomes.append($0) }
+                    )
+                }
             }
 
             // Note: processOffseason already calls applyAgeRegression which increments
@@ -3123,6 +3248,28 @@ enum WeekAdvancer {
             career.currentSeason += 1
 
             startNewSeason(career: career, teams: teams, modelContext: modelContext)
+
+            // --- §5.1 Cutdown day: every club stocks its 16-man squad ---
+            //
+            // ORDERING is load-bearing and this is the only spot that satisfies
+            // it. `startNewSeason` above runs `refillAIRosters`, which drains
+            // the free-agent pool by the SAME `RosterValue.keepScore` order the
+            // squad fill uses; run the fill first and the refill would strip
+            // the best man off every squad seconds after it was assembled.
+            // Running here also means the squads exist for week 1 — the poach
+            // market opens with the season, as it does in the real league.
+            if currentPhase == .rosterCuts {
+                let squadSummary = PracticeSquadEngine.fillSquads(
+                    career: career,
+                    teams: teams,
+                    allPlayers: fetchAllPlayers(modelContext: modelContext),
+                    modelContext: modelContext
+                )
+                print("[PracticeSquad] cutdown fill: \(squadSummary.clubsFilled) clubs, "
+                      + "\(squadSummary.totalSignings) signings "
+                      + "(own cuts \(squadSummary.fromOwnCuts), street \(squadSummary.fromStreetFreeAgents), "
+                      + "generated \(squadSummary.generated))")
+            }
 
             // Generate schedule news for the new season
             let scheduleNews = NewsGenerator.generateOffseasonNews(
@@ -4673,6 +4820,13 @@ enum WeekAdvancer {
                 player.isHoldingOut = false
                 player.trainingFocusArea = nil
                 player.trainingPosition = nil
+                // §5.1: stamp the release. Until practice squads existed nothing
+                // recorded WHO cut an AI player — only the user's cut flow and
+                // waiver claims wrote this — so `PracticeSquadEngine.fillSquads`
+                // had no way to honour "own cuts first", and the Revenge Tour
+                // storyline only ever fired for players the user released.
+                player.cutByTeamID = team.id
+                player.cutAt = .now
             }
         }
     }
@@ -5304,6 +5458,7 @@ enum WeekAdvancer {
                 let staff = coachesByTeam[teamID] ?? []
                 entry.headCoachMotivation = staff.first { $0.role == .headCoach }?.motivation
                 entry.schemeFit = offseasonSchemeFit(player: player, staff: staff)
+                DevelopmentSourceDiag.recordSchemeFit(entry.schemeFit)
                 if let posCoach = staff.first(where: {
                     CoachingEngine.positionRoleMatch(coachRole: $0.role, playerPosition: player.position)
                 }) {
@@ -5911,7 +6066,9 @@ enum WeekAdvancer {
             phase: phase,
             modelContext: modelContext
         )
-        TrainingPlanEngine.applyWeekly(plan: plan, roster: roster, modelContext: modelContext)
+        DevelopmentSourceDiag.measure(DevelopmentSourceDiag.campTrainingPlan, roster) {
+            TrainingPlanEngine.applyWeekly(plan: plan, roster: roster, modelContext: modelContext)
+        }
 
         // 2. Tick 7 days of workload per player. Intensity scales with phase.
         //    Recovery rate is derived from the user team's strength coach (or

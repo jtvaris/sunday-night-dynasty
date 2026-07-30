@@ -324,6 +324,71 @@ extension VersatilityDevelopmentEngine {
     static func versatilityCeiling(player: Player, at position: Position) -> Int {
         fatalError("harness: VersatilityDevelopmentEngine.versatilityCeiling is not staged — no scenario sets trainingPosition")
     }
+
+    /// A completed position switch. Field-for-field the shipped shape, so the
+    /// synced `TrainingFocusEngine.applyWeeklyFocusTick` signature compiles
+    /// unchanged; nothing here ever constructs one.
+    struct CompletedConversion {
+        let playerID: UUID
+        let playerName: String
+        let from: Position
+        let to: Position
+        let overallBefore: Int
+        let overallAfter: Int
+    }
+
+    /// The §5.3 conversion tick the weekly focus pass opens with.
+    ///
+    /// Unlike the two above this one IS called — once per club per week by the
+    /// synced `applyWeeklyFocusTick` — so it cannot fail loud. It returns the
+    /// empty list, which is EXACTLY what the shipped function returns here: a
+    /// conversion only exists for a player with `trainingPosition != nil`, and
+    /// no harness scenario ever sets one. The stub is the shipped behaviour for
+    /// this input, not an approximation of it.
+    static func tickConversions(roster: [Player], coaches: [Coach]) -> [CompletedConversion] {
+        []
+    }
+
+    /// A conversion the staff would sign off on. Opaque here — the harness only
+    /// needs the TYPE so `aiConsiderConversion`'s signature compiles.
+    struct ConversionOffer {}
+
+    /// The AI club's weekly "should we move somebody?" roll, called by the
+    /// synced `TrainingFocusEngine.autoAssignFocus`.
+    ///
+    /// Returns `nil` — no club ever starts a conversion in a harness run. That
+    /// is a deliberate scope exclusion, not an oversight: the shipped decision
+    /// runs through `conversionOffers` → `VersatilityEngine.rate`, the
+    /// positional-fit grader the harness does not compile (same reason
+    /// `versatilityCeiling` above fails loud), and development plan §3 puts
+    /// position conversions out of scope for the balance measurements. Every
+    /// player therefore stays at his drafted position for the whole run.
+    @discardableResult
+    static func aiConsiderConversion(roster: [Player], coaches: [Coach]) -> ConversionOffer? {
+        nil
+    }
+}
+
+// MARK: - Incentive-package stub (UNREACHABLE in this harness)
+//
+// `MotivationState.incentiveChaseScore` — trigger 5b of the §2.3 table, and part
+// of the verbatim `MotivationState.swift` the `career` scenario compiles — asks
+// whether a player is carrying live incentive clauses. The real registry
+// (`Domain/Models/Contract/Contract.swift`) keeps those packages in
+// career-scoped `UserDefaults`, written only by the contract-negotiation screen,
+// and depends on `CareerScopedDefaults` / SwiftData `Player.careerID`, none of
+// which the harness has.
+//
+// Same argument as the `FaceLibrary` stub above: a package can only exist
+// because a user negotiated one, so in a harness run every player has none. The
+// stub returns the empty package for everybody, which makes `incentiveChaseScore`
+// return 0 — byte-identical to what the shipped code returns for a synthetic
+// league — and the synced source stays verbatim.
+struct ContractIncentive {}
+
+enum ContractIncentiveRegistry {
+    static func incentives(for player: Player) -> [ContractIncentive] { [] }
+    static func hasIncentives(for player: Player) -> Bool { false }
 }
 
 // MARK: - SimPlayer.init(from:) — harness overload

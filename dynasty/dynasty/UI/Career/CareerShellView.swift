@@ -1091,7 +1091,7 @@ struct CareerShellView: View {
         case .interviewReport:
             // Hint to ScoutingHubView to auto-select the Interviews tab so the
             // saved interview report is visible immediately.
-            UserDefaults.standard.set("interviews", forKey: "scoutingPendingTab")
+            CareerScopedDefaults.set("interviews", "scoutingPendingTab")
             shellDest = .scouting
         case .personalWorkouts:   shellDest = .scouting
         case .developmentReport:  shellDest = .developmentReport
@@ -1179,17 +1179,17 @@ struct CareerShellView: View {
 
             // Review Roster tasks — check actual game state / user confirmations
             case "Review Position Group Grades":
-                if UserDefaults.standard.bool(forKey: "rosterEvaluationConfirmed") {
+                if CareerScopedDefaults.bool("rosterEvaluationConfirmed") {
                     currentTasks[index].status = .done
                 }
             case "Analyze Contract Situations":
-                if UserDefaults.standard.bool(forKey: "rosterEvaluationConfirmed") {
+                if CareerScopedDefaults.bool("rosterEvaluationConfirmed") {
                     currentTasks[index].status = .done
                 }
             case "Franchise Tag Decisions":
                 // Complete if a franchise tag was applied OR the user confirmed evaluation
                 let hasFranchiseTag = players.contains { $0.isFranchiseTagged }
-                if hasFranchiseTag || UserDefaults.standard.bool(forKey: "franchiseTagVisited") {
+                if hasFranchiseTag || CareerScopedDefaults.bool("franchiseTagVisited") {
                     currentTasks[index].status = .done
                 }
             case "Check Salary Cap Outlook":
@@ -1198,23 +1198,23 @@ struct CareerShellView: View {
                     currentTasks[index].status = .done
                 }
             case "Set Roster Priorities":
-                if let data = UserDefaults.standard.string(forKey: "rosterPriorities"),
+                if let data = CareerScopedDefaults.string("rosterPriorities"),
                    !data.isEmpty, data != "{}" {
                     currentTasks[index].status = .done
                 }
 
             // Combine — sequential task unlocking
             case "Send scouts to Combine":
-                if UserDefaults.standard.bool(forKey: "scoutsSentToCombine") {
+                if CareerScopedDefaults.bool("scoutsSentToCombine") {
                     currentTasks[index].status = .done
                 }
 
             case "Review Combine results":
                 // Locked until scouts sent
-                let scoutsSent = UserDefaults.standard.bool(forKey: "scoutsSentToCombine")
+                let scoutsSent = CareerScopedDefaults.bool("scoutsSentToCombine")
                 if !scoutsSent {
                     currentTasks[index].status = .todo
-                } else if UserDefaults.standard.bool(forKey: "combineResultsReviewed") {
+                } else if CareerScopedDefaults.bool("combineResultsReviewed") {
                     // User visited the Combine tab after scouts were sent
                     currentTasks[index].status = .done
                 }
@@ -1234,13 +1234,13 @@ struct CareerShellView: View {
                 let interviewsDone = currentTasks.first(where: { $0.title == "Conduct prospect interviews" })?.status == .done
                 if !interviewsDone {
                     currentTasks[index].status = .todo
-                } else if UserDefaults.standard.bool(forKey: "interviewReportReviewed") {
+                } else if CareerScopedDefaults.bool("interviewReportReviewed") {
                     // User opened/closed the InterviewReportView → report reviewed
                     currentTasks[index].status = .done
                 } else if career.interviewsUsed >= 60 {
                     // Backstop for stuck saves: all 60 interviews used means the
                     // post-interview report was shown automatically; treat as reviewed.
-                    UserDefaults.standard.set(true, forKey: "interviewReportReviewed")
+                    CareerScopedDefaults.set(true, "interviewReportReviewed")
                     currentTasks[index].status = .done
                 }
 

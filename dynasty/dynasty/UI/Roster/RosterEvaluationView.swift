@@ -70,10 +70,10 @@ struct RosterEvaluationView: View {
     @State private var showCapDetailPopover = false
 
     // MARK: - Roster Notes & Priorities (#245)
-    @AppStorage("rosterNotes") private var rosterNotesJSON: String = "{}"
-    @AppStorage("rosterPriorities") private var rosterPrioritiesJSON: String = "{}"
-    @AppStorage("rosterOwnAssessments") private var rosterOwnAssessmentsJSON: String = "{}"
-    @AppStorage("rosterEvaluationConfirmed") private var rosterEvaluationConfirmed: Bool = false
+    @CareerScopedStorage("rosterNotes") private var rosterNotesJSON: String = "{}"
+    @CareerScopedStorage("rosterPriorities") private var rosterPrioritiesJSON: String = "{}"
+    @CareerScopedStorage("rosterOwnAssessments") private var rosterOwnAssessmentsJSON: String = "{}"
+    @CareerScopedStorage("rosterEvaluationConfirmed") private var rosterEvaluationConfirmed: Bool = false
     @State private var editingGroup: EvalPositionGroup?
     @State private var editingNote: String = ""
     @State private var editingPriority: String = "none"
@@ -83,7 +83,7 @@ struct RosterEvaluationView: View {
     @State private var expandedDecisions: Set<UUID> = []
 
     // #252: Cap Scenario selection (persists across sessions)
-    @AppStorage("rosterCapScenario") private var selectedCapScenario: String = ""
+    @CareerScopedStorage("rosterCapScenario") private var selectedCapScenario: String = ""
     @State private var capScenarioConfirmation: String?
 
     // Own assessment options (#266)

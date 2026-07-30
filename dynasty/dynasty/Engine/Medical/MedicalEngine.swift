@@ -14,6 +14,7 @@ enum MedicalEngine {
     /// - R40: an optional league-setting frequency multiplier (off/low/normal)
     /// - Phase 2 (plan §2.9.6): camp workload — an overloaded or burned-out
     ///   body breaks down more often
+    /// - §5.4: the club's medical wing tier (`FacilityEngine`)
     ///
     /// R28 parity note: baseline incidence is unchanged — the only rate change
     /// is the opt-in rush-back multiplier, and injury-type selection is now
@@ -22,6 +23,9 @@ enum MedicalEngine {
     /// R40 parity note: `frequencyMultiplier` defaults to 1.0 (= today's exact
     /// rates); only careers created with a custom injury-frequency league
     /// setting pass anything else.
+    /// §5.4 parity note: the facility multiplier is 1.0 at the stored default
+    /// tier (league standard), so a save that has never touched the buildings
+    /// rolls the same rates it always did.
     static func injuryCheck(
         player: Player,
         playType: PlayType,
@@ -67,6 +71,12 @@ enum MedicalEngine {
         // `.healthy`. Only a genuinely over-worked player pays.
         risk *= workloadRiskMultiplier(player: player)
 
+        // §5.4: the medical wing the club pays for. A dated building misses the
+        // soft-tissue warning signs a state-of-the-art one catches, so this is
+        // a frequency lever, not a severity one. Neutral (×1.0) at the default
+        // tier — see `facilityRiskMultiplier`.
+        risk *= facilityRiskMultiplier(player: player)
+
         // Roll
         guard Double.random(in: 0...1) < risk else { return nil }
 
@@ -81,6 +91,15 @@ enum MedicalEngine {
     static func workloadRiskMultiplier(player: Player) -> Double {
         guard player.workloadStatusRaw != nil else { return 1.0 }
         return player.workloadStatus.injuryMultiplier
+    }
+
+    /// §5.4: medical-wing injury multiplier, resolved through the player's
+    /// club. `1.0` for a free agent, a player outside a SwiftData context, an
+    /// owner-less club, or — the normal case — a club sitting at the league
+    /// standard tier, so nothing that has not deliberately invested (or
+    /// disinvested) sees any change.
+    static func facilityRiskMultiplier(player: Player) -> Double {
+        FacilityEngine.injuryRiskMultiplier(levels: FacilityEngine.levels(forPlayer: player))
     }
 
     /// R28: re-injury risk multiplier during the post-rush-back window.
@@ -114,10 +133,18 @@ enum MedicalEngine {
     ///
     /// - Physio reduces recovery by up to 25%
     /// - Doctor reduces recovery by up to 15%
+    /// - §5.4: the club's recovery centre scales the whole prognosis
+    ///
+    /// `facilityMultiplier` defaults to 1.0 so the formula is unchanged for
+    /// any caller that has no club to read (and for a club at the standard
+    /// tier). `applyInjury` is the one caller that has a player in hand, and
+    /// it passes the real number — which covers both the weekly sim and the
+    /// coached game, since both apply their injuries through it.
     static func recoveryWeeks(
         injury: InjuryType,
         physio: Coach?,
-        doctor: Coach?
+        doctor: Coach?,
+        facilityMultiplier: Double = 1.0
     ) -> Int {
         let base = Int.random(in: injury.baseRecoveryWeeks)
 
@@ -133,12 +160,22 @@ enum MedicalEngine {
             modifier -= Double(doc.playerDevelopment) / 660.0
         }
 
+        // The building the rehab happens in.
+        modifier *= facilityMultiplier
+
         return max(1, Int(Double(base) * modifier))
+    }
+
+    /// §5.4: recovery-centre multiplier on an injury prognosis, resolved
+    /// through the player's club. `1.0` at the standard tier.
+    static func facilityRecoveryMultiplier(player: Player) -> Double {
+        FacilityEngine.recoveryWeeksMultiplier(levels: FacilityEngine.levels(forPlayer: player))
     }
 
     /// Weekly fatigue recovery amount, improved by physio quality.
     ///
     /// Base recovery is 15 fatigue points per week, with physio adding up to 10 extra.
+    /// §5.4: the recovery centre adds a flat ±0-4 on top (0 at the standard tier).
     static func weeklyFatigueRecovery(player: Player, physio: Coach?) -> Int {
         var recovery = 15  // Base: recover 15 fatigue per week
 
@@ -146,7 +183,11 @@ enum MedicalEngine {
             recovery += Int(Double(physio.playerDevelopment) / 10.0)  // Up to +10 extra
         }
 
-        return recovery
+        recovery += FacilityEngine.fatigueRecoveryBonus(
+            levels: FacilityEngine.levels(forPlayer: player)
+        )
+
+        return max(1, recovery)
     }
 
     /// Apply an injury to a player, setting all relevant properties.
@@ -163,7 +204,12 @@ enum MedicalEngine {
         season: Int = 0,
         week: Int = 0
     ) {
-        let weeks = recoveryWeeks(injury: injuryType, physio: physio, doctor: doctor)
+        let weeks = recoveryWeeks(
+            injury: injuryType,
+            physio: physio,
+            doctor: doctor,
+            facilityMultiplier: facilityRecoveryMultiplier(player: player)
+        )
         let priorSameType = player.priorInjuryCount(of: injuryType)
 
         player.isInjured = true
@@ -234,8 +280,13 @@ enum MedicalEngine {
         guard player.isInjured else { return RehabResult(status: .onTrack, recovered: false) }
 
         let skill = Double(trainer?.playerDevelopment ?? 0)
-        let aheadChance = 0.10 + skill * 0.001      // 10% … ~20%
-        let setbackChance = max(0.04, 0.10 - skill * 0.0006) // 10% … ~4%
+        // §5.4: the recovery centre shifts the odds ±0.03 either way, both
+        // directions at once — a good building creates good weeks and prevents
+        // bad ones. 0 at the standard tier, so the published 10/80/10 split is
+        // still exactly what a default club rolls.
+        let shift = FacilityEngine.rehabOddsShift(levels: FacilityEngine.levels(forPlayer: player))
+        let aheadChance = max(0.02, 0.10 + skill * 0.001 + shift)      // 10% … ~20%
+        let setbackChance = max(0.02, 0.10 - skill * 0.0006 - shift)   // 10% … ~4%
 
         let roll = Double.random(in: 0...1)
         let status: RehabStatus

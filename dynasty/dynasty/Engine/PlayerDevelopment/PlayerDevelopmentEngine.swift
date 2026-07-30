@@ -935,6 +935,14 @@ enum PlayerDevelopmentEngine {
             add(1)
         }
 
+        // 5b. Incentive chase (TODO §5.5) — the other way a season can still be
+        //     worth money to him. Same gate as trigger 5, and +1 by design:
+        //     stacked on the contract year the contract-driven half of the table
+        //     tops out at the `.driven` threshold, so a deal can tip a player
+        //     over on its own but only when nothing else about his season is
+        //     negative.
+        add(MotivationState.incentiveChaseScore(for: player))
+
         // 6. Just paid — the robust finding (reference §3): performance dips
         //    the season after a big guarantee, gated by drive. Winners are
         //    immune; money-motivated players slip further.
@@ -1715,6 +1723,12 @@ enum PlayerDevelopmentEngine {
     ///     with neutral defaults.
     ///   - environment: the team-level situation (scheme install year,
     ///     coordinator continuity — plan §2.9.2-3).
+    ///   - facilityMultiplier: 0.92-1.08 from the club's facility investment
+    ///     (`FacilityEngine.developmentMultiplier`). It scales the realization
+    ///     boost, i.e. how much of a man's ceiling the building lets him reach
+    ///     this year — a weight room is not a second die roll. Defaults to the
+    ///     neutral 1.0, so every caller that does not model facilities (the
+    ///     balance harness, unit-style callers) is byte-identical to before.
     ///   - onOutcome: Optional per-player callback fired once the player has
     ///     been fully processed, carrying the realization verdict (motivation,
     ///     plateau, late-bloomer, OVR delta) for the §2.10 narrative surfaces.
@@ -1726,9 +1740,15 @@ enum PlayerDevelopmentEngine {
         coaches: [Coach],
         inputs: [UUID: OffseasonInputs] = [:],
         environment: TeamEnvironment = TeamEnvironment(),
+        facilityMultiplier: Double = 1.0,
         onOutcome: ((OffseasonOutcome) -> Void)? = nil
     ) -> [String] {
         var events: [String] = []
+
+        // Clamped at the boundary rather than trusted: this is the one argument
+        // that arrives from a live, user-editable investment level, and a bad
+        // tier must not be able to multiply a whole roster's development.
+        let facilityFactor = min(1.08, max(0.92, facilityMultiplier))
 
         // Task #29: last season's depth-chart rung for every man on this roster,
         // so the playing-time share below is a LADDER rather than the binary
@@ -1765,7 +1785,7 @@ enum PlayerDevelopmentEngine {
                 playingTimeShare: playingTimeShare,
                 health: health
             )
-            var realizationBoost = 1.0
+            var realizationBoost = facilityFactor
             var lateBloomerBreakout = false
             let plateaued = isPlateaued(
                 player: player,
@@ -1775,7 +1795,10 @@ enum PlayerDevelopmentEngine {
                 role: role
             )
             if plateaued, rollsLateBloomerBreakout(player: player, inputs: playerInputs) {
-                realizationBoost = lateBloomerRealizationBoost
+                // Multiplied, not assigned: the late-career leap happens INSIDE
+                // a building, and assigning here would silently hand every
+                // late bloomer in the league a neutral facility.
+                realizationBoost *= lateBloomerRealizationBoost
                 lateBloomerBreakout = true
                 events.append("\(player.fullName) has finally put it together — a late-career leap.")
             }

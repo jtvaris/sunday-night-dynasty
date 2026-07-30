@@ -213,6 +213,14 @@ struct CoachDetailView: View {
 
     private var developmentSection: some View {
         Section("Development") {
+            // TODO §5.7 — developer reputation. `Coach.reputation` only ever
+            // moved on the team's record, so a staff that turned three rookies
+            // into starters during a 5-12 season read as a failure. This is the
+            // other half: what the young players on his watch actually gained,
+            // measured off `PlayerSeasonHistory` deltas, blended with his
+            // development attributes until there is a record to blend with.
+            developerReputationChip
+
             // Fuzzy potential label — accuracy improves with tenure
             let seasonsOnTeam: Int = {
                 guard let currentSeason = career?.currentSeason,
@@ -263,6 +271,51 @@ struct CoachDetailView: View {
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// TODO §5.7 — the chip that puts a coach's development record on his card.
+    ///
+    /// The detail line is deliberately explicit about which of the two states
+    /// the number is in: "Projected" while the score is still an attribute
+    /// read, the measured tally once completed seasons exist. A player looking
+    /// at a hire needs to know whether he is reading a promise or a result.
+    private var developerReputationChip: some View {
+        let record = CoachDevelopmentEngine.developerRecord(
+            coach: coach,
+            currentSeason: career?.currentSeason
+        )
+        return VStack(alignment: .leading, spacing: 4) {
+            LabeledContent("Developer Reputation") {
+                HStack(spacing: 6) {
+                    Text(record.tier)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(developerScoreColor(record.score))
+                    Text("\(record.score)")
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(developerScoreColor(record.score))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(developerScoreColor(record.score).opacity(0.15))
+                        )
+                }
+            }
+            Text(record.detail)
+                .font(.caption)
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func developerScoreColor(_ score: Int) -> Color {
+        switch score {
+        case 85...:   return Color.accentGold
+        case 72..<85: return .green
+        case 58..<72: return Color.accentBlue
+        case 45..<58: return Color.textSecondary
+        case 32..<45: return .orange
+        default:      return .red
+        }
     }
 
     /// Color for the fuzzy potential label.

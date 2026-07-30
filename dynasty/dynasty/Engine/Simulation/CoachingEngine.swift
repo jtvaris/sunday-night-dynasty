@@ -1222,6 +1222,92 @@ enum CoachingEngine {
             + coach.discipline + coach.mediaHandling + coach.contractNegotiation + coach.moraleInfluence) / 12
     }
 
+    // MARK: - Developer Reputation as Free-Agent Appeal (TODO §5.7)
+
+    /// Bounds of the free-agency multiplier. A staff cannot buy a player, but a
+    /// reputation for making players better is worth roughly the same as a
+    /// modest contract sweetener — which is what ±15 % of a decision score is.
+    static let developmentAppealRange: ClosedRange<Double> = 0.85...1.15
+
+    /// How much a franchise's coaching staff is worth to a free agent who cares
+    /// about getting better, expressed as a multiplier on his decision score.
+    ///
+    /// `1.0` is a neutral staff (and the value for a team with no staff at all,
+    /// so a missing lookup can never quietly favour or punish anyone).
+    /// Below `1.0` a player would rather be coached somewhere else; above it,
+    /// the building itself is part of the pitch.
+    ///
+    /// The score behind it is `CoachDevelopmentEngine.DeveloperRecord.score` —
+    /// each coach's development attributes blended with what the young players
+    /// on his watch actually gained (`PlayerSeasonHistory` deltas). Early in a
+    /// career that is a projection off attributes; after a few seasons it is a
+    /// record, and a staff that lets rookies stagnate loses the pitch it was
+    /// hired on.
+    ///
+    /// ## Weighting
+    ///
+    /// A free agent's development is not the head coach's personal project: the
+    /// position coach runs his drills, the coordinator runs his unit, and the
+    /// head coach sets whether any of that is taken seriously. So the staff
+    /// score is a weighted blend rather than the HC's number — and a team with
+    /// a great HC and nobody under him does not get to claim a great classroom.
+    ///
+    /// - Parameters:
+    ///   - teamID: The franchise being evaluated.
+    ///   - coaches: Coaches to consider — the league-wide array is fine, it is
+    ///     filtered to `teamID` here.
+    static func developmentAppeal(teamID: UUID, coaches: [Coach]) -> Double {
+        let staff = coaches.filter { $0.teamID == teamID && !$0.isRetired }
+        guard !staff.isEmpty else { return 1.0 }
+
+        // Resolved once for the whole staff: the free-agency loop calls this per
+        // candidate per team, and letting each coach look the season up himself
+        // would turn one `Career` read into one per seat.
+        let season = staff.lazy.compactMap { CoachDevelopmentEngine.activeSeason(for: $0) }.first
+
+        func averageScore(_ group: [Coach]) -> Double? {
+            guard !group.isEmpty else { return nil }
+            let total = group.reduce(0.0) {
+                $0 + Double(CoachDevelopmentEngine.developerRecord(coach: $1, currentSeason: season).score)
+            }
+            return total / Double(group.count)
+        }
+
+        let headCoach = averageScore(staff.filter { $0.role == .headCoach })
+        let coordinators = averageScore(staff.filter {
+            $0.role == .assistantHeadCoach
+                || $0.role == .offensiveCoordinator
+                || $0.role == .defensiveCoordinator
+                || $0.role == .specialTeamsCoordinator
+        })
+        let positionCoaches = averageScore(staff.filter { positionCoachRoles.contains($0.role) })
+
+        // Missing layers are dropped rather than defaulted: an empty seat is
+        // not a 50-rated coach, it is one fewer voice in the blend, and the
+        // remaining weights renormalise around it.
+        let layers: [(score: Double, weight: Double)] = [
+            headCoach.map { ($0, 0.35) },
+            coordinators.map { ($0, 0.30) },
+            positionCoaches.map { ($0, 0.35) },
+        ].compactMap { $0 }
+        guard !layers.isEmpty else { return 1.0 }
+
+        let totalWeight = layers.reduce(0.0) { $0 + $1.weight }
+        let staffScore = layers.reduce(0.0) { $0 + $1.score * $1.weight } / totalWeight
+
+        // 50 (a league-average staff) maps to exactly 1.0; the ends of the
+        // rating scale reach the ends of the band.
+        let appeal = 1.0 + (staffScore - 50.0) / 50.0 * 0.15
+        return min(developmentAppealRange.upperBound, max(developmentAppealRange.lowerBound, appeal))
+    }
+
+    /// The roles that actually stand in front of a position group at practice.
+    /// Medical staff develop nobody's technique, so they are not in the blend.
+    private static let positionCoachRoles: Set<CoachRole> = [
+        .qbCoach, .rbCoach, .wrCoach, .olCoach,
+        .dlCoach, .lbCoach, .dbCoach, .strengthCoach,
+    ]
+
     // MARK: - Coordinator Poaching
 
     /// Evaluates a coaching staff and returns the subset of coordinators or position coaches

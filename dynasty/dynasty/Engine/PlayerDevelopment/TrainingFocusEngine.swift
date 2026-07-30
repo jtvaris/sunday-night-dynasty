@@ -148,7 +148,27 @@ enum TrainingFocusEngine {
     /// Runs the weekly focus roll for a single team's roster.
     /// Injured and holdout players never gain; the 3-slot cap is enforced
     /// here too in case stale focus flags linger after trades/cuts.
-    static func applyWeeklyFocusTick(roster: [Player], coaches: [Coach]) -> [FocusGain] {
+    ///
+    /// §5.3: this is also where position conversions land. The weekly pass
+    /// runs for all 32 clubs, which is exactly the coverage a conversion needs
+    /// — the familiarity itself is banked by the in-season and offseason
+    /// training passes, and this only decides when a man has banked enough to
+    /// change positions for good.
+    ///
+    /// The conversions this tick completed are handed back through `conversions`
+    /// rather than the return value, so the existing `[FocusGain]` contract (and
+    /// every caller that only wants the attribute bumps) is untouched. A
+    /// completed conversion is a permanent, visible change to a man's job title
+    /// — `WeekAdvancer` publishes each one as league news — so it must not stay
+    /// a silent side effect of a development pass.
+    static func applyWeeklyFocusTick(
+        roster: [Player],
+        coaches: [Coach],
+        conversions: inout [VersatilityDevelopmentEngine.CompletedConversion]
+    ) -> [FocusGain] {
+        conversions.append(contentsOf:
+            VersatilityDevelopmentEngine.tickConversions(roster: roster, coaches: coaches))
+
         var gains: [FocusGain] = []
 
         let focused = roster
@@ -175,6 +195,14 @@ enum TrainingFocusEngine {
             }
         }
         return gains
+    }
+
+    /// Convenience overload for callers with nothing to announce (the balance
+    /// harness, and any future pass that only wants the attribute bumps).
+    /// Identical behaviour — the conversions still run, they are just dropped.
+    static func applyWeeklyFocusTick(roster: [Player], coaches: [Coach]) -> [FocusGain] {
+        var ignored: [VersatilityDevelopmentEngine.CompletedConversion] = []
+        return applyWeeklyFocusTick(roster: roster, coaches: coaches, conversions: &ignored)
     }
 
     /// Probability (0-0.6) that a focused player converts this week's extra
@@ -228,7 +256,18 @@ enum TrainingFocusEngine {
     /// AI counterpart of the user's manual selection: keeps up to 3 focus
     /// slots filled with the team's best young players (highest potential,
     /// then youngest). Recycles slots held by players past their peak.
+    ///
+    /// §5.3: also the AI's conversion desk. This is the only weekly hook that
+    /// runs for the other 31 clubs and NOT for the user's, which is what a
+    /// conversion decision needs — the user makes his own on the development
+    /// screen, and an AI pass that also moved his players would be reaching
+    /// over his shoulder.
     static func autoAssignFocus(roster: [Player]) {
+        // No staff in hand here (the caller keeps coaches for the focus tick),
+        // which only costs the offer's week estimate — a display field the AI
+        // never reads.
+        VersatilityDevelopmentEngine.aiConsiderConversion(roster: roster, coaches: [])
+
         // Free slots wasted on post-peak players.
         for player in roster where player.trainingFocusArea != nil
             && player.age > player.position.peakAgeRange.upperBound {

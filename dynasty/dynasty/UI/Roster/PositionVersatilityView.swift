@@ -218,7 +218,7 @@ struct PositionVersatilityView: View {
             if let player = selectedPlayer, let pos = trainTargetPosition {
                 let ceiling = VersatilityDevelopmentEngine.versatilityCeiling(player: player, at: pos)
                 let current = player.familiarity(at: pos)
-                Text("Train \(player.fullName) at \(pos.rawValue)?\nCurrent: \(current)% / Ceiling: \(ceiling)%\nThis is a slow process that takes multiple seasons.")
+                Text("Train \(player.fullName) at \(pos.rawValue)?\nCurrent: \(current)% / Ceiling: \(ceiling)%\nThis is a slow process that takes multiple seasons. At \(VersatilityDevelopmentEngine.conversionCommitFamiliarity)% familiarity the move becomes PERMANENT — he changes position for good and his ratings are rebuilt around \(pos.rawValue). Stop the programme before then if you only want a backup there.")
             }
         }
     }
@@ -303,26 +303,34 @@ struct PositionVersatilityView: View {
 
             // Training status badge
             if let trainingPos = player.trainingPosition, trainingPos != player.position {
-                HStack(spacing: 6) {
-                    Image(systemName: "figure.run")
-                        .font(.caption)
-                        .foregroundStyle(Color.accentGold)
-                    Text("Training at \(trainingPos.rawValue)")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentGold)
-                    Spacer()
-                    Button {
-                        player.trainingPosition = nil
-                        try? modelContext.save()
-                    } label: {
-                        Text("Stop")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(Color.danger)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color.danger.opacity(0.15), in: Capsule())
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "figure.run")
+                            .font(.caption)
+                            .foregroundStyle(Color.accentGold)
+                        Text("Training at \(trainingPos.rawValue)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentGold)
+                        Spacer()
+                        Button {
+                            player.trainingPosition = nil
+                            try? modelContext.save()
+                        } label: {
+                            Text("Stop")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(Color.danger)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.danger.opacity(0.15), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                    // §5.3: the programme is not just cross-training any more —
+                    // it converts him for good once he has banked enough.
+                    Text("Converts permanently at \(VersatilityDevelopmentEngine.conversionCommitFamiliarity)% familiarity (\(player.familiarity(at: trainingPos))% now), unless he is the outright starter at \(player.position.rawValue).")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(8)
                 .background(Color.accentGold.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))

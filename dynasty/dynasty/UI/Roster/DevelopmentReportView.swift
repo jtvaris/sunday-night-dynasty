@@ -8,7 +8,9 @@ import SwiftData
 ///    position-relevant skill area (young players convert reps the best).
 /// 2. Mentorships — the active R25 veteran → youngster pairs and their
 ///    +10% development boost, surfaced instead of hidden in the engine.
-/// 3. Weekly Development Reports — who improved and why, who is stalled.
+/// 3. Position Conversions (§5.3) — buried players the staff would move to a
+///    position that needs them, and the paths already running.
+/// 4. Weekly Development Reports — who improved and why, who is stalled.
 struct DevelopmentReportView: View {
 
     let career: Career
@@ -16,6 +18,7 @@ struct DevelopmentReportView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var players: [Player] = []
+    @State private var coaches: [Coach] = []
     @State private var showFocusPicker = false
 
     // MARK: - Derived
@@ -38,6 +41,32 @@ struct DevelopmentReportView: View {
         max(0, TrainingFocusEngine.maxFocusPlayersPerTeam - focusedPlayers.count)
     }
 
+    /// One row of the "already converting" list.
+    private struct ActiveConversion: Identifiable {
+        let player: Player
+        let progress: VersatilityDevelopmentEngine.ConversionProgress
+        var id: UUID { player.id }
+    }
+
+    /// §5.3: players already on a conversion path, and what the staff would
+    /// raise next. Offers exclude anyone already converting, so the two lists
+    /// never show the same man twice.
+    private var activeConversions: [ActiveConversion] {
+        players.compactMap { player in
+            VersatilityDevelopmentEngine.activeConversion(for: player)
+                .map { ActiveConversion(player: player, progress: $0) }
+        }
+        .sorted { $0.progress.fraction > $1.progress.fraction }
+    }
+
+    private var conversionOffers: [VersatilityDevelopmentEngine.ConversionOffer] {
+        VersatilityDevelopmentEngine.conversionOffers(roster: players, coaches: coaches)
+    }
+
+    private var conversionSlotsFree: Bool {
+        activeConversions.count < VersatilityDevelopmentEngine.maxActiveConversions
+    }
+
     /// Candidates for a new focus slot: unfocused, young-first.
     private var focusCandidates: [Player] {
         players
@@ -58,6 +87,7 @@ struct DevelopmentReportView: View {
                 VStack(spacing: DSSpacing.lg) {
                     instructionBanner
                     focusSection
+                    conversionSection
                     mentorSection
                     reportsSection
                 }
@@ -225,6 +255,181 @@ struct DevelopmentReportView: View {
                 Capsule().fill(Color.accentBlue.opacity(0.12))
             )
         }
+    }
+
+    // MARK: - Conversion Section (§5.3)
+
+    private var conversionSection: some View {
+        VStack(alignment: .leading, spacing: DSSpacing.sm) {
+            HStack {
+                SectionHeaderText(title: "Position Conversions")
+                Spacer()
+                Text("\(activeConversions.count)/\(VersatilityDevelopmentEngine.maxActiveConversions) paths")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textSecondary)
+            }
+
+            Text("Moving a man is a rebuild, not a depth-chart edit: he cross-trains for weeks, then takes a one-off rating hit as he learns a new job. Young players earn it back. Veterans mostly do not, which is why they are never suggested.")
+                .font(.caption)
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ForEach(activeConversions) { row in
+                activeConversionRow(row.player, row.progress)
+            }
+
+            if conversionOffers.isEmpty {
+                if activeConversions.isEmpty {
+                    emptyStateText("No conversions on the board. The staff raises one when a young player is buried at his own position and profiles at one the roster is thin at.")
+                }
+            } else {
+                ForEach(conversionOffers) { offer in
+                    conversionOfferRow(offer)
+                }
+            }
+        }
+        .padding(16)
+        .cardBackground()
+    }
+
+    private func activeConversionRow(
+        _ player: Player,
+        _ progress: VersatilityDevelopmentEngine.ConversionProgress
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                positionBadge(player.position)
+                Image(systemName: "arrow.right")
+                    .font(.caption)
+                    .foregroundStyle(Color.textTertiary)
+                positionBadge(progress.target)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(player.fullName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text(
+                        progress.familiarity >= progress.threshold
+                            ? "Ready to switch — held until he isn't starting at \(player.position.rawValue)"
+                            : "\(progress.familiarity)% learned · switches at \(progress.threshold)%"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(
+                        progress.familiarity >= progress.threshold ? Color.success : Color.textSecondary
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                Button {
+                    VersatilityDevelopmentEngine.cancelConversion(player: player)
+                    try? modelContext.save()
+                    loadPlayers()
+                } label: {
+                    Text("Stop")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Color.danger)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.danger.opacity(0.15)))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Stop converting \(player.fullName)")
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.backgroundSecondary)
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.accentGold)
+                        .frame(width: geo.size.width * progress.fraction)
+                }
+            }
+            .frame(height: 6)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(Color.backgroundTertiary)
+        )
+    }
+
+    private func conversionOfferRow(
+        _ offer: VersatilityDevelopmentEngine.ConversionOffer
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Text(offer.headline)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button {
+                    accept(offer)
+                } label: {
+                    Text("Start")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.backgroundPrimary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule().fill(conversionSlotsFree ? Color.accentGold : Color.textTertiary.opacity(0.4))
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(!conversionSlotsFree)
+            }
+
+            Text(offer.rationale)
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                Label(
+                    offer.overallDelta >= 0 ? "+\(offer.overallDelta) OVR" : "\(offer.overallDelta) OVR",
+                    systemImage: offer.overallDelta >= 0 ? "arrow.up.right" : "arrow.down.right"
+                )
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(offer.overallDelta >= 0 ? Color.success : Color.warning)
+
+                if let weeks = offer.weeksEstimate {
+                    Label(
+                        weeks <= 0 ? "ready now" : "~\(weeks) wk of reps",
+                        systemImage: "calendar"
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+                } else {
+                    Label("needs an offseason", systemImage: "calendar")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                }
+
+                Label("\(offer.familiarity)% learned", systemImage: "brain.head.profile")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(Color.backgroundSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                        .strokeBorder(Color.surfaceBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private func accept(_ offer: VersatilityDevelopmentEngine.ConversionOffer) {
+        guard conversionSlotsFree,
+              let player = players.first(where: { $0.id == offer.playerID }) else { return }
+        guard VersatilityDevelopmentEngine.startConversion(player: player, to: offer.to) else { return }
+        try? modelContext.save()
+        loadPlayers()
     }
 
     // MARK: - Mentor Section
@@ -516,5 +721,8 @@ struct DevelopmentReportView: View {
         guard let teamID = career.teamID else { return }
         let descriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.teamID == teamID })
         players = (try? modelContext.fetch(descriptor)) ?? []
+        // §5.3: the conversion offers need the staff for their week estimates.
+        let coachDesc = FetchDescriptor<Coach>(predicate: #Predicate<Coach> { $0.teamID == teamID })
+        coaches = (try? modelContext.fetch(coachDesc)) ?? []
     }
 }

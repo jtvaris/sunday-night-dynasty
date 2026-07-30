@@ -118,6 +118,9 @@ struct DepthChartView: View {
                             groupSection(group)
                                 .padding(.horizontal, 20)
                         }
+
+                        practiceSquadSection
+                            .padding(.horizontal, 20)
                     }
                     .padding(.vertical, 16)
                     .frame(maxWidth: DSLayout.contentMeasure)
@@ -161,6 +164,65 @@ struct DepthChartView: View {
         }
         .task {
             loadOrSeedDepthChart()
+        }
+    }
+
+    // MARK: - Practice Squad Section (§5.1)
+
+    /// The men one signature below the chart.
+    ///
+    /// Read-only on purpose: a squad player is not assignable to a depth slot —
+    /// he cannot dress — so putting him in the chart proper would be a lie the
+    /// simulator would then have to refuse. He shows up here filtered to the
+    /// side being viewed, as the answer to "who covers this hole if a starter
+    /// goes down", with promotion living on the roster screen where the
+    /// active-roster spot it costs is visible.
+    @ViewBuilder
+    private var practiceSquadSection: some View {
+        let squad = career.teamID.map { PracticeSquadEngine.squad(of: $0, in: allPlayers) } ?? []
+        let onThisSide = squad.filter { $0.position.side == selectedTab }
+
+        if !squad.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Label("Practice Squad", systemImage: "person.3.sequence.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                    Spacer()
+                    Text("\(squad.count)/\(PracticeSquadEngine.squadSize)")
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Color.textSecondary)
+                }
+
+                if onThisSide.isEmpty {
+                    Text("Nobody on this side of the ball.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                } else {
+                    ForEach(onThisSide, id: \.id) { player in
+                        HStack(spacing: 10) {
+                            Text(player.position.rawValue)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(Color.textSecondary)
+                                .frame(width: 34, alignment: .leading)
+                            Text(player.fullName)
+                                .font(.subheadline)
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            Text("\(player.overall)")
+                                .font(.subheadline.weight(.bold).monospacedDigit())
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                    }
+                }
+
+                Text("Squad players practise and develop with the team but cannot dress. Promote from the Roster screen.")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .padding(14)
+            .background(Color.backgroundSecondary, in: RoundedRectangle(cornerRadius: DSCornerRadius.card))
         }
     }
 

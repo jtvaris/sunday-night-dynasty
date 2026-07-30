@@ -38,7 +38,7 @@ enum MultiSeasonSmokeTest {
             FAStorylineEvent.self, Holdout.self, TrainingPlan.self,
             WorkloadEvent.self, PositionBattle.self, RosterCut.self,
             OpponentPrepWeek.self, VoluntaryWorkout.self, HardKnocksEvent.self,
-            TradeRecord.self,
+            TradeRecord.self, TeamSeasonArchive.self,
         ])
         guard let container = try? ModelContainer(
             for: schema,
@@ -53,6 +53,14 @@ enum MultiSeasonSmokeTest {
         // one list with the app's career-switch reset, so a newly added static
         // can never be wiped in one place and forgotten in the other.
         WeekAdvancer.resetProcessStateForCareerSwitch()
+
+        // Task #51: per-source development ledger, plus the per-run pyramid
+        // reference readings the 90+ / 33+ drift verdicts are taken against.
+        // Only this harness ever turns the ledger on — see
+        // `DevelopmentSourceDiag`.
+        DevelopmentSourceDiag.reset()
+        DevelopmentSourceDiag.isEnabled = true
+        resetPyramidBaselines()
 
         // League + career bootstrap (mirrors TeamSelectionView.startCareer,
         // except the user's team KEEPS its generated coaching staff — the
@@ -781,6 +789,14 @@ enum MultiSeasonSmokeTest {
               + "yp4to7=\(cohort(4...7)) yp8plus=\(vetText) "
               + String(format: "leaguePot=%.2f", avgPot))
 
+        // Task #51: which pass developed the league this season, in the same
+        // league-mean OVR points the drift gate is stated in.
+        if let devSources = DevelopmentSourceDiag.report(
+            seasonLabel: seasonLabel, rosteredCount: rostered.count
+        ) {
+            print(devSources)
+        }
+
         let unsigned = players.filter { $0.teamID == nil && !$0.isRetired }
         printPyramidDiagnostics(
             seasonLabel: "\(seasonLabel)",
@@ -819,6 +835,59 @@ enum MultiSeasonSmokeTest {
     /// verbatim mirror (400-league Monte-Carlo); the equilibrium numbers from
     /// `tools/balance-harness` `career` (20 leagues × 30 seasons, asserts 6.9a-g).
     /// Where the gate is wider than §8 the reason is named at the band.
+    ///
+    /// ## Two of the bands are SAMPLING gates, not level gates (task #51)
+    ///
+    /// The 90+ and 33+ shares are counts of a few dozen men in ONE 1 696-man
+    /// league, and an absolute band on a count that small is a coin flip. The
+    /// binomial standard error is the whole argument:
+    ///
+    ///     90+ : p = 0.0177 (leaguegen's 400-league pool) → σ = √(n·p·(1−p)) / n
+    ///                                                        = 5.43 / 1696 = 0.32 pp
+    ///     33+ : p = 0.024                                  → σ = 6.30 / 1696 = 0.37 pp
+    ///
+    /// The 90+ number is not a theory: `season=base` has measured 1.8 / 2.0 /
+    /// 2.2 / 2.2 / 2.7 % across runs — sample sd 0.33 pp, i.e. exactly the
+    /// binomial σ — **before a single week is simulated**, against an absolute
+    /// ceiling of 2.5. That band fires on ~1 run in 5 for no reason at all, and
+    /// a gate that cries wolf on season 0 teaches a reader to ignore it by
+    /// season 3, which is the failure mode the P1 wave was trying to close.
+    ///
+    /// So both are re-stated as DRIFT gates against this run's own `base`
+    /// reading, which removes the generator's roll from the comparison. Two
+    /// readings from one run are not independent, but ~half the population has
+    /// turned over by season 4, so σ_diff ≈ σ·√2 (0.45 pp for 90+, 0.53 pp for
+    /// 33+) and the allowances below are ≈3σ_diff one-sided. Each keeps a hard
+    /// ABSOLUTE ceiling as well, set where no amount of sampling can reach: 4 %
+    /// of a 1 696-man league is 68 blue chips, double §8's 25-35, which is a
+    /// shape failure and not a roll. The historical pathology these gates exist
+    /// for — 90+ drifting to 9.5 % — is +7.5 pp of drift, 17σ, and is caught by
+    /// the drift form far more sharply than by the absolute one.
+    ///
+    /// ## The DENOMINATOR moves between `base` and season 4 — read `faPool` (task #51)
+    ///
+    /// Every share here is over ROSTERED players, which is right (§8 describes
+    /// 53-man rosters). But `season=base` is measured at `faPool = 0` — the
+    /// generator emits exactly 32×53 bodies and nothing else exists — while by
+    /// season 4 the league also carries ~570 unsigned, unretired men that the
+    /// reading excludes. The rostered slice is therefore 100 % of the
+    /// population at base and ~75 % of it by season 4, and it is the TOP 75 %.
+    ///
+    /// Rebasing season 4 onto the base's whole-population denominator is an
+    /// upper bound on the correction (it assumes no unsigned man clears the
+    /// threshold, which is nearly true): 80+ 22.0 % → 16.5 %, 75+ 42.6 % →
+    /// 31.9 %, i.e. BOTH land inside band. So most of the apparent 80+ / 75+
+    /// drift is the slice narrowing, not extra development — the per-source
+    /// ledger says the same thing from the other direction, with every weekly
+    /// development pass summing to +0.07 mean OVR a season.
+    ///
+    /// This is left as a note rather than a change because it is a design
+    /// question, not an arithmetic one: whoever calibrates next has to decide
+    /// which population §8's bands describe before moving any constant. What is
+    /// NOT open is that a constant in `PlayerDevelopmentEngine` cannot be the
+    /// answer — `tools/balance-harness` `career` asserts sub-65 ≤ 25 % and
+    /// measures 24.94 %, so any shared constant that develops the league less
+    /// breaks 6.9d on its first run.
     private static func printPyramidDiagnostics(
         seasonLabel: String,
         rostered: [Player],
@@ -838,6 +907,14 @@ enum MultiSeasonSmokeTest {
         let sub65 = share { $0.overall < 65 }
         let a33 = share { $0.age >= 33 }
         let yp03 = share { $0.yearsPro <= 3 }
+        // Task #51: the veteran end of the AGE pyramid, which is where the
+        // shipped league's excess quality actually sits. The per-source ledger
+        // (`DevelopmentSourceDiag`) put every weekly development pass at
+        // +0.07 mean OVR a season combined, i.e. nowhere near the ~2 OVR gap to
+        // the balance harness — what moves is this share, 6.8 % at t=0 and
+        // 23.8 % by season 4, because the men the league sheds average OVR 66
+        // at age 26 and the men it keeps average 78 at 31.
+        let yp8 = share { $0.yearsPro >= 8 }
         let blueChips = Int((s90 / 100.0 * total).rounded())
         // Task #28: WHICH rooms the 33+ crowd is sitting in. The share alone
         // could not tell "the league ages evenly" from "two position rooms never
@@ -849,13 +926,32 @@ enum MultiSeasonSmokeTest {
         let oldOL = old.filter {
             [.LT, .LG, .C, .RG, .RT].contains($0.position)
         }.count
+        // The first call of a run is `season=base` — keep its 90+ / 33+ readings
+        // so every later season is graded against THIS league's own roll rather
+        // than against a band the roll alone can miss.
+        if seasonLabel == "base" {
+            baseline90Plus = s90
+            baselineAge33Plus = a33
+        }
+
+        // The two drift-graded shares print their drift on the LINE, not only
+        // when the gate fires. A ~3σ noise gate that stays quiet is not the
+        // same statement as "this share did not move", and the 33+ drift in
+        // particular has measured +1.0 / +1.2 / +1.4 pp across runs — real, and
+        // sitting just inside the gate. Hiding that behind a green verdict is
+        // exactly the reporting failure the drift form was meant to fix.
+        func versus(_ value: Double, _ base: Double) -> String {
+            guard base > 0, seasonLabel != "base" else { return "" }
+            return String(format: " (base %.1f, %+.1fpp)", base, value - base)
+        }
         print(String(
-            format: "SMOKE: diag pyramid season=%@ 90+=%.1f%% [0.8-2.5] (=%d blue chips) 80+=%.1f%% [12-19] "
+            format: "SMOKE: diag pyramid season=%@ 90+=%.1f%%%@ (=%d blue chips) 80+=%.1f%% [12-19] "
                   + "75+=%.1f%% [28-40] sub65=%.1f%% [15-30] "
-                  + "ageMed=%d ageMean=%.1f a33plus=%.1f%% [<=4] (n=%d qb=%d spec=%d ol=%d) "
-                  + "yp0to3=%.1f%% [45-55] faPool=%d",
-            seasonLabel, s90, blueChips, s80, s75, sub65,
-            medianAge, meanAge, a33, old.count, oldQB, oldSpec, oldOL, yp03, unsignedCount
+                  + "ageMed=%d ageMean=%.1f a33plus=%.1f%%%@ (n=%d qb=%d spec=%d ol=%d) "
+                  + "yp0to3=%.1f%% [45-55] yp8plus=%.1f%% faPool=%d",
+            seasonLabel, s90, versus(s90, baseline90Plus), blueChips, s80, s75, sub65,
+            medianAge, meanAge, a33, versus(a33, baselineAge33Plus),
+            old.count, oldQB, oldSpec, oldOL, yp03, yp8, unsignedCount
         ))
 
         var misses: [String] = []
@@ -863,33 +959,85 @@ enum MultiSeasonSmokeTest {
             guard value < lo || value > hi else { return }
             misses.append(String(format: "%@=%.1f%% (band %.1f-%.1f)", name, value, lo, hi))
         }
-        // 90+ : §8's blue-chip band is 1-2 % (25-35 players). The floor is 0.8
-        // rather than 1.0 because a single 1 696-man league is a ±0.25 pp sample
-        // on a 1.7 % share; the ceiling is the brief's 2.5 %.
-        band("90+", s90, 0.8, 2.5)
+        /// A share whose single-league sampling error is the same size as the
+        /// band anyone would write for it: graded as DRIFT from this run's own
+        /// `base` reading, with a hard absolute ceiling behind it. See the
+        /// binomial arithmetic in the doc comment above.
+        func driftBand(
+            _ name: String,
+            _ value: Double,
+            base: Double,
+            maxDrift: Double,
+            absoluteCeiling: Double,
+            absoluteFloor: Double
+        ) {
+            if value > absoluteCeiling || value < absoluteFloor {
+                misses.append(String(
+                    format: "%@=%.1f%% (absolute %.1f-%.1f)",
+                    name, value, absoluteFloor, absoluteCeiling
+                ))
+                return
+            }
+            guard base > 0, seasonLabel != "base" else { return }
+            let drift = value - base
+            guard drift > maxDrift else { return }
+            misses.append(String(
+                format: "%@=%.1f%% drift %+.1fpp from base %.1f%% (max %+.1fpp)",
+                name, value, drift, base, maxDrift
+            ))
+        }
+        // 90+ : σ = 0.32 pp on one league, so σ_diff ≈ 0.45 pp — the allowance
+        // is ≈3σ_diff. The absolute ceiling of 4.0 % (68 blue chips, double
+        // §8's 25-35) is the shape failure no roll reaches; the 0.8 % floor is
+        // still a level gate, because a league with no blue chips at all is
+        // broken however it got there.
+        driftBand("90+", s90, base: baseline90Plus,
+                  maxDrift: 1.3, absoluteCeiling: 4.0, absoluteFloor: 0.8)
         // 80+ / 75+ : §8 12-16 / 30-40, widened to the interval spanned by the two
         // measured sources (t=0 16.8/35.2 and equilibrium 17.3/30.6) plus sampling.
+        // These two count 300-700 men, so their sampling error is ~0.9 pp on a
+        // 7 pp band — level gates, as written.
         band("80+", s80, 12.0, 19.0)
         band("75+", s75, 28.0, 40.0)
         // sub-65 : §8 ~25 %. The floor is what catches the pathology this wave
         // fixed — a league with NO depth tier, which is what 7.9 % meant.
         band("sub65", sub65, 15.0, 30.0)
-        // 33+ : §8 wants ≤2 %; both sources sit at ~3.1-3.4 % and closing that is a
-        // retirement calibration (a separate wave). Banded so it cannot grow.
-        band("a33plus", a33, 0.0, 4.0)
+        // 33+ : §8 wants ≤2 %; both feeding sources sit at ~3.1-3.4 %, so the
+        // LEVEL is a retirement calibration nobody has run yet and an absolute
+        // band on it only ever re-reports that. What this run can own is
+        // whether the league AGES on top of that, which is the drift term
+        // (σ = 0.37 pp → σ_diff ≈ 0.53 pp, allowance ≈3σ_diff).
+        driftBand("a33plus", a33, base: baselineAge33Plus,
+                  maxDrift: 1.5, absoluteCeiling: 6.0, absoluteFloor: 0.0)
         band("yp0to3", yp03, 45.0, 55.0)
         if !misses.isEmpty {
             print("SMOKE: ANOMALY season=\(seasonLabel) §8 pyramid bands missed: "
                   + misses.joined(separator: ", ")
-                  + " — compare against `season=base` FIRST: one generated league is a"
-                  + " ±0.5pp sample on the 90+ share and season 0 has measured"
-                  + " 1.8/2.2/2.7% across runs, i.e. the band's 2.5 ceiling is inside"
-                  + " the generator's own spread. The draft-intake ratchet is fixed"
-                  + " (DraftClassBuilder.drawUpside — leaguePot no longer marches);"
-                  + " what remains is that the shipped season pipeline develops ~2 OVR"
-                  + " more than the balance harness at the same intake"
-                  + " — see printDriftDiagnostics")
+                  + " — the 90+ and 33+ verdicts are DRIFT from this run's own"
+                  + " `season=base` reading (binomial σ 0.32/0.37pp on one"
+                  + " 1696-man league makes an absolute band on either a coin"
+                  + " flip — see the doc comment). Task #51 measured where the"
+                  + " remaining quality drift comes from and it is NOT a"
+                  + " development pass: `diag devsource` puts camp+focus+"
+                  + "breakout+gameXP at +0.07 mean OVR a season combined,"
+                  + " against +1.6 for the offseason pass the balance harness"
+                  + " also runs. What moves is the AGE pyramid — `yp8plus`"
+                  + " triples and `diag retired` shows the league shedding"
+                  + " 66-OVR 26-year-olds while keeping 78-OVR 31-year-olds")
         }
+    }
+
+    /// `season=base` 90+ share for this run — the reference the drift verdict
+    /// is taken against. Reset per run by `resetPyramidBaselines`.
+    private static var baseline90Plus: Double = 0
+    /// `season=base` 33+ age share for this run.
+    private static var baselineAge33Plus: Double = 0
+
+    /// Clears the per-run pyramid reference readings. A second `run` in the same
+    /// process must not grade its seasons against the previous league's roll.
+    private static func resetPyramidBaselines() {
+        baseline90Plus = 0
+        baselineAge33Plus = 0
     }
 
     /// Phase-2 §5 stage-6 gate: the league morale distribution must sit in a
