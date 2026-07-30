@@ -23,8 +23,16 @@ extension Color {
     static let textPrimary = Color(red: 0.945, green: 0.961, blue: 0.976)
     /// Muted labels, captions `#94A3B8`
     static let textSecondary = Color(red: 0.580, green: 0.639, blue: 0.722)
-    /// Disabled, very subtle `#64748B`
-    static let textTertiary = Color(red: 0.392, green: 0.455, blue: 0.545)
+    /// Third-level text — axis ticks, units, meta captions `#8A96A8`
+    ///
+    /// Was `#64748B`, which measured 3.93 : 1 on `backgroundPrimary`,
+    /// 3.51 : 1 on `backgroundSecondary` and 3.06 : 1 on `backgroundTertiary`
+    /// — all under the WCAG AA 4.5 : 1 floor. The token is not decorative:
+    /// ~1200 call sites hang real information off it (morale axis ranges,
+    /// tiebreaker sub-records, "TAP FOR TIEBREAKERS"). Lightened to clear AA
+    /// on every surface the app actually paints it on:
+    /// primary 6.24 : 1, secondary 5.57 : 1, tertiary 4.87 : 1.
+    static let textTertiary = Color(red: 0.541, green: 0.588, blue: 0.659)
 
     // MARK: Semantic
     /// Good attributes, positive events `#22C55E`
@@ -78,15 +86,12 @@ extension Color {
     /// `#5BE08A`
     static let eliteGreen = Color(red: 0.357, green: 0.878, blue: 0.541)
 
-    /// Five-tier color for an overall rating value (0–99).
-    static func forRating(_ value: Int) -> Color {
-        switch value {
-        case 90...:   return .eliteGreen   // Elite
-        case 80..<90: return .success      // Good
-        case 70..<80: return .accentBlue   // Solid
-        case 60..<70: return .warning      // Average
-        default:      return .danger       // Poor
-        }
+    /// Five-tier color for a rating value.
+    ///
+    /// `scale` says which numeric scale the value lives on so a percentage and
+    /// an OVR can never disagree about the same number — see ``RatingScale``.
+    static func forRating(_ value: Int, scale: RatingScale = .absolute) -> Color {
+        forRatingTier(RatingTier(value: value, scale: scale))
     }
 
     /// Five-tier color for a position-group / roster-evaluation tier.
@@ -102,7 +107,21 @@ extension Color {
     }
 }
 
-/// Five-tier rating bucket. Keep aligned with `Color.forRating(_:)`.
+/// Which numeric scale a value handed to ``Color/forRating(_:scale:)`` lives on.
+///
+/// Both cases deliberately share the same band edges. The bug this exists to
+/// stop was scheme familiarity 62 % painting green on one screen while a 62 OVR
+/// painted yellow on the next — two bespoke colour ladders for the same digits.
+/// Declaring the scale at the call site keeps the intent readable, and leaves
+/// exactly one place to retune percentages should they ever need to diverge.
+enum RatingScale {
+    /// 0–99 player / team / attribute rating. The app default.
+    case absolute
+    /// 0–100 percentage — scheme familiarity, snap share, completion.
+    case percent
+}
+
+/// Five-tier rating bucket. Keep aligned with `Color.forRating(_:scale:)`.
 enum RatingTier {
     case elite, good, solid, average, poor
 
@@ -113,6 +132,15 @@ enum RatingTier {
         case 70..<80: self = .solid
         case 60..<70: self = .average
         default:      self = .poor
+        }
+    }
+
+    /// Bucket for a value on an explicit scale. Percentages map onto the OVR
+    /// ladder unchanged — that shared mapping is the whole point.
+    init(value: Int, scale: RatingScale) {
+        switch scale {
+        case .absolute: self.init(ovr: value)
+        case .percent:  self.init(ovr: min(value, 99))
         }
     }
 }

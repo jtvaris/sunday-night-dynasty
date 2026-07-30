@@ -84,7 +84,9 @@ struct TopNavigationBar: View {
             }
             .frame(alignment: .trailing)
         }
-        .padding(.horizontal, 16)
+        // 12 rather than 16: the 11 pt bookmark labels widened the strip, and
+        // the bar's own edge inset is the cheapest place to find the room.
+        .padding(.horizontal, 12)
         .frame(height: 52)
         .background(Color.backgroundPrimary)
     }
@@ -131,8 +133,13 @@ struct TopNavigationBar: View {
                             // person.3.fill), which pushed "Draft" a couple of
                             // points below its neighbours' baseline.
                             .frame(height: 18)
+                        // 9 pt left a 6.5 pt cap height — legible only if you
+                        // already knew what it said. 11 pt costs the strip
+                        // ~15 pt of total width (only "Standings" and
+                        // "Schedule" grow past the 44 pt touch target), which
+                        // the trimmed 12 pt bar padding below pays for.
                         Text(bookmark.label)
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.system(size: 11, weight: .medium))
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
                     }

@@ -29,6 +29,30 @@ struct StandingsView: View {
 
     private var playerTeamID: UUID? { career.teamID }
 
+    /// Current run of results per team, e.g. `W3` / `L2` / `T1`.
+    ///
+    /// `StandingsRecord` stores no streak, but the games it is aggregated from
+    /// do — and this uses the identical filter (`isPlayed && !isPlayoff`) the
+    /// calculator uses, so STRK can never contradict the W-L-T beside it.
+    private var streaks: [UUID: String] {
+        var byTeam: [UUID: [(week: Int, outcome: Character)]] = [:]
+
+        for game in seasonGames where game.isPlayed && !game.isPlayoff {
+            guard let home = game.homeScore, let away = game.awayScore else { continue }
+            let homeOutcome: Character = home > away ? "W" : (home < away ? "L" : "T")
+            let awayOutcome: Character = home > away ? "L" : (home < away ? "W" : "T")
+            byTeam[game.homeTeamID, default: []].append((game.week, homeOutcome))
+            byTeam[game.awayTeamID, default: []].append((game.week, awayOutcome))
+        }
+
+        return byTeam.compactMapValues { results in
+            let ordered = results.sorted { $0.week > $1.week }
+            guard let latest = ordered.first?.outcome else { return nil }
+            let run = ordered.prefix(while: { $0.outcome == latest }).count
+            return "\(latest)\(run)"
+        }
+    }
+
     /// Conference standings keyed by team for quick conference-rank lookup.
     private var conferenceRankings: [Conference: [UUID]] {
         var result: [Conference: [UUID]] = [:]
@@ -76,6 +100,9 @@ struct StandingsView: View {
                     VStack(spacing: 16) {
                         wildCardRaceBanner
 
+                        // Derived once per render, not once per division.
+                        let streaksByTeam = streaks
+
                         ForEach(Division.allCases, id: \.self) { division in
                             DivisionStandingsSection(
                                 conference: selectedConference,
@@ -84,6 +111,7 @@ struct StandingsView: View {
                                 teams: allTeams,
                                 playerTeamID: playerTeamID,
                                 conferenceRankings: conferenceRankings[selectedConference] ?? [],
+                                streaks: streaksByTeam,
                                 onTapRow: { detail in selectedRowDetail = detail }
                             )
                         }
@@ -252,6 +280,8 @@ private struct DivisionStandingsSection: View {
     let teams: [Team]
     let playerTeamID: UUID?
     let conferenceRankings: [UUID]
+    /// `teamID` → current streak string (`W3`), built once by the parent.
+    let streaks: [UUID: String]
     let onTapRow: (StandingsRowDetail) -> Void
 
     private var sortedRecords: [StandingsRecord] {
@@ -286,6 +316,7 @@ private struct DivisionStandingsSection: View {
                     team: team,
                     divisionRank: index + 1,
                     conferenceRank: confRank,
+                    streak: streaks[record.teamID],
                     isLeader: isLeader,
                     isPlayerTeam: isPlayerTeam
                 )
@@ -330,6 +361,22 @@ private struct DivisionStandingsSection: View {
     }
 }
 
+// MARK: - Standings Column Widths
+
+/// Shared column widths so the header and the rows can't drift apart.
+/// Total fixed width = 444 pt, leaving ≥ 300 pt for TEAM at every iPad size
+/// the app supports (the table caps at `DSLayout.wideMeasure`).
+private enum StandingsColumn {
+    static let seed:   CGFloat = 44
+    static let wlt:    CGFloat = 30
+    static let pct:    CGFloat = 46
+    /// Holds "2-1" and, in a tie year, "2-1-1" at 12 pt.
+    static let record: CGFloat = 46
+    static let streak: CGFloat = 42
+    static let points: CGFloat = 42
+    static let diff:   CGFloat = 46
+}
+
 // MARK: - Standings Header Row
 
 private struct StandingsHeaderRow: View {
@@ -339,14 +386,25 @@ private struct StandingsHeaderRow: View {
             Text("TEAM")
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            columnHeader("CONF", width: 44)
-            columnHeader("W",    width: 32)
-            columnHeader("L",    width: 32)
-            columnHeader("T",    width: 32)
-            columnHeader("PCT",  width: 48)
-            columnHeader("PF",   width: 48)
-            columnHeader("PA",   width: 48)
-            columnHeader("DIFF", width: 48)
+            // The old "CONF" header sat over a `#4` badge — that is a seed,
+            // not a conference record, and it occupied the name a real
+            // standings table needs for the conference W-L.
+            columnHeader("SEED", width: StandingsColumn.seed)
+            columnHeader("W",    width: StandingsColumn.wlt)
+            columnHeader("L",    width: StandingsColumn.wlt)
+            columnHeader("T",    width: StandingsColumn.wlt)
+            columnHeader("PCT",  width: StandingsColumn.pct)
+            // Division and conference records decide seeding before point
+            // differential does; both already lived in `StandingsRecord`,
+            // visible only after tapping through to the tiebreaker sheet.
+            columnHeader("DIV",  width: StandingsColumn.record)
+            columnHeader("CONF", width: StandingsColumn.record)
+            columnHeader("STRK", width: StandingsColumn.streak)
+            // PF/PA trimmed 48 → 42 to pay for the three new columns; scores
+            // are three digits at most, so nothing clips.
+            columnHeader("PF",   width: StandingsColumn.points)
+            columnHeader("PA",   width: StandingsColumn.points)
+            columnHeader("DIFF", width: StandingsColumn.diff)
         }
         .font(.system(size: 10, weight: .semibold))
         .foregroundStyle(Color.textTertiary)
@@ -368,6 +426,8 @@ private struct StandingsTeamRow: View {
     let team: Team?
     let divisionRank: Int
     let conferenceRank: Int?
+    /// `W3` / `L2` / `T1`, or nil before the team has played.
+    let streak: String?
     let isLeader: Bool
     let isPlayerTeam: Bool
 
@@ -387,6 +447,29 @@ private struct StandingsTeamRow: View {
         let d = record.pointDifferential
         if d > 0 { return "+\(d)" }
         return "\(d)"
+    }
+
+    private var divisionRecord: String {
+        record.divisionTies > 0
+            ? "\(record.divisionWins)-\(record.divisionLosses)-\(record.divisionTies)"
+            : "\(record.divisionWins)-\(record.divisionLosses)"
+    }
+
+    private var conferenceRecord: String {
+        record.conferenceTies > 0
+            ? "\(record.conferenceWins)-\(record.conferenceLosses)-\(record.conferenceTies)"
+            : "\(record.conferenceWins)-\(record.conferenceLosses)"
+    }
+
+    /// Green while winning, red while losing — the streak is the one column
+    /// here that describes momentum rather than the season total.
+    private var streakColor: Color {
+        guard let kind = streak?.first else { return Color.textTertiary }
+        switch kind {
+        case "W": return Color.success
+        case "L": return Color.danger
+        default:  return Color.textSecondary
+        }
     }
 
     /// Conference rank badge — color-coded by playoff seeding.
@@ -437,17 +520,20 @@ private struct StandingsTeamRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Conference rank cell
+            // Playoff seed cell
             confRankCell
 
             // Stats columns
-            statCell("\(record.wins)",        width: 32, color: Color.textPrimary)
-            statCell("\(record.losses)",      width: 32, color: Color.textPrimary)
-            statCell("\(record.ties)",        width: 32, color: Color.textSecondary)
-            statCell(pctFormatted,            width: 48, color: Color.textPrimary)
-            statCell("\(record.pointsFor)",   width: 48, color: Color.textSecondary)
-            statCell("\(record.pointsAgainst)", width: 48, color: Color.textSecondary)
-            statCell(diffFormatted,           width: 48, color: diffColor)
+            statCell("\(record.wins)",   width: StandingsColumn.wlt, color: Color.textPrimary)
+            statCell("\(record.losses)", width: StandingsColumn.wlt, color: Color.textPrimary)
+            statCell("\(record.ties)",   width: StandingsColumn.wlt, color: Color.textSecondary)
+            statCell(pctFormatted,       width: StandingsColumn.pct, color: Color.textPrimary)
+            recordCell(divisionRecord)
+            recordCell(conferenceRecord)
+            streakCell
+            statCell("\(record.pointsFor)",     width: StandingsColumn.points, color: Color.textSecondary)
+            statCell("\(record.pointsAgainst)", width: StandingsColumn.points, color: Color.textSecondary)
+            statCell(diffFormatted,             width: StandingsColumn.diff,   color: diffColor)
         }
         .font(.system(size: 14).monospacedDigit())
         .padding(.horizontal, 16)
@@ -477,7 +563,7 @@ private struct StandingsTeamRow: View {
                     .foregroundStyle(Color.textTertiary)
             }
         }
-        .frame(width: 44, alignment: .trailing)
+        .frame(width: StandingsColumn.seed, alignment: .trailing)
     }
 
     private func statCell(_ value: String, width: CGFloat, color: Color) -> some View {
@@ -486,10 +572,29 @@ private struct StandingsTeamRow: View {
             .frame(width: width, alignment: .trailing)
     }
 
+    /// Sub-records ride one step below the headline W-L-T: same column rhythm,
+    /// smaller type, so the eye still lands on the overall record first.
+    private func recordCell(_ value: String) -> some View {
+        Text(value)
+            .font(.system(size: 12, weight: .medium).monospacedDigit())
+            .foregroundStyle(Color.textSecondary)
+            .frame(width: StandingsColumn.record, alignment: .trailing)
+    }
+
+    private var streakCell: some View {
+        Text(streak ?? "—")
+            .font(.system(size: 12, weight: .bold).monospacedDigit())
+            .foregroundStyle(streakColor)
+            .frame(width: StandingsColumn.streak, alignment: .trailing)
+    }
+
     private var rowAccessibilityLabel: String {
         let name = team?.fullName ?? "Unknown team"
-        let confPart = conferenceRank.map { ", conference rank \($0)" } ?? ""
-        return "\(name), division rank \(divisionRank)\(confPart), \(record.wins) wins, \(record.losses) losses, \(record.ties) ties, " +
+        let seedPart = conferenceRank.map { ", conference seed \($0)" } ?? ""
+        let streakPart = streak.map { ", streak \($0)" } ?? ""
+        return "\(name), division rank \(divisionRank)\(seedPart), " +
+               "\(record.wins) wins, \(record.losses) losses, \(record.ties) ties, " +
+               "division \(divisionRecord), conference \(conferenceRecord)\(streakPart), " +
                "\(record.pointsFor) points for, \(record.pointsAgainst) points against"
     }
 }
@@ -562,7 +667,10 @@ private struct StandingsRowDetailSheet: View {
         HStack(spacing: 10) {
             rankBadge(label: "DIV", value: "#\(detail.divisionRank)", tint: Color.accentBlue)
             if let r = detail.conferenceRank {
-                rankBadge(label: "CONF", value: "#\(r)", tint: confRankColor(r))
+                // "SEED", matching the table column — the table's DIV/CONF now
+                // mean division/conference *records*, so a `#4` under a "CONF"
+                // heading would read as a 4-something record here.
+                rankBadge(label: "SEED", value: "#\(r)", tint: confRankColor(r))
             }
         }
     }

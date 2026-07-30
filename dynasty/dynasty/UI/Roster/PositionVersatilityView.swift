@@ -493,11 +493,12 @@ struct PositionVersatilityView: View {
         .cardBackground()
     }
 
+    /// Scheme familiarity shares the app-wide rating ladder. Its own gold /
+    /// green / blue / red thresholds put 62 % in green while a 62 OVR sat in
+    /// yellow one screen over, so the same two digits meant "good" here and
+    /// "mediocre" there.
     private func schemeFamiliarityColor(_ value: Int) -> Color {
-        if value >= 80 { return .accentGold }
-        if value >= 60 { return .success }
-        if value >= 40 { return .accentBlue }
-        return .danger
+        Color.forRating(value, scale: .percent)
     }
 
     // MARK: - Versatility Explainers

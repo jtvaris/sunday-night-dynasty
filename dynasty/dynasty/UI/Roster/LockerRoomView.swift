@@ -446,16 +446,19 @@ struct LockerRoomView: View {
                 HStack(spacing: 0) {
                     chemStatColumn(
                         label: "Leadership",
+                        tier: leadershipTier(state.leadershipScore),
                         value: "+\(state.leadershipScore)",
                         color: Color.success
                     )
                     chemStatColumn(
                         label: "Toxicity",
+                        tier: toxicityTier(state.toxicityScore),
                         value: "-\(state.toxicityScore)",
                         color: Color.danger
                     )
                     chemStatColumn(
                         label: "Net",
+                        tier: netTier(state.leadershipScore - state.toxicityScore),
                         value: "\(state.leadershipScore - state.toxicityScore > 0 ? "+" : "")\(state.leadershipScore - state.toxicityScore)",
                         color: state.leadershipScore >= state.toxicityScore ? Color.success : Color.danger
                     )
@@ -466,16 +469,67 @@ struct LockerRoomView: View {
         .cardBackground()
     }
 
-    private func chemStatColumn(label: String, value: String, color: Color) -> some View {
+    /// A worded verdict on top, the engine's raw point sum underneath.
+    /// "+149" alone is unreadable — nobody outside the source knows whether
+    /// that is a good week or a crisis.
+    private func chemStatColumn(label: String, tier: String, value: String, color: Color) -> some View {
         VStack(spacing: 4) {
-            Text(value)
-                .font(.title3.weight(.bold).monospacedDigit())
+            Text(tier)
+                .font(.title3.weight(.bold))
                 .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             Text(label)
                 .font(.caption)
                 .foregroundStyle(Color.textSecondary)
+            Text(value)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(Color.textTertiary)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label): \(tier), \(value) points")
+    }
+
+    // MARK: - Chemistry Wording
+    //
+    // Leadership and toxicity are raw point sums, so they scale with roster
+    // size: +149 across a 63-man camp roster is ordinary, the same number on a
+    // 53-man roster is not. Both are therefore worded per player, against
+    // `LockerRoomEngine.calculateChemistry`'s own per-player values — a Team
+    // Leader contributes 8 (4 when unhappy), a Mentor 6/3, a happy Feel Player
+    // 3, a Class Clown 2, a Steady Performer or Quiet Professional 1; against
+    // that, a Drama Queen costs 8/4, a Fiery Competitor 5/2, a sour Feel
+    // Player 3. A mixed NFL room lands near 2.3 leadership points per head,
+    // which is where the "Solid" band sits.
+
+    private func leadershipTier(_ score: Int) -> String {
+        guard !players.isEmpty else { return "—" }
+        switch Double(score) / Double(players.count) {
+        case 4.0...:    return "Exceptional"
+        case 2.5..<4.0: return "Strong"
+        case 1.2..<2.5: return "Solid"
+        case 0.5..<1.2: return "Thin"
+        default:        return "Absent"
+        }
+    }
+
+    private func toxicityTier(_ score: Int) -> String {
+        guard !players.isEmpty else { return "—" }
+        switch Double(score) / Double(players.count) {
+        case 3.0...:    return "Severe"
+        case 1.8..<3.0: return "High"
+        case 0.8..<1.8: return "Noticeable"
+        case 0.2..<0.8: return "Minor"
+        default:        return "Clean"
+        }
+    }
+
+    /// Net is not a per-player figure — it is literally what the engine adds to
+    /// the base 50 to get team chemistry (`rawChemistry = 50 + leadership -
+    /// toxicity`), so it is worded with the engine's own chemistry ladder.
+    private func netTier(_ net: Int) -> String {
+        LockerRoomEngine.chemistryLabel(max(0, min(100, 50 + net)))
     }
 
     // MARK: - Morale Distribution Card
@@ -632,6 +686,10 @@ struct LockerRoomView: View {
                     .font(.headline)
                     .foregroundStyle(Color.textPrimary)
                 Spacer()
+                // Says out loud that the bars are not a 0-100 axis.
+                Text("avg morale · 40-100 axis")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
             }
 
             Divider().overlay(Color.surfaceBorder)
@@ -654,17 +712,54 @@ struct LockerRoomView: View {
         .cardBackground()
     }
 
-    /// R25: good/neutral/tense verdict for a position room, from the engine.
-    private func chemistryState(forGroupID id: String) -> LockerRoomEngine.GroupChemistryState? {
-        groupChemistry.first { $0.id == id }?.state
+    // MARK: - Position Room Chip
+
+    private struct GroupChip {
+        let text: String
+        let color: Color
     }
 
-    private func chemistryStateColor(_ state: LockerRoomEngine.GroupChemistryState) -> Color {
-        switch state {
-        case .good:    return Color.success
-        case .neutral: return Color.textSecondary
-        case .tense:   return Color.danger
+    /// R25's good/neutral/tense verdict, re-worded to say *why*.
+    ///
+    /// `LockerRoomEngine.positionGroupChemistry` flags a room `.tense` when it
+    /// holds an active conflict **or** averages under 45 morale. Chipping both
+    /// cases "Tense" put two red badges next to a Morale Distribution card
+    /// reporting "0 Low" — which reads as a bug rather than as two different
+    /// measurements. Identical precedence and identical colours to the engine;
+    /// only the wording changes, so a conflict-driven room says "Conflict" and
+    /// a morale-driven one says "Low Morale" against the same 0-44 band the
+    /// distribution card labels Low.
+    private func groupChip(forGroupID id: String) -> GroupChip? {
+        guard let room = groupChemistry.first(where: { $0.id == id }) else { return nil }
+
+        if !room.conflicts.isEmpty {
+            return GroupChip(text: "Conflict", color: Color.danger)
         }
+        if room.avgMorale < 45 {
+            return GroupChip(text: "Low Morale", color: Color.danger)
+        }
+        if !room.mentorships.isEmpty {
+            return GroupChip(text: "Mentoring", color: Color.success)
+        }
+        if room.avgMorale >= 70 {
+            return GroupChip(text: "Good", color: Color.success)
+        }
+        return GroupChip(text: "Neutral", color: Color.textSecondary)
+    }
+
+    // MARK: - Morale Bar Axis
+
+    /// Position-room averages cluster in the high 60s to high 70s, so a 0-100
+    /// track spent ~6 pt of its 60 pt length on the entire spread and every
+    /// room's bar looked the same. The axis starts at 40 instead: a room
+    /// averaging below that is already deep in the Low band and pinned empty,
+    /// while the realistic 60-80 range now covers a third of the track.
+    private static let moraleAxisFloor = 40.0
+
+    private func moraleBarFraction(_ avgMorale: Int) -> CGFloat {
+        let span = 100.0 - Self.moraleAxisFloor
+        let fraction = (Double(avgMorale) - Self.moraleAxisFloor) / span
+        return CGFloat(min(max(fraction, 0), 1))
     }
 
     private func positionGroupRow(group: PositionGroupSummary) -> some View {
@@ -683,19 +778,19 @@ struct LockerRoomView: View {
                     .foregroundStyle(group.lowCount > 0 ? Color.danger : Color.textTertiary)
             }
 
-            // R25: chemistry verdict badge (good / neutral / tense)
-            if let state = chemistryState(forGroupID: group.id) {
-                Text(state.rawValue)
+            // R25: chemistry verdict badge (conflict / low morale / mentoring / …)
+            if let chip = groupChip(forGroupID: group.id) {
+                Text(chip.text)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(chemistryStateColor(state))
+                    .foregroundStyle(chip.color)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(Capsule().fill(chemistryStateColor(state).opacity(0.15)))
+                    .background(Capsule().fill(chip.color.opacity(0.15)))
             }
 
             Spacer()
 
-            // Mini bar showing avg morale
+            // Mini bar showing avg morale on the zoomed 40-100 axis
             VStack(alignment: .trailing, spacing: 4) {
                 Text("\(group.avgMorale)")
                     .font(.subheadline.weight(.bold).monospacedDigit())
@@ -703,10 +798,10 @@ struct LockerRoomView: View {
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(Color.backgroundTertiary)
-                        .frame(width: 60, height: 4)
+                        .frame(width: 72, height: 5)
                     RoundedRectangle(cornerRadius: 2)
                         .fill(group.moraleColor)
-                        .frame(width: 60 * CGFloat(group.avgMorale) / 100.0, height: 4)
+                        .frame(width: 72 * moraleBarFraction(group.avgMorale), height: 5)
                 }
             }
         }

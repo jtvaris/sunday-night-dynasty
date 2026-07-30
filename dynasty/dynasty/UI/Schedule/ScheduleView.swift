@@ -109,19 +109,19 @@ enum TeamStrength {
         return values.reduce(0, +) / values.count
     }
 
-    /// Relative strength color. The league's starters OVR sits in a narrow
-    /// band (~75-78), so the old absolute thresholds (80+/70-79/<70) parked
-    /// every team in yellow and the badge carried no signal. Colors relative
-    /// to the league mean instead: green = strong roster, red = weak roster,
-    /// yellow = the league-average band. `leagueAverage` is the truncated
-    /// integer mean (sits ~0.5 below the true mean), so the asymmetric +2/-1
-    /// offsets land ≈ ±1.5 around the real average — with the observed
-    /// spread that colors 78+ green and 75-and-under red.
+    /// Team strength color for an OVR badge — the app-wide `Color.forRating`
+    /// ladder, nothing bespoke.
+    ///
+    /// This used to color relative to the league mean (green above the pivot,
+    /// red below) to squeeze signal out of the narrow ~75-78 starters band.
+    /// It worked in isolation and broke everywhere else: Cleveland at 76 came
+    /// up red here and blue on League Rosters, which reads as a data bug
+    /// rather than a scale choice. Absolute wins — the same number is the same
+    /// color on every screen. `leagueAverage` is kept in the signature so the
+    /// pivot can come back as an opt-in later without re-threading the value
+    /// through `GameCard` / the opponent card.
     static func ovrColor(_ ovr: Int, leagueAverage: Int) -> Color {
-        let pivot = leagueAverage > 0 ? leagueAverage : 76
-        if ovr >= pivot + 2 { return Color.success }
-        if ovr <= pivot - 1 { return Color.danger }
-        return Color.warning
+        Color.forRating(ovr)
     }
 }
 
@@ -525,6 +525,7 @@ private struct NextGamePill: View {
         )
     }
 
+    /// Opponent OVR badge — `Color.forRating`, same ladder as League Rosters.
     private func ovrColor(_ ovr: Int) -> Color {
         TeamStrength.ovrColor(ovr, leagueAverage: leagueAvgOVR)
     }
@@ -701,6 +702,7 @@ private struct GameCard: View {
         ovrByTeam[team.id] ?? 0
     }
 
+    /// Game-card OVR badge — `Color.forRating`, same ladder as League Rosters.
     private func ovrColor(_ ovr: Int) -> Color {
         TeamStrength.ovrColor(ovr, leagueAverage: leagueAvgOVR)
     }
