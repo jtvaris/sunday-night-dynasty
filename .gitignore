@@ -38,6 +38,12 @@ tools/faces/__pycache__/
 # HEICs + extra_faces_manifest.json are committed under
 # dynasty/dynasty/Resources/Faces/ instead.
 tools/faces/raw_extras/
+# raw_aged/ = source PNG renders for the aged variants (tools/faces/generate_aged.py),
+# 47 MB at the 48-face coach pilot and ~800 MB at a full run. Same deal again:
+# aged_manifest.json IS tracked (the (seed, source-id) ledger the resume needs),
+# the packaged HEICs land in dynasty/dynasty/Resources/Faces/ when — and only
+# when — the coherence call in docs/FACE_AGE_VARIANTS.md comes back yes.
+tools/faces/raw_aged/
 
 # league-data source scrape cache (tools/league-data/build_raw.py) — 725 MB of
 # HTML/CSV snapshots, a fetch cache and a nested Xcode build dir. The refined

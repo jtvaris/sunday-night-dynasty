@@ -24,6 +24,11 @@ Enforces `docs/ANONYMIZATION_SPEC.md` §6.2 on an actual build product:
      arrays. Every pool pair listed in `SWIFT_NAME_POOLS` is therefore parsed
      out of its Swift source and its whole CROSS PRODUCT is held to the same
      rule as a generated template name.
+  F. Coverage guard on check E. E only knows the pools somebody remembered to
+     add to `SWIFT_NAME_POOLS`; F goes and finds every string-array in the Swift
+     sources that LOOKS like a pool of people's names and fails if it is not
+     classified in one of the three registries below. A new name source is then
+     a red gate on the commit that adds it, not a discovery two releases later.
 
 Exit code 0 = clean, 1 = at least one hit, 2 = could not run.
 
@@ -101,6 +106,91 @@ SWIFT_NAME_POOLS = [
 SWIFT_POOL_DECL = re.compile(
     r"let\s+(?P<name>\w+)\s*:\s*\[String\]\s*=\s*\[(?P<body>[^\]]*)\]", re.S)
 SWIFT_STRING = re.compile(r'"([^"\\]*)"')
+
+# --- Gate F: coverage registries ------------------------------------------
+#
+# Gate E's docstring says its blind spot out loud ("a new name pool elsewhere in
+# the app is out of scope until it is added to that list"). That sentence was
+# accurate and useless: nothing made anyone read it at the moment they added a
+# pool. F turns it into a gate — every candidate the scanner finds must be in
+# exactly one of the three registries below, and an unclassified one FAILS.
+#
+# Classifying is the point. The registries are not an allowlist to grow when the
+# gate goes red; each entry is a decision someone made about whether that array
+# names people, written down where the next person will see it.
+
+SWIFT_SOURCE_ROOT = "dynasty/dynasty"
+
+# Arrays whose identifier reads name-ish, or whose contents read like full
+# names, but that name no PERSON. Reason is mandatory — it is the whole audit
+# trail.
+NON_PERSON_POOLS = {
+    ("Data/Import/LeagueGenerator.swift", "allAttrNames"):
+        "coach attribute keys (playCalling, reputation, …)",
+    ("Engine/Simulation/CoachingEngine.swift", "allAttrNames"):
+        "coach attribute keys, same list one layer up",
+    ("Engine/Simulation/LeagueTemplateValidation.swift", "named"):
+        "template field names the validator reports on",
+    ("UI/Common/CoachAvatarView.swift", "malePhotoNames"):
+        "illustrated avatar TITLES (The Chairman, The Closer) — roles, not people",
+    ("UI/Common/CoachAvatarView.swift", "femalePhotoNames"):
+        "illustrated avatar titles, female set",
+    ("UI/Scouting/BigBoardView.swift", "tierNames"):
+        "draft tier labels (Blue Chip, First Rounder)",
+    ("UI/Match/CoachedGameView.swift", "categories"):
+        "play-call categories (Run, Short Pass)",
+    ("UI/Match/PlayCallView.swift", "offensiveCategories"):
+        "play-call categories, the other caller",
+}
+
+# Pools of complete, invented PEOPLE — a single array of "First Last" strings
+# rather than a cross product. E cannot check these (there is no second half to
+# cross with), so F holds each member to the same rule a template identity
+# string gets: Levenshtein >= 3 from every real name, no real surname token.
+#
+# `open` marks an entry whose contents are a known, unresolved problem. It is
+# printed loudly in the verdict instead of failing the gate, because the fix is
+# a content edit in somebody else's file and a permanently red gate is a gate
+# nobody reads.
+PERSON_NAME_LITERALS = {
+    ("Engine/Contract/AgentPersona.swift", "agentNamePool"):
+        {"purpose": "the agent across the table in every contract negotiation"},
+    ("Engine/Contract/TradeValueEngine.swift", "gmNamePool"):
+        {"purpose": "the AI general managers named in trade talk"},
+}
+
+# RESOLVED (was the one `open` entry): `InboxEngine.agentNames` held five REAL,
+# currently-working NFL player agents (Drew Rosenhaus, Tom Condon, Joel Segal,
+# Todd France, Ben Dogra). They were invisible to check A because the blocklist
+# is built from the roster snapshot — players and HC/OC/DC — and agents are in
+# neither, while ANONYMIZATION_SPEC.md §1 carves out nobody. The array is gone:
+# the cold-email now draws from `AgentPersona.agentNamePool` through
+# `AgentPersona.randomAgentName()`, so there is exactly ONE agent-name pool in
+# the app and it is the one registered above. No entry is needed here for a file
+# that no longer declares a pool — F only asks about arrays it finds.
+
+# A declaration must contain at least this many string literals to count as a
+# pool. Below it we are looking at a two-element tuple or an empty accumulator,
+# not at a name source.
+MIN_POOL_SIZE = 3
+
+# Heuristic 1 — the identifier. Catches a pool whose members are given names or
+# surnames (single words), which no content test can distinguish from any other
+# list of capitalised words.
+NAMEISH_IDENT = re.compile(r"(name|surname)", re.I)
+
+# Heuristic 2 — the contents. "Marcus Cole", "C.J. Reeves": two capitalised
+# tokens. Catches a person pool whose identifier gives nothing away, which is
+# exactly how `InboxEngine.agentNames` sat unnoticed. 60 % rather than 100 % so
+# one "Sol Bergman Jr" in a list of 24 does not disarm the test.
+LOOKS_LIKE_FULL_NAME = re.compile(r"^[A-Z][a-z'’]+\.? [A-Z][a-zA-Z'’.\-]+$")
+FULL_NAME_SHARE = 0.6
+
+# Any `let`/`var` array literal — typed or not, unlike SWIFT_POOL_DECL, because
+# `let agentNames = ["…"]` has no annotation. `[^\[\]]*` keeps it to flat arrays;
+# a nested literal is not a name pool.
+ANY_ARRAY_DECL = re.compile(
+    r"(?:let|var)\s+(?P<name>\w+)\s*(?::\s*\[String\]\s*)?=\s*\[(?P<body>[^\[\]]*)\]", re.S)
 
 # Files whose bytes carry no text worth scanning but cost real time. Everything
 # else — the Mach-O binary included — is scanned.
@@ -378,21 +468,146 @@ def scan_name_pools(blocklist: dict) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# F — coverage guard on E
+# ---------------------------------------------------------------------------
+
+
+def _pool_candidates(source_root: str):
+    """Every flat string-array in the Swift sources that could be a name pool.
+
+    Yields (rel_path, identifier, values). The two heuristics are OR-ed: an
+    identifier containing "name"/"surname", or a body that is mostly
+    "First Last" strings. Arrays that mix literals with anything else (a
+    `.map`, an interpolation, an enum case) are skipped — a pool is a list of
+    constants, and anything computed cannot be read out of the source anyway.
+    """
+    for root, _dirs, files in os.walk(source_root):
+        for name in sorted(files):
+            if not name.endswith(".swift"):
+                continue
+            path = os.path.join(root, name)
+            rel = os.path.relpath(path, source_root)
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    source = fh.read()
+            except OSError:
+                continue
+            for match in ANY_ARRAY_DECL.finditer(source):
+                body = match.group("body")
+                values = SWIFT_STRING.findall(body)
+                if len(values) < MIN_POOL_SIZE:
+                    continue
+                if SWIFT_STRING.sub("", body).replace(",", "").strip():
+                    continue  # not a pure literal array
+                ident = match.group("name")
+                full = sum(1 for v in values if LOOKS_LIKE_FULL_NAME.match(v))
+                if NAMEISH_IDENT.search(ident) or (
+                        full >= MIN_POOL_SIZE and full / len(values) >= FULL_NAME_SHARE):
+                    yield rel, ident, values
+
+
+def scan_pool_coverage(blocklist: dict, source_root: str) -> list[str]:
+    """Fails on a name-pool candidate that no registry classifies, and holds the
+    full-name literal pools to the template rule."""
+    violations: list[str] = []
+    notes: list[str] = []
+    # SWIFT_NAME_POOLS paths are repo-relative, the scan is source-root-relative;
+    # compare on the tail they share.
+    covered = set()
+    for rel, first, last, _purpose in SWIFT_NAME_POOLS:
+        scoped = os.path.relpath(rel, SWIFT_SOURCE_ROOT)
+        covered.add((scoped, first))
+        covered.add((scoped, last))
+
+    block_full = mt._by_length(blocklist["fullNorm"])
+
+    counts = {"gated": 0, "non_person": 0, "literal": 0}
+    for rel, ident, values in _pool_candidates(source_root):
+        key = (rel, ident)
+        if key in covered:
+            counts["gated"] += 1
+            continue
+        if key in NON_PERSON_POOLS:
+            counts["non_person"] += 1
+            continue
+        entry = PERSON_NAME_LITERALS.get(key)
+        if entry is None:
+            violations.append(
+                f"[F] UNREGISTERED NAME POOL: {rel}/{ident} ({len(values)} entries, "
+                f"e.g. {values[0]!r}) — classify it in SWIFT_NAME_POOLS (a cross-product "
+                "generator), NON_PERSON_POOLS (not people) or PERSON_NAME_LITERALS "
+                "(complete invented names)")
+            continue
+
+        counts["literal"] += 1
+        # The recognition test, and only that one: Levenshtein >= 3 from every
+        # real full name.
+        #
+        # Deliberately NOT gate D's extra "no real surname as a token" rule.
+        # That rule earns its place where it lives — on GENERATED template names,
+        # whose surnames come out of a blocklist-filtered pool, and on the
+        # surname POOLS check E reads, where the surname is the entire draw. Here
+        # the unit is a complete invented person, and the question the spec asks
+        # about a complete person is whether he reads as a specific real one.
+        # "Marcus Cole" does not, and Cole/Grant/Brooks/Vaughn are ordinary
+        # American surnames: applying the token rule flagged 8 of 24 agents and
+        # would have forced the pools to avoid every surname any NFL player
+        # happens to have, which is not a rule anybody could write to.
+        for value in values:
+            norm = mt.norm_name(value)
+            if any(mt.levenshtein_at_most(norm, b, 2) <= 2
+                   for b in mt._near(block_full, norm, 2)):
+                violations.append(
+                    f"[F] {rel}/{ident}: {value!r} is within 2 edits of a real name")
+        if entry.get("open"):
+            notes.append(f"[F-NOTE] {rel}/{ident}: {entry['open']}")
+
+    print(f"  name-pool coverage: {counts['gated']} gated by E, "
+          f"{counts['non_person']} classified not-people, "
+          f"{counts['literal']} full-name literal pools checked")
+    for note in notes:
+        print(f"  {note}")
+    return violations
+
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("app", help="path to the built .app")
+    parser.add_argument("app", nargs="?", help="path to the built .app "
+                                               "(omit only with --coverage-only)")
     parser.add_argument(
         "--raw",
         default=os.path.join(HERE, "raw", "league_raw_2026.json"),
         help="raw snapshot the blocklist is built from",
     )
+    parser.add_argument(
+        "--source-root",
+        default=os.path.join(REPO_ROOT, SWIFT_SOURCE_ROOT),
+        help="Swift sources check F walks (overridable so the coverage guard "
+             "can be exercised against a fixture)",
+    )
+    parser.add_argument(
+        "--coverage-only",
+        action="store_true",
+        help="run check F alone — no built .app needed",
+    )
     args = parser.parse_args()
 
-    if not os.path.isdir(args.app):
+    if args.coverage_only:
+        if not os.path.exists(args.raw):
+            print(f"scan_bundle: no raw snapshot at {args.raw}", file=sys.stderr)
+            return 2
+        violations = scan_pool_coverage(load_blocklist(args.raw), args.source_root)
+        for line in violations:
+            print(f"  {line}")
+        print("" if violations else "  coverage clean")
+        return 1 if violations else 0
+
+    if not args.app or not os.path.isdir(args.app):
         print(f"scan_bundle: no such app bundle: {args.app}", file=sys.stderr)
         return 2
     if not os.path.exists(args.raw):
@@ -405,6 +620,7 @@ def main() -> int:
     violations = scan_product(args.app, blocklist)
     violations += scan_publish_template(args.app, blocklist)
     violations += scan_name_pools(blocklist)
+    violations += scan_pool_coverage(blocklist, args.source_root)
 
     if violations:
         print("")
@@ -421,9 +637,12 @@ def main() -> int:
     print("  - no dev template, no raw snapshot artifact in the product;")
     print("  - shipped publish template: Levenshtein >= 3, no real surname token, no notes;")
     print(f"  - the {len(SWIFT_NAME_POOLS)} runtime name-pool pairs in SWIFT_NAME_POOLS "
-          "cannot compose a real name.")
+          "cannot compose a real name;")
+    print("  - every name-pool-shaped string array in the Swift sources is classified, and")
+    print("    the full-name literal pools clear the same rule a template name does.")
     print("  NOT covered: bare surnames inside the binary (see the module docstring), and")
-    print("  any runtime name source not listed in SWIFT_NAME_POOLS.")
+    print("  real people who are in NEITHER the roster snapshot the blocklist is built")
+    print("  from NOR a classified pool — check F names them, it cannot recognise them.")
     return 0
 
 

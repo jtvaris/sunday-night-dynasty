@@ -355,9 +355,20 @@ nonisolated final class FaceImageCache: @unchecked Sendable {
 
 extension PersonFaceView {
 
+    /// The face id is resolved through `AgedFaceCatalog` on the way in, so a
+    /// player who has aged past `playerAgeThreshold` renders the older variant of
+    /// the portrait he has always worn.
+    ///
+    /// Render-time only: the resolved id is never written back to `player.faceID`.
+    /// The stored id stays the person's identity for the whole save — the claim
+    /// registry, the retirement cooldown and every duplicate check key on it —
+    /// and only the pixels change. That also makes the swap free to undo: pull
+    /// the aged manifest and every portrait is exactly what it was.
     init(player: Player, size: Size = .medium, ringColor: Color? = nil) {
         self.init(
-            faceID: player.faceID,
+            faceID: AgedFaceCatalog.shared.resolveForPlayer(
+                faceID: player.faceID, age: player.age
+            ),
             size: size,
             ringColor: ringColor,
             accessibilityName: player.fullName,
@@ -365,9 +376,14 @@ extension PersonFaceView {
         )
     }
 
+    /// Same age-variant resolution as the player initializer, on the coach clock
+    /// (`AgedFaceCatalog.coachAgeThreshold`) — the one this whole layer exists for,
+    /// since a coach can be hired at 46 and still be on the sideline at 70.
     init(coach: Coach, size: Size = .medium, ringColor: Color? = nil) {
         self.init(
-            faceID: coach.faceID,
+            faceID: AgedFaceCatalog.shared.resolveForCoach(
+                faceID: coach.faceID, age: coach.age
+            ),
             size: size,
             ringColor: ringColor,
             accessibilityName: coach.fullName,

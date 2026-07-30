@@ -1,0 +1,711 @@
+{
+ "version": 1,
+ "seed": 20260730,
+ "faces": [
+  {
+   "id": "aged_face_00008",
+   "file": "raw_aged/aged_face_00008.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 835718123,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, sturdy build, short straight hair, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00008"
+  },
+  {
+   "id": "aged_face_00027",
+   "file": "raw_aged/aged_face_00027.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 629287762,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, sturdy build, bald head, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00027"
+  },
+  {
+   "id": "aged_face_00037",
+   "file": "raw_aged/aged_face_00037.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 1382515131,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, average build, short straight hair, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00037"
+  },
+  {
+   "id": "aged_face_00055",
+   "file": "raw_aged/aged_face_00055.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 1558831191,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, average build, short dreadlocks, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00055"
+  },
+  {
+   "id": "aged_face_00064",
+   "file": "raw_aged/aged_face_00064.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 744946384,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, sturdy build, medium afro, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00064"
+  },
+  {
+   "id": "aged_face_00080",
+   "file": "raw_aged/aged_face_00080.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-72",
+    "tone": "black",
+    "build": "heavy",
+    "gender": "male"
+   },
+   "seed": 479555637,
+   "backend": "replicate",
+   "prompt": "Black American man in his early sixties, mostly gray hair, weathered lined face, heavyset build, buzz cut, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00080"
+  },
+  {
+   "id": "aged_face_00105",
+   "file": "raw_aged/aged_face_00105.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 866798368,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, average build, short cropped hair, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00105"
+  },
+  {
+   "id": "aged_face_00195",
+   "file": "raw_aged/aged_face_00195.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-72",
+    "tone": "black",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 33609369,
+   "backend": "replicate",
+   "prompt": "Black American man in his early sixties, mostly gray hair, weathered lined face, sturdy build, short straight hair, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00195"
+  },
+  {
+   "id": "aged_face_00196",
+   "file": "raw_aged/aged_face_00196.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 618797585,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, average build, medium afro, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00196"
+  },
+  {
+   "id": "aged_face_00203",
+   "file": "raw_aged/aged_face_00203.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 1019399311,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, average build, short dreadlocks, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00203"
+  },
+  {
+   "id": "aged_face_00206",
+   "file": "raw_aged/aged_face_00206.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 1890337155,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, average build, fade haircut, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00206"
+  },
+  {
+   "id": "aged_face_00240",
+   "file": "raw_aged/aged_face_00240.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 742490331,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, average build, short dreadlocks, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00240"
+  },
+  {
+   "id": "aged_face_00555",
+   "file": "raw_aged/aged_face_00555.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "heavy",
+    "gender": "male"
+   },
+   "seed": 1743833893,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, heavyset build, short straight hair, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00555"
+  },
+  {
+   "id": "aged_face_00693",
+   "file": "raw_aged/aged_face_00693.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "white",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 1758425777,
+   "backend": "replicate",
+   "prompt": "white American man in his late sixties, silver gray hair, weathered face with deep lines, average build, short cropped hair, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00693"
+  },
+  {
+   "id": "aged_face_00800",
+   "file": "raw_aged/aged_face_00800.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-72",
+    "tone": "mixed",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 460471148,
+   "backend": "replicate",
+   "prompt": "mixed-race American man in his early sixties, mostly gray hair, weathered lined face, sturdy build, short dreadlocks, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00800"
+  },
+  {
+   "id": "aged_face_00920",
+   "file": "raw_aged/aged_face_00920.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 760107734,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, sturdy build, short cropped hair, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00920"
+  },
+  {
+   "id": "aged_face_00950",
+   "file": "raw_aged/aged_face_00950.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "heavy",
+    "gender": "male"
+   },
+   "seed": 602633490,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, heavyset build, medium afro, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_00950"
+  },
+  {
+   "id": "aged_face_01017",
+   "file": "raw_aged/aged_face_01017.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-72",
+    "tone": "white",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 507622971,
+   "backend": "replicate",
+   "prompt": "white American man in his early sixties, mostly gray hair, weathered lined face, average build, buzz cut, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_01017"
+  },
+  {
+   "id": "aged_face_01117",
+   "file": "raw_aged/aged_face_01117.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-72",
+    "tone": "black",
+    "build": "heavy",
+    "gender": "male"
+   },
+   "seed": 1996211077,
+   "backend": "replicate",
+   "prompt": "Black American man in his early sixties, mostly gray hair, weathered lined face, heavyset build, short curly hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_01117"
+  },
+  {
+   "id": "aged_face_01139",
+   "file": "raw_aged/aged_face_01139.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "white",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 773743772,
+   "backend": "replicate",
+   "prompt": "white American man in his late sixties, silver gray hair, weathered face with deep lines, sturdy build, fade haircut, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_01139"
+  },
+  {
+   "id": "aged_face_01148",
+   "file": "raw_aged/aged_face_01148.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-72",
+    "tone": "black",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 1985564688,
+   "backend": "replicate",
+   "prompt": "Black American man in his early sixties, mostly gray hair, weathered lined face, sturdy build, short cropped hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_01148"
+  },
+  {
+   "id": "aged_face_01479",
+   "file": "raw_aged/aged_face_01479.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 1690338033,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, average build, bald head, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_01479"
+  },
+  {
+   "id": "aged_face_01507",
+   "file": "raw_aged/aged_face_01507.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "white",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 1470381022,
+   "backend": "replicate",
+   "prompt": "white American man in his late sixties, silver gray hair, weathered face with deep lines, sturdy build, bald head, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_01507"
+  },
+  {
+   "id": "aged_face_01583",
+   "file": "raw_aged/aged_face_01583.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 713633820,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, average build, short dreadlocks, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_01583"
+  },
+  {
+   "id": "aged_face_01593",
+   "file": "raw_aged/aged_face_01593.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-72",
+    "tone": "black",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 1960893868,
+   "backend": "replicate",
+   "prompt": "Black American man in his early sixties, mostly gray hair, weathered lined face, average build, short straight hair, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_01593"
+  },
+  {
+   "id": "aged_face_01645",
+   "file": "raw_aged/aged_face_01645.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "white",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 672982702,
+   "backend": "replicate",
+   "prompt": "white American man in his late sixties, silver gray hair, weathered face with deep lines, average build, short curly hair, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_01645"
+  },
+  {
+   "id": "aged_face_01709",
+   "file": "raw_aged/aged_face_01709.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 1027359786,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, sturdy build, fade haircut, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_01709"
+  },
+  {
+   "id": "aged_face_01735",
+   "file": "raw_aged/aged_face_01735.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-72",
+    "tone": "white",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 1732792562,
+   "backend": "replicate",
+   "prompt": "white American man in his early sixties, mostly gray hair, weathered lined face, average build, medium afro, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_01735"
+  },
+  {
+   "id": "aged_face_01758",
+   "file": "raw_aged/aged_face_01758.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-72",
+    "tone": "latino",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 2024775974,
+   "backend": "replicate",
+   "prompt": "Latino American man in his early sixties, mostly gray hair, weathered lined face, sturdy build, short straight hair, goatee. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_01758"
+  },
+  {
+   "id": "aged_face_01784",
+   "file": "raw_aged/aged_face_01784.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 1668085224,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, sturdy build, fade haircut, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_01784"
+  },
+  {
+   "id": "aged_face_02017",
+   "file": "raw_aged/aged_face_02017.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "white",
+    "build": "heavy",
+    "gender": "male"
+   },
+   "seed": 1285865505,
+   "backend": "replicate",
+   "prompt": "white American man in his late sixties, silver gray hair, weathered face with deep lines, heavyset build, medium afro, full beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_02017"
+  },
+  {
+   "id": "aged_face_02023",
+   "file": "raw_aged/aged_face_02023.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-72",
+    "tone": "white",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 1948737691,
+   "backend": "replicate",
+   "prompt": "white American man in his early sixties, mostly gray hair, weathered lined face, sturdy build, short curly hair, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_02023"
+  },
+  {
+   "id": "aged_face_02261",
+   "file": "raw_aged/aged_face_02261.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 1577529088,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, sturdy build, medium afro, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_02261"
+  },
+  {
+   "id": "aged_face_02304",
+   "file": "raw_aged/aged_face_02304.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "heavy",
+    "gender": "male"
+   },
+   "seed": 705352625,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, heavyset build, medium afro, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_02304"
+  },
+  {
+   "id": "aged_face_02346",
+   "file": "raw_aged/aged_face_02346.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-75",
+    "tone": "mixed",
+    "build": "athletic",
+    "gender": "male"
+   },
+   "seed": 442843560,
+   "backend": "replicate",
+   "prompt": "mixed-race American man in his late sixties, silver gray hair, weathered face with deep lines, sturdy build, short dreadlocks, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_02346"
+  },
+  {
+   "id": "aged_face_02403",
+   "file": "raw_aged/aged_face_02403.png",
+   "bucket": {
+    "role": "coach",
+    "ageBand": "62-72",
+    "tone": "black",
+    "build": "lean",
+    "gender": "male"
+   },
+   "seed": 1468532835,
+   "backend": "replicate",
+   "prompt": "Black American man in his early sixties, mostly gray hair, weathered lined face, average build, short dreadlocks, clean shaven. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_02403"
+  },
+  {
+   "id": "aged_face_02664",
+   "file": "raw_aged/aged_face_02664.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "male",
+    "ageBand": "62-72",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 2010963254,
+   "backend": "replicate",
+   "prompt": "Black American man in his early sixties, mostly gray hair, weathered lined face, heavyset build, short cropped hair, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_02664"
+  },
+  {
+   "id": "aged_face_02862",
+   "file": "raw_aged/aged_face_02862.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "male",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 2080209125,
+   "backend": "replicate",
+   "prompt": "Black American man in his late sixties, silver gray hair, weathered face with deep lines, average build, short curly hair, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_02862"
+  },
+  {
+   "id": "aged_face_02912",
+   "file": "raw_aged/aged_face_02912.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "male",
+    "ageBand": "62-75",
+    "tone": "latino",
+    "build": "lean"
+   },
+   "seed": 1681584937,
+   "backend": "replicate",
+   "prompt": "Latino American man in his late sixties, silver gray hair, weathered face with deep lines, average build, short dreadlocks, mustache. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_02912"
+  },
+  {
+   "id": "aged_face_03286",
+   "file": "raw_aged/aged_face_03286.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "male",
+    "ageBand": "62-72",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 1145749777,
+   "backend": "replicate",
+   "prompt": "Black American man in his early sixties, mostly gray hair, weathered lined face, heavyset build, fade haircut, short beard. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_03286"
+  },
+  {
+   "id": "aged_face_03315",
+   "file": "raw_aged/aged_face_03315.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "62-72",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 1723420752,
+   "backend": "replicate",
+   "prompt": "Black American woman in her early sixties, mostly gray hair, weathered lined face, average build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_03315"
+  },
+  {
+   "id": "aged_face_03499",
+   "file": "raw_aged/aged_face_03499.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "male",
+    "ageBand": "62-72",
+    "tone": "black",
+    "build": "heavy"
+   },
+   "seed": 270935626,
+   "backend": "replicate",
+   "prompt": "Black American man in his early sixties, mostly gray hair, weathered lined face, heavyset build, short straight hair, light stubble. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_03499"
+  },
+  {
+   "id": "aged_face_03630",
+   "file": "raw_aged/aged_face_03630.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "62-75",
+    "tone": "white",
+    "build": "heavy"
+   },
+   "seed": 157600309,
+   "backend": "replicate",
+   "prompt": "white American woman in her late sixties, silver gray hair, weathered face with deep lines, heavyset build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_03630"
+  },
+  {
+   "id": "aged_face_03658",
+   "file": "raw_aged/aged_face_03658.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "62-72",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 1917878633,
+   "backend": "replicate",
+   "prompt": "Black American woman in her early sixties, mostly gray hair, weathered lined face, sturdy build, shoulder-length straight hair. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_03658"
+  },
+  {
+   "id": "aged_face_03667",
+   "file": "raw_aged/aged_face_03667.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "lean"
+   },
+   "seed": 916377799,
+   "backend": "replicate",
+   "prompt": "Black American woman in her late sixties, silver gray hair, weathered face with deep lines, average build, hair in a tight bun. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_03667"
+  },
+  {
+   "id": "aged_face_03675",
+   "file": "raw_aged/aged_face_03675.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "62-75",
+    "tone": "black",
+    "build": "athletic"
+   },
+   "seed": 860944537,
+   "backend": "replicate",
+   "prompt": "Black American woman in her late sixties, silver gray hair, weathered face with deep lines, sturdy build, short pixie cut. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_03675"
+  },
+  {
+   "id": "aged_face_03681",
+   "file": "raw_aged/aged_face_03681.png",
+   "bucket": {
+    "role": "coach",
+    "gender": "female",
+    "ageBand": "62-72",
+    "tone": "white",
+    "build": "lean"
+   },
+   "seed": 1575173985,
+   "backend": "replicate",
+   "prompt": "white American woman in her early sixties, mostly gray hair, weathered lined face, average build, long straight hair tied back. Professional sports media day headshot portrait photograph, head and shoulders, facing camera, neutral confident expression, plain dark gray studio backdrop, soft even studio lighting, photorealistic, 85mm lens, sharp focus, plain dark polo shirt. Single adult person, a generic person who does not resemble any celebrity or public figure. No text, no logos, no jersey branding, no hands in frame.",
+   "source": "face_03681"
+  }
+ ]
+}

@@ -124,13 +124,22 @@ def build_spec(rng, role, gender="male"):
     return {"role": role, "gender": gender, "ageBand": age_t, "tone": tone_t, "build": build_t}, prompt
 
 # ---------------- backends ----------------
+# Replicate sits behind Cloudflare, which now rejects the default
+# `Python-urllib/3.x` user agent with `403 / error code: 1010` before the
+# request ever reaches the API — a valid token gets the same 403 as no token,
+# so the failure reads like a credential problem and is not one. Sending any
+# ordinary UA clears it (verified: 403 -> 200 on /v1/account, same token).
+UA = "dynasty-face-tools/1.0"
+
 def http_json(url, payload, headers, timeout=180):
-    req = urllib.request.Request(url, json.dumps(payload).encode(), {"Content-Type": "application/json", **headers})
+    req = urllib.request.Request(url, json.dumps(payload).encode(),
+                                 {"Content-Type": "application/json", "User-Agent": UA, **headers})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 
 def fetch(url, timeout=180):
-    with urllib.request.urlopen(url, timeout=timeout) as r:
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
 
 def gen_replicate(prompt, seed):
