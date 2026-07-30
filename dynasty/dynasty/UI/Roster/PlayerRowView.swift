@@ -17,7 +17,15 @@ struct PlayerRowView: View {
         static let ovr: CGFloat = 40
         /// Fits the icon plus "Discouraged", the longest motivation label.
         static let motivation: CGFloat = 76
+        /// Contracts mode: dead cap if cut, e.g. "$12.3M" over a "dead" caption.
+        static let deadCap: CGFloat = 48
+        /// Contracts mode: net cap saved by cutting, same shape as `deadCap`.
+        static let capSavings: CGFloat = 48
     }
+
+    /// The status / personality badge line under a player's name. One constant
+    /// so the five badges that share the line can never drift apart again.
+    private static let badgeFontSize: CGFloat = 10
 
     let player: Player
     /// Depth chart index: 0 = starter, 1 = backup, 2+ = 3rd string. nil = unknown.
@@ -56,33 +64,41 @@ struct PlayerRowView: View {
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
 
-                // Status badges — full text for clarity (#171, #172)
+                // Status badges — full text for clarity (#171, #172).
+                //
+                // 10pt, not 7. At 7pt bold this line measured a 5pt cap height —
+                // the smallest text in the app, and the personality archetype it
+                // ends with is a real scouting fact, not a decoration. The face
+                // beside it is 30pt while the name + badge stack is ~31pt, so
+                // the extra three points cost the row no height at all.
                 HStack(spacing: 4) {
                     if isExpiringContract {
                         Text("Trade Watch")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.system(size: Self.badgeFontSize, weight: .bold))
                             .foregroundStyle(Color.warning)
                     }
                     if isHighCapInvestment {
                         Text("Invested")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.system(size: Self.badgeFontSize, weight: .bold))
                             .foregroundStyle(Color.accentGold)
                     }
                     if player.isFranchiseTagged {
                         Text("Franchise")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.system(size: Self.badgeFontSize, weight: .bold))
                             .foregroundStyle(Color.danger)
                     }
                     if player.isHoldingOut {
                         Text("Holdout")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.system(size: Self.badgeFontSize, weight: .bold))
                             .foregroundStyle(Color.danger)
                     }
                     // R25: personality trait badge (tier-colored)
                     Text(player.personality.archetype.shortLabel)
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.system(size: Self.badgeFontSize, weight: .bold))
                         .foregroundStyle(personalityTierColor)
                 }
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
             }
             .frame(minWidth: 80, alignment: .leading)
 
@@ -212,6 +228,32 @@ struct PlayerRowView: View {
 
     private var contractColumns: some View {
         Group {
+            // DEAD and SAVE lead the group on purpose. `RosterView`'s header row
+            // is right-aligned against the same trailing edge as these cells, so
+            // appending a column would have slid every existing header label one
+            // column off its own numbers. Added at the head, the five headed
+            // columns (Salary / Cap / Yrs / FA / OVR) keep their alignment and
+            // the two new ones carry their own captions until the header learns
+            // to label them.
+
+            // Dead cap if cut — the number that decides whether a bad contract
+            // is escapable at all.
+            capColumn(
+                value: deadCapIfCut,
+                caption: "dead",
+                color: deadCapIfCut > 0 ? Color.danger : Color.textTertiary,
+                width: Column.deadCap
+            )
+
+            // Net cap saved by the release. Cutting is only ever worth what is
+            // left after the dead money, which is why the two travel together.
+            capColumn(
+                value: capSavingsIfCut,
+                caption: "save",
+                color: capSavingsIfCut > 0 ? Color.success : Color.textTertiary,
+                width: Column.capSavings
+            )
+
             // Base Salary
             Text(formattedSalary)
                 .font(.caption)
@@ -228,7 +270,7 @@ struct PlayerRowView: View {
                     .monospacedDigit()
                     .foregroundStyle(Color.accentGold)
                 Text("cap")
-                    .font(.system(size: 7))
+                    .font(.system(size: 8))
                     .foregroundStyle(Color.textTertiary)
             }
             .frame(width: 52, alignment: .trailing)
@@ -237,8 +279,9 @@ struct PlayerRowView: View {
             contractYearsLabel
                 .frame(width: 34, alignment: .center)
 
-            // Free agent year estimate
-            Text("FA \(player.age + player.contractYearsRemaining)")
+            // Free agent year estimate. "FA 31" read as a season — it is the
+            // player's AGE when the deal runs out, so it is written like one.
+            Text("FA @\(player.age + player.contractYearsRemaining)")
                 .font(.system(size: 9, weight: .medium))
                 .monospacedDigit()
                 .foregroundStyle(player.contractYearsRemaining <= 1 ? Color.warning : Color.textTertiary)
@@ -251,6 +294,26 @@ struct PlayerRowView: View {
                 .foregroundStyle(Color.forRating(player.overall))
                 .frame(width: Column.ovr, alignment: .center)
         }
+    }
+
+    /// A money cell with its own caption — the shape the cap-hit column already
+    /// uses, factored out so DEAD and SAVE read as the same component.
+    private func capColumn(value: Int, caption: String, color: Color, width: CGFloat) -> some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            Text(formatSalary(value))
+                .font(.caption)
+                .fontWeight(.semibold)
+                .monospacedDigit()
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(caption)
+                .font(.system(size: 8))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .frame(width: width, alignment: .trailing)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(caption == "dead" ? "Dead cap if cut" : "Cap saved by cutting") \(formatSalary(value))")
     }
 
     // MARK: - Development Columns
@@ -518,8 +581,8 @@ struct PlayerRowView: View {
             .accessibilityLabel("\(player.position.rawValue), \(player.position.side.rawValue)\(onPositionBadgeTap != nil ? ", tap to change" : "")")
     }
 
-    @ViewBuilder
     /// Whether this player is a starter based on depth index and scheme-aware starter count.
+    /// (No `@ViewBuilder` — it is a `Bool`; the attribute only silenced itself into a warning.)
     private var isStarterRole: Bool {
         guard let idx = depthIndex else { return false }
         return idx < starterCountForPosition
@@ -729,6 +792,29 @@ struct PlayerRowView: View {
 
     private var formattedSalary: String {
         formatSalary(player.annualSalary)
+    }
+
+    /// Dead cap the club still owes if this player is released, in thousands.
+    ///
+    /// Not recomputed here: the precedence is `CapManagementEngine.tradeCapSplit`'s
+    /// — a detailed `Contract` row's own `deadCap` when one exists, and
+    /// `RosterCutEvaluator.deadCap` (the 15 %-per-remaining-year proxy the cut
+    /// screens already quote) for everyone else, which is most of the league.
+    @MainActor
+    private var deadCapIfCut: Int {
+        if let contract, contract.totalYears > 0 {
+            return contract.deadCap
+        }
+        return RosterCutEvaluator.deadCap(player: player)
+    }
+
+    /// Cap actually freed by the release: salary minus the dead money.
+    @MainActor
+    private var capSavingsIfCut: Int {
+        if let contract, contract.totalYears > 0 {
+            return max(0, player.annualSalary - contract.deadCap)
+        }
+        return RosterCutEvaluator.capSavings(player: player)
     }
 
     private var capPercent: Double {
