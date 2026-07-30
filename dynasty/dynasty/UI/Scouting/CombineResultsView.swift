@@ -96,6 +96,11 @@ struct CombineResultsView: View {
                 let bRank = LetterGrade(rawValue: b.scoutGrade ?? "")?.rank ?? Int.max
                 if aRank == bRank { return compare(a.lastName, b.lastName) }
                 return aRank < bRank
+            case .production:
+                let aTier = a.collegeProductionTier.sortRank
+                let bTier = b.collegeProductionTier.sortRank
+                if aTier == bTier { return compare(a.lastName, b.lastName) }
+                return aTier < bTier
             case .projection:
                 return compare(a.draftProjection ?? 999, b.draftProjection ?? 999)
             case .fortyYard:
@@ -389,6 +394,7 @@ struct CombineResultsView: View {
             sortableHeader("Name", column: .name, width: 140, alignment: .leading)
             sortableHeader("Pos", column: .position, width: 44)
             sortableHeader("GRD", column: .grade, width: 54)
+            sortableHeader("PROD", column: .production, width: 52)
             sortableHeader("Proj", column: .projection, width: 44)
             sortableHeader("College", column: .college, width: 110, alignment: .leading)
             sortableHeader("40yd", column: .fortyYard, width: 60)
@@ -494,6 +500,9 @@ struct CombineResultsView: View {
                 trajectory: prospect.stockTrajectory
             )
             .frame(width: 64)
+
+            // PROD column — college production tier
+            ProductionTierChip(tier: prospect.collegeProductionTier, width: 52, fontSize: 10)
 
             // Proj column
             Text(projectionDisplayText(for: prospect))
@@ -776,7 +785,7 @@ struct CombineResultsView: View {
 
 private enum CombineColumn {
     case rank, name, position, college
-    case grade, projection
+    case grade, projection, production
     case fortyYard, bench, vertical, broadJump, threeCone, shuttle
     case positionDrill
 }

@@ -86,10 +86,15 @@ enum HoldoutEngine {
     /// Initiates a holdout for a player. Returns the persisted Holdout record,
     /// or `nil` if a save error occurs. R22: flags the player as holding out
     /// so simulation, development and UI all see the same state.
+    /// - Parameter seasonYear: `career.currentSeason` at the time the standoff
+    ///   begins. Stamped on the record so the phase-2 camp pipeline can tell a
+    ///   holdout settled THIS offseason (health gate 0.7 — he missed camp) from
+    ///   one settled years ago. `0` leaves it unknown.
     static func startHoldout(
         player: Player,
         teamID: UUID,
         subMarketDelta: Int,
+        seasonYear: Int = 0,
         modelContext: ModelContext
     ) -> Holdout? {
         let holdout = Holdout(
@@ -97,6 +102,7 @@ enum HoldoutEngine {
             teamID: teamID,
             subMarketDelta: subMarketDelta
         )
+        holdout.seasonYear = seasonYear
         player.isHoldingOut = true
         modelContext.insert(holdout)
         do {

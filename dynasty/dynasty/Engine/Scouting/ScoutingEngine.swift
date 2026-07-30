@@ -15,298 +15,28 @@ enum ScoutingEngine {
         "Minnesota", "Illinois", "Boston College", "Wake Forest", "Duke"
     ]
 
-    // MARK: - Position Distribution
-
-    /// Target distribution for a ~350-player draft class.
-    private static let positionDistribution: [(Position, Int)] = [
-        (.QB, 42), (.RB, 28), (.FB, 7), (.WR, 49), (.TE, 21),
-        (.LT, 14), (.LG, 14), (.C, 11), (.RG, 11), (.RT, 14),
-        (.DE, 25), (.DT, 22), (.OLB, 20), (.MLB, 17),
-        (.CB, 22), (.FS, 14), (.SS, 11),
-        (.K, 8), (.P, 7)
-    ]
-
-    // MARK: - Height/Weight Ranges per Position (inches, pounds)
-
-    private static func heightWeightRange(for position: Position) -> (height: ClosedRange<Int>, weight: ClosedRange<Int>) {
-        switch position {
-        case .QB:  return (73...77, 205...240)
-        case .RB:  return (68...73, 195...230)
-        case .FB:  return (71...74, 235...260)
-        case .WR:  return (69...76, 175...215)
-        case .TE:  return (74...78, 235...265)
-        case .LT, .RT: return (76...80, 295...340)
-        case .LG, .RG: return (74...78, 295...335)
-        case .C:   return (73...77, 290...320)
-        case .DE:  return (74...79, 250...285)
-        case .DT:  return (73...77, 280...330)
-        case .OLB: return (73...77, 230...260)
-        case .MLB: return (72...76, 235...260)
-        case .CB:  return (69...74, 180...205)
-        case .FS:  return (71...75, 195...215)
-        case .SS:  return (71...75, 200...225)
-        case .K:   return (71...75, 185...215)
-        case .P:   return (72...76, 200...225)
-        }
-    }
-
-    // MARK: - Positional Draft Value
-
-    /// Modifier that affects how high a position can realistically be drafted.
-    /// 1.0 = highest value (QB), lower values push positions down in projected round.
-    static func positionalDraftValue(for position: Position) -> Double {
-        switch position {
-        case .QB:              return 1.0
-        case .LT, .RT:        return 0.95
-        case .DE:              return 0.93
-        case .WR:              return 0.90
-        case .CB:              return 0.88
-        case .DT:              return 0.85
-        case .OLB, .MLB:      return 0.78
-        case .TE:              return 0.75
-        case .FS, .SS:        return 0.72
-        case .RB:              return 0.65
-        case .C, .LG, .RG:   return 0.60
-        case .FB:              return 0.30
-        case .K:               return 0.25
-        case .P:               return 0.20
-        }
-    }
-
-    /// Maximum first-round prospects allowed per position in a typical draft class.
-    private static let maxFirstRounders: [Position: ClosedRange<Int>] = [
-        .QB: 1...3, .WR: 3...5, .LT: 1...2, .RT: 1...2,
-        .DE: 3...5, .CB: 2...4, .DT: 1...3, .OLB: 1...2, .MLB: 0...1,
-        .TE: 0...2, .FS: 0...1, .SS: 0...1, .RB: 0...2,
-        .C: 0...1, .LG: 0...1, .RG: 0...1,
-        .FB: 0...0, .K: 0...0, .P: 0...0
-    ]
-
     // MARK: - Draft Class Strength
 
-    /// Picks 2-3 "strong" positions and 2-3 "weak" positions for the draft class.
-    private struct DraftClassStrength {
-        let strongPositions: Set<Position>
-        let weakPositions: Set<Position>
+    /// Per-class positional strength profile. Owned by `DraftClassBuilder` now;
+    /// re-exported here so existing news/UI call sites keep compiling.
+    typealias DraftClassStrength = DraftClassBuilder.DraftClassStrength
 
-        static func random() -> DraftClassStrength {
-            // Eligible positions for strength variance (exclude K/P/FB)
-            let eligible: [Position] = [.QB, .RB, .WR, .TE, .LT, .RT, .LG, .RG, .C,
-                                        .DE, .DT, .OLB, .MLB, .CB, .FS, .SS]
-            var shuffled = eligible.shuffled()
-            let strongCount = Int.random(in: 2...3)
-            let strong = Set(shuffled.prefix(strongCount))
-            shuffled.removeFirst(strongCount)
-            let weakCount = Int.random(in: 2...3)
-            let weak = Set(shuffled.prefix(weakCount))
-            return DraftClassStrength(strongPositions: strong, weakPositions: weak)
-        }
+    /// Strength profile of the most recently generated class.
+    static var lastDraftClassStrength: DraftClassStrength? {
+        DraftClassBuilder.lastClassStrength
     }
 
     // MARK: - Prospect Generation
 
-    /// Generates a full draft class of college prospects with realistic position distribution
-    /// and draft class strength variance.
+    /// Generates a full draft class of college prospects.
+    ///
+    /// Thin wrapper — the generator itself lives in `DraftClassBuilder`
+    /// (`docs/DRAFT_CLASS_OVERHAUL_PLAN.md` §2). Signature, return type and every
+    /// call site are unchanged; `draftProjection` now comes straight from the
+    /// prospect's grade band instead of a `trueOverall × positionValue` sort
+    /// with per-position first-round caps and round-2 overflow.
     static func generateDraftClass(count: Int = 350) -> [CollegeProspect] {
-        var prospects: [CollegeProspect] = []
-        let classStrength = DraftClassStrength.random()
-
-        // Scale distribution to requested count
-        let totalTarget = positionDistribution.reduce(0) { $0 + $1.1 }
-        let scale = Double(count) / Double(totalTarget)
-
-        for (position, baseCount) in positionDistribution {
-            var posCount = max(1, Int((Double(baseCount) * scale).rounded()))
-
-            // Adjust count based on draft class strength
-            if classStrength.strongPositions.contains(position) {
-                posCount = Int(Double(posCount) * Double.random(in: 1.2...1.4))
-            } else if classStrength.weakPositions.contains(position) {
-                posCount = max(1, Int(Double(posCount) * Double.random(in: 0.6...0.8)))
-            }
-
-            for _ in 0..<posCount {
-                let prospect = generateProspect(position: position)
-                prospects.append(prospect)
-            }
-        }
-
-        // Trim or pad to exact count
-        while prospects.count > count {
-            prospects.removeLast()
-        }
-        while prospects.count < count {
-            let randomPos = positionDistribution.randomElement()!.0
-            prospects.append(generateProspect(position: randomPos))
-        }
-
-        // Assign draft projections using positional draft value modifier
-        // Sort by a composite score: trueOverall * positionalDraftValue
-        prospects.sort { a, b in
-            let aScore = Double(a.trueOverall) * positionalDraftValue(for: a.position)
-            let bScore = Double(b.trueOverall) * positionalDraftValue(for: b.position)
-            return aScore > bScore
-        }
-
-        // Track first-rounders per position to enforce caps
-        var firstRoundCount: [Position: Int] = [:]
-
-        for i in prospects.indices {
-            let fraction = Double(i) / Double(prospects.count)
-            let position = prospects[i].position
-            let posValue = positionalDraftValue(for: position)
-
-            // Base round from ranking fraction
-            let baseRound: Int
-            if fraction < 0.09 {
-                baseRound = 1
-            } else if fraction < 0.18 {
-                baseRound = 2
-            } else if fraction < 0.32 {
-                baseRound = 3
-            } else if fraction < 0.46 {
-                baseRound = 4
-            } else if fraction < 0.60 {
-                baseRound = 5
-            } else if fraction < 0.78 {
-                baseRound = 6
-            } else {
-                baseRound = 7
-            }
-
-            // Apply positional value penalty: low-value positions get pushed down
-            let roundPenalty: Int
-            if posValue >= 0.85 {
-                roundPenalty = 0
-            } else if posValue >= 0.70 {
-                roundPenalty = baseRound <= 1 ? 1 : 0
-            } else if posValue >= 0.50 {
-                roundPenalty = baseRound <= 2 ? 1 : 0
-            } else if posValue >= 0.30 {
-                // FB: earliest Rd 4
-                roundPenalty = max(0, 4 - baseRound)
-            } else {
-                // K/P: earliest Rd 4 (best ever), typically Rd 5+
-                roundPenalty = max(0, 4 - baseRound)
-            }
-
-            var projectedRound = min(7, baseRound + roundPenalty)
-
-            // Enforce first-round caps per position
-            if projectedRound == 1 {
-                let maxRange = maxFirstRounders[position] ?? (0...0)
-                let currentCount = firstRoundCount[position, default: 0]
-
-                // Strong positions get the upper bound, weak get lower bound
-                let maxAllowed: Int
-                if classStrength.strongPositions.contains(position) {
-                    maxAllowed = maxRange.upperBound
-                } else if classStrength.weakPositions.contains(position) {
-                    maxAllowed = maxRange.lowerBound
-                } else {
-                    maxAllowed = Int.random(in: maxRange)
-                }
-
-                if currentCount >= maxAllowed {
-                    projectedRound = 2  // Push to round 2
-                } else {
-                    firstRoundCount[position, default: 0] += 1
-                }
-            }
-
-            prospects[i].draftProjection = projectedRound
-        }
-
-        // Now scale physical stats based on assigned draft projection (tier)
-        for i in prospects.indices {
-            let round = prospects[i].draftProjection ?? 7
-            prospects[i].truePhysical = tieredPhysical(forRound: round)
-        }
-
-        // Generate medical/character risk profile for each prospect
-        for i in prospects.indices {
-            generateRiskProfile(for: &prospects[i])
-        }
-
-        prospects.shuffle()
-        return prospects
-    }
-
-    /// Physical stat ranges per draft round tier.
-    /// Draft-age athletes (20-23) are near physical peak — mental/technique develops more over career.
-    private static func tieredPhysical(forRound round: Int) -> PhysicalAttributes {
-        let range: ClosedRange<Int>
-        switch round {
-        case 1:  range = 82...96
-        case 2:  range = 76...90
-        case 3:  range = 70...85
-        case 4, 5: range = 65...80
-        default: range = 58...75
-        }
-        return PhysicalAttributes(
-            speed: bellCurveRating(min: range.lowerBound, max: range.upperBound,
-                                  center: (range.lowerBound + range.upperBound) / 2),
-            acceleration: bellCurveRating(min: range.lowerBound, max: range.upperBound,
-                                          center: (range.lowerBound + range.upperBound) / 2),
-            strength: bellCurveRating(min: range.lowerBound, max: range.upperBound,
-                                      center: (range.lowerBound + range.upperBound) / 2),
-            agility: bellCurveRating(min: range.lowerBound, max: range.upperBound,
-                                     center: (range.lowerBound + range.upperBound) / 2),
-            stamina: bellCurveRating(min: range.lowerBound, max: range.upperBound,
-                                     center: (range.lowerBound + range.upperBound) / 2),
-            durability: bellCurveRating(min: range.lowerBound, max: range.upperBound,
-                                        center: (range.lowerBound + range.upperBound) / 2)
-        )
-    }
-
-    /// Generates a single college prospect at the given position with bell-curved attributes.
-    /// Physical stats are assigned later by `generateDraftClass` based on draft tier.
-    private static func generateProspect(position: Position) -> CollegeProspect {
-        let name = RandomNameGenerator.randomName()
-        let college = colleges.randomElement()!
-        let age = Int.random(in: 20...23)
-        let hw = heightWeightRange(for: position)
-        let height = Int.random(in: hw.height)
-        let weight = Int.random(in: hw.weight)
-
-        // Placeholder physical — will be overwritten by tieredPhysical in generateDraftClass
-        let physical = bellCurvePhysical()
-        let mental = bellCurveMental()
-        let posAttrs = randomPositionAttributes(for: position)
-        let personality = PlayerPersonality(
-            archetype: PersonalityArchetype.allCases.randomElement()!,
-            motivation: Motivation.allCases.randomElement()!
-        )
-        // League OVR-drift calibration (R32 multi-season verify): prospect
-        // potential must roughly match the veteran outflow or the league's
-        // potential base drains every season. Measured: retirees leave with
-        // avgPot ≈ 73, while the old bellCurveRating(35...99, center: 60)
-        // gave classes avgPot ≈ 63.4 and a hard ~80 cap (the (raw+center)/2
-        // bias halves the spread — no 90+ potential prospect could EVER
-        // spawn). leaguePot decayed ~0.8/season → 10+ season careers rotted.
-        // New draw: mean of two uniforms in 41...99 → triangular bell,
-        // mean 70, full upper tail (~2.4 % of a class ≥ 90, ~0.6 % ≥ 95).
-        let potential = (Int.random(in: 41...99) + Int.random(in: 41...99)) / 2
-        let anthro = generateAnthropometrics(for: position)
-
-        let prospect = CollegeProspect(
-            firstName: name.first,
-            lastName: name.last,
-            college: college,
-            position: position,
-            age: age,
-            height: height,
-            weight: weight,
-            truePhysical: physical,
-            trueMental: mental,
-            truePositionAttributes: posAttrs,
-            truePersonality: personality,
-            truePotential: potential
-        )
-        prospect.handSize = anthro.handSize
-        prospect.armLength = anthro.armLength
-        prospect.wingspan = anthro.wingspan
-        return prospect
+        DraftClassBuilder.build(count: count).prospects
     }
 
     // MARK: - Anthropometrics (Hand Size / Arm Length / Wingspan)
@@ -394,108 +124,6 @@ enum ScoutingEngine {
         )
     }
 
-    // MARK: - Bell Curve Helpers
-
-    /// Generates a rating with a bell-curve distribution centered on `center`.
-    private static func bellCurveRating(min: Int, max: Int, center: Int) -> Int {
-        // Average of 3 random values produces a rough bell curve
-        let sum = Int.random(in: min...max) + Int.random(in: min...max) + Int.random(in: min...max)
-        let raw = sum / 3
-        // Bias toward center
-        let biased = (raw + center) / 2
-        return Swift.min(max, Swift.max(min, biased))
-    }
-
-    private static func bellCurvePhysical() -> PhysicalAttributes {
-        PhysicalAttributes(
-            speed: bellCurveRating(min: 40, max: 99, center: 62),
-            acceleration: bellCurveRating(min: 40, max: 99, center: 62),
-            strength: bellCurveRating(min: 40, max: 99, center: 62),
-            agility: bellCurveRating(min: 40, max: 99, center: 62),
-            stamina: bellCurveRating(min: 40, max: 99, center: 62),
-            durability: bellCurveRating(min: 40, max: 99, center: 62)
-        )
-    }
-
-    private static func bellCurveMental() -> MentalAttributes {
-        MentalAttributes(
-            awareness: bellCurveRating(min: 40, max: 99, center: 58),
-            decisionMaking: bellCurveRating(min: 40, max: 99, center: 58),
-            clutch: bellCurveRating(min: 40, max: 99, center: 58),
-            workEthic: bellCurveRating(min: 40, max: 99, center: 58),
-            coachability: bellCurveRating(min: 40, max: 99, center: 58),
-            leadership: bellCurveRating(min: 40, max: 99, center: 58)
-        )
-    }
-
-    private static func randomPositionAttributes(for position: Position) -> PositionAttributes {
-        switch position {
-        case .QB:
-            return .quarterback(QBAttributes(
-                armStrength: bellCurveRating(min: 40, max: 99, center: 65),
-                accuracyShort: bellCurveRating(min: 40, max: 99, center: 65),
-                accuracyMid: bellCurveRating(min: 40, max: 99, center: 60),
-                accuracyDeep: bellCurveRating(min: 40, max: 99, center: 55),
-                pocketPresence: bellCurveRating(min: 40, max: 99, center: 58),
-                scrambling: bellCurveRating(min: 40, max: 99, center: 55)
-            ))
-        case .WR:
-            return .wideReceiver(WRAttributes(
-                routeRunning: bellCurveRating(min: 40, max: 99, center: 60),
-                catching: bellCurveRating(min: 40, max: 99, center: 62),
-                release: bellCurveRating(min: 40, max: 99, center: 58),
-                spectacularCatch: bellCurveRating(min: 40, max: 99, center: 50)
-            ))
-        case .RB, .FB:
-            return .runningBack(RBAttributes(
-                vision: bellCurveRating(min: 40, max: 99, center: 60),
-                elusiveness: bellCurveRating(min: 40, max: 99, center: 58),
-                breakTackle: bellCurveRating(min: 40, max: 99, center: 58),
-                receiving: bellCurveRating(min: 40, max: 99, center: 52)
-            ))
-        case .TE:
-            return .tightEnd(TEAttributes(
-                blocking: bellCurveRating(min: 40, max: 99, center: 58),
-                catching: bellCurveRating(min: 40, max: 99, center: 60),
-                routeRunning: bellCurveRating(min: 40, max: 99, center: 55),
-                speed: bellCurveRating(min: 40, max: 99, center: 55)
-            ))
-        case .LT, .LG, .C, .RG, .RT:
-            return .offensiveLine(OLAttributes(
-                runBlock: bellCurveRating(min: 40, max: 99, center: 62),
-                passBlock: bellCurveRating(min: 40, max: 99, center: 60),
-                pull: bellCurveRating(min: 40, max: 99, center: 55),
-                anchor: bellCurveRating(min: 40, max: 99, center: 60)
-            ))
-        case .DE, .DT:
-            return .defensiveLine(DLAttributes(
-                passRush: bellCurveRating(min: 40, max: 99, center: 60),
-                blockShedding: bellCurveRating(min: 40, max: 99, center: 60),
-                powerMoves: bellCurveRating(min: 40, max: 99, center: 58),
-                finesseMoves: bellCurveRating(min: 40, max: 99, center: 55)
-            ))
-        case .OLB, .MLB:
-            return .linebacker(LBAttributes(
-                tackling: bellCurveRating(min: 40, max: 99, center: 62),
-                zoneCoverage: bellCurveRating(min: 40, max: 99, center: 58),
-                manCoverage: bellCurveRating(min: 40, max: 99, center: 52),
-                blitzing: bellCurveRating(min: 40, max: 99, center: 55)
-            ))
-        case .CB, .FS, .SS:
-            return .defensiveBack(DBAttributes(
-                manCoverage: bellCurveRating(min: 40, max: 99, center: 60),
-                zoneCoverage: bellCurveRating(min: 40, max: 99, center: 60),
-                press: bellCurveRating(min: 40, max: 99, center: 55),
-                ballSkills: bellCurveRating(min: 40, max: 99, center: 58)
-            ))
-        case .K, .P:
-            return .kicking(KickingAttributes(
-                kickPower: bellCurveRating(min: 40, max: 99, center: 65),
-                kickAccuracy: bellCurveRating(min: 40, max: 99, center: 62)
-            ))
-        }
-    }
-
     // MARK: - Scouting Process
 
     /// Has a scout evaluate a prospect, returning a scouting report and updating the prospect's scouted fields.
@@ -538,22 +166,7 @@ enum ScoutingEngine {
         }
 
         // Scout grade based on scouted overall
-        let grade: String
-        switch scoutedOvr {
-        case 90...99: grade = "A+"
-        case 85...89: grade = "A"
-        case 80...84: grade = "A-"
-        case 75...79: grade = "B+"
-        case 70...74: grade = "B"
-        case 65...69: grade = "B-"
-        case 60...64: grade = "C+"
-        case 55...59: grade = "C"
-        case 50...54: grade = "C-"
-        case 45...49: grade = "D+"
-        case 40...44: grade = "D"
-        default:      grade = "F"
-        }
-        prospect.scoutGrade = grade
+        prospect.scoutGrade = LetterGrade.from(numericValue: scoutedOvr).rawValue
 
         // Confidence level based on scout accuracy and experience
         let baseConfidence = Double(effectiveAccuracy) / 100.0
@@ -570,6 +183,8 @@ enum ScoutingEngine {
         // Generate per-attribute letter grades
         let mentalGrades = generateMentalGrades(
             mental: prospect.trueMental,
+            learning: prospect.trueLearning,
+            competitiveness: prospect.trueCompetitiveness,
             accuracy: effectiveAccuracy,
             positionSpec: scout.positionSpecialization == prospect.position,
             mentalFocus: scout.focusAttribute == .mental
@@ -667,6 +282,8 @@ enum ScoutingEngine {
         // 7. Generate per-attribute letter grades for mental and position skills
         let mentalGrades = generateMentalGrades(
             mental: prospect.trueMental,
+            learning: prospect.trueLearning,
+            competitiveness: prospect.trueCompetitiveness,
             accuracy: effectiveAccuracy,
             positionSpec: scout.positionSpecialization == prospect.position,
             mentalFocus: scout.focusAttribute == .mental
@@ -706,7 +323,19 @@ enum ScoutingEngine {
     // MARK: - Grade Generation Helpers
 
     /// Generates letter grades for each mental attribute with noise based on scout accuracy.
-    private static func generateMentalGrades(mental: MentalAttributes, accuracy: Int, positionSpec: Bool, mentalFocus: Bool = false) -> [String: LetterGrade] {
+    /// - Parameters:
+    ///   - learning: The prospect's `trueLearning`, surfaced as the `LRN` grade.
+    ///   - competitiveness: The prospect's `trueCompetitiveness`, surfaced as the
+    ///     `CMP` grade (phase-2 plan §2.1). Same scout fog as every other mental
+    ///     read — a fighter can be missed, and a coaster can grade out well.
+    private static func generateMentalGrades(
+        mental: MentalAttributes,
+        learning: Int,
+        competitiveness: Int,
+        accuracy: Int,
+        positionSpec: Bool,
+        mentalFocus: Bool = false
+    ) -> [String: LetterGrade] {
         // Higher accuracy = less noise. Noise in grade steps: low acc → ±3, high acc → ±1
         // Mental focus reduces noise by 1 additional step
         let noiseSteps = max(0, 4 - accuracy / 25 - (positionSpec ? 1 : 0) - (mentalFocus ? 1 : 0))
@@ -724,6 +353,8 @@ enum ScoutingEngine {
             "WRK": gradeWithNoise(mental.workEthic),
             "COA": gradeWithNoise(mental.coachability),
             "LDR": gradeWithNoise(mental.leadership),
+            "LRN": gradeWithNoise(learning),
+            "CMP": gradeWithNoise(competitiveness),
         ]
     }
 
@@ -784,21 +415,7 @@ enum ScoutingEngine {
         prospect.scoutedPotential = bestReport.potentialGrade
 
         // Scout grade based on best scouted overall
-        let ovr = bestReport.overallGrade
-        switch ovr {
-        case 90...99: prospect.scoutGrade = "A+"
-        case 85...89: prospect.scoutGrade = "A"
-        case 80...84: prospect.scoutGrade = "A-"
-        case 75...79: prospect.scoutGrade = "B+"
-        case 70...74: prospect.scoutGrade = "B"
-        case 65...69: prospect.scoutGrade = "B-"
-        case 60...64: prospect.scoutGrade = "C+"
-        case 55...59: prospect.scoutGrade = "C"
-        case 50...54: prospect.scoutGrade = "C-"
-        case 45...49: prospect.scoutGrade = "D+"
-        case 40...44: prospect.scoutGrade = "D"
-        default:      prospect.scoutGrade = "F"
-        }
+        prospect.scoutGrade = LetterGrade.from(numericValue: bestReport.overallGrade).rawValue
 
         // New: Update grade-based scouting fields
         applyGradeBasedFields(report: report, to: prospect)
@@ -1012,9 +629,14 @@ enum ScoutingEngine {
 
     /// Generate realistic combine results for invited prospects (~330 of the draft class).
     /// Top prospects by trueOverall are invited (`combineInvite = true`).
-    /// K/P only get height/weight measured — no athletic drills.
-    /// Drill results derive from true physical attributes with position-specific
-    /// adjustments and ±2-5% random noise.
+    /// K/P only get height/weight measured — no athletic drills; QBs skip the bench.
+    ///
+    /// Every drill is drawn from its own **per-position** mean/σ
+    /// (`DRAFT_NFL_REFERENCE.md` §5) correlated r ≈ 0.8 with the underlying
+    /// physical attribute, truncated at the observed floor/ceiling, with a
+    /// 0.5 % freak tail for record-flirting headlines. Previously bench, vert,
+    /// broad, cone and shuttle shared three coarse position groups, so a
+    /// cornerback and a quarterback tested from the same distribution.
     static func generateCombineResults(for prospects: inout [CollegeProspect], scoutingAbility: Int = 50) {
         // 1. Select top ~330 prospects by trueOverall as combine invitees
         let inviteCount = min(330, prospects.count)
@@ -1025,7 +647,7 @@ enum ScoutingEngine {
             prospects[i].combineInvite = true
         }
 
-        // 2. Generate drill results for each invitee using position-group benchmarks
+        // 2. Generate drill results for each invitee from the position's own curve
         for i in invitedIndices {
             let position = prospects[i].position
             let phys = prospects[i].truePhysical
@@ -1034,74 +656,112 @@ enum ScoutingEngine {
             if position == .K || position == .P { continue }
 
             let combineModifier = combinePersonalityModifier()
-            let posGroup = positionGroup(for: position)
-            let tiers = drillTiers(for: posGroup)
+            let drills = CombineDrillTable.drills(for: position)
 
-            // DE bonus: slightly faster than OL/DT on 40 and 3-cone
-            let isDE = position == .DE
+            prospects[i].fortyTime = drillResult(
+                drills.forty, attribute: phys.speed, attributeKind: .speed,
+                position: position, modifier: combineModifier)
 
-            // --- 40-yard dash ---
-            // Position-based normal distribution + SPD attribute bias.
-            var fortyResult = fortyTimeFromSpeed(speed: phys.speed, position: position, combineModifier: combineModifier)
-            if isDE { fortyResult -= 0.03 }
-            prospects[i].fortyTime = max(4.22, min(5.55, fortyResult))
+            // QBs do not bench at the combine (the field is Optional, so we can
+            // simply leave it unmeasured rather than invent a number).
+            if position == .QB {
+                prospects[i].benchPress = nil
+            } else {
+                let bench = drillResult(
+                    drills.bench, attribute: phys.strength, attributeKind: .strength,
+                    position: position, modifier: combineModifier)
+                prospects[i].benchPress = Int(bench.rounded())
+            }
 
-            // --- Bench press (225 lb reps) ---
-            let benchResult = drillResult(tiers: tiers.bench, attribute: phys.strength, combineModifier: combineModifier, lowerIsBetter: false)
-            prospects[i].benchPress = max(3, min(45, Int(benchResult.rounded())))
+            prospects[i].verticalJump = drillResult(
+                drills.vertical, attribute: (phys.agility + phys.acceleration) / 2,
+                attributeKind: .explosion, position: position, modifier: combineModifier)
 
-            // --- Vertical jump ---
-            let vertAttr = (phys.agility + phys.acceleration) / 2
-            let vertResult = drillResult(tiers: tiers.vert, attribute: vertAttr, combineModifier: combineModifier, lowerIsBetter: false)
-            prospects[i].verticalJump = max(20.0, min(46.0, vertResult))
+            let broad = drillResult(
+                drills.broad, attribute: (phys.strength + phys.acceleration) / 2,
+                attributeKind: .power, position: position, modifier: combineModifier)
+            prospects[i].broadJump = Int(broad.rounded())
 
-            // --- Broad jump ---
-            let broadAttr = (phys.strength + phys.acceleration) / 2
-            let broadResult = drillResult(tiers: tiers.broad, attribute: broadAttr, combineModifier: combineModifier, lowerIsBetter: false)
-            prospects[i].broadJump = max(84, min(146, Int(broadResult.rounded())))
+            prospects[i].coneDrill = drillResult(
+                drills.cone, attribute: (phys.agility + phys.acceleration) / 2,
+                attributeKind: .explosion, position: position, modifier: combineModifier)
 
-            // --- 3-cone drill ---
-            let coneAttr = (phys.agility + phys.acceleration) / 2
-            var coneResult = drillResult(tiers: tiers.cone, attribute: coneAttr, combineModifier: combineModifier, lowerIsBetter: true)
-            if isDE { coneResult -= 0.05 }
-            prospects[i].coneDrill = max(6.30, min(8.30, coneResult))
+            prospects[i].shuttleTime = drillResult(
+                drills.shuttle, attribute: (phys.agility + phys.speed) / 2,
+                attributeKind: .lateral, position: position, modifier: combineModifier)
+        }
 
-            // --- Shuttle time ---
-            let shuttleAttr = (phys.agility + phys.speed) / 2
-            let shuttleResult = drillResult(tiers: tiers.shuttle, attribute: shuttleAttr, combineModifier: combineModifier, lowerIsBetter: true)
-            prospects[i].shuttleTime = max(3.90, min(5.10, shuttleResult))
+        // 3. Position drill grades are graded *relative to the prospect's own
+        //    position*, so a class produces 1–3 A/A+ testers per position
+        //    (`DRAFT_NFL_REFERENCE.md` §5) rather than grading everyone against
+        //    one league-wide scale.
+        applyPositionDrillGrades(&prospects, invited: invitedIndices, scoutingAbility: scoutingAbility)
+    }
 
-            // Position drill grade — imprecise estimate from position-specific attributes
-            // Better scouting staff → more accurate grade
-            prospects[i].positionDrillGrade = generatePositionDrillGrade(for: prospects[i], scoutingAbility: scoutingAbility)
+    /// Grades each invitee's position drills against the distribution of *his own
+    /// position* in this class (percentile → letter).
+    ///
+    /// Calibration note (balance-harness `draftclass`): this used to rank inside
+    /// the three coarse `CombinePositionGroup`s. Because the generator *solves*
+    /// the position-skill average from the talent target minus the position's
+    /// physical/mental contribution, positions with low physical priors end up
+    /// with structurally higher position-attribute averages — so inside one
+    /// coarse group the A/A+ grades all went to the same position (measured: QB
+    /// 3.2 per class vs WR 1.4 and CB 1.9 in `speedster`; DT 1.1 vs DE 0.4 in
+    /// `bigman`). Ranking within the position self-normalises that away.
+    private static func applyPositionDrillGrades(
+        _ prospects: inout [CollegeProspect],
+        invited: Set<Int>,
+        scoutingAbility: Int
+    ) {
+        var scoresByPosition: [Position: [Double]] = [:]
+        var rawScores: [Int: Double] = [:]
+
+        for i in invited where prospects[i].position != .K && prospects[i].position != .P {
+            let score = noisyPositionDrillScore(for: prospects[i], scoutingAbility: scoutingAbility)
+            rawScores[i] = score
+            scoresByPosition[prospects[i].position, default: []].append(score)
+        }
+
+        var stats: [Position: (mean: Double, sd: Double)] = [:]
+        for (position, values) in scoresByPosition {
+            let mean = values.reduce(0, +) / Double(values.count)
+            let variance = values.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(max(1, values.count))
+            stats[position] = (mean, max(3.0, variance.squareRoot()))
+        }
+
+        for (i, score) in rawScores {
+            guard let stat = stats[prospects[i].position] else { continue }
+            let z = (score - stat.mean) / stat.sd
+            prospects[i].positionDrillGrade = drillGradeLetter(forZScore: z)
+        }
+    }
+
+    /// Percentile thresholds expressed as z-scores: A+ top 3 %, A top 5 %,
+    /// A- top 15 %, B+ top 25 %, B top 35 %, B- top 50 %, then the C/D tail.
+    private static func drillGradeLetter(forZScore z: Double) -> String {
+        switch z {
+        case 1.88...:      return "A+"
+        case 1.645..<1.88: return "A"
+        case 1.036..<1.645: return "A-"
+        case 0.674..<1.036: return "B+"
+        case 0.385..<0.674: return "B"
+        case 0.0..<0.385:   return "B-"
+        case -0.253..<0.0:  return "C+"
+        case -0.524..<(-0.253): return "C"
+        case -0.842..<(-0.524): return "C-"
+        case -1.175..<(-0.842): return "D+"
+        case -1.555..<(-1.175): return "D"
+        case -1.881..<(-1.555): return "D-"
+        default:            return "F"
         }
     }
 
     /// Generates a position drill grade (F through A+) based on the prospect's
     /// position-specific attributes. Noise varies by position (QB/DB hardest to
     /// evaluate, OL/DL most visible) and is reduced by better scouting staff.
-    private static func generatePositionDrillGrade(for prospect: CollegeProspect, scoutingAbility: Int = 50) -> String {
-        let baseAvg: Double
-        switch prospect.truePositionAttributes {
-        case .quarterback(let a):
-            baseAvg = Double(a.armStrength + a.accuracyShort + a.accuracyMid + a.accuracyDeep + a.pocketPresence + a.scrambling) / 6.0
-        case .wideReceiver(let a):
-            baseAvg = Double(a.routeRunning + a.catching + a.release + a.spectacularCatch) / 4.0
-        case .runningBack(let a):
-            baseAvg = Double(a.vision + a.elusiveness + a.breakTackle + a.receiving) / 4.0
-        case .tightEnd(let a):
-            baseAvg = Double(a.blocking + a.catching + a.routeRunning + a.speed) / 4.0
-        case .offensiveLine(let a):
-            baseAvg = Double(a.runBlock + a.passBlock + a.pull + a.anchor) / 4.0
-        case .defensiveLine(let a):
-            baseAvg = Double(a.passRush + a.blockShedding + a.powerMoves + a.finesseMoves) / 4.0
-        case .linebacker(let a):
-            baseAvg = Double(a.tackling + a.zoneCoverage + a.manCoverage + a.blitzing) / 4.0
-        case .defensiveBack(let a):
-            baseAvg = Double(a.manCoverage + a.zoneCoverage + a.press + a.ballSkills) / 4.0
-        case .kicking(let a):
-            baseAvg = Double(a.kickPower + a.kickAccuracy) / 2.0
-        }
+    private static func noisyPositionDrillScore(for prospect: CollegeProspect, scoutingAbility: Int = 50) -> Double {
+        let baseAvg = prospect.truePositionAttributes.overall
 
         // Position-specific base noise — some positions are harder to evaluate in drills
         // QB: decision-making/reads can't be fully measured in drills
@@ -1126,26 +786,7 @@ enum ScoutingEngine {
 
         let adjustedNoise = positionNoise * staffModifier
         let noise = Double.random(in: -adjustedNoise...adjustedNoise)
-        let drillScore = max(20, min(99, baseAvg + noise))
-
-        // Convert to letter grade using percentile-based thresholds
-        // Top 3%: A+, Top 5%: A, Top 15%: A-, Top 25%: B+, Top 35%: B
-        // Top 50%: B-, Top 60%: C+, Top 70%: C, Top 80%: C-, Top 88%: D+, Top 94%: D, Top 97%: D-, Rest: F
-        switch drillScore {
-        case 93...:   return "A+"
-        case 88..<93:  return "A"
-        case 82..<88:  return "A-"
-        case 76..<82:  return "B+"
-        case 70..<76:  return "B"
-        case 64..<70:  return "B-"
-        case 58..<64:  return "C+"
-        case 52..<58:  return "C"
-        case 46..<52:  return "C-"
-        case 40..<46:  return "D+"
-        case 35..<40:  return "D"
-        case 30..<35:  return "D-"
-        default:       return "F"
-        }
+        return max(20, min(99, baseAvg + noise))
     }
 
     /// Legacy wrapper — calls generateCombineResults(for:).
@@ -1153,9 +794,12 @@ enum ScoutingEngine {
         generateCombineResults(for: &prospects, scoutingAbility: scoutingAbility)
     }
 
-    // MARK: - Combine Position Groups & Drill Ranges
+    // MARK: - Combine Position Groups
 
-    private enum CombinePositionGroup {
+    /// Coarse groups used for pro-day hand timing and for grading position
+    /// drills relative to peers. Combine *measurables* use the per-position
+    /// table below, not these groups.
+    enum CombinePositionGroup: Hashable {
         case speedster  // WR, CB, FS, SS, QB — fastest 40 times
         case bigman     // OL (LT, LG, C, RG, RT), DL (DE, DT) — highest bench press, slower 40
         case balanced   // RB, FB, TE, OLB, MLB — balanced across drills
@@ -1174,168 +818,222 @@ enum ScoutingEngine {
         }
     }
 
-    /// Real NFL Combine drill ranges per position group, split into 4 tiers:
-    /// Elite (attr 95-99), Good (80-94), Average (65-79), Below Average (<65).
-    /// Each tier stores (min, max) for the drill result.
-    private struct CombineDrillTiers {
-        let elite: (Double, Double)
-        let good: (Double, Double)
-        let average: (Double, Double)
-        let belowAvg: (Double, Double)
+    // MARK: - Per-Position Combine Drill Table
 
-        /// Returns the (min, max) range for a given physical attribute value (40-99).
-        func range(for attribute: Int) -> (Double, Double) {
-            switch attribute {
-            case 95...99: return elite
-            case 80...94: return good
-            case 65...79: return average
-            default:      return belowAvg
+    /// One drill's distribution for one position: `N(mean, sd)` truncated to the
+    /// observed floor/ceiling. Straight out of `DRAFT_NFL_REFERENCE.md` §5.
+    struct CombineDrill {
+        let mean: Double
+        let sd: Double
+        let range: ClosedRange<Double>
+        let lowerIsBetter: Bool
+    }
+
+    /// Which physical attribute a drill is correlated with, and the position
+    /// prior it is measured against.
+    private enum DrillAttribute {
+        case speed          // 40-yard dash
+        case strength       // bench press
+        case explosion      // vertical jump, 3-cone (agility + acceleration)
+        case power          // broad jump (strength + acceleration)
+        case lateral        // shuttle (agility + speed)
+
+        func referenceMean(for position: Position) -> Double {
+            let p = PositionPhysicalProfile.profile(for: position)
+            switch self {
+            case .speed:     return p.speed.mean
+            case .strength:  return p.strength.mean
+            case .explosion: return (p.agility.mean + p.acceleration.mean) / 2
+            case .power:     return (p.strength.mean + p.acceleration.mean) / 2
+            case .lateral:   return (p.agility.mean + p.speed.mean) / 2
             }
         }
     }
 
-    /// Position-group–specific drill tiers based on real NFL Combine data.
-    /// For time-based drills (40, 3-cone, shuttle) lower is better.
-    /// For reps/distance drills (bench, vert, broad) higher is better.
-    private static func drillTiers(for group: CombinePositionGroup) -> (
-        forty: CombineDrillTiers,
-        bench: CombineDrillTiers,
-        vert: CombineDrillTiers,
-        broad: CombineDrillTiers,
-        cone: CombineDrillTiers,
-        shuttle: CombineDrillTiers
-    ) {
-        switch group {
-        // Tier ranges define the elite..below-average envelope used by `drillResult`,
-        // which now uses a normal-ish distribution (mean = midpoint, sigma = span/4).
-        // Wider envelopes produce a more realistic spread with outliers on both ends.
-        case .speedster:
-            return (
-                forty:   CombineDrillTiers(elite: (4.25, 4.35), good: (4.36, 4.45), average: (4.46, 4.55), belowAvg: (4.56, 4.75)),
-                bench:   CombineDrillTiers(elite: (16, 22), good: (12, 16), average: (8, 12), belowAvg: (4, 8)),
-                vert:    CombineDrillTiers(elite: (40, 44), good: (36, 40), average: (32, 36), belowAvg: (28, 32)),
-                broad:   CombineDrillTiers(elite: (128, 138), good: (120, 128), average: (112, 120), belowAvg: (104, 112)),
-                cone:    CombineDrillTiers(elite: (6.50, 6.70), good: (6.70, 6.90), average: (6.90, 7.10), belowAvg: (7.10, 7.40)),
-                shuttle: CombineDrillTiers(elite: (3.95, 4.10), good: (4.10, 4.25), average: (4.25, 4.40), belowAvg: (4.40, 4.60))
-            )
-        case .bigman:
-            return (
-                forty:   CombineDrillTiers(elite: (4.80, 5.00), good: (5.00, 5.15), average: (5.15, 5.30), belowAvg: (5.30, 5.55)),
-                bench:   CombineDrillTiers(elite: (30, 38), good: (25, 30), average: (20, 25), belowAvg: (14, 20)),
-                vert:    CombineDrillTiers(elite: (30, 34), good: (27, 30), average: (24, 27), belowAvg: (20, 24)),
-                broad:   CombineDrillTiers(elite: (108, 118), good: (100, 108), average: (94, 100), belowAvg: (86, 94)),
-                cone:    CombineDrillTiers(elite: (7.20, 7.45), good: (7.45, 7.65), average: (7.65, 7.85), belowAvg: (7.85, 8.20)),
-                shuttle: CombineDrillTiers(elite: (4.40, 4.60), good: (4.60, 4.75), average: (4.75, 4.90), belowAvg: (4.90, 5.10))
-            )
-        case .balanced:
-            return (
-                forty:   CombineDrillTiers(elite: (4.35, 4.48), good: (4.48, 4.60), average: (4.60, 4.72), belowAvg: (4.72, 4.90)),
-                bench:   CombineDrillTiers(elite: (22, 30), good: (16, 22), average: (12, 16), belowAvg: (8, 12)),
-                vert:    CombineDrillTiers(elite: (37, 42), good: (33, 37), average: (29, 33), belowAvg: (25, 29)),
-                broad:   CombineDrillTiers(elite: (120, 132), good: (110, 120), average: (102, 110), belowAvg: (94, 102)),
-                cone:    CombineDrillTiers(elite: (6.70, 6.95), good: (6.95, 7.15), average: (7.15, 7.35), belowAvg: (7.35, 7.65)),
-                shuttle: CombineDrillTiers(elite: (4.10, 4.25), good: (4.25, 4.40), average: (4.40, 4.55), belowAvg: (4.55, 4.75))
-            )
+    /// Per-position combine measurables. All six drills now have their own
+    /// mean/σ per position instead of five of them sharing three coarse groups.
+    enum CombineDrillTable {
+        struct PositionDrills {
+            let forty: CombineDrill
+            let bench: CombineDrill
+            let vertical: CombineDrill
+            let broad: CombineDrill
+            let cone: CombineDrill
+            let shuttle: CombineDrill
+        }
+
+        /// Absolute bounds any human has ever posted (used to truncate the ±3σ tails).
+        private static let fortyBounds = 4.18...5.55
+        private static let benchBounds = 2.0...49.0
+        private static let vertBounds = 19.0...46.0
+        private static let broadBounds = 82.0...147.0
+        private static let coneBounds = 6.28...8.45
+        private static let shuttleBounds = 3.75...5.25
+
+        private static func drill(
+            _ mean: Double,
+            _ sd: Double,
+            lowerIsBetter: Bool,
+            bounds: ClosedRange<Double>,
+            sigma: Double = 3.0
+        ) -> CombineDrill {
+            let low = max(bounds.lowerBound, mean - sd * sigma)
+            let high = min(bounds.upperBound, mean + sd * sigma)
+            return CombineDrill(mean: mean, sd: sd,
+                                range: low...max(low + 0.01, high),
+                                lowerIsBetter: lowerIsBetter)
+        }
+
+        private static func timed(_ mean: Double, _ sd: Double, _ floor: Double, _ ceiling: Double) -> CombineDrill {
+            CombineDrill(mean: mean, sd: sd, range: floor...ceiling, lowerIsBetter: true)
+        }
+
+        static func drills(for position: Position) -> PositionDrills {
+            switch position {
+            case .QB:
+                return PositionDrills(
+                    forty: timed(4.83, 0.12, 4.55, 5.10),
+                    bench: drill(18, 4, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(30.5, 3, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(112, 6, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(7.15, 0.20, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.40, 0.15, lowerIsBetter: true, bounds: shuttleBounds))
+            case .RB:
+                return PositionDrills(
+                    forty: timed(4.52, 0.08, 4.32, 4.75),
+                    bench: drill(20, 4, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(34.5, 3, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(119, 5, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(7.05, 0.15, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.30, 0.12, lowerIsBetter: true, bounds: shuttleBounds))
+            case .FB:
+                return PositionDrills(
+                    forty: timed(4.78, 0.10, 4.55, 5.05),
+                    bench: drill(24, 4, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(32, 3, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(112, 5, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(7.20, 0.18, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.45, 0.12, lowerIsBetter: true, bounds: shuttleBounds))
+            case .WR:
+                return PositionDrills(
+                    forty: timed(4.49, 0.08, 4.22, 4.70),
+                    bench: drill(13, 3, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(36, 3, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(122, 5, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(6.95, 0.15, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.25, 0.12, lowerIsBetter: true, bounds: shuttleBounds))
+            case .TE:
+                return PositionDrills(
+                    forty: timed(4.72, 0.10, 4.55, 5.00),
+                    bench: drill(21, 4, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(33, 3, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(116, 5, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(7.10, 0.15, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.40, 0.12, lowerIsBetter: true, bounds: shuttleBounds))
+            case .LT, .RT:
+                return PositionDrills(
+                    forty: timed(5.16, 0.13, 4.85, 5.45),
+                    bench: drill(24, 5, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(27.5, 3, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(103, 6, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(7.75, 0.25, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.80, 0.15, lowerIsBetter: true, bounds: shuttleBounds))
+            case .LG, .C, .RG:
+                return PositionDrills(
+                    forty: timed(5.22, 0.12, 4.95, 5.50),
+                    bench: drill(27, 5, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(28, 3, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(104, 6, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(7.70, 0.22, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.75, 0.15, lowerIsBetter: true, bounds: shuttleBounds))
+            case .DE:
+                return PositionDrills(
+                    forty: timed(4.70, 0.10, 4.40, 4.95),
+                    bench: drill(24, 4, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(33.5, 3.5, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(118, 6, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(7.15, 0.20, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.45, 0.13, lowerIsBetter: true, bounds: shuttleBounds))
+            case .DT:
+                return PositionDrills(
+                    forty: timed(5.02, 0.14, 4.70, 5.35),
+                    bench: drill(29, 5, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(29, 3.5, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(108, 7, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(7.60, 0.25, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.75, 0.15, lowerIsBetter: true, bounds: shuttleBounds))
+            case .OLB, .MLB:
+                return PositionDrills(
+                    forty: timed(4.62, 0.09, 4.38, 4.85),
+                    bench: drill(22, 4, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(34, 3, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(119, 5, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(7.10, 0.18, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.35, 0.12, lowerIsBetter: true, bounds: shuttleBounds))
+            case .CB:
+                return PositionDrills(
+                    forty: timed(4.47, 0.07, 4.28, 4.65),
+                    bench: drill(14, 3, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(36.5, 3, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(124, 5, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(6.90, 0.15, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.20, 0.10, lowerIsBetter: true, bounds: shuttleBounds))
+            case .FS, .SS:
+                return PositionDrills(
+                    forty: timed(4.53, 0.08, 4.35, 4.72),
+                    bench: drill(16, 3, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(36, 3, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(122, 5, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(7.00, 0.15, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.25, 0.10, lowerIsBetter: true, bounds: shuttleBounds))
+            case .K, .P:
+                return PositionDrills(
+                    forty: timed(4.95, 0.15, 4.60, 5.40),
+                    bench: drill(15, 4, lowerIsBetter: false, bounds: benchBounds),
+                    vertical: drill(28, 4, lowerIsBetter: false, bounds: vertBounds),
+                    broad: drill(105, 7, lowerIsBetter: false, bounds: broadBounds),
+                    cone: drill(7.40, 0.25, lowerIsBetter: true, bounds: coneBounds),
+                    shuttle: drill(4.55, 0.18, lowerIsBetter: true, bounds: shuttleBounds))
+            }
         }
     }
 
-    /// Generates a drill result using a normal-ish distribution (sum of 3 uniform rolls)
-    /// centered on the attribute-driven midpoint of the tier range. This produces a
-    /// realistic spread with most prospects clustering around the mean and a few
-    /// outliers on both ends.
-    /// For time-based drills (lower = better), higher attributes produce lower results.
-    /// For rep/distance drills (higher = better), higher attributes produce higher results.
+    /// Draws one drill result: `mean ± sd·(0.8·attributeZ + 0.6·noise + modifier)`.
+    ///
+    /// The attribute term is normalised against the position's own physical
+    /// prior, so "fast for a tackle" and "fast for a corner" mean different
+    /// things — corr(attribute, result) ≈ 0.8 as the reference requires. A
+    /// 0.5 % freak tail pushes an extra 1.5–2.5σ past the normal draw, which is
+    /// how a 4.2x receiver or a 4.4 edge rusher shows up in the headlines.
     private static func drillResult(
-        tiers: CombineDrillTiers,
+        _ drill: CombineDrill,
         attribute: Int,
-        combineModifier: Double,
-        lowerIsBetter: Bool
+        attributeKind: DrillAttribute,
+        position: Position,
+        modifier: Double
     ) -> Double {
-        // Span the full position range from elite to belowAvg.
-        // Use the mid of average tier as the population mean, and use the full
-        // elite-to-belowAvg span as ~4 standard deviations.
-        let bestEnd: Double  // fastest time / most reps
-        let worstEnd: Double // slowest time / fewest reps
-        if lowerIsBetter {
-            bestEnd  = min(tiers.elite.0, tiers.elite.1)
-            worstEnd = max(tiers.belowAvg.0, tiers.belowAvg.1)
-        } else {
-            bestEnd  = max(tiers.elite.0, tiers.elite.1)
-            worstEnd = min(tiers.belowAvg.0, tiers.belowAvg.1)
-        }
-        let mean = (bestEnd + worstEnd) / 2.0
-        let stdDev = abs(bestEnd - worstEnd) / 4.0  // ~95% of values fall within elite..belowAvg
+        // Spread of a position's attribute inside a class: prior σ combined with
+        // the talent-driven level shift (≈8 points).
+        let attributeSpread = 8.0
+        let reference = attributeKind.referenceMean(for: position)
+        let z = max(-2.5, min(2.5, (Double(attribute) - reference) / attributeSpread))
 
-        // Normal-ish distribution (avg of 3 uniform rolls in [-1, 1])
-        let roll = (Double.random(in: -1.0...1.0)
-                  + Double.random(in: -1.0...1.0)
-                  + Double.random(in: -1.0...1.0)) / 3.0
+        let correlation = 0.8
+        let signal = correlation * z
+        let noise = (1.0 - correlation * correlation).squareRoot()
+            * PositionPhysicalProfile.gaussian(mean: 0, sd: 1)
 
-        // Attribute bias: maps 40-99 attribute to ~+1.4..-1.4 std-dev shift.
-        // attr 70 (median) → 0 shift, attr 99 (elite) → toward best end, attr 40 → toward worst.
-        let attrBias = (70.0 - Double(attribute)) / 20.0  // higher attr → smaller (negative) bias
+        var sigmas = signal + noise + modifier * 0.5
 
-        // Combine modifier shifts ~0.5 std-dev
-        let modBias = combineModifier * 0.5
-
-        // For "lowerIsBetter" drills, higher attribute should reduce the value.
-        // attrBias positive = lower attr = should be slower (higher value if lowerIsBetter).
-        let signedAttrBias = lowerIsBetter ? attrBias : -attrBias
-        let signedModBias = lowerIsBetter ? -modBias : modBias
-
-        return mean + (roll + signedAttrBias + signedModBias) * stdDev
-    }
-
-    /// Converts a speed attribute (40-99) to a realistic 40-yard dash time.
-    /// Uses position-specific mean + standard deviation (normal-ish distribution).
-    /// Speed attribute biases the result: high SPD shifts toward fast end of position curve,
-    /// low SPD shifts toward slow end, but position is the dominant factor (a 99-SPD OL
-    /// still runs ~4.95, a 60-SPD WR still runs ~4.55).
-    private static func fortyTimeFromSpeed(speed: Int, position: Position, combineModifier: Double) -> Double {
-        // Position-specific mean + std dev (in seconds).
-        // Calibrated to real NFL Combine distributions — skill positions widened
-        // so an elite 99-SPD WR/CB/RB can post sub-4.35 times like the real combine.
-        let mean: Double
-        let stdDev: Double
-        switch position {
-        case .WR, .CB, .FS, .SS:
-            mean = 4.46;  stdDev = 0.11   // Most 4.28-4.64, top performers 4.25-4.36
-        case .RB:
-            mean = 4.52;  stdDev = 0.11   // Most 4.34-4.70
-        case .QB:
-            mean = 4.78;  stdDev = 0.14   // Most 4.55-5.00 (Mahomes 4.80, Lamar 4.34)
-        case .OLB:
-            mean = 4.66;  stdDev = 0.11   // Most 4.50-4.85
-        case .MLB:
-            mean = 4.72;  stdDev = 0.11   // Most 4.55-4.90
-        case .TE:
-            mean = 4.68;  stdDev = 0.11   // Most 4.50-4.85
-        case .FB:
-            mean = 4.78;  stdDev = 0.12   // Most 4.60-5.00
-        case .DE:
-            mean = 4.76;  stdDev = 0.12   // Most 4.55-4.95, top edge 4.40-4.55
-        case .DT:
-            mean = 4.95;  stdDev = 0.12   // Most 4.75-5.15
-        case .LT, .LG, .C, .RG, .RT:
-            mean = 5.13;  stdDev = 0.14   // Most 4.90-5.40
-        case .K, .P:
-            mean = 4.95;  stdDev = 0.15
+        // 0.5 % freak tail — record-flirting results.
+        if Double.random(in: 0...1) < 0.005 {
+            sigmas += Double.random(in: 1.5...2.5)
         }
 
-        // Two uniform rolls averaged → bell-curve roughly [-0.5, +0.5] stddev.
-        let roll = (Double.random(in: -1.0...1.0) + Double.random(in: -1.0...1.0)) / 2.0
-
-        // Speed attribute bias — wider divisor so elite SPD truly separates from average.
-        // SPD 50 → +1.25 stddev (slower than position avg)
-        // SPD 75 → 0 (position avg)
-        // SPD 99 → -1.20 stddev (clearly faster than position avg)
-        let speedBias = (75.0 - Double(speed)) / 20.0
-
-        // Combine modifier: warriors (-0.6 std), bad testers (+0.6 std)
-        let modBias = -combineModifier * 0.6
-
-        let result = mean + (roll + speedBias + modBias) * stdDev
-        return result
+        let raw = drill.lowerIsBetter
+            ? drill.mean - drill.sd * sigmas
+            : drill.mean + drill.sd * sigmas
+        return min(drill.range.upperBound, max(drill.range.lowerBound, raw))
     }
 
     /// Returns a modifier: positive = combine warrior (tests better), negative = bad tester.
@@ -1488,21 +1186,15 @@ enum ScoutingEngine {
             revealedPersonality = wrong.randomElement() ?? prospect.truePersonality.archetype
         }
 
-        // 2. Reveal footballIQ scaled by draft projection tier with interviewer noise
-        let trueMentalAvg = Int(prospect.trueMental.average.rounded())
-        let projRound = prospect.draftProjection ?? 5
-        let iqFloor: Int
-        let iqCeiling: Int
-        switch projRound {
-        case 1:      iqFloor = 70; iqCeiling = 95
-        case 2...3:  iqFloor = 60; iqCeiling = 85
-        case 4...5:  iqFloor = 50; iqCeiling = 78
-        default:     iqFloor = 45; iqCeiling = 75
-        }
-        let scaledIQ = iqFloor + Int(Double(trueMentalAvg - 40) / 59.0 * Double(iqCeiling - iqFloor))
+        // 2. Reveal footballIQ from the two attributes that actually describe it:
+        //    game IQ (`awareness`) and how fast he absorbs a playbook
+        //    (`trueLearning`). The old round-based floor/ceiling made the
+        //    interview a restatement of the draft projection — a projected first
+        //    rounder could never interview below 70, so the room told you nothing.
+        let baseIQ = 0.5 * Double(prospect.trueMental.awareness) + 0.5 * Double(prospect.trueLearning)
         let maxNoise = max(1, 20 - (interviewerQuality * 20 / 100))
         let iqNoise = Int.random(in: -maxNoise...maxNoise)
-        let footballIQ = min(iqCeiling, max(iqFloor, scaledIQ + iqNoise))
+        let footballIQ = min(99, max(25, Int(baseIQ.rounded()) + iqNoise))
 
         // 3. Generate 1-3 character notes based on true attributes
         var characterPool: [String] = []
@@ -1772,22 +1464,7 @@ enum ScoutingEngine {
         if let bestReport = prospect.scoutingReports.max(by: { $0.confidenceLevel < $1.confidenceLevel }) {
             prospect.scoutedOverall = bestReport.overallGrade
             prospect.scoutedPotential = bestReport.potentialGrade
-
-            let ovr = bestReport.overallGrade
-            switch ovr {
-            case 90...99: prospect.scoutGrade = "A+"
-            case 85...89: prospect.scoutGrade = "A"
-            case 80...84: prospect.scoutGrade = "A-"
-            case 75...79: prospect.scoutGrade = "B+"
-            case 70...74: prospect.scoutGrade = "B"
-            case 65...69: prospect.scoutGrade = "B-"
-            case 60...64: prospect.scoutGrade = "C+"
-            case 55...59: prospect.scoutGrade = "C"
-            case 50...54: prospect.scoutGrade = "C-"
-            case 45...49: prospect.scoutGrade = "D+"
-            case 40...44: prospect.scoutGrade = "D"
-            default:      prospect.scoutGrade = "F"
-            }
+            prospect.scoutGrade = LetterGrade.from(numericValue: bestReport.overallGrade).rawValue
         }
 
         prospect.proDayCompleted = true
@@ -2084,12 +1761,15 @@ enum ScoutingEngine {
             teamNeeds[team.id] = evaluateTeamNeedsForMock(roster: roster)
         }
 
-        // Sort prospects by composite score: trueOverall * positionalDraftValue
+        // Consensus board order. Positional value is already baked into the
+        // class blueprint (a position's talent is decided by the board slots it
+        // is allocated), so a second positional multiplier here would double-count
+        // it and re-create the "every QB above every RB" sort.
         let sortedProspects = prospects
             .filter { $0.isDeclaringForDraft }
-            .sorted {
-                Double($0.trueOverall) * positionalDraftValue(for: $0.position) >
-                Double($1.trueOverall) * positionalDraftValue(for: $1.position)
+            .sorted { lhs, rhs in
+                if lhs.trueOverall != rhs.trueOverall { return lhs.trueOverall > rhs.trueOverall }
+                return (lhs.draftProjection ?? 8) < (rhs.draftProjection ?? 8)
             }
 
         var takenIDs = Set<UUID>()
@@ -2106,8 +1786,7 @@ enum ScoutingEngine {
 
             // Score each available prospect
             let scored = available.prefix(80).compactMap { prospect -> (CollegeProspect, Double, String, String)? in
-                let posValue = positionalDraftValue(for: prospect.position)
-                var score = Double(prospect.trueOverall) * posValue
+                var score = Double(prospect.trueOverall)
 
                 // Positional need boost
                 let needMultiplier = needs[prospect.position] ?? 1.0
@@ -2239,7 +1918,7 @@ enum ScoutingEngine {
                 // Only interested in prospects projected in rounds 1-3
                 if let proj = prospects[i].draftProjection, proj <= 3 {
                     prospects[i].teamInterest.append(team.id)
-                } else if prospects[i].trueOverall >= 65 {
+                } else if prospects[i].trueOverall >= 74 {
                     // Also interested in high-talent prospects regardless of projection
                     prospects[i].teamInterest.append(team.id)
                 }
@@ -2479,21 +2158,7 @@ enum ScoutingEngine {
             prospects[i].scoutedPotential = bestReport.potentialGrade
 
             // Set scout grade based on best scouted overall
-            let ovr = bestReport.overallGrade
-            switch ovr {
-            case 90...99: prospects[i].scoutGrade = "A+"
-            case 85...89: prospects[i].scoutGrade = "A"
-            case 80...84: prospects[i].scoutGrade = "A-"
-            case 75...79: prospects[i].scoutGrade = "B+"
-            case 70...74: prospects[i].scoutGrade = "B"
-            case 65...69: prospects[i].scoutGrade = "B-"
-            case 60...64: prospects[i].scoutGrade = "C+"
-            case 55...59: prospects[i].scoutGrade = "C"
-            case 50...54: prospects[i].scoutGrade = "C-"
-            case 45...49: prospects[i].scoutGrade = "D+"
-            case 40...44: prospects[i].scoutGrade = "D"
-            default:      prospects[i].scoutGrade = "F"
-            }
+            prospects[i].scoutGrade = LetterGrade.from(numericValue: bestReport.overallGrade).rawValue
         }
     }
 
@@ -2547,8 +2212,11 @@ enum ScoutingEngine {
 
     // MARK: - Declaration Period
 
-    /// Simulates the draft declaration period: ~70 underclassmen declare, ~5-10 withdraw,
-    /// all seniors auto-declare. Returns news items for top declarations and withdrawals.
+    /// Simulates the draft declaration period: seniors auto-declare, the best
+    /// underclassmen declare on a talent-weighted roll (~70, more when the class
+    /// is senior-light), ~5-10 withdraw. The declaring pool is guaranteed to
+    /// exceed the draft's 224 picks by a UDFA-market cushion.
+    /// Returns news items for top declarations and withdrawals.
     static func generateDeclarations(
         prospects: inout [CollegeProspect]
     ) -> [(name: String, isDeclaration: Bool, headline: String)] {
@@ -2566,19 +2234,67 @@ enum ScoutingEngine {
         var underclassmenIndices = prospects.indices.filter { prospects[$0].age < seniorAge }
         underclassmenIndices.sort { prospects[$0].trueOverall > prospects[$1].trueOverall }
 
+        // Nobody in the underclass declares until he is drawn below — the model
+        // default is `true`, so leaving an underclassman untouched would silently
+        // declare him.
+        for i in underclassmenIndices {
+            prospects[i].isDeclaringForDraft = false
+        }
+
+        // The declaring pool has to fill the whole draft AND leave a UDFA market
+        // behind it. The class's senior count swings roughly 140–203 between
+        // classes (age is drawn per prospect), so a flat 65–75 underclassmen
+        // target left 17 % of classes with fewer declared players than the 224
+        // picks the seven rounds consume — the board then empties mid-draft,
+        // late picks silently vanish and `DraftEngine.aiMakePick` traps on an
+        // empty pool. The target is therefore the larger of the flavour band and
+        // "enough bodies for every pick plus a UDFA class", so the pool lands at
+        // ≥ 224 + `udfaCushion` in every class.
+        //
+        // PHASE 2 TARGET CHANGE (plan §2.9.8): the cushion was 26, which is a
+        // UDFA market of roughly ONE signing per club — the 31 AI teams then
+        // fought over ~28 players while each asked for 10-14, and the fix to
+        // that loop (`WeekAdvancer`, shuffled order + a fair per-team share) is
+        // only half the story: the market itself was too thin to be a market.
+        // 60 puts annual inflow at 224 picks + ~60 undrafted ≈ the ~250-300
+        // new players a season `DEVELOPMENT_NFL_REFERENCE.md` §8 calls for.
+        // This is a deliberate raise of the target, not a relaxed guard: the
+        // ≥ 224 + cushion floor still holds in EVERY class by construction
+        // (target ≤ underclass count is guaranteed while 224 + 60 + 10 ≤ 350).
+        // Harness-measured over 200 generated classes with the new cushion
+        // (`./run.sh draftclass`, assert 7.11): declared pool mean ≈ 286.6
+        // (286.4-286.8 across runs), min 284, max 289 — 0 classes short of the
+        // 284 floor.
+        let seniorCount = prospects.count - underclassmenIndices.count
+        let draftCapacity = 224
+        let udfaCushion = 60
+        let maxWithdrawals = 10
+        let flavourTarget = Int.random(in: 65...75)
+        let targetDeclarations = min(
+            underclassmenIndices.count,
+            max(flavourTarget, draftCapacity + udfaCushion + maxWithdrawals - seniorCount)
+        )
+
         var declarationCount = 0
-        let targetDeclarations = Int.random(in: 65...75)
+        var undeclared: [Int] = []
 
         for i in underclassmenIndices {
-            guard declarationCount < targetDeclarations else { break }
+            guard declarationCount < targetDeclarations else {
+                undeclared.append(i)
+                continue
+            }
 
-            // Higher-rated underclassmen are more likely to declare
+            // Higher-rated underclassmen are more likely to declare.
+            // Thresholds re-anchored to the generator-v2 talent curve
+            // (#1 ≈ 92 · #28 ≈ 79 · #100 ≈ 72.5 · #350 ≈ 62); the old 80/70/60
+            // cut points were tuned against the compressed 60–69 band and would
+            // now put every prospect in the top bracket.
             let declareChance: Int
             let overall = prospects[i].trueOverall
-            if overall >= 80 { declareChance = 95 }
-            else if overall >= 70 { declareChance = 75 }
-            else if overall >= 60 { declareChance = 40 }
-            else { declareChance = 15 }
+            if overall >= 79 { declareChance = 95 }
+            else if overall >= 73 { declareChance = 62 }
+            else if overall >= 68 { declareChance = 32 }
+            else { declareChance = 10 }
 
             if Int.random(in: 1...100) <= declareChance {
                 prospects[i].isDeclaringForDraft = true
@@ -2594,14 +2310,23 @@ enum ScoutingEngine {
                     ))
                 }
             } else {
-                prospects[i].isDeclaringForDraft = false
+                undeclared.append(i)
             }
+        }
+
+        // The per-bracket rates only reach ~63 declarations over a typical
+        // 174-man underclass, i.e. below the target every time. Top the pool up
+        // from the best remaining underclassmen so the target is an actual
+        // target rather than a ceiling the draw never touches.
+        for i in undeclared where declarationCount < targetDeclarations {
+            prospects[i].isDeclaringForDraft = true
+            declarationCount += 1
         }
 
         // 3. Withdrawals: ~5-10 declared underclassmen change their mind
         let withdrawalCount = Int.random(in: 5...10)
         let declaredUnderclassmen = prospects.indices.filter {
-            prospects[$0].age < seniorAge && prospects[$0].isDeclaringForDraft && prospects[$0].trueOverall < 75
+            prospects[$0].age < seniorAge && prospects[$0].isDeclaringForDraft && prospects[$0].trueOverall < 76
         }.shuffled()
 
         for i in declaredUnderclassmen.prefix(withdrawalCount) {
@@ -2644,20 +2369,7 @@ enum ScoutingEngine {
                 prospects[idx].scoutedOverall = scoutedOvr
 
                 // Accurate scout grade
-                switch scoutedOvr {
-                case 90...99: prospects[idx].scoutGrade = "A+"
-                case 85...89: prospects[idx].scoutGrade = "A"
-                case 80...84: prospects[idx].scoutGrade = "A-"
-                case 75...79: prospects[idx].scoutGrade = "B+"
-                case 70...74: prospects[idx].scoutGrade = "B"
-                case 65...69: prospects[idx].scoutGrade = "B-"
-                case 60...64: prospects[idx].scoutGrade = "C+"
-                case 55...59: prospects[idx].scoutGrade = "C"
-                case 50...54: prospects[idx].scoutGrade = "C-"
-                case 45...49: prospects[idx].scoutGrade = "D+"
-                case 40...44: prospects[idx].scoutGrade = "D"
-                default:      prospects[idx].scoutGrade = "F"
-                }
+                prospects[idx].scoutGrade = LetterGrade.from(numericValue: scoutedOvr).rawValue
 
                 // Potential revealed with moderate accuracy (within +-8)
                 let potError = Int.random(in: -8...8)
@@ -2697,21 +2409,7 @@ enum ScoutingEngine {
                 let error = Int.random(in: -10...10)
                 let scoutedOvr = min(99, max(1, prospects[idx].trueOverall + error))
                 prospects[idx].scoutedOverall = scoutedOvr
-
-                switch scoutedOvr {
-                case 90...99: prospects[idx].scoutGrade = "A+"
-                case 85...89: prospects[idx].scoutGrade = "A"
-                case 80...84: prospects[idx].scoutGrade = "A-"
-                case 75...79: prospects[idx].scoutGrade = "B+"
-                case 70...74: prospects[idx].scoutGrade = "B"
-                case 65...69: prospects[idx].scoutGrade = "B-"
-                case 60...64: prospects[idx].scoutGrade = "C+"
-                case 55...59: prospects[idx].scoutGrade = "C"
-                case 50...54: prospects[idx].scoutGrade = "C-"
-                case 45...49: prospects[idx].scoutGrade = "D+"
-                case 40...44: prospects[idx].scoutGrade = "D"
-                default:      prospects[idx].scoutGrade = "F"
-                }
+                prospects[idx].scoutGrade = LetterGrade.from(numericValue: scoutedOvr).rawValue
 
                 let report = ScoutingReport(
                     prospectID: prospects[idx].id,
@@ -3135,11 +2833,12 @@ enum ScoutingEngine {
         // 4. Workout impressions — position-specific.
         let workoutImpressions = generateWorkoutImpressions(for: prospect.position, prospect: prospect)
 
-        // 5. Team-fit score — heuristic combining trueOverall, position value, and personality fit.
-        // Without a roster handle here, we approximate fit using the prospect's traits
-        // and let UI/coordinator refine with team-context if needed.
+        // 5. Team-fit score — heuristic combining talent, board standing, and
+        // personality fit. Board standing replaces the old positional-value
+        // multiplier: a prospect's grade band already encodes how the league
+        // values his position.
         let baseFit = Double(prospect.trueOverall) / 99.0
-        let posValue = positionalDraftValue(for: prospect.position)
+        let boardStanding = 1.0 - Double(min(8, max(1, prospect.draftProjection ?? 5)) - 1) / 7.0
         let personalityBonus: Double
         switch prospect.truePersonality.archetype {
         case .teamLeader, .quietProfessional, .mentor: personalityBonus = 0.10
@@ -3148,7 +2847,7 @@ enum ScoutingEngine {
         case .classClown:                               personalityBonus = -0.03
         default:                                        personalityBonus = 0.0
         }
-        let rawFit = baseFit * 0.6 + posValue * 0.3 + personalityBonus
+        let rawFit = baseFit * 0.6 + boardStanding * 0.3 + personalityBonus
         let teamFit = Swift.min(1.0, Swift.max(0.0, rawFit + Double.random(in: -0.05...0.05)))
 
         return Top30VisitResult(
@@ -3250,109 +2949,53 @@ struct CombineBenchmarks {
         shuttle: (value: 3.75, name: "Dunta Robinson", year: 2004)
     )
 
+    /// Per-position drill benchmarks, derived from the SAME distribution the
+    /// generator draws combine results from (`ScoutingEngine.CombineDrillTable`,
+    /// `DRAFT_NFL_REFERENCE.md` §5) instead of a hand-written all-time-outlier
+    /// table.
+    ///
+    /// `percentile(value:benchmark:)` maps `average` → 50, `elite` → 95 and
+    /// `poor` → 15, so the three anchors have to BE those percentiles of the
+    /// generated distribution: `mean`, `mean ± 1.645σ` and `mean ∓ 1.036σ`.
+    /// The previous table anchored `elite` on record-flirting values the
+    /// ±3σ-truncated generator can no longer reach (CB broad 147" vs a 139"
+    /// generated max), which compressed the whole top half of every percentile
+    /// — the class's best athlete graded ~72 and the combine-media "Stock
+    /// Riser" / "Surprise" gates (≥70 / ≥75) were unreachable.
+    ///
+    /// Measured over 60 classes after the re-anchor: drill results at the "gold"
+    /// ≥90 tier 0.31 % → 4.4 %, combine average p99 72 → 85, and the media gates
+    /// produce 7.3 Stock-Riser and 0.8 Surprise candidates per class (was 0.03
+    /// and 0.00).
     static func benchmarks(for position: Position) -> PositionBenchmarks {
-        switch position {
-        case .QB:
-            return PositionBenchmarks(
-                fortyYard: DrillBenchmark(elite: 4.35, average: 4.87, poor: 5.20, lowerIsBetter: true),
-                benchPress: DrillBenchmark(elite: 26, average: 18, poor: 10, lowerIsBetter: false),
-                verticalJump: DrillBenchmark(elite: 40.5, average: 32.0, poor: 26.0, lowerIsBetter: false),
-                broadJump: DrillBenchmark(elite: 129, average: 111, poor: 98, lowerIsBetter: false),
-                threeCone: DrillBenchmark(elite: 6.55, average: 7.15, poor: 7.55, lowerIsBetter: true),
-                shuttle: DrillBenchmark(elite: 3.98, average: 4.45, poor: 4.80, lowerIsBetter: true)
-            )
-        case .RB, .FB:
-            return PositionBenchmarks(
-                fortyYard: DrillBenchmark(elite: 4.24, average: 4.53, poor: 4.72, lowerIsBetter: true),
-                benchPress: DrillBenchmark(elite: 36, average: 20, poor: 12, lowerIsBetter: false),
-                verticalJump: DrillBenchmark(elite: 43, average: 35, poor: 29, lowerIsBetter: false),
-                broadJump: DrillBenchmark(elite: 135, average: 121, poor: 110, lowerIsBetter: false),
-                threeCone: DrillBenchmark(elite: 6.50, average: 6.95, poor: 7.30, lowerIsBetter: true),
-                shuttle: DrillBenchmark(elite: 3.93, average: 4.25, poor: 4.50, lowerIsBetter: true)
-            )
-        case .WR:
-            return PositionBenchmarks(
-                fortyYard: DrillBenchmark(elite: 4.21, average: 4.48, poor: 4.65, lowerIsBetter: true),
-                benchPress: DrillBenchmark(elite: 27, average: 15, poor: 8, lowerIsBetter: false),
-                verticalJump: DrillBenchmark(elite: 45, average: 36, poor: 30, lowerIsBetter: false),
-                broadJump: DrillBenchmark(elite: 132, average: 120, poor: 110, lowerIsBetter: false),
-                threeCone: DrillBenchmark(elite: 6.42, average: 6.85, poor: 7.15, lowerIsBetter: true),
-                shuttle: DrillBenchmark(elite: 3.81, average: 4.30, poor: 4.55, lowerIsBetter: true)
-            )
-        case .TE:
-            return PositionBenchmarks(
-                fortyYard: DrillBenchmark(elite: 4.40, average: 4.70, poor: 4.92, lowerIsBetter: true),
-                benchPress: DrillBenchmark(elite: 35, average: 21, poor: 14, lowerIsBetter: false),
-                verticalJump: DrillBenchmark(elite: 43.5, average: 33, poor: 27, lowerIsBetter: false),
-                broadJump: DrillBenchmark(elite: 134, average: 116, poor: 106, lowerIsBetter: false),
-                threeCone: DrillBenchmark(elite: 6.73, average: 7.15, poor: 7.50, lowerIsBetter: true),
-                shuttle: DrillBenchmark(elite: 4.01, average: 4.40, poor: 4.65, lowerIsBetter: true)
-            )
-        case .LT, .LG, .C, .RG, .RT:
-            return PositionBenchmarks(
-                fortyYard: DrillBenchmark(elite: 4.71, average: 5.26, poor: 5.55, lowerIsBetter: true),
-                benchPress: DrillBenchmark(elite: 45, average: 26, poor: 18, lowerIsBetter: false),
-                verticalJump: DrillBenchmark(elite: 38.5, average: 28, poor: 22, lowerIsBetter: false),
-                broadJump: DrillBenchmark(elite: 121, average: 104, poor: 94, lowerIsBetter: false),
-                threeCone: DrillBenchmark(elite: 7.06, average: 7.80, poor: 8.30, lowerIsBetter: true),
-                shuttle: DrillBenchmark(elite: 4.14, average: 4.65, poor: 5.10, lowerIsBetter: true)
-            )
-        case .DE:
-            return PositionBenchmarks(
-                fortyYard: DrillBenchmark(elite: 4.36, average: 4.80, poor: 5.05, lowerIsBetter: true),
-                benchPress: DrillBenchmark(elite: 38, average: 23, poor: 16, lowerIsBetter: false),
-                verticalJump: DrillBenchmark(elite: 41.5, average: 33, poor: 27, lowerIsBetter: false),
-                broadJump: DrillBenchmark(elite: 134, average: 117, poor: 106, lowerIsBetter: false),
-                threeCone: DrillBenchmark(elite: 6.70, average: 7.25, poor: 7.60, lowerIsBetter: true),
-                shuttle: DrillBenchmark(elite: 4.00, average: 4.40, poor: 4.65, lowerIsBetter: true)
-            )
-        case .DT:
-            return PositionBenchmarks(
-                fortyYard: DrillBenchmark(elite: 4.49, average: 5.06, poor: 5.35, lowerIsBetter: true),
-                benchPress: DrillBenchmark(elite: 49, average: 29, poor: 21, lowerIsBetter: false),
-                verticalJump: DrillBenchmark(elite: 37.5, average: 29.5, poor: 24, lowerIsBetter: false),
-                broadJump: DrillBenchmark(elite: 125, average: 107, poor: 96, lowerIsBetter: false),
-                threeCone: DrillBenchmark(elite: 7.07, average: 7.55, poor: 7.95, lowerIsBetter: true),
-                shuttle: DrillBenchmark(elite: 4.21, average: 4.65, poor: 4.95, lowerIsBetter: true)
-            )
-        case .OLB, .MLB:
-            return PositionBenchmarks(
-                fortyYard: DrillBenchmark(elite: 4.38, average: 4.68, poor: 4.90, lowerIsBetter: true),
-                benchPress: DrillBenchmark(elite: 41, average: 22, poor: 14, lowerIsBetter: false),
-                verticalJump: DrillBenchmark(elite: 42.5, average: 34, poor: 28, lowerIsBetter: false),
-                broadJump: DrillBenchmark(elite: 138, average: 120, poor: 108, lowerIsBetter: false),
-                threeCone: DrillBenchmark(elite: 6.45, average: 7.10, poor: 7.50, lowerIsBetter: true),
-                shuttle: DrillBenchmark(elite: 3.96, average: 4.25, poor: 4.55, lowerIsBetter: true)
-            )
-        case .CB:
-            return PositionBenchmarks(
-                fortyYard: DrillBenchmark(elite: 4.23, average: 4.48, poor: 4.62, lowerIsBetter: true),
-                benchPress: DrillBenchmark(elite: 27, average: 15, poor: 8, lowerIsBetter: false),
-                verticalJump: DrillBenchmark(elite: 45, average: 36.5, poor: 30, lowerIsBetter: false),
-                broadJump: DrillBenchmark(elite: 147, average: 126, poor: 114, lowerIsBetter: false),
-                threeCone: DrillBenchmark(elite: 6.48, average: 6.90, poor: 7.20, lowerIsBetter: true),
-                shuttle: DrillBenchmark(elite: 3.81, average: 4.20, poor: 4.45, lowerIsBetter: true)
-            )
-        case .FS, .SS:
-            return PositionBenchmarks(
-                fortyYard: DrillBenchmark(elite: 4.29, average: 4.54, poor: 4.72, lowerIsBetter: true),
-                benchPress: DrillBenchmark(elite: 32, average: 17, poor: 10, lowerIsBetter: false),
-                verticalJump: DrillBenchmark(elite: 44, average: 36, poor: 30, lowerIsBetter: false),
-                broadJump: DrillBenchmark(elite: 146, average: 122, poor: 110, lowerIsBetter: false),
-                threeCone: DrillBenchmark(elite: 6.56, average: 6.90, poor: 7.20, lowerIsBetter: true),
-                shuttle: DrillBenchmark(elite: 3.90, average: 4.25, poor: 4.50, lowerIsBetter: true)
-            )
-        case .K, .P:
-            // Use safety benchmarks as fallback
-            return PositionBenchmarks(
-                fortyYard: DrillBenchmark(elite: 4.29, average: 4.54, poor: 4.72, lowerIsBetter: true),
-                benchPress: DrillBenchmark(elite: 32, average: 17, poor: 10, lowerIsBetter: false),
-                verticalJump: DrillBenchmark(elite: 44, average: 36, poor: 30, lowerIsBetter: false),
-                broadJump: DrillBenchmark(elite: 146, average: 122, poor: 110, lowerIsBetter: false),
-                threeCone: DrillBenchmark(elite: 6.56, average: 6.90, poor: 7.20, lowerIsBetter: true),
-                shuttle: DrillBenchmark(elite: 3.90, average: 4.25, poor: 4.50, lowerIsBetter: true)
-            )
+        let drills = ScoutingEngine.CombineDrillTable.drills(for: position)
+        return PositionBenchmarks(
+            fortyYard: benchmark(from: drills.forty),
+            benchPress: benchmark(from: drills.bench),
+            verticalJump: benchmark(from: drills.vertical),
+            broadJump: benchmark(from: drills.broad),
+            threeCone: benchmark(from: drills.cone),
+            shuttle: benchmark(from: drills.shuttle)
+        )
+    }
+
+    /// 95th / 50th / 15th percentile of a drill's `N(mean, sd)` draw, clamped to
+    /// the drill's own truncation range so no anchor sits outside what the
+    /// generator can produce.
+    private static func benchmark(from drill: ScoutingEngine.CombineDrill) -> DrillBenchmark {
+        let z95 = 1.645
+        let z15 = 1.036
+        let elite = drill.lowerIsBetter ? drill.mean - z95 * drill.sd : drill.mean + z95 * drill.sd
+        let poor = drill.lowerIsBetter ? drill.mean + z15 * drill.sd : drill.mean - z15 * drill.sd
+        func clamped(_ value: Double) -> Double {
+            min(drill.range.upperBound, max(drill.range.lowerBound, value))
         }
+        return DrillBenchmark(
+            elite: clamped(elite),
+            average: clamped(drill.mean),
+            poor: clamped(poor),
+            lowerIsBetter: drill.lowerIsBetter
+        )
     }
 
     /// Calculate percentile (0-100) for a drill value at a position.

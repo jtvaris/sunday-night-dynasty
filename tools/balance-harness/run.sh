@@ -9,11 +9,14 @@
 #   ./run.sh --no-sync depth                # skip re-sync (reuse build/src)
 #   ./run.sh fullgame --home-tier elite --away-tier weak --n 200   # round-5 full games
 #   ./run.sh positionsweep --group CB --n 100                      # round-5 sweep
+#   ./run.sh draftclass --classes 200          # draft-class generator validation
+#   ./run.sh career                            # player-development validation
 #
 # Per-play scenarios: percall depth keyed-pa regression pass-talent run-talent
 #            familiarity stacking spam heat-* composure-lev mental-regression macro.
-# Round-5 parameterized scenarios (flag args, run on their own — not via `all`):
-#            fullgame, positionsweep.  (see README.md for the full CLI + band targets.)
+# Parameterized scenarios (flag args, run on their own — not via `all`):
+#            fullgame, positionsweep, draftclass, career.
+#            (see README.md for the full CLI + band targets.)
 #
 # This is REPO TOOLING — it does NOT build the iOS app. It compiles only the
 # synced simulation sources + the driver with swiftc -O.

@@ -9,6 +9,9 @@ import SwiftData
 @MainActor
 enum TrainingPlanEngine {
 
+    /// Share of a training week's gains a `.burnedOut` player still absorbs.
+    static let burnedOutGainFactor = 0.5
+
     // MARK: - Public API
 
     /// Applies a training plan's focus distribution to per-player attribute deltas.
@@ -20,13 +23,31 @@ enum TrainingPlanEngine {
     ) {
         guard !roster.isEmpty else { return }
 
-        let tDelta = tacticalDelta(pct: plan.tacticalPct)
-        let pDelta = physicalDelta(pct: plan.physicalPct)
-        let kDelta = technicalDelta(pct: plan.technicalPct)
+        let baseTacticalDelta = tacticalDelta(pct: plan.tacticalPct)
+        let basePhysicalDelta = physicalDelta(pct: plan.physicalPct)
+        let baseTechnicalDelta = technicalDelta(pct: plan.technicalPct)
 
         for player in roster {
             // Skip injured / holding-out players entirely.
             guard !player.isInjured else { continue }
+
+            // Burnout tax (plan §2.9.6): a player the staff has run into the
+            // ground gets half the value out of the week. Until phase 2 the
+            // `.burnedOut` status multiplied nothing at all — the camp workload
+            // slider had no downside, so the optimal play was always max
+            // intensity. This is the other half of its teeth (the first is
+            // `MedicalEngine.workloadRiskMultiplier`, which the weekly sim and
+            // the live engine both apply league-wide).
+            //
+            // Scope note (plan §2.9.6 leaves the choice to the implementer):
+            // this half is inherently user-only, because a training PLAN is a
+            // user feature — AI clubs have none to over-crank. The injury half
+            // is what makes the workload state cost the other 31 clubs too, and
+            // that is the half that runs league-wide.
+            let loadFactor = player.workloadStatus == .burnedOut ? burnedOutGainFactor : 1.0
+            let tDelta = baseTacticalDelta * loadFactor
+            let pDelta = basePhysicalDelta * loadFactor
+            let kDelta = baseTechnicalDelta * loadFactor
 
             // Per-player ceiling: scaled from truePotential (1-99); shared formula.
             let ceiling = PlayerDevelopmentEngine.developmentCeiling(for: player)

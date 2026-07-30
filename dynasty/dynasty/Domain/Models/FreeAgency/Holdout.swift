@@ -22,6 +22,20 @@ final class Holdout {
     /// Default-value stored property → safe lightweight migration.
     var weeksActive: Int = 0
 
+    /// The career season this standoff belongs to (`career.currentSeason` when
+    /// it started). Holdouts begin at OTAs and the season counter only advances
+    /// when the next regular season kicks off, so a holdout started in an
+    /// offseason carries the year of the season that just finished — the same
+    /// value the following `.trainingCamp` reads.
+    ///
+    /// Phase 2 (plan §2.4/§2.9.7) needs it: a player whose holdout was settled
+    /// LATE still missed camp reps and takes a 0.7 health gate that offseason,
+    /// and without a season stamp a resolved standoff from three years ago
+    /// would look identical to this one. `startedAt` is wall-clock and cannot
+    /// answer the question. `0` = unknown (legacy row) and never matches a real
+    /// season. Default-value stored property → safe lightweight migration.
+    var seasonYear: Int = 0
+
     var resolution: HoldoutResolution? {
         get {
             guard let raw = resolutionRaw else { return nil }

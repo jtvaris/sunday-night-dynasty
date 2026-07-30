@@ -183,17 +183,23 @@ struct InfoTooltipButton: View {
     }
 }
 
-/// Color legend for letter grades A-F. Matches `gradeColor(_:)` palette used in
-/// ProspectListView / BigBoardView (success / accentGold / warning / danger).
+/// Color legend for letter grades A-F. Colors come straight from
+/// `PositionGradeCalculator.gradeColorForLetter`, the single source every list
+/// renders from (A green, B blue, C yellow, D/F red) — the legend used to claim
+/// B → gold, which contradicted every grade on screen.
 struct LetterGradeLegend: View {
     var body: some View {
         HStack(spacing: 6) {
-            legendCell("A", color: .success)
-            legendCell("B", color: .accentGold)
-            legendCell("C", color: .warning)
-            legendCell("D", color: .danger)
-            legendCell("F", color: .danger)
+            legendCell("A")
+            legendCell("B")
+            legendCell("C")
+            legendCell("D")
+            legendCell("F")
         }
+    }
+
+    private func legendCell(_ letter: String) -> some View {
+        legendCell(letter, color: PositionGradeCalculator.gradeColorForLetter(letter))
     }
 
     private func legendCell(_ letter: String, color: Color) -> some View {

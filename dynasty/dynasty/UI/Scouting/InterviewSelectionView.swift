@@ -473,6 +473,8 @@ struct InterviewSelectionView: View {
                 .padding(.leading, 6)
             Text("OVR")
                 .frame(width: 50, alignment: .center)
+            Text("PROD")
+                .frame(width: 46, alignment: .center)
             Text("RD")
                 .frame(width: 32, alignment: .center)
             Text("RISK")
@@ -587,6 +589,9 @@ struct InterviewSelectionView: View {
                         scoutGradeColor: PositionGradeCalculator.gradeColorForLetter(prospect.overallGradeDisplay)
                     )
                     .frame(width: 50, alignment: .center)
+
+                    // College production tier
+                    ProductionTierChip(tier: prospect.collegeProductionTier, width: 46)
 
                     // Draft projection as round
                     if let proj = prospect.draftProjection {

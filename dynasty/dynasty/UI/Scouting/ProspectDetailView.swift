@@ -72,6 +72,10 @@ struct ProspectDetailView: View {
     private var headerSection: some View {
         Section {
             HStack(alignment: .top, spacing: 16) {
+                // Portrait — a draft class is 350 faceless names, so the head
+                // shot is the cheapest way to make one prospect memorable.
+                PersonFaceView(prospect: prospect, size: .medium)
+
                 // Position badge
                 VStack {
                     Text(prospect.position.rawValue)
@@ -206,31 +210,53 @@ struct ProspectDetailView: View {
     private var quickAssessmentRow: some View {
         let risk = prospect.riskLevel
         let fit = evaluateSchemeFit()
+        let readiness = ProspectReadinessBucket(readiness: prospect.nflReadiness)
         Section {
-            HStack(spacing: 8) {
-                // Risk badge
-                if risk != .unknown {
-                    assessmentBadge(icon: risk.icon, label: risk.rawValue, color: risk.color)
-                }
-                // Scheme fit badge
-                if let fit {
-                    assessmentBadge(icon: schemeFitIcon(fit), label: "Fit: \(fit)", color: schemeFitColor(fit))
-                }
-                // Athletic profile badge
-                if hasCombine {
-                    assessmentBadge(icon: "figure.run", label: athleticProfileLabel, color: athleticProfileColor)
-                }
-                // Stock trajectory
-                let trajectory = prospect.stockTrajectory
-                if trajectory != .newOnBoard {
-                    assessmentBadge(icon: trajectory.icon, label: trajectory.rawValue, color: trajectory.color)
-                }
-                // Draft value mismatch warning
-                if let proj = prospect.draftProjection, let ovr = prospect.scoutedOverall {
-                    let projectedMinOvr = projectionMinOverall(proj)
-                    if ovr < projectedMinOvr {
-                        assessmentBadge(icon: "exclamationmark.triangle.fill", label: "Overdraft?", color: .danger)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    // Risk badge
+                    if risk != .unknown {
+                        assessmentBadge(icon: risk.icon, label: risk.rawValue, color: risk.color)
                     }
+                    // Scheme fit badge
+                    if let fit {
+                        assessmentBadge(icon: schemeFitIcon(fit), label: "Fit: \(fit)", color: schemeFitColor(fit))
+                    }
+                    // Athletic profile badge
+                    if hasCombine {
+                        assessmentBadge(icon: "figure.run", label: athleticProfileLabel, color: athleticProfileColor)
+                    }
+                    // Stock trajectory
+                    let trajectory = prospect.stockTrajectory
+                    if trajectory != .newOnBoard {
+                        assessmentBadge(icon: trajectory.icon, label: trajectory.rawValue, color: trajectory.color)
+                    }
+                    // Draft value mismatch warning
+                    if let proj = prospect.draftProjection, let ovr = prospect.scoutedOverall {
+                        let projectedMinOvr = projectionMinOverall(proj)
+                        if ovr < projectedMinOvr {
+                            assessmentBadge(icon: "exclamationmark.triangle.fill", label: "Overdraft?", color: .danger)
+                        }
+                    }
+                }
+
+                // NFL readiness insight — how much of his talent lands on the
+                // field in year one. Shown as a bucket, never as the raw hidden
+                // number that drives the rookie conversion.
+                HStack(spacing: 6) {
+                    Image(systemName: readiness.icon)
+                        .font(.caption2)
+                        .foregroundStyle(readiness.color)
+                    Text(readiness.label)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(readiness.color)
+                    Text(verbatim: "·")
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                    Text(readiness.detail)
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiary)
+                        .lineLimit(2)
                 }
             }
         }
@@ -251,13 +277,25 @@ struct ProspectDetailView: View {
         .background(color.opacity(0.12), in: Capsule())
     }
 
-    /// Minimum expected OVR for a given draft round projection
+    /// Minimum expected OVR for a given draft round projection.
+    ///
+    /// Anchored to `DraftClassBuilder.talentTarget` at each band's *floor*
+    /// (R1 78.9 · R2 75.0 · R3 72.5 · R4 70.7 · R5 69.2 · R6 67.5 · R7 64.8,
+    /// the last two including the post-#224 taper) minus ~3 points, so the
+    /// "Overdraft?" badge fires when the scouted grade is a full band or more
+    /// below the projection instead of never. The old 70/60/50/40 cut points
+    /// came from the pre-overhaul class, which spanned only overall 60–69 —
+    /// against generator-v2 band means (R2 76.6, R7 66.1) they sat 13–29 points
+    /// below any reachable scouting error.
     private func projectionMinOverall(_ round: Int) -> Int {
         switch round {
-        case 1: return 70
-        case 2...3: return 60
-        case 4...5: return 50
-        default: return 40
+        case 1:  return 76
+        case 2:  return 72
+        case 3:  return 69
+        case 4:  return 67
+        case 5:  return 66
+        case 6:  return 64
+        default: return 62
         }
     }
 
@@ -276,11 +314,19 @@ struct ProspectDetailView: View {
         guard !percentiles.isEmpty else { return "No Data" }
         let avg = percentiles.reduce(0, +) / percentiles.count
 
+        // Buckets track the distribution `CombineBenchmarks` actually produces.
+        // `percentile(value:benchmark:)` interpolates linearly between anchors
+        // at the 95th / 50th / 15th percentile, and those two segments have
+        // different slopes per σ, so a symmetric draw lands with a median of 46
+        // rather than 50. Measured over 60 classes (≈21 000 invitees) these cut
+        // points give Elite 3.2 % · Above Average 15.2 % · Average 52.1 % ·
+        // Below Average 26.0 % · Poor 3.5 %; the old 80/65/45/25 read 40 % of
+        // every class as a below-average athlete.
         switch avg {
-        case 80...: return "Elite"
-        case 65..<80: return "Above Average"
-        case 45..<65: return "Average"
-        case 25..<45: return "Below Average"
+        case 78...: return "Elite"
+        case 62..<78: return "Above Average"
+        case 38..<62: return "Average"
+        case 22..<38: return "Below Average"
         default: return "Poor"
         }
     }
@@ -590,7 +636,9 @@ struct ProspectDetailView: View {
 
     /// Mental grades grid with fallback from legacy numeric values.
     private var mentalGradesGrid: some View {
-        let mentalKeys = ["AWR", "DEC", "WRK", "CLT", "COA", "LDR"]
+        // LRN = how fast he absorbs a playbook (drives scheme install speed).
+        // CMP = competitiveness, how he answers adversity (plan §2.1).
+        let mentalKeys = ["AWR", "DEC", "WRK", "CLT", "COA", "LDR", "LRN", "CMP"]
         let scoutedGrades = prospect.scoutedMentalGrades
         let hasAny = scoutedGrades != nil && !(scoutedGrades?.isEmpty ?? true)
 
@@ -600,7 +648,7 @@ struct ProspectDetailView: View {
                     Text("Mental Attributes")
                         .font(.caption)
                         .foregroundStyle(Color.textTertiary)
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 6), spacing: 8) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 8), spacing: 8) {
                         ForEach(mentalKeys, id: \.self) { key in
                             if let gr = scoutedGrades?[key] {
                                 gradeCell(key: key, grade: gr)
@@ -750,6 +798,39 @@ struct ProspectDetailView: View {
                     Text("Affects scheme learning speed")
                         .font(.caption2)
                         .foregroundStyle(Color.textTertiary)
+
+                    // Scouted Learning (LRN) grade — the playbook-absorption
+                    // half of Football IQ, graded separately by the scouts.
+                    if let learningGrade = prospect.scoutedMentalGrades?["LRN"] {
+                        HStack {
+                            Text("Learning")
+                                .font(.subheadline)
+                                .foregroundStyle(Color.textSecondary)
+                            Spacer()
+                            Text(learningGrade.displayText)
+                                .font(.body.weight(.heavy))
+                                .foregroundStyle(detailGradeColor(learningGrade.midGrade))
+                        }
+                    }
+
+                    // Scouted Competitiveness (CMP) — the interview room's read
+                    // on how he answers adversity (plan §2.1/§2.10). Drives the
+                    // pro-level motivation state machine, so it belongs beside
+                    // the football-IQ line the interview already surfaces.
+                    if let competitivenessGrade = prospect.scoutedMentalGrades?["CMP"] {
+                        HStack {
+                            Text("Competitiveness")
+                                .font(.subheadline)
+                                .foregroundStyle(Color.textSecondary)
+                            Spacer()
+                            Text(competitivenessGrade.displayText)
+                                .font(.body.weight(.heavy))
+                                .foregroundStyle(detailGradeColor(competitivenessGrade.midGrade))
+                        }
+                        Text("How he answers a bad season — and how immune he is to a payday")
+                            .font(.caption2)
+                            .foregroundStyle(Color.textTertiary)
+                    }
 
                     // Football IQ impact (Task 11)
                     if iq >= 85 {
@@ -992,8 +1073,9 @@ struct ProspectDetailView: View {
         }
     }
 
-    /// Snapshot of college playing time + production. Driven by `truePotential`
-    /// and `truePositionAttributes` so it correlates with the prospect's grade.
+    /// Snapshot of college playing time + production. Generator v2 stores this
+    /// as a noisy signal (`collegeProductionScore`) that correlates with — but
+    /// does not reveal — the prospect's true grade.
     @ViewBuilder
     private var collegeProductionSummarySection: some View {
         Section("College Production") {
@@ -1002,9 +1084,12 @@ struct ProspectDetailView: View {
                     productionTile(label: "Years Started", value: "\(prospect.collegeYearsStarted)/4")
                     productionTile(
                         label: "Production",
-                        value: prospect.collegeProductionTier.rawValue,
-                        color: productionTierColor(prospect.collegeProductionTier)
+                        value: prospect.collegeProductionTier.displayName,
+                        color: prospect.collegeProductionTier.chipColor
                     )
+                    if let level = prospect.collegeCompetitionLevel {
+                        productionTile(label: String(localized: "Competition"), value: level.longName)
+                    }
                 }
                 HStack(spacing: 8) {
                     Image(systemName: "chart.bar.xaxis")
@@ -1035,15 +1120,6 @@ struct ProspectDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
         .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func productionTierColor(_ tier: CollegeProspect.CollegeProductionTier) -> Color {
-        switch tier {
-        case .elite:    return .eliteGreen
-        case .aboveAvg: return .success
-        case .average:  return .accentBlue
-        case .belowAvg: return .warning
-        }
     }
 
     @ViewBuilder

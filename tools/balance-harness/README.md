@@ -74,7 +74,7 @@ README live in git.
 
 `sync_sources.sh` produces `build/src/` in three ways:
 
-### 1. Verbatim copies (17 files, SHA-verified)
+### 1. Verbatim copies (30 files, SHA-verified)
 
 **Play-by-play (11):** `PlayCall.swift`, `PlayType.swift`, `Position.swift`,
 `Scheme.swift`, `GameWeather.swift`, `PersonalityArchetype.swift`,
@@ -87,7 +87,16 @@ README live in git.
 `positionsweep` scenarios run the exact box-score pipeline the app ships (no
 reimplemented game loop, momentum, clock, heat feed, or box score).
 
-All 17 are copied byte-for-byte. The script asserts `sha(copy) == sha(repo)` for
+**Draft-class generator (7, stage 4):** `Motivation.swift`,
+`PlayerPersonality.swift`, `LetterGrade.swift`, `PositionPhysicalProfile.swift`,
+`MentalAttributeModel.swift`, `RandomNameGenerator.swift`,
+`DraftClassBuilder.swift`.
+
+**Development stack (6, stage 5):** `InjuryType.swift`, `CampEnums.swift`,
+`MotivationState.swift`, `InjuryRecord.swift`, `PlayerDevelopmentEngine.swift`,
+`PlayerRetirementEngine.swift`.
+
+All 30 are copied byte-for-byte. The script asserts `sha(copy) == sha(repo)` for
 each and records both in `MANIFEST.txt`; a mismatch aborts the build.
 
 ### 2. `AdaptiveOpponentAIExtract.swift` — mechanically sliced from the repo
@@ -152,6 +161,62 @@ the three carries any balance math**; they are pure data holders. So
 `static let` numeric constant** — no engine number may live in the scaffolding.
 Every tuning literal still flows from the sha-verified verbatim sources above.
 
+### 5. `ScoutingEngineExtract.swift` — mechanical KEEP-LIST slice
+
+The shipped `ScoutingEngine` is 3 000 lines wired to `Scout` / `ScoutingReport` /
+`Coach` / `Player` / `GradeRange`. The `draftclass` scenario needs four things
+out of it: the college list, the anthropometrics table, the **whole combine
+path** (per-position drill table + `drillResult` + the personality modifier +
+the relative drill grading) and the risk-profile roll — none of which reference
+anything outside the verbatim sources. So an `awk` **keep-list** pass copies
+exactly those members (brace/bracket-balanced from each named declaration) and
+re-wraps them in `enum ScoutingEngine { … }`.
+
+Two guards make it drift-proof: **every non-blank line of the slice must appear
+byte-identically in the repo file** (so nothing can be retyped or mangled), and
+the 78 per-position drill constants (`forty: timed(4.83, 0.12, …)` …) must
+`diff` clean against the repo. A mismatch aborts the build.
+
+### 6. Development-stack extracts (stage 5 — the `career` scenario)
+
+The realization model itself is copied **verbatim**: `PlayerDevelopmentEngine`,
+`PlayerRetirementEngine`, `MotivationState`, `InjuryRecord`, `CampEnums`,
+`InjuryType`. The motivation state machine, the R factor, the catch-up table,
+the position-shaped regression, potential drift and the retirement curve are
+therefore the shipped bytes, sha-verified like everything else above.
+
+Five more files are reached into by that stack but cannot compile standalone, so
+each is reduced by the same mechanical **KEEP-LIST slice** the `ScoutingEngine`
+extract uses, then guarded twice — every non-blank line of the slice must appear
+byte-identically in the repo file, and the named single-line tuning constants are
+grepped straight out of the repo rather than transcribed:
+
+| extract | what is sliced | wrapped as |
+|---|---|---|
+| `CoachingEngineExtract.swift` | `hierarchicalDevelopmentBonus` (the 4-layer ±8/±4/±10/±15 % stack), `positionRoleMatch`, the continuity constants | `extension CoachingEngine` |
+| `VersatilityExtract.swift` | `learnScheme`, `decayUnusedSchemes`, the install/decay constants | `extension VersatilityDevelopmentEngine` |
+| `ContractEngineExtract.swift` | `estimateMarketValue` + its two position helpers — the only thing the post-payday complacency trigger reads | `enum ContractEngine` |
+| `TrainingFocusExtract.swift` | `TrainingFocusArea` (top level, verbatim) + `applyWeeklyFocusTick` / `weeklyGainChance` / `autoAssignFocus` / `potentialCeiling` / `applyFocusPoint` / `bump` | `enum TrainingFocusEngine` |
+| `DraftEngineExtract.swift` | `rookieScaleFactors` + `scaleAttribute`/`scalePhysical`/`scaleMental`/`scalePositionAttributes` + `initializeRookieFamiliarity` + `roundForPick` | `enum DraftEngine` |
+
+`GameModels.swift` also gains one repo splice: the stub `Player` needs the
+SHIPPED `Player.overall` blend, because the career scenario develops attributes
+and must read the rating the app would. Rather than retype the 0.5/0.3/0.2
+weights, the repo's own computed property is spliced verbatim into a
+`ShippedOverall` carrier and `Player.overall` falls through to it whenever the
+round-5 tier generator has not pinned an explicit grade.
+
+### 7. `CollegeProspect.swift` — template + repo math splice
+
+The shipped `CollegeProspect` is a SwiftData `@Model` pulling in SwiftUI and the
+whole scouting graph. `driver/CollegeProspect.harness.swift` supplies the storage
+(plain `var`s with the same names and init labels) and splices the **math block**
+verbatim from the repo: the production/competition/archetype enums,
+`collegeYearsStarted`, `productionTier(forScore:)`, `statLine(…)` and — the one
+the scenario actually measures — `trueOverall` / `overallValue(…)`. Same
+fail-closed contract as `SimPlayer.swift`: if the repo anchors move, the sync
+dies instead of measuring a stale formula.
+
 `MANIFEST.txt` records the role (`VERBATIM` / `EXTRACT` / `ASSEMBLED` /
 `HARNESS`), the staged file's SHA, and the repo source SHA for every file.
 
@@ -194,10 +259,12 @@ with margin for that.
 | `spam` | degenerate spam-collapse + mixed-parity (memory ON vs OFF) | repeated call decays to ~45 % of r1; varied script `|Δ| ≤ 0.3` (balanced-control) |
 | `fullgame` | **round 5** — complete games via the shipped GameSimulator/DriveSimulator; per-game box + N-game aggregates + win split | per-team-per-game NFL bands (see below) + equal-tier ~50/50, elite-vs-weak decisive-not-deterministic |
 | `positionsweep` | **round 5** — one position group swept {55,70,85,95} on an avg roster vs an avg opponent | monotone win% + headline stat vs the swept group |
+| `draftclass` | **draft-class overhaul** — N classes through the shipped `DraftClassBuilder` + combine; full distribution report + the 31 plan-§7 invariants as hard asserts | every §7.1–§7.10 invariant; **exits 1** on any violation |
+| `career` | **development overhaul** — 20 independent 32-team leagues run end-to-end through the shipped development stack; hit rates by round, elite shares, trajectory mix, aging curves, R and motivation distributions, career lengths | every `PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §6 item; **exits 1** on any violation |
 
-The last two are **parameterized** — they take `--flag value` args instead of a
-scenario-name list (see "Round-5 full-game campaign" below), so they are invoked
-on their own, not via `all`.
+The last four are **parameterized** — they take `--flag value` args instead of a
+scenario-name list (see "Round-5 full-game campaign" and "Draft-class validation"
+below), so they are invoked on their own, not via `all`.
 
 ---
 
@@ -259,6 +326,17 @@ across his cluster:
 | `good`  | 80–87 |
 | `avg`   | 70–79 |
 | `weak`  | 55–69 |
+
+A tier grade means "that grade **for his position**". Skills and speed carry the
+grade literally; **acceleration and strength** are placed at the position's
+`PositionPhysicalProfile` prior offset by `grade − 70` (`phys(_:_:str:acc:agi:)`
+in `driver/main.swift`). That is required, not cosmetic: PlaySimulator's R39
+attribute-gap terms read those two through `relativeAcceleration` /
+`relativeStrength`, which measure a player against his own position prior — a
+flat `acceleration = grade` on both sides of the line would read as an 18-point
+OL advantage and drag the sack rate ~2 pp off. With the offset, `relativeX`
+returns exactly the grade, so every band below is measured on the same footing
+as the shipped, position-shaped rosters.
 
 A bare number (`--home-tier 70`) means that exact grade. **Unit-level overrides**
 put a different tier on one position group: `--home-override QB=elite,OL=weak,CB=95x2`
@@ -330,6 +408,57 @@ tool's file scope):
    a realistic star/role-player mix via `--home-override` narrows it. `weak`-vs-
    `weak` lands **26.5 pts [OK]**, `avg`-vs-`avg` 31, `elite`-vs-`elite` 39 — the
    response is monotone but scales faster than NFL.)
+
+## Development validation (`career`)
+
+```bash
+./run.sh career                                   # the calibrated default
+./run.sh career --leagues 4 --classes 4 --verbose # quick iteration
+./run.sh career --fog 8                           # sweep the scouting-error knob
+```
+
+### What it runs
+
+A synthetic league, exactly as `PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §6 specifies:
+**depth-chart rank by OVR inside the position cohort → playing-time share, no
+game sim.** Per season, per club: retirement roll → contract tick → draft off a
+scouted board → cut to the 53-man template → coordinator churn → training camp
+(`processOffseason`) → 17 weeks of availability, game experience, injuries and
+weekly training-focus ticks → standings from starter strength.
+
+Intake is the shipped generator (`DraftClassBuilder` + the combine and
+declaration passes) converted through the shipped `DraftEngine` rookie scaling.
+Development, regression, motivation, plateau/late-bloomer, potential drift and
+retirement are the shipped engines. The scenario itself contains **no
+development constant** — it drives the engine and measures it.
+
+Defaults: 20 independent leagues × (8 burn-in + 10 measured classes + 12-season
+career window) = 30 seasons each, 7 680 drafted careers per round bucket plus
+~47 000 undrafted camp bodies. ~12 s.
+
+### The asserts (plan §6)
+
+`6.1` hit rate by round within ±8 pp of `DRAFT_NFL_REFERENCE.md` §6 ·
+`6.2` elite (peak OVR ≥ 90) shares R1 20-30 % / R2 8-15 % / R3-7 ≤ 4 % ·
+`6.3` plateau 30-50 %, late bloomer 5-12 %, R5-7 washout ≥ 45 % ·
+`6.4` modal peak age inside every position's `peakAgeRange` and the decline
+ordering RB/CB < standard < QB/OL · `6.5` R mean 0.45-0.55, p10 ≤ 0.30,
+p90 ≥ 0.85 and the four-state motivation mix · `6.6` career length ·
+`6.7` growth shape · `6.8` split-half stability.
+
+### The one fitted parameter
+
+`crScoutErrorRange` (`--fog`) is the width of the draft-day evaluation error.
+How wrong front offices are about a prospect's eventual level is not directly
+observable; the observable is the outcome it produces, which is exactly
+`DRAFT_NFL_REFERENCE.md` §6. The harness cannot stage the app's whole evaluation
+apparatus (scouts, multiple reports, interviews, `DraftIntel`, the AI need
+model), so that width is calibrated here — which makes assert 6.1 a check that
+the DEVELOPMENT system can reproduce the reference curve at all, not an
+independent test of the draft. Asserts 6.2-6.8 and the league quality pyramid
+printed at the end are independent of it.
+
+---
 
 `positionsweep` confirms the **discrimination is clean and monotone** even where
 aggregates run hot — e.g. sweeping `CB` drives opponent completion **74.8 → 59.5 %**

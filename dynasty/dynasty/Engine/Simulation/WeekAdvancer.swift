@@ -67,6 +67,208 @@ enum WeekAdvancer {
         try? context.save()
     }
 
+    // MARK: - In-Flight Save Migration (plan §5)
+
+    /// Regenerates a pre-overhaul draft class that is still sitting in an
+    /// in-flight save.
+    ///
+    /// Classes stamped `generatorVersion < 2` came out of the old generator: the
+    /// whole board compressed into a 60-69 overall band, QBs monopolising round 1,
+    /// no `trueLearning` / `nflReadiness` / college-production data, and roughly
+    /// three classes in ten with zero punters. None of that can be repaired in
+    /// place, so a save that has **not yet run its draft** purges the class,
+    /// regenerates it, and re-runs every cycle step the old class had already
+    /// been through (pre-scout / combine / declarations / mock draft) so the
+    /// board the user is looking at stays internally consistent — several of
+    /// those steps belong to phases the migration can only fire *after*, and
+    /// nothing else in the cycle would ever run them.
+    /// Scouting progress on the old class is lost —
+    /// acceptable, since the old class *is* the bug.
+    ///
+    /// If the draft already happened the prospects have become Players, so this
+    /// deliberately does nothing. Prospects are purged wholesale at every season
+    /// rollover (`purgeStaleSeasonData`), which makes this path short-lived by
+    /// design.
+    ///
+    /// - Returns: `true` when a class was purged and regenerated.
+    @discardableResult
+    static func migrateLegacyDraftClassIfNeeded(
+        career: Career,
+        modelContext: ModelContext
+    ) -> Bool {
+        guard isBeforeThisCycleDraft(career: career, modelContext: modelContext) else {
+            return false
+        }
+
+        // Prefer the in-memory cycle class; fall back to SwiftData for the
+        // fresh-launch restore path, which has not populated it yet.
+        var stored = currentDraftClass
+        if stored.isEmpty {
+            stored = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>())) ?? []
+        }
+        guard stored.contains(where: {
+            $0.generatorVersion < DraftClassBuilder.currentGeneratorVersion
+        }) else { return false }
+
+        // Remember how far through the scouting cycle the old class had come so
+        // the replacement can be brought to the same point.
+        let hadCombineResults = stored.contains { $0.fortyTime != nil }
+        let hadScoutedGrades = stored.contains { $0.scoutedOverall != nil }
+        // The declaration period (`.coachingChanges`) and the mock draft
+        // (week 9 / `.combine` / `.freeAgency`) are cycle steps, not scouting
+        // depth — and neither `.proDays` nor `.draft` re-runs them, so a class
+        // migrated in those phases would never get them at all.
+        let hadDeclarationTrim = stored.contains { !$0.isDeclaringForDraft }
+        let hadMockDraft = stored.contains { $0.mockDraftPickNumber != nil }
+
+        // Purge every persisted prospect row, not just the in-memory ones — the
+        // restore paths read the whole table.
+        let persisted = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>())) ?? []
+        for prospect in persisted {
+            modelContext.delete(prospect)
+        }
+        currentDraftClass = []
+        currentMockDraft = []
+        mockDraftHistory = [:]
+        draftClassGenerated = false
+
+        var regenerated = ScoutingEngine.generateDraftClass()
+        let isFirstSeason = career.totalWins == 0 && career.totalLosses == 0
+        if isFirstSeason || hadScoutedGrades {
+            ScoutingEngine.applyPreScoutedData(prospects: &regenerated)
+        }
+        if hadCombineResults {
+            ScoutingEngine.generateCombineResults(for: &regenerated)
+        }
+        // Without this every regenerated prospect keeps `isDeclaringForDraft`'s
+        // model default of `true`, so all 350 declare instead of ~250 — the
+        // board, pro days, top-30 visits, the war-room pool and the UDFA market
+        // are all filtered on it, and underclassmen who should have withdrawn
+        // stay draftable for the rest of the cycle.
+        if hadDeclarationTrim {
+            _ = ScoutingEngine.generateDeclarations(prospects: &regenerated)
+        }
+        // The mock is the only thing that writes `mockDraftPickNumber` /
+        // `teamInterest`; a regenerated class carries neither until it is
+        // re-run, and after `.freeAgency` nothing ever re-runs it.
+        if hadMockDraft {
+            let teams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
+            let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
+            let season = career.currentSeason
+            var picks = currentDraftPicks
+            if picks.isEmpty {
+                let descriptor = FetchDescriptor<DraftPick>(
+                    predicate: #Predicate<DraftPick> { $0.seasonYear == season }
+                )
+                picks = (try? modelContext.fetch(descriptor)) ?? []
+            }
+            if !teams.isEmpty, !picks.isEmpty {
+                currentMockDraft = ScoutingEngine.generateMockDraft(
+                    prospects: regenerated,
+                    draftPicks: picks,
+                    teams: teams,
+                    players: allPlayers
+                )
+                ScoutingEngine.updateTeamInterest(
+                    prospects: &regenerated,
+                    teams: teams,
+                    players: allPlayers
+                )
+                ScoutingEngine.applyMockDraftToProspects(
+                    prospects: &regenerated,
+                    mockDraft: currentMockDraft
+                )
+            }
+        }
+
+        currentDraftClass = regenerated
+        draftClassGenerated = true
+        persistDraftClass(regenerated, to: modelContext)
+        return true
+    }
+
+    /// `true` while the current offseason cycle's draft has not produced a single
+    /// completed pick. Picks are stamped with `career.currentSeason`, which only
+    /// advances when the next regular season starts, so the season filter scopes
+    /// the check to this cycle.
+    private static func isBeforeThisCycleDraft(
+        career: Career,
+        modelContext: ModelContext
+    ) -> Bool {
+        switch career.currentPhase {
+        case .otas, .trainingCamp, .preseason, .rosterCuts:
+            return false        // this cycle's draft is already behind us
+        default:
+            break
+        }
+
+        let season = career.currentSeason
+        var descriptor = FetchDescriptor<DraftPick>(
+            predicate: #Predicate<DraftPick> { $0.seasonYear == season && $0.isComplete }
+        )
+        descriptor.fetchLimit = 1
+        let completed = (try? modelContext.fetch(descriptor)) ?? []
+        return completed.isEmpty
+    }
+
+    /// Seeds `Player.learning` on rows created before that property existed.
+    ///
+    /// Legacy players carry `Player.defaultLearning` (55), which would install
+    /// schemes ~15 % slower than the awareness term they were tuned against. The
+    /// seeded value comes from the SHARED `MentalAttributeModel.learning`
+    /// (phase-2 plan §2.2) — the same 0.40/0.60 blend the draft class and the
+    /// veteran generator use, so a backfilled row is indistinguishable from a
+    /// generated one — with the draw derived from the player's own UUID instead
+    /// of the RNG. Every generator routes through `Player.storedLearning` (which
+    /// never emits 55), so this pass provably touches each row at most once and
+    /// always writes the same value.
+    static func backfillLegacyLearning(players: [Player]) {
+        for player in players where player.learning == Player.defaultLearning {
+            player.learning = MentalAttributeModel.learning(
+                awareness: player.mental.awareness,
+                level: player.mental.average,
+                seed: Int(player.id.uuid.15)
+            )
+        }
+    }
+
+    /// Seeds `Player.competitiveness` on rows created before that property
+    /// existed (phase-2 plan §2.1).
+    ///
+    /// Same contract as `backfillLegacyLearning`: legacy rows sit on
+    /// `Player.defaultCompetitiveness` (55), the seeded value is
+    /// `0.45·workEthic + 0.25·clutch + 0.30·hash[30,85]` plus the personality
+    /// shift, and `Player.storedCompetitiveness` never emits 55 — so the pass is
+    /// deterministic AND idempotent. A DIFFERENT UUID byte than the learning
+    /// backfill is read, so the two backfilled attributes stay uncorrelated.
+    /// Clamped to 25...95: a backfilled veteran should not be handed the very
+    /// top of the fighter scale by a hash.
+    static func backfillLegacyCompetitiveness(players: [Player]) {
+        for player in players where player.competitiveness == Player.defaultCompetitiveness {
+            player.competitiveness = MentalAttributeModel.competitiveness(
+                archetype: player.personality.archetype,
+                workEthic: player.mental.workEthic,
+                clutch: player.mental.clutch,
+                seed: Int(player.id.uuid.14),
+                bounds: 25...95
+            )
+        }
+    }
+
+    /// Phase 4 face backfill — same contract as the two backfills above, one
+    /// level up: it also reconciles the career's in-use registry against the
+    /// live population, so a face freed by a path that never called
+    /// `FaceLibrary.releaseFace` still returns to circulation.
+    ///
+    /// Rows created before `faceID` existed (and template-imported leagues,
+    /// which are built by `LeagueTemplateImporter` rather than the random
+    /// generator) get their portrait here, on the first advance after loading.
+    /// Idempotent: a second run assigns nothing.
+    static func backfillLegacyFaces(career: Career, players: [Player], coaches: [Coach]) {
+        FaceLibrary.shared.activate(career: career)
+        FaceLibrary.shared.backfill(players: players, coaches: coaches)
+    }
+
     // MARK: - Public API
 
     /// Advances the career state by exactly one week.
@@ -250,8 +452,20 @@ enum WeekAdvancer {
         // froze last offseason.
         NegotiationLockRegistry.reset()
 
-        // 1. Reset every team's win/loss/tie record.
+        // 1. Snapshot the finished season's record, THEN reset it.
+        //
+        // Ordering is load-bearing: `lastSeasonWins/-Losses` (plan §2.3) must be
+        // written from the live counters before they are zeroed, otherwise every
+        // team reads as a 0-win collapse next offseason. Everything above this
+        // point that consumes `team.wins` (the budget recalculations in step 0)
+        // still sees the finished season, exactly as before.
         for team in teams {
+            // A team with no games on the board never played a season — leave the
+            // `-1` "unknown" sentinel rather than inventing an 0-win collapse.
+            if team.wins + team.losses + team.ties > 0 {
+                team.lastSeasonWins = team.wins
+                team.lastSeasonLosses = team.losses
+            }
             team.wins = 0
             team.losses = 0
             team.ties = 0
@@ -401,6 +615,14 @@ enum WeekAdvancer {
         let playersByTeam = Dictionary(grouping: allPlayers.filter { $0.teamID != nil },
                                        by: { $0.teamID! })
         perf.lap("fetch")
+
+        // Plan §5 in-flight save migration: seed `learning` on pre-overhaul rows
+        // and swap out a pre-overhaul draft class (the midseason class is
+        // generated at week 9, well before any pick is made).
+        backfillLegacyLearning(players: allPlayers)
+        backfillLegacyCompetitiveness(players: allPlayers)
+        backfillLegacyFaces(career: career, players: allPlayers, coaches: allCoaches)
+        migrateLegacyDraftClassIfNeeded(career: career, modelContext: modelContext)
 
         // Simulate every unplayed game.
         // Player's team game uses full play-by-play simulation;
@@ -742,6 +964,35 @@ enum WeekAdvancer {
 
         perf.lap("holdout_lockerroom")
 
+        // 4f. Phase 2 (plan §2.9.1): the weekly morale loop, activated.
+        // `LockerRoomEngine.weeklyMoraleUpdate` was written but never called —
+        // morale only ever moved through holdouts, tags and locker-room events,
+        // so the designed "winning lifts the room, losing drains it" link did
+        // not exist. It now runs league-wide (morale gates weekly training
+        // gains and the §2.3 motivation triggers for all 32 clubs, not just the
+        // user's) with the ±3 + reversion damping described on the engine.
+        //
+        // Only rosters that actually played are ticked — a bye week is not a
+        // loss — and holdouts are skipped because `HoldoutEngine` owns their
+        // morale while they are away from the facility.
+        var weekResultByTeam: [UUID: Bool] = [:]
+        for game in weekGamesForAttendance {
+            guard let home = game.homeScore, let away = game.awayScore, home != away else { continue }
+            weekResultByTeam[game.homeTeamID] = home > away
+            weekResultByTeam[game.awayTeamID] = away > home
+        }
+        for (teamID, won) in weekResultByTeam {
+            let roster = (playersByTeam[teamID] ?? []).filter { !$0.isHoldingOut && !$0.isRetired }
+            guard !roster.isEmpty else { continue }
+            LockerRoomEngine.weeklyMoraleUpdate(
+                players: roster,
+                wonLastGame: won,
+                chemistry: LockerRoomEngine.chemistryScore(players: roster)
+            )
+        }
+
+        perf.lap("morale")
+
         // 5. Apply fatigue changes for players who played this week
         // (R22: holdout players are away from the facility — no game fatigue).
         for player in allPlayers where player.teamID != nil && !player.isInjured && !player.isHoldingOut {
@@ -816,9 +1067,19 @@ enum WeekAdvancer {
         // (R22: holdout players don't play, so they earn no experience.)
         // R25: a young player with an active mentor in his position room
         // develops slightly faster (+10 % XP, league-wide and symmetric).
+        // Plan §2.9.5: teams whose QB room actually develops the backup — a QB
+        // coach rated 70+ (an active mentorship counts too, per player below).
+        let clipboardTeamIDs = Set(
+            allCoaches
+                .filter { $0.role == .qbCoach && $0.playerDevelopment >= 70 }
+                .compactMap(\.teamID)
+        )
         let mentoredIDs = LockerRoomEngine.mentoredProtegeIDs(allPlayers: allPlayers)
         for player in allPlayers where player.teamID != nil && !player.isInjured && !player.isHoldingOut {
-            let mentorBoost = mentoredIDs.contains(player.id) ? 1.1 : 1.0
+            let isMentored = mentoredIDs.contains(player.id)
+            let mentorBoost = isMentored ? 1.1 : 1.0
+            let clipboardRoom = player.position == .QB
+                && (isMentored || clipboardTeamIDs.contains(player.teamID!))
             // Approximate starters as those with overall >= 65 or on small rosters
             if player.overall >= 65 {
                 PlayerDevelopmentEngine.applyGameExperience(
@@ -826,7 +1087,8 @@ enum WeekAdvancer {
                 )
             } else {
                 PlayerDevelopmentEngine.applyGameExperience(
-                    player, gamesPlayed: 1, gamesStarted: 0, experienceBoost: mentorBoost
+                    player, gamesPlayed: 1, gamesStarted: 0,
+                    experienceBoost: mentorBoost, clipboardRoom: clipboardRoom
                 )
             }
         }
@@ -962,12 +1224,19 @@ enum WeekAdvancer {
             let oc = teamCoaches.first { $0.role == .offensiveCoordinator }
             let dc = teamCoaches.first { $0.role == .defensiveCoordinator }
 
+            // Install year (plan §2.9.2): a team that changed systems this
+            // offseason spends the WHOLE season installing, so its in-season
+            // practice reps teach at ×1.25 too — not just camp.
+            let schemeIntensity = team.schemeInstallSeason == season
+                ? 0.5 * VersatilityDevelopmentEngine.schemeInstallIntensityBonus
+                : 0.5
+
             for player in teamPlayers where !player.isInjured && !player.isHoldingOut {
                 // Scheme learning (reduced intensity during season)
                 if let offScheme = oc?.offensiveScheme, player.position.side == .offense {
                     let gain = VersatilityDevelopmentEngine.learnScheme(
                         player: player, scheme: offScheme.rawValue,
-                        coordinator: oc, practiceIntensity: 0.5
+                        coordinator: oc, practiceIntensity: schemeIntensity
                     )
                     let key = offScheme.rawValue
                     player.schemeFamiliarity[key] = min(100, (player.schemeFamiliarity[key] ?? 0) + gain)
@@ -975,7 +1244,7 @@ enum WeekAdvancer {
                 if let defScheme = dc?.defensiveScheme, player.position.side == .defense {
                     let gain = VersatilityDevelopmentEngine.learnScheme(
                         player: player, scheme: defScheme.rawValue,
-                        coordinator: dc, practiceIntensity: 0.5
+                        coordinator: dc, practiceIntensity: schemeIntensity
                     )
                     let key = defScheme.rawValue
                     player.schemeFamiliarity[key] = min(100, (player.schemeFamiliarity[key] ?? 0) + gain)
@@ -1119,6 +1388,27 @@ enum WeekAdvancer {
                 season: season,
                 modelContext: modelContext
             )
+
+            // Phase 2 (plan §2.9.1): the season-end morale settlement — record,
+            // chemistry, pay vs. market and contract runway, clamped to ±8 so it
+            // reads as a verdict on the year rather than a second weekly loop.
+            //
+            // ORDERING: deliberately BEFORE the contract tick below. The
+            // "upcoming free agency" clause keys on `contractYearsRemaining == 1`,
+            // which right now means "his deal expires in a few weeks" — after the
+            // decrement that same player is a free agent with no team and no
+            // salary, and the pay-vs-market term would read as a 0-salary insult.
+            for team in teamsByID.values {
+                let roster = (playersByTeam[team.id] ?? [])
+                    .filter { $0.teamID == team.id && !$0.isRetired }
+                guard !roster.isEmpty else { continue }
+                LockerRoomEngine.applyMoraleEffects(
+                    players: roster,
+                    teamWins: team.wins,
+                    teamLosses: team.losses,
+                    chemistry: LockerRoomEngine.chemistryScore(players: roster)
+                )
+            }
 
             for player in allPlayers where player.contractYearsRemaining > 0 {
                 player.contractYearsRemaining -= 1
@@ -1630,6 +1920,15 @@ enum WeekAdvancer {
         let allCoaches = fetchAllCoaches(modelContext: modelContext)
         let teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
 
+        // Plan §5 in-flight save migration. Runs BEFORE the phase switch so the
+        // `!draftClassGenerated` generation guards below see the regenerated
+        // class, and so a user entering the combine/pro-days/draft phases from an
+        // old save gets a v2 board instead of the pre-overhaul one.
+        backfillLegacyLearning(players: allPlayers)
+        backfillLegacyCompetitiveness(players: allPlayers)
+        backfillLegacyFaces(career: career, players: allPlayers, coaches: allCoaches)
+        migrateLegacyDraftClassIfNeeded(career: career, modelContext: modelContext)
+
         // --- Run engine logic for the CURRENT phase before transitioning ---
         switch currentPhase {
 
@@ -1899,6 +2198,14 @@ enum WeekAdvancer {
                         career.coachingTree = tree
                     }
                     coach.teamID = nil  // Remove from team
+                    // Phase 4 faces: he is done coaching, so the portrait goes
+                    // back to the pool (the row stays for the coaching tree and
+                    // history, and still renders his face). `isRetired` is what
+                    // keeps `FaceLibrary.backfill` from re-claiming it on the
+                    // next advance — without it the coach half of the pool
+                    // leaked a few hundred ids over a long career.
+                    coach.isRetired = true
+                    FaceLibrary.shared.releaseFace(coach.faceID)
                 }
             }
 
@@ -2023,6 +2330,15 @@ enum WeekAdvancer {
                     newHC.teamID = reqTeam.id
                     newHC.hireSeasonYear = career.currentSeason
                     newHC.contractYearsRemaining = 4
+                    // Phase 4 faces: claim the candidate's preview portrait —
+                    // they are in the league now (see `CoachCarouselEngine`).
+                    // Gender-matched, or the claim's fast path would keep a
+                    // wrong-gender preview id.
+                    newHC.faceID = FaceLibrary.shared.claimFace(
+                        newHC.faceID, personID: newHC.id,
+                        role: .coach, age: newHC.age, position: nil,
+                        gender: FacePersonGender(tag: newHC.gender)
+                    )
                     modelContext.insert(newHC)
                     lastNewsItems.append(NewsItem(
                         headline: "\(reqTeam.fullName) name \(newHC.fullName) head coach",
@@ -2081,6 +2397,18 @@ enum WeekAdvancer {
                 phase: .freeAgency,
                 career: career,
                 teams: teams
+            )
+
+            // Phase 2 (plan §5 stage 6): the washout pass. The market has now
+            // closed, so an empty `teamID` finally means what the term needs it
+            // to mean — nobody signed him. Deliberately NOT part of the
+            // `.coachingChanges` retirement wave three phases back, where every
+            // expiring contract in the league (the user's own included) is
+            // still sitting at `teamID == nil` from the week-18 tick.
+            processWashouts(
+                career: career,
+                allPlayers: allPlayers,
+                modelContext: modelContext
             )
 
             // R23 — Compensatory picks: the market has closed, settle the
@@ -2161,30 +2489,41 @@ enum WeekAdvancer {
             if !currentDraftClass.isEmpty,
                !udfaStageCompletedSeasons.contains(career.currentSeason) {
                 let udfaPool = ScoutingEngine.getUDFAPool(prospects: currentDraftClass)
-                let aiTeams = teams.filter { $0.id != career.teamID }
+                // Plan §2.9.8 (fixes defect #10): the order used to be the raw
+                // team array — the same clubs picked first every single season —
+                // and each of the 31 asked for 10-14 players from a pool that
+                // was often ~28 deep, so the first two or three teams took
+                // everything and the rest signed nobody. Shuffle the order and
+                // ask for a fair share of what actually exists.
+                let aiTeams = teams.filter { $0.id != career.teamID }.shuffled()
+                let perTeamAsk = min(
+                    4,
+                    max(1, Int((Double(udfaPool.count) / 31.0).rounded(.up)))
+                )
 
-                // AI teams each sign ~12 UDFAs from the pool
                 var signedIDs = Set<UUID>()
                 for team in aiTeams {
                     let available = udfaPool.filter { !signedIDs.contains($0.id) }
-                    // Pick ~12 UDFAs weighted toward positional need
-                    let toSign = Array(available.prefix(max(8, Int.random(in: 10...14))))
+                    let toSign = Array(available.prefix(perTeamAsk))
+                    let teamCoaches = allCoaches.filter { $0.teamID == team.id }
                     for prospect in toSign {
                         signedIDs.insert(prospect.id)
-                        // Convert prospect to player signed by this AI team
-                        let player = Player(
-                            firstName: prospect.firstName,
-                            lastName: prospect.lastName,
-                            position: prospect.position,
-                            age: prospect.age,
-                            physical: prospect.truePhysical,
-                            mental: prospect.trueMental,
-                            positionAttributes: prospect.truePositionAttributes,
-                            personality: prospect.truePersonality,
-                            truePotential: prospect.truePotential,
-                            teamID: team.id,
-                            contractYearsRemaining: 3,
-                            annualSalary: Int.random(in: 600...900)
+                        // Convert prospect to player signed by this AI team.
+                        // Routed through `convertUDFAToPlayer` so the bulk OTAs
+                        // fallback applies the same rookie scaling as the
+                        // interactive Draft Day UDFA stage — building the Player
+                        // inline used to hand AI teams undrafted rookies at their
+                        // FULL true attributes, i.e. better than every drafted
+                        // rookie in the league.
+                        let player = DraftEngine.convertUDFAToPlayer(
+                            prospect: prospect,
+                            teamID: team.id
+                        )
+                        DraftEngine.initializeRookieFamiliarity(
+                            player: player,
+                            prospect: prospect,
+                            coaches: teamCoaches,
+                            isUndrafted: true
                         )
                         modelContext.insert(player)
                     }
@@ -2218,14 +2557,48 @@ enum WeekAdvancer {
             // for the user's team. Full-pads camp = higher intensity baseline.
             applyCampWeeklyTick(career: career, phase: .trainingCamp, modelContext: modelContext, allPlayers: allPlayers)
 
+            // Phase 2 (plan §2.3-§2.6): assemble the situational inputs the
+            // realization model runs on — last season's record and
+            // participation, the career trend, scheme fit, health flags —
+            // ONCE for the whole league, then hand each team its slice.
+            // `processOffseason` itself stays a pure function of its arguments;
+            // every SwiftData fetch lives here.
+            let offseasonInputs = buildOffseasonInputs(
+                career: career,
+                teamsByID: teamsByID,
+                allPlayers: allPlayers,
+                allCoaches: allCoaches,
+                modelContext: modelContext
+            )
+
+            // Phase 2 (plan §2.9.2-3): the team-level environment — did a
+            // coordinator swap the playbook this offseason, and has the staff
+            // been together long enough for continuity to pay? This also ages
+            // out the systems the building no longer runs and files the news
+            // story for an install year.
+            let schemeChanges = applySchemeChanges(
+                career: career,
+                teams: teams,
+                allPlayers: allPlayers,
+                allCoaches: allCoaches
+            )
+            let teamEnvironments = schemeChanges.environments
+
             // Process offseason development for all teams
             // (R22: holdout players skip camp entirely — no development).
+            // The realization verdicts come back through `onOutcome` so the
+            // §2.10 narrative layer (camp development report, motivation and
+            // late-bloomer stories) can be assembled without a second pass.
+            var offseasonOutcomes: [PlayerDevelopmentEngine.OffseasonOutcome] = []
             for team in teams {
                 let teamPlayers = allPlayers.filter { $0.teamID == team.id && !$0.isHoldingOut }
                 let teamCoaches = allCoaches.filter { $0.teamID == team.id }
                 _ = PlayerDevelopmentEngine.processOffseason(
                     players: teamPlayers,
-                    coaches: teamCoaches
+                    coaches: teamCoaches,
+                    inputs: offseasonInputs,
+                    environment: teamEnvironments[team.id] ?? PlayerDevelopmentEngine.TeamEnvironment(),
+                    onOutcome: { offseasonOutcomes.append($0) }
                 )
             }
 
@@ -2244,11 +2617,45 @@ enum WeekAdvancer {
                 }
             }
 
+            // The camp edition of the Development Report for the user's team:
+            // who showed up driven, who coasted after payday, who has settled
+            // into his role, and who is behind a brand-new playbook (§2.10).
+            if let playerTeamID = career.teamID {
+                let userRoster = allPlayers.filter { $0.teamID == playerTeamID && !$0.isRetired }
+                let campReport = DevelopmentReportBuilder.buildCampReport(
+                    roster: userRoster,
+                    outcomes: offseasonOutcomes.filter { $0.teamID == playerTeamID },
+                    installedSchemes: schemeChanges.installs[playerTeamID] ?? [],
+                    season: career.currentSeason
+                )
+                if !campReport.isEmpty {
+                    career.developmentReports = [campReport] + career.developmentReports
+                    let focusedCount = userRoster.filter { $0.trainingFocusArea != nil }.count
+                    lastInboxMessages.append(
+                        DevelopmentReportBuilder.inboxMessage(
+                            report: campReport,
+                            focusedCount: focusedCount
+                        )
+                    )
+                }
+            }
+
             lastNewsItems = NewsGenerator.generateOffseasonNews(
                 phase: .trainingCamp,
                 career: career,
                 teams: teams
             )
+            // Install-year stories (plan §2.9.2) — appended after the phase
+            // news so the assignment above cannot swallow them.
+            lastNewsItems.append(contentsOf: schemeChanges.news)
+            // Motivation + late-bloomer stories (§2.10), same shape: the user's
+            // own locker room always makes the feed, the rest of the league is
+            // capped so camp week cannot become one long motivation column.
+            lastNewsItems.append(contentsOf: motivationCampNews(
+                outcomes: offseasonOutcomes,
+                teamsByID: teamsByID,
+                career: career
+            ))
 
         case .preseason:
             // Camp Phase 1 hook-up: lighter intensity; preseason snaps drive perf.
@@ -3091,7 +3498,8 @@ enum WeekAdvancer {
                     seasonsPlayed: max(1, player.yearsPro),
                     inductionSeason: season,
                     retiredFromTeamName: teamName,
-                    wasUserTeamPlayer: wasUserPlayer
+                    wasUserTeamPlayer: wasUserPlayer,
+                    faceID: player.faceID
                 ))
             }
         }
@@ -3119,6 +3527,71 @@ enum WeekAdvancer {
             category: .retirement,
             week: 0,
             season: season,
+            sentiment: .neutral
+        ))
+    }
+
+    /// Phase 2 (plan §5 stage 6): the post-free-agency washout pass.
+    ///
+    /// Separate from `processPlayerRetirements` because it needs a different
+    /// MOMENT, not a different formula — see `PlayerRetirementEngine`
+    /// `washoutProbability`. Everybody rolled here is unsigned after the market
+    /// closed, so there is no cap bookkeeping and no team farewell; the league
+    /// simply stops carrying a body it has no room for. One quiet roundup line
+    /// keeps the churn visible without competing with the retirement wave's
+    /// ceremony headlines.
+    private static func processWashouts(
+        career: Career,
+        allPlayers: [Player],
+        modelContext: ModelContext
+    ) {
+        let rostered = allPlayers.filter { $0.teamID != nil && !$0.isRetired }
+        guard !rostered.isEmpty else { return }
+
+        let historyRows = (try? modelContext.fetch(FetchDescriptor<PlayerSeasonHistory>())) ?? []
+        var peakByID: [UUID: Int] = [:]
+        for row in historyRows {
+            peakByID[row.playerID] = max(peakByID[row.playerID] ?? 0, row.overallAtEndOfSeason)
+        }
+
+        let washouts = PlayerRetirementEngine.evaluateWashouts(
+            allPlayers: allPlayers,
+            rosteredPlayers: rostered,
+            peakOverallByPlayerID: peakByID
+        )
+        guard !washouts.isEmpty else { return }
+
+        var inductees: [HallOfFameEntry] = []
+        for washout in washouts {
+            let player = washout.player
+            PlayerRetirementEngine.retire(washout, teamsByID: [:])
+
+            // A genuinely great career that ended on the scrap heap still gets
+            // its bust — the induction rule is about the career, not the exit.
+            if washout.isHallOfFamer {
+                inductees.append(HallOfFameEntry(
+                    playerName: player.fullName,
+                    positionRaw: player.position.rawValue,
+                    peakOverall: washout.peakOverall,
+                    finalAge: player.age,
+                    seasonsPlayed: max(1, player.yearsPro),
+                    inductionSeason: career.currentSeason,
+                    retiredFromTeamName: "Free Agent",
+                    wasUserTeamPlayer: false,
+                    faceID: player.faceID
+                ))
+            }
+        }
+        if !inductees.isEmpty {
+            career.hallOfFame = inductees + career.hallOfFame
+        }
+
+        lastNewsItems.append(NewsItem(
+            headline: "\(washouts.count) unsigned veterans call it a career",
+            body: "With the market closed, \(washouts.count) free agents who never found a landing spot have stopped waiting for the phone to ring. Camp bodies and rotational depth make up the bulk of the group — the annual quiet half of league turnover.",
+            category: .retirement,
+            week: 0,
+            season: career.currentSeason,
             sentiment: .neutral
         ))
     }
@@ -3156,11 +3629,28 @@ enum WeekAdvancer {
         teams: [Team],
         modelContext: ModelContext
     ) {
-        let minimumRosterSize = 46
+        // A full roster, not a skeleton one. `trimAIRosters` cuts to 53 while
+        // this floor used to be 46, so every AI club settled at 46 and simply
+        // never carried its bottom seven — the exact players a real roster is
+        // padded with. Measured over `MultiSeasonSmokeTest` that left 224
+        // league-wide spots empty, a free-agent pool of 800+ that nothing ever
+        // drained, and a league average computed over only the good players
+        // (plan §5 stage 6).
+        let minimumRosterSize = 53
         let allPlayers = fetchAllPlayers(modelContext: modelContext)
+        // Sorted by the SAME key cutdown day uses (`RosterValue.keepScore`), not
+        // by raw `overall`. The two halves of roster management have to agree:
+        // a club that just cut a 31-year-old journeyman on keepScore and then
+        // re-signs him off the top of an `overall` sort has done nothing, and
+        // league-wide that asymmetry is a one-way ratchet — every offseason the
+        // oldest, highest-rated bodies get re-signed and the draft class that
+        // replaced them goes back in the pool. Measured over
+        // `MultiSeasonSmokeTest` (5 seasons) the yp0-3 share fell 52.5 % → 36.1 %
+        // and the 33+ share rose 2.5 % → 8.8 %, against
+        // `DEVELOPMENT_NFL_REFERENCE.md` §8's 45-55 % and ≤ 2 %.
         var freeAgentPool = allPlayers
             .filter { $0.teamID == nil && !$0.isRetired && !$0.isInjured }
-            .sorted { $0.overall > $1.overall }
+            .sorted { RosterValue.keepScore($0) > RosterValue.keepScore($1) }
 
         for team in teams where team.id != career.teamID {
             var roster = allPlayers.filter { $0.teamID == team.id }
@@ -3208,7 +3698,7 @@ enum WeekAdvancer {
         for team in teams where team.id != career.teamID {
             let roster = allPlayers
                 .filter { $0.teamID == team.id && !$0.isRetired }
-                .sorted { $0.overall > $1.overall }
+                .sorted { RosterValue.keepScore($0) > RosterValue.keepScore($1) }
             guard roster.count > rosterCeiling else { continue }
 
             for player in roster.suffix(roster.count - rosterCeiling) {
@@ -3245,6 +3735,17 @@ enum WeekAdvancer {
                 hire.teamID = team.id
                 hire.hireSeasonYear = career.currentSeason
                 hire.contractYearsRemaining = Int.random(in: 2...4)
+                // Phase 4 faces: this loop fills ~10 vacancies in one advance
+                // from the SAME registry state, and the preview portraits it
+                // starts from are non-reserving — so without claiming, two of
+                // the coaches inserted here can hash to the same free face and
+                // both keep it. Claim turns each pick into a reservation, so
+                // the next one draws from a shorter list.
+                hire.faceID = FaceLibrary.shared.claimFace(
+                    hire.faceID, personID: hire.id,
+                    role: .coach, age: hire.age, position: nil,
+                    gender: FacePersonGender(tag: hire.gender)
+                )
                 modelContext.insert(hire)
             }
         }
@@ -3352,6 +3853,543 @@ enum WeekAdvancer {
             }
         )
         return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    // MARK: - Private: Offseason Realization Inputs (plan §2.3-§2.6)
+
+    /// Builds the per-player situational packet the phase-2 offseason pipeline
+    /// runs on, for the whole league in one pass.
+    ///
+    /// `PlayerDevelopmentEngine` is deliberately kept free of SwiftData: every
+    /// fetch (`PlayerSeasonHistory`, `Holdout`, playoff `Game` rows) happens
+    /// here, once, and the engine receives plain values.
+    ///
+    /// Called from the `.trainingCamp` phase handler, i.e. BEFORE
+    /// `processOffseason` ages anybody — so every field describes the season
+    /// that just finished, which is exactly what the §2.3 triggers ask about.
+    private static func buildOffseasonInputs(
+        career: Career,
+        teamsByID: [UUID: Team],
+        allPlayers: [Player],
+        allCoaches: [Coach],
+        modelContext: ModelContext
+    ) -> [UUID: PlayerDevelopmentEngine.OffseasonInputs] {
+        let season = career.currentSeason
+
+        // --- Season history, newest season first, per player ---
+        let historyRows = (try? modelContext.fetch(FetchDescriptor<PlayerSeasonHistory>())) ?? []
+        var historyByPlayer: [UUID: [PlayerSeasonHistory]] = [:]
+        for row in historyRows {
+            historyByPlayer[row.playerID, default: []].append(row)
+        }
+        for key in historyByPlayer.keys {
+            historyByPlayer[key]?.sort { $0.season > $1.season }
+        }
+
+        // --- Holdouts that were settled during THIS offseason ---
+        // They cost the player camp reps, which is the §2.4 `health = 0.7`
+        // gate. A player still holding out at camp is filtered out of
+        // development entirely by the caller (R22), so he never reaches this.
+        let holdoutRows = (try? modelContext.fetch(FetchDescriptor<Holdout>())) ?? []
+        let lateResolvedHoldoutIDs = Set(
+            holdoutRows
+                .filter { $0.seasonYear == season && $0.resolvedAt != nil }
+                .map(\.playerID)
+        )
+
+        // --- Playoff heartbreak: a conference-round or Super Bowl loss ---
+        let heartbreakTeamIDs = playoffHeartbreakTeamIDs(season: season, modelContext: modelContext)
+
+        var coachesByTeam: [UUID: [Coach]] = [:]
+        for coach in allCoaches {
+            guard let teamID = coach.teamID else { continue }
+            coachesByTeam[teamID, default: []].append(coach)
+        }
+
+        var inputs: [UUID: PlayerDevelopmentEngine.OffseasonInputs] = [:]
+        for player in allPlayers where !player.isRetired {
+            var entry = PlayerDevelopmentEngine.OffseasonInputs()
+            let history = historyByPlayer[player.id] ?? []
+            entry.latestOverall = history.first?.overallAtEndOfSeason
+            if history.count >= 2 { entry.previousOverall = history[1].overallAtEndOfSeason }
+            if history.count >= 3 { entry.overallTwoSeasonsAgo = history[2].overallAtEndOfSeason }
+
+            // Participation. SNAPSHOT-VS-RESET ORDERING (verified): the week-18
+            // snapshot writes `PlayerSeasonHistory` from the live counters, and
+            // `startNewSeason` — which zeroes them — does not run until the
+            // rosterCuts → regularSeason transition, i.e. AFTER this camp. Both
+            // sources therefore hold the same finished season here; the
+            // snapshot is preferred (it is the row every other consumer reads)
+            // with the live counters as the fallback for a player who has no
+            // row for this season yet.
+            if let latest = history.first, latest.season == season {
+                entry.gamesStarted = latest.gamesStarted
+                entry.gamesPlayed = latest.gamesPlayed
+            } else {
+                entry.gamesStarted = player.gamesStartedThisSeason
+                entry.gamesPlayed = player.gamesPlayedThisSeason
+            }
+            if history.count >= 2 {
+                entry.previousGamesStarted = history[1].gamesStarted
+                entry.previousGamesPlayed = history[1].gamesPlayed
+            }
+
+            entry.changedTeam = history.first.map { $0.teamID != player.teamID } ?? false
+
+            // Tenure with the CURRENT club, for the §2.9.4 potential
+            // assessment: consecutive completed seasons at the top of his
+            // history that were spent here. `Player.loyaltyYears` looks like
+            // the right field but nothing in the codebase ever writes it, so
+            // reading it would have pinned every assessment at "just acquired"
+            // noise forever.
+            var tenure = 0
+            for row in history {
+                guard let teamID = player.teamID, row.teamID == teamID else { break }
+                tenure += 1
+            }
+            entry.yearsOnTeam = tenure
+            entry.missedCampFromHoldout = lateResolvedHoldoutIDs.contains(player.id)
+            entry.majorInjuryLastSeason = player.injuryHistory.contains {
+                $0.season == season && $0.weeksOut >= PlayerDevelopmentEngine.majorInjuryWeeks
+            }
+
+            if let teamID = player.teamID {
+                entry.teamWins = lastCompletedSeasonWins(for: teamsByID[teamID])
+                entry.playoffHeartbreak = heartbreakTeamIDs.contains(teamID)
+
+                let staff = coachesByTeam[teamID] ?? []
+                entry.headCoachMotivation = staff.first { $0.role == .headCoach }?.motivation
+                entry.schemeFit = offseasonSchemeFit(player: player, staff: staff)
+                if let posCoach = staff.first(where: {
+                    CoachingEngine.positionRoleMatch(coachRole: $0.role, playerPosition: player.position)
+                }) {
+                    // "The OL whisperer arrived": a position coach hired this
+                    // offseason who can actually develop people is one of the
+                    // §2.5 late-bloomer catalysts.
+                    entry.newPositionCoach = posCoach.hireSeasonYear == season
+                        && posCoach.playerDevelopment >= 65
+                }
+            }
+
+            inputs[player.id] = entry
+        }
+        return inputs
+    }
+
+    // MARK: - Private: Scheme Change Consequences (plan §2.9.2-3)
+
+    /// Detects this offseason's coordinator/scheme swaps, applies their
+    /// consequences, and returns the per-team environment the camp development
+    /// pass runs on.
+    ///
+    /// Plan §1.3 defect #4: `schemeFamiliarity` was a write-only ratchet. A club
+    /// could fire its OC and hire a Vertical guru with zero cost to a roster
+    /// that had spent four years learning West Coast, and the West Coast entry
+    /// stayed at 95 forever. Three consequences, all here:
+    ///
+    /// 1. **News** — one story per changed unit, so the swap is visible.
+    /// 2. **Install year** — `Team.schemeInstallSeason` marks the upcoming
+    ///    season; camp and every in-season practice run `learnScheme` at ×1.25
+    ///    (`DEVELOPMENT_NFL_REFERENCE.md` §5: year 1 is an install, year 2 is
+    ///    the payoff).
+    /// 3. **Decay** — schemes the current staff does not run lose 4 points a
+    ///    year down to a floor of 35.
+    ///
+    /// Continuity (§2.9.3) falls out of the same comparison: a coordinator with
+    /// `coordinatorContinuitySeasons`+ years in the building whose scheme did
+    /// NOT change is the stability reward.
+    ///
+    /// Runs at the `.trainingCamp` phase, i.e. after the coaching carousel has
+    /// settled, so the coordinators read here are the ones who will run the
+    /// upcoming season.
+    private static func applySchemeChanges(
+        career: Career,
+        teams: [Team],
+        allPlayers: [Player],
+        allCoaches: [Coach]
+    ) -> (
+        environments: [UUID: PlayerDevelopmentEngine.TeamEnvironment],
+        news: [NewsItem],
+        /// Scheme raw values installed this offseason, per team — the camp
+        /// development report needs them to name the playbook the room is
+        /// still learning (§2.10).
+        installs: [UUID: [String]]
+    ) {
+        let season = career.currentSeason
+        // Camp belongs to the offseason of the season that just finished; the
+        // install applies to the one about to start (`startNewSeason` bumps
+        // `currentSeason` at the rosterCuts → regularSeason boundary).
+        let upcomingSeason = season + 1
+
+        var coachesByTeam: [UUID: [Coach]] = [:]
+        for coach in allCoaches {
+            guard let teamID = coach.teamID else { continue }
+            coachesByTeam[teamID, default: []].append(coach)
+        }
+        var playersByTeam: [UUID: [Player]] = [:]
+        for player in allPlayers where player.teamID != nil && !player.isRetired {
+            playersByTeam[player.teamID!, default: []].append(player)
+        }
+
+        var environments: [UUID: PlayerDevelopmentEngine.TeamEnvironment] = [:]
+        // The user's own installs always make the feed; the rest of the league
+        // is capped so a busy carousel year cannot bury every other headline
+        // (same shape as the §2.10 cap on offseason motivation stories).
+        var userNews: [NewsItem] = []
+        var leagueNews: [NewsItem] = []
+        var installs: [UUID: [String]] = [:]
+
+        for team in teams {
+            let staff = coachesByTeam[team.id] ?? []
+            let oc = staff.first { $0.role == .offensiveCoordinator }
+            let dc = staff.first { $0.role == .defensiveCoordinator }
+            let offScheme = oc?.offensiveScheme?.rawValue
+            let defScheme = dc?.defensiveScheme?.rawValue
+
+            // A `nil` snapshot means "never recorded" (new league / legacy
+            // save): record it, but never charge an install year for it.
+            let offChanged = team.lastOffensiveSchemeRaw != nil
+                && offScheme != nil
+                && team.lastOffensiveSchemeRaw != offScheme
+            let defChanged = team.lastDefensiveSchemeRaw != nil
+                && defScheme != nil
+                && team.lastDefensiveSchemeRaw != defScheme
+
+            if let offScheme { team.lastOffensiveSchemeRaw = offScheme }
+            if let defScheme { team.lastDefensiveSchemeRaw = defScheme }
+
+            if offChanged || defChanged {
+                team.schemeInstallSeason = upcomingSeason
+            }
+            let isUserTeam = team.id == career.teamID
+            if offChanged, let offScheme {
+                let item = schemeInstallNews(
+                    team: team, coordinator: oc, schemeName: offScheme,
+                    isOffense: true, season: season
+                )
+                if isUserTeam { userNews.append(item) } else { leagueNews.append(item) }
+                installs[team.id, default: []].append(offScheme)
+            }
+            if defChanged, let defScheme {
+                let item = schemeInstallNews(
+                    team: team, coordinator: dc, schemeName: defScheme,
+                    isOffense: false, season: season
+                )
+                if isUserTeam { userNews.append(item) } else { leagueNews.append(item) }
+                installs[team.id, default: []].append(defScheme)
+            }
+
+            var environment = PlayerDevelopmentEngine.TeamEnvironment()
+            if team.schemeInstallSeason == upcomingSeason {
+                environment.schemeInstallMultiplier =
+                    VersatilityDevelopmentEngine.schemeInstallIntensityBonus
+            }
+            environment.offensiveContinuity = hasContinuity(
+                coordinator: oc, changedScheme: offChanged, season: season
+            )
+            environment.defensiveContinuity = hasContinuity(
+                coordinator: dc, changedScheme: defChanged, season: season
+            )
+            environments[team.id] = environment
+
+            // Age out the systems this staff no longer runs.
+            let active = Set([offScheme, defScheme].compactMap { $0 })
+            for player in playersByTeam[team.id] ?? [] {
+                VersatilityDevelopmentEngine.decayUnusedSchemes(
+                    player: player,
+                    activeSchemes: active
+                )
+            }
+        }
+
+        return (environments, userNews + leagueNews.prefix(4), installs)
+    }
+
+    /// A coordinator earns the continuity bonus once he has been in the
+    /// building `CoachingEngine.coordinatorContinuitySeasons` seasons AND has
+    /// not just changed the playbook. `hireSeasonYear == 0` is the legacy
+    /// "unknown hire date" sentinel — it never counts as tenure.
+    private static func hasContinuity(
+        coordinator: Coach?,
+        changedScheme: Bool,
+        season: Int
+    ) -> Bool {
+        guard let coordinator, !changedScheme, !coordinator.isInAdjustmentPeriod else { return false }
+        guard coordinator.hireSeasonYear > 0 else { return false }
+        let seasonsOnTeam = season - coordinator.hireSeasonYear
+        return seasonsOnTeam >= CoachingEngine.coordinatorContinuitySeasons
+    }
+
+    /// The install-year story. One per changed unit, filed at camp.
+    private static func schemeInstallNews(
+        team: Team,
+        coordinator: Coach?,
+        schemeName: String,
+        isOffense: Bool,
+        season: Int
+    ) -> NewsItem {
+        let unit = isOffense ? "offense" : "defense"
+        let coachName = coordinator?.fullName ?? "The new coordinator"
+        let schemeName = DevelopmentReportBuilder.schemeDisplayName(schemeName)
+        return NewsItem(
+            headline: "\(team.abbreviation) install a new \(unit): \(schemeName)",
+            body: "\(coachName) has torn up the \(team.fullName) \(unit) playbook and started again. Camp is wall-to-wall installs — the room will learn faster this year than any other, but until the new language is second nature the unit is playing a step slow.",
+            category: .coachingChange,
+            week: 0,
+            season: season,
+            relatedTeamID: team.id,
+            sentiment: .neutral
+        )
+    }
+
+    // MARK: - Camp Narrative (plan §2.10)
+
+    /// How many motivation stories the rest of the league may contribute to a
+    /// camp feed. The user's own room is never subject to the cap.
+    private static let leagueMotivationStoryCap = 4
+
+    /// How many late-bloomer stories the rest of the league may contribute.
+    private static let leagueLateBloomerStoryCap = 2
+
+    /// Camp-week stories from the realization pass (plan §2.10): the "best
+    /// shape of his life" and "showed up heavy" columns, plus the late-bloomer
+    /// breakout. Copy is archetype-flavored — a Fiery Competitor's offseason
+    /// does not read like a Quiet Professional's.
+    ///
+    /// Selection: the user's team always makes the feed (his locker room is
+    /// the story he is playing), the other 31 clubs are capped so camp week
+    /// cannot turn into one long motivation column. Within each bucket the
+    /// best players win the slot — a 58-OVR special-teamer's mindset is not
+    /// news.
+    private static func motivationCampNews(
+        outcomes: [PlayerDevelopmentEngine.OffseasonOutcome],
+        teamsByID: [UUID: Team],
+        career: Career
+    ) -> [NewsItem] {
+        let season = career.currentSeason
+        let userTeamID = career.teamID
+
+        func rank(_ list: [PlayerDevelopmentEngine.OffseasonOutcome])
+            -> [PlayerDevelopmentEngine.OffseasonOutcome] {
+            list.sorted { $0.overallAfter > $1.overallAfter }
+        }
+
+        // --- Late bloomers first: the rarest and most interesting story ---
+        let bloomers = outcomes.filter { $0.lateBloomerBreakout }
+        let userBloomers = rank(bloomers.filter { $0.teamID == userTeamID && userTeamID != nil })
+        let leagueBloomers = rank(bloomers.filter { $0.teamID != userTeamID })
+            .prefix(leagueLateBloomerStoryCap)
+
+        var items: [NewsItem] = []
+        for outcome in userBloomers.prefix(2) + Array(leagueBloomers) {
+            guard let team = outcome.teamID.flatMap({ teamsByID[$0] }) else { continue }
+            items.append(lateBloomerNews(outcome: outcome, team: team, season: season))
+        }
+
+        // --- Motivation: driven and complacent/discouraged, big names only ---
+        let notable = outcomes.filter {
+            !$0.lateBloomerBreakout
+                && $0.motivation != .focused
+                && $0.overallAfter >= 70
+        }
+        let userNotable = rank(notable.filter { $0.teamID == userTeamID && userTeamID != nil })
+        let leagueNotable = rank(notable.filter { $0.teamID != userTeamID })
+            .prefix(leagueMotivationStoryCap)
+
+        for outcome in userNotable.prefix(2) + Array(leagueNotable) {
+            guard let team = outcome.teamID.flatMap({ teamsByID[$0] }) else { continue }
+            items.append(motivationNews(outcome: outcome, team: team, season: season))
+        }
+
+        return items
+    }
+
+    /// One motivation column. The headline is the state, the body is the
+    /// archetype's own voice.
+    private static func motivationNews(
+        outcome: PlayerDevelopmentEngine.OffseasonOutcome,
+        team: Team,
+        season: Int
+    ) -> NewsItem {
+        let name = outcome.playerName
+        let position = outcome.position.rawValue
+        let headline: String
+        let body: String
+        let sentiment: NewsSentiment
+
+        switch outcome.motivation {
+        case .driven:
+            headline = "\(name) reports to camp in the best shape of his career"
+            body = "\(team.fullName) \(position) \(name) has spent the offseason answering last season. \(drivenFlavor(for: outcome.archetype)) The staff expect the work to show up on tape."
+            sentiment = .positive
+
+        case .complacent:
+            headline = "\(name) showed up heavy — \(team.abbreviation) staff not amused"
+            body = "\(team.fullName) \(position) \(name) cashed his cheque and eased off. \(complacentFlavor(for: outcome.archetype)) Coaches have him on a short leash through camp."
+            sentiment = .negative
+
+        case .discouraged:
+            headline = "\(name) is going through the motions in \(team.abbreviation) camp"
+            body = "\(team.fullName) \(position) \(name) arrived checked out. \(discouragedFlavor(for: outcome.archetype)) Until something changes, his development has stalled."
+            sentiment = .negative
+
+        case .focused:
+            headline = "\(name) reports on schedule for \(team.abbreviation) camp"
+            body = "\(team.fullName) \(position) \(name) is going about his business — nothing more, nothing less."
+            sentiment = .neutral
+        }
+
+        return NewsItem(
+            headline: headline,
+            body: body,
+            category: .playerPerformance,
+            week: 0,
+            season: season,
+            relatedTeamID: team.id,
+            relatedPlayerID: outcome.playerID,
+            sentiment: sentiment
+        )
+    }
+
+    /// The year 3-5 breakout story (§2.5) — a career backup who finally put it
+    /// together after a change of scheme, coach or situation.
+    private static func lateBloomerNews(
+        outcome: PlayerDevelopmentEngine.OffseasonOutcome,
+        team: Team,
+        season: Int
+    ) -> NewsItem {
+        let gain = outcome.overallDelta > 0 ? " (+\(outcome.overallDelta) OVR)" : ""
+        return NewsItem(
+            headline: "Late bloomer: \(outcome.playerName) has finally arrived",
+            body: "\(team.fullName) \(outcome.position.rawValue) \(outcome.playerName) spent \(max(1, outcome.yearsPro)) seasons as a name on the depth chart. Something changed this offseason\(gain) — teammates say the game has slowed down for the \(outcome.age)-year-old, and the staff are suddenly planning around him.",
+            category: .playerPerformance,
+            week: 0,
+            season: season,
+            relatedTeamID: team.id,
+            relatedPlayerID: outcome.playerID,
+            sentiment: .positive
+        )
+    }
+
+    private static func drivenFlavor(for archetype: PersonalityArchetype) -> String {
+        switch archetype {
+        case .fieryCompetitor:
+            return "He has been the loudest voice in the building since February, and he is not hiding why."
+        case .teamLeader:
+            return "He organised the whole position group's offseason program and dragged the young players through it."
+        case .quietProfessional, .steadyPerformer:
+            return "No speeches, no posts — he simply never left the facility."
+        case .mentor:
+            return "He came back early to get the rookies up to speed, and put himself through the same work."
+        case .loneWolf:
+            return "He trained alone all offseason and turned up looking like a different athlete."
+        case .dramaQueen:
+            return "He made sure everyone heard about every rep, but the tape backs the noise up."
+        case .feelPlayer:
+            return "He says the game feels right again, and it shows in the way he is moving."
+        case .classClown:
+            return "The jokes are still there — so, for once, is the conditioning."
+        }
+    }
+
+    private static func complacentFlavor(for archetype: PersonalityArchetype) -> String {
+        switch archetype {
+        case .fieryCompetitor, .teamLeader:
+            return "Teammates are surprised: this is not the man who set the tone last year."
+        case .quietProfessional, .steadyPerformer:
+            return "Nothing dramatic — just a step slower in everything the staff time."
+        case .mentor:
+            return "The young players still get his time; the weight room no longer does."
+        case .loneWolf:
+            return "Nobody saw him all offseason, and it is showing."
+        case .dramaQueen:
+            return "The offseason content was excellent. The conditioning test was not."
+        case .feelPlayer:
+            return "He insists he plays his way into shape. The staff have heard it before."
+        case .classClown:
+            return "He is still the funniest man in the room, and now the heaviest."
+        }
+    }
+
+    private static func discouragedFlavor(for archetype: PersonalityArchetype) -> String {
+        switch archetype {
+        case .fieryCompetitor:
+            return "The fire that made him is being spent on the sideline, not the field."
+        case .teamLeader, .mentor:
+            return "The room has noticed the leader has stopped leading."
+        case .quietProfessional, .steadyPerformer:
+            return "He does the work and says nothing, but the edge is gone."
+        case .loneWolf:
+            return "He has withdrawn from the building entirely."
+        case .dramaQueen:
+            return "Every slight is public, and there have been plenty."
+        case .feelPlayer:
+            return "Confidence is his fuel and the tank is empty."
+        case .classClown:
+            return "Even the jokes have dried up."
+        }
+    }
+
+    /// Wins from the season that just finished, for the §2.3 "team collapsed"
+    /// trigger.
+    ///
+    /// ORDERING NOTE: `Team.lastSeasonWins` is written in `startNewSeason`,
+    /// which runs at the rosterCuts → regularSeason boundary — i.e. AFTER the
+    /// camp that reads this. During an offseason the live `wins`/`losses`
+    /// counters still hold the finished season (nothing else resets them),
+    /// while `lastSeasonWins` still holds the season BEFORE it. The live
+    /// counters are therefore the correct source here, and the snapshot field
+    /// is the fallback for the one case the live ones cannot cover: a team with
+    /// no games on the board at all.
+    private static func lastCompletedSeasonWins(for team: Team?) -> Int? {
+        guard let team else { return nil }
+        if team.wins + team.losses + team.ties > 0 { return team.wins }
+        return team.hasLastSeasonRecord ? team.lastSeasonWins : nil
+    }
+
+    /// Teams that lost in the conference round (week 21) or the Super Bowl
+    /// (week 22) — the §2.3 "playoff heartbreak" trigger, which reference §4
+    /// describes as a team-wide offseason edge.
+    ///
+    /// `SeasonSummary` records only "made the playoffs" / "won it all", so the
+    /// round is read off the actual playoff `Game` rows instead. Applies league
+    /// wide rather than user-team-only: the AI clubs have the same bracket.
+    private static func playoffHeartbreakTeamIDs(
+        season: Int,
+        modelContext: ModelContext
+    ) -> Set<UUID> {
+        let games = fetchAllGamesForSeason(seasonYear: season, modelContext: modelContext)
+        var losers: Set<UUID> = []
+        for game in games where game.isPlayoff && game.isPlayed && game.week >= 21 {
+            guard let winner = game.winnerID else { continue }
+            let loser = winner == game.homeTeamID ? game.awayTeamID : game.homeTeamID
+            losers.insert(loser)
+        }
+        return losers
+    }
+
+    /// 0.0-1.0 fit between a player and the scheme his coordinator actually
+    /// runs, for the §2.6 potential drift.
+    ///
+    /// Familiarity is the honest signal the domain already carries: a player who
+    /// has installed his coordinator's scheme for years reads as a fit, one
+    /// dropped into a system he has never run does not. Rookies are held at the
+    /// neutral 0.5 — their familiarity is a seeded install-year number
+    /// (`DraftEngine.initializeRookieFamiliarity`), and a first-year playbook
+    /// gap should not push a ceiling down before he has taken a snap.
+    private static func offseasonSchemeFit(player: Player, staff: [Coach]) -> Double {
+        guard player.yearsPro >= 1 else { return 0.5 }
+        let schemeKey: String?
+        switch player.position.side {
+        case .offense:
+            schemeKey = staff.first { $0.role == .offensiveCoordinator }?.offensiveScheme?.rawValue
+        case .defense:
+            schemeKey = staff.first { $0.role == .defensiveCoordinator }?.defensiveScheme?.rawValue
+        case .specialTeams:
+            schemeKey = nil
+        }
+        guard let schemeKey else { return 0.5 }
+        return min(1.0, max(0.0, Double(player.schemeFam(for: schemeKey)) / 100.0))
     }
 
     // MARK: - Private: Owner Demand Generation (#248)
@@ -3475,10 +4513,17 @@ enum WeekAdvancer {
     // MARK: - Camp Phase 1 Hook-ups
     //
     // The functions below glue pre-built Camp engines into the offseason flow.
-    // They run only for the user's team to keep advanceWeek snappy — AI teams
-    // continue to use the legacy `PlayerDevelopmentEngine.processOffseason`
-    // path. If/when AI camps need the same per-week granularity, expand these
-    // helpers to iterate over `teams`.
+    // The training plan, position battles and Hard Knocks storylines run only
+    // for the user's team to keep advanceWeek snappy — AI teams continue to use
+    // the legacy `PlayerDevelopmentEngine.processOffseason` path.
+    //
+    // Phase 2 (plan §2.9.6) carves out ONE exception: the workload tick now
+    // runs league-wide, because `WorkloadStatus` gained real consequences
+    // (injury multiplier + halved training gains) and a status that exists for
+    // one club out of 32 is a user-only tax. AI clubs get the cheap
+    // `WorkloadEngine.tickWeek` (state, no per-day `WorkloadEvent` rows — see
+    // the row-count measurement on that function); the user's team keeps the
+    // full audit trail its camp dashboard reads.
 
     /// Applies a single weekly camp tick: training plan deltas + 7 days of
     /// workload + per-active-battle resolutions + a HardKnocks event burst.
@@ -3492,14 +4537,29 @@ enum WeekAdvancer {
         modelContext: ModelContext,
         allPlayers: [Player]
     ) {
+        let week = career.currentWeek
+        let season = career.currentSeason
+
+        // 0. A new camp cycle opens at OTAs: last year's accumulated load is
+        //    history (plan §2.9.6 — `cumulativeLoad` had no reset anywhere and
+        //    ratcheted across seasons).
+        if phase == .otas {
+            for player in allPlayers where player.cumulativeLoad != 0 {
+                WorkloadEngine.resetCampLoad(player: player)
+            }
+        }
+
+        // 0b. League-wide workload state (see the section note above). Runs for
+        //     every rostered player EXCEPT the user's, whose per-day rows are
+        //     written in step 2.
+        applyAICampWorkload(career: career, phase: phase, allPlayers: allPlayers)
+
         guard let teamID = career.teamID else { return }
         let roster = allPlayers.filter { $0.teamID == teamID }
         guard !roster.isEmpty else { return }
 
         // 1. Apply the user's saved training plan for this week. If none exists,
         //    seed a balanced 34/33/33 plan so deltas still tick forward.
-        let week = career.currentWeek
-        let season = career.currentSeason
         let plan = fetchOrSeedTrainingPlan(
             teamID: teamID,
             season: season,
@@ -3514,22 +4574,19 @@ enum WeekAdvancer {
         //    physio as fallback). A 50-rated coach yields the legacy 0.55
         //    baseline; elite (99) coaches push toward 0.75; weak (1) coaches
         //    drop toward 0.40. See `computeRecoveryRate` for the mapping.
-        let intensity: Double
-        switch phase {
-        case .otas:         intensity = 0.45
-        case .trainingCamp: intensity = 0.85
-        case .preseason:    intensity = 0.55
-        default:            intensity = 0.5
-        }
+        let intensity = campIntensity(for: phase)
         let teamCoaches = fetchAllCoaches(modelContext: modelContext)
             .filter { $0.teamID == teamID }
         let recoveryRate = computeRecoveryRate(coaches: teamCoaches)
         for player in roster {
-            for _ in 0..<7 {
+            for day in 0..<7 {
                 WorkloadEngine.tickDay(
                     player: player,
                     intensity: intensity,
                     recoveryRate: recoveryRate,
+                    seasonYear: season,
+                    weekNumber: week,
+                    dayOfWeek: day,
                     modelContext: modelContext
                 )
             }
@@ -3570,6 +4627,40 @@ enum WeekAdvancer {
             roster: roster,
             modelContext: modelContext
         )
+    }
+
+    /// Camp workload intensity per offseason phase.
+    ///   .otas         -> 0.45 (no pads)
+    ///   .trainingCamp -> 0.85 (full pads)
+    ///   .preseason    -> 0.55 (lighter; preseason snaps drive most signal)
+    private static func campIntensity(for phase: SeasonPhase) -> Double {
+        switch phase {
+        case .otas:         return 0.45
+        case .trainingCamp: return 0.85
+        case .preseason:    return 0.55
+        default:            return 0.5
+        }
+    }
+
+    /// League-wide camp workload for every team the user does NOT run, at the
+    /// same default intensity, using the row-free `WorkloadEngine.tickWeek`.
+    ///
+    /// AI clubs have no training plan and no saved recovery staff lookup worth
+    /// a per-team fetch here, so they use the neutral 0.55 recovery baseline —
+    /// the same number `computeRecoveryRate` returns for a team with no
+    /// strength coach. The point is that a status EXISTS league-wide so the
+    /// §2.9.6 injury multiplier and burnout tax are not a user-only penalty.
+    private static func applyAICampWorkload(
+        career: Career,
+        phase: SeasonPhase,
+        allPlayers: [Player]
+    ) {
+        let intensity = campIntensity(for: phase)
+        for player in allPlayers {
+            guard let playerTeamID = player.teamID, playerTeamID != career.teamID else { continue }
+            guard !player.isRetired, !player.isHoldingOut else { continue }
+            WorkloadEngine.tickWeek(player: player, intensity: intensity, recoveryRate: 0.55)
+        }
     }
 
     /// Maps the user team's strength coach (or physio as fallback) onto a

@@ -290,10 +290,20 @@ struct DevelopmentReportView: View {
     }
 
     private func reportCard(_ report: DevelopmentReport) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Week \(report.week) · Season \(report.season)")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(Color.accentGold)
+        // Week 0 is the training-camp edition (plan §2.10): motivation states,
+        // plateau tags, late bloomers and install-year notes.
+        let isCamp = report.week == DevelopmentReportBuilder.campReportWeek
+
+        return VStack(alignment: .leading, spacing: 10) {
+            Group {
+                if isCamp {
+                    Text("Training Camp · Season \(report.season)")
+                } else {
+                    Text("Week \(report.week) · Season \(report.season)")
+                }
+            }
+            .font(.caption.weight(.bold))
+            .foregroundStyle(Color.accentGold)
 
             if !report.breakouts.isEmpty {
                 ForEach(report.breakouts) { entry in
@@ -338,8 +348,7 @@ struct DevelopmentReportView: View {
                     reportRow(
                         entry: entry,
                         icon: "arrow.down.circle.fill",
-                        color: entry.reason == .injury || entry.reason == .holdout
-                            ? Color.danger : Color.warning
+                        color: stalledColor(for: entry.reason)
                     )
                 }
             }
@@ -357,9 +366,21 @@ struct DevelopmentReportView: View {
         )
     }
 
+    /// Severity color for a stalled line. Injuries and holdouts are hard stops;
+    /// an install year is simply a slower year, so it reads informational.
+    private func stalledColor(for reason: DevelopmentReport.Reason) -> Color {
+        switch reason {
+        case .injury, .holdout: return Color.danger
+        case .schemeChange:     return Color.accentBlue
+        default:                return Color.warning
+        }
+    }
+
     private func reportRow(entry: DevelopmentReport.Entry, icon: String, color: Color) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: icon)
+            // The phase-2 narrative reasons carry their own glyph — a plateau
+            // is not a fall, an install is not a slump.
+            Image(systemName: entry.reason.iconOverride ?? icon)
                 .font(.caption)
                 .foregroundStyle(color)
                 .frame(width: 18)
@@ -374,6 +395,8 @@ struct DevelopmentReportView: View {
             Text(entry.reason.label.uppercased())
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(color)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
                 .background(Capsule().fill(color.opacity(0.12)))

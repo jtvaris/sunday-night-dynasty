@@ -17,8 +17,16 @@ import SwiftData
 @MainActor
 enum MultiSeasonSmokeTest {
 
-    static func run(seasons: Int = 5, fantasy: Bool = false) {
-        print("SMOKE: ===== multi-season smoke test, \(seasons) seasons\(fantasy ? " (FANTASY DRAFT career)" : "") =====")
+    /// - Parameters:
+    ///   - seasons: How many complete cycles to run.
+    ///   - fantasy: Snake-draft every roster before the first season (R40).
+    ///   - source: Which league the run starts from. `.generated` is the classic
+    ///     random path; `.fixed2026` / `.fixed2026Dev` import a baked template
+    ///     (`docs/REALISTIC_LEAGUE_PLAN.md` phase 3) so the same three-season
+    ///     drift / roster / watchdog gates can be measured on the fixed league.
+    ///     Driven by `PERF_SMOKE_LEAGUE=<LeagueSource rawValue>`.
+    static func run(seasons: Int = 5, fantasy: Bool = false, source: LeagueSource = .generated) {
+        print("SMOKE: ===== multi-season smoke test, \(seasons) seasons\(fantasy ? " (FANTASY DRAFT career)" : "") league=\(source.rawValue) =====")
 
         // Isolated in-memory container (same schema as DataContainer).
         let schema = Schema([
@@ -50,7 +58,39 @@ enum MultiSeasonSmokeTest {
         // except the user's team KEEPS its generated coaching staff — the
         // harness plays a fully AI-managed franchise).
         let career = Career(playerName: "Smoke Bot", role: .gm, capMode: .simple)
-        let generated = LeagueGenerator.generate(startYear: career.currentSeason)
+
+        // Phase 4 faces: same ordering as `TeamSelectionView.startCareer` —
+        // bind the library to the fresh career before the league exists, so a
+        // repeated harness run never inherits the previous run's registry.
+        FaceLibrary.shared.beginNewCareer(career)
+
+        // League source: random roll, or an imported fixed template. The
+        // template path mirrors `TeamSelectionView.startCareer` — same importer,
+        // same career-history insertion — so what runs here is what a real
+        // template career runs. A missing/malformed template is a hard failure,
+        // not a silent fall-back to the random path: a green run must never be
+        // able to mean "the template never loaded".
+        let generated: LeagueGenerator.GeneratedLeague
+        var seasonHistory: [PlayerSeasonHistory] = []
+        if let profile = source.templateProfile {
+            do {
+                let imported = try LeagueGenerator.generateFromTemplate(
+                    profile: profile, startYear: career.currentSeason
+                )
+                generated = imported.generated
+                seasonHistory = imported.seasonHistory
+                career.leagueSource = source
+                print("SMOKE: template imported profile=\(profile.rawValue) teams=\(imported.teams.count) "
+                      + "players=\(imported.players.count) coaches=\(imported.coaches.count) "
+                      + "picks=\(imported.draftPicks.count) historyRows=\(imported.seasonHistory.count)")
+            } catch {
+                print("SMOKE: FAILED — template \(profile.rawValue) could not be imported: \(error)")
+                return
+            }
+        } else {
+            generated = LeagueGenerator.generate(startYear: career.currentSeason)
+        }
+
         career.leagueID = generated.league.id
         career.teamID = generated.teams.first?.id
         career.hasCompletedIntro = true
@@ -70,13 +110,19 @@ enum MultiSeasonSmokeTest {
         generated.owners.forEach { context.insert($0) }
         generated.coaches.forEach { context.insert($0) }
         generated.draftPicks.forEach { context.insert($0) }
+        seasonHistory.forEach { context.insert($0) }
         try? context.save()
 
         // Baseline league metrics.
         let baselineOVR = leagueAverageOVR(context: context)
         let baseRosters = rosterSizes(context: context)
-        print(String(format: "SMOKE: baseline avgOVR=%.2f rosters min=%d max=%d players=%d",
-                     baselineOVR, baseRosters.min, baseRosters.max, baseRosters.total))
+        let baselineRostered = ((try? context.fetch(FetchDescriptor<Player>())) ?? [])
+            .filter { $0.teamID != nil && !$0.isRetired }
+        let baselinePot = baselineRostered.isEmpty ? 0 :
+            Double(baselineRostered.reduce(0) { $0 + $1.truePotential }) / Double(baselineRostered.count)
+        print(String(format: "SMOKE: baseline avgOVR=%.2f leaguePot=%.2f rosters min=%d max=%d players=%d",
+                     baselineOVR, baselinePot, baseRosters.min, baseRosters.max, baseRosters.total))
+        printPyramidDiagnostics(seasonLabel: "base", rostered: baselineRostered, unsignedCount: 0)
 
         // Per-cycle counters.
         var seasonsCompleted = 0
@@ -121,7 +167,7 @@ enum MultiSeasonSmokeTest {
             // closed (offseason ran). Emit the summary row for it.
             if career.currentPhase == .regularSeason && phaseBefore != .regularSeason {
                 // AI stand-in for the user's offseason roster management runs
-                // FIRST (cutdown to 53 + refill to 46) so the row below
+                // FIRST (cutdown to 53 + refill to 53) so the row below
                 // measures a managed league: refillAIRosters skips the user's
                 // team by design, and FA/no-resign flows are the user's job.
                 refillUserRoster(career: career, context: context)
@@ -145,6 +191,24 @@ enum MultiSeasonSmokeTest {
                 retiredTotalPrev = retiredNow
                 draftedThisCycle = 0
                 hcSnapshot = hcNow
+
+                // Phase 4 faces: the portrait invariant is a MULTI-SEASON
+                // property and used to be measured only at career creation —
+                // where it is trivially true. The pool (3 584 ids: 2 048
+                // generated + 512 reserve + the 1 024-id female range) is
+                // smaller than a career's population growth (224 draft picks +
+                // up to ~124 AI UDFAs every offseason against 40-90
+                // retirements), so this is the only place the reuse ladder is
+                // exercised at all. `free=0` in the line below means the catalog
+                // is genuinely full and reuse is arithmetic; a duplicate WITH a
+                // same-gender id still free is a real defect and trips the
+                // assertion inside the audit.
+                //
+                // The female sub-pool is the tight one: 35 female faces against
+                // the ~31 female coaches a 0.06 hiring share produces, so
+                // `freeFemale=0` with within-gender reuse shows up here long
+                // before the male half runs out.
+                auditFaces(seasonLabel: finishedSeason, context: context)
 
                 // OVR-drift diagnostics: who left, who arrived, and how the
                 // yearsPro cohorts are trending.
@@ -256,6 +320,13 @@ enum MultiSeasonSmokeTest {
         let teams = (try? context.fetch(FetchDescriptor<Team>())) ?? []
         let teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
         let players = (try? context.fetch(FetchDescriptor<Player>())) ?? []
+        // Coordinator staff per team — rookies need their drafting team's schemes
+        // to start with non-zero scheme familiarity.
+        let coachesByTeam = Dictionary(
+            grouping: ((try? context.fetch(FetchDescriptor<Coach>())) ?? [])
+                .filter { $0.teamID != nil },
+            by: { $0.teamID! }
+        )
         var rosters = Dictionary(
             grouping: players.filter { $0.teamID != nil && !$0.isRetired },
             by: { $0.teamID! }
@@ -281,6 +352,11 @@ enum MultiSeasonSmokeTest {
                 teamID: pick.currentTeamID,
                 pickNumber: pick.pickNumber,
                 draftSeason: pick.seasonYear
+            )
+            DraftEngine.initializeRookieFamiliarity(
+                player: player,
+                prospect: chosen,
+                coaches: coachesByTeam[pick.currentTeamID] ?? []
             )
             draftedOVRSum += player.overall
             draftedPotSum += player.truePotential
@@ -355,6 +431,73 @@ enum MultiSeasonSmokeTest {
               + "yp1=\(cohort(1...1)) yp2=\(cohort(2...2)) yp3=\(cohort(3...3)) "
               + "yp4to7=\(cohort(4...7)) yp8plus=\(vetText) "
               + String(format: "leaguePot=%.2f", avgPot))
+
+        let unsigned = players.filter { $0.teamID == nil && !$0.isRetired }
+        printPyramidDiagnostics(
+            seasonLabel: "\(seasonLabel)",
+            rostered: rostered,
+            unsignedCount: unsigned.count
+        )
+        printMoraleDiagnostics(seasonLabel: seasonLabel, rostered: rostered)
+    }
+
+    /// `DEVELOPMENT_NFL_REFERENCE.md` §8 quality + age pyramid. The stage-6
+    /// drift gate is a statement about the league MEAN, and a mean can be held
+    /// still by two errors cancelling — this line is what makes that visible.
+    /// `faPool` is the unsigned, unretired population: inflow that the league
+    /// took in but never cycled out.
+    private static func printPyramidDiagnostics(
+        seasonLabel: String,
+        rostered: [Player],
+        unsignedCount: Int
+    ) {
+        guard !rostered.isEmpty else { return }
+        let total = Double(rostered.count)
+        func share(_ predicate: (Player) -> Bool) -> Double {
+            Double(rostered.filter(predicate).count) / total * 100
+        }
+        let ages = rostered.map(\.age).sorted()
+        let medianAge = ages[ages.count / 2]
+        let meanAge = Double(ages.reduce(0, +)) / total
+        print(String(
+            format: "SMOKE: diag pyramid season=%@ 90+=%.1f%% [1-2] 80+=%.1f%% [12-16] 75+=%.1f%% [30-40] sub65=%.1f%% [~25] "
+                  + "ageMed=%d ageMean=%.1f a33plus=%.1f%% [<=2] yp0to3=%.1f%% [45-55] faPool=%d",
+            seasonLabel,
+            share { $0.overall >= 90 }, share { $0.overall >= 80 },
+            share { $0.overall >= 75 }, share { $0.overall < 65 },
+            medianAge, meanAge,
+            share { $0.age >= 33 }, share { $0.yearsPro <= 3 },
+            unsignedCount
+        ))
+    }
+
+    /// Phase-2 §5 stage-6 gate: the league morale distribution must sit in a
+    /// healthy band (mean 60-75, p05 ≥ 35) — the activated `LockerRoomEngine`
+    /// loop must not spiral a whole league into misery. Motivation-state shares
+    /// ride along on the same line because they are the input that moves morale.
+    private static func printMoraleDiagnostics(seasonLabel: Int, rostered: [Player]) {
+        guard !rostered.isEmpty else { return }
+        let morales = rostered.map(\.morale).sorted()
+        let mean = Double(morales.reduce(0, +)) / Double(morales.count)
+        func percentile(_ fraction: Double) -> Int {
+            let index = min(morales.count - 1, max(0, Int(fraction * Double(morales.count))))
+            return morales[index]
+        }
+        var states: [MotivationState: Int] = [:]
+        for player in rostered { states[player.motivationState, default: 0] += 1 }
+        let total = Double(rostered.count)
+        func share(_ state: MotivationState) -> String {
+            String(format: "%.0f%%", Double(states[state] ?? 0) / total * 100)
+        }
+        print(String(
+            format: "SMOKE: diag morale season=%d n=%d mean=%.2f p05=%d p25=%d median=%d p95=%d min=%d max=%d",
+            seasonLabel, morales.count, mean,
+            percentile(0.05), percentile(0.25), percentile(0.50),
+            percentile(0.95), morales.first ?? 0, morales.last ?? 0
+        ))
+        print("SMOKE: diag motivation season=\(seasonLabel) "
+              + "driven=\(share(.driven)) focused=\(share(.focused)) "
+              + "complacent=\(share(.complacent)) discouraged=\(share(.discouraged))")
     }
 
     // MARK: - AI stand-in for user roster management
@@ -365,8 +508,10 @@ enum MultiSeasonSmokeTest {
         var roster = players.filter { $0.teamID == teamID && !$0.isRetired }
 
         // AI stand-in for the user's cutdown day: trim to the 53-man ceiling.
+        // Same keep-score the AI clubs use (`trimAIRosters`), so the harness's
+        // franchise is not the one team in the league that cuts every rookie.
         if roster.count > 53 {
-            let sorted = roster.sorted { $0.overall > $1.overall }
+            let sorted = roster.sorted { RosterValue.keepScore($0) > RosterValue.keepScore($1) }
             for player in sorted.suffix(roster.count - 53) {
                 player.teamID = nil
                 player.annualSalary = 0
@@ -375,11 +520,11 @@ enum MultiSeasonSmokeTest {
             roster = Array(sorted.prefix(53))
         }
 
-        guard roster.count < 46 else { return }
+        guard roster.count < 53 else { return }
         var pool = players
             .filter { $0.teamID == nil && !$0.isRetired && !$0.isInjured }
             .sorted { $0.overall > $1.overall }
-        while roster.count < 46 {
+        while roster.count < 53 {
             let needs = DraftEngine.topTeamNeeds(roster: roster, limit: 3)
             let signing: Player
             if !pool.isEmpty {
@@ -435,6 +580,38 @@ enum MultiSeasonSmokeTest {
     private static func retiredCount(context: ModelContext) -> Int {
         let players = (try? context.fetch(FetchDescriptor<Player>())) ?? []
         return players.filter { $0.isRetired }.count
+    }
+
+    /// One portrait-uniqueness sweep of the whole league, per completed season.
+    ///
+    /// Emits the standard `FACEQA:` line (persons / distinct / duplicated /
+    /// free / reserve / crossRole) plus a `SMOKE: ANOMALY` line when the pool
+    /// runs dry, so a run's output shows exactly WHICH season the library
+    /// stopped being able to give everyone their own face — the number that
+    /// decides whether more images have to be generated.
+    private static func auditFaces(seasonLabel: Int, context: ModelContext) {
+        let players = (try? context.fetch(FetchDescriptor<Player>())) ?? []
+        let coaches = (try? context.fetch(FetchDescriptor<Coach>())) ?? []
+        let audit = FaceLibrary.shared.debugAuditActiveFaces(
+            players: players, coaches: coaches, label: "smoke/season-\(seasonLabel)"
+        )
+        if audit.duplicated > 0 {
+            // `isRegression` is judged per gender (see `FaceLibrary.FaceAudit`):
+            // the 35-id female sub-pool empties several seasons before the male
+            // half, and within-gender reuse there is capacity, not a defect.
+            print("SMOKE: ANOMALY season=\(seasonLabel) faces duplicated=\(audit.duplicated) "
+                  + "(f:\(audit.duplicatedFemale)) "
+                  + "onTeamDuplicates=\(audit.duplicatedOnTeam) free=\(audit.free) "
+                  + "freeFemale=\(audit.freeFemale) — "
+                  + (audit.isRegression
+                     ? "REGRESSION: the picker shared a portrait with unused same-gender ids available"
+                     : "pool exhausted (capacity, not a bug — generate more faces to fix)"))
+        }
+        let deadCoaches = coaches.filter { $0.isRetired }.count
+        let livingFemaleCoaches = coaches.filter { !$0.isRetired && $0.gender == "female" }.count
+        print("SMOKE: faces season=\(seasonLabel) livingCoaches=\(coaches.count - deadCoaches) "
+              + "livingFemaleCoaches=\(livingFemaleCoaches) "
+              + "retiredCoaches=\(deadCoaches) livingPlayers=\(players.filter { !$0.isRetired }.count)")
     }
 
     private static func headCoachByTeam(context: ModelContext) -> [UUID: UUID] {

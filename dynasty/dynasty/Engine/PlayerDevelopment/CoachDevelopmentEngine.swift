@@ -7,12 +7,20 @@ enum CoachDevelopmentEngine {
 
     /// Generate potential for a new coach based on age bracket.
     static func generatePotential(forAge age: Int) -> Int {
+        var rng = SystemRandomNumberGenerator()
+        return generatePotential(forAge: age, using: &rng)
+    }
+
+    /// Seeded variant of `generatePotential(forAge:)` — same bands, caller-owned
+    /// entropy, so the fixed-league template import produces the same staff on
+    /// every run.
+    static func generatePotential<G: RandomNumberGenerator>(forAge age: Int, using rng: inout G) -> Int {
         switch age {
-        case ...30:   return Int.random(in: 40...99)
-        case 31...40: return Int.random(in: 45...90)
-        case 41...50: return Int.random(in: 50...80)
-        case 51...60: return Int.random(in: 40...70)
-        default:      return Int.random(in: 30...60)
+        case ...30:   return Int.random(in: 40...99, using: &rng)
+        case 31...40: return Int.random(in: 45...90, using: &rng)
+        case 41...50: return Int.random(in: 50...80, using: &rng)
+        case 51...60: return Int.random(in: 40...70, using: &rng)
+        default:      return Int.random(in: 30...60, using: &rng)
         }
     }
 
@@ -91,7 +99,19 @@ enum CoachDevelopmentEngine {
         // 5. Reputation based on wins (keep existing logic)
         applyReputationChange(coach: coach, teamWins: teamWins)
 
-        // 6. Clear adjustment period if promoted 1+ seasons ago
+        // 6. Clear the adjustment period — UNCONDITIONALLY, every offseason
+        //    pass, for every coach (rostered or not). This is the only site
+        //    that clears `promotedInSeason`, so anything less than
+        //    unconditional would let `isInAdjustmentPeriod` stick forever on a
+        //    coach who never converts XP, and the -0.05 HC / -0.03 coordinator
+        //    development penalties would become permanent
+        //    (`docs/PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §2.9.3).
+        //
+        //    Expiry is exactly one season by construction: the offseason runs
+        //    this pass BEFORE the coaching carousel stamps this year's
+        //    promotions (`WeekAdvancer`, `.coachingChanges`), so a coach hired
+        //    or promoted in the carousel carries the flag through the upcoming
+        //    season and loses it at the next offseason's pass.
         coach.promotedInSeason = nil
 
         // 7. Reset XP for next season

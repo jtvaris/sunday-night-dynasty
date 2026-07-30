@@ -20,6 +20,88 @@ final class Player {
     /// discovered over time through scouting and player development.
     var truePotential: Int
 
+    /// How fast this player absorbs playbooks and schemes (25-99).
+    ///
+    /// Generated correlated with `awareness` (r ≈ 0.6) but deliberately NOT
+    /// identical to it: `awareness` stays the in-sim game-IQ that every
+    /// `PlaySimulator` formula reads, while `learning` drives scheme-install
+    /// speed (`VersatilityDevelopmentEngine.learnScheme`) and a rookie's
+    /// starting scheme familiarity (`DraftEngine.initializeRookieFamiliarity`).
+    ///
+    /// Written from `CollegeProspect.trueLearning` at draft time and by
+    /// `LeagueGenerator` for generated veterans. Players from saves created
+    /// before this property existed keep the 55 default until
+    /// `WeekAdvancer.backfillLegacyLearning` seeds them from awareness.
+    /// Default-value stored property, never in `init` → safe lightweight
+    /// migration (see `docs/DRAFT_CLASS_OVERHAUL_PLAN.md` §5).
+    var learning: Int = 55
+
+    /// The `learning` value a row carries when nothing has ever written one.
+    /// Doubles as the exact "unset" sentinel for the legacy backfill.
+    static let defaultLearning = MentalAttributeModel.defaultLearning
+
+    /// Normalises a generated learning rating into the 25-99 band and nudges it
+    /// off `defaultLearning`, so a written value can never be mistaken for an
+    /// unwritten one. The one-point gap at 55 is invisible in play and makes
+    /// `WeekAdvancer.backfillLegacyLearning` provably idempotent.
+    ///
+    /// Phase 2 (`docs/PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §2.2): the math moved
+    /// to `MentalAttributeModel` so the three generators share one distribution;
+    /// this stays as the domain-side spelling every call site already uses.
+    static func storedLearning(_ value: Int) -> Int {
+        MentalAttributeModel.storedLearning(value)
+    }
+
+    /// The fighter-mentality rating (25-99): how a player answers adversity —
+    /// a collapsed season, a demotion, a down year — and how immune he is to
+    /// post-payday complacency.
+    ///
+    /// Drives the phase-2 motivation state machine
+    /// (`docs/PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §2.3) and the realization
+    /// factor (§2.4); it is NOT read by `PlaySimulator` (clutch stays the
+    /// in-game nerve stat). Written from `CollegeProspect.trueCompetitiveness`
+    /// at draft time and by `LeagueGenerator` for generated veterans; rows from
+    /// older saves keep the 55 default until
+    /// `WeekAdvancer.backfillLegacyCompetitiveness` seeds them.
+    /// Default-value stored property, never in `init` → safe lightweight
+    /// migration.
+    var competitiveness: Int = 55
+
+    /// The `competitiveness` value a row carries when nothing has ever written
+    /// one. Doubles as the exact "unset" sentinel for the legacy backfill.
+    static let defaultCompetitiveness = MentalAttributeModel.defaultCompetitiveness
+
+    /// Sentinel-safe clamp for competitiveness — mirrors `storedLearning`.
+    static func storedCompetitiveness(_ value: Int) -> Int {
+        MentalAttributeModel.storedCompetitiveness(value)
+    }
+
+    /// Raw value of `MotivationState` — where this player's head is at going
+    /// into the season, recomputed once per offseason when the league enters
+    /// `.trainingCamp` (`docs/PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §2.3).
+    ///
+    /// `nil` = never computed (legacy save row, or a player created mid-cycle),
+    /// which the `motivationState` accessor reads as `.focused` — the neutral
+    /// state, so an untouched row develops exactly as it did before phase 2.
+    /// Optional stored property with a nil default → safe lightweight migration.
+    var motivationStateRaw: String? = nil
+
+    /// Typed accessor for the player's offseason motivation state.
+    var motivationState: MotivationState {
+        get { motivationStateRaw.flatMap(MotivationState.init(rawValue:)) ?? .default }
+        set { motivationStateRaw = newValue.rawValue }
+    }
+
+    /// `truePotential` as it stood the day this player entered the league.
+    ///
+    /// Phase 2 §2.6 lets potential drift a few points with scheme fit and
+    /// morale, but caps the LIFETIME drift at ±8 from the draft-time value —
+    /// which requires remembering that value. `0` is the "never written"
+    /// sentinel: the first offseason pass that touches a player seeds it with
+    /// his current `truePotential`, so legacy saves anchor on where they are
+    /// rather than snapping. Default-value stored property, never in `init`.
+    var draftTruePotential: Int = 0
+
     var morale: Int
     var fatigue: Int
     var isInjured: Bool
@@ -62,6 +144,19 @@ final class Player {
     /// season-history recording. Default value → safe lightweight migration.
     var isRetired: Bool = false
 
+    /// Phase 4: id of this player's portrait in the pre-generated face library
+    /// (`face_00000`…`face_02047`, see `FaceLibrary`). Assigned once — at
+    /// league generation, at the draft (carried over from the prospect), or by
+    /// `WeekAdvancer.backfillLegacyFaces` for rows created before the library
+    /// existed — and never rewritten, so a player's face is a stable identity
+    /// anchor for his whole career.
+    ///
+    /// `nil` means "no face yet"; the image file may also be missing while the
+    /// library is still generating. `PersonFaceView` renders a silhouette in
+    /// both cases. Optional stored property with a nil default → safe
+    /// lightweight migration.
+    var faceID: String? = nil
+
     /// The overall draft pick number (1-224) if this player was drafted, nil for UDFAs/veterans.
     /// Doubles as the "draft pick overall" of record.
     var draftPickNumber: Int?
@@ -84,6 +179,28 @@ final class Player {
     /// Coaching staff's verbal assessment of this player's development ceiling.
     /// Stored as PotentialLabel.rawValue. Accuracy depends on coach quality and time with team.
     var assessedPotential: String?
+
+    // MARK: - Biography (fixed-league template import)
+
+    /// Uniform number (0-99). Written only by `LeagueTemplateImporter` — the
+    /// random `LeagueGenerator` path never assigned numbers, and the match view
+    /// still paints its own decal numbers, so this is roster/profile data only.
+    /// Unique per roster at import: the template resolves its own collisions and
+    /// the importer re-checks, keeping the first holder and reassigning the
+    /// second to the lowest free number in the position's legal NFL band.
+    /// Optional stored property with a nil default → safe lightweight migration.
+    var jerseyNumber: Int? = nil
+
+    /// School of record. Real and factual — colleges are deliberately NOT
+    /// anonymized away, only swapped within tier (`docs/ANONYMIZATION_SPEC.md`
+    /// §2). `nil` for every randomly generated player.
+    var college: String? = nil
+
+    /// Listed height in inches. Bio-jittered in the publish profile (§2).
+    var heightInches: Int? = nil
+
+    /// Listed weight in pounds. Bio-jittered in the publish profile (§2).
+    var weightPounds: Int? = nil
 
     // MARK: - FA Drama / Storylines
 

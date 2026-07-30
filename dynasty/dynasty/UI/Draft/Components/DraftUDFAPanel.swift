@@ -157,10 +157,14 @@ struct DraftUDFAPanel: View {
                             .foregroundStyle(Color.draftStealGold)
                     }
                 }
-                Text(prospect.college)
-                    .font(.caption2)
-                    .foregroundStyle(Color.textSecondary)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(prospect.college)
+                        .font(.caption2)
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                    // College production tier
+                    ProductionMicroLabel(tier: prospect.collegeProductionTier)
+                }
             }
             Spacer()
             if signed {

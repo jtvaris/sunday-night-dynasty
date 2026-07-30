@@ -21,7 +21,12 @@ enum LockerRoomEngine {
 
     /// Evaluates the full team chemistry based on player personalities, motivations,
     /// and how well players complement each other in the locker room.
-    static func calculateChemistry(players: [Player]) -> LockerRoomState {
+    ///
+    /// - Parameter collectEvents: build the human-readable `recentEvents` log.
+    ///   The weekly league-wide morale pass (plan §2.9.1) runs this for all 32
+    ///   rosters and only needs the number, so it opts out of ~50 string
+    ///   interpolations per team per week.
+    static func calculateChemistry(players: [Player], collectEvents: Bool = true) -> LockerRoomState {
         var leadershipScore = 0
         var toxicityScore = 0
         var events: [String] = []
@@ -34,7 +39,7 @@ enum LockerRoomEngine {
                 // High-morale leaders give a strong chemistry boost
                 let contribution = player.morale >= 70 ? 8 : 4
                 leadershipScore += contribution
-                if contribution >= 8 {
+                if contribution >= 8, collectEvents {
                     events.append("\(player.fullName) is leading the team with great energy.")
                 }
 
@@ -42,7 +47,7 @@ enum LockerRoomEngine {
                 // Mentors uplift younger players; solid chemistry contributors
                 let contribution = player.morale >= 60 ? 6 : 3
                 leadershipScore += contribution
-                if contribution >= 6 {
+                if contribution >= 6, collectEvents {
                     events.append("\(player.fullName) is mentoring teammates and building trust.")
                 }
 
@@ -50,7 +55,7 @@ enum LockerRoomEngine {
                 // Drama Queens create friction, especially when unhappy
                 let penalty = player.morale < 50 ? 8 : 4
                 toxicityScore += penalty
-                if penalty >= 8 {
+                if penalty >= 8, collectEvents {
                     events.append("\(player.fullName) is stirring up drama in the locker room.")
                 }
 
@@ -58,7 +63,7 @@ enum LockerRoomEngine {
                 // Can be volatile — hurts chemistry when morale drops
                 let penalty = player.morale < 45 ? 5 : 2
                 toxicityScore += penalty
-                if penalty >= 5 {
+                if penalty >= 5, collectEvents {
                     events.append("\(player.fullName)'s intensity is creating locker room tension.")
                 }
 
@@ -70,10 +75,14 @@ enum LockerRoomEngine {
                 // Feel Players amplify the current mood — good when happy, bad when not
                 if player.morale >= 75 {
                     leadershipScore += 3
-                    events.append("\(player.fullName)'s high energy is lifting the room.")
+                    if collectEvents {
+                        events.append("\(player.fullName)'s high energy is lifting the room.")
+                    }
                 } else if player.morale < 45 {
                     toxicityScore += 3
-                    events.append("\(player.fullName)'s low mood is bringing others down.")
+                    if collectEvents {
+                        events.append("\(player.fullName)'s low mood is bringing others down.")
+                    }
                 }
 
             case .steadyPerformer, .quietProfessional:
@@ -91,9 +100,12 @@ enum LockerRoomEngine {
 
         // Motivation alignment: players with matching motivations bond better
         let motivationGroups = Dictionary(grouping: players, by: { $0.personality.motivation })
-        for (motivation, group) in motivationGroups where group.count >= 3 {
+        for (motivation, group) in motivationGroups.sorted(by: { $0.key.rawValue < $1.key.rawValue })
+        where group.count >= 3 {
             leadershipScore += 2
-            events.append("Several \(motivation.rawValue.lowercased())-motivated players are bonding well.")
+            if collectEvents {
+                events.append("Several \(motivation.rawValue.lowercased())-motivated players are bonding well.")
+            }
         }
 
         // Raw chemistry: base 50, add leadership, subtract toxicity
@@ -108,10 +120,42 @@ enum LockerRoomEngine {
         )
     }
 
+    /// Just the 0-100 chemistry number, without building the event log — the
+    /// league-wide weekly morale pass only needs this.
+    static func chemistryScore(players: [Player]) -> Int {
+        calculateChemistry(players: players, collectEvents: false).teamChemistry
+    }
+
+    // MARK: - Morale Damping (plan §2.9.1)
+
+    /// Morale every roster drifts back toward when nothing is happening. Keeps
+    /// a bad season from spiralling to zero and a good one from pinning at 100.
+    static let moraleBaseline = 70
+
+    /// Hard cap on how far ONE game week may move a player's morale. The
+    /// archetype table below can swing ±9 raw; damped it stays inside ±3 so a
+    /// losing streak bleeds morale instead of hemorrhaging it.
+    static let weeklyMoraleSwingCap = 3
+
+    /// Hard cap on the once-a-season settlement (`applyMoraleEffects`).
+    static let seasonMoraleSwingCap = 8
+
+    /// Applies one point of pull toward `moraleBaseline`, never overshooting it.
+    private static func reversionStep(from morale: Int) -> Int {
+        if morale < moraleBaseline { return 1 }
+        if morale > moraleBaseline { return -1 }
+        return 0
+    }
+
     // MARK: - Apply Morale Effects
 
-    /// Updates each player's morale based on team record, chemistry, contract situation,
-    /// and their personality archetype.
+    /// Season-end morale settlement: team record, locker-room chemistry, pay
+    /// vs. market, and contract runway, filtered through the player's
+    /// personality archetype.
+    ///
+    /// Runs ONCE per season (week 18, before contracts tick down), and the net
+    /// swing is clamped to ±`seasonMoraleSwingCap` so a single call can never
+    /// dominate the weekly loop that has been running all year.
     static func applyMoraleEffects(
         players: [Player],
         teamWins: Int,
@@ -192,7 +236,8 @@ enum LockerRoomEngine {
                 break
             }
 
-            // Apply clamped morale update
+            // Apply the damped, clamped morale update.
+            delta = max(-seasonMoraleSwingCap, min(seasonMoraleSwingCap, delta))
             player.morale = max(1, min(100, player.morale + delta))
         }
     }
@@ -201,6 +246,16 @@ enum LockerRoomEngine {
 
     /// Small weekly morale adjustments tied to the most recent game result.
     /// Streaks compound these effects for feel players.
+    ///
+    /// Damping (plan §2.9.1) makes this safe to run every week for all 32
+    /// rosters: the raw archetype swing is clamped to ±`weeklyMoraleSwingCap`
+    /// and then one point of reversion toward `moraleBaseline` is applied. A
+    /// .500 team therefore converges on ~70, a 4-13 team bleeds roughly
+    /// (13·-2 + 4·+4) = -10 over a season instead of spiralling, and no roster
+    /// can pin itself at either end of the scale.
+    ///
+    /// Callers pass only rosters that actually PLAYED this week (a bye week is
+    /// not a loss) and skip holdouts, whose morale `HoldoutEngine` owns.
     static func weeklyMoraleUpdate(
         players: [Player],
         wonLastGame: Bool,
@@ -258,6 +313,11 @@ enum LockerRoomEngine {
             if player.personality.motivation == .winning {
                 delta = wonLastGame ? delta + 2 : delta - 2
             }
+
+            // Damp: cap the week's movement, then pull one point toward the
+            // baseline so nothing runs away over a 17-week season.
+            delta = max(-weeklyMoraleSwingCap, min(weeklyMoraleSwingCap, delta))
+            delta += reversionStep(from: player.morale)
 
             // Apply clamped morale update
             player.morale = max(1, min(100, player.morale + delta))

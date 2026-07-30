@@ -12,6 +12,8 @@ enum MedicalEngine {
     /// - Team Doctor quality (up to 30% risk reduction)
     /// - R28: an active rush-back window multiplies risk (head trainer dampens it)
     /// - R40: an optional league-setting frequency multiplier (off/low/normal)
+    /// - Phase 2 (plan §2.9.6): camp workload — an overloaded or burned-out
+    ///   body breaks down more often
     ///
     /// R28 parity note: baseline incidence is unchanged — the only rate change
     /// is the opt-in rush-back multiplier, and injury-type selection is now
@@ -51,12 +53,34 @@ enum MedicalEngine {
             risk *= rushBackRiskMultiplier(trainer: trainer)
         }
 
+        // Phase 2 (plan §2.9.6, defect #3 "workload is cosmetic"): the camp
+        // workload a player carried out of training camp follows him into the
+        // season. This is the ONLY place it can bite — every injury the shipped
+        // game actually rolls comes through here and through the live engine's
+        // per-play twin, so putting the multiplier anywhere else leaves burnout
+        // decorative.
+        //
+        // Parity: `workloadStatusRaw == nil` means nothing has ever ticked this
+        // player (legacy save, unsigned free agent) and must not be silently
+        // reclassified; `.healthy` and `.underloaded` both multiply by 1.0, and
+        // the league-wide camp tick lands a default-intensity roster in
+        // `.healthy`. Only a genuinely over-worked player pays.
+        risk *= workloadRiskMultiplier(player: player)
+
         // Roll
         guard Double.random(in: 0...1) < risk else { return nil }
 
         // R28: weighted injury type — previously injured body parts are more
         // likely to flare up again (recurrence), same total incidence.
         return weightedInjuryType(for: player)
+    }
+
+    /// Camp-workload injury multiplier (plan §2.9.6). `1.0` for a player no
+    /// camp tick has ever touched, so legacy saves and unsigned free agents are
+    /// bit-for-bit unchanged.
+    static func workloadRiskMultiplier(player: Player) -> Double {
+        guard player.workloadStatusRaw != nil else { return 1.0 }
+        return player.workloadStatus.injuryMultiplier
     }
 
     /// R28: re-injury risk multiplier during the post-rush-back window.

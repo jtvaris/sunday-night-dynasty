@@ -3,9 +3,9 @@ import Foundation
 /// Player-facing knowledge layer for the draft.
 ///
 /// `DraftIntel` exposes only what the user legitimately knows: a public rank
-/// derived from the consensus board (composite of trueOverall × positional
-/// value), scout-confidence stars, position need scoring, and reach
-/// indicators. It does NOT expose hidden information such as `truePotential`.
+/// derived from the consensus board (scouted overall + media projection),
+/// scout-confidence stars, position need scoring, and reach indicators. It does
+/// NOT expose hidden information such as `truePotential`.
 enum DraftIntel {
 
     // MARK: - Public board rank
@@ -13,19 +13,28 @@ enum DraftIntel {
     /// Builds a `[ProspectID: pickRank (1...N)]` map for the entire draft class.
     /// The rank reflects where each prospect *would* go if the board flowed
     /// strictly by consensus value — used for Steal / Reach calculations.
+    ///
+    /// Single consensus source: the scouted overall the league has landed on,
+    /// broken by the media's projected round. `DraftIntel` used to apply its own
+    /// positional-value table, which disagreed with the one `ScoutingEngine`
+    /// used for `draftProjection` — Steal / Reach badges then contradicted the
+    /// projection shown next to them on the same screen. Positional value is now
+    /// baked into the class blueprint, so no multiplier belongs here at all.
     static func publicBoardRanks(for prospects: [CollegeProspect]) -> [UUID: Int] {
         let sorted = prospects.sorted { lhs, rhs in
-            score(of: lhs) > score(of: rhs)
+            let lhsOverall = lhs.scoutedOverall ?? lhs.trueOverall
+            let rhsOverall = rhs.scoutedOverall ?? rhs.trueOverall
+            if lhsOverall != rhsOverall { return lhsOverall > rhsOverall }
+            let lhsProjection = lhs.draftProjection ?? 8
+            let rhsProjection = rhs.draftProjection ?? 8
+            if lhsProjection != rhsProjection { return lhsProjection < rhsProjection }
+            return lhs.id.uuidString < rhs.id.uuidString
         }
         var result: [UUID: Int] = [:]
         for (idx, prospect) in sorted.enumerated() {
             result[prospect.id] = idx + 1
         }
         return result
-    }
-
-    private static func score(of prospect: CollegeProspect) -> Double {
-        Double(prospect.trueOverall) * positionalDraftValue(for: prospect.position)
     }
 
     // MARK: - Scout confidence
@@ -86,23 +95,4 @@ enum DraftIntel {
         return scores
     }
 
-    // MARK: - Positional draft value
-
-    /// Premium positions (QB, EDGE, LT, CB, WR) carry a boost so consensus
-    /// rankings push them up the board. Lower-value positions (P, K, FB) are
-    /// pushed down. These weights mirror the values used by `ScoutingEngine`
-    /// when assigning `draftProjection`, keeping the player-visible board
-    /// consistent with the league's perceived position value.
-    static func positionalDraftValue(for position: Position) -> Double {
-        switch position {
-        case .QB:                            return 1.30
-        case .DE, .OLB:                      return 1.10  // EDGE
-        case .LT, .RT:                       return 1.05
-        case .CB, .WR:                       return 1.00
-        case .FS, .SS, .DT, .TE, .MLB:       return 0.85
-        case .RB, .C, .LG, .RG:              return 0.70
-        case .FB:                            return 0.30
-        case .K, .P:                         return 0.20
-        }
-    }
 }

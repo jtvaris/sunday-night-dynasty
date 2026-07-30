@@ -561,15 +561,15 @@ enum PlaySimulator {
         // R39 trench matchup (mech 2a strength + mech 1a acceleration): a
         // stronger OL holds the pocket (−sack); a quicker DL first step off the
         // snap gets home faster (+sack). Both differentials are near-zero mean
-        // league-wide (OL/DL attribute means are equal), so the league sack rate
-        // holds while the individual trench matchup separates. Shared path →
+        // league-wide (see `relativeAcceleration`), so the league sack rate holds
+        // while the individual trench matchup separates. Shared path →
         // quick sim and the live engine get it identically.
         let olLinemen = offensePlayers.filter { isOL($0) }
         let dlLinemen = defensePlayers.filter { isDL($0) }
-        let olStrength = averageAttribute(olLinemen, extractor: { Double($0.physical.strength) })
-        let dlStrength = averageAttribute(dlLinemen, extractor: { Double($0.physical.strength) })
-        let olAccel = averageAttribute(olLinemen, extractor: { Double($0.physical.acceleration) })
-        let dlAccel = averageAttribute(dlLinemen, extractor: { Double($0.physical.acceleration) })
+        let olStrength = averageAttribute(olLinemen, extractor: { relativeStrength($0) })
+        let dlStrength = averageAttribute(dlLinemen, extractor: { relativeStrength($0) })
+        let olAccel = averageAttribute(olLinemen, extractor: { relativeAcceleration($0) })
+        let dlAccel = averageAttribute(dlLinemen, extractor: { relativeAcceleration($0) })
         sackChance = clamp(sackChance
                            - strengthTrenchSackReduction(olStrength: olStrength, dlStrength: dlStrength)
                            + accelPassRushBonus(dlAccel: dlAccel, olAccel: olAccel),
@@ -907,8 +907,8 @@ enum PlaySimulator {
             // R39 mech 1b: the WR's BURST off the jam (acceleration) vs the
             // corner's burst. Near-zero mean — rewards the individual matchup.
             let releaseBurst = accelReleaseBonus(
-                wrAccel: Double(target.physical.acceleration),
-                cbAccel: averageAttribute(dbs, extractor: { Double($0.physical.acceleration) })
+                wrAccel: relativeAcceleration(target),
+                cbAccel: averageAttribute(dbs, extractor: { relativeAcceleration($0) })
             )
             if releaseBurst != 0 {
                 completionChance = clamp(completionChance + releaseBurst, min: 0.05, max: 0.95)
@@ -917,8 +917,8 @@ enum PlaySimulator {
             // R39 mech 2c: the corner's physical JAM (strength) disrupts the
             // release. Near-zero mean.
             let jam = strengthPressDisruption(
-                cbStrength: averageAttribute(dbs, extractor: { Double($0.physical.strength) }),
-                wrStrength: Double(target.physical.strength)
+                cbStrength: averageAttribute(dbs, extractor: { relativeStrength($0) }),
+                wrStrength: relativeStrength(target)
             )
             if jam != 0 {
                 completionChance = clamp(completionChance - jam, min: 0.05, max: 0.95)
@@ -1397,9 +1397,9 @@ enum PlaySimulator {
         // off the ball. Near-zero mean → the league rushing average holds.
         let strengthCrease = strengthTrenchRunBonus(
             olStrength: averageAttribute(offensePlayers.filter { isOL($0) },
-                                         extractor: { Double($0.physical.strength) }),
+                                         extractor: { relativeStrength($0) }),
             dlStrength: averageAttribute(defensePlayers.filter { isDL($0) },
-                                         extractor: { Double($0.physical.strength) })
+                                         extractor: { relativeStrength($0) })
         )
 
         // A2-run (Balance R3): `creaseQuality` is the pure OL-vs-front crease
@@ -3296,6 +3296,53 @@ enum PlaySimulator {
         return 50.0
     }
 
+    // MARK: - Position-Normalised Physicals (R39 gap terms)
+
+    /// The rating the R39 attribute-gap terms are centred on.
+    private static let physicalPivot = 70.0
+
+    /// A physical attribute measured against the player's OWN position prior,
+    /// re-based on `physicalPivot`.
+    ///
+    /// Every R39 gap mechanic is documented as "near-zero mean league-wide".
+    /// That held while `PhysicalAttributes.random()` gave every position the
+    /// same uniform 40…99 draw, so a raw DL-minus-OL difference really did
+    /// average 0. Rosters now come from the shared `PositionPhysicalProfile`
+    /// table, where the field units are NOT symmetric: the starting front's
+    /// acceleration priors are DE 76 / DT 62 against LT 52 / LG-C-RG 50 / RT 52,
+    /// a permanent **+18** edge that pins `accelPassRushBonus` on its +0.02 cap
+    /// on essentially every snap for every team — ~+2 pp of league sack rate on
+    /// top of a base tuned to ≈7 %, and zero of the per-matchup separation the
+    /// term exists for.
+    ///
+    /// Comparing each unit against its own prior restores both properties: a
+    /// front that is quick *for a front* still beats a line that is slow *for a
+    /// line*, and a league-average matchup nets exactly zero. Absolute physicals
+    /// stay absolute everywhere else (breakaway speed, YAC, coverage closing
+    /// speed) — only these centred/differential terms are normalised.
+    ///
+    /// AGILITY is deliberately left raw: `agilityJukeBonus` /
+    /// `agilitySeparationBonus` share their input with `yardsAfterCatch`, which
+    /// reads agility on the absolute scale (a fast, shifty receiver really does
+    /// run away from people after the catch). The residual is a ~+0.14 ypc lean
+    /// from the RB agility prior of 82 against the terms' 70 centre, which lands
+    /// the blended run inside its 4.0–4.6 band either way; splitting the two
+    /// readings needs a separate agility pass, not a normalisation here.
+    private static func relativeAcceleration(_ p: SimPlayer) -> Double {
+        Double(p.physical.acceleration)
+            - PositionPhysicalProfile.profile(for: p.position).acceleration.mean
+            + physicalPivot
+    }
+
+    /// Position-normalised strength — see `relativeAcceleration`.
+    /// (OL priors average 85.2 against a DL front's 82.5, so the raw trench
+    /// strength differential also carries a standing bias.)
+    private static func relativeStrength(_ p: SimPlayer) -> Double {
+        Double(p.physical.strength)
+            - PositionPhysicalProfile.profile(for: p.position).strength.mean
+            + physicalPivot
+    }
+
     // MARK: - Attribute-Gap Helpers (R39)
 
     /// Sack-chance INCREASE from a quicker DL first step (acceleration) beating
@@ -3323,7 +3370,7 @@ enum PlaySimulator {
         #if DEBUG
         if debugNeutralAcceleration { return 0 }
         #endif
-        return (Double(rb.physical.acceleration) - 70.0) / 100.0 * accelBurstScale
+        return (relativeAcceleration(rb) - physicalPivot) / 100.0 * accelBurstScale
     }
 
     /// Sack-chance REDUCTION from a stronger OL holding the pocket (mech 2a).
@@ -3349,7 +3396,7 @@ enum PlaySimulator {
         #if DEBUG
         if debugNeutralStrength { return 0 }
         #endif
-        let breakPower = Double(rb.physical.strength) * 0.5 + Double(attrs.breakTackle) * 0.5
+        let breakPower = relativeStrength(rb) * 0.5 + Double(attrs.breakTackle) * 0.5
         return (breakPower - 70.0) / 100.0 * breakTackleContactScale
     }
 

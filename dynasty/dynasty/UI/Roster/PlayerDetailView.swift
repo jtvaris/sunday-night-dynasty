@@ -85,6 +85,14 @@ struct PlayerDetailView: View {
         return max(0, team.availableCap)
     }
 
+    /// Team accent for the header portrait ring. Falls back to the neutral
+    /// border (`nil`) for free agents and unknown clubs.
+    private var teamRingColor: Color? {
+        guard let teamID = player.teamID,
+              let team = allTeams.first(where: { $0.id == teamID }) else { return nil }
+        return TeamColors.color(for: team.abbreviation)
+    }
+
     /// True when in landscape on iPad.
     private var isLandscape: Bool {
         verticalSizeClass == .compact
@@ -229,8 +237,10 @@ struct PlayerDetailView: View {
         Section {
             VStack(spacing: 12) {
                 HStack(spacing: 16) {
-                    // Player avatar
-                    PlayerAvatarView(player: player, size: 80)
+                    // Portrait. Shared by all three responsive layouts
+                    // (landscape split, iPad portrait, compact) because they all
+                    // render this same `playerHeader` section.
+                    PersonFaceView(player: player, size: .large, ringColor: teamRingColor)
 
                     // Large OVR circle with ranking
                     VStack(spacing: 4) {
@@ -303,6 +313,10 @@ struct PlayerDetailView: View {
                 // Quick stats row
                 HStack(spacing: 0) {
                     quickStat(label: "Morale", value: "\(player.morale)", color: moraleColor)
+                    quickStatDivider
+                    // Motivation badge (plan §2.10) — where his head is at,
+                    // read straight off the offseason realization pass.
+                    motivationQuickStat
                     quickStatDivider
                     quickStat(
                         label: "Health",
@@ -450,6 +464,10 @@ struct PlayerDetailView: View {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
                 compactInfoPill(label: "OVR", value: "\(player.overall)", color: Color.forRating(player.overall))
                 compactInfoPill(label: "Morale", value: moraleShortLabel, color: moraleColor)
+                // Motivation sits beside morale on purpose: morale is how he
+                // feels about the building, motivation is what he does about it
+                // (plan §2.10). This card renders in all three layouts.
+                motivationPill
                 compactInfoPill(label: "Age", value: "\(player.age)", color: .textPrimary)
                 compactInfoPill(label: "Exp", value: player.yearsPro == 0 ? "R" : "\(player.yearsPro)yr", color: .textSecondary)
             }
@@ -460,6 +478,17 @@ struct PlayerDetailView: View {
                     .font(.system(size: 9))
                     .foregroundStyle(Color.textTertiary)
                 Text(moraleImpactDescription)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // What his motivation state actually means for development.
+            HStack(alignment: .top, spacing: 4) {
+                Image(systemName: player.motivationState.icon)
+                    .font(.system(size: 9))
+                    .foregroundStyle(motivationColor)
+                Text(player.motivationState.summary)
                     .font(.system(size: 10))
                     .foregroundStyle(Color.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -670,10 +699,60 @@ struct PlayerDetailView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(Color.textTertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Coach's Projection (plan §2.9.4 / §2.10): the STAFF's read on
+                // his ceiling, not the hidden number. Noise shrinks the longer
+                // he has been in the building, and a plateaued player reads a
+                // band lower than his true potential suggests.
+                coachProjectionRow
             }
             .padding(.vertical, 4)
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// The staff's ceiling projection, written every camp by the development
+    /// engine. Hidden entirely until a camp has run on this player (legacy
+    /// saves and just-signed free agents have nothing to show yet).
+    @ViewBuilder
+    private var coachProjectionRow: some View {
+        if let label = assessedPotentialLabel {
+            HStack(spacing: 6) {
+                Image(systemName: "binoculars.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.accentGold)
+                Text("Coach's Projection")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+                Text(label.displayName)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(potentialLabelColor(label))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule().fill(potentialLabelColor(label).opacity(0.15))
+                    )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Persisted staff assessment, decoded from `Player.assessedPotential`.
+    private var assessedPotentialLabel: PotentialLabel? {
+        guard let raw = player.assessedPotential, !raw.isEmpty else { return nil }
+        return PotentialLabel(rawValue: raw)
+    }
+
+    private func potentialLabelColor(_ label: PotentialLabel) -> Color {
+        switch label {
+        case .eliteCeiling:  return .success
+        case .highUpside:    return .accentGold
+        case .solidStarter:  return .accentBlue
+        case .average:       return .textSecondary
+        case .limitedUpside: return .warning
+        case .unknown:       return .textTertiary
+        }
     }
 
     // MARK: - Season Stats Summary (#36)
@@ -1400,6 +1479,11 @@ struct PlayerDetailView: View {
             AttributeRowWithTrend(name: "Work Ethic",       value: player.mental.workEthic,      previousValue: nil)
             AttributeRowWithTrend(name: "Coachability",     value: player.mental.coachability,    previousValue: nil)
             AttributeRowWithTrend(name: "Leadership",       value: player.mental.leadership,      previousValue: nil)
+            // Learning drives how fast he installs a new scheme (awareness stays game-IQ).
+            AttributeRowWithTrend(name: "Learning",         value: player.learning,               previousValue: nil)
+            // Competitiveness is the fighter mentality: how he answers a bad
+            // season and how immune he is to a post-payday coast (plan §2.1).
+            AttributeRowWithTrend(name: "Competitiveness",   value: player.competitiveness,        previousValue: nil)
         }
         .listRowBackground(Color.backgroundSecondary)
     }
@@ -1781,6 +1865,10 @@ struct PlayerDetailView: View {
                 ("Work Ethic",       player.mental.workEthic),
                 ("Coachability",     player.mental.coachability),
                 ("Leadership",       player.mental.leadership),
+                // Learning drives how fast he installs a new scheme.
+                ("Learning",         player.learning),
+                // Competitiveness: the fighter mentality (plan §2.1).
+                ("Competitiveness",  player.competitiveness),
             ])
         }
         .listRowBackground(Color.backgroundSecondary)
@@ -1969,6 +2057,62 @@ struct PlayerDetailView: View {
 
     private var moraleColor: Color {
         Color.forRating(player.morale)
+    }
+
+    // MARK: - Motivation (plan §2.10)
+
+    /// Badge color for the motivation state — the same green/gold/red language
+    /// the rest of the detail screen uses for "good / neutral / bad".
+    private var motivationColor: Color {
+        switch player.motivationState {
+        case .driven:      return .success
+        case .focused:     return .textSecondary
+        case .complacent:  return .warning
+        case .discouraged: return .danger
+        }
+    }
+
+    /// Header badge: icon + state, sitting directly beside the morale figure.
+    private var motivationQuickStat: some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 3) {
+                Image(systemName: player.motivationState.icon)
+                    .font(.system(size: 9, weight: .bold))
+                Text(player.motivationState.displayName)
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundStyle(motivationColor)
+            Text("Motivation")
+                .font(.system(size: 9))
+                .foregroundStyle(Color.textTertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Motivation: \(player.motivationState.displayName)")
+    }
+
+    /// Overview-card pill version of the same badge.
+    private var motivationPill: some View {
+        HStack(spacing: 4) {
+            Text("Motivation")
+                .font(.system(size: 9))
+                .foregroundStyle(Color.textTertiary)
+            Spacer()
+            Image(systemName: player.motivationState.icon)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(motivationColor)
+            Text(player.motivationState.displayName)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(motivationColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 4))
     }
 
     private var moraleIcon: some View {

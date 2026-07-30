@@ -147,6 +147,20 @@ enum PotentialLabel: String, Codable, CaseIterable {
     case limitedUpside  = "Limited Upside"
     case unknown        = "Unknown"
 
+    /// Localized label for display. `rawValue` is the persisted key
+    /// (`Player.assessedPotential`, `CollegeProspect.scoutedPotentialLabel`)
+    /// and must stay English — this is what the UI puts on screen.
+    var displayName: String {
+        switch self {
+        case .eliteCeiling:  return String(localized: "Elite Ceiling")
+        case .highUpside:    return String(localized: "High Upside")
+        case .solidStarter:  return String(localized: "Solid Starter")
+        case .average:       return String(localized: "Average")
+        case .limitedUpside: return String(localized: "Limited Upside")
+        case .unknown:       return String(localized: "Unknown")
+        }
+    }
+
     /// Converts a numeric potential (40-99) to a label with optional noise.
     /// - Parameters:
     ///   - potential: The true potential value.
@@ -159,6 +173,22 @@ enum PotentialLabel: String, Codable, CaseIterable {
         case 68..<78: return .solidStarter
         case 55..<68: return .average
         default:      return .limitedUpside
+        }
+    }
+
+    /// One band down the ladder, floored at `limitedUpside`. Used when the
+    /// staff's projection has to be walked back — a plateaued player
+    /// (`docs/PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §2.5) reads a band lower than
+    /// his hidden ceiling suggests, because two years of tape say he is what he
+    /// is. `unknown` has no band to drop to.
+    var loweredOneBand: PotentialLabel {
+        switch self {
+        case .eliteCeiling:  return .highUpside
+        case .highUpside:    return .solidStarter
+        case .solidStarter:  return .average
+        case .average:       return .limitedUpside
+        case .limitedUpside: return .limitedUpside
+        case .unknown:       return .unknown
         }
     }
 }

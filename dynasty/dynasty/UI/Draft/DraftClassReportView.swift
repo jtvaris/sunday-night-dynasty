@@ -332,13 +332,10 @@ struct DraftClassReportView: View {
             )
     }
 
+    /// Single source of truth for letter-grade tints — the local switch used to
+    /// paint B gold while every prospect list painted it blue.
     private func gradeColor(_ letter: String) -> Color {
-        switch letter.first {
-        case "A": return .success
-        case "B": return .accentGold
-        case "C": return .warning
-        default:  return .danger
-        }
+        PositionGradeCalculator.gradeColorForLetter(letter)
     }
 
     private func pickLabel(round: Int, pick: Int) -> String {

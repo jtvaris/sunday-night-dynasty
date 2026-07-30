@@ -2672,7 +2672,14 @@ final class LiveGameEngine: ObservableObject {
                 player: livePlayer,
                 injuryType: injury.type,
                 doctor: injury.isHomeTeam ? homeDoctor : awayDoctor,
-                physio: injury.isHomeTeam ? homePhysio : awayPhysio
+                physio: injury.isHomeTeam ? homePhysio : awayPhysio,
+                // Stamp the real context, as the weekly sim already does.
+                // Unstamped records (season 0) are invisible to anything that
+                // asks "when did this happen" — including the phase-2 offseason
+                // health gate, which lowers development after a major (≥ 6 wk)
+                // injury in the season just played.
+                season: game.seasonYear,
+                week: game.week
             )
         }
         WeekAdvancer.liveGameInjuryTeamIDs = [homeTeamID, awayTeamID]
@@ -2684,10 +2691,12 @@ final class LiveGameEngine: ObservableObject {
     /// (see ``matchupWins``/``matchupLosses``). The top-3 battle winners on
     /// the PLAYER's team gain +3 morale (clamped 1...100, same bounds as
     /// `LockerRoomEngine`); teammates who collected 2+ battle losses without
-    /// at least as many wins lose 1. `PlayerDevelopmentEngine` exposes no
-    /// per-game XP tick (`applyGameExperience` rounds to zero for a single
-    /// game), so morale is the whole effect. Called once from ``persist``,
-    /// which only runs for the user's own coached games.
+    /// at least as many wins lose 1. Game XP itself is NOT applied here:
+    /// `WeekAdvancer`'s weekly `applyGameExperience` pass credits every roster
+    /// in the league, coached and quick-simmed alike, so doing it here too
+    /// would double-count the user's own team. Morale is the whole effect.
+    /// Called once from ``persist``, which only runs for the user's own
+    /// coached games.
     private func applyMatchupMorale() {
         let playerIDs = Set(playerTeamIsHome ? homePlayerIDs : awayPlayerIDs)
 
@@ -3053,6 +3062,14 @@ final class LiveGameEngine: ObservableObject {
         risk *= 1.0 - Double(player.physical.durability) / 200.0
         if let doctor = isHomeTeam ? homeDoctor : awayDoctor {
             risk *= 1.0 - Double(doctor.playerDevelopment) / 330.0
+        }
+        // Phase 2 (plan §2.9.6): camp workload, same term the quick sim applies
+        // in `MedicalEngine.injuryCheck` — a coached game must not be the one
+        // place burnout costs nothing. Read off the live model rather than the
+        // `SimPlayer` snapshot: workload is a once-per-game constant, so it does
+        // not belong in the per-play hot-path struct.
+        if let live = livePlayerByID[playerID] {
+            risk *= MedicalEngine.workloadRiskMultiplier(player: live)
         }
         guard Double.random(in: 0...1) < risk else { return }
 

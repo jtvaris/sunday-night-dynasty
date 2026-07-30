@@ -10,6 +10,15 @@ final class WorkloadEvent {
     var seasonYear: Int
     /// Day of the camp / season week, 0-6.
     var dayOfWeek: Int
+
+    /// The GAME week this day belongs to (`Career.currentWeek`).
+    ///
+    /// `seasonYear` + `dayOfWeek` alone could not place a row on the calendar —
+    /// and until phase 2 both were stamped from `Calendar.current`, i.e. the
+    /// real-world clock of whoever was playing (plan §2.9.6). `0` is the
+    /// "unknown week" default legacy rows keep. Default-value stored property,
+    /// never in `init` → safe lightweight migration.
+    var weekNumber: Int = 0
     /// Positive integer for training intensity load.
     var loadDelta: Int
     /// Positive integer for recovery (e.g. off day, light walk-through).

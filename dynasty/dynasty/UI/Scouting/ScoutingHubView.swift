@@ -437,6 +437,10 @@ struct ScoutingHubView: View {
         )
         scouts = (try? modelContext.fetch(scoutDesc)) ?? []
 
+        // Plan §5: an in-flight save can be sitting on a pre-overhaul draft class.
+        // Swap it out before anything reads the board (no-op once the draft ran).
+        WeekAdvancer.migrateLegacyDraftClassIfNeeded(career: career, modelContext: modelContext)
+
         // Restore draft class on app restart: prefer SwiftData, then re-generate.
         if WeekAdvancer.currentDraftClass.isEmpty {
             let prospectFetch = FetchDescriptor<CollegeProspect>()
@@ -1888,6 +1892,8 @@ struct ProDayListView: View {
                             .font(.system(size: 9))
                             .foregroundStyle(Color.textTertiary)
                     }
+                    // College production tier
+                    ProductionMicroLabel(tier: prospect.collegeProductionTier)
                 }
             }
 

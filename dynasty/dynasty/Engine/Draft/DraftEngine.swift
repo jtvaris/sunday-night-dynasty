@@ -155,10 +155,15 @@ enum DraftEngine {
 
     // MARK: - Convert Prospect to Player
 
-    /// Creates a `Player` from a drafted `CollegeProspect` using the prospect's true
-    /// attributes scaled down by a rookie factor. Rookies start below their ceiling
-    /// and must develop to reach their true potential. Rookie contract terms are based
-    /// on pick number.
+    /// Creates a `Player` from a drafted `CollegeProspect` by scaling the prospect's
+    /// true attributes down with the readiness-driven rookie factors of plan §3.1.
+    /// Rookies start below their ceiling and must develop to reach their true
+    /// potential. Rookie contract terms are based on pick number.
+    ///
+    /// Causality note: the scale is driven by `nflReadiness` / `trueLearning`, never
+    /// by the pick number. Players fall in the draft because they are worse, not the
+    /// other way round — so a pro-ready mid-rounder can legitimately out-play a raw
+    /// first-rounder in year one (`docs/DRAFT_NFL_REFERENCE.md` §7).
     ///
     /// - Parameters:
     ///   - prospect: The college prospect being drafted.
@@ -176,24 +181,23 @@ enum DraftEngine {
         salaryCap: Int = 265_000
     ) -> Player {
         let contract = rookieContract(pickNumber: pickNumber, salaryCap: salaryCap)
-        let factor = rookieScaleFactor(pickNumber: pickNumber)
+        let factors = rookieScaleFactors(
+            readiness: prospect.nflReadiness,
+            learning: prospect.trueLearning,
+            potential: prospect.truePotential
+        )
 
-        // Physical attributes get a +0.05 bonus — physicals are more "ready" than mental.
-        let physicalFactor = min(factor + 0.05, 1.0)
-
-        let scaledPhysical = scalePhysical(prospect.truePhysical, factor: physicalFactor)
-        let scaledMental = scaleMental(prospect.trueMental, factor: factor)
-        let scaledPosition = scalePositionAttributes(prospect.truePositionAttributes, factor: factor)
-
-        return Player(
+        let player = Player(
             firstName: prospect.firstName,
             lastName: prospect.lastName,
             position: prospect.position,
             age: prospect.age,
             yearsPro: 0,
-            physical: scaledPhysical,
-            mental: scaledMental,
-            positionAttributes: scaledPosition,
+            physical: scalePhysical(prospect.truePhysical, factor: factors.physical),
+            mental: scaleMental(prospect.trueMental, factor: factors.mental),
+            positionAttributes: scalePositionAttributes(
+                prospect.truePositionAttributes, factor: factors.skill
+            ),
             personality: prospect.truePersonality,
             truePotential: prospect.truePotential,
             teamID: teamID,
@@ -204,6 +208,36 @@ enum DraftEngine {
             draftSeason: draftSeason,
             draftRound: roundForPick(pickNumber)
         )
+        copyProspectMetadata(from: prospect, to: player)
+        return player
+    }
+
+    /// Carries the prospect-side fields that have a `Player` counterpart across the
+    /// draft boundary. `learning` becomes the canonical playbook-absorption stat and
+    /// the hometown pair feeds the FA-drama storylines — `CollegeProspect` documented
+    /// that carry-over but nothing ever performed it, so every drafted player used to
+    /// arrive hometown-less.
+    private static func copyProspectMetadata(from prospect: CollegeProspect, to player: Player) {
+        player.learning = Player.storedLearning(prospect.trueLearning)
+        player.competitiveness = Player.storedCompetitiveness(prospect.trueCompetitiveness)
+        // Anchor for the phase-2 ±8 lifetime potential-drift cap (plan §2.6):
+        // stamped here so a player drafted from now on never needs the legacy
+        // "seed on first touch" fallback.
+        player.draftTruePotential = player.truePotential
+        player.hometownState = prospect.hometownState
+        player.hometownCity = prospect.hometownCity
+        // Phase 4 faces: the prospect only ever held a PREVIEW face (a class is
+        // 350 prospects, so reserving them would drain the pool every spring).
+        // Signing him is the moment it becomes real — he keeps the face the
+        // user scouted whenever it is still free, otherwise he draws a fresh
+        // one from the same bucket.
+        player.faceID = FaceLibrary.shared.claimFace(
+            prospect.faceID,
+            personID: player.id,
+            role: .player,
+            age: player.age,
+            position: player.position
+        )
     }
 
     /// Draft round (1-7) for an overall pick number, matching the 32-pick round
@@ -213,61 +247,235 @@ enum DraftEngine {
     }
 
     /// R24: Creates a `Player` from an UNDRAFTED prospect on a cheap 1-2 year
-    /// deal. UDFAs use the bottom of the rookie readiness curve (they need
-    /// development time), mirroring `convertToPlayer` but without a draft
-    /// pick number.
+    /// deal. UDFAs use the same readiness-driven scaling as drafted rookies plus
+    /// the undrafted discount (see `rookieScaleFactors`), mirroring
+    /// `convertToPlayer` but without a draft pick number.
     static func convertUDFAToPlayer(
         prospect: CollegeProspect,
         teamID: UUID
     ) -> Player {
-        let factor = Double.random(in: 0.58...0.68)
-        let physicalFactor = min(factor + 0.05, 1.0)
-        return Player(
+        let factors = rookieScaleFactors(
+            readiness: prospect.nflReadiness,
+            learning: prospect.trueLearning,
+            potential: prospect.truePotential,
+            undrafted: true
+        )
+        let player = Player(
             firstName: prospect.firstName,
             lastName: prospect.lastName,
             position: prospect.position,
             age: prospect.age,
             yearsPro: 0,
-            physical: scalePhysical(prospect.truePhysical, factor: physicalFactor),
-            mental: scaleMental(prospect.trueMental, factor: factor),
-            positionAttributes: scalePositionAttributes(prospect.truePositionAttributes, factor: factor),
+            physical: scalePhysical(prospect.truePhysical, factor: factors.physical),
+            mental: scaleMental(prospect.trueMental, factor: factors.mental),
+            positionAttributes: scalePositionAttributes(
+                prospect.truePositionAttributes, factor: factors.skill
+            ),
             personality: prospect.truePersonality,
             truePotential: prospect.truePotential,
             teamID: teamID,
             contractYearsRemaining: Int.random(in: 1...2),
             annualSalary: Int.random(in: 450...750)
         )
+        copyProspectMetadata(from: prospect, to: player)
+        return player
     }
 
     // MARK: - Rookie Scaling
 
-    /// Returns a rookie scale factor (0.0-1.0) based on draft pick number.
-    /// Higher picks produce more NFL-ready rookies. A 5% chance from any round
-    /// yields an immediately elite rookie (0.92-0.97).
-    static func rookieScaleFactor(pickNumber: Int) -> Double {
-        // 5% chance: immediately elite rookie from any round
-        if Int.random(in: 1...100) <= 5 {
-            return Double.random(in: 0.92...0.97)
-        }
+    /// The three attribute-group multipliers applied when a prospect becomes a Player.
+    struct RookieScaleFactors {
+        /// Applied to the position-specific skills (50 % of `Player.overall`).
+        let skill: Double
+        /// Applied to the physical attributes (30 %).
+        let physical: Double
+        /// Applied to the mental attributes (20 %).
+        let mental: Double
+    }
 
-        switch pickNumber {
-        case 1...5:
-            return Double.random(in: 0.82...0.90)
-        case 6...32:
-            return Double.random(in: 0.77...0.85)
-        case 33...64:
-            return Double.random(in: 0.72...0.80)
-        case 65...100:
-            return Double.random(in: 0.68...0.76)
-        case 101...150:
-            return Double.random(in: 0.64...0.72)
-        default:
-            return Double.random(in: 0.60...0.68)
+    /// Readiness-driven rookie scaling (plan §3.1). Replaces the old pick-number
+    /// `rookieScaleFactor`, which had the causality backwards: it decided how good
+    /// a rookie was from *where he was picked* rather than from what he is.
+    ///
+    /// - `skill` rises with `nflReadiness` — technique is what needs NFL coaching.
+    /// - `physical` is near-flat: bodies arrive NFL-ready.
+    /// - `mental` rises with `learning` — smart rookies pick up the pro game faster.
+    ///
+    /// **Calibration deviation from plan §3.1.** The plan lists
+    /// `0.62 + readiness/99·0.28` / `0.97` / `0.80 + learning/99·0.12` *and* states
+    /// the intent "day-1 OVR ≈ 70-85 % of true ability". Those two cannot both hold,
+    /// because `scaleAttribute` interpolates from a **floor of 35**, not from zero:
+    /// a factor of 0.83 on a 82-rated skill yields 74, i.e. 90 % — not 83 %.
+    /// Measured over 60 simulated classes the literal constants put first-rounders
+    /// at 76.5 OVR mean (93 % of true ability) against a league average of ~70.6,
+    /// i.e. every first-rounder would arrive as an above-average starter and the #1
+    /// pick as a top-10 player in the league on day one.
+    ///
+    /// The intercepts are therefore lowered while the plan's *spreads* (0.28 / 0.12)
+    /// and the constant physical factor are kept verbatim, which preserves every
+    /// relative statement the plan makes and only moves the level. Measured result
+    /// (60 classes × 350): R1 72.6 [p05 68.1, p95 78.9] · R2 67.5 · R3 65.3 ·
+    /// R4 63.9 · R5 62.9 · R6 62.0 · R7 61.3 · UDFA 55.1 [p05 52.1, p95 58.2] —
+    /// inside the target bands (R1 68-76, UDFA 50-58, league avg ~70.6).
+    ///
+    /// **Phase-2 recalibration (plan §5 stage 5, the `career` harness).** Those
+    /// levels made `DRAFT_NFL_REFERENCE.md` §6 unreachable *by arithmetic*. A
+    /// first-rounder arriving at 72.6 is already at the league mean, so the
+    /// primary-starter bar (OVR 75, the top ~third of the league per
+    /// `DEVELOPMENT_NFL_REFERENCE.md` §8) sits **2.4 points away** — and the
+    /// weakest development the realization model can produce (R at its 0.20
+    /// clamp) still clears it. Measured hit rate: **98 %** against the
+    /// reference's 55-65 %. There is no R weighting that fixes that; the
+    /// distance from entry to the starter bar is what sets the hit rate.
+    ///
+    /// The intercepts are therefore lowered again so a rookie enters at roughly
+    /// **70-75 % of his eventual level** — precisely the "rookies contribute at
+    /// 55-85 % of eventual level" band in `DEVELOPMENT_NFL_REFERENCE.md` §2 —
+    /// leaving the realization model 10-13 points of room to separate the
+    /// ascenders from the busts inside the rookie deal. The plan's spreads
+    /// (0.28 skill / 0.12 mental) are again untouched: only the level moves.
+    ///
+    /// **The rawness term (`potential`).** `DEVELOPMENT_NFL_REFERENCE.md` §2's
+    /// "rookies contribute at 55-85 % of eventual level" is a BAND, and which end
+    /// of it a rookie sits at is decided by how far his eventual level is from
+    /// replacement: the 95-ceiling athletic project shows 55 % of what he will
+    /// become, the 78-ceiling four-year college starter shows 85 %. Modelling
+    /// that is what makes rookie-year play flat across the draft (which it
+    /// empirically is — rookie starters come from every round) while career
+    /// outcomes stay steeply slot-correlated (which they also are).
+    ///
+    /// Measured consequence (career harness, stage 5): without it a first-round
+    /// rookie entered ~4 OVR above a seventh-rounder AND carried a 10-point
+    /// higher ceiling, so his hit rate came out ~73 % against the reference's
+    /// 55-65 % while rounds 3-7 flattened into each other. With it the entry
+    /// levels compress to ~61-62 across the whole board and the ROUND signal is
+    /// carried entirely by the ceiling, which is where the reference puts it.
+    ///
+    /// - Parameters:
+    ///   - readiness: `CollegeProspect.nflReadiness` (25-95).
+    ///   - learning: `CollegeProspect.trueLearning` (25-99).
+    ///   - potential: `CollegeProspect.truePotential` — the eventual level the
+    ///     rawness term measures the entry against. The default is the league's
+    ///     typical intake ceiling, i.e. a neutral rawness of ~0.
+    ///   - undrafted: `true` for UDFAs, who take an extra development discount —
+    ///     no team spent a pick on them and their NFL starter rate is < 5 %
+    ///     (`docs/DRAFT_NFL_REFERENCE.md` §6).
+    static func rookieScaleFactors(
+        readiness: Int,
+        learning: Int,
+        potential: Int = rawnessPivot,
+        undrafted: Bool = false
+    ) -> RookieScaleFactors {
+        let readinessShare = Double(min(99, max(0, readiness))) / 99.0
+        let learningShare = Double(min(99, max(0, learning))) / 99.0
+        let rawness = min(1.0, max(0.0, Double(potential - rawnessPivot) / 23.0))
+        return RookieScaleFactors(
+            skill: 0.05 + readinessShare * 0.14 - rawness * 0.34 - (undrafted ? 0.03 : 0.0),
+            physical: (undrafted ? 0.90 : 0.95) - rawness * 0.30,
+            mental: 0.20 + learningShare * 0.20 - rawness * 0.36 - (undrafted ? 0.05 : 0.0)
+        )
+    }
+
+    /// Ceiling at which the rawness term is zero — a prospect whose eventual
+    /// level is only this high is, by definition, close to it already.
+    static let rawnessPivot = 76
+
+    // MARK: - Rookie Familiarity
+
+    /// Seeds a freshly converted rookie's position and scheme familiarity, mirroring
+    /// `LeagueGenerator.initializePlayerFamiliarity` for veterans.
+    ///
+    /// Fixes the fam-0 bug: `convertToPlayer` never wrote `schemeFamiliarity`, so
+    /// every rookie in the league entered at familiarity 0 and took the maximum
+    /// scheme penalty — identically, regardless of how smart or pro-ready he was.
+    ///
+    /// Starting value is `10 + readiness·0.20 + learning·0.15` (≈ 15-45): below the
+    /// 70 completion pivot and mostly below the 55 bust pivot, so rookies still err,
+    /// but a smart, pro-ready rookie ramps from ~45 while a raw one starts at ~15.
+    /// UDFAs take a further −5.
+    ///
+    /// - Parameters:
+    ///   - player: The freshly created rookie (mutated in place).
+    ///   - prospect: The prospect he was converted from — supplies readiness/learning.
+    ///   - offensiveScheme: The drafting team's OC scheme, if any.
+    ///   - defensiveScheme: The drafting team's DC scheme, if any.
+    ///   - isUndrafted: `true` for UDFA signings.
+    static func initializeRookieFamiliarity(
+        player: Player,
+        prospect: CollegeProspect,
+        offensiveScheme: OffensiveScheme?,
+        defensiveScheme: DefensiveScheme?,
+        isUndrafted: Bool = false
+    ) {
+        // Primary position is always fully known.
+        player.positionFamiliarity[player.position.rawValue] = 100
+
+        let raw = 10.0
+            + Double(prospect.nflReadiness) * 0.20
+            + Double(prospect.trueLearning) * 0.15
+            - (isUndrafted ? 5.0 : 0.0)
+        let starting = min(100, max(0, Int(raw.rounded())))
+
+        switch player.position.side {
+        case .offense:
+            if let scheme = offensiveScheme {
+                player.schemeFamiliarity[scheme.rawValue] = starting
+            }
+        case .defense:
+            if let scheme = defensiveScheme {
+                player.schemeFamiliarity[scheme.rawValue] = starting
+            }
+        case .specialTeams:
+            // Specialists belong to no coordinator, so they are exposed to both
+            // installs — the same treatment `assignCareerSchemeFamiliarity` gives
+            // K/P veterans.
+            if let scheme = offensiveScheme {
+                player.schemeFamiliarity[scheme.rawValue] = starting
+            }
+            if let scheme = defensiveScheme {
+                player.schemeFamiliarity[scheme.rawValue] = starting
+            }
         }
     }
 
+    /// Convenience overload for callers that hold the drafting team's staff rather
+    /// than the resolved coordinator schemes.
+    static func initializeRookieFamiliarity(
+        player: Player,
+        prospect: CollegeProspect,
+        coaches: [Coach],
+        isUndrafted: Bool = false
+    ) {
+        initializeRookieFamiliarity(
+            player: player,
+            prospect: prospect,
+            offensiveScheme: coaches.first { $0.role == .offensiveCoordinator }?.offensiveScheme,
+            defensiveScheme: coaches.first { $0.role == .defensiveCoordinator }?.defensiveScheme,
+            isUndrafted: isUndrafted
+        )
+    }
+
     /// Scales a single attribute value: `floor + Int(Double(trueValue - floor) * factor)`.
-    private static let attributeFloor = 35
+    ///
+    /// **Phase-2 recalibration (plan §5 stage 5, `career` harness).** The floor
+    /// was 35 — an "empty" rating, far below anything an NFL roster carries — so
+    /// the conversion was effectively `entry ≈ 0.6 × true ability` and the whole
+    /// class arrived spread out in proportion to its true talent. Measured
+    /// consequence: entry OVR ranged 72.6 (R1) down to 55.1 (UDFA), a 17-point
+    /// gap, which put the primary-starter bar (75) within arm's reach of every
+    /// first-rounder and out of reach of every seventh — hit rates 98 % / 0 %
+    /// against `DRAFT_NFL_REFERENCE.md` §6's 60 % / 10 %.
+    ///
+    /// Raising the floor to a real replacement-level rating and shrinking the
+    /// factors makes rookies converge on a common rookie level (~59-65 OVR)
+    /// regardless of where they were picked — which is what actually happens:
+    /// first-round and seventh-round rookies play about the same as ROOKIES.
+    /// The round then shows up where it belongs, in `truePotential` and
+    /// therefore in the development ceiling, over years 2-5. It also puts the
+    /// entry level at 55-85 % of eventual level for everyone, exactly the band
+    /// `DEVELOPMENT_NFL_REFERENCE.md` §2 gives — high-ceiling prospects land at
+    /// the raw end of it, polished low-ceiling ones at the ready end.
+    private static let attributeFloor = 52
 
     private static func scaleAttribute(_ trueValue: Int, factor: Double) -> Int {
         attributeFloor + Int(Double(trueValue - attributeFloor) * factor)
@@ -286,14 +494,27 @@ enum DraftEngine {
     }
 
     /// Scales mental attributes with the given factor.
+    /// Scales the mental attributes a rookie has NOT yet learned, and passes the
+    /// ones he already is straight through.
+    ///
+    /// **Phase-2 fix (plan §5 stage 5).** This used to scale all six. Work ethic,
+    /// coachability and leadership are character, not craft — a rookie does not
+    /// arrive with 60 % of his own drive and grow into the rest — and scaling
+    /// them had a measurable side effect: league work ethic collapsed to p50 60,
+    /// which is the dominant term of the R factor's `base` and the gate on the
+    /// §2.3 post-payday complacency trigger. `DEVELOPMENT_NFL_REFERENCE.md` §2
+    /// lists work ethic among the differentiators that DECIDE a trajectory, so
+    /// it has to arrive intact and stay a trait. Awareness, decision making and
+    /// clutch are the pro-game learning curve and keep the discount — exactly
+    /// the trio `applyCatchUpGrowth` then develops.
     static func scaleMental(_ attrs: MentalAttributes, factor: Double) -> MentalAttributes {
         MentalAttributes(
             awareness: scaleAttribute(attrs.awareness, factor: factor),
             decisionMaking: scaleAttribute(attrs.decisionMaking, factor: factor),
             clutch: scaleAttribute(attrs.clutch, factor: factor),
-            workEthic: scaleAttribute(attrs.workEthic, factor: factor),
-            coachability: scaleAttribute(attrs.coachability, factor: factor),
-            leadership: scaleAttribute(attrs.leadership, factor: factor)
+            workEthic: attrs.workEthic,
+            coachability: attrs.coachability,
+            leadership: attrs.leadership
         )
     }
 

@@ -1,0 +1,1425 @@
+import Foundation
+
+// ============================================================================
+// SCENARIO `career` — player-development validation (development plan §5/§6)
+// ============================================================================
+// Runs a 32-team synthetic league through the SHIPPED development stack and
+// asserts every invariant in `docs/PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §6.
+//
+// WHAT IS SHIPPED CODE (synced by sync_sources.sh, never retyped here):
+//   • `PlayerDevelopmentEngine`  — verbatim, sha-verified. The motivation state
+//     machine, the R factor, the restored catch-up table, real playing time,
+//     the health gate, plateau / late-bloomer, potential drift, the
+//     position-shaped regression and the whole `processOffseason` pipeline.
+//   • `PlayerRetirementEngine`   — verbatim. Retirement probability + apply.
+//   • `MotivationState`          — verbatim. Multipliers and score mapping.
+//   • `TrainingFocusEngine`      — keep-list slice. Weekly gain chance + tick.
+//   • `CoachingEngine`           — keep-list slice. The 4-layer dev multiplier.
+//   • `VersatilityDevelopmentEngine` — keep-list slice. Scheme learning/decay.
+//   • `ContractEngine`           — keep-list slice. Market value (payday gate).
+//   • `DraftEngine`              — keep-list slice. Rookie scaling + familiarity.
+//   • `DraftClassBuilder` + `ScoutingEngine` — verbatim / slice. The INTAKE.
+//
+// WHAT THIS FILE OWNS (scaffolding the plan explicitly asks for — §6: "stub
+// coaches/teams with the harness pattern; synthetic season loop: depth-chart
+// rank by OVR within position cohort → playing-time share; no game sim"):
+//   • the 53-man roster template and the depth-chart → starts mapping,
+//   • coach-staff generation, coordinator churn and the install/continuity flags,
+//   • a record model (wins from starter strength — there is no game sim),
+//   • contract lifecycle (rookie deal → extension at market → veteran minimum),
+//   • the draft/UDFA/FA allocation, and
+//   • the measurement + assertions.
+// None of it contains a development constant. Every number that moves a rating
+// comes out of the staged engine.
+// ============================================================================
+
+// MARK: - Small stats helpers (cr-prefixed: the harness is one module)
+
+func crMean(_ xs: [Double]) -> Double { xs.isEmpty ? 0 : xs.reduce(0, +) / Double(xs.count) }
+func crPct(_ xs: [Double], _ p: Double) -> Double {
+    guard !xs.isEmpty else { return 0 }
+    let s = xs.sorted()
+    let idx = max(0, min(s.count - 1, Int((p * Double(s.count - 1)).rounded())))
+    return s[idx]
+}
+func crShare(_ hit: Int, _ total: Int) -> Double {
+    total > 0 ? Double(hit) / Double(total) * 100.0 : 0
+}
+func crPad(_ s: String, _ n: Int) -> String {
+    s.count >= n ? String(s.prefix(n)) : s + String(repeating: " ", count: n - s.count)
+}
+func crLPad(_ s: String, _ n: Int) -> String {
+    s.count >= n ? String(s.prefix(n)) : String(repeating: " ", count: n - s.count) + s
+}
+func crMode(_ xs: [Int]) -> Int? {
+    guard !xs.isEmpty else { return nil }
+    var counts: [Int: Int] = [:]
+    for x in xs { counts[x, default: 0] += 1 }
+    return counts.max { a, b in a.value == b.value ? a.key < b.key : a.value < b.value }?.key
+}
+
+// MARK: - Assertion collector
+
+final class CRAsserts {
+    private(set) var lines: [(ok: Bool, id: String, text: String)] = []
+    func check(_ id: String, _ ok: Bool, _ text: String) { lines.append((ok, id, text)) }
+    var failures: Int { lines.filter { !$0.ok }.count }
+    func report() {
+        print("")
+        print("===== ASSERTIONS (development plan §6) =====")
+        for l in lines {
+            print("  [\(l.ok ? "PASS" : "FAIL")] \(crPad(l.id, 5)) \(l.text)")
+        }
+        print("")
+        print(failures == 0
+              ? "  ALL \(lines.count) ASSERTIONS PASSED"
+              : "  \(failures) of \(lines.count) ASSERTIONS FAILED")
+    }
+}
+
+// MARK: - Reference targets (DRAFT_NFL_REFERENCE.md §6 via plan §6 item 1)
+
+/// Primary-starter hit rate by round. Round 8 == UDFA.
+let crHitRateTarget: [Int: Double] = [1: 60, 2: 45, 3: 33, 4: 25, 5: 18, 6: 12, 7: 10, 8: 4]
+/// Tolerance on each of those, in percentage points (plan §6 item 1).
+let crHitRateTolerance = 8.0
+/// The OVR a player must reach by year 4 to count as a primary starter.
+let crStarterOverall = 75
+/// Peak OVR that counts as an elite outcome (plan §6 item 2).
+let crEliteOverall = 90
+
+// MARK: - Roster blueprint (harness scaffolding)
+
+/// 53-man roster with the starter counts that put 11 offense + 11 defense + K + P
+/// on the field. `starters` is what the depth chart converts into 17 starts;
+/// everyone else on the roster dresses (17 appearances) and takes practice reps —
+/// which is exactly the split `realPlayingTimeShare` is written against
+/// (0.85 · starts + 0.15 · appearances, floored at the practice-reps term).
+struct CRSlot {
+    let position: Position
+    let roster: Int
+    let starters: Int
+}
+
+let crRosterTemplate: [CRSlot] = [
+    CRSlot(position: .QB, roster: 3, starters: 1),
+    CRSlot(position: .RB, roster: 4, starters: 1),
+    CRSlot(position: .FB, roster: 1, starters: 0),
+    CRSlot(position: .WR, roster: 6, starters: 3),
+    CRSlot(position: .TE, roster: 3, starters: 1),
+    CRSlot(position: .LT, roster: 2, starters: 1),
+    CRSlot(position: .LG, roster: 2, starters: 1),
+    CRSlot(position: .C,  roster: 2, starters: 1),
+    CRSlot(position: .RG, roster: 2, starters: 1),
+    CRSlot(position: .RT, roster: 2, starters: 1),
+    CRSlot(position: .DE, roster: 4, starters: 2),
+    CRSlot(position: .DT, roster: 4, starters: 2),
+    CRSlot(position: .OLB, roster: 4, starters: 2),
+    CRSlot(position: .MLB, roster: 3, starters: 1),
+    CRSlot(position: .CB, roster: 5, starters: 2),
+    CRSlot(position: .FS, roster: 2, starters: 1),
+    CRSlot(position: .SS, roster: 2, starters: 1),
+    CRSlot(position: .K,  roster: 1, starters: 1),
+    CRSlot(position: .P,  roster: 1, starters: 1),
+]
+
+let crRosterNeed: [Position: Int] = {
+    var d: [Position: Int] = [:]
+    for s in crRosterTemplate { d[s.position] = s.roster }
+    return d
+}()
+let crStarterSlots: [Position: Int] = {
+    var d: [Position: Int] = [:]
+    for s in crRosterTemplate { d[s.position] = s.starters }
+    return d
+}()
+let crRosterSize = crRosterTemplate.reduce(0) { $0 + $1.roster }
+
+/// Undrafted free agents each club brings to camp. They are measured whether or
+/// not they stick (see `runDraft`).
+let crUDFAsPerTeam = 16
+
+/// Weeks of rehab between the season finale and the first camp practice.
+let crOffseasonRehabWeeks = 18
+
+/// Half-width of the uniform error a club carries into the draft, applied to the
+/// consensus grade below.
+///
+/// **This is the one FITTED parameter in the scenario, and it is fitted on
+/// purpose.** How wrong NFL front offices are about a prospect's eventual level
+/// is not directly observable; the thing that IS observable is the outcome it
+/// produces — `DRAFT_NFL_REFERENCE.md` §6's hit rates by round. The harness
+/// cannot stage the app's whole evaluation apparatus (scouts, multiple reports,
+/// interviews, personal workouts, `DraftIntel`, the AI's need model), all of
+/// which sit between `trueOverall` and a pick; the shipped per-report error
+/// alone (`ScoutingEngine.generateScoutReport`: uniform ±max(2, 15·(1 −
+/// accuracy/100)) ≈ ±6) is only one term of it.
+///
+/// So the round → outcome mapping is calibrated here, and assert 6.1 is
+/// consequently a check that the DEVELOPMENT system can reproduce the reference
+/// curve at all — not an independent test of the draft. The asserts that ARE
+/// independent of this number are 6.2-6.8 (elite shares, trajectory mix, aging
+/// curves, R distribution, career length, growth shape) plus the league quality
+/// pyramid printed at the end.
+var crScoutErrorRange: Double = 11.5
+
+/// How a club's board balances "what he is" against "what he could be". Draft
+/// day is a bet on the second, which is why the first round is where the
+/// misses live.
+let crBoardOverallWeight: Double = 0.55
+
+/// Extra error per point of projected ceiling above the pivot.
+var crScoutErrorCeilingSlope: Double = 0.0
+var crScoutErrorCeilingPivot = 78
+
+/// Coarse unit for the per-position decline report.
+func crUnit(_ pos: Position) -> String {
+    switch pos {
+    case .LT, .LG, .C, .RG, .RT: return "OL"
+    case .DE, .DT:               return "DL"
+    case .OLB, .MLB:             return "LB"
+    case .FS, .SS:               return "S"
+    default:                     return pos.rawValue
+    }
+}
+
+// MARK: - Career record (measurement)
+
+final class CRCareer {
+    let playerID: UUID
+    let position: Position
+    /// 1-7 = draft round, 8 = UDFA.
+    let round: Int
+    let entryOverall: Int
+    let truePotentialAtEntry: Int
+    var seasons = 0
+    /// End-of-season OVR, index 0 = first pro season.
+    var overallByYear: [Int] = []
+    /// Age in the matching season.
+    var ageByYear: [Int] = []
+    var peakOverall = 0
+    var peakAge = 0
+    var plateauSeasons = 0
+    var lateBloomerSeasons = 0
+    var active = true
+
+    init(playerID: UUID, position: Position, round: Int, entryOverall: Int, truePotential: Int) {
+        self.playerID = playerID
+        self.position = position
+        self.round = round
+        self.entryOverall = entryOverall
+        self.truePotentialAtEntry = truePotential
+    }
+
+    func record(overall: Int, age: Int) {
+        seasons += 1
+        overallByYear.append(overall)
+        ageByYear.append(age)
+        if overall > peakOverall { peakOverall = overall; peakAge = age }
+    }
+
+    /// Primary-starter proxy (plan §6 item 1): OVR ≥ 75 at any point through
+    /// year 4 — the end of the rookie contract, which is exactly the window
+    /// `DEVELOPMENT_NFL_REFERENCE.md` §2 calls decisive ("not starter-quality by
+    /// the end of the rookie deal → ~10 % odds of ever becoming one").
+    var hitByYear4: Bool { overallByYear.prefix(4).contains { $0 >= crStarterOverall } }
+    var isElite: Bool { peakOverall >= crEliteOverall }
+    var washedOut: Bool { seasons <= 4 }
+}
+
+/// One completed season on a roster, the harness's stand-in for
+/// `PlayerSeasonHistory` (plan §6: "stub … PlayerSeasonHistory").
+struct CRSeasonRow {
+    let season: Int
+    let overall: Int
+    let gamesPlayed: Int
+    let gamesStarted: Int
+    let teamID: UUID
+    let age: Int
+    let majorInjury: Bool
+}
+
+// MARK: - Club (harness scaffolding around the Team stub)
+
+final class CRClub {
+    let team: Team
+    var coaches: [Coach] = []
+    /// Wins in the season that just finished (-1 = none played yet).
+    var lastSeasonWins = -1
+    var lastSeasonPlayoffHeartbreak = false
+    var offensiveScheme: OffensiveScheme
+    var defensiveScheme: DefensiveScheme
+    var offenseInstallYear = false
+    var defenseInstallYear = false
+    /// Position-coach roles filled by a NEW, good (dev ≥ 70) hire this offseason.
+    var freshPositionCoachRoles: Set<Int> = []
+
+    init(offensiveScheme: OffensiveScheme, defensiveScheme: DefensiveScheme) {
+        self.team = Team(players: [])
+        self.offensiveScheme = offensiveScheme
+        self.defensiveScheme = defensiveScheme
+    }
+
+    var roster: [Player] {
+        get { team.players }
+        set { team.players = newValue }
+    }
+    var id: UUID { team.id }
+
+    func coach(_ role: CoachRole) -> Coach? { coaches.first { $0.role == role } }
+    var headCoach: Coach? { coach(.headCoach) }
+    /// The staff's position coach for a player, matching the shipped lookup
+    /// (`coaches.first { positionRoleMatch(...) }`). The strength coach matches
+    /// EVERY position in the shipped matcher, so he is kept last in the array.
+    func positionCoach(for pos: Position) -> Coach? {
+        coaches.first { CoachingEngine.positionRoleMatch(coachRole: $0.role, playerPosition: pos) }
+    }
+}
+
+// MARK: - Config
+
+struct CRConfig {
+    var teams = 32
+    /// Seasons run before measurement starts, so the league has a natural age
+    /// pyramid and full 53-man rosters instead of an all-rookie population.
+    var burnIn = 8
+    /// Draft classes whose careers are measured.
+    var measuredClasses = 10
+    /// Seasons each measured career is followed for (censoring point).
+    var careerWindow = 12
+    var classSize = 420
+    var picks = 224
+    /// Independent leagues run and pooled. One league of N classes is ONE
+    /// correlated trajectory — its draft classes share the same standings, the
+    /// same staffs and the same roster churn — so the run-to-run spread of a
+    /// hit rate is several times the binomial error. Pooling independent
+    /// leagues is what makes the §6.1 bands measurable rather than noisy.
+    var leagues = 20
+    var weeks = 17
+    var verbose = false
+
+    var totalSeasons: Int { burnIn + measuredClasses + careerWindow }
+}
+
+// MARK: - League
+
+final class CRLeague {
+    let cfg: CRConfig
+    var clubs: [CRClub] = []
+    var freeAgents: [Player] = []
+
+    // --- per-player bookkeeping -------------------------------------------
+    var history: [UUID: [CRSeasonRow]] = [:]
+    var careers: [UUID: CRCareer] = [:]
+    /// Deterministic per-player scheme-fit draw (the harness has no play sim, so
+    /// fit is a stable player↔building property rather than a computed one).
+    var schemeFitByPlayer: [UUID: Double] = [:]
+    var majorInjuryThisSeason: Set<UUID> = []
+    var draftRoundByPlayer: [UUID: Int] = [:]
+
+    // --- collectors --------------------------------------------------------
+    var measuredCareers: [CRCareer] = []
+    var rSamples: [Double] = []
+    var motivationCounts: [MotivationState: Int] = [:]
+    /// OVR gain by yearsPro transition (index k = the k-th offseason of a career).
+    var gainByYearIndex: [[Double]] = Array(repeating: [], count: 8)
+    var plateauPlayerSeasons = 0
+    var lateBloomerPlayerSeasons = 0
+    var measuredOffseasonPasses = 0
+    var leagueOverallBySeason: [Int: [Double]] = [:]
+    var leagueAgeBySeason: [Int: [Double]] = [:]
+
+    init(cfg: CRConfig) { self.cfg = cfg }
+
+    var measureFrom: Int { cfg.burnIn + 1 }
+    var measureThrough: Int { cfg.burnIn + cfg.measuredClasses }
+
+    // MARK: Setup
+
+    func buildLeague() {
+        let offSchemes = OffensiveScheme.allCases
+        let defSchemes = DefensiveScheme.allCases
+        for i in 0..<cfg.teams {
+            let club = CRClub(
+                offensiveScheme: offSchemes[i % offSchemes.count],
+                defensiveScheme: defSchemes[i % defSchemes.count]
+            )
+            club.coaches = makeStaff(club: club, freshHires: true)
+            clubs.append(club)
+        }
+    }
+
+    /// Coach-quality draw. Centred a little above the 50 the shipped multipliers
+    /// treat as neutral, with a wide spread so "good building / bad building" is
+    /// a real difference — the reference's §5 point that coaching quality AND
+    /// continuity are first-order development inputs.
+    private func coachRating() -> Int {
+        Int(PositionPhysicalProfile.truncatedGaussian(mean: 58, sd: 15, limit: 2.4).rounded())
+            .cr_clamped(25, 95)
+    }
+
+    private func makeStaff(club: CRClub, freshHires: Bool) -> [Coach] {
+        // Position coaches FIRST: the shipped `positionRoleMatch` answers true
+        // for the strength coach at every position, and `developPlayer` takes
+        // the first match, so staff order decides who counts as "the position
+        // coach". Keeping the strength coach last reproduces the intended
+        // hierarchy (position coach > coordinator > strength > HC).
+        let posRoles: [CoachRole] = [.qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach]
+        var staff: [Coach] = posRoles.map {
+            let c = Coach(role: $0, playerDevelopment: coachRating())
+            c.isInAdjustmentPeriod = freshHires
+            return c
+        }
+        let hc = Coach(role: .headCoach, motivation: coachRating(), playerDevelopment: coachRating())
+        hc.isInAdjustmentPeriod = freshHires
+        let ahc = Coach(role: .assistantHeadCoach, playerDevelopment: coachRating())
+        let oc = Coach(
+            role: .offensiveCoordinator,
+            offensiveScheme: club.offensiveScheme,
+            schemeExpertise: [club.offensiveScheme.rawValue: coachRating()],
+            playerDevelopment: coachRating()
+        )
+        oc.isInAdjustmentPeriod = freshHires
+        let dc = Coach(
+            role: .defensiveCoordinator,
+            defensiveScheme: club.defensiveScheme,
+            schemeExpertise: [club.defensiveScheme.rawValue: coachRating()],
+            playerDevelopment: coachRating()
+        )
+        dc.isInAdjustmentPeriod = freshHires
+        let stc = Coach(role: .specialTeamsCoordinator, playerDevelopment: coachRating())
+        let sc = Coach(role: .strengthCoach, playerDevelopment: coachRating())
+        staff.append(contentsOf: [hc, ahc, oc, dc, stc, sc])
+        return staff
+    }
+
+    // MARK: Intake
+
+    /// One draft: builds a class through the SHIPPED generator, runs the shipped
+    /// combine + declaration passes, converts the first 224 declared prospects
+    /// through the SHIPPED rookie scaling, and hands them to teams in reverse
+    /// standings order picking for need-then-value.
+    func runDraft(season: Int) {
+        let built = DraftClassBuilder.buildOrdered(count: cfg.classSize)
+        var prospects = built.prospects
+        ScoutingEngine.generateCombineResults(for: &prospects, scoutingAbility: 50)
+        _ = ScoutingEngine.generateDeclarations(prospects: &prospects)
+        let board = prospects.filter { $0.isDeclaringForDraft }
+
+        // Draft order: worst record picks first, same order every round (the
+        // NFL layout `DraftEngine.roundForPick` assumes).
+        let order = clubs.sorted { a, b in
+            if a.lastSeasonWins != b.lastSeasonWins { return a.lastSeasonWins < b.lastSeasonWins }
+            return a.id.uuidString < b.id.uuidString
+        }
+
+        // SCOUTED board, not the true one. Clubs draft off graded prospects, and
+        // the grades are wrong: the shipped `ScoutingEngine.generateScoutReport`
+        // adds `±max(2, 15·(1 − accuracy/100))` uniform noise to BOTH trueOverall
+        // and truePotential before a club ever sees a prospect. Reproducing that
+        // error model here is not decoration — without it "round" would be a
+        // synonym for "true talent rank" and the whole hit-rate curve would be a
+        // property of the generator's band layout rather than of scouting and
+        // development. The overrated first-rounder and the seventh-round steal
+        // both come from this line.
+        var perceived: [UUID: Double] = [:]
+        for p in board {
+            let consensus = Double(p.trueOverall) * crBoardOverallWeight
+                + Double(p.truePotential) * (1 - crBoardOverallWeight)
+            // The error grows with the ceiling being projected. A four-year
+            // college starter with a 78 ceiling is a short projection; a
+            // boom-or-bust athlete with a 95 ceiling is a long one, and the
+            // long ones are where front offices actually miss — which is why
+            // the NFL's famous busts cluster in the top half of round one.
+            let error = crScoutErrorRange
+                + crScoutErrorCeilingSlope * Double(max(0, p.truePotential - crScoutErrorCeilingPivot))
+            perceived[p.id] = consensus + Double.random(in: -error...error)
+        }
+        var available = board.sorted { (perceived[$0.id] ?? 0) > (perceived[$1.id] ?? 0) }
+
+        var pick = 0
+        while pick < cfg.picks, !available.isEmpty {
+            let club = order[pick % clubs.count]
+            // Best player available off the club's own board, with a mild need
+            // tilt: a club already stocked at a position looks elsewhere.
+            let needs = openings(for: club)
+            var chosenIndex = 0
+            var bestScore = -Double.infinity
+            for i in 0..<min(available.count, 12) {
+                let p = available[i]
+                let need = needs[p.position, default: 0]
+                let score = -Double(i) + (need > 0 ? 2.5 : 0) + Double.random(in: 0..<1.5)
+                if score > bestScore { bestScore = score; chosenIndex = i }
+            }
+            let prospect = available.remove(at: chosenIndex)
+            let pickNumber = pick + 1
+            let player = convert(prospect: prospect, pickNumber: pickNumber, club: club, season: season)
+            club.roster.append(player)
+            pick += 1
+        }
+
+        // UDFA market: everyone still declared behind the 224 picks. Clubs sign
+        // them into CAMP, not onto the 53 — `reshapeRosters` then decides who
+        // sticks. That is the whole point of measuring UDFAs: the reference's
+        // "< 5 % become starters" is a share of everyone SIGNED, so a harness
+        // that only counted survivors would report a wildly optimistic number.
+        // The camp market: everyone still on the declared board behind the 224
+        // picks, PLUS the prospects the declaration pass kept in school. The
+        // second group is harness scaffolding with a purpose: 224 picks and a
+        // ~60-man declared cushion cannot supply the 250-300 players/season
+        // `DEVELOPMENT_NFL_REFERENCE.md` §8 says enter the league, because the
+        // real churn also runs through street free agents and practice-squad
+        // elevations that this scenario does not model. Without them the closed
+        // league's arithmetic (1 696 roster spots ÷ ~290 entrants) pins the mean
+        // career at 5.8 seasons before any development rule gets a vote.
+        var udfaPool = available + prospects.filter { !$0.isDeclaringForDraft }
+        udfaPool.shuffle()
+        var cursor = 0
+        for club in clubs.shuffled() {
+            var signed = 0
+            while signed < crUDFAsPerTeam, cursor < udfaPool.count {
+                let prospect = udfaPool[cursor]
+                cursor += 1
+                let player = convert(prospect: prospect, pickNumber: nil, club: club, season: season)
+                club.roster.append(player)
+                signed += 1
+            }
+        }
+    }
+
+    /// Prospect → Player through the SHIPPED conversion math (`DraftEngine`
+    /// keep-list slice). The only harness-owned lines are the field copies
+    /// `DraftEngine.copyProspectMetadata` performs (learning / competitiveness /
+    /// draftTruePotential) — assignments, not math.
+    private func convert(prospect: CollegeProspect, pickNumber: Int?, club: CRClub, season: Int) -> Player {
+        let undrafted = pickNumber == nil
+        let factors = DraftEngine.rookieScaleFactors(
+            readiness: prospect.nflReadiness,
+            learning: prospect.trueLearning,
+            potential: prospect.truePotential,
+            undrafted: undrafted
+        )
+        let player = Player(
+            fullName: prospect.fullName,
+            position: prospect.position,
+            physical: DraftEngine.scalePhysical(prospect.truePhysical, factor: factors.physical),
+            mental: DraftEngine.scaleMental(prospect.trueMental, factor: factors.mental),
+            positionAttributes: DraftEngine.scalePositionAttributes(
+                prospect.truePositionAttributes, factor: factors.skill
+            ),
+            personalityArchetype: prospect.truePersonality.archetype
+        )
+        player.personality = prospect.truePersonality
+        player.isMoodDependent = prospect.truePersonality.isMoodDependent
+        player.age = prospect.age
+        player.yearsPro = 0
+        player.truePotential = prospect.truePotential
+        player.learning = Player.storedLearning(prospect.trueLearning)
+        player.competitiveness = Player.storedCompetitiveness(prospect.trueCompetitiveness)
+        player.draftTruePotential = player.truePotential
+        player.teamID = club.id
+        player.draftPickNumber = pickNumber
+        player.draftedByTeamID = club.id
+        player.draftSeason = season
+        player.draftRound = pickNumber.map { DraftEngine.roundForPick($0) }
+        player.contractYearsRemaining = undrafted ? 3 : 4
+        player.annualSalary = undrafted ? 750 : rookieSalary(pick: pickNumber ?? 999)
+        player.morale = 70
+        DraftEngine.initializeRookieFamiliarity(
+            player: player,
+            prospect: prospect,
+            offensiveScheme: club.offensiveScheme,
+            defensiveScheme: club.defensiveScheme,
+            isUndrafted: undrafted
+        )
+        schemeFitByPlayer[player.id] = PositionPhysicalProfile
+            .truncatedGaussian(mean: 0.55, sd: 0.18, limit: 2.0)
+            .cr_clampedD(0.05, 0.95)
+
+        let round = pickNumber.map { DraftEngine.roundForPick($0) } ?? 8
+        draftRoundByPlayer[player.id] = round
+        if season >= measureFrom, season <= measureThrough {
+            careers[player.id] = CRCareer(
+                playerID: player.id,
+                position: player.position,
+                round: round,
+                entryOverall: player.overall,
+                truePotential: player.truePotential
+            )
+        }
+        return player
+    }
+
+    /// Rookie-scale money in thousands, so `contractYearsRemaining == 1` reads
+    /// as a real contract year and an extension can be priced against market.
+    private func rookieSalary(pick: Int) -> Int {
+        switch pick {
+        case 1...10:   return 6500
+        case 11...32:  return 3800
+        case 33...64:  return 1900
+        case 65...105: return 1300
+        default:       return 950
+        }
+    }
+
+    private func openings(for club: CRClub) -> [Position: Int] {
+        var counts: [Position: Int] = [:]
+        for p in club.roster { counts[p.position, default: 0] += 1 }
+        var open: [Position: Int] = [:]
+        for slot in crRosterTemplate {
+            open[slot.position] = max(0, slot.roster - (counts[slot.position] ?? 0))
+        }
+        return open
+    }
+
+    // MARK: Roster management
+
+    /// Value a club puts on keeping a player. OVR is the spine; young players
+    /// carry an upside premium and recent draft capital, which is why a 68-OVR
+    /// first-round rookie is not cut for a 71-OVR journeyman. Pure roster
+    /// policy — it moves nobody's rating, only his opportunity.
+    private func keepScore(_ p: Player) -> Double {
+        var score = Double(p.overall)
+        // Cheap youth beats expensive age at the back of a roster.
+        score -= Double(max(0, p.age - 25)) * 3.2
+        if p.yearsPro <= 3 {
+            score += Double(max(0, p.truePotential - p.overall)) * 0.45
+            let round = draftRoundByPlayer[p.id] ?? 8
+            // Draft capital buys patience: NFL clubs keep nearly every pick
+            // through year one, and a first-rounder for three. UDFAs buy none.
+            let capital: [Int: Double] = [1: 13, 2: 9, 3: 6, 4: 4, 5: 2.5, 6: 2, 7: 1.5, 8: 0]
+            score += (capital[round] ?? 0) * (p.yearsPro <= 1 ? 1.0 : 0.45)
+        }
+        return score
+    }
+
+    /// Cut to the template at every position, then fill the holes from the pool
+    /// of released players. Anyone left unsigned is out of the league for good —
+    /// the washout path that makes "out of the league in 3-4 years" real.
+    func reshapeRosters() {
+        var released: [Player] = []
+        for club in clubs {
+            var byPosition: [Position: [Player]] = [:]
+            for p in club.roster { byPosition[p.position, default: []].append(p) }
+            var keep: [Player] = []
+            for slot in crRosterTemplate {
+                let group = (byPosition[slot.position] ?? [])
+                    .sorted { keepScore($0) > keepScore($1) }
+                keep.append(contentsOf: group.prefix(slot.roster))
+                released.append(contentsOf: group.dropFirst(slot.roster))
+            }
+            club.roster = keep
+        }
+        var pool = (freeAgents + released).filter { !$0.isRetired }
+        for p in pool { p.teamID = nil }
+
+        // Fill holes: best available first, so a cut starter lands somewhere.
+        pool.sort { $0.overall > $1.overall }
+        var signedIDs: Set<UUID> = []
+        for club in clubs.shuffled() {
+            var open = openings(for: club)
+            for p in pool {
+                guard !signedIDs.contains(p.id) else { continue }
+                guard open[p.position, default: 0] > 0 else { continue }
+                p.teamID = club.id
+                p.contractYearsRemaining = max(1, p.contractYearsRemaining)
+                club.roster.append(p)
+                open[p.position] = (open[p.position] ?? 1) - 1
+                signedIDs.insert(p.id)
+            }
+        }
+        // Unsigned → out of the league.
+        for p in pool where !signedIDs.contains(p.id) {
+            p.isRetired = true
+            p.teamID = nil
+            careers[p.id]?.active = false
+        }
+        freeAgents = []
+    }
+
+    /// The ~18 weeks between the last snap and the first camp practice: the
+    /// shipped weekly rehab tick keeps running, so only genuinely season-plus
+    /// injuries are still open when the health gate is read.
+    func runOffseasonRehab() {
+        for p in clubs.flatMap(\.roster) where p.isInjured {
+            for _ in 0..<crOffseasonRehabWeeks {
+                guard p.isInjured else { break }
+                _ = PlayerDevelopmentEngine.processInjury(p)
+            }
+        }
+    }
+
+    /// Contract lifecycle. A deal that runs out is either extended at market
+    /// (the club keeps a starter) or replaced by a short veteran-minimum deal.
+    /// This is what makes the shipped §2.3 contract-year bump and post-payday
+    /// complacency trigger reachable at all.
+    func tickContracts() {
+        for club in clubs {
+            let starters = Set(startingLineup(club: club).map(\.id))
+            for p in club.roster {
+                p.contractYearsRemaining -= 1
+                guard p.contractYearsRemaining <= 0 else { continue }
+                let market = ContractEngine.estimateMarketValue(player: p)
+                if starters.contains(p.id) || p.overall >= 74 {
+                    p.contractYearsRemaining = Int.random(in: 3...5)
+                    p.annualSalary = Int(Double(market) * Double.random(in: 0.95...1.15))
+                } else {
+                    p.contractYearsRemaining = Int.random(in: 1...2)
+                    p.annualSalary = max(900, Int(Double(market) * Double.random(in: 0.45...0.8)))
+                }
+            }
+        }
+    }
+
+    // MARK: Coaching churn
+
+    /// Coordinators and position coaches turn over. A bad season gets the
+    /// coordinator fired, which resets continuity and installs a new playbook —
+    /// the tax/reward pair the reference calls out in §5.
+    func runCoachingChanges() {
+        for club in clubs {
+            club.offenseInstallYear = false
+            club.defenseInstallYear = false
+            club.freshPositionCoachRoles = []
+
+            let wins = club.lastSeasonWins
+            let pressure = wins < 0 ? 0.0 : max(0.05, min(0.55, (8.5 - Double(wins)) * 0.09))
+
+            for coach in club.coaches {
+                coach.isInAdjustmentPeriod = false
+                coach.seasonsOnTeam += 1
+            }
+            if Double.random(in: 0..<1) < pressure {
+                replaceCoordinator(club: club, offense: true)
+            }
+            if Double.random(in: 0..<1) < pressure {
+                replaceCoordinator(club: club, offense: false)
+            }
+            if Double.random(in: 0..<1) < pressure * 0.8, let hc = club.headCoach {
+                hc.motivation = coachRating()
+                hc.playerDevelopment = coachRating()
+                hc.isInAdjustmentPeriod = true
+                hc.seasonsOnTeam = 0
+            }
+            // Position coaches churn independently — the "OL whisperer arrives"
+            // catalyst behind the §2.5 late-bloomer roll.
+            for (index, coach) in club.coaches.enumerated() {
+                switch coach.role {
+                case .qbCoach, .rbCoach, .wrCoach, .olCoach, .dlCoach, .lbCoach, .dbCoach:
+                    guard Double.random(in: 0..<1) < 0.16 else { continue }
+                    let rating = coachRating()
+                    let improved = rating >= 70 && rating > coach.playerDevelopment
+                    coach.playerDevelopment = rating
+                    coach.seasonsOnTeam = 0
+                    coach.isInAdjustmentPeriod = true
+                    if improved { club.freshPositionCoachRoles.insert(index) }
+                default: break
+                }
+            }
+        }
+    }
+
+    private func replaceCoordinator(club: CRClub, offense: Bool) {
+        guard let coord = club.coach(offense ? .offensiveCoordinator : .defensiveCoordinator) else { return }
+        coord.playerDevelopment = coachRating()
+        coord.seasonsOnTeam = 0
+        coord.isInAdjustmentPeriod = true
+        // A new coordinator usually brings his own system.
+        if Double.random(in: 0..<1) < 0.6 {
+            if offense {
+                let scheme = OffensiveScheme.allCases.randomElement() ?? club.offensiveScheme
+                if scheme != club.offensiveScheme {
+                    club.offensiveScheme = scheme
+                    club.offenseInstallYear = true
+                }
+                coord.offensiveScheme = club.offensiveScheme
+                coord.schemeExpertise = [club.offensiveScheme.rawValue: coachRating()]
+            } else {
+                let scheme = DefensiveScheme.allCases.randomElement() ?? club.defensiveScheme
+                if scheme != club.defensiveScheme {
+                    club.defensiveScheme = scheme
+                    club.defenseInstallYear = true
+                }
+                coord.defensiveScheme = club.defensiveScheme
+                coord.schemeExpertise = [club.defensiveScheme.rawValue: coachRating()]
+            }
+        }
+    }
+
+    private func environment(for club: CRClub) -> PlayerDevelopmentEngine.TeamEnvironment {
+        var env = PlayerDevelopmentEngine.TeamEnvironment()
+        if club.offenseInstallYear || club.defenseInstallYear {
+            env.schemeInstallMultiplier = VersatilityDevelopmentEngine.schemeInstallIntensityBonus
+        }
+        let need = CoachingEngine.coordinatorContinuitySeasons
+        if let oc = club.coach(.offensiveCoordinator), oc.seasonsOnTeam >= need, !club.offenseInstallYear {
+            env.offensiveContinuity = true
+        }
+        if let dc = club.coach(.defensiveCoordinator), dc.seasonsOnTeam >= need, !club.defenseInstallYear {
+            env.defensiveContinuity = true
+        }
+        return env
+    }
+
+    // MARK: Offseason (training camp)
+
+    func runTrainingCamp(season: Int) {
+        let measured = season > cfg.burnIn
+        for club in clubs {
+            let env = environment(for: club)
+            let activeSchemes: Set<String> = [club.offensiveScheme.rawValue, club.defensiveScheme.rawValue]
+
+            var inputs: [UUID: PlayerDevelopmentEngine.OffseasonInputs] = [:]
+            for p in club.roster {
+                inputs[p.id] = offseasonInputs(player: p, club: club)
+            }
+
+            // The R and motivation the engine is about to use, recomputed here
+            // with the SAME shipped functions and the SAME arguments so the
+            // distribution can be reported without instrumenting the engine.
+            if measured {
+                for p in club.roster {
+                    let inp = inputs[p.id] ?? PlayerDevelopmentEngine.OffseasonInputs()
+                    let posCoach = club.positionCoach(for: p.position)
+                    let state = PlayerDevelopmentEngine.evaluateMotivation(player: p, inputs: inp)
+                    let share = PlayerDevelopmentEngine.realPlayingTimeShare(
+                        gamesStarted: inp.gamesStarted,
+                        gamesPlayed: inp.gamesPlayed,
+                        positionCoach: posCoach
+                    )
+                    let health = PlayerDevelopmentEngine.healthFactor(player: p, inputs: inp)
+                    rSamples.append(PlayerDevelopmentEngine.realizationFactor(
+                        player: p, motivation: state, playingTimeShare: share, health: health
+                    ))
+                    motivationCounts[state, default: 0] += 1
+                    measuredOffseasonPasses += 1
+                }
+            }
+
+            for p in club.roster {
+                VersatilityDevelopmentEngine.decayUnusedSchemes(player: p, activeSchemes: activeSchemes)
+            }
+
+            var before: [UUID: Int] = [:]
+            for p in club.roster { before[p.id] = p.overall }
+
+            PlayerDevelopmentEngine.processOffseason(
+                players: club.roster,
+                coaches: club.coaches,
+                inputs: inputs,
+                environment: env,
+                onOutcome: { [weak self] outcome in
+                    guard let self else { return }
+                    guard measured else { return }
+                    if outcome.plateaued {
+                        self.plateauPlayerSeasons += 1
+                        self.careers[outcome.playerID]?.plateauSeasons += 1
+                    }
+                    if outcome.lateBloomerBreakout {
+                        self.lateBloomerPlayerSeasons += 1
+                        self.careers[outcome.playerID]?.lateBloomerSeasons += 1
+                    }
+                }
+            )
+
+            if measured {
+                for p in club.roster {
+                    guard let career = careers[p.id] else { continue }
+                    let idx = min(gainByYearIndex.count - 1, max(0, p.yearsPro - 1))
+                    // Growth shape (plan §6 item 7) is a statement about players
+                    // still climbing: past the peak window the same delta is
+                    // regression, not development.
+                    if p.age < p.position.peakAgeRange.upperBound,
+                       let b = before[p.id] {
+                        gainByYearIndex[idx].append(Double(p.overall - b))
+                    }
+                    _ = career
+                }
+            }
+        }
+        // Unsigned free agents still get a year older (mirrors the shipped
+        // `.trainingCamp` handler, which ages everyone camp did not).
+        for p in freeAgents where !p.isRetired {
+            PlayerDevelopmentEngine.applyAgeRegression(p)
+            p.fatigue = 0
+        }
+    }
+
+    private func offseasonInputs(player: Player, club: CRClub) -> PlayerDevelopmentEngine.OffseasonInputs {
+        var inp = PlayerDevelopmentEngine.OffseasonInputs()
+        let rows = history[player.id] ?? []
+        inp.teamWins = club.lastSeasonWins >= 0 ? club.lastSeasonWins : nil
+        inp.headCoachMotivation = club.headCoach?.motivation
+        inp.playoffHeartbreak = club.lastSeasonPlayoffHeartbreak
+        if let last = rows.last {
+            inp.gamesStarted = last.gamesStarted
+            inp.gamesPlayed = last.gamesPlayed
+            inp.latestOverall = last.overall
+            inp.majorInjuryLastSeason = last.majorInjury
+            inp.changedTeam = last.teamID != club.id
+        }
+        if rows.count >= 2 {
+            let prev = rows[rows.count - 2]
+            inp.previousGamesStarted = prev.gamesStarted
+            inp.previousGamesPlayed = prev.gamesPlayed
+            inp.previousOverall = prev.overall
+        }
+        if rows.count >= 3 { inp.overallTwoSeasonsAgo = rows[rows.count - 3].overall }
+        inp.schemeFit = schemeFitByPlayer[player.id] ?? 0.5
+        if let index = club.coaches.firstIndex(where: {
+            CoachingEngine.positionRoleMatch(coachRole: $0.role, playerPosition: player.position)
+        }) {
+            inp.newPositionCoach = club.freshPositionCoachRoles.contains(index)
+        }
+        var yearsOnTeam = 0
+        for row in rows.reversed() {
+            guard row.teamID == club.id else { break }
+            yearsOnTeam += 1
+        }
+        inp.yearsOnTeam = yearsOnTeam
+        return inp
+    }
+
+    // MARK: Regular season
+
+    /// Depth chart: available players ranked by OVR inside the position cohort.
+    private func startingLineup(club: CRClub) -> [Player] {
+        var starters: [Player] = []
+        var byPosition: [Position: [Player]] = [:]
+        for p in club.roster where !p.isInjured && !p.isRetired {
+            byPosition[p.position, default: []].append(p)
+        }
+        for slot in crRosterTemplate where slot.starters > 0 {
+            let group = (byPosition[slot.position] ?? []).sorted { $0.overall > $1.overall }
+            starters.append(contentsOf: group.prefix(slot.starters))
+        }
+        return starters
+    }
+
+    func runSeason(season: Int) {
+        for club in clubs {
+            for p in club.roster {
+                p.gamesPlayedThisSeason = 0
+                p.gamesStartedThisSeason = 0
+            }
+            TrainingFocusEngine.autoAssignFocus(roster: club.roster)
+        }
+        majorInjuryThisSeason = []
+
+        for _ in 1...cfg.weeks {
+            for club in clubs {
+                let starters = Set(startingLineup(club: club).map(\.id))
+                let qbCoach = club.coach(.qbCoach)
+                let clipboard = (qbCoach?.playerDevelopment ?? 0) >= 70
+                for p in club.roster {
+                    if p.isInjured {
+                        _ = PlayerDevelopmentEngine.processInjury(p)
+                        continue
+                    }
+                    let started = starters.contains(p.id)
+                    p.gamesPlayedThisSeason += 1
+                    if started { p.gamesStartedThisSeason += 1 }
+                    PlayerDevelopmentEngine.applyGameExperience(
+                        p,
+                        gamesPlayed: 1,
+                        gamesStarted: started ? 1 : 0,
+                        clipboardRoom: clipboard
+                    )
+                    // Snaps carry injury risk; the shipped roll reads durability,
+                    // fatigue, age past peak and the workload multiplier.
+                    if let injury = PlayerDevelopmentEngine.checkForInjury(p, playIntensity: started ? 0.7 : 0.45) {
+                        if injury.weeksOut >= PlayerDevelopmentEngine.majorInjuryWeeks {
+                            majorInjuryThisSeason.insert(p.id)
+                            var records = p.injuryHistory
+                            records.append(InjuryRecord(
+                                injuryTypeRaw: InjuryType.knee.rawValue,
+                                weeksOut: injury.weeksOut,
+                                season: season
+                            ))
+                            p.injuryHistory = records
+                        }
+                    }
+                }
+                _ = TrainingFocusEngine.applyWeeklyFocusTick(roster: club.roster, coaches: club.coaches)
+            }
+        }
+        finishSeason(season: season)
+    }
+
+    /// No game sim (plan §6): the standings come from starter strength plus
+    /// noise, which is all the motivation triggers need (a collapsed season, a
+    /// playoff heartbreak) and all the draft order needs.
+    private func finishSeason(season: Int) {
+        var strengths: [(club: CRClub, strength: Double)] = []
+        for club in clubs {
+            let starters = startingLineup(club: club)
+            strengths.append((club, crMean(starters.map { Double($0.overall) })))
+        }
+        let mean = crMean(strengths.map(\.strength))
+        let sd = max(0.5, {
+            let m = mean
+            let v = strengths.reduce(0.0) { $0 + ($1.strength - m) * ($1.strength - m) } / Double(max(1, strengths.count - 1))
+            return v.squareRoot()
+        }())
+        var records: [(club: CRClub, wins: Int)] = []
+        for (club, strength) in strengths {
+            let z = (strength - mean) / sd
+            let raw = 8.5 + z * 3.1 + PositionPhysicalProfile.gaussian(mean: 0, sd: 1.7)
+            let wins = Int(raw.rounded()).cr_clamped(0, 17)
+            club.lastSeasonWins = wins
+            club.lastSeasonPlayoffHeartbreak = false
+            records.append((club, wins))
+        }
+        // Three clubs lose deep in January: the two conference title games and
+        // the Super Bowl (the champion is the only one who does not).
+        records.sort { $0.wins > $1.wins }
+        for i in 1..<min(4, records.count) { records[i].club.lastSeasonPlayoffHeartbreak = true }
+
+        // Locker-room mood. `LockerRoomEngine` (the app's own morale loop, wired
+        // by plan §2.9.1) is NOT part of the development stack and is not staged,
+        // so the harness supplies the one property the shipped motivation
+        // triggers read: morale that responds to winning and to playing, damped
+        // back toward the league-neutral 70. Without it every player sits at a
+        // flat 70 forever and the `morale < 40` trigger is unreachable by
+        // construction — which would make the measured state mix a fiction.
+        for club in clubs {
+            let starters = Set(startingLineup(club: club).map(\.id))
+            let winDelta = (Double(club.lastSeasonWins) - 8.5) * 1.6
+            for p in club.roster {
+                let roleDelta = starters.contains(p.id) ? 3.0 : -4.0
+                let reversion = (70.0 - Double(p.morale)) * 0.18
+                let moved = Double(p.morale) + winDelta + roleDelta + reversion
+                    + PositionPhysicalProfile.gaussian(mean: 0, sd: 5.0)
+                p.morale = Int(moved.rounded()).cr_clamped(5, 100)
+            }
+        }
+
+        let measured = season > cfg.burnIn
+        var leagueOverall: [Double] = []
+        var leagueAge: [Double] = []
+        for club in clubs {
+            for p in club.roster {
+                history[p.id, default: []].append(CRSeasonRow(
+                    season: season,
+                    overall: p.overall,
+                    gamesPlayed: p.gamesPlayedThisSeason,
+                    gamesStarted: p.gamesStartedThisSeason,
+                    teamID: club.id,
+                    age: p.age,
+                    majorInjury: majorInjuryThisSeason.contains(p.id)
+                ))
+                if let career = careers[p.id], career.active, career.seasons < cfg.careerWindow {
+                    career.record(overall: p.overall, age: p.age)
+                }
+                leagueOverall.append(Double(p.overall))
+                leagueAge.append(Double(p.age))
+            }
+        }
+        if measured {
+            leagueOverallBySeason[season] = leagueOverall
+            leagueAgeBySeason[season] = leagueAge
+        }
+    }
+
+    // MARK: Retirement
+
+    func runRetirements() {
+        var peakByID: [UUID: Int] = [:]
+        for (id, rows) in history { peakByID[id] = rows.map(\.overall).max() ?? 0 }
+        let all = clubs.flatMap(\.roster) + freeAgents
+        let retirements = PlayerRetirementEngine.evaluateRetirements(
+            allPlayers: all,
+            peakOverallByPlayerID: peakByID
+        )
+        var teamsByID: [UUID: Team] = [:]
+        for club in clubs { teamsByID[club.id] = club.team }
+        for r in retirements {
+            PlayerRetirementEngine.retire(r, teamsByID: teamsByID)
+            careers[r.player.id]?.active = false
+        }
+        for club in clubs { club.roster.removeAll { $0.isRetired } }
+        freeAgents.removeAll { $0.isRetired }
+    }
+
+    // MARK: Drive
+
+    func run() {
+        buildLeague()
+        for season in 1...cfg.totalSeasons {
+            runOffseasonRehab()
+            runRetirements()
+            tickContracts()
+            runDraft(season: season)
+            reshapeRosters()
+            runCoachingChanges()
+            runTrainingCamp(season: season)
+            runSeason(season: season)
+            if cfg.verbose {
+                let league = clubs.flatMap(\.roster)
+                print(String(format: "    season %2d  rostered %4d  avgOVR %.2f  avgAge %.2f  intake careers %d",
+                             season, league.count,
+                             crMean(league.map { Double($0.overall) }),
+                             crMean(league.map { Double($0.age) }),
+                             careers.count))
+            }
+        }
+        // EVERY converted prospect in the measured window counts — including the
+        // UDFA cut in his first camp (0 seasons). The reference's hit rates are
+        // shares of everyone who entered, not of everyone who survived.
+        measuredCareers = careers.values
+            .sorted { $0.playerID.uuidString < $1.playerID.uuidString }
+    }
+}
+
+// MARK: - Clamping helpers
+
+extension Int {
+    func cr_clamped(_ lo: Int, _ hi: Int) -> Int { Swift.min(hi, Swift.max(lo, self)) }
+}
+extension Double {
+    func cr_clampedD(_ lo: Double, _ hi: Double) -> Double { Swift.min(hi, Swift.max(lo, self)) }
+}
+
+// MARK: - Scenario entry point
+
+func scenarioCareer(_ flags: [String: String]) {
+    var cfg = CRConfig()
+    if let v = Int(flags["teams"] ?? "") { cfg.teams = max(8, v) }
+    if let v = Int(flags["burnin"] ?? "") { cfg.burnIn = max(0, v) }
+    if let v = Int(flags["classes"] ?? "") { cfg.measuredClasses = max(1, v) }
+    if let v = Int(flags["window"] ?? "") { cfg.careerWindow = max(4, v) }
+    if let v = Int(flags["leagues"] ?? "") { cfg.leagues = max(1, v) }
+    if let v = Int(flags["size"] ?? "") { cfg.classSize = max(120, v) }
+    if let v = Double(flags["fog"] ?? "") { crScoutErrorRange = max(0, v) }
+    if let v = Double(flags["fog-slope"] ?? "") { crScoutErrorCeilingSlope = max(0, v) }
+    if let v = Int(flags["fog-pivot"] ?? "") { crScoutErrorCeilingPivot = v }
+    cfg.verbose = flags["verbose"] != nil
+
+    print("===== SCENARIO career: \(cfg.leagues) x \(cfg.teams) teams x \(cfg.totalSeasons) seasons =====")
+    print("  burn-in \(cfg.burnIn) | measured draft classes \(cfg.measuredClasses) x \(cfg.leagues) independent leagues | career window \(cfg.careerWindow) seasons")
+    print("  intake: DraftClassBuilder v\(DraftClassBuilder.currentGeneratorVersion) (verbatim) -> DraftEngine rookie scaling (slice)")
+    print("  development: PlayerDevelopmentEngine + PlayerRetirementEngine (verbatim) + TrainingFocus/Coaching/Versatility/Contract slices")
+
+    let t0 = Date()
+    var leagues: [CRLeague] = []
+    for _ in 0..<cfg.leagues {
+        let league = CRLeague(cfg: cfg)
+        league.run()
+        leagues.append(league)
+    }
+    let elapsed = Date().timeIntervalSince(t0)
+
+    crReport(leagues: leagues, elapsed: elapsed)
+}
+
+// MARK: - Report + assertions
+
+func crReport(leagues: [CRLeague], elapsed: TimeInterval) {
+    let A = CRAsserts()
+    guard let league = leagues.first else { return }
+    let cfg = league.cfg
+    let all = leagues.flatMap { $0.measuredCareers }
+    let drafted = all.filter { $0.round <= 7 }
+    let udfa = all.filter { $0.round == 8 }
+
+    print("")
+    print(String(format: "  measured careers: %d drafted + %d UDFA = %d   (runtime %.1fs)",
+                 drafted.count, udfa.count, all.count, elapsed))
+
+    // ---- 1. Hit rates by round ------------------------------------------
+    print("")
+    print("--- HIT RATES BY ROUND (primary-starter proxy: OVR >= \(crStarterOverall) by year 4) ---")
+    print("  \(crPad("rnd", 5))\(crLPad("n", 6))\(crLPad("hit%", 8))\(crLPad("target", 8))\(crLPad("delta", 8))   \(crLPad("elite%", 7))\(crLPad("entryOVR", 9))\(crLPad("pot", 6))\(crLPad("ceil", 6))\(crLPad("peakOVR", 8))\(crLPad("career", 7))\(crLPad("wash%", 7))")
+    var hitByRound: [Int: Double] = [:]
+    var eliteByRound: [Int: Double] = [:]
+    var careerLenByRound: [Int: Double] = [:]
+    var worstHitDelta = 0.0
+    var worstHitRound = 0
+    for round in 1...8 {
+        let group = all.filter { $0.round == round }
+        guard !group.isEmpty else { continue }
+        let hits = group.filter { $0.hitByYear4 }.count
+        let hit = crShare(hits, group.count)
+        let elite = crShare(group.filter { $0.isElite }.count, group.count)
+        let careerLen = crMean(group.map { Double($0.seasons) })
+        let wash = crShare(group.filter { $0.washedOut }.count, group.count)
+        hitByRound[round] = hit
+        eliteByRound[round] = elite
+        careerLenByRound[round] = careerLen
+        let target = crHitRateTarget[round] ?? 0
+        let delta = hit - target
+        if abs(delta) > abs(worstHitDelta) { worstHitDelta = delta; worstHitRound = round }
+        let pot = crMean(group.map { Double($0.truePotentialAtEntry) })
+        // Peak is reported over careers that actually played — a prospect cut in
+        // his first camp has a peak of zero, which would make the column read as
+        // an attrition rate rather than a development one.
+        let played = group.filter { $0.seasons > 0 }
+        print(String(format: "  %-5@%6d%7.1f%%%8.0f%+8.1f   %6.1f%%%9.1f%6.1f%6.1f%8.1f%7.2f%6.1f%%",
+                     round == 8 ? "UDFA" : "R\(round)", group.count, hit, target, delta,
+                     elite, crMean(group.map { Double($0.entryOverall) }),
+                     pot, pot * 0.60 + 39.0,
+                     crMean(played.map { Double($0.peakOverall) }), careerLen, wash))
+    }
+    // Where the OVR-75 bar actually falls inside each round's year-4 outcome
+    // distribution — the diagnostic that says whether a missed hit rate is a
+    // level problem or a spread problem.
+    print("  year-4 peak OVR by round:  \(crPad("", 0))")
+    for round in 1...8 {
+        let group = all.filter { $0.round == round && $0.seasons > 0 }
+        guard group.count >= 20 else { continue }
+        let peaks = group.map { Double($0.overallByYear.prefix(4).max() ?? 0) }
+        print(String(format: "    %-5@ p10 %.1f  p25 %.1f  p50 %.1f  p75 %.1f  p90 %.1f   (bar 75)",
+                     round == 8 ? "UDFA" : "R\(round)",
+                     crPct(peaks, 0.10), crPct(peaks, 0.25), crPct(peaks, 0.50),
+                     crPct(peaks, 0.75), crPct(peaks, 0.90)))
+    }
+    A.check("6.1", abs(worstHitDelta) <= crHitRateTolerance,
+            String(format: "hit rate within +-%.0fpp of DRAFT_NFL_REFERENCE §6 for every round (worst %@ %+.1fpp)",
+                   crHitRateTolerance, worstHitRound == 8 ? "UDFA" : "R\(worstHitRound)", worstHitDelta))
+
+    // ---- 2. Elite share --------------------------------------------------
+    let r1Elite = eliteByRound[1] ?? 0
+    let r2Elite = eliteByRound[2] ?? 0
+    let lateRounds = all.filter { $0.round >= 3 && $0.round <= 7 }
+    let lateElite = crShare(lateRounds.filter { $0.isElite }.count, lateRounds.count)
+    print(String(format: "  elite (peak OVR >= %d): R1 %.1f%% [20-30]  R2 %.1f%% [8-15]  R3-7 %.2f%% [<=4]",
+                 crEliteOverall, r1Elite, r2Elite, lateElite))
+    A.check("6.2a", r1Elite >= 20 && r1Elite <= 30,
+            String(format: "R1 elite share in [20,30]%% (%.1f%%)", r1Elite))
+    A.check("6.2b", r2Elite >= 8 && r2Elite <= 15,
+            String(format: "R2 elite share in [8,15]%% (%.1f%%)", r2Elite))
+    A.check("6.2c", lateElite <= 4.0,
+            String(format: "R3-7 combined elite share <= 4%% (%.2f%%)", lateElite))
+
+    // ---- 3. Trajectory shares -------------------------------------------
+    print("")
+    print("--- TRAJECTORIES ----------------------------------------------------------")
+    // Trajectory shares are measured over DRAFTED careers — `DEVELOPMENT_NFL_REFERENCE.md`
+    // §2 states its mix explicitly as a "share of drafted players", and the
+    // undrafted camp bodies (four fifths of whom never finish a season) would
+    // otherwise turn the plateau rate into an attrition rate.
+    let plateauShare = crShare(drafted.filter { $0.plateauSeasons > 0 }.count, drafted.count)
+    let lateBloomShare = crShare(drafted.filter { $0.lateBloomerSeasons > 0 }.count, drafted.count)
+    let day3 = all.filter { $0.round >= 5 && $0.round <= 7 }
+    let day3Wash = crShare(day3.filter { $0.washedOut }.count, day3.count)
+    let allWash = crShare(all.filter { $0.washedOut }.count, all.count)
+    print(String(format: "  plateaued at least once %.1f%% [30-50]   late-bloomer breakout %.1f%% [5-12]",
+                 plateauShare, lateBloomShare))
+    print(String(format: "  washout (<= 4 seasons): R5-7 %.1f%% [>=45]   all measured %.1f%%   (plateau player-seasons %d, breakouts %d)",
+                 day3Wash, allWash, leagues.reduce(0) { $0 + $1.plateauPlayerSeasons }, leagues.reduce(0) { $0 + $1.lateBloomerPlayerSeasons }))
+    A.check("6.3a", plateauShare >= 30 && plateauShare <= 50,
+            String(format: "plateau share in [30,50]%% (%.1f%%)", plateauShare))
+    A.check("6.3b", lateBloomShare >= 5 && lateBloomShare <= 12,
+            String(format: "late-bloomer share in [5,12]%% (%.1f%%)", lateBloomShare))
+    A.check("6.3c", day3Wash >= 45,
+            String(format: "R5-7 washout (<=4 seasons) >= 45%% (%.1f%%)", day3Wash))
+
+    // ---- 4. Peak age + decline ------------------------------------------
+    print("")
+    print("--- PEAK AGE / DECLINE BY POSITION ---------------------------------------")
+    print("  \(crPad("pos", 5))\(crLPad("n", 6))\(crLPad("peakMode", 9))\(crLPad("peakMean", 9))  \(crPad("window", 8))\(crLPad("declOVR/yr", 11))")
+    var peakOutside: [String] = []
+    var declineByUnit: [String: [Double]] = [:]
+    for pos in Position.allCases {
+        let window = pos.peakAgeRange
+        let group = all.filter { $0.position == pos && ($0.ageByYear.max() ?? 0) >= window.lowerBound }
+        guard group.count >= 30 else { continue }
+        let peaks = group.map(\.peakAge)
+        let mode = crMode(peaks) ?? 0
+        var declines: [Double] = []
+        for c in group {
+            for i in 1..<max(1, c.ageByYear.count) {
+                let age = c.ageByYear[i]
+                guard age > window.upperBound, age <= window.upperBound + 4 else { continue }
+                declines.append(Double(c.overallByYear[i] - c.overallByYear[i - 1]))
+            }
+        }
+        let decl = crMean(declines)
+        declineByUnit[crUnit(pos), default: []].append(contentsOf: declines)
+        if !window.contains(mode) { peakOutside.append("\(pos.rawValue) mode \(mode) vs \(window)") }
+        print(String(format: "  %-5@%6d%9d%9.1f  %-8@%+11.2f",
+                     pos.rawValue, group.count, mode, crMean(peaks.map(Double.init)),
+                     "\(window.lowerBound)-\(window.upperBound)", decl))
+    }
+    A.check("6.4a", peakOutside.isEmpty,
+            "modal peak age inside peakAgeRange for every position"
+            + (peakOutside.isEmpty ? "" : " — \(peakOutside.joined(separator: ", "))"))
+    let cliffDecline = crMean((declineByUnit["RB"] ?? []) + (declineByUnit["CB"] ?? []))
+    let glideDecline = crMean((declineByUnit["QB"] ?? []) + (declineByUnit["OL"] ?? []))
+    let standardDecline = crMean((declineByUnit["WR"] ?? []) + (declineByUnit["DL"] ?? [])
+                                 + (declineByUnit["LB"] ?? []) + (declineByUnit["S"] ?? []) + (declineByUnit["TE"] ?? []))
+    print(String(format: "  decline slope: cliff (RB/CB) %+.2f  <  standard %+.2f  <  glide (QB/OL) %+.2f  OVR/yr",
+                 cliffDecline, standardDecline, glideDecline))
+    A.check("6.4b", cliffDecline < standardDecline && standardDecline < glideDecline,
+            String(format: "decline ordering RB/CB steepest < standard < QB/OL shallowest (%.2f / %.2f / %.2f)",
+                   cliffDecline, standardDecline, glideDecline))
+
+    // ---- 5. R + motivation ----------------------------------------------
+    print("")
+    print("--- REALIZATION FACTOR / MOTIVATION --------------------------------------")
+    let rSamples = leagues.flatMap { $0.rSamples }
+    let rMean = crMean(rSamples)
+    let rP10 = crPct(rSamples, 0.10)
+    let rP90 = crPct(rSamples, 0.90)
+    print(String(format: "  R: mean %.3f [0.45-0.55]  p10 %.3f [<=0.30]  p50 %.3f  p90 %.3f [>=0.85]  max %.3f   n=%d",
+                 rMean, rP10, crPct(rSamples, 0.50), rP90,
+                 rSamples.max() ?? 0, rSamples.count))
+    var motivationCounts: [MotivationState: Int] = [:]
+    for l in leagues { for (k, v) in l.motivationCounts { motivationCounts[k, default: 0] += v } }
+    let totalMotiv = motivationCounts.values.reduce(0, +)
+    var motivShares: [MotivationState: Double] = [:]
+    var motivLine = "  motivation:"
+    for state in MotivationState.allCases {
+        let share = crShare(motivationCounts[state] ?? 0, totalMotiv)
+        motivShares[state] = share
+        motivLine += String(format: "  %@ %.1f%%", state.rawValue, share)
+    }
+    print(motivLine + "   [driven 15-25 / focused 55-70 / complacent 5-12 / discouraged 5-12]")
+    // The gate inputs behind that mix — the §2.3 trigger table is written in
+    // absolute competitiveness/morale thresholds, so their realised percentiles
+    // ARE the calibration.
+    let snapshot = leagues.flatMap { $0.clubs.flatMap(\.roster) }
+    func dist(_ label: String, _ xs: [Double], _ gates: [Double]) -> String {
+        var s = String(format: "  %@ p05 %.0f  p25 %.0f  p50 %.0f  p75 %.0f  p95 %.0f", label,
+                       crPct(xs, 0.05), crPct(xs, 0.25), crPct(xs, 0.50), crPct(xs, 0.75), crPct(xs, 0.95))
+        for g in gates {
+            s += String(format: "   <=%.0f: %.0f%%", g, crShare(xs.filter { $0 <= g }.count, xs.count))
+        }
+        return s
+    }
+    print(dist("competitiveness", snapshot.map { Double($0.competitiveness) }, [40, 45, 60, 65, 70]))
+    print(dist("work ethic     ", snapshot.map { Double($0.mental.workEthic) }, [60]))
+    print(dist("morale         ", snapshot.map { Double($0.morale) }, [40]))
+    print(dist("learning       ", snapshot.map { Double($0.learning) }, []))
+    A.check("6.5a", rMean >= 0.45 && rMean <= 0.55, String(format: "R league mean in [0.45,0.55] (%.3f)", rMean))
+    A.check("6.5b", rP10 <= 0.30, String(format: "R p10 <= 0.30 (%.3f)", rP10))
+    A.check("6.5c", rP90 >= 0.85, String(format: "R p90 >= 0.85 (%.3f)", rP90))
+    let dr = motivShares[.driven] ?? 0, fo = motivShares[.focused] ?? 0
+    let co = motivShares[.complacent] ?? 0, di = motivShares[.discouraged] ?? 0
+    A.check("6.5d", dr >= 15 && dr <= 25 && fo >= 55 && fo <= 70 && co >= 5 && co <= 12 && di >= 5 && di <= 12,
+            String(format: "motivation mix driven %.1f%% [15-25] focused %.1f%% [55-70] complacent %.1f%% [5-12] discouraged %.1f%% [5-12]",
+                   dr, fo, co, di))
+
+    // ---- 6. Career length -----------------------------------------------
+    print("")
+    print("--- CAREER LENGTH ---------------------------------------------------------")
+    let draftedLen = crMean(drafted.map { Double($0.seasons) })
+    let r1Len = careerLenByRound[1] ?? 0
+    print(String(format: "  all drafted mean %.2f seasons [4.5-6]   R1 mean %.2f [>=7.5]   UDFA mean %.2f   (censored at %d)",
+                 draftedLen, r1Len, crMean(udfa.map { Double($0.seasons) }), cfg.careerWindow))
+    A.check("6.6a", draftedLen >= 4.5 && draftedLen <= 6.0,
+            String(format: "all-drafted mean career 4.5-6 seasons (%.2f)", draftedLen))
+    A.check("6.6b", r1Len >= 7.5, String(format: "R1 mean career >= 7.5 seasons (%.2f)", r1Len))
+
+    // ---- 7. Growth shape -------------------------------------------------
+    print("")
+    print("--- GROWTH SHAPE (mean OVR gain per offseason, pre-peak players only) -----")
+    var gains: [Double] = []
+    var gainLine = "  "
+    for k in 0..<6 {
+        let g = crMean(leagues.flatMap { $0.gainByYearIndex[k] })
+        gains.append(g)
+        gainLine += String(format: "yp%d->%d %+5.2f (n=%d)  ", k, k + 1, g, leagues.reduce(0) { $0 + $1.gainByYearIndex[k].count })
+    }
+    print(gainLine)
+    let firstLargest = gains.dropFirst().allSatisfy { $0 < gains[0] }
+    // Monte-Carlo tolerance: at n ≈ 1 500 player-seasons per cell the standard
+    // error on a mean gain is ~0.06 OVR, so two adjacent cells that are equal in
+    // expectation routinely invert by a few hundredths.
+    var monotone = true
+    for k in 1..<gains.count where gains[k] > gains[k - 1] + 0.12 { monotone = false }
+    A.check("6.7a", firstLargest, String(format: "yp0->1 gain is the largest (%.2f)", gains[0]))
+    A.check("6.7b", monotone, "offseason OVR gains decline monotonically through the growth window")
+
+    // ---- 8. Sample stability --------------------------------------------
+    print("")
+    print("--- SAMPLE STABILITY (plan §6 item 8) ------------------------------------")
+    var halfA: [CRCareer] = [], halfB: [CRCareer] = []
+    for (i, c) in all.enumerated() { if i % 2 == 0 { halfA.append(c) } else { halfB.append(c) } }
+    var worstSplit = 0.0
+    var worstSplitLabel = ""
+    for round in 1...8 {
+        let a = halfA.filter { $0.round == round }, b = halfB.filter { $0.round == round }
+        guard a.count >= 30, b.count >= 30 else { continue }
+        let ha = crShare(a.filter { $0.hitByYear4 }.count, a.count)
+        let hb = crShare(b.filter { $0.hitByYear4 }.count, b.count)
+        if abs(ha - hb) > abs(worstSplit) { worstSplit = ha - hb; worstSplitLabel = round == 8 ? "UDFA" : "R\(round)" }
+    }
+    let lenA = crMean(halfA.filter { $0.round <= 7 }.map { Double($0.seasons) })
+    let lenB = crMean(halfB.filter { $0.round <= 7 }.map { Double($0.seasons) })
+    let rHalfA = crMean(Array(rSamples.prefix(rSamples.count / 2)))
+    let rHalfB = crMean(Array(rSamples.suffix(rSamples.count / 2)))
+    print(String(format: "  split-half: worst hit-rate gap %@ %+.1fpp [<=%.0f]  career length %.2f vs %.2f  R mean %.3f vs %.3f",
+                 worstSplitLabel, worstSplit, crHitRateTolerance, lenA, lenB, rHalfA, rHalfB))
+    A.check("6.8", abs(worstSplit) <= crHitRateTolerance
+            && abs(lenA - lenB) <= 0.6 && abs(rHalfA - rHalfB) <= 0.05,
+            String(format: "split-half stability inside every tolerance (hit %+.1fpp, career %+.2f, R %+.3f)",
+                   worstSplit, lenA - lenB, rHalfA - rHalfB))
+
+    // ---- League context (not asserted here — plan §5 stage 6 owns it) ----
+    print("")
+    print("--- LEAGUE CONTEXT (informational; DEVELOPMENT_NFL_REFERENCE §8) ----------")
+    let seasons = league.leagueOverallBySeason.keys.sorted()
+    if let first = seasons.first, let last = seasons.last {
+        let firstOVR = crMean(league.leagueOverallBySeason[first] ?? [])
+        let lastOVR = crMean(league.leagueOverallBySeason[last] ?? [])
+        print(String(format: "  league mean OVR season %d %.2f -> season %d %.2f (drift %+.3f/season over %d seasons)",
+                     first, firstOVR, last, lastOVR,
+                     (lastOVR - firstOVR) / Double(max(1, last - first)), last - first))
+        let ages = league.leagueAgeBySeason[last] ?? []
+        print(String(format: "  final-season age: mean %.2f  33+ share %.1f%%   |  OVR 90+ %.1f%%  80+ %.1f%%  75+ %.1f%%",
+                     crMean(ages), crShare(ages.filter { $0 >= 33 }.count, ages.count),
+                     crShare((league.leagueOverallBySeason[last] ?? []).filter { $0 >= 90 }.count, (league.leagueOverallBySeason[last] ?? []).count),
+                     crShare((league.leagueOverallBySeason[last] ?? []).filter { $0 >= 80 }.count, (league.leagueOverallBySeason[last] ?? []).count),
+                     crShare((league.leagueOverallBySeason[last] ?? []).filter { $0 >= 75 }.count, (league.leagueOverallBySeason[last] ?? []).count)))
+    }
+
+    A.report()
+
+    print("")
+    print("--- DEVIATION NOTES ------------------------------------------------------")
+    print("  §6.1 'primary starter' is read as OVR >= \(crStarterOverall) reached AT ANY POINT through year 4,")
+    print("       matching DEVELOPMENT_NFL_REFERENCE §2 ('not starter-quality by the end of")
+    print("       the rookie deal → ~10 % odds of ever becoming one'). A year-4-only")
+    print("       snapshot would punish players who peaked in year 3 and got hurt.")
+    print("  §6.6 career length is CENSORED at \(cfg.careerWindow) seasons — every measured class is")
+    print("       followed for exactly that window, so R1 means are a lower bound on the")
+    print("       reference's ~9-year figure, not an estimate of it.")
+    print("  §6.4 peak age is measured over careers that actually REACHED the position's")
+    print("       peak window (max age >= window lower bound). Including 2-season washouts")
+    print("       would report their last season as a 'peak' and make the assert a")
+    print("       statement about attrition rather than about the aging curve.")
+    print("  §6.5 R and motivation are sampled every measured offseason for every rostered")
+    print("       player (n=\(leagues.reduce(0) { $0 + $1.measuredOffseasonPasses })) using the SHIPPED evaluateMotivation /")
+    print("       realPlayingTimeShare / healthFactor / realizationFactor with the same")
+    print("       arguments processOffseason is about to use — the engine is read, never")
+    print("       re-implemented.")
+    print("  §6   there is NO game sim (the plan's own instruction). Standings come from")
+    print("       starter-strength z-scores plus noise, which is all the collapsed-season /")
+    print("       playoff-heartbreak triggers and the draft order consume.")
+    print(String(format: "  §6.1 the draft-board evaluation error (--fog, currently %.1f) is the ONE fitted",
+                 crScoutErrorRange))
+    print("       parameter in this scenario. How wrong front offices are about a prospect's")
+    print("       eventual level is not directly observable; the observable is the outcome,")
+    print("       i.e. DRAFT_NFL_REFERENCE §6 itself. The harness cannot stage the app's whole")
+    print("       evaluation apparatus (scouts, multiple reports, interviews, DraftIntel, the")
+    print("       AI need model), so 6.1 is a check that the DEVELOPMENT system can reproduce")
+    print("       the reference curve at all — 6.2-6.8 and the league pyramid above are the")
+    print("       asserts independent of it.")
+    print("  §8   the LEAGUE CONTEXT block is informational here: DEVELOPMENT_NFL_REFERENCE §8")
+    print("       equilibrium is plan §5 STAGE 6's gate (MultiSeasonSmokeTest), not this")
+    print("       scenario's. It is printed because a development calibration that quietly")
+    print("       wrecked the quality pyramid would otherwise pass every assert above.")
+    print("  §6.3 trajectory shares are measured over DRAFTED careers — the reference states")
+    print("       its mix as a \"share of drafted players\", and the undrafted camp bodies")
+    print("       (four fifths of whom never finish a season) would turn the plateau rate")
+    print("       into an attrition rate.")
+
+    if A.failures > 0 {
+        print("")
+        print("CAREER: FAILED (\(A.failures) assertion(s))")
+        exit(1)
+    }
+    print("")
+    print("CAREER: OK")
+}

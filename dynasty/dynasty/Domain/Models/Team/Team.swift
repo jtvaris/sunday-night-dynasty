@@ -22,6 +22,57 @@ final class Team {
     var losses: Int
     var ties: Int
 
+    /// Wins from the season that just finished, snapshotted by
+    /// `WeekAdvancer.startNewSeason` immediately BEFORE `wins` is reset.
+    ///
+    /// Only the user's franchise had a season archive (`Career.seasonSummaries`),
+    /// so the offseason motivation triggers in
+    /// `docs/PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §2.3 ("team collapsed last
+    /// season") were impossible to evaluate for the other 31 clubs. This is the
+    /// cheap fix — one season back, league-wide, not a full archive (§3 keeps
+    /// per-team season archives out of scope).
+    ///
+    /// `-1` means "no completed season on record yet" (a brand-new league, or a
+    /// save created before this property existed); callers must treat it as
+    /// "unknown", never as 0 wins. Default-value stored property, never in
+    /// `init` → safe lightweight migration.
+    var lastSeasonWins: Int = -1
+
+    /// Losses from the season that just finished. Same contract as
+    /// `lastSeasonWins`, including the `-1` "unknown" sentinel.
+    var lastSeasonLosses: Int = -1
+
+    /// Whether `lastSeasonWins` / `lastSeasonLosses` hold a real completed season.
+    var hasLastSeasonRecord: Bool {
+        lastSeasonWins >= 0 && lastSeasonLosses >= 0
+    }
+
+    /// The offensive scheme this franchise ran the last time camp opened
+    /// (`OffensiveScheme.rawValue`). Snapshotted at the `.trainingCamp` phase
+    /// and compared against the current OC's scheme on the next pass — that
+    /// diff is the only scheme-CHANGE signal in the domain
+    /// (`docs/PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §1.3 defect #4: nothing ever
+    /// taxed or decayed `Player.schemeFamiliarity` on coordinator turnover).
+    ///
+    /// `nil` means "never recorded" — a brand-new league or a save created
+    /// before this property existed. The first camp after that only records;
+    /// it never fires an install year, so no existing save is retroactively
+    /// taxed. Default-value stored property, never in `init` → safe lightweight
+    /// migration.
+    var lastOffensiveSchemeRaw: String? = nil
+
+    /// The defensive scheme this franchise ran at the last camp
+    /// (`DefensiveScheme.rawValue`). Same contract as `lastOffensiveSchemeRaw`.
+    var lastDefensiveSchemeRaw: String? = nil
+
+    /// The season an install year is in effect for: the whole of that season's
+    /// `learnScheme` work (camp AND the weekly in-season reps) runs at
+    /// ×`VersatilityDevelopmentEngine.schemeInstallIntensityBonus` because the
+    /// staff is teaching a brand-new system from scratch (plan §2.9.2,
+    /// `DEVELOPMENT_NFL_REFERENCE.md` §5: "an OC change costs a measurable
+    /// install year"). `0` = no install pending.
+    var schemeInstallSeason: Int = 0
+
     /// Total salary cap in thousands of dollars (default: $265,000,000 → 265_000, 2026 projection).
     var salaryCap: Int
 

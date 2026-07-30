@@ -5,10 +5,13 @@
 # Populates build/src/ with the CANONICAL engine sources needed to compile the
 # balance harness against the SHIPPED simulation math:
 #
-#   • 17 files copied VERBATIM from the repo (byte-identical; sha-verified).
+#   • 30 files copied VERBATIM from the repo (byte-identical; sha-verified).
 #     11 play-by-play sources + 6 full-game sources (GameSimulator / DriveSimulator /
 #     CoachingModifiers / BoxScore / PlayerGameStats / DriveResult) for the round-5
-#     full-game campaign — all pure engine, no hand-typed constants.
+#     full-game campaign, 7 draft-class generator sources for `draftclass`, and 6
+#     development sources (PlayerDevelopmentEngine / PlayerRetirementEngine /
+#     MotivationState / InjuryRecord / InjuryType / CampEnums) for `career` — all
+#     pure engine, no hand-typed constants.
 #   • AdaptiveOpponentAIExtract.swift REGENERATED mechanically from the shipped
 #     Engine/Match/AdaptiveOpponentAI.swift by awk-stripping only the 4
 #     persona-hint functions (which need DCPersona/OCPersona and carry ZERO
@@ -44,12 +47,13 @@ sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 die() { echo "sync_sources.sh: FATAL: $*" >&2; exit 1; }
 
 # Temp scratch files, cleaned up on any exit.
-SLICE=""; STORAGE=""; COMPUTED=""
-cleanup() { rm -f "$SLICE" "$STORAGE" "$COMPUTED"; }
+SLICE=""; STORAGE=""; COMPUTED=""; SCOUTSLICE=""; ANCHORS=""; PRODUCTION=""
+cleanup() { rm -f "$SLICE" "$STORAGE" "$COMPUTED" "$SCOUTSLICE" "$ANCHORS" "$PRODUCTION"; }
 trap cleanup EXIT
 
 # --- Canonical repo sources (relative to $ENGINE) --------------------------
-# 17 files copied verbatim: 11 play-by-play + 6 full-game.
+# 30 files copied verbatim: 11 play-by-play + 6 full-game + 7 draft-class +
+# 6 development.
 VERBATIM_SOURCES=(
   "Domain/Enums/PlayCall.swift"
   "Domain/Enums/PlayType.swift"
@@ -69,6 +73,24 @@ VERBATIM_SOURCES=(
   "Engine/Simulation/CoachingModifiers.swift"
   "Engine/Simulation/DriveSimulator.swift"
   "Engine/Simulation/GameSimulator.swift"
+  # --- draft-class generator (stage 4; zero hand-typed generator constants) ------
+  "Domain/Enums/Motivation.swift"
+  "Domain/Models/Player/PlayerPersonality.swift"
+  "Domain/Models/Scouting/LetterGrade.swift"
+  "Domain/Models/Player/PositionPhysicalProfile.swift"
+  "Domain/Models/Player/MentalAttributeModel.swift"
+  "Data/Import/RandomNameGenerator.swift"
+  "Engine/Scouting/DraftClassBuilder.swift"
+  # --- development stack (stage 5; scenario `career`) ----------------------------
+  # The whole realization model is copied byte-for-byte: motivation state machine,
+  # R factor, catch-up table, position-shaped regression, potential drift,
+  # retirement probability. NOTHING in the career scenario re-implements any of it.
+  "Domain/Enums/InjuryType.swift"
+  "Domain/Enums/CampEnums.swift"
+  "Domain/Enums/MotivationState.swift"
+  "Domain/Models/Player/InjuryRecord.swift"
+  "Engine/PlayerDevelopment/PlayerDevelopmentEngine.swift"
+  "Engine/PlayerDevelopment/PlayerRetirementEngine.swift"
 )
 AI_SOURCE="$ENGINE/Engine/Match/AdaptiveOpponentAI.swift"
 SIM_SOURCE="$ENGINE/Engine/Simulation/SimPlayer.swift"
@@ -76,6 +98,19 @@ SIM_TEMPLATE="$HARNESS_DIR/driver/SimPlayer.harness.swift"
 # Harness-owned SwiftData-model stubs (Player/Team/Coach/CoachRole + SimPlayer.init(from:))
 # copied verbatim so the synced full-game pipeline compiles standalone.
 GAMEMODELS_TEMPLATE="$HARNESS_DIR/driver/GameModels.harness.swift"
+# --- draft-class staging (scenario `draftclass`) ------------------------------
+SCOUT_SOURCE="$ENGINE/Engine/Scouting/ScoutingEngine.swift"
+PROSPECT_SOURCE="$ENGINE/Domain/Models/Scouting/CollegeProspect.swift"
+PROSPECT_TEMPLATE="$HARNESS_DIR/driver/CollegeProspect.harness.swift"
+DRAFTSCENARIO_TEMPLATE="$HARNESS_DIR/driver/DraftClassScenario.harness.swift"
+# --- development staging (scenario `career`, plan §6) -------------------------
+PLAYER_SOURCE="$ENGINE/Domain/Models/Player/Player.swift"
+COACHING_SOURCE="$ENGINE/Engine/Simulation/CoachingEngine.swift"
+VERSATILITY_SOURCE="$ENGINE/Engine/PlayerDevelopment/VersatilityDevelopmentEngine.swift"
+CONTRACT_SOURCE="$ENGINE/Engine/Contract/ContractEngine.swift"
+FOCUS_SOURCE="$ENGINE/Engine/PlayerDevelopment/TrainingFocusEngine.swift"
+DRAFTENGINE_SOURCE="$ENGINE/Engine/Draft/DraftEngine.swift"
+CAREERSCENARIO_TEMPLATE="$HARNESS_DIR/driver/CareerScenario.harness.swift"
 
 # --- Preflight: refuse to build if any source is missing -------------------
 missing=0
@@ -86,6 +121,14 @@ done
 [ -f "$SIM_SOURCE" ]    || { echo "  MISSING: $SIM_SOURCE" >&2; missing=1; }
 [ -f "$SIM_TEMPLATE" ]  || { echo "  MISSING: $SIM_TEMPLATE" >&2; missing=1; }
 [ -f "$GAMEMODELS_TEMPLATE" ] || { echo "  MISSING: $GAMEMODELS_TEMPLATE" >&2; missing=1; }
+[ -f "$SCOUT_SOURCE" ]    || { echo "  MISSING: $SCOUT_SOURCE" >&2; missing=1; }
+[ -f "$PROSPECT_SOURCE" ] || { echo "  MISSING: $PROSPECT_SOURCE" >&2; missing=1; }
+[ -f "$PROSPECT_TEMPLATE" ]     || { echo "  MISSING: $PROSPECT_TEMPLATE" >&2; missing=1; }
+[ -f "$DRAFTSCENARIO_TEMPLATE" ] || { echo "  MISSING: $DRAFTSCENARIO_TEMPLATE" >&2; missing=1; }
+for f in "$PLAYER_SOURCE" "$COACHING_SOURCE" "$VERSATILITY_SOURCE" "$CONTRACT_SOURCE" \
+         "$FOCUS_SOURCE" "$DRAFTENGINE_SOURCE" "$CAREERSCENARIO_TEMPLATE"; do
+  [ -f "$f" ] || { echo "  MISSING: $f" >&2; missing=1; }
+done
 [ "$missing" -eq 0 ] || die "one or more canonical sources are missing — refusing to build."
 
 rm -rf "$SRC_OUT"
@@ -200,10 +243,26 @@ printf 'ASSEMBLED  %s  build/src/SimPlayer.swift  <=  %s  dynasty/dynasty/Engine
 # SimPlayer.init(from:)) carrying ZERO balance math, so they are copied straight
 # from the driver/ template. They exist only to let the sha-verified full-game
 # engine sources above compile & run standalone.
-echo "==> copying harness model stubs (GameModels.swift)"
+#
+# ONE exception (stage 5): the stub `Player` needs the SHIPPED `Player.overall`
+# blend, because the `career` scenario develops attributes and must read the same
+# rating the app would. Rather than retype the 0.5/0.3/0.2 weights, the repo's own
+# computed property is spliced VERBATIM into a `ShippedOverall` carrier.
+echo "==> assembling harness model stubs (GameModels.swift + Player.overall splice)"
 GAMEMODELS_OUT="$SRC_OUT/GameModels.swift"
-cp "$GAMEMODELS_TEMPLATE" "$GAMEMODELS_OUT"
+OVERALL="$(mktemp)"
+sed -n '/^    var overall: Int {$/,/^    }$/p' "$PLAYER_SOURCE" > "$OVERALL"
+[ -s "$OVERALL" ] || die "Player.overall splice is empty — repo anchors changed."
+grep -q 'positionAttributes.overall' "$OVERALL" || die "Player.overall splice lost the position term — repo layout changed."
+grep -q 'mental.average' "$OVERALL"             || die "Player.overall splice lost the mental term — repo layout changed."
+awk -v overall="$OVERALL" '
+  /^[[:space:]]*\/\/ @@SPLICE:PLAYEROVERALL@@[[:space:]]*$/ { while ((getline line < overall) > 0) print line; close(overall); next }
+  { print }
+' "$GAMEMODELS_TEMPLATE" > "$GAMEMODELS_OUT"
+rm -f "$OVERALL"
+if grep -q '@@SPLICE:' "$GAMEMODELS_OUT"; then die "the GameModels PLAYEROVERALL splice marker was left unresolved."; fi
 grep -q 'final class Player' "$GAMEMODELS_OUT"   || die "GameModels.swift lost the Player stub."
+grep -q 'struct ShippedOverall' "$GAMEMODELS_OUT" || die "GameModels.swift lost the ShippedOverall carrier."
 grep -q 'init(from p: Player)' "$GAMEMODELS_OUT" || die "GameModels.swift lost SimPlayer.init(from:)."
 # Guard: the stubs must stay math-free. If a repo constant ever needs to live here
 # it belongs in a verbatim engine source instead — fail loudly rather than let a
@@ -211,9 +270,394 @@ grep -q 'init(from p: Player)' "$GAMEMODELS_OUT" || die "GameModels.swift lost S
 if grep -qE '^[[:space:]]*static let [A-Za-z].*=[[:space:]]*[0-9]' "$GAMEMODELS_OUT"; then
   die "GameModels.swift contains a static-let numeric constant — stubs must carry no balance math."
 fi
-printf 'HARNESS    %s  build/src/GameModels.swift  <=  (harness-owned stub) driver/GameModels.harness.swift  %s\n' \
-  "$(sha "$GAMEMODELS_OUT")" "$(sha "$GAMEMODELS_TEMPLATE")" >> "$MANIFEST"
-echo "    GameModels.swift  (Player/Team/Coach/CoachRole stubs + SimPlayer.init(from:))"
+printf 'ASSEMBLED  %s  build/src/GameModels.swift  <=  %s  dynasty/dynasty/Domain/Models/Player/Player.swift  (overall spliced into driver/GameModels.harness.swift %s)\n' \
+  "$(sha "$GAMEMODELS_OUT")" "$(sha "$PLAYER_SOURCE")" "$(sha "$GAMEMODELS_TEMPLATE")" >> "$MANIFEST"
+echo "    GameModels.swift  (Player/Team/Coach/CoachRole stubs + SimPlayer.init(from:) + Player.overall splice)"
+
+# --- 5) ScoutingEngineExtract.swift (mechanical KEEP-LIST slice) --------------
+# The shipped ScoutingEngine is 3 000 lines wired to Scout / ScoutingReport /
+# Coach / Player / GradeRange — none of which the harness compiles. The
+# `draftclass` scenario needs exactly four things out of it: the college list,
+# the anthropometrics table, the COMBINE math (per-position drill table +
+# drillResult + the personality modifier + the relative drill grading) and the
+# risk-profile roll. Those members reference nothing outside the verbatim
+# sources, so they are sliced out MECHANICALLY (brace/bracket-balanced from each
+# named declaration) and re-wrapped in `enum ScoutingEngine { … }`.
+#
+# ANTI-DRIFT: every non-blank line of the slice must appear VERBATIM in the repo
+# file (checked below), and the per-position drill constants must diff clean —
+# so no combine mean/σ can ever be hand-typed here.
+echo "==> regenerating ScoutingEngineExtract.swift from repo (awk keep-list slice)"
+SCOUT_OUT="$SRC_OUT/ScoutingEngineExtract.swift"
+SCOUTSLICE="$(mktemp)"; ANCHORS="$(mktemp)"
+cat > "$ANCHORS" <<'EOF'
+static let colleges = \[
+static func generateAnthropometrics\(
+static func generateDeclarations\(
+static func generateCombineResults\(
+private static func applyPositionDrillGrades\(
+private static func drillGradeLetter\(
+private static func noisyPositionDrillScore\(
+enum CombinePositionGroup: Hashable \{
+private static func positionGroup\(
+struct CombineDrill \{
+private enum DrillAttribute \{
+enum CombineDrillTable \{
+private static func drillResult\(
+private static func combinePersonalityModifier\(
+static func generateRiskProfile\(
+EOF
+awk -v anchorfile="$ANCHORS" '
+  BEGIN {
+    n = 0
+    while ((getline line < anchorfile) > 0) { if (line != "") anchors[++n] = "^[[:space:]]*" line }
+    close(anchorfile)
+    cap = 0
+  }
+  cap == 0 {
+    for (i = 1; i <= n; i++) if ($0 ~ anchors[i]) { cap = 1; depth = 0; seen = 0; break }
+  }
+  cap == 1 {
+    l = $0; o  = gsub(/[{]/, "X", l)
+    l = $0; c  = gsub(/[}]/, "X", l)
+    l = $0; ob = gsub(/\[/, "X", l)
+    l = $0; cb = gsub(/\]/, "X", l)
+    depth += (o + ob) - (c + cb)
+    # `seen` only flips once the block is actually OPEN — a multi-line signature
+    # whose parameter list carries a balanced `[CollegeProspect]` must not be
+    # mistaken for the end of the member.
+    if (depth > 0) seen = 1
+    print
+    if (seen == 1 && depth <= 0) { cap = 0; print "" }
+  }
+' "$SCOUT_SOURCE" > "$SCOUTSLICE"
+
+[ -s "$SCOUTSLICE" ] || die "ScoutingEngine slice is empty — repo anchors changed."
+# 5a) Every member the harness names must actually be in the slice.
+for want in 'static let colleges' 'generateAnthropometrics' 'generateDeclarations' 'generateCombineResults' \
+            'applyPositionDrillGrades' 'drillGradeLetter' 'noisyPositionDrillScore' \
+            'enum CombinePositionGroup' 'func positionGroup' 'struct CombineDrill' \
+            'enum DrillAttribute' 'enum CombineDrillTable' 'func drillResult' \
+            'combinePersonalityModifier' 'generateRiskProfile'; do
+  grep -q "$want" "$SCOUTSLICE" || die "ScoutingEngine slice lost '$want' — the awk keep-list failed."
+done
+# 5b) ANTI-DRIFT GUARD 1: no line may exist in the slice that is not byte-identical
+#     to a line of the repo file (i.e. nothing was retyped or mangled).
+if grep -vxF -f "$SCOUT_SOURCE" "$SCOUTSLICE" | grep -q '[^[:space:]]'; then
+  grep -vxF -f "$SCOUT_SOURCE" "$SCOUTSLICE" | grep '[^[:space:]]' >&2
+  die "ScoutingEngine slice contains lines absent from the repo file."
+fi
+# 5c) ANTI-DRIFT GUARD 2: the per-position combine drill constants must diff clean.
+DRILL_RE='^[[:space:]]*(forty|bench|vertical|broad|cone|shuttle): (timed|drill)\('
+if ! diff <(grep -E "$DRILL_RE" "$SCOUT_SOURCE") <(grep -E "$DRILL_RE" "$SCOUTSLICE") > /dev/null; then
+  diff <(grep -E "$DRILL_RE" "$SCOUT_SOURCE") <(grep -E "$DRILL_RE" "$SCOUTSLICE") >&2 || true
+  die "a combine drill constant differs between the repo file and the extract."
+fi
+DRILL_COUNT="$(grep -cE "$DRILL_RE" "$SCOUTSLICE")"
+[ "$DRILL_COUNT" -ge 60 ] || die "only $DRILL_COUNT combine drill lines sliced — expected the full per-position table."
+{
+  echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
+  echo "// Source: dynasty/dynasty/Engine/Scouting/ScoutingEngine.swift (sha $(sha "$SCOUT_SOURCE"))"
+  echo "// Transform: awk KEEP-LIST slice of the members the draftclass scenario needs"
+  echo "//            (colleges, anthropometrics, the whole combine path, risk profile),"
+  echo "//            re-wrapped in the enum. Every line is a repo byte —"
+  echo "//            $DRILL_COUNT per-position drill constants verified identical."
+  echo ""
+  echo "import Foundation"
+  echo ""
+  echo "enum ScoutingEngine {"
+  cat "$SCOUTSLICE"
+  echo "}"
+} > "$SCOUT_OUT"
+rm -f "$SCOUTSLICE" "$ANCHORS"; SCOUTSLICE=""; ANCHORS=""
+echo "    ScoutingEngineExtract.swift  ($DRILL_COUNT drill constants verified byte-identical to repo)"
+printf 'EXTRACT    %s  build/src/ScoutingEngineExtract.swift  <=  %s  dynasty/dynasty/Engine/Scouting/ScoutingEngine.swift  (keep-list slice; %s drill consts verified)\n' \
+  "$(sha "$SCOUT_OUT")" "$(sha "$SCOUT_SOURCE")" "$DRILL_COUNT" >> "$MANIFEST"
+
+# --- 6) CollegeProspect.swift (template + repo math splice) -------------------
+echo "==> assembling CollegeProspect.swift (storage stub + verbatim repo math splice)"
+PRODUCTION="$(mktemp)"
+# Math block: `enum CollegeProductionTier` .. just before the Boom/Bust MARK —
+# the tier/competition/archetype enums, collegeYearsStarted, productionTier(forScore:),
+# statLine(...) and trueOverall / overallValue (the formula under test).
+sed -n '/^    enum CollegeProductionTier: String {$/,/^    \/\/ MARK: - Boom\/Bust Risk Indicator$/p' \
+  "$PROSPECT_SOURCE" | sed '$d' > "$PRODUCTION"
+[ -s "$PRODUCTION" ] || die "CollegeProspect math splice is empty — repo anchors changed."
+grep -q 'static func overallValue' "$PRODUCTION" || die "CollegeProspect splice missing overallValue — repo layout changed."
+grep -q 'var trueOverall: Int' "$PRODUCTION"     || die "CollegeProspect splice missing trueOverall — repo layout changed."
+grep -q 'static func productionTier' "$PRODUCTION" || die "CollegeProspect splice missing productionTier — repo layout changed."
+PROSPECT_OUT="$SRC_OUT/CollegeProspect.swift"
+awk -v production="$PRODUCTION" '
+  /^[[:space:]]*\/\/ @@SPLICE:PRODUCTION@@[[:space:]]*$/ { while ((getline line < production) > 0) print line; close(production); next }
+  { print }
+' "$PROSPECT_TEMPLATE" > "$PROSPECT_OUT"
+grep -q 'final class CollegeProspect' "$PROSPECT_OUT" || die "assembled CollegeProspect.swift lost its class."
+if grep -q '@@SPLICE:' "$PROSPECT_OUT"; then die "the CollegeProspect splice marker was left unresolved."; fi
+echo "    CollegeProspect.swift  (production + overall math spliced from repo)"
+printf 'ASSEMBLED  %s  build/src/CollegeProspect.swift  <=  %s  dynasty/dynasty/Domain/Models/Scouting/CollegeProspect.swift  (math spliced into driver/CollegeProspect.harness.swift)\n' \
+  "$(sha "$PROSPECT_OUT")" "$(sha "$PROSPECT_SOURCE")" >> "$MANIFEST"
+rm -f "$PRODUCTION"; PRODUCTION=""
+
+# --- 7) DraftClassScenario.swift (harness-owned scenario, verbatim copy) ------
+# Measurement + assertions only: it reads the generator, it never re-implements
+# it. Same math-free guard as GameModels.swift.
+echo "==> copying draftclass scenario (DraftClassScenario.swift)"
+DRAFTSCENARIO_OUT="$SRC_OUT/DraftClassScenario.swift"
+cp "$DRAFTSCENARIO_TEMPLATE" "$DRAFTSCENARIO_OUT"
+grep -q 'func scenarioDraftClass' "$DRAFTSCENARIO_OUT" || die "DraftClassScenario.swift lost its entry point."
+printf 'HARNESS    %s  build/src/DraftClassScenario.swift  <=  (harness-owned scenario) driver/DraftClassScenario.harness.swift  %s\n' \
+  "$(sha "$DRAFTSCENARIO_OUT")" "$(sha "$DRAFTSCENARIO_TEMPLATE")" >> "$MANIFEST"
+echo "    DraftClassScenario.swift  (200-class distribution report + plan §7 asserts)"
+
+# =============================================================================
+# 8) Development-stack extracts (stage 5, scenario `career`)
+# =============================================================================
+# The realization model itself (PlayerDevelopmentEngine / PlayerRetirementEngine /
+# MotivationState) is copied VERBATIM above. What is left are five files that the
+# engine reaches into but which cannot compile standalone (SwiftData, SwiftUI, the
+# Scout/Career graph). Each is reduced by the SAME mechanical KEEP-LIST slice the
+# ScoutingEngine extract uses, then guarded two ways:
+#
+#   • every non-blank line of the slice must appear byte-identically in the repo
+#     file (nothing was retyped or mangled), and
+#   • the named single-line tuning constants are grepped straight out of the repo
+#     (never transcribed).
+#
+# So no development constant — the ±15 % position-coach layer, the 0.05 continuity
+# bonus, the 1.5 base scheme-learning rate, the 0.49 + readiness·0.28 rookie skill
+# factor, the 0.32/0.18/0.06 weekly focus bands — can drift into this harness.
+
+# keeplist_slice <source> <anchors-file> <dest>
+#   Copies each named declaration brace/bracket-balanced from its header line to
+#   its closing brace. Block members only; single-line `static let`s are pulled by
+#   const_lines below (a one-line member has no block for the balancer to close).
+keeplist_slice() {
+  awk -v anchorfile="$2" '
+    BEGIN {
+      n = 0
+      while ((getline line < anchorfile) > 0) { if (line != "") anchors[++n] = "^[[:space:]]*" line }
+      close(anchorfile)
+      cap = 0
+    }
+    cap == 0 {
+      for (i = 1; i <= n; i++) if ($0 ~ anchors[i]) { cap = 1; depth = 0; seen = 0; break }
+    }
+    cap == 1 {
+      l = $0; o  = gsub(/[{]/, "X", l)
+      l = $0; c  = gsub(/[}]/, "X", l)
+      l = $0; ob = gsub(/\[/, "X", l)
+      l = $0; cb = gsub(/\]/, "X", l)
+      depth += (o + ob) - (c + cb)
+      if (depth > 0) seen = 1
+      print
+      if (seen == 1 && depth <= 0) { cap = 0; print "" }
+    }
+  ' "$1" > "$3"
+  [ -s "$3" ] || die "keep-list slice of $(basename "$1") is empty — repo anchors changed."
+}
+
+# verbatim_guard <source> <slice>  — every non-blank slice line must be a repo byte.
+verbatim_guard() {
+  if grep -vxF -f "$1" "$2" | grep -q '[^[:space:]]'; then
+    grep -vxF -f "$1" "$2" | grep '[^[:space:]]' >&2
+    die "slice of $(basename "$1") contains lines absent from the repo file."
+  fi
+}
+
+DEVSLICE=""; DEVANCHORS=""
+cleanup_dev() { rm -f "$DEVSLICE" "$DEVANCHORS"; }
+trap 'cleanup; cleanup_dev' EXIT
+
+# --- 8a) CoachingEngineExtract.swift -----------------------------------------
+echo "==> regenerating CoachingEngineExtract.swift from repo (awk keep-list slice)"
+COACHING_OUT="$SRC_OUT/CoachingEngineExtract.swift"
+DEVANCHORS="$(mktemp)"; DEVSLICE="$(mktemp)"
+cat > "$DEVANCHORS" <<'EOF'
+static func hierarchicalDevelopmentBonus\(
+static func positionRoleMatch\(
+EOF
+keeplist_slice "$COACHING_SOURCE" "$DEVANCHORS" "$DEVSLICE"
+verbatim_guard "$COACHING_SOURCE" "$DEVSLICE"
+COACHING_CONSTS="$(grep -E '^[[:space:]]*static let (coordinatorContinuitySeasons|coordinatorContinuityBonus) =' "$COACHING_SOURCE")"
+[ -n "$COACHING_CONSTS" ] || die "CoachingEngine continuity constants not found in the repo file."
+grep -q 'hierarchicalDevelopmentBonus' "$DEVSLICE" || die "CoachingEngine slice lost hierarchicalDevelopmentBonus."
+grep -q 'positionRoleMatch' "$DEVSLICE"            || die "CoachingEngine slice lost positionRoleMatch."
+{
+  echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
+  echo "// Source: dynasty/dynasty/Engine/Simulation/CoachingEngine.swift (sha $(sha "$COACHING_SOURCE"))"
+  echo "// Transform: awk KEEP-LIST slice of the 4-layer development multiplier and the"
+  echo "//            position-role matcher, re-wrapped as an extension of the harness"
+  echo "//            CoachingEngine stub. Every line is a repo byte."
+  echo ""
+  echo "import Foundation"
+  echo ""
+  echo "extension CoachingEngine {"
+  echo "$COACHING_CONSTS"
+  echo ""
+  cat "$DEVSLICE"
+  echo "}"
+} > "$COACHING_OUT"
+printf 'EXTRACT    %s  build/src/CoachingEngineExtract.swift  <=  %s  dynasty/dynasty/Engine/Simulation/CoachingEngine.swift  (keep-list slice)\n' \
+  "$(sha "$COACHING_OUT")" "$(sha "$COACHING_SOURCE")" >> "$MANIFEST"
+echo "    CoachingEngineExtract.swift"
+
+# --- 8b) VersatilityExtract.swift --------------------------------------------
+echo "==> regenerating VersatilityExtract.swift from repo (awk keep-list slice)"
+VERS_OUT="$SRC_OUT/VersatilityExtract.swift"
+cat > "$DEVANCHORS" <<'EOF'
+static func learnScheme\(
+static func decayUnusedSchemes\(
+EOF
+keeplist_slice "$VERSATILITY_SOURCE" "$DEVANCHORS" "$DEVSLICE"
+verbatim_guard "$VERSATILITY_SOURCE" "$DEVSLICE"
+VERS_CONSTS="$(grep -E '^[[:space:]]*static let (schemeInstallIntensityBonus|unusedSchemeDecayPerOffseason|unusedSchemeFloor) =' "$VERSATILITY_SOURCE")"
+[ -n "$VERS_CONSTS" ] || die "VersatilityDevelopmentEngine scheme constants not found in the repo file."
+grep -q 'learningRate \*= Double(player.learning)' "$DEVSLICE" || die "Versatility slice lost the learning term."
+{
+  echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
+  echo "// Source: dynasty/dynasty/Engine/PlayerDevelopment/VersatilityDevelopmentEngine.swift (sha $(sha "$VERSATILITY_SOURCE"))"
+  echo "// Transform: awk KEEP-LIST slice of the scheme-learning path, re-wrapped as an"
+  echo "//            extension of the harness VersatilityDevelopmentEngine stub."
+  echo ""
+  echo "import Foundation"
+  echo ""
+  echo "extension VersatilityDevelopmentEngine {"
+  echo "$VERS_CONSTS"
+  echo ""
+  cat "$DEVSLICE"
+  echo "}"
+} > "$VERS_OUT"
+printf 'EXTRACT    %s  build/src/VersatilityExtract.swift  <=  %s  dynasty/dynasty/Engine/PlayerDevelopment/VersatilityDevelopmentEngine.swift  (keep-list slice)\n' \
+  "$(sha "$VERS_OUT")" "$(sha "$VERSATILITY_SOURCE")" >> "$MANIFEST"
+echo "    VersatilityExtract.swift"
+
+# --- 8c) ContractEngineExtract.swift -----------------------------------------
+echo "==> regenerating ContractEngineExtract.swift from repo (awk keep-list slice)"
+CONTRACT_OUT="$SRC_OUT/ContractEngineExtract.swift"
+cat > "$DEVANCHORS" <<'EOF'
+static func estimateMarketValue\(
+static func naturalPositionForAttributes\(
+static func bestPayingPosition\(
+EOF
+keeplist_slice "$CONTRACT_SOURCE" "$DEVANCHORS" "$DEVSLICE"
+verbatim_guard "$CONTRACT_SOURCE" "$DEVSLICE"
+grep -q 'basePercent \* positionMultiplier' "$DEVSLICE" || die "ContractEngine slice lost the market-value formula."
+{
+  echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
+  echo "// Source: dynasty/dynasty/Engine/Contract/ContractEngine.swift (sha $(sha "$CONTRACT_SOURCE"))"
+  echo "// Transform: awk KEEP-LIST slice of the market-value path — the ONLY thing the"
+  echo "//            motivation state machine's post-payday trigger reads."
+  echo ""
+  echo "import Foundation"
+  echo ""
+  echo "enum ContractEngine {"
+  cat "$DEVSLICE"
+  echo "}"
+} > "$CONTRACT_OUT"
+printf 'EXTRACT    %s  build/src/ContractEngineExtract.swift  <=  %s  dynasty/dynasty/Engine/Contract/ContractEngine.swift  (keep-list slice)\n' \
+  "$(sha "$CONTRACT_OUT")" "$(sha "$CONTRACT_SOURCE")" >> "$MANIFEST"
+echo "    ContractEngineExtract.swift"
+
+# --- 8d) TrainingFocusExtract.swift ------------------------------------------
+# Two slices from one file: the TrainingFocusArea enum stays top-level, the engine
+# members are re-wrapped. Everything the Career/SwiftData-bound report builder and
+# the breakout-cap persistence need is left behind.
+echo "==> regenerating TrainingFocusExtract.swift from repo (awk keep-list slice x2)"
+FOCUS_OUT="$SRC_OUT/TrainingFocusExtract.swift"
+FOCUS_AREA="$(mktemp)"
+cat > "$DEVANCHORS" <<'EOF'
+enum TrainingFocusArea: String, Codable, CaseIterable, Identifiable \{
+EOF
+keeplist_slice "$FOCUS_SOURCE" "$DEVANCHORS" "$FOCUS_AREA"
+verbatim_guard "$FOCUS_SOURCE" "$FOCUS_AREA"
+cat > "$DEVANCHORS" <<'EOF'
+struct FocusGain \{
+static func applyWeeklyFocusTick\(
+static func weeklyGainChance\(
+static func autoAssignFocus\(
+static func potentialCeiling\(
+static func applyFocusPoint\(
+private static func bump<T>\(
+EOF
+keeplist_slice "$FOCUS_SOURCE" "$DEVANCHORS" "$DEVSLICE"
+verbatim_guard "$FOCUS_SOURCE" "$DEVSLICE"
+FOCUS_CONSTS="$(grep -E '^[[:space:]]*static let maxFocusPlayersPerTeam =' "$FOCUS_SOURCE")"
+[ -n "$FOCUS_CONSTS" ] || die "TrainingFocusEngine slot cap constant not found in the repo file."
+grep -q 'base = 0.32' "$DEVSLICE" || die "TrainingFocus slice lost the pre-peak weekly gain band."
+grep -q 'focusGainMultiplier' "$DEVSLICE" || die "TrainingFocus slice lost the motivation multiplier."
+{
+  echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
+  echo "// Source: dynasty/dynasty/Engine/PlayerDevelopment/TrainingFocusEngine.swift (sha $(sha "$FOCUS_SOURCE"))"
+  echo "// Transform: awk KEEP-LIST slices — the TrainingFocusArea enum verbatim at top"
+  echo "//            level, plus the weekly-tick members re-wrapped in the enum. The"
+  echo "//            Career-persisted breakout cap and the SwiftData report builder are"
+  echo "//            deliberately left behind (the harness has no store)."
+  echo ""
+  echo "import Foundation"
+  echo ""
+  cat "$FOCUS_AREA"
+  echo "enum TrainingFocusEngine {"
+  echo "$FOCUS_CONSTS"
+  echo ""
+  cat "$DEVSLICE"
+  echo "}"
+} > "$FOCUS_OUT"
+rm -f "$FOCUS_AREA"
+printf 'EXTRACT    %s  build/src/TrainingFocusExtract.swift  <=  %s  dynasty/dynasty/Engine/PlayerDevelopment/TrainingFocusEngine.swift  (keep-list slice)\n' \
+  "$(sha "$FOCUS_OUT")" "$(sha "$FOCUS_SOURCE")" >> "$MANIFEST"
+echo "    TrainingFocusExtract.swift"
+
+# --- 8e) DraftEngineExtract.swift --------------------------------------------
+# Draft-day INTAKE: the readiness/learning rookie scaling and the familiarity seed.
+# The career scenario converts prospects through these exact functions, so the
+# rookie level it measures is the one the app ships.
+echo "==> regenerating DraftEngineExtract.swift from repo (awk keep-list slice)"
+DRAFTENGINE_OUT="$SRC_OUT/DraftEngineExtract.swift"
+cat > "$DEVANCHORS" <<'EOF'
+struct RookieScaleFactors \{
+static func rookieScaleFactors\(
+private static func scaleAttribute\(
+static func scalePhysical\(
+static func scaleMental\(
+static func scalePositionAttributes\(
+static func roundForPick\(
+static func initializeRookieFamiliarity\(
+EOF
+keeplist_slice "$DRAFTENGINE_SOURCE" "$DEVANCHORS" "$DEVSLICE"
+verbatim_guard "$DRAFTENGINE_SOURCE" "$DEVSLICE"
+DRAFTENGINE_CONSTS="$(grep -E '^[[:space:]]*(private )?static let (attributeFloor|rawnessPivot) =' "$DRAFTENGINE_SOURCE")"
+echo "$DRAFTENGINE_CONSTS" | grep -q attributeFloor || die "DraftEngine attributeFloor constant not found in the repo file."
+echo "$DRAFTENGINE_CONSTS" | grep -q rawnessPivot  || die "DraftEngine rawnessPivot constant not found in the repo file."
+grep -q 'skill: .*readinessShare \*' "$DEVSLICE" || die "DraftEngine slice lost the rookie skill-scaling term."
+grep -q 'mental: .*learningShare \*' "$DEVSLICE"  || die "DraftEngine slice lost the rookie mental-scaling term."
+{
+  echo "// GENERATED by sync_sources.sh — DO NOT EDIT."
+  echo "// Source: dynasty/dynasty/Engine/Draft/DraftEngine.swift (sha $(sha "$DRAFTENGINE_SOURCE"))"
+  echo "// Transform: awk KEEP-LIST slice of the prospect→Player conversion math"
+  echo "//            (readiness-driven scaling + rookie familiarity seed)."
+  echo ""
+  echo "import Foundation"
+  echo ""
+  echo "enum DraftEngine {"
+  echo "$DRAFTENGINE_CONSTS"
+  echo ""
+  cat "$DEVSLICE"
+  echo "}"
+} > "$DRAFTENGINE_OUT"
+printf 'EXTRACT    %s  build/src/DraftEngineExtract.swift  <=  %s  dynasty/dynasty/Engine/Draft/DraftEngine.swift  (keep-list slice)\n' \
+  "$(sha "$DRAFTENGINE_OUT")" "$(sha "$DRAFTENGINE_SOURCE")" >> "$MANIFEST"
+echo "    DraftEngineExtract.swift"
+
+# --- 9) CareerScenario.swift (harness-owned scenario, verbatim copy) ----------
+# League scaffolding + measurement + assertions only: it drives the staged engine,
+# it never re-implements it. Same math-free guard as GameModels.swift.
+echo "==> copying career scenario (CareerScenario.swift)"
+CAREERSCENARIO_OUT="$SRC_OUT/CareerScenario.swift"
+cp "$CAREERSCENARIO_TEMPLATE" "$CAREERSCENARIO_OUT"
+grep -q 'func scenarioCareer' "$CAREERSCENARIO_OUT" || die "CareerScenario.swift lost its entry point."
+printf 'HARNESS    %s  build/src/CareerScenario.swift  <=  (harness-owned scenario) driver/CareerScenario.harness.swift  %s\n' \
+  "$(sha "$CAREERSCENARIO_OUT")" "$(sha "$CAREERSCENARIO_TEMPLATE")" >> "$MANIFEST"
+echo "    CareerScenario.swift  (32-team synthetic league + plan §6 asserts)"
 
 echo "==> MANIFEST written to build/src/MANIFEST.txt"
 echo "==> sync complete: $(ls "$SRC_OUT"/*.swift | wc -l | tr -d ' ') engine sources staged."

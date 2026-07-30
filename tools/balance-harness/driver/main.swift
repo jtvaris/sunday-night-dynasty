@@ -36,6 +36,17 @@ import Foundation
 //                  [--seedable] [--seed N] [--detail]  (per-side --home-*/--away-* too)
 //   positionsweep  one group swept {55,70,85,95} on an avg roster vs avg; win% + stat.
 //                  positionsweep --group QB|RB|WR|TE|OL|DL|LB|CB|S --n N [--seedable]
+//   draftclass     draft-class GENERATOR validation (DRAFT_CLASS_OVERHAUL_PLAN §7):
+//                  N classes through the shipped DraftClassBuilder + combine, a full
+//                  distribution report, and the §7.1-§7.9 invariants as asserts.
+//                  Exits 1 on any violation.  draftclass [--classes 200] [--size 350] [--verbose]
+//   career         player-DEVELOPMENT validation (PLAYER_DEVELOPMENT_OVERHAUL_PLAN §6):
+//                  a 32-team synthetic league (depth-rank → playing time, no game sim)
+//                  driven by the shipped PlayerDevelopmentEngine / retirement / focus
+//                  stack, >= 2 000 drafted careers over a 12-season window, hit rates
+//                  by round vs DRAFT_NFL_REFERENCE §6 + the §6.1-§6.8 asserts.
+//                  Exits 1 on any violation.
+//                  career [--teams 32] [--burnin 8] [--classes 10] [--window 12] [--verbose]
 //
 // Sample sizes: env BH_N (default 40000) per cell; BH_GN (default 24000) per grid
 // cell. The default reproduces the round-3 verifier numbers (see README).
@@ -49,15 +60,35 @@ let tiers = [55, 70, 85, 95]
 // Roster factories (league-average 70 baseline; parameterized by tier)
 // ---------------------------------------------------------------------------
 func pctf(_ a: Int, _ b: Int) -> Double { b == 0 ? 0 : Double(a) / Double(b) * 100 }
-func phys(_ s: Int, str: Int = 70, acc: Int = 70, agi: Int = 70) -> PhysicalAttributes {
-    PhysicalAttributes(speed: s, acceleration: acc, strength: str, agility: agi, stamina: 70, durability: 70)
+
+/// Places an ACCELERATION / STRENGTH rating on the position-relative scale
+/// PlaySimulator's R39 gap terms read (`relativeAcceleration` /
+/// `relativeStrength`).
+///
+/// The harness's tier rating means "grade `g` for his position", which is what
+/// every band in this file was dialled against. The shipped rosters now draw
+/// bodies from `PositionPhysicalProfile`, so those terms measure each unit
+/// against its own prior instead of raw — a flat `acceleration = g` on both
+/// sides of the trench would read as a −18-point OL advantage. Offsetting the
+/// rating by the position prior makes `relativeX` return exactly `g` again, so
+/// every measured band is unchanged by the normalisation.
+func posRelative(_ rating: Int, _ mean: Double) -> Int {
+    Int((Double(rating) - 70.0 + mean).rounded())
+}
+
+func phys(_ p: Position, _ s: Int, str: Int = 70, acc: Int = 70, agi: Int = 70) -> PhysicalAttributes {
+    let prior = PositionPhysicalProfile.profile(for: p)
+    return PhysicalAttributes(speed: s,
+                              acceleration: posRelative(acc, prior.acceleration.mean),
+                              strength: posRelative(str, prior.strength.mean),
+                              agility: agi, stamina: 70, durability: 70)
 }
 func ment() -> MentalAttributes {
     MentalAttributes(awareness: 70, decisionMaking: 70, clutch: 70, workEthic: 70, coachability: 70, leadership: 70)
 }
 func mk(_ n: String, _ p: Position, _ spd: Int, _ pa: PositionAttributes, str: Int = 70, acc: Int = 70, agi: Int = 70,
         fam: [String: Int] = [:]) -> SimPlayer {
-    SimPlayer(fullName: n, position: p, physical: phys(spd, str: str, acc: acc, agi: agi), mental: ment(),
+    SimPlayer(fullName: n, position: p, physical: phys(p, spd, str: str, acc: acc, agi: agi), mental: ment(),
               positionAttributes: pa, overall: 70, schemeFamiliarity: fam)
 }
 
@@ -532,7 +563,7 @@ func mentC(_ c: Int) -> MentalAttributes {
 /// SimPlayer with an explicit archetype / heat / composure (all attrs 70).
 func mkM(_ n: String, _ p: Position, _ pa: PositionAttributes,
          arch: PersonalityArchetype = .steadyPerformer, heat: Double = 0, composure: Int = 70) -> SimPlayer {
-    var sp = SimPlayer(fullName: n, position: p, physical: phys(70), mental: mentC(composure),
+    var sp = SimPlayer(fullName: n, position: p, physical: phys(p, 70), mental: mentC(composure),
                        positionAttributes: pa, overall: 70, personalityArchetype: arch)
     sp.heat = heat
     return sp
@@ -1206,7 +1237,7 @@ func buildRoster(_ spec: RosterSpec, side: String) -> (team: Team, coaches: [Coa
         if let f = spec.fam { fam[osKey] = f; fam[dsKey] = f }
         players.append(Player(
             fullName: "\(side)-\(slot.name)", position: slot.pos,
-            physical: PhysicalAttributes(speed: g, acceleration: g, strength: g, agility: g, stamina: 70, durability: 70),
+            physical: phys(slot.pos, g, str: g, acc: g, agi: g),
             mental: MentalAttributes(awareness: g, decisionMaking: g, clutch: g, workEthic: 70, coachability: 70, leadership: 70),
             positionAttributes: posAttr(slot.pos, g),
             personalityArchetype: archetypeFor(spec.archetypes),
@@ -1752,12 +1783,14 @@ func scenarioBlowoutProbe(_ f: [String: String]) {
 // Parameterized round-5 scenarios consume `--flag value` args instead of a
 // scenario-name list. They dispatch BEFORE the name-list path so every existing
 // scenario keeps working exactly as before.
-if let first = args.first, first == "fullgame" || first == "positionsweep" || first == "blowoutprobe" {
+if let first = args.first, first == "fullgame" || first == "positionsweep" || first == "blowoutprobe" || first == "draftclass" || first == "career" {
     let flags = parseFlags(Array(args.dropFirst()))
     printHeader()
     print("")
     if first == "fullgame" { scenarioFullGame(flags) }
     else if first == "blowoutprobe" { scenarioBlowoutProbe(flags) }
+    else if first == "draftclass" { scenarioDraftClass(flags) }
+    else if first == "career" { scenarioCareer(flags) }
     else { scenarioPositionSweep(flags) }
     print("\nDONE.")
     exit(0)

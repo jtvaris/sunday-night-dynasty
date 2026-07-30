@@ -50,18 +50,48 @@ struct DevelopmentReport: Codable, Identifiable {
     // MARK: Reason
 
     /// Why a player appears in the report — drives the chip label/color.
+    ///
+    /// Phase 2 (`docs/PLAYER_DEVELOPMENT_OVERHAUL_PLAN.md` §2.10) adds the four
+    /// realization-model reasons. Persisted rows decode through
+    /// `Reason(rawValue:) ?? .focus`, so an old save that predates them is
+    /// unaffected and a new case can never break an archived report.
     enum Reason: String, Codable {
         case focus, mentor, breakout, morale, holdout, injury, ageCurve
+        /// Where his head is at going into the season (§2.3).
+        case motivation
+        /// "He is what he is" — two offseasons without a step forward (§2.5).
+        case plateau
+        /// The year 3-5 breakout a changed situation unlocked (§2.5).
+        case lateBloomer
+        /// Install year: the playbook changed under him (§2.9.2).
+        case schemeChange
 
         var label: String {
             switch self {
-            case .focus:    return "Training Focus"
-            case .mentor:   return "Mentored"
-            case .breakout: return "Breakout"
-            case .morale:   return "Morale"
-            case .holdout:  return "Holdout"
-            case .injury:   return "Injured"
-            case .ageCurve: return "Age Curve"
+            case .focus:        return String(localized: "Training Focus")
+            case .mentor:       return String(localized: "Mentored")
+            case .breakout:     return String(localized: "Breakout")
+            case .morale:       return String(localized: "Morale")
+            case .holdout:      return String(localized: "Holdout")
+            case .injury:       return String(localized: "Injured")
+            case .ageCurve:     return String(localized: "Age Curve")
+            case .motivation:   return String(localized: "Motivation")
+            case .plateau:      return String(localized: "Plateau")
+            case .lateBloomer:  return String(localized: "Late Bloomer")
+            case .schemeChange: return String(localized: "New Scheme")
+            }
+        }
+
+        /// SF Symbol that replaces the section default where the section icon
+        /// would misread the line: a plateau is not a fall, and an install year
+        /// is not a slump. `nil` = keep the section's own icon.
+        var iconOverride: String? {
+            switch self {
+            case .motivation:   return "brain.head.profile"
+            case .plateau:      return "equal.circle.fill"
+            case .lateBloomer:  return "sparkles"
+            case .schemeChange: return "book.closed.fill"
+            default:            return nil
             }
         }
     }

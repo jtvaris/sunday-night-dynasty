@@ -691,6 +691,9 @@ struct MockDraftView: View {
                             .font(.caption)
                             .foregroundStyle(Color.textSecondary)
 
+                        // College production tier
+                        ProductionTierChip(tier: prospect.collegeProductionTier, width: nil)
+
                         // Media comment
                         if !pick.mediaComment.isEmpty {
                             Text(pick.mediaComment)

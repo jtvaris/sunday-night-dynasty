@@ -85,6 +85,8 @@ struct LiveBigBoardPanel: View {
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(1)
             Spacer()
+            // College production tier (3-char chip)
+            ProductionTierChip(tier: prospect.collegeProductionTier, width: 32, showsBackground: false, fontSize: 9)
             Text(stars(for: prospect))
                 .font(.caption2)
                 .foregroundStyle(Color.draftStealGold)

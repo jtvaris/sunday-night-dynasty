@@ -203,6 +203,15 @@ enum TrainingFocusEngine {
         } else if player.morale <= 35 {
             chance *= 0.7
         }
+
+        // Phase 2 (plan §2.3): the offseason motivation state carries into the
+        // weekly reps — ×1.20 driven … ×0.70 discouraged. It COMPOSES with the
+        // morale factor above rather than replacing it (morale is this week's
+        // mood, motivation is the season's headspace), and the 0.6 hard cap is
+        // unchanged so a driven high-work-ethic youngster still cannot exceed
+        // the designed ceiling.
+        chance *= player.motivationState.focusGainMultiplier
+
         return min(0.6, chance)
     }
 
@@ -633,21 +642,199 @@ enum DevelopmentReportBuilder {
             ))
         }
 
+        // --- Season-opening motivation check (plan §2.10) ---
+        // The state was decided at camp and does not move in-season, so it is
+        // reported once, in week 1, rather than repeated for eighteen weeks.
+        if week == seasonOpeningWeek {
+            for player in roster.filter({ $0.motivationState == .driven })
+                .sorted(by: { $0.overall > $1.overall })
+                .prefix(campReportGroupCap) {
+                report.risers.append(DevelopmentReport.Entry(
+                    playerID: player.id,
+                    playerName: player.fullName,
+                    positionRaw: player.position.rawValue,
+                    detail: player.motivationState.summary,
+                    reasonRaw: DevelopmentReport.Reason.motivation.rawValue
+                ))
+            }
+            for player in roster.filter({
+                $0.motivationState == .complacent || $0.motivationState == .discouraged
+            })
+                .sorted(by: { $0.overall > $1.overall })
+                .prefix(campReportGroupCap) {
+                report.stalled.append(DevelopmentReport.Entry(
+                    playerID: player.id,
+                    playerName: player.fullName,
+                    positionRaw: player.position.rawValue,
+                    detail: player.motivationState.summary,
+                    reasonRaw: DevelopmentReport.Reason.motivation.rawValue
+                ))
+            }
+        }
+
         return report
     }
 
-    /// Weekly inbox digest linking to the Development Report screen.
+    /// Week the regular season opens — the one week the motivation states are
+    /// worth repeating outside the camp report.
+    static let seasonOpeningWeek = 1
+
+    // MARK: - Camp Report (phase 2 — plan §2.10)
+
+    /// `week` value that marks a report as the training-camp edition rather
+    /// than a regular-season week. Regular-season reports are always week ≥ 1.
+    static let campReportWeek = 0
+
+    /// How many players each phase-2 narrative group may contribute. The camp
+    /// report covers a whole roster in one card, so every group is capped —
+    /// a 53-man list of "focused" nobodies is not a story.
+    static let campReportGroupCap = 4
+
+    /// The offseason digest, filed at training camp: who showed up driven, who
+    /// eased off after payday, who has settled into his role, who finally broke
+    /// out, and who is a step slow inside a brand-new playbook.
+    ///
+    /// Deliberately built from the same `DevelopmentReport` shape as the weekly
+    /// edition — the entries just carry the phase-2 `Reason` cases, so
+    /// `DevelopmentReportView` renders it with no special casing.
+    ///
+    /// - Parameters:
+    ///   - roster: The user's post-camp roster (used for the install-year
+    ///     lines, which need live scheme familiarity).
+    ///   - outcomes: The realization verdicts `processOffseason` handed back
+    ///     for this roster.
+    ///   - installedSchemes: Raw values of the schemes this team installed this
+    ///     offseason (the same keys `Player.schemeFamiliarity` uses); empty
+    ///     when the playbook did not change.
+    ///   - season: The season the camp belongs to.
+    static func buildCampReport(
+        roster: [Player],
+        outcomes: [PlayerDevelopmentEngine.OffseasonOutcome],
+        installedSchemes: [String],
+        season: Int
+    ) -> DevelopmentReport {
+        var report = DevelopmentReport(season: season, week: campReportWeek)
+
+        func entry(
+            _ outcome: PlayerDevelopmentEngine.OffseasonOutcome,
+            _ detail: String,
+            _ reason: DevelopmentReport.Reason
+        ) -> DevelopmentReport.Entry {
+            DevelopmentReport.Entry(
+                playerID: outcome.playerID,
+                playerName: outcome.playerName,
+                positionRaw: outcome.position.rawValue,
+                detail: detail,
+                reasonRaw: reason.rawValue
+            )
+        }
+
+        // --- Late bloomers: the headline of any camp they happen in ---
+        for outcome in outcomes.filter({ $0.lateBloomerBreakout })
+            .sorted(by: { $0.overallDelta > $1.overallDelta })
+            .prefix(campReportGroupCap) {
+            let detail = outcome.overallDelta > 0
+                ? String(localized: "+\(outcome.overallDelta) OVR — the light finally came on")
+                : String(localized: "Something clicked in the offseason program")
+            report.breakouts.append(entry(outcome, detail, .lateBloomer))
+        }
+
+        // --- Driven: the fighters who answered a bad season ---
+        for outcome in outcomes.filter({ $0.motivation == .driven && !$0.lateBloomerBreakout })
+            .sorted(by: { $0.overallAfter > $1.overallAfter })
+            .prefix(campReportGroupCap) {
+            report.risers.append(entry(outcome, outcome.motivation.summary, .motivation))
+        }
+
+        // --- Complacent / discouraged: the training output that went missing ---
+        for outcome in outcomes.filter({ $0.motivation == .complacent || $0.motivation == .discouraged })
+            .sorted(by: { $0.overallAfter > $1.overallAfter })
+            .prefix(campReportGroupCap) {
+            report.stalled.append(entry(outcome, outcome.motivation.summary, .motivation))
+        }
+
+        // --- Plateaued: "he is what he is" ---
+        for outcome in outcomes.filter({ $0.plateaued && !$0.lateBloomerBreakout })
+            .sorted(by: { $0.overallAfter > $1.overallAfter })
+            .prefix(campReportGroupCap) {
+            report.stalled.append(entry(
+                outcome,
+                String(localized: "Has settled into his role — two years without a step forward"),
+                .plateau
+            ))
+        }
+
+        // --- Install year: the players furthest behind the new language ---
+        //
+        // Scored and labelled PER SIDE. A player only ever carries a
+        // familiarity entry for his own unit's scheme (`DraftEngine`
+        // `initializeRookieFamiliarity`, `LeagueGenerator`, and both weekly
+        // learning paths all switch on `position.side`), so scoring a defender
+        // against the new offensive playbook reads 0 for everyone: the sort
+        // became arbitrary, every line printed "familiarity 0", and half the
+        // entries named a playbook the player is not in. A club that changes
+        // both coordinators now gets one section per unit.
+        let outcomesByID = Dictionary(outcomes.map { ($0.playerID, $0) }) { first, _ in first }
+        for installed in installedSchemes {
+            guard let side = schemeSide(installed) else { continue }
+            let schemeName = schemeDisplayName(installed)
+            let laggards = roster
+                .filter { $0.position.side == side && outcomesByID[$0.id] != nil }
+                .sorted { schemeFamiliarity($0, scheme: installed) < schemeFamiliarity($1, scheme: installed) }
+                .prefix(campReportGroupCap)
+            for player in laggards {
+                guard let outcome = outcomesByID[player.id] else { continue }
+                let familiarity = schemeFamiliarity(player, scheme: installed)
+                report.stalled.append(entry(
+                    outcome,
+                    String(localized: "Learning the new \(schemeName) playbook — install year (familiarity \(familiarity))"),
+                    .schemeChange
+                ))
+            }
+        }
+
+        return report
+    }
+
+    /// How far behind THIS playbook the player is.
+    private static func schemeFamiliarity(_ player: Player, scheme: String) -> Int {
+        player.schemeFamiliarity[scheme] ?? 0
+    }
+
+    /// Which unit a stored scheme raw value belongs to — `nil` for anything
+    /// unrecognised (a legacy save's stale key).
+    private static func schemeSide(_ rawValue: String) -> PositionSide? {
+        if OffensiveScheme(rawValue: rawValue) != nil { return .offense }
+        if DefensiveScheme(rawValue: rawValue) != nil { return .defense }
+        return nil
+    }
+
+    /// Human-readable name for a stored scheme raw value ("WestCoast" → "West
+    /// Coast"). Falls back to the raw value for anything unrecognised.
+    static func schemeDisplayName(_ rawValue: String) -> String {
+        if let offense = OffensiveScheme(rawValue: rawValue) { return offense.displayName }
+        if let defense = DefensiveScheme(rawValue: rawValue) { return defense.displayName }
+        return rawValue
+    }
+
+    /// Weekly inbox digest linking to the Development Report screen. A report
+    /// stamped `campReportWeek` is the offseason edition and is titled as such.
     static func inboxMessage(report: DevelopmentReport, focusedCount: Int) -> InboxMessage {
         var lines: [String] = []
+        let isCamp = report.week == campReportWeek
 
         if !report.risers.isEmpty {
             let names = report.risers.prefix(3)
                 .map { "\($0.playerName) (\($0.detail))" }
                 .joined(separator: ", ")
-            lines.append("Trending up: \(names).")
+            lines.append(isCamp ? "Reported in the best shape of the room: \(names)." : "Trending up: \(names).")
         }
         if let breakoutEntry = report.breakouts.first {
-            lines.append("BREAKOUT: \(breakoutEntry.playerName) took a massive developmental leap this week — the game has slowed down for him.")
+            lines.append(
+                isCamp
+                    ? "LATE BLOOMER: \(breakoutEntry.playerName) has finally put it together — the staff say this is a different player."
+                    : "BREAKOUT: \(breakoutEntry.playerName) took a massive developmental leap this week — the game has slowed down for him."
+            )
         }
         if !report.mentorships.isEmpty {
             let pairs = report.mentorships.prefix(2)
@@ -664,9 +851,13 @@ enum DevelopmentReportBuilder {
 
         return InboxMessage(
             sender: .developmentStaff,
-            subject: "Development Report — Week \(report.week)",
+            subject: isCamp
+                ? "Development Report — Training Camp"
+                : "Development Report — Week \(report.week)",
             body: lines.joined(separator: "\n\n"),
-            date: "Week \(report.week), Season \(report.season)",
+            date: isCamp
+                ? "Training Camp, Season \(report.season)"
+                : "Week \(report.week), Season \(report.season)",
             category: .rosterAnalysis,
             attachments: [
                 MessageAttachment(title: "Development Report", destination: .developmentReport)

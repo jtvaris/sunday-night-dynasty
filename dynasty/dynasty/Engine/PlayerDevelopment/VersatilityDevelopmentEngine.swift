@@ -65,6 +65,57 @@ enum VersatilityDevelopmentEngine {
         }
     }
 
+    // MARK: - Scheme Change Consequences (plan §2.9.2)
+
+    /// Extra practice intensity during a scheme install year. The staff spends
+    /// the whole season teaching a system nobody in the building has run, so
+    /// the reps that DO happen teach more (`DEVELOPMENT_NFL_REFERENCE.md` §5:
+    /// offenses under a new OC underperform in year 1 and recover in year 2 —
+    /// the tax is the lost familiarity, this is the catch-up).
+    static let schemeInstallIntensityBonus = 1.25
+
+    /// Points a scheme nobody on the staff runs any more loses each offseason.
+    static let unusedSchemeDecayPerOffseason = 4
+
+    /// Floor the decay stops at. A player never forgets a system completely —
+    /// he keeps a working knowledge of it, which is what makes a reunion with an
+    /// old coordinator worth something.
+    ///
+    /// The number is `PlaySimulator`'s **blown-assignment pivot** (`famBustPivot`
+    /// = 55), and that coupling is the whole point. Below that pivot every snap
+    /// rolls a bust chance and the completion channel is docked; at or above it
+    /// a squad is parity-neutral. A floor of 35 — 20 points UNDER the pivot —
+    /// meant that a club which parked a system for four or five offseasons and
+    /// then re-hired the coordinator who ran it found the room *in the busting
+    /// regime*, which is the opposite of the reunion this floor exists to
+    /// reward. `learnScheme` then needs the better part of a decade to climb
+    /// back out (in-season gains are ~1 point/season by the time familiarity
+    /// reaches the high 40s). Rusty, not broken.
+    static let unusedSchemeFloor = 55
+
+    /// Ages out the schemes this player's team no longer runs (plan §2.9.2).
+    ///
+    /// Without this, `schemeFamiliarity` was a monotone ratchet: a journeyman
+    /// accumulated 90+ in every system he ever touched, so scheme fit stopped
+    /// discriminating between clubs entirely. Only values ABOVE the floor
+    /// decay — the floor is never used to lift a low number.
+    ///
+    /// - Parameters:
+    ///   - player: The player whose dictionary is aged (mutated in place).
+    ///   - activeSchemes: The `rawValue`s his current staff actually runs.
+    static func decayUnusedSchemes(player: Player, activeSchemes: Set<String>) {
+        var familiarity = player.schemeFamiliarity
+        var changed = false
+        for (scheme, value) in familiarity where !activeSchemes.contains(scheme) {
+            let decayed = max(unusedSchemeFloor, value - unusedSchemeDecayPerOffseason)
+            if decayed != value {
+                familiarity[scheme] = decayed
+                changed = true
+            }
+        }
+        if changed { player.schemeFamiliarity = familiarity }
+    }
+
     // MARK: - Scheme Learning
 
     /// Develop a player's scheme familiarity.
@@ -104,10 +155,25 @@ enum VersatilityDevelopmentEngine {
         // Practice intensity
         learningRate *= practiceIntensity
 
-        // Player awareness helps scheme comprehension
-        learningRate *= Double(player.mental.awareness) / 70.0
+        // How fast the player absorbs a playbook. This used to read
+        // `awareness / 70`, but awareness is the in-sim game-IQ every
+        // PlaySimulator formula depends on — `learning` is now the canonical
+        // "picks up the install" stat (plan §3.3), leaving awareness pure.
+        // The divisor is chosen so the change is level-neutral: league-typical
+        // awareness ~69.5 gave 0.993, league-typical learning ~69.5 gives 1.069
+        // (+7.7 %, inside the ±10 % class-average guard).
+        learningRate *= Double(player.learning) / 65.0
 
-        return max(0, Int(learningRate.rounded()))
+        // Probabilistic rounding, not truncation-by-rounding. `Int(rounded())`
+        // silently returns 0 for every fractional gain below 0.5, and the
+        // in-season call (`practiceIntensity` 0.5) drops under that threshold
+        // once familiarity passes the high 40s — so a squad learning a new
+        // playbook STALLED at ~47, below `PlaySimulator`'s bust pivot of 55,
+        // and could only crawl out at +1 per offseason camp. Rolling the
+        // fraction keeps the designed per-season expectation while letting the
+        // in-season reps keep counting. Mirrors
+        // `PlayerDevelopmentEngine.applyGameExperience`.
+        return max(0, PlayerDevelopmentEngine.probabilisticPoints(learningRate))
     }
 
     // MARK: - Game Performance Impact
