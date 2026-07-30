@@ -156,13 +156,24 @@ struct InjuryReportView: View {
     private var currentInjuriesSection: some View {
         Section("Current Injuries (\(injuredPlayers.count))") {
             if injuredPlayers.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
+                // Reached directly from the dashboard's Injuries chip/tile now,
+                // so this is a destination in its own right rather than a
+                // footnote — it has to say plainly that there is nothing wrong.
+                VStack(spacing: 6) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 30))
                         .foregroundStyle(Color.success)
-                    Text("Fully healthy roster")
-                        .font(.caption.weight(.semibold))
+                    Text("No injuries \u{2014} fully healthy")
+                        .font(.subheadline.weight(.bold))
                         .foregroundStyle(Color.success)
+                    Text("Every player on the roster is available this week.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                        .multilineTextAlignment(.center)
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .accessibilityElement(children: .combine)
             } else {
                 ForEach(injuredPlayers) { player in
                     injuryRow(player)

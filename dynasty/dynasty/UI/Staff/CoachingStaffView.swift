@@ -55,6 +55,9 @@ struct CoachingStaffView: View {
     // MARK: - Tab State (#107)
     @State private var selectedTab: StaffTab = .staff
 
+    /// Transient one-liner explaining why a locked tab cannot be opened.
+    @State private var lockedTabHint: String?
+
     // MARK: - Hiring Confirmation State (#49)
     @State private var recentHireMessage: String?
 
@@ -740,45 +743,75 @@ struct CoachingStaffView: View {
 
     // MARK: - Tab Bar (#107)
 
+    /// Why a locked tab is locked — shown as a one-line hint when it is tapped.
+    private func lockHint(for tab: StaffTab) -> String {
+        tab == .schemes
+            ? "Hire a coordinator to unlock Schemes"
+            : "Hire staff to unlock Review"
+    }
+
+    /// Flashes the unlock hint under the tab bar for a couple of seconds.
+    private func flashLockHint(_ hint: String) {
+        withAnimation(.easeInOut(duration: 0.2)) { lockedTabHint = hint }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            if lockedTabHint == hint {
+                withAnimation(.easeOut(duration: 0.3)) { lockedTabHint = nil }
+            }
+        }
+    }
+
     private var staffTabBar: some View {
-        HStack(spacing: 0) {
-            ForEach(StaffTab.allCases, id: \.self) { tab in
-                let isLocked = (tab == .schemes && !isSchemesTabAvailable) ||
-                               (tab == .review && !isReviewTabAvailable)
-                let isSelected = selectedTab == tab
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(StaffTab.allCases, id: \.self) { tab in
+                    let isLocked = (tab == .schemes && !isSchemesTabAvailable) ||
+                                   (tab == .review && !isReviewTabAvailable)
+                    let isSelected = selectedTab == tab
 
-                Button {
-                    if !isLocked {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            selectedTab = tab
-                        }
-                    }
-                } label: {
-                    VStack(spacing: 6) {
-                        HStack(spacing: 4) {
-                            if isLocked {
-                                Image(systemName: "lock.fill")
-                                    .font(.system(size: 9))
+                    Button {
+                        if isLocked {
+                            flashLockHint(lockHint(for: tab))
+                        } else {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedTab = tab
                             }
-                            Text(tab.rawValue)
-                                .font(.subheadline.weight(isSelected ? .bold : .medium))
                         }
-                        .foregroundStyle(
-                            isSelected ? Color.accentGold :
-                            isLocked ? Color.textTertiary.opacity(0.5) :
-                            Color.textSecondary
-                        )
+                    } label: {
+                        VStack(spacing: 6) {
+                            HStack(spacing: 4) {
+                                if isLocked {
+                                    Image(systemName: "lock.fill")
+                                        .font(.system(size: 9))
+                                }
+                                Text(tab.rawValue)
+                                    .font(.subheadline.weight(isSelected ? .bold : .medium))
+                            }
+                            .foregroundStyle(
+                                isSelected ? Color.accentGold :
+                                isLocked ? Color.textTertiary.opacity(0.5) :
+                                Color.textSecondary
+                            )
 
-                        Rectangle()
-                            .fill(isSelected ? Color.accentGold : Color.clear)
-                            .frame(height: 2)
+                            Rectangle()
+                                .fill(isSelected ? Color.accentGold : Color.clear)
+                                .frame(height: 2)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
                     }
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .opacity(isLocked ? 0.5 : 1.0)
+                    .accessibilityHint(isLocked ? lockHint(for: tab) : "")
                 }
-                .buttonStyle(.plain)
-                .opacity(isLocked ? 0.5 : 1.0)
-                .accessibilityHint(isLocked ? "Hire coordinators to unlock" : "")
+            }
+
+            // Tapping a locked tab explains itself instead of doing nothing.
+            if let hint = lockedTabHint {
+                Text(hint)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.warning)
+                    .padding(.top, 4)
+                    .transition(.opacity)
             }
         }
         .padding(.horizontal, 16)
@@ -2252,9 +2285,18 @@ struct CoachingStaffView: View {
     // MARK: - Budget Header
 
     /// Budget change from previous season (in thousands).
+    ///
+    /// Only meaningful once this front office has actually worked a season.
+    /// At career bootstrap `WeekAdvancer.startNewSeason` stamps
+    /// `previousCoachingBudget` with the authored `NFLTeamData` figure and then
+    /// replaces `coachingBudget` with the `BudgetEngine` formula output, so week 0
+    /// of season 1 would otherwise show a phantom year-over-year delta
+    /// (BAL: $46.0M authored → $38.4M formula = a bogus "-$7.6M").
     private var budgetChange: Int? {
+        guard career.totalWins + career.totalLosses > 0 else { return nil }
         guard let prev = owner?.previousCoachingBudget, prev > 0 else { return nil }
-        return coachingBudget - prev
+        let delta = coachingBudget - prev
+        return delta == 0 ? nil : delta
     }
 
     /// League-average coaching budget in thousands. Used for context indicator.
@@ -2302,15 +2344,18 @@ struct CoachingStaffView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.textPrimary)
                     HStack(spacing: 4) {
-                        Text("$\(formatBudget(totalCoachSalaryUsed))M / $\(formatBudget(coachingBudget))M used")
+                        Text("Used $\(formatBudget(totalCoachSalaryUsed))M of $\(formatBudget(coachingBudget))M")
                             .font(.caption)
                             .foregroundStyle(remainingBudget >= 0 ? Color.textSecondary : Color.danger)
 
-                        // Show budget change from last season (#80)
-                        if let change = budgetChange, change != 0 {
-                            Text(change > 0 ? "(+$\(formatBudget(change))M)" : "(-$\(formatBudget(abs(change)))M)")
+                        // Budget change from last season (#80) — spelled out, so a
+                        // year-over-year cut can never read as an overspend.
+                        if let change = budgetChange {
+                            Text(change > 0
+                                 ? "(+$\(formatBudget(change))M vs last season)"
+                                 : "(-$\(formatBudget(abs(change)))M vs last season)")
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(change > 0 ? Color.success : Color.danger)
+                                .foregroundStyle(change > 0 ? Color.success : Color.warning)
                         }
                     }
 
@@ -2355,7 +2400,7 @@ struct CoachingStaffView: View {
                     Text("Scouting Budget")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.textPrimary)
-                    Text("$\(formatBudget(totalScoutSalaryUsed))M / $\(formatBudget(scoutingBudget))M used")
+                    Text("Used $\(formatBudget(totalScoutSalaryUsed))M of $\(formatBudget(scoutingBudget))M")
                         .font(.caption)
                         .foregroundStyle(remainingScoutBudget >= 0 ? Color.textSecondary : Color.danger)
                 }
@@ -2384,7 +2429,7 @@ struct CoachingStaffView: View {
                     Text("Medical Budget")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.textPrimary)
-                    Text("$\(formatBudget(totalMedicalSalaryUsed))M / $\(formatBudget(medicalBudget))M used")
+                    Text("Used $\(formatBudget(totalMedicalSalaryUsed))M of $\(formatBudget(medicalBudget))M")
                         .font(.caption)
                         .foregroundStyle(remainingMedicalBudget >= 0 ? Color.textSecondary : Color.danger)
                 }

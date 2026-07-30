@@ -27,14 +27,21 @@ struct DraftDayView: View {
                     .foregroundStyle(Color.textPrimary)
             }
         }
-        .navigationTitle("NFL Draft \(career.currentSeason)")
+        .navigationTitle("NFL Draft \(String(career.currentSeason))")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             if coordinator.coord == nil {
                 let c = DraftDayCoordinator(career: career, modelContext: modelContext)
                 await c.loadData()
                 coordinator.coord = c
-                c.start()
+                // Second line of defence behind `CareerShellView.isDraftRoomLive`:
+                // the pick clock must never tick outside the draft phase. A save
+                // opened in Week 1 of the regular season used to resume a running
+                // 60 s clock here ("ON THE CLOCK: New York Giants") off stale
+                // state. The board still renders — it just never starts.
+                if career.currentPhase == .draft {
+                    c.start()
+                }
             }
         }
     }

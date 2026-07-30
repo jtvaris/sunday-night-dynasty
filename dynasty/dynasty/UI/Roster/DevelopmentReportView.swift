@@ -502,9 +502,9 @@ struct DevelopmentReportView: View {
         return VStack(alignment: .leading, spacing: 10) {
             Group {
                 if isCamp {
-                    Text("Training Camp · Season \(report.season)")
+                    Text("Training Camp · Season \(String(report.season))")
                 } else {
-                    Text("Week \(report.week) · Season \(report.season)")
+                    Text("Week \(report.week) · Season \(String(report.season))")
                 }
             }
             .font(.caption.weight(.bold))

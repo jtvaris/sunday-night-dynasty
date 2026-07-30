@@ -36,7 +36,7 @@ struct DraftUDFAPanel: View {
                     .font(.caption.weight(.heavy))
                     .tracking(1.6)
                     .foregroundStyle(Color.accentGold)
-                Text("Undrafted Free Agency — \(coordinator.draftYear)")
+                Text("Undrafted Free Agency — \(String(coordinator.draftYear))")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(Color.textPrimary)
             }

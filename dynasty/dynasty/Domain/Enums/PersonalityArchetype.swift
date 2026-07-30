@@ -30,7 +30,7 @@ enum PersonalityArchetype: String, Codable, CaseIterable {
         switch self {
         case .teamLeader:        return "Leader"
         case .loneWolf:          return "Lone Wolf"
-        case .feelPlayer:        return "Feel"
+        case .feelPlayer:        return "Instinct"
         case .steadyPerformer:   return "Steady"
         case .dramaQueen:        return "Drama"
         case .quietProfessional: return "Quiet Pro"

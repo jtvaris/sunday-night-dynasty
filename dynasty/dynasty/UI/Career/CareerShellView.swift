@@ -76,6 +76,11 @@ struct CareerShellView: View {
                 pendingTaskCount: pendingTaskCount,
                 onCalendarTapped: { showCalendar = true },
                 onQuitTapped: { showQuitConfirmation = true },
+                unreadInboxCount: inboxMessages.filter { !$0.isRead }.count,
+                onInboxTapped: {
+                    navigationPath = NavigationPath()
+                    navigationPath.append(ShellDestination.inbox)
+                },
                 onBookmarkTapped: { destination in
                     handleBookmarkNavigation(destination)
                 }
@@ -631,14 +636,26 @@ struct CareerShellView: View {
             // the Trade Center's "Scout league rosters" link.
             LeagueRostersView(career: career)
         case .draft:
-            DraftDayView(career: career)
-                .onAppear {
-                    markTaskVisited(for: .draft)
-                    refreshTaskCompletionStatus()
+            // The "Draft" nav entry is live-room-only DURING the draft phase.
+            // Outside it, opening this route used to resume a stale war room —
+            // a running 60-second pick clock in Week 1 of the regular season,
+            // for a draft the sidebar already reported as Complete. Everywhere
+            // else the destination is a read-only recap of the last draft plus
+            // the club's upcoming draft capital.
+            Group {
+                if isDraftRoomLive {
+                    DraftDayView(career: career)
+                } else {
+                    DraftRecapView(career: career)
                 }
-                .onDisappear {
-                    refreshTaskCompletionStatus()
-                }
+            }
+            .onAppear {
+                markTaskVisited(for: .draft)
+                refreshTaskCompletionStatus()
+            }
+            .onDisappear {
+                refreshTaskCompletionStatus()
+            }
         case .scouting:
             ScoutingHubView(career: career)
             .onAppear {
@@ -816,6 +833,15 @@ struct CareerShellView: View {
                 consecutiveOpponentWeeks: consecutiveOpponentPrepWeeks
             )
         }
+    }
+
+    // MARK: - Draft Routing
+
+    /// `true` only while the club is actually on the draft calendar. The live
+    /// war room (and its pick clock) must never be reachable outside it — see
+    /// the `.draft` destination.
+    private var isDraftRoomLive: Bool {
+        career.currentPhase == .draft
     }
 
     // MARK: - Game Plan Helpers
@@ -1359,6 +1385,8 @@ struct CareerShellView: View {
         case .scouting:      dest = .scouting
         case .cap:           dest = .cap
         case .coachingStaff: dest = .coachingStaff
+        case .news:          dest = .news
+        case .trades:        dest = .trades
         }
         // Reset to root then push the destination
         navigationPath = NavigationPath()

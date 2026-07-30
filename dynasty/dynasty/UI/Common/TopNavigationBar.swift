@@ -10,6 +10,11 @@ struct TopNavigationBar: View {
     let onCalendarTapped: () -> Void
     var onQuitTapped: (() -> Void)?
 
+    /// Unread mail count driving the envelope badge. 0 hides the badge.
+    var unreadInboxCount: Int = 0
+    /// Opens the inbox. When nil the envelope button is hidden entirely.
+    var onInboxTapped: (() -> Void)?
+
     // MARK: - Bookmark Definitions
 
     struct Bookmark: Identifiable {
@@ -21,6 +26,13 @@ struct TopNavigationBar: View {
 
     enum BookmarkDestination {
         case roster, schedule, standings, draft, scouting, cap, coachingStaff
+        /// League news feed (`NewsView`) — previously reachable only from the
+        /// round-recap sheet, which meant trade/signing headlines were
+        /// effectively invisible between games.
+        case news
+        /// Trade Center (`TradeView`) — browse the other 31 rosters and
+        /// propose deals. Had no primary nav entry at all before.
+        case trades
     }
 
     static let defaultBookmarks: [Bookmark] = [
@@ -31,6 +43,8 @@ struct TopNavigationBar: View {
         Bookmark(icon: "list.clipboard.fill", label: "Draft", destination: .draft),
         Bookmark(icon: "magnifyingglass", label: "Scouting", destination: .scouting),
         Bookmark(icon: "dollarsign.circle.fill", label: "Cap", destination: .cap),
+        Bookmark(icon: "arrow.left.arrow.right", label: "Trades", destination: .trades),
+        Bookmark(icon: "newspaper.fill", label: "News", destination: .news),
     ]
 
     /// Callback when a bookmark is tapped — the shell view handles navigation.
@@ -50,8 +64,12 @@ struct TopNavigationBar: View {
 
             Spacer(minLength: 8)
 
-            // MARK: Right — Calendar + Quit
-            HStack(spacing: 12) {
+            // MARK: Right — Inbox + Calendar + Quit
+            HStack(spacing: 8) {
+                if onInboxTapped != nil {
+                    inboxButton
+                }
+
                 calendarButton
 
                 Button {
@@ -97,7 +115,10 @@ struct TopNavigationBar: View {
     // MARK: - Bookmark Strip
 
     private var bookmarkStrip: some View {
-        HStack(spacing: 12) {
+        // 9 entries at 44 pt each — spacing trimmed from 12 to 8 so News and
+        // Trades fit alongside the original seven in iPad portrait without the
+        // strip crowding the team badge.
+        HStack(spacing: 8) {
             ForEach(Self.defaultBookmarks) { bookmark in
                 Button {
                     onBookmarkTapped?(bookmark.destination)
@@ -123,6 +144,37 @@ struct TopNavigationBar: View {
                 .accessibilityLabel(bookmark.label)
             }
         }
+    }
+
+    // MARK: - Inbox Button
+
+    /// Envelope + unread badge, sitting immediately left of the calendar. The
+    /// inbox destination existed but had no persistent entry point, so mail
+    /// (trade receipts, agent demands, owner notes) only surfaced by accident.
+    private var inboxButton: some View {
+        Button {
+            onInboxTapped?()
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: unreadInboxCount > 0 ? "envelope.badge.fill" : "envelope")
+                    .font(.system(size: 18))
+                    .foregroundStyle(unreadInboxCount > 0 ? Color.accentGold : Color.textSecondary)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+
+                if unreadInboxCount > 0 {
+                    Text("\(min(unreadInboxCount, 99))")
+                        .font(.system(size: 10, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.danger))
+                        .offset(x: 6, y: -2)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Inbox, \(unreadInboxCount) unread")
     }
 
     // MARK: - Calendar Button

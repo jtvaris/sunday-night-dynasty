@@ -411,7 +411,15 @@ struct ScoutingHubView: View {
         case .prospects:
             ProspectListView(career: career, prospects: prospects, scoutsSentToCombine: scoutsSentToCombine)
         case .bigBoard:
-            BigBoardView(career: career, prospects: prospects, teamRoster: teamPlayers, scoutsSentToCombine: scoutsSentToCombine)
+            BigBoardView(
+                career: career,
+                prospects: prospects,
+                teamRoster: teamPlayers,
+                scoutsSentToCombine: scoutsSentToCombine,
+                // Empty-state CTAs need a way back into the hub's other tabs.
+                onSwitchTab: { selectedTab = $0 },
+                scoutCount: scouts.count
+            )
         case .combine:
             CombineResultsView(career: career, prospects: prospects)
         case .interviews:
@@ -2430,7 +2438,7 @@ struct NextYearClassPreview: View {
                     Image(systemName: "eye.fill")
                         .foregroundStyle(Color.accentGold)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Early Look \u{2014} \(career.currentSeason + 1) Draft Class")
+                        Text("Early Look \u{2014} \(String(career.currentSeason + 1)) Draft Class")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Color.textPrimary)
                         Text("Full scouting begins next season")

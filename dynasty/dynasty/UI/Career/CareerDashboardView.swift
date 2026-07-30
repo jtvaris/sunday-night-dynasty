@@ -37,6 +37,11 @@ struct CareerDashboardView: View {
     @State private var expiringContractPlayers: [Player] = []
     @State private var positionGroupGrades: [(group: String, starterGrade: String, depthGrade: String, starterOVR: Int, depthOVR: Int)] = []
     @State private var teamMorale: Int = 70
+    /// Team chemistry 0-100 straight from `LockerRoomEngine` — the SAME number
+    /// the Locker Room screen shows. The dashboard tile used to label its
+    /// chemistry row with `moraleLabel(teamMorale)`, so a 100/100 "Elite" locker
+    /// room read as "Good" here.
+    @State private var teamChemistry: Int = 50
     @State private var previousSeasonRecord: String?
     @State private var previousSeasonYear: Int?
 
@@ -76,6 +81,8 @@ struct CareerDashboardView: View {
 
     /// Coaching staff review sheet (shown during coachingChanges phase advance)
     @State private var showCoachingStaffReview = false
+    /// Medical report sheet, opened by the Injuries quick chip and tile.
+    @State private var showInjuryReport = false
     @State private var allCoaches: [Coach] = []
 
     /// Tracks which Position-Grades letter is currently showing its explainer popover.
@@ -385,6 +392,12 @@ struct CareerDashboardView: View {
             guard shouldLaunch else { return }
             launchCoachedGame.wrappedValue = false
             startCoachedGame()
+        }
+        // Injuries quick chip / Injuries tile → the medical report, not the
+        // plain roster Overview. Presented as a sheet so it reads the same here
+        // as it does from the Roster screen's medical toolbar button.
+        .sheet(isPresented: $showInjuryReport) {
+            InjuryReportView(players: players, career: career)
         }
         .sheet(isPresented: $showCoachingStaffReview) {
             CoachingStaffReviewSheet(
@@ -1028,6 +1041,11 @@ struct CareerDashboardView: View {
         let icon: String
         let label: String
         let destination: TaskDestination
+        /// When true the chip opens the medical/injury report sheet instead of
+        /// pushing `destination`. The Injuries chip used to route to `.roster`,
+        /// which dumped the user on the plain roster Overview with no hint of
+        /// what they were meant to look at.
+        var opensInjuryReport: Bool = false
     }
 
     private func quickActions(for group: SeasonPhaseGroup) -> [QuickAction] {
@@ -1063,7 +1081,7 @@ struct CareerDashboardView: View {
                 QuickAction(icon: "scope", label: "Game Plan", destination: .gamePlan),
                 QuickAction(icon: "list.number", label: "Depth Chart", destination: .depthChart),
                 QuickAction(icon: "chart.line.uptrend.xyaxis", label: "Development", destination: .developmentReport),
-                QuickAction(icon: "cross.case.fill", label: "Injuries", destination: .roster)
+                QuickAction(icon: "cross.case.fill", label: "Injuries", destination: .roster, opensInjuryReport: true)
             ]
         }
     }
@@ -1083,7 +1101,11 @@ struct CareerDashboardView: View {
 
     private func quickActionButton(_ action: QuickAction) -> some View {
         Button {
-            onTaskSelected(action.destination)
+            if action.opensInjuryReport {
+                showInjuryReport = true
+            } else {
+                onTaskSelected(action.destination)
+            }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: action.icon)
@@ -1375,7 +1397,9 @@ struct CareerDashboardView: View {
 
     private var injuryReportTile: some View {
         Button {
-            onTaskSelected(.roster)
+            // Same destination as the Injuries quick chip — the medical report,
+            // not the plain roster.
+            showInjuryReport = true
         } label: {
             DashboardTile(icon: "cross.case.fill", title: "Injuries") {
                 VStack(alignment: .leading, spacing: 4) {
@@ -2033,26 +2057,28 @@ struct CareerDashboardView: View {
         } label: {
             DashboardTile(icon: "heart.fill", title: "Locker Room") {
                 VStack(alignment: .leading, spacing: 6) {
-                    // Chemistry label with dynamic text
+                    // Chemistry tier — same engine label + same 0-100 value the
+                    // Locker Room screen prints ("Elite 100/100").
                     HStack {
                         Text("Chemistry")
                             .font(.system(size: 10))
                             .foregroundStyle(Color.textSecondary)
                         Spacer()
-                        Text(moraleLabel(teamMorale))
+                        Text("\(LockerRoomEngine.chemistryLabel(teamChemistry)) \(teamChemistry)/100")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(moraleColor(teamMorale))
+                            .foregroundStyle(chemistryColor(teamChemistry))
                     }
 
-                    // Visual morale bar (larger)
+                    // The bar belongs to the CHEMISTRY row above it — it used to
+                    // plot morale under a "Chemistry" label.
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             RoundedRectangle(cornerRadius: 5)
                                 .fill(Color.backgroundTertiary)
                                 .frame(height: 12)
                             RoundedRectangle(cornerRadius: 5)
-                                .fill(moraleColor(teamMorale))
-                                .frame(width: geo.size.width * (Double(teamMorale) / 100.0), height: 12)
+                                .fill(chemistryColor(teamChemistry))
+                                .frame(width: geo.size.width * (Double(teamChemistry) / 100.0), height: 12)
                         }
                     }
                     .frame(height: 12)
@@ -2571,7 +2597,14 @@ struct CareerDashboardView: View {
 
     private var draftTile: some View {
         NavigationLink {
-            DraftDayView(career: career)
+            // Live war room only during the draft phase — everywhere else this
+            // tile opens the read-only recap (see `DraftRecapView`). Resuming
+            // the room off stale picks started a 60 s pick clock in-season.
+            if career.currentPhase == .draft {
+                DraftDayView(career: career)
+            } else {
+                DraftRecapView(career: career)
+            }
         } label: {
             DashboardTile(icon: "list.clipboard.fill", title: "Draft", highlighted: currentPhaseHighlightedTiles.contains("Draft")) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -2964,6 +2997,18 @@ struct CareerDashboardView: View {
         return Color.danger
     }
 
+    /// Mirrors `LockerRoomView.chemistryColor` so the dashboard tile and the
+    /// Locker Room screen tint the same score identically.
+    private func chemistryColor(_ value: Int) -> Color {
+        switch value {
+        case 90...100: return Color.accentGold
+        case 75..<90:  return Color.success
+        case 55..<75:  return Color.accentBlue
+        case 40..<55:  return Color.warning
+        default:       return Color.danger
+        }
+    }
+
     private func gradeForOVR(_ ovr: Int) -> String {
         if ovr >= 90 { return "A+" }
         if ovr >= 85 { return "A" }
@@ -3204,6 +3249,12 @@ struct CareerDashboardView: View {
         // Team morale (#82) — average of all player morale
         if !players.isEmpty {
             teamMorale = players.reduce(0) { $0 + $1.morale } / players.count
+            // Chemistry is a separate engine number (leadership vs. toxicity),
+            // not a morale average — read it from the same source the Locker
+            // Room screen uses so both screens agree on the tier.
+            teamChemistry = LockerRoomEngine.calculateChemistry(
+                players: players, collectEvents: false
+            ).teamChemistry
         }
 
         // Position group grades (#17)

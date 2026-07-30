@@ -105,7 +105,7 @@ struct RoundResultsView: View {
                 Text(String(localized: "Week \(data.week) Recap"))
                     .font(.title2.weight(.heavy))
                     .foregroundStyle(Color.textPrimary)
-                Text(String(localized: "Around the league · Season \(data.season)"))
+                Text(String(localized: "Around the league · Season \(String(data.season))"))
                     .font(.subheadline)
                     .foregroundStyle(Color.textSecondary)
             }

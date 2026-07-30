@@ -15,6 +15,11 @@ struct TimelineTasksPanel: View {
     /// How many upcoming phases (beyond current) to show fully expanded.
     private let upcomingPhaseCount = 3
 
+    /// Completed phases are collapsed behind one disclosure row by default.
+    /// Expanded, twelve struck-through rows ate most of the sidebar in Week 1
+    /// and pushed the live phase (the only actionable part) below the fold.
+    @State private var showCompletedPhases = false
+
     // MARK: - Ordered Phases
 
     private static let orderedPhases: [SeasonPhase] = [
@@ -54,9 +59,14 @@ struct TimelineTasksPanel: View {
             // Scrollable phases list
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    // Past phases (collapsed)
-                    ForEach(pastPhases, id: \.phase) { entry in
-                        pastPhaseRow(entry)
+                    // Past phases — one summary row, expandable on demand.
+                    if !pastPhases.isEmpty {
+                        completedPhasesDisclosure
+                        if showCompletedPhases {
+                            ForEach(pastPhases, id: \.phase) { entry in
+                                pastPhaseRow(entry)
+                            }
+                        }
                     }
 
                     // Current phase (expanded with real tasks)
@@ -101,8 +111,11 @@ struct TimelineTasksPanel: View {
 
             Spacer()
 
-            let doneCount = tasks.filter { $0.status == .done }.count
-            Text("\(doneCount)/\(tasks.count)")
+            // Counts real steps only — the group banner is a label that ships
+            // pre-`.done`, so including it read as "1/5 done" on a fresh week.
+            let real = Self.actionableTasks(tasks)
+            let doneCount = real.filter { $0.status == .done }.count
+            Text("\(doneCount)/\(real.count)")
                 .font(.system(size: 11, weight: .semibold).monospacedDigit())
                 .foregroundStyle(Color.textSecondary)
         }
@@ -126,6 +139,58 @@ struct TimelineTasksPanel: View {
             let phase = Self.orderedPhases[i]
             return (phase, Self.phaseName(phase))
         }
+    }
+
+    /// Single collapsed row standing in for every completed phase, e.g.
+    /// "Offseason complete (12)". Labelled after the group the finished phases
+    /// belong to when they all share one, otherwise a neutral "Phases complete".
+    private var completedPhasesDisclosure: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showCompletedPhases.toggle()
+            }
+        } label: {
+            HStack(spacing: 10) {
+                VStack(spacing: 0) {
+                    Color.clear.frame(width: 2, height: 6)
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color.success.opacity(0.7))
+                    Rectangle()
+                        .fill(Color.textTertiary.opacity(0.3))
+                        .frame(width: 2, height: 6)
+                }
+
+                Text("\(completedPhasesLabel) (\(pastPhases.count))")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.textSecondary)
+
+                Spacer()
+
+                Image(systemName: showCompletedPhases ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(completedPhasesLabel), \(pastPhases.count) phases")
+        .accessibilityHint(showCompletedPhases ? "Collapse the completed list" : "Expand the completed list")
+    }
+
+    private var completedPhasesLabel: String {
+        let groups = Set(pastPhases.map { $0.phase.group })
+        // Once the games start, everything behind us is "the offseason" in the
+        // way a coach means it — that reads better than listing four groups.
+        if career.currentPhase.group == .regularSeason, !groups.contains(.regularSeason) {
+            return "Offseason complete"
+        }
+        if groups.count == 1, let only = groups.first {
+            return "\(only.displayName) complete"
+        }
+        return "Phases complete"
     }
 
     private func pastPhaseRow(_ entry: (phase: SeasonPhase, name: String)) -> some View {
@@ -212,10 +277,24 @@ struct TimelineTasksPanel: View {
             .padding(.horizontal, 14)
             .padding(.top, 8)
 
+            // Group caption, replacing the "─ Regular Season ─" pseudo-task that
+            // `TaskGenerator` pins to the top of every list. Rendered as a task
+            // row it read as a struck-through step the user had somehow already
+            // completed — and inside the TRADE DEADLINE / PLAYOFFS groups it
+            // looked like a stray "Regular Season" item in the wrong phase.
+            Text(groupCaption(for: career.currentPhase))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.textTertiary)
+                .textCase(.uppercase)
+                .tracking(0.4)
+                .padding(.leading, 30)
+                .padding(.top, 4)
+
             // Task rows for current phase
             VStack(spacing: 0) {
-                let required = tasks.filter { $0.isRequired }
-                let optional = tasks.filter { !$0.isRequired }
+                let actionable = Self.actionableTasks(tasks)
+                let required = actionable.filter { $0.isRequired }
+                let optional = actionable.filter { !$0.isRequired }
 
                 ForEach(required) { task in
                     currentTaskRow(task, isRequired: true)
@@ -518,9 +597,18 @@ struct TimelineTasksPanel: View {
             .padding(.horizontal, 14)
             .padding(.top, 6)
 
-            // Preview task rows (dimmed)
+            Text(groupCaption(for: entry.phase))
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Color.textTertiary)
+                .textCase(.uppercase)
+                .tracking(0.4)
+                .padding(.leading, 30)
+                .padding(.top, 2)
+
+            // Preview task rows (dimmed) — banner row stripped, see
+            // `actionableTasks`.
             VStack(spacing: 0) {
-                ForEach(entry.tasks) { task in
+                ForEach(Self.actionableTasks(entry.tasks)) { task in
                     previewTaskRow(task)
                 }
             }
@@ -578,6 +666,26 @@ struct TimelineTasksPanel: View {
     }
 
     // MARK: - Static Helpers
+
+    /// Drops `TaskGenerator`'s read-only group-banner pseudo-task (title
+    /// `"─ <Group> ─"`, always `.done`) from a task list. It is a label, not a
+    /// step: the panel renders it as a caption instead — see `groupCaption`.
+    static func actionableTasks(_ tasks: [GameTask]) -> [GameTask] {
+        tasks.filter { !$0.title.hasPrefix("\u{2500}") }
+    }
+
+    /// Caption under a phase header explaining what the phase's task list is.
+    /// Regular-season groups repeat their list every week, which is exactly the
+    /// thing the old "─ Regular Season ─" separator failed to say.
+    private func groupCaption(for phase: SeasonPhase) -> String {
+        switch phase.group {
+        case .regularSeason:
+            return "Weekly during regular season"
+        default:
+            let progress = phase.groupProgress
+            return "\(phase.group.displayName) \u{00B7} step \(progress.current) of \(progress.total)"
+        }
+    }
 
     static func phaseName(_ phase: SeasonPhase) -> String {
         switch phase {

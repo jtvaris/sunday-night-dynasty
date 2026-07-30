@@ -206,7 +206,7 @@ struct WarRoomPanel: View {
                         .font(.caption.monospaced())
                         .foregroundStyle(Color.textSecondary)
                     Spacer()
-                    Text("\(PickValueChart.points(forPick: pick.pickNumber)) pts")
+                    Text("\(String(PickValueChart.points(forPick: pick.pickNumber))) pts")
                         .font(.caption.monospaced().weight(.bold))
                         .foregroundStyle(Color.accentGold)
                 }
@@ -216,11 +216,11 @@ struct WarRoomPanel: View {
             // discount the engine charges — no second opinion in the UI.
             ForEach(userFuturePicks, id: \.id) { pick in
                 HStack {
-                    Text("\(pick.seasonYear) Rd \(pick.round)")
+                    Text("\(String(pick.seasonYear)) Rd \(pick.round)")
                         .font(.caption.monospaced())
                         .foregroundStyle(Color.textTertiary)
                     Spacer()
-                    Text("\(TradeValueEngine.pickTradeValue(pick: pick, currentSeason: coordinator.draftYear)) pts")
+                    Text("\(String(TradeValueEngine.pickTradeValue(pick: pick, currentSeason: coordinator.draftYear))) pts")
                         .font(.caption.monospaced().weight(.bold))
                         .foregroundStyle(Color.accentGold.opacity(0.75))
                 }
@@ -231,7 +231,7 @@ struct WarRoomPanel: View {
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.textPrimary)
                 Spacer()
-                Text("\(userTotalValue()) pts")
+                Text("\(String(userTotalValue())) pts")
                     .font(.caption.monospaced().weight(.heavy))
                     .foregroundStyle(Color.draftStealGold)
             }

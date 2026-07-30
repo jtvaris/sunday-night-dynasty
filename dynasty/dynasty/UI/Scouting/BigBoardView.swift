@@ -6,6 +6,13 @@ struct BigBoardView: View {
     let prospects: [CollegeProspect]
     let teamRoster: [Player]
     var scoutsSentToCombine: Bool = false
+    /// Lets the empty state hand the user back to another Scouting tab
+    /// ("Hire Scouts" → Scout Team, "Browse Prospects" → Prospects). Optional so
+    /// standalone call sites and previews can omit it.
+    var onSwitchTab: ((ScoutingTab) -> Void)?
+    /// Number of scouts currently on staff — drives the empty state's copy
+    /// (0 scouts is a different problem from 8 scouts and an unscouted class).
+    var scoutCount: Int = 0
 
     @Environment(\.modelContext) private var modelContext
     @State private var positionFilter: ProspectPositionFilter = .all
@@ -1462,13 +1469,36 @@ struct BigBoardView: View {
                 }
             }
 
-            Picker("Flag", selection: $flagFilter) {
-                ForEach(ProspectFlagFilter.allCases) { filter in
-                    Text(filter.label).tag(filter)
+            // Flag filter. This was a `.pickerStyle(.menu)` Picker squeezed into
+            // a 44 pt frame: the selected value wrapped mid-word and rendered as
+            // a cryptic blue "A‖" glyph with no label at all. Now it is an
+            // explicitly labelled menu that names what it filters and what is
+            // currently selected.
+            Menu {
+                Picker("Flag", selection: $flagFilter) {
+                    ForEach(ProspectFlagFilter.allCases) { filter in
+                        Label(filter.label, systemImage: filter.icon).tag(filter)
+                    }
                 }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: flagFilter.icon)
+                        .font(.caption)
+                    Text(flagFilter == .all ? "All Flags" : flagFilter.label)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .foregroundStyle(flagFilter == .all ? Color.textSecondary : Color.accentGold)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule().fill(Color.backgroundTertiary)
+                )
+                .fixedSize()
             }
-            .pickerStyle(.menu)
-            .frame(width: 44)
+            .accessibilityLabel("Filter by flag, \(flagFilter.label)")
 
             Button {
                 showWatchlistOnly.toggle()
@@ -1483,7 +1513,10 @@ struct BigBoardView: View {
     // MARK: - Empty State
 
     private var emptyState: some View {
-        VStack(spacing: 20) {
+        // The board can only fill up via scouting, so a bare "it's empty"
+        // message left the user staring at a full-screen void with nothing to
+        // press. Both routes out of the dead end are offered here.
+        VStack(spacing: 16) {
             Image(systemName: "list.star")
                 .font(.system(size: 52))
                 .foregroundStyle(Color.textTertiary)
@@ -1492,13 +1525,61 @@ struct BigBoardView: View {
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(Color.textPrimary)
 
-            Text("Scout prospects to add them to your draft board.")
+            Text(emptyStateMessage)
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
+
+            HStack(spacing: 12) {
+                emptyStateButton(
+                    title: "Hire Scouts",
+                    systemImage: "person.badge.plus",
+                    isPrimary: scoutCount == 0
+                ) { onSwitchTab?(.scouts) }
+
+                emptyStateButton(
+                    title: "Browse Prospects",
+                    systemImage: "person.3",
+                    isPrimary: scoutCount > 0
+                ) { onSwitchTab?(.prospects) }
+            }
+            .padding(.top, 4)
+            .opacity(onSwitchTab == nil ? 0 : 1)
+            .disabled(onSwitchTab == nil)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyStateMessage: String {
+        if scoutCount == 0 {
+            return "You have no scouts on staff, so nobody is filing reports. Hire a scout, then work the prospect list to build your board."
+        }
+        return "Scout prospects to add them to your draft board — open the prospect list and assign your scouts."
+    }
+
+    private func emptyStateButton(
+        title: String,
+        systemImage: String,
+        isPrimary: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(isPrimary ? Color.backgroundPrimary : Color.textPrimary)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 11)
+                .background(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                        .fill(isPrimary ? Color.accentGold : Color.backgroundTertiary)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                        .strokeBorder(isPrimary ? Color.clear : Color.surfaceBorder, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Assessment Sheet
@@ -1790,6 +1871,16 @@ enum ProspectFlagFilter: String, CaseIterable, Identifiable {
         case .mustHave: return "Must Have"
         case .sleeper:  return "Sleepers"
         case .avoid:    return "Avoid"
+        }
+    }
+
+    /// SF Symbol shown next to the label in the (now labelled) filter menu.
+    var icon: String {
+        switch self {
+        case .all:      return "line.3.horizontal.decrease.circle"
+        case .mustHave: return "star.fill"
+        case .sleeper:  return "moon.zzz.fill"
+        case .avoid:    return "hand.thumbsdown.fill"
         }
     }
 }
