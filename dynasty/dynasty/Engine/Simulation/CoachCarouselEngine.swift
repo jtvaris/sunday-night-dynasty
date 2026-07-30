@@ -264,6 +264,7 @@ enum CoachCarouselEngine {
             }
             let unattachedCoordinators = allCoaches.filter {
                 $0.teamID == nil
+                    && !$0.isRetired            // a retired coach never comes back
                     && [.offensiveCoordinator, .defensiveCoordinator, .assistantHeadCoach].contains($0.role)
                     && CoachingEngine.coachOverallRating($0) >= 66
             }
@@ -296,6 +297,15 @@ enum CoachCarouselEngine {
                 guard let generated = CoachingEngine.generateCoachCandidates(role: .headCoach, count: 1).first else { continue }
                 hired = generated
                 originNote = "surprise outside hire"
+                // Phase 4: they are joining the league for real — turn the
+                // candidate's preview portrait into a reserved one. `gender:`
+                // must be passed or the claim's fast path would accept a
+                // wrong-gender preview verbatim.
+                generated.faceID = FaceLibrary.shared.claimFace(
+                    generated.faceID, personID: generated.id,
+                    role: .coach, age: generated.age, position: nil,
+                    gender: FacePersonGender(tag: generated.gender)
+                )
                 result.newCoaches.append(generated)
             }
 
@@ -356,7 +366,7 @@ enum CoachCarouselEngine {
 
             // 1) Best unattached coach already carrying the role.
             if let free = allCoaches
-                .filter({ $0.teamID == nil && $0.role == vacancy.role && $0.age < 64 })
+                .filter({ $0.teamID == nil && !$0.isRetired && $0.role == vacancy.role && $0.age < 64 })
                 .max(by: { CoachingEngine.coachOverallRating($0) < CoachingEngine.coachOverallRating($1) }) {
                 filled = free
                 originNote = "veteran \(vacancy.role.abbreviation)"
@@ -372,6 +382,13 @@ enum CoachCarouselEngine {
             }
             // 3) Fresh hire from outside the league's tracked pool.
             else if let generated = CoachingEngine.generateCoachCandidates(role: vacancy.role, count: 1).first {
+                // Phase 4: reserve the preview portrait now that they are in the
+                // league — gender-matched, see the head-coach claim above.
+                generated.faceID = FaceLibrary.shared.claimFace(
+                    generated.faceID, personID: generated.id,
+                    role: .coach, age: generated.age, position: nil,
+                    gender: FacePersonGender(tag: generated.gender)
+                )
                 result.newCoaches.append(generated)
                 filled = generated
                 originNote = "outside hire"

@@ -58,6 +58,10 @@ struct CareerShellView: View {
     @State private var pendingOwnerReview: OwnerPersonaEngine.OwnerSeasonReview?
     @State private var showFiredScreen = false
 
+    // Phase 4 faces — the full store-wide portrait reconciliation is a
+    // once-per-opened-save job, not a per-advance one (see `loadFaceLibrary`).
+    @State private var didReconcileFaces = false
+
     var body: some View {
         VStack(spacing: 0) {
             // Persistent top navigation bar
@@ -346,6 +350,7 @@ struct CareerShellView: View {
             player: first,
             teamID: teamID,
             subMarketDelta: delta,
+            seasonYear: career.currentSeason,
             modelContext: modelContext
         ) {
             pendingHoldoutPlayer = first
@@ -1417,6 +1422,11 @@ struct CareerShellView: View {
     // MARK: - Data Loading
 
     private func loadShellData() {
+        // Phase 4 faces: bind the library to THIS career and backfill anyone
+        // still portrait-less. Done on shell load rather than only on the next
+        // week advance so a legacy save shows real faces the moment it opens.
+        loadFaceLibrary()
+
         guard let teamID = career.teamID else { return }
 
         // One-time data integrity pass: bring legacy `scoutGrade` and the new
@@ -1463,6 +1473,42 @@ struct CareerShellView: View {
     /// Reconciles the legacy `scoutGrade` letter with the modern `scoutedOverallGrade`
     /// range, and back-fills `scoutedOverallGrade` from `scoutedOverall` when missing.
     /// Idempotent — safe to call on every load.
+    /// Binds `FaceLibrary` to this career and backfills missing portraits.
+    ///
+    /// Mirrors `WeekAdvancer.backfillLegacyFaces` (which covers the advance
+    /// path); running it here too means a save opened and browsed without ever
+    /// advancing a week still renders faces.
+    ///
+    /// **Runs its fetches ONCE per opened save.** `loadShellData()` is also the
+    /// post-advance reload (`Advance Week` → `shell_reload`), and the full
+    /// reconciliation needs three unpredicated fetches — `Player` is the largest
+    /// table in the store and grows monotonically (~13 k rows over a 30-season
+    /// career, retired players kept for history). Repeating that on the main
+    /// thread inside the button handler bought nothing: `WeekAdvancer` has
+    /// already run the very same backfill during the advance, with the
+    /// players/coaches it fetched for the sim. So later reloads only re-bind the
+    /// library, which is a dictionary swap.
+    private func loadFaceLibrary() {
+        FaceLibrary.shared.activate(career: career)
+        guard !didReconcileFaces else { return }
+        didReconcileFaces = true
+
+        let players = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
+        let coaches = (try? modelContext.fetch(FetchDescriptor<Coach>())) ?? []
+        WeekAdvancer.backfillLegacyFaces(career: career, players: players, coaches: coaches)
+
+        // Prospects only ever hold a preview face, so they are handled apart
+        // from the reserving backfill. New classes get theirs in
+        // `DraftClassBuilder`, so this only covers rows that predate the field.
+        let prospects = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>())) ?? []
+        for prospect in prospects where prospect.faceID == nil {
+            prospect.faceID = FaceLibrary.shared.previewFace(
+                personID: prospect.id, role: .player,
+                age: prospect.age, position: prospect.position
+            )
+        }
+    }
+
     private func syncProspectGrades() {
         let prospects = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>())) ?? []
         var changed = 0

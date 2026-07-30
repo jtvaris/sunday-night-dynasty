@@ -55,6 +55,8 @@ struct WarRoomPanel: View {
             }
             if let last = lastUserPick {
                 HStack(spacing: 4) {
+                    PersonFaceView(faceID: last.faceID, size: .small,
+                                   accessibilityName: last.playerName)
                     Text("Last: #\(last.pickNumber)")
                         .font(.caption2.monospaced())
                         .foregroundStyle(Color.textSecondary)
@@ -150,23 +152,31 @@ struct WarRoomPanel: View {
         let trend = prospect.stockTrajectory
 
         return HStack(spacing: DSSpacing.xs) {
+            // The panel is 280 pt wide, so the portrait has to pay for itself:
+            // it takes the space the standalone position column used to hold,
+            // and the position tag moves down to the sub-line (same need
+            // colouring). Net width and row height are unchanged.
+            PersonFaceView(prospect: prospect, size: .small)
             Text(prospect.overallGradeDisplay)
                 .font(.caption2.monospaced().weight(.heavy))
                 .foregroundStyle(Color.accentGold)
                 .frame(width: 44, alignment: .leading)
-            Text(prospect.position.rawValue)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(need >= 0.7 ? Color.draftStealGold : Color.textSecondary)
-                .frame(width: 28, alignment: .leading)
             VStack(alignment: .leading, spacing: 0) {
                 Text("\(prospect.firstName.prefix(1)). \(prospect.lastName)")
                     .font(.caption)
                     .foregroundStyle(Color.textPrimary)
                     .lineLimit(1)
-                if isSleeper(prospect, scoutRank: scoutRank) {
-                    Text("SLEEPER")
-                        .font(.system(size: 8, weight: .heavy))
-                        .foregroundStyle(Color.success)
+                HStack(spacing: 4) {
+                    Text(prospect.position.rawValue)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(need >= 0.7 ? Color.draftStealGold : Color.textSecondary)
+                    // College production micro-label — no room for a column here.
+                    ProductionMicroLabel(tier: prospect.collegeProductionTier)
+                    if isSleeper(prospect, scoutRank: scoutRank) {
+                        Text("SLEEPER")
+                            .font(.system(size: 8, weight: .heavy))
+                            .foregroundStyle(Color.success)
+                    }
                 }
             }
             Spacer()

@@ -126,6 +126,8 @@ struct PickSheetView: View {
             pendingProspect = prospect
         } label: {
             HStack(spacing: DSSpacing.sm) {
+                PersonFaceView(prospect: prospect, size: .small)
+
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text("\(prospect.firstName) \(prospect.lastName)")
@@ -140,9 +142,15 @@ struct PickSheetView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 3))
                         }
                     }
-                    Text("\(prospect.position.rawValue) · \(prospect.college) · OVR \(prospect.trueOverall) · \(stars(prospect))")
-                        .font(.caption)
-                        .foregroundStyle(Color.textSecondary)
+                    HStack(spacing: 4) {
+                        Text("\(prospect.position.rawValue) · \(prospect.college) · OVR \(prospect.trueOverall) · \(stars(prospect))")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                        Text("·")
+                            .font(.caption)
+                            .foregroundStyle(Color.textSecondary)
+                        ProductionMicroLabel(tier: prospect.collegeProductionTier, fontSize: 9)
+                    }
                     if showReachWarning {
                         Text("⚠️ Position not a top need")
                             .font(.caption2)
@@ -197,6 +205,8 @@ struct PickSheetView: View {
         let preview = pickGradePreview(prospect: prospect, bbRank: bbRank, pickNumber: pickNumber, needScore: needScore)
 
         return VStack(alignment: .leading, spacing: DSSpacing.xs) {
+            PersonFaceView(prospect: prospect, size: .small)
+
             Text("\(prospect.firstName) \(prospect.lastName)")
                 .font(.callout.weight(.bold))
                 .foregroundStyle(Color.textPrimary)
@@ -227,6 +237,12 @@ struct PickSheetView: View {
             }
             Divider().overlay(Color.surfaceBorder)
             VStack(alignment: .leading, spacing: 2) {
+                Text("Production")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textSecondary)
+                Text(prospect.collegeProductionTier.displayName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(prospect.collegeProductionTier.chipColor)
                 Text("Speed")
                     .font(.caption2)
                     .foregroundStyle(Color.textSecondary)

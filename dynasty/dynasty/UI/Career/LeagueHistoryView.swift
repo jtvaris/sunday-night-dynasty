@@ -169,14 +169,16 @@ struct LeagueHistoryView: View {
 
     private func hofRow(_ entry: HallOfFameEntry) -> some View {
         HStack(spacing: DSSpacing.sm) {
-            ZStack {
-                Circle()
-                    .fill(Color.accentGold.opacity(0.15))
-                    .frame(width: 36, height: 36)
-                Image(systemName: "building.columns.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.accentGold)
-            }
+            // The legend's portrait in a gold ring — the induction row is the
+            // one place a retired player is still a person rather than a stat
+            // line. Faces snapshotted at induction; missing ones fall back to
+            // the silhouette, which still reads as a bust in a gold frame.
+            PersonFaceView(
+                faceID: entry.faceID,
+                size: .small,
+                ringColor: .accentGold,
+                accessibilityName: entry.playerName
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {

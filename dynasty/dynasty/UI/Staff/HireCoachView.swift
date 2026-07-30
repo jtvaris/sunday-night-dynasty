@@ -973,6 +973,16 @@ struct HireCoachView: View {
         candidate.teamID = teamID
         candidate.hireSeasonYear = allCareers.first?.currentSeason ?? 2026
         candidate.contractYearsRemaining = 3
+        // Phase 4 faces: a candidate list carries a NON-reserving preview
+        // portrait (`CoachingEngine.generateCoachCandidates`), so every hire has
+        // to claim it here. Without the claim the registry never learns the
+        // face is taken and the next person drawn from the same free list — the
+        // very next hire in this same wizard — can be handed the same portrait.
+        candidate.faceID = FaceLibrary.shared.claimFace(
+            candidate.faceID, personID: candidate.id,
+            role: .coach, age: candidate.age, position: nil,
+            gender: FacePersonGender(tag: candidate.gender)
+        )
         modelContext.insert(candidate)
         hiredCoachID = candidate.id
 

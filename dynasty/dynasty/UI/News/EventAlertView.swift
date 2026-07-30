@@ -18,6 +18,9 @@ struct EventAlertView: View {
     @State private var relatedCoachName: String?
     @State private var navigateToPlayer = false
     @State private var relatedPlayer: Player?
+    /// Portrait of the person the event is about. Resolved alongside the name;
+    /// `nil` (unknown person, or no image yet) renders the silhouette.
+    @State private var relatedFaceID: String?
 
     var body: some View {
         ZStack {
@@ -102,6 +105,7 @@ struct EventAlertView: View {
 
     private func relatedPersonRow(icon: String, label: String, name: String, showInfoLink: Bool) -> some View {
         HStack(spacing: 10) {
+            PersonFaceView(faceID: relatedFaceID, size: .small, accessibilityName: name)
             Image(systemName: icon)
                 .foregroundStyle(Color.accentGold)
                 .frame(width: 20)
@@ -264,12 +268,16 @@ struct EventAlertView: View {
             if let player = try? modelContext.fetch(descriptor).first {
                 relatedPlayerName = "\(player.firstName) \(player.lastName)"
                 relatedPlayer = player
+                relatedFaceID = player.faceID
             }
         }
         if let coachID = event.coachID {
             let descriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.id == coachID })
             if let coach = try? modelContext.fetch(descriptor).first {
                 relatedCoachName = coach.fullName
+                // The player branch wins the header row, so only claim the
+                // portrait when no player was resolved.
+                if relatedPlayerName == nil { relatedFaceID = coach.faceID }
             }
         }
     }

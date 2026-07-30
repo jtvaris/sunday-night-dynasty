@@ -156,6 +156,11 @@ final class DraftDayCoordinator: ObservableObject {
         // edits across app restarts). Fall back to in-memory only if SwiftData is
         // empty, and finally generate a fresh class on demand so the draft is
         // never blocked by missing scouting data.
+        // Plan §5: a save that reaches the war room still carrying a pre-overhaul
+        // class regenerates it here. No-op once a pick of this cycle is complete —
+        // a draft in progress is never rebuilt underneath the user.
+        WeekAdvancer.migrateLegacyDraftClassIfNeeded(career: career, modelContext: modelContext)
+
         let inMemoryClass = WeekAdvancer.currentDraftClass
         let prospectFetch = FetchDescriptor<CollegeProspect>()
         let persistedClass = (try? modelContext.fetch(prospectFetch)) ?? []
@@ -504,9 +509,13 @@ final class DraftDayCoordinator: ObservableObject {
         if clockSeconds == 0 {
             clockTask?.cancel()
             if forUser {
-                // Owner override: AI picks for the user using BPA logic
+                // Owner override: AI picks for the user using BPA logic.
+                // `DraftEngine.aiMakePick` traps on an empty board, and the user
+                // cannot select from one either, so an exhausted pool must skip
+                // the pick instead of running the clock into a `fatalError`.
                 if let pick = currentPick,
-                   let team = teamsByID[pick.currentTeamID] {
+                   let team = teamsByID[pick.currentTeamID],
+                   !availableProspects.isEmpty {
                     let roster = rosters[pick.currentTeamID] ?? []
                     let chosen = DraftEngine.aiMakePick(
                         team: team,
@@ -514,8 +523,8 @@ final class DraftDayCoordinator: ObservableObject {
                         teamRoster: roster
                     )
                     completePick(pick: pick, prospect: chosen, isUserPick: false, ownerOverride: true)
-                    advance()
                 }
+                advance()
             } else {
                 aiMakePickForCurrent()
                 advance()
@@ -549,7 +558,23 @@ final class DraftDayCoordinator: ObservableObject {
             pickNumber: pick.pickNumber,
             draftSeason: pick.seasonYear
         )
+        // Seed scheme/position familiarity from the drafting team's coordinators —
+        // without this every rookie enters the league at familiarity 0.
+        let draftingSchemes = schemesByTeam[pick.currentTeamID]
+        DraftEngine.initializeRookieFamiliarity(
+            player: player,
+            prospect: prospect,
+            offensiveScheme: draftingSchemes?.offense,
+            defensiveScheme: draftingSchemes?.defense
+        )
         modelContext.insert(player)
+        // He is in the league now — take him off every future prospect pool.
+        // `ScoutingEngine.getUDFAPool` (the OTAs bulk fallback) filters on
+        // `isDeclaringForDraft && mockDraftPickNumber == nil`, and the mock is
+        // only an annotation: without this a drafted rookie whose mock slot was
+        // never stamped (a regenerated class, a cycle whose mock was not
+        // refreshed) is signed a SECOND time as a UDFA by an AI team.
+        prospect.isDeclaringForDraft = false
 
         // Update DraftPick
         pick.playerID = player.id
@@ -623,7 +648,8 @@ final class DraftDayCoordinator: ObservableObject {
             isGem: grade.isGemCandidate,
             isBigDrop: isBigDrop,
             isUserPick: isUserPick,
-            ownerOverride: ownerOverride
+            ownerOverride: ownerOverride,
+            faceID: prospect.faceID
         )
         lastPickResult = result
         allPickResults.append(result)
@@ -715,6 +741,14 @@ final class DraftDayCoordinator: ObservableObject {
               udfaPool.contains(where: { $0.id == prospect.id }) else { return }
 
         let player = DraftEngine.convertUDFAToPlayer(prospect: prospect, teamID: teamID)
+        let signingSchemes = schemesByTeam[teamID]
+        DraftEngine.initializeRookieFamiliarity(
+            player: player,
+            prospect: prospect,
+            offensiveScheme: signingSchemes?.offense,
+            defensiveScheme: signingSchemes?.defense,
+            isUndrafted: true
+        )
         modelContext.insert(player)
         rosters[teamID, default: []].append(player)
         signedUDFAProspectIDs.append(prospect.id)
@@ -754,6 +788,14 @@ final class DraftDayCoordinator: ObservableObject {
                 }
                 guard let team = assigned else { break }   // every team is full
                 let player = DraftEngine.convertUDFAToPlayer(prospect: prospect, teamID: team.id)
+                let aiSchemes = schemesByTeam[team.id]
+                DraftEngine.initializeRookieFamiliarity(
+                    player: player,
+                    prospect: prospect,
+                    offensiveScheme: aiSchemes?.offense,
+                    defensiveScheme: aiSchemes?.defense,
+                    isUndrafted: true
+                )
                 modelContext.insert(player)
                 rosters[team.id, default: []].append(player)
                 team.currentCapUsage += player.annualSalary
@@ -979,4 +1021,8 @@ struct PickResult: Identifiable {
     let isBigDrop: Bool
     let isUserPick: Bool
     let ownerOverride: Bool
+    /// Portrait of the drafted prospect, carried so the War Room's "last pick"
+    /// line can show a face without re-fetching the (already removed) prospect.
+    /// `nil` is normal — it renders the placeholder silhouette.
+    var faceID: String? = nil
 }

@@ -61,6 +61,53 @@ final class Coach {
     /// during free agency to surface reunion-discount storylines.
     var coacheePlayerIDs: [UUID] = []
 
+    /// Phase 4: id of this coach's portrait in the pre-generated face library
+    /// (`face_00000`…`face_03583`, see `FaceLibrary`). Coaches draw from the
+    /// coach-age half of the pool — and, per `gender` below, from the matching
+    /// gender half of that. Assigned at league generation, when a candidate is
+    /// hired, or by `WeekAdvancer.backfillLegacyFaces`; stays `nil` when no face
+    /// of this coach's gender is available, which renders the placeholder photo.
+    /// Optional stored property with a nil default → safe lightweight migration.
+    var faceID: String? = nil
+
+    /// `true` once the coach has left coaching for good (the 65+ retirement in
+    /// `WeekAdvancer`). The row is kept forever — coaching trees, history and
+    /// portraits still read it — exactly like a retired player's row.
+    ///
+    /// It exists because "unemployed" and "gone" used to be the same state
+    /// (`teamID == nil`), which made the coach half of the face pool leak: a
+    /// retired coach can never coach again, yet `FaceLibrary.backfill` re-claimed
+    /// his portrait on every advance, so a career accumulated hundreds of dead
+    /// rows holding faces. Now retirement releases the face and this flag keeps
+    /// the reconciliation pass from taking it back.
+    /// Stored property with an inline default → safe lightweight migration.
+    var isRetired: Bool = false
+
+    /// `"male"` | `"female"` — the same two-value vocabulary `FaceBucket.gender`
+    /// uses, because portrait matching is gender-strict: a female coach may only
+    /// ever be handed a face out of the female half of the library.
+    ///
+    /// The male default is load-bearing, not laziness. Every row written before
+    /// this field existed is male — the game had no female coaches at all — and
+    /// the same convention holds one layer down, where a face bucket generated
+    /// before the female range simply has no `gender` key and decodes as male.
+    /// Template HC/OC/DC and support staff stay male by construction too: they
+    /// anonymize real male coaches (`ANONYMIZATION_SPEC.md`).
+    /// Stored property with an inline default → safe lightweight migration.
+    var gender: String = "male"
+
+    /// `gender` as the enum the bundled placeholder photographs are tagged with
+    /// (`CoachAvatars.maleAvatars` / `femaleAvatars`).
+    ///
+    /// A shim on the model rather than a string comparison in the view layer:
+    /// `PersonFaceView.init(coach:)` is where a nil `faceID` turns into a
+    /// `coach_m*`/`coach_f*` photo, and it should not be the place that decides
+    /// what an unrecognised gender string means. Anything that is not
+    /// `"female"` reads as male, exactly like `FacePersonGender(tag:)`.
+    var avatarGender: CoachAvatarInfo.Gender {
+        gender == "female" ? .female : .male
+    }
+
     /// Get expertise for a specific scheme (baseline 20 for unknown schemes).
     func expertise(for scheme: String) -> Int {
         return schemeExpertise[scheme] ?? 20

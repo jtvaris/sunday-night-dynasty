@@ -52,4 +52,9 @@ struct HallOfFameEntry: Codable, Identifiable, Equatable {
     var retiredFromTeamName: String
     /// True when the player retired off the user's roster.
     var wasUserTeamPlayer: Bool
+    /// The legend's portrait, snapshotted like every other career fact so the
+    /// bust keeps its face even after the `Player` row is gone. Optional and
+    /// last in the list: careers inducted before faces existed decode with
+    /// `nil` and render the placeholder silhouette.
+    var faceID: String? = nil
 }

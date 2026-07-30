@@ -6,6 +6,22 @@ import Foundation
 /// All methods are pure functions or mutate only their explicit inout / reference parameters.
 enum CoachingEngine {
 
+    // MARK: - Staff Demographics
+
+    /// The share of coaches the game HIRES that come out female — every
+    /// generated-league staff member (`LeagueGenerator.generateCoach`) and every
+    /// candidate the hiring market invents (`generateCoachCandidates`). Template
+    /// staff are excluded: they anonymize real male coaches.
+    ///
+    /// 0.06 is a budget, not a target. There are 35 female faces in the library
+    /// and a career fills ~512 coaching slots, so E[female] ≈ 31 — comfortably
+    /// under supply, because portrait matching is gender-strict and a female
+    /// coach with no free female face falls through to a placeholder silhouette.
+    /// The face generator draws at 0.22 (`FaceGeneratorConstants.femaleCoachShare`)
+    /// for exactly this reason: the library carries headroom the game does not
+    /// spend.
+    static let femaleCoachShare = 0.06
+
     // MARK: - Scheme Fit
 
     /// Returns a 0.0–1.0 rating representing how well a player fits the given offensive
@@ -393,7 +409,14 @@ enum CoachingEngine {
         return (0..<actualCount).map { index in
             let isPremium = effectivePremiumIndices.contains(index)
             let isBudget = budgetIndices.contains(index)
-            let name = RandomNameGenerator.randomName()
+
+            // Gender is rolled BEFORE the name so the given name is drawn from
+            // the matching pool (`RandomNameGenerator.randomName(female:)`).
+            // Unlike `LeagueGenerator.generateCoach` this stream is unseeded and
+            // has no template-replay coupling, so the draw position is free —
+            // it just has to precede the name and `previewFace` below.
+            let isFemale = Double.random(in: 0..<1) < Self.femaleCoachShare
+            let name = RandomNameGenerator.randomName(female: isFemale)
 
             // Age distribution: young assistants skew lower, coordinators/HC skew older
             let ageRange: ClosedRange<Int>
@@ -623,8 +646,21 @@ enum CoachingEngine {
                 teamID: nil,
                 yearsExperience: exp
             )
+            // MUST be set before `generateBackground` — the blurb's phrase pools
+            // are selected by gender — and before `previewFace`, which is
+            // gender-strict.
+            coach.gender = isFemale ? "female" : "male"
             coach.background = generateBackground(for: coach)
             initializeSchemeExpertise(for: coach)
+            // Phase 4 faces: a candidate list is 20-25 coaches of which at most
+            // one is hired, so the portrait is a non-reserving PREVIEW. The
+            // hire path (`CoachCarouselEngine`, `WeekAdvancer`, the staff UI)
+            // persists the coach and the next backfill pass converts the
+            // preview into a real reservation.
+            coach.faceID = FaceLibrary.shared.previewFace(
+                personID: coach.id, role: .coach, age: coach.age, position: nil,
+                gender: FacePersonGender(tag: coach.gender)
+            )
             return coach
         }
     }
@@ -691,41 +727,107 @@ enum CoachingEngine {
     /// Generates an auto-generated coaching background / history blurb based on the coach's
     /// attributes, experience, personality, age, and scheme preferences.
     static func generateBackground(for coach: Coach) -> String {
+        var rng = SystemRandomNumberGenerator()
+        return generateBackground(for: coach, using: &rng)
+    }
+
+    /// Picks the phrase pool that matches `coach.gender`, for the blurb lines
+    /// that carry a pronoun (or other gendered wording, e.g. "father figure").
+    ///
+    /// DETERMINISM CONTRACT — read before touching any call site:
+    /// every `male:` array below is byte-identical to the single array it
+    /// replaced, and `male` and `female` always have the SAME element count, so
+    /// the `randomElement(using:)` draw that follows consumes exactly one value
+    /// from exactly the same distribution as before this function existed. The
+    /// fixed-league template's staff are male by construction (they anonymize
+    /// real male coaches) and `LeagueGenerator` replays their blurbs from a
+    /// seeded stream, so their text must not move by a single byte. Never edit a
+    /// `male:` array's contents, never change either array's length, and never
+    /// add or remove a draw.
+    private static func genderedPhrases(
+        male: [String], female: [String], for coach: Coach
+    ) -> [String] {
+        assert(male.count == female.count, "gendered phrase pools must be the same length")
+        return coach.gender == "female" ? female : male
+    }
+
+    /// Seeded variant of `generateBackground(for:)` — identical phrase pools,
+    /// caller-owned entropy. The fixed-league template import needs the blurb to
+    /// be the same on every import of the same template.
+    static func generateBackground<G: RandomNumberGenerator>(
+        for coach: Coach, using rng: inout G
+    ) -> String {
         var parts: [String] = []
 
         // Experience-based opening
         let expOpeners: [String]
         switch coach.yearsExperience {
         case 0...5:
-            expOpeners = [
-                "A rising talent with \(coach.yearsExperience) years in the league.",
-                "Young and hungry, still building his coaching resume.",
-                "Fresh face on the coaching circuit with raw potential.",
-                "Recently transitioned from a quality control role."
-            ]
+            expOpeners = genderedPhrases(
+                male: [
+                    "A rising talent with \(coach.yearsExperience) years in the league.",
+                    "Young and hungry, still building his coaching resume.",
+                    "Fresh face on the coaching circuit with raw potential.",
+                    "Recently transitioned from a quality control role."
+                ],
+                female: [
+                    "A rising talent with \(coach.yearsExperience) years in the league.",
+                    "Young and hungry, still building her coaching resume.",
+                    "Fresh face on the coaching circuit with raw potential.",
+                    "Recently transitioned from a quality control role."
+                ],
+                for: coach
+            )
         case 6...12:
-            expOpeners = [
-                "Spent \(coach.yearsExperience) years climbing the coaching ladder.",
-                "A mid-career coach with a growing reputation around the league.",
-                "Has been steadily building his resume over \(coach.yearsExperience) seasons.",
-                "Proven himself as a reliable coordinator over the past decade."
-            ]
+            expOpeners = genderedPhrases(
+                male: [
+                    "Spent \(coach.yearsExperience) years climbing the coaching ladder.",
+                    "A mid-career coach with a growing reputation around the league.",
+                    "Has been steadily building his resume over \(coach.yearsExperience) seasons.",
+                    "Proven himself as a reliable coordinator over the past decade."
+                ],
+                female: [
+                    "Spent \(coach.yearsExperience) years climbing the coaching ladder.",
+                    "A mid-career coach with a growing reputation around the league.",
+                    "Has been steadily building her resume over \(coach.yearsExperience) seasons.",
+                    "Proven herself as a reliable coordinator over the past decade."
+                ],
+                for: coach
+            )
         case 13...20:
-            expOpeners = [
-                "A seasoned veteran with \(coach.yearsExperience) years of NFL experience.",
-                "Well-respected throughout the league after nearly two decades of coaching.",
-                "One of the more experienced coaches available, with \(coach.yearsExperience) years under his belt.",
-                "A veteran presence who has seen it all in his \(coach.yearsExperience)-year career."
-            ]
+            expOpeners = genderedPhrases(
+                male: [
+                    "A seasoned veteran with \(coach.yearsExperience) years of NFL experience.",
+                    "Well-respected throughout the league after nearly two decades of coaching.",
+                    "One of the more experienced coaches available, with \(coach.yearsExperience) years under his belt.",
+                    "A veteran presence who has seen it all in his \(coach.yearsExperience)-year career."
+                ],
+                female: [
+                    "A seasoned veteran with \(coach.yearsExperience) years of NFL experience.",
+                    "Well-respected throughout the league after nearly two decades of coaching.",
+                    "One of the more experienced coaches available, with \(coach.yearsExperience) years under her belt.",
+                    "A veteran presence who has seen it all in her \(coach.yearsExperience)-year career."
+                ],
+                for: coach
+            )
         default:
-            expOpeners = [
-                "A grizzled coaching lifer with \(coach.yearsExperience) years in the business.",
-                "Has been coaching longer than some of his players have been alive.",
-                "An old-school football mind with over two decades of experience.",
-                "One of the longest-tenured coaches in professional football."
-            ]
+            expOpeners = genderedPhrases(
+                male: [
+                    "A grizzled coaching lifer with \(coach.yearsExperience) years in the business.",
+                    "Has been coaching longer than some of his players have been alive.",
+                    "An old-school football mind with over two decades of experience.",
+                    "One of the longest-tenured coaches in professional football."
+                ],
+                female: [
+                    "A grizzled coaching lifer with \(coach.yearsExperience) years in the business.",
+                    "Has been coaching longer than some of her players have been alive.",
+                    "An old-school football mind with over two decades of experience.",
+                    "One of the longest-tenured coaches in professional football."
+                ],
+                for: coach
+            )
         }
-        parts.append(expOpeners.randomElement()!)
+        parts.append(expOpeners.randomElement(using: &rng)!)
 
         // Attribute-based flavor (pick the highest attribute for emphasis)
         let attrMap: [(String, Int)] = [
@@ -745,109 +847,223 @@ enum CoachingEngine {
             let attrPhrases: [String]
             switch topAttr.0 {
             case "play-calling":
-                attrPhrases = [
-                    "Known for creative play-calling that keeps defenses guessing.",
-                    "His game-day play-calling is considered among the best in the league.",
-                    "Offensive coordinators around the league study his play sheets."
-                ]
+                attrPhrases = genderedPhrases(
+                    male: [
+                        "Known for creative play-calling that keeps defenses guessing.",
+                        "His game-day play-calling is considered among the best in the league.",
+                        "Offensive coordinators around the league study his play sheets."
+                    ],
+                    female: [
+                        "Known for creative play-calling that keeps defenses guessing.",
+                        "Her game-day play-calling is considered among the best in the league.",
+                        "Offensive coordinators around the league study her play sheets."
+                    ],
+                    for: coach
+                )
             case "player development":
-                attrPhrases = [
-                    "Known for developing raw talent into starters.",
-                    "Has a track record of turning late-round picks into Pro Bowlers.",
-                    "Players who work under him consistently improve year over year."
-                ]
+                attrPhrases = genderedPhrases(
+                    male: [
+                        "Known for developing raw talent into starters.",
+                        "Has a track record of turning late-round picks into Pro Bowlers.",
+                        "Players who work under him consistently improve year over year."
+                    ],
+                    female: [
+                        "Known for developing raw talent into starters.",
+                        "Has a track record of turning late-round picks into Pro Bowlers.",
+                        "Players who work under her consistently improve year over year."
+                    ],
+                    for: coach
+                )
             case "game planning":
-                attrPhrases = [
-                    "Meticulous game planner who leaves no stone unturned.",
-                    "His game plans are legendary for exploiting opponent weaknesses.",
-                    "Spends 18-hour days during the week perfecting his game plan."
-                ]
+                attrPhrases = genderedPhrases(
+                    male: [
+                        "Meticulous game planner who leaves no stone unturned.",
+                        "His game plans are legendary for exploiting opponent weaknesses.",
+                        "Spends 18-hour days during the week perfecting his game plan."
+                    ],
+                    female: [
+                        "Meticulous game planner who leaves no stone unturned.",
+                        "Her game plans are legendary for exploiting opponent weaknesses.",
+                        "Spends 18-hour days during the week perfecting her game plan."
+                    ],
+                    for: coach
+                )
             case "scouting":
-                attrPhrases = [
-                    "Has an exceptional eye for talent that others overlook.",
-                    "Former scouts credit him with finding several hidden gems.",
-                    "Known for spending extra hours in the film room evaluating prospects."
-                ]
+                attrPhrases = genderedPhrases(
+                    male: [
+                        "Has an exceptional eye for talent that others overlook.",
+                        "Former scouts credit him with finding several hidden gems.",
+                        "Known for spending extra hours in the film room evaluating prospects."
+                    ],
+                    female: [
+                        "Has an exceptional eye for talent that others overlook.",
+                        "Former scouts credit her with finding several hidden gems.",
+                        "Known for spending extra hours in the film room evaluating prospects."
+                    ],
+                    for: coach
+                )
             case "recruiting":
-                attrPhrases = [
-                    "Free agents consistently cite him as a reason they signed.",
-                    "His recruiting pitch is considered one of the best in the league.",
-                    "Players want to play for him — it's that simple."
-                ]
+                attrPhrases = genderedPhrases(
+                    male: [
+                        "Free agents consistently cite him as a reason they signed.",
+                        "His recruiting pitch is considered one of the best in the league.",
+                        "Players want to play for him — it's that simple."
+                    ],
+                    female: [
+                        "Free agents consistently cite her as a reason they signed.",
+                        "Her recruiting pitch is considered one of the best in the league.",
+                        "Players want to play for her — it's that simple."
+                    ],
+                    for: coach
+                )
             case "motivation":
-                attrPhrases = [
-                    "His halftime speeches are the stuff of locker room legend.",
-                    "Players run through walls for him on game day.",
-                    "Known for getting the absolute maximum out of his roster."
-                ]
+                attrPhrases = genderedPhrases(
+                    male: [
+                        "His halftime speeches are the stuff of locker room legend.",
+                        "Players run through walls for him on game day.",
+                        "Known for getting the absolute maximum out of his roster."
+                    ],
+                    female: [
+                        "Her halftime speeches are the stuff of locker room legend.",
+                        "Players run through walls for her on game day.",
+                        "Known for getting the absolute maximum out of her roster."
+                    ],
+                    for: coach
+                )
             case "discipline":
-                attrPhrases = [
-                    "Runs a tight ship — his teams are among the least penalized in the league.",
-                    "Demands accountability from every player, coach, and staff member.",
-                    "His attention to detail borders on obsessive, in the best way."
-                ]
+                attrPhrases = genderedPhrases(
+                    male: [
+                        "Runs a tight ship — his teams are among the least penalized in the league.",
+                        "Demands accountability from every player, coach, and staff member.",
+                        "His attention to detail borders on obsessive, in the best way."
+                    ],
+                    female: [
+                        "Runs a tight ship — her teams are among the least penalized in the league.",
+                        "Demands accountability from every player, coach, and staff member.",
+                        "Her attention to detail borders on obsessive, in the best way."
+                    ],
+                    for: coach
+                )
             case "media handling":
-                attrPhrases = [
-                    "A natural in front of the cameras who shields his players from distractions.",
-                    "His press conferences are masterclasses in saying nothing and everything.",
-                    "The media respects him, and he uses that to protect his locker room."
-                ]
+                attrPhrases = genderedPhrases(
+                    male: [
+                        "A natural in front of the cameras who shields his players from distractions.",
+                        "His press conferences are masterclasses in saying nothing and everything.",
+                        "The media respects him, and he uses that to protect his locker room."
+                    ],
+                    female: [
+                        "A natural in front of the cameras who shields her players from distractions.",
+                        "Her press conferences are masterclasses in saying nothing and everything.",
+                        "The media respects her, and she uses that to protect her locker room."
+                    ],
+                    for: coach
+                )
             case "contract negotiation":
+                // Already gender-neutral — one pool for both genders.
                 attrPhrases = [
                     "Has a keen understanding of the salary cap and player value.",
                     "Works closely with the front office on roster construction.",
                     "Known for identifying value signings in free agency."
                 ]
             case "morale building":
-                attrPhrases = [
-                    "His locker rooms are consistently described as tight-knit families.",
-                    "Creates an environment where players genuinely enjoy coming to work.",
-                    "Team chemistry has never been an issue under his leadership."
-                ]
+                attrPhrases = genderedPhrases(
+                    male: [
+                        "His locker rooms are consistently described as tight-knit families.",
+                        "Creates an environment where players genuinely enjoy coming to work.",
+                        "Team chemistry has never been an issue under his leadership."
+                    ],
+                    female: [
+                        "Her locker rooms are consistently described as tight-knit families.",
+                        "Creates an environment where players genuinely enjoy coming to work.",
+                        "Team chemistry has never been an issue under her leadership."
+                    ],
+                    for: coach
+                )
             default:
                 attrPhrases = ["A well-rounded coaching mind."]
             }
-            parts.append(attrPhrases.randomElement()!)
+            parts.append(attrPhrases.randomElement(using: &rng)!)
         }
 
         // Personality flavor
         switch coach.personality {
         case .fieryCompetitor:
-            parts.append(["Brings an intense, fiery energy to every practice.", "His competitive fire is contagious in the building."].randomElement()!)
+            parts.append(genderedPhrases(
+                male: ["Brings an intense, fiery energy to every practice.", "His competitive fire is contagious in the building."],
+                female: ["Brings an intense, fiery energy to every practice.", "Her competitive fire is contagious in the building."],
+                for: coach).randomElement(using: &rng)!)
         case .quietProfessional:
-            parts.append(["Prefers to let the results speak for themselves.", "A quiet operator who avoids the spotlight."].randomElement()!)
+            // Already gender-neutral — one pool for both genders.
+            parts.append(["Prefers to let the results speak for themselves.", "A quiet operator who avoids the spotlight."].randomElement(using: &rng)!)
         case .mentor:
-            parts.append(["Players describe him as a father figure in the locker room.", "Young coaches seek him out for career advice."].randomElement()!)
+            parts.append(genderedPhrases(
+                male: ["Players describe him as a father figure in the locker room.", "Young coaches seek him out for career advice."],
+                female: ["Players describe her as a mentor figure in the locker room.", "Young coaches seek her out for career advice."],
+                for: coach).randomElement(using: &rng)!)
         case .teamLeader:
-            parts.append(["A natural leader who commands respect from Day 1.", "His leadership style unites entire organizations."].randomElement()!)
+            parts.append(genderedPhrases(
+                male: ["A natural leader who commands respect from Day 1.", "His leadership style unites entire organizations."],
+                female: ["A natural leader who commands respect from Day 1.", "Her leadership style unites entire organizations."],
+                for: coach).randomElement(using: &rng)!)
         case .dramaQueen:
-            parts.append(["Not afraid of controversy — thrives in the spotlight.", "His bold personality makes headlines, for better or worse."].randomElement()!)
+            parts.append(genderedPhrases(
+                male: ["Not afraid of controversy — thrives in the spotlight.", "His bold personality makes headlines, for better or worse."],
+                female: ["Not afraid of controversy — thrives in the spotlight.", "Her bold personality makes headlines, for better or worse."],
+                for: coach).randomElement(using: &rng)!)
         case .loneWolf:
-            parts.append(["Keeps his inner circle small and his playbook close.", "A football hermit who lives and breathes the game in isolation."].randomElement()!)
+            parts.append(genderedPhrases(
+                male: ["Keeps his inner circle small and his playbook close.", "A football hermit who lives and breathes the game in isolation."],
+                female: ["Keeps her inner circle small and her playbook close.", "A football hermit who lives and breathes the game in isolation."],
+                for: coach).randomElement(using: &rng)!)
         case .feelPlayer:
-            parts.append(["Trusts his gut instincts over analytics.", "Makes decisions by feel — and his feel is usually right."].randomElement()!)
+            parts.append(genderedPhrases(
+                male: ["Trusts his gut instincts over analytics.", "Makes decisions by feel — and his feel is usually right."],
+                female: ["Trusts her gut instincts over analytics.", "Makes decisions by feel — and her feel is usually right."],
+                for: coach).randomElement(using: &rng)!)
         case .classClown:
-            parts.append(["Keeps the locker room loose with his sense of humor.", "Players love his lighthearted approach to a grueling season."].randomElement()!)
+            parts.append(genderedPhrases(
+                male: ["Keeps the locker room loose with his sense of humor.", "Players love his lighthearted approach to a grueling season."],
+                female: ["Keeps the locker room loose with her sense of humor.", "Players love her lighthearted approach to a grueling season."],
+                for: coach).randomElement(using: &rng)!)
         case .steadyPerformer:
-            parts.append(["Consistent and reliable — never the highest high or lowest low.", "His steady hand has guided teams through turbulent stretches."].randomElement()!)
+            parts.append(genderedPhrases(
+                male: ["Consistent and reliable — never the highest high or lowest low.", "His steady hand has guided teams through turbulent stretches."],
+                female: ["Consistent and reliable — never the highest high or lowest low.", "Her steady hand has guided teams through turbulent stretches."],
+                for: coach).randomElement(using: &rng)!)
         }
 
         // Scheme reference if applicable
         if let offScheme = coach.offensiveScheme {
-            let schemePhrases = [
-                "Runs a \(offScheme.displayName) offense.",
-                "His offensive philosophy centers on the \(offScheme.displayName) system.",
-                "Brings a \(offScheme.displayName) scheme that he's refined over the years."
-            ]
-            parts.append(schemePhrases.randomElement()!)
+            let schemePhrases = genderedPhrases(
+                male: [
+                    "Runs a \(offScheme.displayName) offense.",
+                    "His offensive philosophy centers on the \(offScheme.displayName) system.",
+                    "Brings a \(offScheme.displayName) scheme that he's refined over the years."
+                ],
+                female: [
+                    "Runs a \(offScheme.displayName) offense.",
+                    "Her offensive philosophy centers on the \(offScheme.displayName) system.",
+                    "Brings a \(offScheme.displayName) scheme that she's refined over the years."
+                ],
+                for: coach
+            )
+            parts.append(schemePhrases.randomElement(using: &rng)!)
         }
         if let defScheme = coach.defensiveScheme {
-            let schemePhrases = [
-                "Favors a \(defScheme.displayName) defense.",
-                "Built a top-tier defense using his \(defScheme.displayName) scheme.",
-                "His \(defScheme.displayName) defensive system has been widely imitated."
-            ]
-            parts.append(schemePhrases.randomElement()!)
+            let schemePhrases = genderedPhrases(
+                male: [
+                    "Favors a \(defScheme.displayName) defense.",
+                    "Built a top-tier defense using his \(defScheme.displayName) scheme.",
+                    "His \(defScheme.displayName) defensive system has been widely imitated."
+                ],
+                female: [
+                    "Favors a \(defScheme.displayName) defense.",
+                    "Built a top-tier defense using her \(defScheme.displayName) scheme.",
+                    "Her \(defScheme.displayName) defensive system has been widely imitated."
+                ],
+                for: coach
+            )
+            parts.append(schemePhrases.randomElement(using: &rng)!)
         }
 
         // Cap at 2-3 sentences for readability
@@ -1099,13 +1315,30 @@ enum CoachingEngine {
 
     // MARK: - Hierarchical Development Bonus
 
+    /// Seasons a coordinator must have spent on the same team, running the same
+    /// scheme, before continuity starts paying (plan §2.9.3,
+    /// `DEVELOPMENT_NFL_REFERENCE.md` §5: "continuity matters as much as
+    /// quality").
+    static let coordinatorContinuitySeasons = 3
+
+    /// What that continuity is worth on the development multiplier stack.
+    /// Deliberately the same order of magnitude as the −0.03 adjustment-period
+    /// penalty it mirrors: stability compounds, churn taxes.
+    static let coordinatorContinuityBonus = 0.05
+
     /// Calculate layered coaching bonus from HC → AHC → Coordinator → Position Coach
+    ///
+    /// - Parameter coordinatorContinuity: the unit's coordinator has been in the
+    ///   building `coordinatorContinuitySeasons`+ years AND has not changed the
+    ///   scheme. Computed by the caller, which is the layer that knows the
+    ///   current season and the team's scheme history.
     static func hierarchicalDevelopmentBonus(
         headCoach: Coach?,
         assistantHC: Coach?,
         coordinator: Coach?,
         positionCoach: Coach?,
-        player: Player
+        player: Player,
+        coordinatorContinuity: Bool = false
     ) -> Double {
         var multiplier = 1.0
 
@@ -1127,6 +1360,11 @@ enum CoachingEngine {
             let coordBonus = (Double(coord.playerDevelopment) - 50.0) / 50.0 * 0.10
             multiplier += coordBonus
             if coord.isInAdjustmentPeriod { multiplier -= 0.03 }
+            // Continuity reward (plan §2.9.3). Mutually exclusive with the
+            // adjustment penalty by construction: a coordinator who was
+            // promoted this offseason cannot also have three seasons in the
+            // same seat with an unchanged scheme.
+            if coordinatorContinuity { multiplier += coordinatorContinuityBonus }
         }
 
         // Layer 4: Position coach direct bonus

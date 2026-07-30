@@ -68,9 +68,15 @@ struct NewsView: View {
 
     let career: Career
 
+    @Environment(\.modelContext) private var modelContext
+
     @State private var newsItems: [NewsItem] = []
     @State private var activeFilter: NewsFilter = .all
     @State private var expandedItemIDs: Set<UUID> = []
+    /// Portraits for the stories that are ABOUT one person (`relatedPlayerID`).
+    /// Resolved once with a single id-scoped fetch when the feed loads — the
+    /// cards must never touch the store while scrolling.
+    @State private var faceIDsByPlayerID: [UUID: String] = [:]
 
     // MARK: Filtering
 
@@ -282,7 +288,8 @@ struct NewsView: View {
                         item: item,
                         isMyTeam: item.relatedTeamID == career.teamID,
                         isExpanded: expandedItemIDs.contains(item.id),
-                        isPinned: true
+                        isPinned: true,
+                        subjectFaceID: faceID(for: item)
                     ) {
                         toggleExpansion(item.id)
                     }
@@ -320,7 +327,8 @@ struct NewsView: View {
                         item: item,
                         isMyTeam: true,
                         isExpanded: expandedItemIDs.contains(item.id),
-                        isPinned: false
+                        isPinned: false,
+                        subjectFaceID: faceID(for: item)
                     ) {
                         toggleExpansion(item.id)
                     }
@@ -335,7 +343,8 @@ struct NewsView: View {
                         item: item,
                         isMyTeam: false,
                         isExpanded: expandedItemIDs.contains(item.id),
-                        isPinned: false
+                        isPinned: false,
+                        subjectFaceID: faceID(for: item)
                     ) {
                         toggleExpansion(item.id)
                     }
@@ -453,6 +462,29 @@ struct NewsView: View {
         // R29: the news feed is persisted on the career (JSON-encoded,
         // newest first) by WeekAdvancer after every advance.
         newsItems = career.newsLog
+        loadFaces()
+    }
+
+    /// Resolves the portrait of every story subject in one fetch. Only ids the
+    /// feed actually mentions are fetched, and a story whose player has since
+    /// been pruned simply keeps no face (the card then shows no portrait).
+    private func loadFaces() {
+        let ids = Array(Set(newsItems.compactMap(\.relatedPlayerID)))
+        guard !ids.isEmpty else {
+            faceIDsByPlayerID = [:]
+            return
+        }
+        let descriptor = FetchDescriptor<Player>(predicate: #Predicate<Player> { ids.contains($0.id) })
+        let players = (try? modelContext.fetch(descriptor)) ?? []
+        faceIDsByPlayerID = players.reduce(into: [:]) { map, player in
+            if let face = player.faceID { map[player.id] = face }
+        }
+    }
+
+    /// The subject's portrait id, when this story is about one person.
+    private func faceID(for item: NewsItem) -> String? {
+        guard let playerID = item.relatedPlayerID else { return nil }
+        return faceIDsByPlayerID[playerID]
     }
 }
 
@@ -464,6 +496,10 @@ private struct NewsItemCard: View {
     let isMyTeam: Bool
     let isExpanded: Bool
     let isPinned: Bool
+    /// Portrait of the person the story is about, when it has one. `nil` means
+    /// "not a person story" and draws no portrait at all — a silhouette on a
+    /// league-wide headline would be noise, not a placeholder.
+    var subjectFaceID: String? = nil
     let onTap: () -> Void
 
     var body: some View {
@@ -517,13 +553,20 @@ private struct NewsItemCard: View {
                             .monospacedDigit()
                     }
 
-                    // Headline
-                    Text(item.headline)
-                        .font(isPinned
-                              ? .headline.weight(.bold)
-                              : .subheadline.weight(.bold))
-                        .foregroundStyle(Color.textPrimary)
-                        .multilineTextAlignment(.leading)
+                    // Headline (with the subject's portrait when the story is
+                    // about one person — retirements, awards, stat lines).
+                    HStack(alignment: .top, spacing: 10) {
+                        if let subjectFaceID {
+                            PersonFaceView(faceID: subjectFaceID, size: .small)
+                        }
+                        Text(item.headline)
+                            .font(isPinned
+                                  ? .headline.weight(.bold)
+                                  : .subheadline.weight(.bold))
+                            .foregroundStyle(Color.textPrimary)
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 0)
+                    }
 
                     // Body — full text when expanded, 3 lines preview otherwise.
                     Text(item.body)

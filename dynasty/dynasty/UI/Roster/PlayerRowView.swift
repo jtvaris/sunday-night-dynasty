@@ -29,7 +29,7 @@ struct PlayerRowView: View {
             depthIndicator
                 .frame(width: 14, alignment: .center)
 
-            PlayerAvatarView(player: player, size: 28)
+            PersonFaceView(player: player, size: .small)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(player.fullName)

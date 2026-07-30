@@ -190,9 +190,15 @@ struct ProspectListView: View {
                 if cachedDisplayed.isEmpty {
                     emptyState
                 } else {
-                    // Column headers
+                    // Column headers. The insets MIRROR the rows'
+                    // `listRowInsets` (leading 8 / trailing 16) rather than a
+                    // round 20/20 — with a different leading inset every
+                    // labelled column sat a dozen points off its data, on top
+                    // of the unlabelled columns compensated inside
+                    // `columnHeaders`.
                     columnHeaders
-                        .padding(.horizontal, 20)
+                        .padding(.leading, 8)
+                        .padding(.trailing, 16)
                         .padding(.vertical, 4)
                         .background(Color.backgroundPrimary)
 
@@ -372,9 +378,22 @@ struct ProspectListView: View {
     @ViewBuilder
     private var columnHeaders: some View {
         HStack(spacing: 0) {
+            // Leading control column: the star button (44 pt) — or the compare
+            // checkbox (32 pt) while comparing. It has no label but it is in
+            // every row, so the header has to reserve it.
+            Spacer().frame(width: compareMode ? 32 : 44)
+
             // Always-visible: POS
             Text("POS")
                 .frame(width: 36, alignment: .center)
+
+            // Portrait column — unlabelled, but it MUST be reserved here or the
+            // header stops lining up with the rows: `ProspectRowView` draws a
+            // 30 pt `PersonFaceView` plus 6 pt of leading padding between the
+            // badge and the name, and both sides absorb the difference in the
+            // shared `Spacer`, so the only visible symptom would be "NAME"
+            // sitting 36 pt left of the first name.
+            Spacer().frame(width: 36)
 
             // NAME
             Text("NAME")
@@ -431,6 +450,14 @@ struct ProspectListView: View {
         Group {
             Text("AGE")
                 .frame(width: 28, alignment: .center)
+            HStack(spacing: 2) {
+                Text("PROD")
+                InfoTooltipButton(
+                    text: "College production tier — ELI elite, AA above average, AVG average, BA below average. Production is a real but imperfect signal: workout warriors under-produce, and system players over-produce against weak competition.",
+                    size: 9
+                )
+            }
+            .frame(width: 46, alignment: .center)
             Text("FIT")
                 .frame(width: 32, alignment: .center)
             Text("NEED")
@@ -462,19 +489,24 @@ struct ProspectListView: View {
     }
 
     private var mentalHeaders: some View {
+        // 8 columns (LRN + CMP added) — widths shrink 32 → 26 so the row fits.
         Group {
             Text("AWR")
-                .frame(width: 32, alignment: .center)
+                .frame(width: 26, alignment: .center)
             Text("DEC")
-                .frame(width: 32, alignment: .center)
+                .frame(width: 26, alignment: .center)
             Text("WRK")
-                .frame(width: 32, alignment: .center)
+                .frame(width: 26, alignment: .center)
             Text("CLT")
-                .frame(width: 32, alignment: .center)
+                .frame(width: 26, alignment: .center)
             Text("COA")
-                .frame(width: 32, alignment: .center)
+                .frame(width: 26, alignment: .center)
             Text("LDR")
-                .frame(width: 32, alignment: .center)
+                .frame(width: 26, alignment: .center)
+            Text("LRN")
+                .frame(width: 26, alignment: .center)
+            Text("CMP")
+                .frame(width: 26, alignment: .center)
         }
         .font(.system(size: 8, weight: .bold))
         .foregroundStyle(Color.textTertiary)
@@ -695,6 +727,11 @@ struct ProspectRowView: View {
             // Always-visible: Position badge
             positionBadge
 
+            // Always-visible: Portrait (30 pt — matches the row's existing
+            // two-line content height, so the list rhythm does not change).
+            PersonFaceView(prospect: prospect, size: .small)
+                .padding(.leading, 6)
+
             // Always-visible: Name column
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
@@ -810,6 +847,9 @@ struct ProspectRowView: View {
                 .foregroundStyle(Color.textSecondary)
                 .frame(width: 28, alignment: .center)
 
+            // College production tier
+            ProductionTierChip(tier: prospect.collegeProductionTier, width: 46)
+
             // Scheme Fit
             schemeFitIcon
                 .frame(width: 32, alignment: .center)
@@ -855,26 +895,32 @@ struct ProspectRowView: View {
     // MARK: - Mental Columns
 
     private var mentalColumns: some View {
+        // 8 columns (LRN + CMP added) — widths shrink 32 → 26 so the row fits.
         Group {
             if isScouted {
                 gradeRangeMiniAttribute(key: "AWR", label: "AWR", grades: prospect.scoutedMentalGrades)
-                    .frame(width: 32, alignment: .center)
+                    .frame(width: 26, alignment: .center)
                 gradeRangeMiniAttribute(key: "DEC", label: "DEC", grades: prospect.scoutedMentalGrades)
-                    .frame(width: 32, alignment: .center)
+                    .frame(width: 26, alignment: .center)
                 gradeRangeMiniAttribute(key: "WRK", label: "WRK", grades: prospect.scoutedMentalGrades)
-                    .frame(width: 32, alignment: .center)
+                    .frame(width: 26, alignment: .center)
                 gradeRangeMiniAttribute(key: "CLT", label: "CLT", grades: prospect.scoutedMentalGrades)
-                    .frame(width: 32, alignment: .center)
+                    .frame(width: 26, alignment: .center)
                 gradeRangeMiniAttribute(key: "COA", label: "COA", grades: prospect.scoutedMentalGrades)
-                    .frame(width: 32, alignment: .center)
+                    .frame(width: 26, alignment: .center)
                 gradeRangeMiniAttribute(key: "LDR", label: "LDR", grades: prospect.scoutedMentalGrades)
-                    .frame(width: 32, alignment: .center)
+                    .frame(width: 26, alignment: .center)
+                gradeRangeMiniAttribute(key: "LRN", label: "LRN", grades: prospect.scoutedMentalGrades)
+                    .frame(width: 26, alignment: .center)
+                // CMP = competitiveness, the fighter mentality (plan §2.1).
+                gradeRangeMiniAttribute(key: "CMP", label: "CMP", grades: prospect.scoutedMentalGrades)
+                    .frame(width: 26, alignment: .center)
             } else {
-                ForEach(0..<6, id: \.self) { _ in
+                ForEach(0..<8, id: \.self) { _ in
                     Text("--")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(Color.textTertiary)
-                        .frame(width: 32, alignment: .center)
+                        .frame(width: 26, alignment: .center)
                 }
             }
         }
@@ -1435,10 +1481,15 @@ struct ProspectCompareSheet: View {
     }
 
     private var overviewRows: [CompareRow] {
-        [
+        let leftTier = left.collegeProductionTier
+        let rightTier = right.collegeProductionTier
+        return [
             numericRow(label: "AGE", lhs: left.age, rhs: right.age),
             textRow(label: "HT", lhs: heightString(left.height), rhs: heightString(right.height)),
             numericRow(label: "WT", lhs: left.weight, rhs: right.weight),
+            textRow(label: "PROD", lhs: leftTier.displayName, rhs: rightTier.displayName,
+                    lhsBetter: leftTier.sortRank < rightTier.sortRank,
+                    rhsBetter: rightTier.sortRank < leftTier.sortRank),
             numericRow(label: "PROJ RD", lhs: left.draftProjection, rhs: right.draftProjection),
             textRow(label: "FIT", lhs: schemeFitLeft ?? "--", rhs: schemeFitRight ?? "--",
                     lhsBetter: schemeFitLeft == "Good" && schemeFitRight != "Good",
@@ -1462,7 +1513,7 @@ struct ProspectCompareSheet: View {
     }
 
     private var mentalRows: [CompareRow] {
-        let keys = ["AWR", "DEC", "WRK", "CLT", "COA", "LDR"]
+        let keys = ["AWR", "DEC", "WRK", "CLT", "COA", "LDR", "LRN", "CMP"]
         return keys.map { k in
             let l = left.scoutedMentalGrades?[k]?.displayText ?? "?"
             let r = right.scoutedMentalGrades?[k]?.displayText ?? "?"

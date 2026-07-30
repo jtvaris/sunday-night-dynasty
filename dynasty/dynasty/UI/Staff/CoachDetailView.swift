@@ -36,13 +36,6 @@ struct CoachDetailView: View {
         return sum / 12
     }
 
-    /// Deterministic avatar ID derived from the coach's name.
-    private var coachAvatarID: String {
-        let allIDs = CoachAvatars.all.map { $0.id }
-        let hash = abs(coach.fullName.hashValue)
-        return allIDs[hash % allIDs.count]
-    }
-
     private let columns = [
         GridItem(.flexible(), spacing: 12),
         GridItem(.flexible(), spacing: 12)
@@ -147,11 +140,7 @@ struct CoachDetailView: View {
             HStack {
                 Spacer()
                 VStack(spacing: 8) {
-                    CoachAvatarImageView(avatarID: coachAvatarID, size: 96)
-                        .overlay(
-                            Circle()
-                                .strokeBorder(Color.accentGold, lineWidth: 2)
-                        )
+                    PersonFaceView(coach: coach, size: .large, ringColor: .accentGold)
                     Text(coach.role.displayName)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.accentGold)

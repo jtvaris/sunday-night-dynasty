@@ -2396,6 +2396,21 @@ struct CoachingStaffView: View {
                     .padding(.vertical, 6)
                     .background(Color.accentGold, in: RoundedRectangle(cornerRadius: 6))
 
+                // The user's own portrait — the avatar picked in the new-career
+                // wizard — MOVED here from the row's trailing edge. It was the
+                // only face on the staff screen that did not sit right after
+                // the role badge (`HeadCoachCardView`, `CoachRowView` and
+                // `CoachRowWithDescriptionView` all lead with it), which read
+                // as the head-coach card missing the portrait every row under
+                // it had. Same `PersonFaceView` styling as the AI rows, so the
+                // gold ring and diameter match.
+                PersonFaceView(
+                    careerAvatarID: career.avatarID,
+                    size: .medium,
+                    ringColor: .accentGold,
+                    name: career.playerName
+                )
+
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text("You")
@@ -2417,14 +2432,6 @@ struct CoachingStaffView: View {
                 }
 
                 Spacer()
-
-                // Player avatar
-                Image(career.avatarID)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 40, height: 40)
-                    .clipShape(Circle())
-                    .overlay(Circle().strokeBorder(Color.accentGold, lineWidth: 2))
             }
 
             Text("Sets the team's vision, manages coordinators, and makes key game-day decisions")
@@ -2948,6 +2955,10 @@ private struct HeadCoachCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 14) {
+                // Head coach portrait — the staff card is the one place a
+                // coach gets more than a row, so it carries the bigger size.
+                PersonFaceView(coach: coach, size: .medium, ringColor: .accentGold)
+
                 // HC badge -- larger
                 Text("HC")
                     .font(.system(size: 16, weight: .black))
@@ -3098,6 +3109,8 @@ private struct CoachRowWithDescriptionView: View {
                     .background(coach.role.badgeColor, in: RoundedRectangle(cornerRadius: 4))
                     .frame(width: 44)
 
+                PersonFaceView(coach: coach, size: .small)
+
                 // Name + meta
                 VStack(alignment: .leading, spacing: 2) {
                     Text(coach.fullName)
@@ -3187,6 +3200,8 @@ private struct CoachRowView: View {
                 .padding(.vertical, 4)
                 .background(coach.role.badgeColor, in: RoundedRectangle(cornerRadius: 4))
                 .frame(width: 44)
+
+            PersonFaceView(coach: coach, size: .small)
 
             // Name + meta
             VStack(alignment: .leading, spacing: 2) {
@@ -3490,6 +3505,13 @@ private struct SimpleMedicalHireSheet: View {
         }
 
         candidate.teamID = teamID
+        // Phase 4 faces: turn the candidate's non-reserving preview portrait
+        // into a real reservation (same reason as `HireCoachView.hire`).
+        candidate.faceID = FaceLibrary.shared.claimFace(
+            candidate.faceID, personID: candidate.id,
+            role: .coach, age: candidate.age, position: nil,
+            gender: FacePersonGender(tag: candidate.gender)
+        )
         modelContext.insert(candidate)
         hiredID = candidate.id
         try? modelContext.save()

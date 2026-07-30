@@ -1,0 +1,27 @@
+Drop target for the packaged face library (docs/FACE_GENERATION_PLAN.md §7).
+
+    python3 tools/faces/package_faces.py
+    cp tools/faces/out/Faces/*.heic          dynasty/dynasty/Resources/Faces/
+    cp tools/faces/out/faces_manifest.json   dynasty/dynasty/Resources/Faces/
+
+The Xcode project is a filesystem-synchronized root group, so anything added
+here is bundled on the next build with no project-file edit. Measured: the
+sync FLATTENS subdirectories, so the files land at the bundle ROOT
+(dynasty.app/face_00000.heic, dynasty.app/faces_manifest.json) — which is why
+FaceImageCache.bundleURL and FaceLibrary.loadManifest each try the bundle root
+as well as the "Faces" subdirectory.
+
+This directory is intentionally empty: the app renders a placeholder
+silhouette for every missing image, and shipping a PARTIAL faces_manifest.json
+would be worse than none (the manifest is authoritative when present, so it
+would shrink the catalog to whatever ids it lists).
+
+After dropping the files, verify the build actually picked them up — do not
+eyeball the .app:
+
+    SIMCTL_CHILD_FACE_BUNDLE_AUDIT=1 xcrun simctl launch --console-pty \
+      <device> com.brewcrow.dynasty | grep FACEBUNDLE
+
+Expect `catalog=manifest/<n>` and `images resolved=n/n`. A FAIL means the
+manifest did not decode (the app silently falls back to the synthesized
+catalog) or images shipped that the manifest does not list.

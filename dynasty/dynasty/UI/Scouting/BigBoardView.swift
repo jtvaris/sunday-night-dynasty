@@ -146,43 +146,50 @@ struct BigBoardView: View {
         prospects.filter { $0.scoutedOverall != nil }
     }
 
-    /// Composite board score: scouted overall weighted by positional draft value.
-    /// This ensures QB/DE/LT rank highly while P/K/FB are pushed down.
-    /// Reduced positional weight (0.15) so raw talent matters more than position.
+    /// Composite board score = the scouted overall, full stop.
+    /// Positional value is baked into the class blueprint (a position's talent
+    /// is decided by which board slots it is allocated), so re-applying a
+    /// positional multiplier here would double-count it.
     private func boardCompositeScore(for prospect: CollegeProspect) -> Double {
-        let ovr = Double(prospect.scoutedOverall ?? prospect.trueOverall)
-        let posValue = ScoutingEngine.positionalDraftValue(for: prospect.position)
-        return ovr * (0.85 + 0.15 * posValue)
+        Double(prospect.scoutedOverall ?? prospect.trueOverall)
     }
 
-    /// Projected round based on composite board score (considers positional value).
+    /// Projected round from the board score. Thresholds are `DraftClassBuilder`'s
+    /// own `talentTarget` evaluated at the cumulative band boundaries, **including
+    /// the post-#224 taper** the bare `96.5 − 5.2·ln(r + 1.5)` curve omits:
+    /// #28 78.9 · #61 75.0 · #99 72.5 · #142 70.7 · #189 69.2 ·
+    /// #240 67.5 (68.0 − 0.48 taper) · #295 64.8 (66.9 − 2.13 taper).
+    /// Reading the R6/R7/UDFA cuts off the untapered curve put them a full band
+    /// too high, so ~58 % of round-7 grades rendered "UDFA" here while every
+    /// other screen showed the prospect's own `draftProjection` of "Rd 7".
     private func boardProjectedRound(for prospect: CollegeProspect) -> Int {
         let score = boardCompositeScore(for: prospect)
-        // Map composite score to round: higher score = lower (better) round
         switch score {
-        case 82...:  return 1
-        case 76..<82: return 2
-        case 70..<76: return 3
-        case 64..<70: return 4
-        case 58..<64: return 5
-        case 52..<58: return 6
-        case 46..<52: return 7
-        default:       return 8 // UDFA
+        case 78.9...:     return 1
+        case 75..<78.9:   return 2
+        case 72.5..<75:   return 3
+        case 70.7..<72.5: return 4
+        case 69.2..<70.7: return 5
+        case 67.5..<69.2: return 6
+        case 64.8..<67.5: return 7
+        default:          return 8 // UDFA
         }
     }
 
-    /// Board tier based on composite score (considers positional value).
+    /// Board tier from the board score, on the same tapered curve as the round
+    /// bands (tier 5 "Late Rounds (Rd 6-7)" therefore spans the R6 *and* R7
+    /// bands, and tier 6/7 split the UDFA band at its midpoint #322 ≈ 63.5).
     private func boardTier(for prospect: CollegeProspect) -> Int {
         if let manual = prospect.manualTier { return manual }
         let score = boardCompositeScore(for: prospect)
         switch score {
-        case 85...:  return 1  // Blue Chip
-        case 78..<85: return 2  // First Rounder
-        case 72..<78: return 3  // Day Two (Rd 2-3)
-        case 66..<72: return 4  // Day Three (Rd 4-5)
-        case 58..<66: return 5  // Late Rounds (Rd 6-7)
-        case 50..<58: return 6  // Priority UDFA
-        default:       return 7  // Draftable
+        case 83.8...:     return 1  // Blue Chip      (top ~10 slots)
+        case 78.9..<83.8: return 2  // First Rounder
+        case 72.5..<78.9: return 3  // Day Two (Rd 2-3)
+        case 69.2..<72.5: return 4  // Day Three (Rd 4-5)
+        case 64.8..<69.2: return 5  // Late Rounds (Rd 6-7)
+        case 63.5..<64.8: return 6  // Priority UDFA
+        default:          return 7  // Draftable
         }
     }
 
@@ -267,6 +274,13 @@ struct BigBoardView: View {
                 let riskRankA = riskSortRank($0.riskLevel)
                 let riskRankB = riskSortRank($1.riskLevel)
                 if riskRankA != riskRankB { return riskRankA < riskRankB }
+                return ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0)
+            }
+        case .production:
+            return filtered.sorted {
+                let prodA = $0.collegeProductionTier.sortRank
+                let prodB = $1.collegeProductionTier.sortRank
+                if prodA != prodB { return prodA < prodB }
                 return ($0.scoutedOverall ?? 0) > ($1.scoutedOverall ?? 0)
             }
         }
@@ -533,8 +547,11 @@ struct BigBoardView: View {
 
                     bigBoardAttributeTabPicker
 
+                    // Insets MIRROR the rows' `listRowInsets` (leading 8 /
+                    // trailing 16) so each label sits over its own column.
                     bigBoardColumnHeaders
-                        .padding(.horizontal, 20)
+                        .padding(.leading, 8)
+                        .padding(.trailing, 16)
                         .padding(.vertical, 4)
                         .background(Color.backgroundPrimary)
 
@@ -770,6 +787,9 @@ struct BigBoardView: View {
     @ViewBuilder
     private var bigBoardColumnHeaders: some View {
         HStack(spacing: 0) {
+            // Leading star-button column (44 pt): unlabelled, but in every row.
+            Spacer().frame(width: 44)
+
             // Rank
             Text("#")
                 .frame(width: 28, alignment: .center)
@@ -777,6 +797,10 @@ struct BigBoardView: View {
             // POS
             Text("POS")
                 .frame(width: 36, alignment: .center)
+
+            // Portrait column — unlabelled, but reserved so the header keeps
+            // matching the row (30 pt `PersonFaceView` + 6 pt leading padding).
+            Spacer().frame(width: 36)
 
             // NAME
             Text("NAME")
@@ -837,6 +861,14 @@ struct BigBoardView: View {
         Group {
             Text("AGE")
                 .frame(width: 28, alignment: .center)
+            HStack(spacing: 2) {
+                Text("PROD")
+                InfoTooltipButton(
+                    text: "College production tier — ELI elite, AA above average, AVG average, BA below average. Production is a real but imperfect signal: workout warriors under-produce, and system players over-produce against weak competition.",
+                    size: 9
+                )
+            }
+            .frame(width: 46, alignment: .center)
             Text("FIT")
                 .frame(width: 32, alignment: .center)
             Text("NEED")
@@ -868,19 +900,24 @@ struct BigBoardView: View {
     }
 
     private var bigBoardMentalHeaders: some View {
+        // 8 columns (LRN + CMP added) — widths shrink 32 → 26 so the row fits.
         Group {
             Text("AWR")
-                .frame(width: 32, alignment: .center)
+                .frame(width: 26, alignment: .center)
             Text("DEC")
-                .frame(width: 32, alignment: .center)
+                .frame(width: 26, alignment: .center)
             Text("WRK")
-                .frame(width: 32, alignment: .center)
+                .frame(width: 26, alignment: .center)
             Text("CLT")
-                .frame(width: 32, alignment: .center)
+                .frame(width: 26, alignment: .center)
             Text("COA")
-                .frame(width: 32, alignment: .center)
+                .frame(width: 26, alignment: .center)
             Text("LDR")
-                .frame(width: 32, alignment: .center)
+                .frame(width: 26, alignment: .center)
+            Text("LRN")
+                .frame(width: 26, alignment: .center)
+            Text("CMP")
+                .frame(width: 26, alignment: .center)
         }
         .font(.system(size: 8, weight: .bold))
         .foregroundStyle(Color.textTertiary)
@@ -1803,6 +1840,11 @@ struct BigBoardRowView: View {
             // Position badge
             boardPositionBadge
 
+            // Portrait (30 pt — same height as the row's two text lines, so
+            // board rows keep their current density).
+            PersonFaceView(prospect: prospect, size: .small)
+                .padding(.leading, 6)
+
             // Name column (compact)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
@@ -1920,6 +1962,9 @@ struct BigBoardRowView: View {
                 .foregroundStyle(Color.textSecondary)
                 .frame(width: 28, alignment: .center)
 
+            // College production tier
+            ProductionTierChip(tier: prospect.collegeProductionTier, width: 46)
+
             // Scheme Fit
             boardSchemeFitIcon
                 .frame(width: 32, alignment: .center)
@@ -1965,26 +2010,32 @@ struct BigBoardRowView: View {
     // MARK: - Mental Columns
 
     private var boardMentalColumns: some View {
+        // 8 columns (LRN + CMP added) — widths shrink 32 → 26 so the row fits.
         Group {
             if isScouted {
                 boardGradeRangeMiniAttribute(key: "AWR", label: "AWR", grades: prospect.scoutedMentalGrades)
-                    .frame(width: 32, alignment: .center)
+                    .frame(width: 26, alignment: .center)
                 boardGradeRangeMiniAttribute(key: "DEC", label: "DEC", grades: prospect.scoutedMentalGrades)
-                    .frame(width: 32, alignment: .center)
+                    .frame(width: 26, alignment: .center)
                 boardGradeRangeMiniAttribute(key: "WRK", label: "WRK", grades: prospect.scoutedMentalGrades)
-                    .frame(width: 32, alignment: .center)
+                    .frame(width: 26, alignment: .center)
                 boardGradeRangeMiniAttribute(key: "CLT", label: "CLT", grades: prospect.scoutedMentalGrades)
-                    .frame(width: 32, alignment: .center)
+                    .frame(width: 26, alignment: .center)
                 boardGradeRangeMiniAttribute(key: "COA", label: "COA", grades: prospect.scoutedMentalGrades)
-                    .frame(width: 32, alignment: .center)
+                    .frame(width: 26, alignment: .center)
                 boardGradeRangeMiniAttribute(key: "LDR", label: "LDR", grades: prospect.scoutedMentalGrades)
-                    .frame(width: 32, alignment: .center)
+                    .frame(width: 26, alignment: .center)
+                boardGradeRangeMiniAttribute(key: "LRN", label: "LRN", grades: prospect.scoutedMentalGrades)
+                    .frame(width: 26, alignment: .center)
+                // CMP = competitiveness, the fighter mentality (plan §2.1).
+                boardGradeRangeMiniAttribute(key: "CMP", label: "CMP", grades: prospect.scoutedMentalGrades)
+                    .frame(width: 26, alignment: .center)
             } else {
-                ForEach(0..<6, id: \.self) { _ in
+                ForEach(0..<8, id: \.self) { _ in
                     Text("--")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(Color.textTertiary)
-                        .frame(width: 32, alignment: .center)
+                        .frame(width: 26, alignment: .center)
                 }
             }
         }
@@ -2339,29 +2390,31 @@ struct BigBoardRowView: View {
 // MARK: - #9: Big Board Sort Enum
 
 enum BigBoardSort: String, CaseIterable, Identifiable {
-    case boardRank, overall, position, tier, schemeFit, risk
+    case boardRank, overall, position, tier, schemeFit, risk, production
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .boardRank: return "Board Rank"
-        case .overall:   return "Overall"
-        case .position:  return "Position"
-        case .tier:      return "Tier"
-        case .schemeFit: return "Scheme Fit"
-        case .risk:      return "Risk Level"
+        case .boardRank:  return String(localized: "Board Rank")
+        case .overall:    return String(localized: "Overall")
+        case .position:   return String(localized: "Position")
+        case .tier:       return String(localized: "Tier")
+        case .schemeFit:  return String(localized: "Scheme Fit")
+        case .risk:       return String(localized: "Risk Level")
+        case .production: return String(localized: "College Production")
         }
     }
 
     var icon: String {
         switch self {
-        case .boardRank: return "list.number"
-        case .overall:   return "star.fill"
-        case .position:  return "rectangle.3.group"
-        case .tier:      return "chart.bar.fill"
-        case .schemeFit: return "checkmark.circle"
-        case .risk:      return "bolt.fill"
+        case .boardRank:  return "list.number"
+        case .overall:    return "star.fill"
+        case .position:   return "rectangle.3.group"
+        case .tier:       return "chart.bar.fill"
+        case .schemeFit:  return "checkmark.circle"
+        case .risk:       return "bolt.fill"
+        case .production: return "chart.bar.xaxis"
         }
     }
 }
