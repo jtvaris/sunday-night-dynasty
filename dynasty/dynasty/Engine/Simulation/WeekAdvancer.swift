@@ -115,6 +115,73 @@ enum WeekAdvancer {
     /// `currentMockDraft` taken right after that phase's mock was generated.
     static var mockDraftHistory: [String: [ScoutingEngine.MockDraftPick]] = [:]
 
+    // MARK: - Career switch reset
+
+    /// The save this engine is currently bound to. **Every store-wide fetch in
+    /// this file filters on it**, so two careers in one SwiftData store never
+    /// see each other's teams, players, games or picks.
+    ///
+    /// `nil` means "not bound" — the scoped fetches then match only rows whose
+    /// `careerID` is also `nil`, i.e. they come back empty. That is deliberate:
+    /// an unbound engine doing nothing is a visible bug, an unbound engine
+    /// simulating every career at once is a silent one.
+    private(set) static var activeCareerID: UUID?
+
+    /// Binds the engine to `career`. Switching saves also empties the
+    /// process-global caches that belonged to the save being left.
+    static func bind(to career: Career) {
+        guard activeCareerID != career.id else { return }
+        resetProcessStateForCareerSwitch()
+        activeCareerID = career.id
+    }
+
+    /// Every static above is PROCESS-global, so without this a career switch
+    /// (or a second `New Career` in the same launch) carried save A's draft
+    /// class, UDFA completion set, trade-volume caps and `wasFired` flag into
+    /// save B. Call on every career open and on career creation.
+    ///
+    /// This is the same reset `MultiSeasonSmokeTest` has always run at
+    /// bootstrap — hoisted here so the app and the harness share one list and a
+    /// newly added static cannot be reset in one place and forgotten in the other.
+    static func resetProcessStateForCareerSwitch() {
+        activeCareerID = nil
+        lastPlayerGameResult = nil
+        liveGameInjuryTeamIDs = []
+        lastNewsItems = []
+        lastEvents = []
+        lastInboxMessages = []
+        wasFired = false
+        pendingPressConference = nil
+
+        currentDraftClass = []
+        currentDraftPicks = []
+        currentMockDraft = []
+        mockDraftHistory = [:]
+        draftClassGenerated = false
+        udfaStageCompletedSeasons = []
+
+        // Trade counters: the monotonic pair the per-season diff reads, plus the
+        // per-cycle pair `startNewSeason` maintains (season 1 never calls it, so a
+        // second career in the same process would inherit the first one's totals
+        // and start with the market's volume caps already spent).
+        aiTradeOffersGenerated = 0
+        aiTradeOffersOffseasonGenerated = 0
+        aiOffersThisSeason = 0
+        aiOffersThisOffseason = 0
+        leagueTradesThisSeason = 0
+        leagueTradesThisOffseason = 0
+        TradeValueEngine.TradeTalkRegistry.reset()
+        TradeValueEngine.funnel = TradeValueEngine.MarketFunnel()
+
+        // Per-career ledgers held outside SwiftData — keyed by player/team ids
+        // that only mean something inside one save.
+        TrainingFocusEngine.resetProcessState()
+        CompensatoryPickEngine.resetProcessState()
+        NegotiationLockRegistry.reset()
+        FASigningTracker.reset()
+        PerfLog.resetProcessState()
+    }
+
     // MARK: - Draft Class Persistence
 
     /// Inserts every prospect of the current draft class into the SwiftData
@@ -124,6 +191,7 @@ enum WeekAdvancer {
     @MainActor
     static func persistDraftClass(_ prospects: [CollegeProspect], to context: ModelContext) {
         for prospect in prospects {
+            prospect.careerID = activeCareerID
             context.insert(prospect)
         }
         try? context.save()
@@ -158,6 +226,7 @@ enum WeekAdvancer {
         career: Career,
         modelContext: ModelContext
     ) -> Bool {
+        bind(to: career)
         guard isBeforeThisCycleDraft(career: career, modelContext: modelContext) else {
             return false
         }
@@ -166,7 +235,10 @@ enum WeekAdvancer {
         // fresh-launch restore path, which has not populated it yet.
         var stored = currentDraftClass
         if stored.isEmpty {
-            stored = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>())) ?? []
+            let cid = activeCareerID
+            stored = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>(
+                predicate: #Predicate { $0.careerID == cid }
+            ))) ?? []
         }
         guard stored.contains(where: {
             $0.generatorVersion < DraftClassBuilder.currentGeneratorVersion
@@ -185,7 +257,10 @@ enum WeekAdvancer {
 
         // Purge every persisted prospect row, not just the in-memory ones — the
         // restore paths read the whole table.
-        let persisted = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>())) ?? []
+        let migrationCareerID = activeCareerID
+        let persisted = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>(
+            predicate: #Predicate { $0.careerID == migrationCareerID }
+        ))) ?? []
         for prospect in persisted {
             modelContext.delete(prospect)
         }
@@ -214,13 +289,18 @@ enum WeekAdvancer {
         // `teamInterest`; a regenerated class carries neither until it is
         // re-run, and after `.freeAgency` nothing ever re-runs it.
         if hadMockDraft {
-            let teams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
-            let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
+            let cid = career.id
+            let teams = (try? modelContext.fetch(FetchDescriptor<Team>(
+                predicate: #Predicate { $0.careerID == cid }
+            ))) ?? []
+            let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>(
+                predicate: #Predicate { $0.careerID == cid }
+            ))) ?? []
             let season = career.currentSeason
             var picks = currentDraftPicks
             if picks.isEmpty {
                 let descriptor = FetchDescriptor<DraftPick>(
-                    predicate: #Predicate<DraftPick> { $0.seasonYear == season }
+                    predicate: #Predicate<DraftPick> { $0.careerID == cid && $0.seasonYear == season }
                 )
                 picks = (try? modelContext.fetch(descriptor)) ?? []
             }
@@ -265,8 +345,11 @@ enum WeekAdvancer {
         }
 
         let season = career.currentSeason
+        let cid = career.id
         var descriptor = FetchDescriptor<DraftPick>(
-            predicate: #Predicate<DraftPick> { $0.seasonYear == season && $0.isComplete }
+            predicate: #Predicate<DraftPick> {
+                $0.careerID == cid && $0.seasonYear == season && $0.isComplete
+            }
         )
         descriptor.fetchLimit = 1
         let completed = (try? modelContext.fetch(descriptor)) ?? []
@@ -353,6 +436,9 @@ enum WeekAdvancer {
     ///   - career: The active `Career` object (mutated in place).
     ///   - modelContext: SwiftData context used to fetch and persist `Game` and `Team` objects.
     static func advanceWeek(career: Career, modelContext: ModelContext) {
+        // Multi-save isolation: bind every store-wide fetch below to this save.
+        bind(to: career)
+
         // Reset per-advance state
         lastNewsItems = []
         lastEvents = []
@@ -435,6 +521,7 @@ enum WeekAdvancer {
     ///   - teams:  All 32 teams in the league.
     ///   - modelContext: SwiftData context used to insert the new games.
     static func startNewSeason(career: Career, teams: [Team], modelContext: ModelContext) {
+        bind(to: career)
         // 0. Recalculate coaching budgets based on previous season performance (#80)
         for team in teams {
             if let owner = team.owner {
@@ -549,6 +636,7 @@ enum WeekAdvancer {
 
         // 3. Persist every game into the SwiftData store.
         for game in newGames {
+            game.careerID = career.id
             modelContext.insert(game)
         }
 
@@ -1041,7 +1129,10 @@ enum WeekAdvancer {
                 // Contracts make the offer builder no-trade-clause-aware; without
                 // them the Trade Center would veto on accept what the AI just
                 // offered (preview ≢ outcome).
-                let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>())) ?? []
+                let contractCareerID = activeCareerID
+                let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>(
+                    predicate: #Predicate { $0.careerID == contractCareerID }
+                ))) ?? []
                 for _ in 0..<hazard.rolls {
                     guard aiOffersThisSeason < TradeValueEngine.maxInSeasonOffers else { break }
                     guard Int.random(in: 1...100) <= hazard.chancePercent else { continue }
@@ -2001,9 +2092,10 @@ enum WeekAdvancer {
         guard (19...22).contains(week) else { return }
         let season = career.currentSeason
 
+        let cid = career.id
         let existingDescriptor = FetchDescriptor<Game>(
             predicate: #Predicate<Game> {
-                $0.seasonYear == season && $0.week == week && $0.isPlayoff == true
+                $0.careerID == cid && $0.seasonYear == season && $0.week == week && $0.isPlayoff == true
             }
         )
         let existing = (try? modelContext.fetch(existingDescriptor)) ?? []
@@ -2105,6 +2197,7 @@ enum WeekAdvancer {
         }
 
         for game in newGames {
+            game.careerID = career.id
             modelContext.insert(game)
         }
     }
@@ -2428,6 +2521,7 @@ enum WeekAdvancer {
                 season: career.currentSeason
             )
             for coach in carousel.newCoaches {
+                coach.careerID = career.id
                 modelContext.insert(coach)
             }
             lastNewsItems.append(contentsOf: carousel.news)
@@ -2544,6 +2638,7 @@ enum WeekAdvancer {
                         role: .coach, age: newHC.age, position: nil,
                         gender: FacePersonGender(tag: newHC.gender)
                     )
+                    newHC.careerID = career.id
                     modelContext.insert(newHC)
                     lastNewsItems.append(NewsItem(
                         headline: "\(reqTeam.fullName) name \(newHC.fullName) head coach",
@@ -2730,6 +2825,7 @@ enum WeekAdvancer {
                             coaches: teamCoaches,
                             isUndrafted: true
                         )
+                        player.careerID = activeCareerID
                         modelContext.insert(player)
                     }
                 }
@@ -3055,9 +3151,10 @@ enum WeekAdvancer {
         modelContext: ModelContext
     ) {
         let season = career.currentSeason
+        let cid = career.id
         let existingDescriptor = FetchDescriptor<DraftPick>(
             predicate: #Predicate<DraftPick> {
-                $0.seasonYear == season && $0.isComplete == false
+                $0.careerID == cid && $0.seasonYear == season && $0.isComplete == false
             }
         )
         var draftPicks = (try? modelContext.fetch(existingDescriptor)) ?? []
@@ -3075,6 +3172,7 @@ enum WeekAdvancer {
                 seasonYear: season
             )
             for pick in draftPicks {
+                pick.careerID = cid
                 modelContext.insert(pick)
             }
         } else if draftPicks.contains(where: { $0.isProvisionalOrder }) {
@@ -3104,6 +3202,7 @@ enum WeekAdvancer {
                 teamAbbrs: teamAbbrs
             )
             for pick in compPicks {
+                pick.careerID = cid
                 modelContext.insert(pick)
             }
             draftPicks.append(contentsOf: compPicks)
@@ -3204,9 +3303,10 @@ enum WeekAdvancer {
     ) {
         guard teams.count >= 2 else { return }
         let season = career.currentSeason
+        let cid = career.id
         for year in (season + 1)...(season + LeagueGenerator.futurePickHorizon) {
             var descriptor = FetchDescriptor<DraftPick>(
-                predicate: #Predicate<DraftPick> { $0.seasonYear == year }
+                predicate: #Predicate<DraftPick> { $0.careerID == cid && $0.seasonYear == year }
             )
             descriptor.fetchLimit = 1
             let existing = (try? modelContext.fetch(descriptor)) ?? []
@@ -3216,6 +3316,7 @@ enum WeekAdvancer {
                 afterSeason: year - 1,
                 horizon: 1
             ) {
+                pick.careerID = cid
                 modelContext.insert(pick)
             }
         }
@@ -3255,8 +3356,11 @@ enum WeekAdvancer {
         // Slot into an already-persisted upcoming pool when one exists;
         // otherwise leave the awards pending for draft-order generation.
         let season = career.currentSeason
+        let cid = career.id
         let poolDescriptor = FetchDescriptor<DraftPick>(
-            predicate: #Predicate<DraftPick> { $0.seasonYear == season && $0.isComplete == false }
+            predicate: #Predicate<DraftPick> {
+                $0.careerID == cid && $0.seasonYear == season && $0.isComplete == false
+            }
         )
         let existingPool = (try? modelContext.fetch(poolDescriptor)) ?? []
         // A pool whose order is still PROVISIONAL (future-pick rows whose year has
@@ -3273,7 +3377,10 @@ enum WeekAdvancer {
                 seasonYear: season,
                 teamAbbrs: teamAbbrs
             )
-            for pick in compPicks { modelContext.insert(pick) }
+            for pick in compPicks {
+                pick.careerID = cid
+                modelContext.insert(pick)
+            }
             CompensatoryPickEngine.clearPendingAwards()
         } else {
             CompensatoryPickEngine.stashPendingAwards(awards)
@@ -3435,8 +3542,10 @@ enum WeekAdvancer {
         isPlayoff: Bool,
         modelContext: ModelContext
     ) -> [Game] {
+        let cid = activeCareerID
         let descriptor = FetchDescriptor<Game>(
             predicate: #Predicate { game in
+                game.careerID == cid &&
                 game.week == week &&
                 game.seasonYear == seasonYear &&
                 game.isPlayoff == isPlayoff &&
@@ -3455,8 +3564,10 @@ enum WeekAdvancer {
         seasonYear: Int,
         modelContext: ModelContext
     ) -> [Game] {
+        let cid = activeCareerID
         let descriptor = FetchDescriptor<Game>(
             predicate: #Predicate { game in
+                game.careerID == cid &&
                 game.week == week &&
                 game.seasonYear == seasonYear &&
                 game.isPlayoff == false
@@ -3558,23 +3669,27 @@ enum WeekAdvancer {
     }
 
     private static func fetchTeamsByID(modelContext: ModelContext) -> [UUID: Team] {
-        let descriptor = FetchDescriptor<Team>()
+        let cid = activeCareerID
+        let descriptor = FetchDescriptor<Team>(predicate: #Predicate { $0.careerID == cid })
         let teams = (try? modelContext.fetch(descriptor)) ?? []
         return Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
     }
 
     private static func fetchAllTeams(modelContext: ModelContext) -> [Team] {
-        let descriptor = FetchDescriptor<Team>()
+        let cid = activeCareerID
+        let descriptor = FetchDescriptor<Team>(predicate: #Predicate { $0.careerID == cid })
         return (try? modelContext.fetch(descriptor)) ?? []
     }
 
     private static func fetchAllPlayers(modelContext: ModelContext) -> [Player] {
-        let descriptor = FetchDescriptor<Player>()
+        let cid = activeCareerID
+        let descriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.careerID == cid })
         return (try? modelContext.fetch(descriptor)) ?? []
     }
 
     private static func fetchAllCoaches(modelContext: ModelContext) -> [Coach] {
-        let descriptor = FetchDescriptor<Coach>()
+        let cid = activeCareerID
+        let descriptor = FetchDescriptor<Coach>(predicate: #Predicate { $0.careerID == cid })
         return (try? modelContext.fetch(descriptor)) ?? []
     }
 
@@ -3638,14 +3753,16 @@ enum WeekAdvancer {
     }
 
     private static func fetchAllScouts(modelContext: ModelContext) -> [Scout] {
-        let descriptor = FetchDescriptor<Scout>()
+        let cid = activeCareerID
+        let descriptor = FetchDescriptor<Scout>(predicate: #Predicate { $0.careerID == cid })
         return (try? modelContext.fetch(descriptor)) ?? []
     }
 
     /// Draft picks that haven't been used yet — the tradable pick pool (R21).
     private static func fetchActiveDraftPicks(modelContext: ModelContext) -> [DraftPick] {
+        let cid = activeCareerID
         let descriptor = FetchDescriptor<DraftPick>(
-            predicate: #Predicate { !$0.isComplete }
+            predicate: #Predicate { $0.careerID == cid && !$0.isComplete }
         )
         return (try? modelContext.fetch(descriptor)) ?? []
     }
@@ -3781,7 +3898,10 @@ enum WeekAdvancer {
             )
             if hazard.rolls > 0 {
                 let activePicks = fetchActiveDraftPicks(modelContext: modelContext)
-                let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>())) ?? []
+                let contractCareerID = activeCareerID
+                let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>(
+                    predicate: #Predicate { $0.careerID == contractCareerID }
+                ))) ?? []
                 for _ in 0..<hazard.rolls {
                     guard aiOffersThisOffseason < TradeValueEngine.maxOffseasonOffers else { break }
                     guard Int.random(in: 1...100) <= hazard.chancePercent else { continue }
@@ -3943,7 +4063,10 @@ enum WeekAdvancer {
         modelContext: ModelContext
     ) {
         // Career-peak OVR per player from season-history snapshots.
-        let historyRows = (try? modelContext.fetch(FetchDescriptor<PlayerSeasonHistory>())) ?? []
+        let historyCareerID = activeCareerID
+        let historyRows = (try? modelContext.fetch(FetchDescriptor<PlayerSeasonHistory>(
+            predicate: #Predicate { $0.careerID == historyCareerID }
+        ))) ?? []
         var peakByID: [UUID: Int] = [:]
         for row in historyRows {
             peakByID[row.playerID] = max(peakByID[row.playerID] ?? 0, row.overallAtEndOfSeason)
@@ -4059,7 +4182,10 @@ enum WeekAdvancer {
         let rostered = allPlayers.filter { $0.teamID != nil && !$0.isRetired }
         guard !rostered.isEmpty else { return }
 
-        let historyRows = (try? modelContext.fetch(FetchDescriptor<PlayerSeasonHistory>())) ?? []
+        let washoutCareerID = activeCareerID
+        let historyRows = (try? modelContext.fetch(FetchDescriptor<PlayerSeasonHistory>(
+            predicate: #Predicate { $0.careerID == washoutCareerID }
+        ))) ?? []
         var peakByID: [UUID: Int] = [:]
         for row in historyRows {
             peakByID[row.playerID] = max(peakByID[row.playerID] ?? 0, row.overallAtEndOfSeason)
@@ -4115,14 +4241,19 @@ enum WeekAdvancer {
     ///   reads every persisted prospect, so stale rows would pollute it),
     /// - `Game` rows older than the just-finished season (~272/season).
     private static func purgeStaleSeasonData(career: Career, modelContext: ModelContext) {
-        let prospects = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>())) ?? []
+        // Scoped hard: unscoped, these two sweeps deleted the OTHER save's
+        // prospects and game history — data loss, not a display bug.
+        let cid = career.id
+        let prospects = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
         for prospect in prospects {
             modelContext.delete(prospect)
         }
 
         let cutoff = career.currentSeason - 1   // keep last season + the new one
         let oldGamesDescriptor = FetchDescriptor<Game>(
-            predicate: #Predicate<Game> { $0.seasonYear < cutoff }
+            predicate: #Predicate<Game> { $0.careerID == cid && $0.seasonYear < cutoff }
         )
         let oldGames = (try? modelContext.fetch(oldGamesDescriptor)) ?? []
         for game in oldGames {
@@ -4183,6 +4314,7 @@ enum WeekAdvancer {
                         teamID: team.id,
                         depthIndex: 2
                     )
+                    generated.careerID = activeCareerID
                     modelContext.insert(generated)
                     signing = generated
                 }
@@ -4257,6 +4389,7 @@ enum WeekAdvancer {
                     role: .coach, age: hire.age, position: nil,
                     gender: FacePersonGender(tag: hire.gender)
                 )
+                hire.careerID = activeCareerID
                 modelContext.insert(hire)
             }
         }
@@ -4342,8 +4475,9 @@ enum WeekAdvancer {
         modelContext: ModelContext
     ) {
         // Fetch any history rows already written for this season so we don't dupe.
+        let cid = activeCareerID
         let existingDescriptor = FetchDescriptor<PlayerSeasonHistory>(
-            predicate: #Predicate { $0.season == season }
+            predicate: #Predicate { $0.careerID == cid && $0.season == season }
         )
         let existing = (try? modelContext.fetch(existingDescriptor)) ?? []
         let existingPlayerIDs = Set(existing.map(\.playerID))
@@ -4393,6 +4527,7 @@ enum WeekAdvancer {
                 statLine: statLine,
                 statsAreSynthesized: needsSynthesis
             )
+            entry.careerID = cid
             modelContext.insert(entry)
         }
     }
@@ -4416,9 +4551,10 @@ enum WeekAdvancer {
         seasonYear: Int,
         modelContext: ModelContext
     ) -> [Game] {
+        let cid = activeCareerID
         let descriptor = FetchDescriptor<Game>(
             predicate: #Predicate { game in
-                game.seasonYear == seasonYear
+                game.careerID == cid && game.seasonYear == seasonYear
             }
         )
         return (try? modelContext.fetch(descriptor)) ?? []
@@ -4446,7 +4582,10 @@ enum WeekAdvancer {
         let season = career.currentSeason
 
         // --- Season history, newest season first, per player ---
-        let historyRows = (try? modelContext.fetch(FetchDescriptor<PlayerSeasonHistory>())) ?? []
+        let cid = career.id
+        let historyRows = (try? modelContext.fetch(FetchDescriptor<PlayerSeasonHistory>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
         var historyByPlayer: [UUID: [PlayerSeasonHistory]] = [:]
         for row in historyRows {
             historyByPlayer[row.playerID, default: []].append(row)
@@ -4459,7 +4598,9 @@ enum WeekAdvancer {
         // They cost the player camp reps, which is the §2.4 `health = 0.7`
         // gate. A player still holding out at camp is filtered out of
         // development entirely by the caller (R22), so he never reaches this.
-        let holdoutRows = (try? modelContext.fetch(FetchDescriptor<Holdout>())) ?? []
+        let holdoutRows = (try? modelContext.fetch(FetchDescriptor<Holdout>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
         let lateResolvedHoldoutIDs = Set(
             holdoutRows
                 .filter { $0.seasonYear == season && $0.resolvedAt != nil }
@@ -5286,9 +5427,10 @@ enum WeekAdvancer {
         seasonYear: Int,
         modelContext: ModelContext
     ) -> [PositionBattle] {
+        let cid = activeCareerID
         let descriptor = FetchDescriptor<PositionBattle>(
             predicate: #Predicate<PositionBattle> {
-                $0.seasonYear == seasonYear && $0.winnerID == nil
+                $0.careerID == cid && $0.seasonYear == seasonYear && $0.winnerID == nil
             }
         )
         return (try? modelContext.fetch(descriptor)) ?? []
@@ -5337,9 +5479,10 @@ enum WeekAdvancer {
         modelContext: ModelContext
     ) {
         let season = career.currentSeason
+        let cid = career.id
         let cutsDescriptor = FetchDescriptor<RosterCut>(
             predicate: #Predicate<RosterCut> {
-                $0.seasonYear == season && $0.claimedByTeamID == nil
+                $0.careerID == cid && $0.seasonYear == season && $0.claimedByTeamID == nil
             }
         )
         let cuts = (try? modelContext.fetch(cutsDescriptor)) ?? []

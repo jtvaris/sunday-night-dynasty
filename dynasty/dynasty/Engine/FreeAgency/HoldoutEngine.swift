@@ -103,6 +103,7 @@ enum HoldoutEngine {
             subMarketDelta: subMarketDelta
         )
         holdout.seasonYear = seasonYear
+        holdout.careerID = player.careerID
         player.isHoldingOut = true
         modelContext.insert(holdout)
         do {
@@ -206,9 +207,14 @@ enum HoldoutEngine {
         holdout: Holdout,
         modelContext: ModelContext
     ) -> ForcedTradeOutcome {
+        // The old `?? careers.first` fallback silently ran a forced trade
+        // against ANOTHER save's cap mode, season and news log. The holdout row
+        // now names its own save, so the lookup is exact or it bails.
         let careers = (try? modelContext.fetch(FetchDescriptor<Career>())) ?? []
-        guard let career = careers.first(where: { $0.teamID == holdout.teamID }) ?? careers.first
+        guard let career = careers.first(where: { $0.id == holdout.careerID })
+                ?? careers.first(where: { $0.id == player.careerID })
         else { return .noMarket }
+        let cid = career.id
 
         // Holdouts break out at OTAs, where the window is open — but never
         // assume it: the same dialog can be reached mid-season.
@@ -217,13 +223,21 @@ enum HoldoutEngine {
             week: career.currentWeek
         ) else { return .noMarket }
 
-        let allTeams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
+        let allTeams = (try? modelContext.fetch(FetchDescriptor<Team>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
         guard let sellingTeam = allTeams.first(where: { $0.id == holdout.teamID }) else { return .noMarket }
 
-        let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
-        let allPicks = ((try? modelContext.fetch(FetchDescriptor<DraftPick>())) ?? [])
+        let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
+        let allPicks = ((try? modelContext.fetch(FetchDescriptor<DraftPick>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? [])
             .filter { !$0.isComplete }
-        let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>())) ?? []
+        let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
 
         guard let package = TradeValueEngine.buildForcedTradePackage(
             player: player,
@@ -256,7 +270,9 @@ enum HoldoutEngine {
         // A forced trade is league news like any other executed deal — the
         // user gave up a star; the whole league heard about it.
         if let record = outcome.record {
-            let teams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
+            let teams = (try? modelContext.fetch(FetchDescriptor<Team>(
+                predicate: #Predicate { $0.careerID == cid }
+            ))) ?? []
             let teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
             let announcement = TradeNewsFactory.announce(
                 record: record, teamsByID: teamsByID, userTeamID: career.teamID

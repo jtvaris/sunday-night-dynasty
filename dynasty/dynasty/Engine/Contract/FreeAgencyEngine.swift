@@ -162,6 +162,7 @@ enum FreeAgencyEngine {
                 noTrade: false
             )
 
+            contract.careerID = player.careerID ?? team.careerID
             modelContext.insert(contract)
 
             player.contractYearsRemaining = years
@@ -236,6 +237,7 @@ enum FreeAgencyEngine {
 
         guard !events.isEmpty else { return }
         for evt in events {
+            evt.careerID = player.careerID ?? signingTeam.careerID
             modelContext.insert(evt)
         }
         try? modelContext.save()

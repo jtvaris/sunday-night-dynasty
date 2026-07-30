@@ -56,6 +56,7 @@ enum WorkloadEngine {
         // Default-value property → set after construction, never through the
         // initializer (the project's @Model migration convention).
         event.weekNumber = weekNumber
+        event.careerID = player.careerID
         modelContext.insert(event)
     }
 

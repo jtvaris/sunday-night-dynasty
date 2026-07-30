@@ -262,6 +262,7 @@ struct CareerShellView: View {
                                 headline: "\(player.fullName) holdout resolved",
                                 body: "Front office took the \(resolutionLabel(resolution)) path."
                             )
+                            evt.careerID = career.id
                             modelContext.insert(evt)
                             try? modelContext.save()
                         }
@@ -470,9 +471,10 @@ struct CareerShellView: View {
         guard week > 0 else { return nil }
 
         // This week's played, non-playoff league games.
+        let cid = career.id
         let descriptor = FetchDescriptor<Game>(
             predicate: #Predicate<Game> {
-                $0.seasonYear == season && $0.week == week && $0.isPlayoff == false
+                $0.careerID == cid && $0.seasonYear == season && $0.week == week && $0.isPlayoff == false
             }
         )
         let games = ((try? modelContext.fetch(descriptor)) ?? []).filter { $0.isPlayed }
@@ -1012,6 +1014,7 @@ struct CareerShellView: View {
                 HireCoachView(
                     role: role,
                     teamID: teamID,
+                    career: career,
                     remainingBudget: budget - usedBudget,
                     teamBudget: budget,
                     teamWins: team?.wins ?? 8,
@@ -1261,8 +1264,9 @@ struct CareerShellView: View {
             // Pro Days — completion checks
             case "Assign scouts to Pro Days":
                 // Done if at least 1 pro day has been attended
+                let proCareerID = career.id
                 let proDesc = FetchDescriptor<CollegeProspect>(
-                    predicate: #Predicate { $0.proDayCompleted == true }
+                    predicate: #Predicate { $0.careerID == proCareerID && $0.proDayCompleted == true }
                 )
                 if let count = try? modelContext.fetch(proDesc).count, count > 0 {
                     currentTasks[index].status = .done
@@ -1446,6 +1450,25 @@ struct CareerShellView: View {
     // MARK: - Data Loading
 
     private func loadShellData() {
+        // MULTI-SAVE ISOLATION — must run FIRST.
+        //
+        // 1. Adopt any legacy rows (`careerID == nil`) into the save they
+        //    belong to. Every scoped fetch below filters on `careerID`, so an
+        //    unadopted save would render as an empty league.
+        // 2. Bind the engine's process-global statics (draft class, trade caps,
+        //    `wasFired`) to THIS career, wiping whatever the previously opened
+        //    save left behind.
+        // 3. Hand the legacy un-suffixed AppStorage values (roster notes,
+        //    prospect board) to this career's namespace, once.
+        CareerScope.adoptLegacyRowsIfNeeded(context: modelContext)
+        WeekAdvancer.bind(to: career)
+        CareerScopedDefaults.migrateGlobalKeys(into: career.id)
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CAREERID_AUDIT"] != nil {
+            CareerScope.debugAuditCounts(context: modelContext, label: "open/\(career.playerName)")
+        }
+        #endif
+
         // Phase 4 faces: bind the library to THIS career and backfill anyone
         // still portrait-less. Done on shell load rather than only on the next
         // week advance so a legacy save shows real faces the moment it opens.
@@ -1458,7 +1481,10 @@ struct CareerShellView: View {
         // shows the same letter for the same prospect.
         syncProspectGrades()
 
-        let allTeamsDescriptor = FetchDescriptor<Team>()
+        let cid = career.id
+        let allTeamsDescriptor = FetchDescriptor<Team>(
+            predicate: #Predicate { $0.careerID == cid }
+        )
         let allTeams = (try? modelContext.fetch(allTeamsDescriptor)) ?? []
         allTeamsByID = Dictionary(uniqueKeysWithValues: allTeams.map { ($0.id, $0) })
 
@@ -1466,7 +1492,7 @@ struct CareerShellView: View {
 
         let seasonYear = career.currentSeason
         let gameDescriptor = FetchDescriptor<Game>(predicate: #Predicate {
-            $0.seasonYear == seasonYear
+            $0.careerID == cid && $0.seasonYear == seasonYear
         })
         let allGames = (try? modelContext.fetch(gameDescriptor)) ?? []
 
@@ -1517,14 +1543,26 @@ struct CareerShellView: View {
         guard !didReconcileFaces else { return }
         didReconcileFaces = true
 
-        let players = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
-        let coaches = (try? modelContext.fetch(FetchDescriptor<Coach>())) ?? []
+        // Scoped hard: `FaceLibrary.backfill` rebuilds `registry.inUse` from the
+        // population it is handed and CLEARS the loser's faceID on collision, so
+        // a store-wide array let career A's open rewrite career B's portraits —
+        // and made the "living people vs. catalog size" capacity gate count two
+        // leagues against one catalog, disabling collision repair entirely.
+        let faceCareerID = career.id
+        let players = (try? modelContext.fetch(FetchDescriptor<Player>(
+            predicate: #Predicate { $0.careerID == faceCareerID }
+        ))) ?? []
+        let coaches = (try? modelContext.fetch(FetchDescriptor<Coach>(
+            predicate: #Predicate { $0.careerID == faceCareerID }
+        ))) ?? []
         WeekAdvancer.backfillLegacyFaces(career: career, players: players, coaches: coaches)
 
         // Prospects only ever hold a preview face, so they are handled apart
         // from the reserving backfill. New classes get theirs in
         // `DraftClassBuilder`, so this only covers rows that predate the field.
-        let prospects = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>())) ?? []
+        let prospects = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>(
+            predicate: #Predicate { $0.careerID == faceCareerID }
+        ))) ?? []
         for prospect in prospects where prospect.faceID == nil {
             prospect.faceID = FaceLibrary.shared.previewFace(
                 personID: prospect.id, role: .player,
@@ -1536,12 +1574,17 @@ struct CareerShellView: View {
         // are created exactly once per league — so unlike players and coaches they
         // need no per-advance pass, only this one-shot repair for careers that
         // predate `Owner.faceID` (`ExtrasCatalog.backfillOwnerFaces`).
-        let owners = (try? modelContext.fetch(FetchDescriptor<Owner>())) ?? []
+        let owners = (try? modelContext.fetch(FetchDescriptor<Owner>(
+            predicate: #Predicate { $0.careerID == faceCareerID }
+        ))) ?? []
         ExtrasCatalog.shared.backfillOwnerFaces(owners)
     }
 
     private func syncProspectGrades() {
-        let prospects = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>())) ?? []
+        let cid = career.id
+        let prospects = (try? modelContext.fetch(FetchDescriptor<CollegeProspect>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
         var changed = 0
 
         for prospect in prospects {

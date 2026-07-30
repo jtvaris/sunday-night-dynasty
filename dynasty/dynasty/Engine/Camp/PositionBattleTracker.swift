@@ -34,6 +34,7 @@ enum PositionBattleTracker {
                 competitorIDs: competitors.map(\.id),
                 currentLeaderID: competitors.first?.id
             )
+            battle.careerID = competitors.first?.careerID
             modelContext.insert(battle)
             battles.append(battle)
         }

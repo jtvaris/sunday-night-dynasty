@@ -2615,7 +2615,10 @@ enum TradeValueEngine {
 
         // Contracts are fetched once per pass (not per deal) so the market
         // enforces no-trade clauses and dead-money cap math at a fixed cost.
-        let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>())) ?? []
+        let contractCareerID = WeekAdvancer.activeCareerID
+        let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>(
+            predicate: #Predicate { $0.careerID == contractCareerID }
+        ))) ?? []
 
         // Market views are the expensive part (a need profile per team), so they
         // are built once and only the two clubs involved in a completed deal are

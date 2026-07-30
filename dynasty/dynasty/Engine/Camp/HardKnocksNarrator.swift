@@ -144,6 +144,7 @@ enum HardKnocksNarrator {
             headline: template.headline,
             body: template.body
         )
+        event.careerID = player?.careerID ?? WeekAdvancer.activeCareerID
         modelContext.insert(event)
         return event
     }

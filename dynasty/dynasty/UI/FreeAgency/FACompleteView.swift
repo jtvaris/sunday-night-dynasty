@@ -697,8 +697,13 @@ struct FACompleteView: View {
         team = try? modelContext.fetch(teamDesc).first
         guard let team else { return }
 
-        let allTeams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
-        let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
+        let cid = career.id
+        let allTeams = (try? modelContext.fetch(FetchDescriptor<Team>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
+        let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
         let myPlayers = allPlayers.filter { $0.teamID == teamID }
         baseSalaryCap = FASigningTracker.getBaseSalaryCap()
 

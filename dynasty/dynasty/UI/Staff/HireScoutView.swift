@@ -5,6 +5,8 @@ struct HireScoutView: View {
 
     let scoutRole: ScoutRole
     let teamID: UUID
+    /// The save being played — every scout hired here is stamped with it.
+    let career: Career
     let remainingBudget: Int
     /// R27: deterministic candidate pool seed (same team/role/season → same pool).
     var poolSeed: UInt64? = nil
@@ -197,6 +199,7 @@ struct HireScoutView: View {
         }
 
         candidate.teamID = teamID
+        candidate.careerID = career.id
         modelContext.insert(candidate)
         hiredScoutID = candidate.id
 
@@ -355,7 +358,12 @@ private struct ScoutCandidateRow: View {
 
 #Preview {
     NavigationStack {
-        HireScoutView(scoutRole: .chiefScout, teamID: UUID(), remainingBudget: 5_000)
+        HireScoutView(
+            scoutRole: .chiefScout,
+            teamID: UUID(),
+            career: Career(playerName: "Preview", role: .gm, capMode: .simple),
+            remainingBudget: 5_000
+        )
     }
     .modelContainer(for: Scout.self, inMemory: true)
 }

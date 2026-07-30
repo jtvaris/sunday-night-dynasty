@@ -5,6 +5,10 @@ struct HireCoachView: View {
 
     let role: CoachRole
     let teamID: UUID
+    /// The save being played. Threaded in rather than guessed from
+    /// `allCareers.first`, which stamped hires with the WRONG save's season
+    /// once a second career existed.
+    let career: Career
     let remainingBudget: Int
     /// #267: Team data for candidate quality scaling
     var teamBudget: Int = 25_000
@@ -15,8 +19,11 @@ struct HireCoachView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    @Query private var allCoaches: [Coach]
-    @Query private var allCareers: [Career]
+    @Query private var allCoachesUnscoped: [Coach]
+
+    // `@Query` cannot take a runtime predicate built from a stored property,
+    // so the store-wide result is narrowed to THIS save here.
+    private var allCoaches: [Coach] { allCoachesUnscoped.filter { $0.careerID == career.id } }
 
     @State private var candidates: [Coach] = []
     @State private var hiredCoachID: UUID?
@@ -285,8 +292,8 @@ struct HireCoachView: View {
                 schemeFitResult: schemeFit(for: candidate),
                 // BUG FIX: When user is GM+HC, no .headCoach Coach record exists.
                 // Pass user's coaching style so chemistry can be evaluated against the user.
-                userIsHeadCoach: allCareers.first?.role == .gmAndHeadCoach,
-                userCoachingStyle: allCareers.first?.coachingStyle,
+                userIsHeadCoach: career.role == .gmAndHeadCoach,
+                userCoachingStyle: career.coachingStyle,
                 marketRivals: CoachCarouselEngine.demand(for: candidate).rivalTeams,
                 onHire: { hire(candidate) },
                 onRejected: { rejectedCandidates.insert(candidate.id) }
@@ -971,7 +978,8 @@ struct HireCoachView: View {
         }
 
         candidate.teamID = teamID
-        candidate.hireSeasonYear = allCareers.first?.currentSeason ?? 2026
+        candidate.careerID = career.id
+        candidate.hireSeasonYear = career.currentSeason
         candidate.contractYearsRemaining = 3
         // Phase 4 faces: a candidate list carries a NON-reserving preview
         // portrait (`CoachingEngine.generateCoachCandidates`), so every hire has
@@ -987,7 +995,7 @@ struct HireCoachView: View {
         hiredCoachID = candidate.id
 
         // R30: every hire joins the user's coaching tree.
-        if let career = allCareers.first {
+        do {
             var tree = career.coachingTree
             CoachRelationshipEngine.updateCoachingTree(
                 tree: &tree.entries,
@@ -2474,7 +2482,12 @@ private struct NegotiationResult {
 
 #Preview {
     NavigationStack {
-        HireCoachView(role: .offensiveCoordinator, teamID: UUID(), remainingBudget: 15_000)
+        HireCoachView(
+            role: .offensiveCoordinator,
+            teamID: UUID(),
+            career: Career(playerName: "Preview", role: .gm, capMode: .simple),
+            remainingBudget: 15_000
+        )
     }
     .modelContainer(for: Coach.self, inMemory: true)
 }

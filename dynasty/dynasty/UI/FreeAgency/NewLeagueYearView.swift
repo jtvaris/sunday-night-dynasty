@@ -196,8 +196,13 @@ struct NewLeagueYearView: View {
         hasExecuted = true
 
         guard let teamID = career.teamID else { return }
-        let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
-        let allTeams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
+        let cid = career.id
+        let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
+        let allTeams = (try? modelContext.fetch(FetchDescriptor<Team>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
 
         // Capture pre-FA snapshot before contracts expire
         let myTeam = allTeams.first { $0.id == teamID }

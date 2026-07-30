@@ -775,14 +775,20 @@ private struct SaveSlotPickerSheet: View {
                 presenting: pendingDeletion
             ) { career in
                 Button("Delete", role: .destructive) {
-                    modelContext.delete(career)
+                    // Cascade: `Career` has no SwiftData relationships, so
+                    // deleting the row alone used to orphan the save's whole
+                    // league — 32 teams, ~1 900 players, every game and pick —
+                    // permanently, and every `New Career` compounded it.
+                    CareerScope.cascadeDelete(career: career, context: modelContext)
                     pendingDeletion = nil
                 }
                 Button("Cancel", role: .cancel) {
                     pendingDeletion = nil
                 }
             } message: { career in
-                Text("This permanently removes \(career.playerName)'s dynasty. This cannot be undone.")
+                Text("This permanently removes \(career.playerName)'s dynasty — "
+                     + CareerScope.deletionSummary(career: career, context: modelContext)
+                     + ". This cannot be undone.")
             }
         }
     }
@@ -996,7 +1002,9 @@ struct CareerListView: View {
 
     private func deleteCareers(at offsets: IndexSet) {
         for index in offsets {
-            modelContext.delete(careers[index])
+            // Same cascade the save-slot picker runs — deleting only the
+            // `Career` row leaves its entire league orphaned in the store.
+            CareerScope.cascadeDelete(career: careers[index], context: modelContext)
         }
     }
 }

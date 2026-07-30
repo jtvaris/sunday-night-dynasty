@@ -1652,22 +1652,25 @@ struct TradeView: View {
     // MARK: - Data
 
     private func loadData() {
-        let teamDescriptor = FetchDescriptor<Team>()
+        let cid = career.id
+        let teamDescriptor = FetchDescriptor<Team>(predicate: #Predicate { $0.careerID == cid })
         allTeams = (try? modelContext.fetch(teamDescriptor)) ?? []
 
         if let teamID = career.teamID {
             playerTeam = allTeams.first { $0.id == teamID }
         }
 
-        let playerDescriptor = FetchDescriptor<Player>()
+        let playerDescriptor = FetchDescriptor<Player>(predicate: #Predicate { $0.careerID == cid })
         allPlayers = (try? modelContext.fetch(playerDescriptor)) ?? []
 
         let pickDescriptor = FetchDescriptor<DraftPick>(
-            predicate: #Predicate { !$0.isComplete }
+            predicate: #Predicate { $0.careerID == cid && !$0.isComplete }
         )
         allPicks = (try? modelContext.fetch(pickDescriptor)) ?? []
 
-        allContracts = (try? modelContext.fetch(FetchDescriptor<Contract>())) ?? []
+        allContracts = (try? modelContext.fetch(FetchDescriptor<Contract>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
 
         // R21: incoming offers are persisted on the career (generated weekly
         // by WeekAdvancer). Show only offers whose assets are still where the

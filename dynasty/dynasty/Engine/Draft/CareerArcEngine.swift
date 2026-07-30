@@ -55,8 +55,9 @@ enum CareerArcEngine {
         // this career actually drafted, and every product below is behind
         // `if let pickGrade`. `draftedByTeamID` is written by `DraftEngine` alone,
         // so keying on it restores parity with a generated league.
+        let cid = WeekAdvancer.activeCareerID
         let playerFetch = FetchDescriptor<Player>(
-            predicate: #Predicate { $0.draftedByTeamID != nil && $0.yearsPro >= 1 }
+            predicate: #Predicate { $0.careerID == cid && $0.draftedByTeamID != nil && $0.yearsPro >= 1 }
         )
         let players = (try? modelContext.fetch(playerFetch)) ?? []
 
@@ -100,6 +101,7 @@ enum CareerArcEngine {
                 draftYear: currentSeason - player.yearsPro,
                 draftPickNumber: player.draftPickNumber ?? 224
             )
+            state.careerID = player.careerID
             modelContext.insert(state)
         }
 

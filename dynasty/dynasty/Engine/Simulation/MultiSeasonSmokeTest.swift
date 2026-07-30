@@ -31,7 +31,7 @@ enum MultiSeasonSmokeTest {
         // Isolated in-memory container (same schema as DataContainer).
         let schema = Schema([
             Career.self, League.self, Team.self, Player.self, Owner.self,
-            Coach.self, Season.self, Game.self, Schedule.self, Contract.self,
+            Coach.self, Game.self, Contract.self,
             Scout.self, CollegeProspect.self, DraftPick.self, DraftEvent.self,
             DraftPickGrade.self, DraftReputation.self, CareerArcState.self,
             PlayerSeasonHistory.self, FABid.self, FAVisit.self,
@@ -49,23 +49,10 @@ enum MultiSeasonSmokeTest {
         }
         let context = container.mainContext
 
-        // Reset WeekAdvancer static state so a fresh cycle starts clean.
-        WeekAdvancer.currentDraftClass = []
-        WeekAdvancer.currentDraftPicks = []
-        WeekAdvancer.draftClassGenerated = false
-        WeekAdvancer.udfaStageCompletedSeasons = []
-        // Trade counters: the monotonic pair the per-season diff reads, plus the
-        // per-cycle pair `startNewSeason` maintains (season 1 never calls it, so a
-        // second harness run in the same process would inherit run 1's totals and
-        // start with the market's volume caps already spent).
-        WeekAdvancer.aiTradeOffersGenerated = 0
-        WeekAdvancer.aiTradeOffersOffseasonGenerated = 0
-        WeekAdvancer.aiOffersThisSeason = 0
-        WeekAdvancer.aiOffersThisOffseason = 0
-        WeekAdvancer.leagueTradesThisSeason = 0
-        WeekAdvancer.leagueTradesThisOffseason = 0
-        TradeValueEngine.TradeTalkRegistry.reset()
-        TradeValueEngine.funnel = TradeValueEngine.MarketFunnel()
+        // Reset WeekAdvancer static state so a fresh cycle starts clean. Shares
+        // one list with the app's career-switch reset, so a newly added static
+        // can never be wiped in one place and forgotten in the other.
+        WeekAdvancer.resetProcessStateForCareerSwitch()
 
         // League + career bootstrap (mirrors TeamSelectionView.startCareer,
         // except the user's team KEEPS its generated coaching staff — the
@@ -120,6 +107,19 @@ enum MultiSeasonSmokeTest {
             career.gameMode = .fantasyDraft
             applyFantasyDraft(generated: generated)
         }
+
+        // Multi-save isolation: stamp exactly like `finalizeCareer` does, so the
+        // harness exercises the same scoped fetches the app runs. Without this
+        // every careerID-filtered fetch would return nothing and the run would
+        // go silently green-but-empty.
+        career.schemaBackfillVersion = CareerScope.currentBackfillVersion
+        CareerScope.stamp(generated.league, careerID: career.id)
+        CareerScope.stamp(generated.teams, careerID: career.id)
+        CareerScope.stamp(generated.players, careerID: career.id)
+        CareerScope.stamp(generated.owners, careerID: career.id)
+        CareerScope.stamp(generated.coaches, careerID: career.id)
+        CareerScope.stamp(generated.draftPicks, careerID: career.id)
+        CareerScope.stamp(seasonHistory, careerID: career.id)
 
         context.insert(career)
         context.insert(generated.league)
@@ -257,6 +257,7 @@ enum MultiSeasonSmokeTest {
                 // `freeFemale=0` with within-gender reuse shows up here long
                 // before the male half runs out.
                 auditFaces(seasonLabel: finishedSeason, context: context)
+                auditCareerScope(seasonLabel: finishedSeason, context: context)
 
                 // Wave 0 instrumentation, Wave 2 band asserts.
                 printTradeDiagnostics(
@@ -420,6 +421,7 @@ enum MultiSeasonSmokeTest {
             )
             draftedOVRSum += player.overall
             draftedPotSum += player.truePotential
+            player.careerID = career.id
             context.insert(player)
             pick.playerID = player.id
             pick.playerName = chosen.fullName
@@ -823,6 +825,7 @@ enum MultiSeasonSmokeTest {
                     teamID: teamID,
                     depthIndex: 2
                 )
+                signing.careerID = career.id
                 context.insert(signing)
             }
             signing.teamID = teamID
@@ -875,6 +878,19 @@ enum MultiSeasonSmokeTest {
     /// runs dry, so a run's output shows exactly WHICH season the library
     /// stopped being able to give everyone their own face — the number that
     /// decides whether more images have to be generated.
+    /// Multi-save tripwire: a row that reached the store without a `careerID`
+    /// is invisible to every scoped fetch — the sim silently stops seeing it —
+    /// so an unstamped insert site must fail the harness, not drift the bands.
+    private static func auditCareerScope(seasonLabel: Int, context: ModelContext) {
+        let unscoped = CareerScope.debugUnscopedRows(context: context)
+        if unscoped.isEmpty {
+            print("SMOKE: careerID scope season=\(seasonLabel) OK — every row stamped")
+        } else {
+            print("SMOKE: ANOMALY season=\(seasonLabel) careerID unscoped rows: \(unscoped) "
+                  + "— an insert site is missing its careerID stamp")
+        }
+    }
+
     private static func auditFaces(seasonLabel: Int, context: ModelContext) {
         let players = (try? context.fetch(FetchDescriptor<Player>())) ?? []
         let coaches = (try? context.fetch(FetchDescriptor<Coach>())) ?? []

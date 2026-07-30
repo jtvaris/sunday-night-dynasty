@@ -16,8 +16,14 @@ struct LeagueRostersView: View {
 
     let career: Career
 
-    @Query private var allTeams: [Team]
-    @Query private var allPlayers: [Player]
+    @Query private var allTeamsUnscoped: [Team]
+    @Query private var allPlayersUnscoped: [Player]
+
+    // `@Query` cannot take a runtime predicate built from a stored property,
+    // so the store-wide result is narrowed to THIS save here. Without it the
+    // screen mixes two careers' populations into one list.
+    private var allTeams: [Team] { allTeamsUnscoped.filter { $0.careerID == career.id } }
+    private var allPlayers: [Player] { allPlayersUnscoped.filter { $0.careerID == career.id } }
 
     /// `nil` until the user picks a side, so the screen opens on HIS conference
     /// (his division rivals are the rosters he cares about) without an init.
@@ -186,7 +192,12 @@ struct LeagueTeamRosterView: View {
     let team: Team
     let career: Career
 
-    @Query private var allPlayers: [Player]
+    @Query private var allPlayersUnscoped: [Player]
+
+    // `@Query` cannot take a runtime predicate built from a stored property,
+    // so the store-wide result is narrowed to THIS save here. Without it the
+    // screen mixes two careers' populations into one list.
+    private var allPlayers: [Player] { allPlayersUnscoped.filter { $0.careerID == career.id } }
 
     @State private var showTradeCenter = false
 
@@ -395,9 +406,10 @@ struct ProposeTradeButton<Label: View>: View {
 
     @State private var showTradeCenter = false
 
-    /// Same single-career assumption the rest of the detail-screen surfaces make
-    /// (see `CoachDetailView`): one active save per container.
-    private var career: Career? { allCareers.first }
+    /// The save this player belongs to. The row itself names it, so no career
+    /// has to be threaded down here — and `allCareers.first` (which used to
+    /// answer this) could pick the WRONG save once two exist.
+    private var career: Career? { allCareers.first { $0.id == player.careerID } }
 
     var body: some View {
         if let career,

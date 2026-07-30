@@ -38,11 +38,19 @@ struct CoachingStaffView: View {
     let career: Career
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Query private var allCoaches: [Coach]
-    @Query private var allScouts: [Scout]
+    @Query private var allCoachesUnscoped: [Coach]
+    @Query private var allScoutsUnscoped: [Scout]
 
-    @Query private var allPlayers: [Player]
-    @Query private var allTeams: [Team]
+    @Query private var allPlayersUnscoped: [Player]
+    @Query private var allTeamsUnscoped: [Team]
+
+    // `@Query` cannot take a runtime predicate built from a stored property,
+    // so the store-wide result is narrowed to THIS save here. Without it the
+    // screen mixes two careers' populations into one list.
+    private var allCoaches: [Coach] { allCoachesUnscoped.filter { $0.careerID == career.id } }
+    private var allScouts: [Scout] { allScoutsUnscoped.filter { $0.careerID == career.id } }
+    private var allPlayers: [Player] { allPlayersUnscoped.filter { $0.careerID == career.id } }
+    private var allTeams: [Team] { allTeamsUnscoped.filter { $0.careerID == career.id } }
 
     // MARK: - Tab State (#107)
     @State private var selectedTab: StaffTab = .staff
@@ -624,6 +632,7 @@ struct CoachingStaffView: View {
                             HireCoachView(
                                 role: role,
                                 teamID: teamID,
+                                career: career,
                                 remainingBudget: remainingBudget,
                                 teamBudget: coachingBudget,
                                 teamWins: team?.wins ?? 8,
@@ -637,6 +646,7 @@ struct CoachingStaffView: View {
                             HireScoutView(
                                 scoutRole: role,
                                 teamID: teamID,
+                                career: career,
                                 remainingBudget: remainingScoutBudget,
                                 poolSeed: CoachingEngine.scoutPoolSeed(
                                     teamID: teamID,
@@ -654,6 +664,7 @@ struct CoachingStaffView: View {
                                 candidates: candidates,
                                 remainingBudget: remainingMedicalBudget,
                                 teamID: teamID,
+                                careerID: career.id,
                                 onHired: { name, roleName in
                                     activeHireSheet = nil
                                     showHiringConfirmation(coachName: name, roleName: roleName)
@@ -3380,6 +3391,8 @@ private struct SimpleMedicalHireSheet: View {
     let candidates: [Coach]
     let remainingBudget: Int
     let teamID: UUID
+    /// The save being played — every medical hire is stamped with it.
+    let careerID: UUID
     var onHired: ((String, String) -> Void)?
 
     @Environment(\.modelContext) private var modelContext
@@ -3512,6 +3525,7 @@ private struct SimpleMedicalHireSheet: View {
             role: .coach, age: candidate.age, position: nil,
             gender: FacePersonGender(tag: candidate.gender)
         )
+        candidate.careerID = careerID
         modelContext.insert(candidate)
         hiredID = candidate.id
         try? modelContext.save()

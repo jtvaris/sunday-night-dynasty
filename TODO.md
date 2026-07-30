@@ -26,8 +26,7 @@ Tila: vaiheet 1–4 valmiit ja kaikki portit vihreinä (draft class · kehitys-r
 - [ ] **Playoff-tuotanto**: `LeagueTemplate.StatLine` ei dekoodaa transformin jo emittoimaa `post`-objektia (2 236 riviä dev-profiilissa) — `var post: PostLine?` avaisi sen ilman putkimuutosta.
 - [ ] **Ura-yhteissummarivi** taulukon alle (ei ollut tehtävänannossa).
 
-**3 · careerID-erottelu** (rakenteellinen; pakollinen jos monisave halutaan)
-- Kaikki haut ovat store-laajuisia; toinen ura samaan storeen → populaatiot sekoittuvat, kasvorekisteri varaa toisen uran ihmisiä, uran poisto jättää orvot. Fix: careerID Player/Coach/ym. + predikaatit + migraatio + kaskadipoisto. Oma aalto.
+**3 · ~~careerID-erottelu (monisave)~~ TEHTY 2026-07-30** — 26 mallia sai `var careerID: UUID? = nil` (inline-default → kevyt migraatio, ei koskaan `init`issä), `#Index` yhdeksälle isoimmalle taululle. Uusi `Data/Persistence/CareerScope.swift`: `CareerScoped`-protokolla, `stamp`/`insert`, kertaluontoinen **adoptio** legacy-riveille, **kaskadipoisto** ja DEBUG-auditit. Kuolleet `Season`/`Schedule` poistettu skeemasta. Predikaattipyyhkäisy: kaikki store-laajuiset haut saivat `careerID`-suodattimen (moottorin chokepointit `WeekAdvancer.activeCareerID`-sidonnan kautta, `bind(to:)` jokaisessa sisääntulossa); 23 `@Query`-määrittelyä kavennettiin `*Unscoped` + laskettu ominaisuus -muotoon; `PlayerDetailView`/`CoachDetailView`/`TradeForButton` lukevat saven rivistä itsestään (`player.careerID`), `HireCoachView`/`HireScoutView`/`SimpleMedicalHireSheet` saivat `career`-parametrin. `HoldoutEngine`in `?? careers.first` -fallback poistettu. Prosessiglobaalit (`WeekAdvancer`-statukset, `TradeValueEngine`, `TrainingFocusEngine`, `CompensatoryPickEngine`, `NegotiationLockRegistry`, `FASigningTracker`, `PerfLog`) nollautuvat uranvaihdossa yhdestä listasta, jota myös smoke-harness käyttää. Ura-tilaiset `UserDefaults`-avaimet namespacetettu (`CareerScopedDefaults`) + purge poistossa. Portit alempana ("MONISAVE / careerID -AALTO").
 
 **4 · ~~Kasvopoolin kasvatus 3 584:ään~~ TEHTY 2026-07-30** — laajennettuna: pooli 3 584 JA naisvalmentajat (35 naiskasvoa, `Coach.gender`, gender-tiukka matchays, naisnimipoolit, she/her-taustat, placeholder-fix). Ks. BACKLOG 2026-07-30 -osio.
 
@@ -131,7 +130,7 @@ Kymmenen review-löydöksen triage: **9 korjattu, 1 kirjattu ulkopuoliseksi (mon
 
 ### Auki tästä aallosta
 - [x] **Käyttäjän päätös: kasvattaako poolia?** → PÄÄTETTY JA TEHTY 2026-07-30: kasvatettu 3 584:ään + naisvalmentajakasvot mukaan (ks. BACKLOG). Nipussa 3 584 kuvaa / 36,25 MiB.
-- [ ] **Monisave/`careerID` (ei korjattu, ulkopuolinen):** `Player`/`Coach` eivät kanna uran id:tä ja kaikki moottorin haut ovat storen laajuisia → kaksi savea jakavat saman populaation (uuden uran luonti työntää toisen liigan samaan storeen, uran poisto poistaa vain `Career`-rivin). Kasvorekisteri on uran laajuinen, joten kahdella savella toisen uran rekisteri varaa ensimmäisen uran ihmiset. Korjaus = datamallin migraatio (careerID + predikaatit kaikkiin hakuihin) = oma aalto. → BACKLOG.
+- [x] **Monisave/`careerID` — KORJATTU 2026-07-30 (oma aalto, ks. §3 ja "MONISAVE / careerID -AALTO"):** `Player`/`Coach` eivät kanna uran id:tä ja kaikki moottorin haut ovat storen laajuisia → kaksi savea jakavat saman populaation (uuden uran luonti työntää toisen liigan samaan storeen, uran poisto poistaa vain `Career`-rivin). Kasvorekisteri on uran laajuinen, joten kahdella savella toisen uran rekisteri varaa ensimmäisen uran ihmiset. Korjaus = datamallin migraatio (careerID + predikaatit kaikkiin hakuihin) = oma aalto. → BACKLOG.
 
 ## 🙂 VAIHE 4 / AALTO 3: validointi + nippukytkentä — 2026-07-30 (committoimaton)
 

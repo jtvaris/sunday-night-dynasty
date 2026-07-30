@@ -7,8 +7,13 @@ struct CoachDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    @Query private var allCoaches: [Coach]
+    @Query private var allCoachesUnscoped: [Coach]
     @Query private var allCareers: [Career]
+
+    // `@Query` cannot take a runtime predicate built from a stored property,
+    // so the store-wide result is narrowed to THIS save here. Without it the
+    // screen mixes two careers' populations into one list.
+    private var allCoaches: [Coach] { allCoachesUnscoped.filter { $0.careerID == coach.careerID } }
 
     @State private var showFireConfirmation = false
     @State private var showExtendAlert = false
@@ -48,9 +53,10 @@ struct CoachDetailView: View {
         return allCoaches.first { $0.role == .headCoach && $0.teamID == teamID }
     }
 
-    /// The active career (used for coaching style context).
+    /// The save this coach belongs to — the row names it, so `allCareers.first`
+    /// (which could pick the wrong save once two exist) is no longer consulted.
     private var career: Career? {
-        allCareers.first
+        allCareers.first { $0.id == coach.careerID }
     }
 
     var body: some View {

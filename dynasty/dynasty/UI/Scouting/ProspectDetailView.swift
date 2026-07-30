@@ -1718,7 +1718,8 @@ struct ProspectDetailView: View {
     }
 
     private func loadPositionRank() {
-        let desc = FetchDescriptor<CollegeProspect>()
+        let cid = career.id
+        let desc = FetchDescriptor<CollegeProspect>(predicate: #Predicate { $0.careerID == cid })
         guard let all = try? modelContext.fetch(desc) else { return }
         let ranked = all
             .filter { $0.position == prospect.position && $0.scoutedOverall != nil }

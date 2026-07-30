@@ -2309,8 +2309,13 @@ struct RosterEvaluationView: View {
         players = (try? modelContext.fetch(playerDesc)) ?? []
 
         // Fetch all players and teams for FA preview
-        allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
-        allTeams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
+        let cid = career.id
+        allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
+        allTeams = (try? modelContext.fetch(FetchDescriptor<Team>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
 
         // Fetch the defensive coordinator's scheme
         let coachDesc = FetchDescriptor<Coach>(

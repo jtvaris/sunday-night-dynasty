@@ -34,6 +34,13 @@ import SwiftData
 final class TradeRecord {
     var id: UUID
 
+
+    /// The save slot (``Career.id``) this row belongs to. `nil` marks a legacy
+    /// row written before multi-save isolation existed; `CareerScope.adopt`
+    /// stamps those on first launch. Default-value stored property, never in
+    /// `init` -> safe lightweight migration.
+    var careerID: UUID? = nil
+
     // MARK: When
 
     /// League year the trade was executed in (`Career.currentSeason`).
@@ -263,6 +270,9 @@ enum TradeLedger {
             futurePicksCount: (sentPicks + receivedPicks)
                 .filter { $0.seasonYear > context.season }.count
         )
+        record.careerID = (sentPlayers + receivedPlayers).first?.careerID
+            ?? (sentPicks + receivedPicks).first?.careerID
+            ?? WeekAdvancer.activeCareerID
         modelContext.insert(record)
         return record
     }
@@ -298,6 +308,8 @@ enum TradeLedger {
             futurePicksCount: (picksSent + picksReceived)
                 .filter { $0.seasonYear > context.season }.count
         )
+        record.careerID = (picksSent + picksReceived).first?.careerID
+            ?? WeekAdvancer.activeCareerID
         modelContext.insert(record)
         return record
     }

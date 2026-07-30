@@ -49,28 +49,43 @@ struct PlayerDetailView: View {
     let player: Player
 
     // #178: Use @Query to fetch all players for league ranking context
-    @Query private var allLeaguePlayers: [Player]
+    @Query private var allLeaguePlayersUnscoped: [Player]
 
     /// All coaches in the league — used to detect scheme mismatch vs the player's team HC.
-    @Query private var allCoaches: [Coach]
+    @Query private var allCoachesUnscoped: [Coach]
 
     /// All teams — used together with coaches to look up the player's team scheme.
-    @Query private var allTeams: [Team]
+    @Query private var allTeamsUnscoped: [Team]
 
     /// All season-history rows in the store. Filtered to this player by
     /// `playerSeasonHistory` below. Recorded by WeekAdvancer at end of week 18.
-    @Query(sort: \PlayerSeasonHistory.season) private var allSeasonHistory: [PlayerSeasonHistory]
+    @Query(sort: \PlayerSeasonHistory.season) private var allSeasonHistoryUnscoped: [PlayerSeasonHistory]
 
     /// All persisted draft pick grades. Filtered to this player to render the
     /// Public/True/Gem badge row in the header.
-    @Query private var allDraftPickGrades: [DraftPickGrade]
+    @Query private var allDraftPickGradesUnscoped: [DraftPickGrade]
+
+    /// The save this screen belongs to — read off the player row itself, so no
+    /// career has to be threaded into this view (it is pushed from six places).
+    /// `@Query` cannot take a runtime predicate from a stored property, so every
+    /// store-wide result above is narrowed here. The league-percentile ranks in
+    /// particular were computed against BOTH saves' players before this.
+    private var scopeCareerID: UUID? { player.careerID }
+    private var allLeaguePlayers: [Player] { allLeaguePlayersUnscoped.filter { $0.careerID == scopeCareerID } }
+    private var allCoaches: [Coach] { allCoachesUnscoped.filter { $0.careerID == scopeCareerID } }
+    private var allTeams: [Team] { allTeamsUnscoped.filter { $0.careerID == scopeCareerID } }
+    private var allSeasonHistory: [PlayerSeasonHistory] { allSeasonHistoryUnscoped.filter { $0.careerID == scopeCareerID } }
+    private var allDraftPickGrades: [DraftPickGrade] { allDraftPickGradesUnscoped.filter { $0.careerID == scopeCareerID } }
 
     /// The career, for the one thing the stat surfaces cannot do without: which
     /// season is being played right now. Week 18 snapshots a season into
     /// `PlayerSeasonHistory` BEFORE the offseason clears
     /// `Player.seasonStatLine`, so without the season number the two sources
     /// would double-count the same year.
-    @Query(sort: \Career.currentSeason, order: .reverse) private var careers: [Career]
+    @Query(sort: \Career.currentSeason, order: .reverse) private var careersUnscoped: [Career]
+
+    /// THIS player's save, never "whichever career sorted first".
+    private var careers: [Career] { careersUnscoped.filter { $0.id == scopeCareerID } }
 
     /// Playoff production by season for this player. Dev-template only for now
     /// (`DevPostseasonStats`); empty in Release and in every generated league.

@@ -193,6 +193,7 @@ struct GameWeekPrepPicker: View {
             opponentPct: opponentPctInt,
             teamID: teamID
         )
+        prep.careerID = career.id
         modelContext.insert(prep)
         try? modelContext.save()
         didSave = true

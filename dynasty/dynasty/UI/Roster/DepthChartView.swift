@@ -8,7 +8,12 @@ struct DepthChartView: View {
     let career: Career
 
     @Environment(\.modelContext) private var modelContext
-    @Query private var allPlayers: [Player]
+    @Query private var allPlayersUnscoped: [Player]
+
+    // `@Query` cannot take a runtime predicate built from a stored property,
+    // so the store-wide result is narrowed to THIS save here. Without it the
+    // screen mixes two careers' populations into one list.
+    private var allPlayers: [Player] { allPlayersUnscoped.filter { $0.careerID == career.id } }
 
     @State private var depthChart = DepthChart()
     @State private var selectedTab: PositionSide = .offense

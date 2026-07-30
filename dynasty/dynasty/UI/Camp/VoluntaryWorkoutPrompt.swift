@@ -192,6 +192,7 @@ struct VoluntaryWorkoutPrompt: View {
             injuryRiskBoost: cfg.injuryRiskBoost,
             teamID: teamID
         )
+        workout.careerID = career.id
         modelContext.insert(workout)
         try? modelContext.save()
         dismiss()

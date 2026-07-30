@@ -1137,10 +1137,11 @@ struct MockDraftView: View {
     }
 
     private func loadData() {
-        let teamDesc = FetchDescriptor<Team>()
+        let cid = career.id
+        let teamDesc = FetchDescriptor<Team>(predicate: #Predicate { $0.careerID == cid })
         teams = (try? modelContext.fetch(teamDesc)) ?? []
 
-        let playerDesc = FetchDescriptor<Player>()
+        let playerDesc = FetchDescriptor<Player>(predicate: #Predicate { $0.careerID == cid })
         players = (try? modelContext.fetch(playerDesc)) ?? []
 
         if let teamID = career.teamID {

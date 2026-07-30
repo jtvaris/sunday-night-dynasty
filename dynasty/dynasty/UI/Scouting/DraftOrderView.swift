@@ -428,8 +428,9 @@ struct DraftOrderView: View {
     // MARK: - Data Loading
 
     private func loadData() {
+        let cid = career.id
         let pickDesc = FetchDescriptor<DraftPick>(
-            predicate: #Predicate { $0.seasonYear == 0 || $0.seasonYear >= 0 },
+            predicate: #Predicate { $0.careerID == cid },
             sortBy: [SortDescriptor(\.pickNumber)]
         )
         draftPicks = (try? modelContext.fetch(pickDesc)) ?? []
@@ -452,7 +453,7 @@ struct DraftOrderView: View {
             displayedSeason = currentYear
         }
 
-        let teamDesc = FetchDescriptor<Team>()
+        let teamDesc = FetchDescriptor<Team>(predicate: #Predicate { $0.careerID == cid })
         teams = (try? modelContext.fetch(teamDesc)) ?? []
     }
 }

@@ -7,15 +7,19 @@ import OSLog
 final class DraftStoryRecorder {
 
     private let modelContext: ModelContext
+    /// The save every event this recorder writes (and reads) belongs to.
+    private let careerID: UUID
     private let logger = Logger(subsystem: "com.dynasty.app", category: "DraftStoryRecorder")
 
-    init(modelContext: ModelContext) {
+    init(modelContext: ModelContext, careerID: UUID) {
         self.modelContext = modelContext
+        self.careerID = careerID
     }
 
     /// Inserts a `DraftEvent` and saves the context. Save failures are logged, never thrown —
     /// a missed event must not crash the live draft loop.
     func record(_ event: DraftEvent) {
+        event.careerID = careerID
         modelContext.insert(event)
         do {
             try modelContext.save()
@@ -26,8 +30,9 @@ final class DraftStoryRecorder {
 
     /// Returns all persisted events for the given draft year, ordered by sequence.
     func events(forYear year: Int) -> [DraftEvent] {
+        let cid = careerID
         let descriptor = FetchDescriptor<DraftEvent>(
-            predicate: #Predicate { $0.draftYear == year },
+            predicate: #Predicate { $0.careerID == cid && $0.draftYear == year },
             sortBy: [SortDescriptor(\.sequence, order: .forward)]
         )
         do {

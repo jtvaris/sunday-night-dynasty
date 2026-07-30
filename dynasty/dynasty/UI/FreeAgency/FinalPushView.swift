@@ -968,6 +968,7 @@ struct FinalPushView: View {
         career.reputation = max(0, min(100, career.reputation + penalty.fanMood / 2))
 
         if let evt = LoyaltyEngine.generateLetWalkEvent(player: player) {
+            evt.careerID = career.id
             modelContext.insert(evt)
         }
         try? modelContext.save()
@@ -996,8 +997,13 @@ struct FinalPushView: View {
         }
 
         // All players + teams for FA preview
-        allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
-        allTeams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
+        let cid = career.id
+        allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
+        allTeams = (try? modelContext.fetch(FetchDescriptor<Team>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
 
         // R23: legal-tampering buzz — same pricing/need model the market uses.
         tamperingRumors = TamperingRumorEngine.generateRumors(

@@ -24,6 +24,15 @@ enum CompensatoryPickEngine {
     private static let departuresKey    = "compPickDepartures"
     private static let pendingAwardsKey = "compPickPendingAwards"
 
+    /// Both ledgers are keyed by player/team ids that only mean something
+    /// inside one save, so a career switch must empty them — otherwise save B
+    /// awards compensatory picks for save A's departures. Called from
+    /// `WeekAdvancer.resetProcessStateForCareerSwitch()`.
+    static func resetProcessState() {
+        UserDefaults.standard.removeObject(forKey: departuresKey)
+        UserDefaults.standard.removeObject(forKey: pendingAwardsKey)
+    }
+
     // MARK: - Departure Ledger
 
     /// Records that a player's contract expired while on `formerTeamID`.

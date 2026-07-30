@@ -106,6 +106,14 @@ enum TrainingFocusEngine {
     /// league walk runs at most once per team.
     private static var careerIDByTeamID: [UUID: UUID] = [:]
 
+    /// Both caches above are process-global and keyed by ids that only mean
+    /// something inside one save, so a career switch must empty them.
+    /// Called from `WeekAdvancer.resetProcessStateForCareerSwitch()`.
+    static func resetProcessState() {
+        breakoutCounts = [:]
+        careerIDByTeamID = [:]
+    }
+
     // MARK: - Breakout Cap Persistence
 
     /// Season-scoped per-team breakout usage, JSON-persisted on the Career
@@ -331,11 +339,10 @@ enum TrainingFocusEngine {
            let cached = careers.first(where: { $0.id == cachedID }) {
             return cached
         }
-        let leagues = (try? context.fetch(FetchDescriptor<League>())) ?? []
-        for career in careers {
-            guard let leagueID = career.leagueID,
-                  let league = leagues.first(where: { $0.id == leagueID }),
-                  league.teams.contains(where: { $0.id == teamID }) else { continue }
+        // Every roster row names its own save now, so the league walk this used
+        // to do (career.leagueID -> League.teams) collapses to one lookup.
+        if let cid = roster.first(where: { $0.careerID != nil })?.careerID,
+           let career = careers.first(where: { $0.id == cid }) {
             careerIDByTeamID[teamID] = career.id
             return career
         }

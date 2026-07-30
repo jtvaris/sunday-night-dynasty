@@ -776,6 +776,20 @@ struct TeamSelectionView: View {
         )
         #endif
 
+        // MULTI-SAVE ISOLATION: every row this career owns is stamped with the
+        // career's id BEFORE it reaches the store. This is the single funnel all
+        // three creation paths (generated league, template import, fantasy-draft
+        // detour) pass through, so nothing can enter unscoped.
+        let careerID = career.id
+        career.schemaBackfillVersion = CareerScope.currentBackfillVersion
+        CareerScope.stamp(result.league, careerID: careerID)
+        CareerScope.stamp(result.teams, careerID: careerID)
+        CareerScope.stamp(result.players, careerID: careerID)
+        CareerScope.stamp(result.owners, careerID: careerID)
+        CareerScope.stamp(result.coaches, careerID: careerID)
+        CareerScope.stamp(result.draftPicks, careerID: careerID)
+        CareerScope.stamp(seasonHistory, careerID: careerID)
+
         // Insert all generated objects into the model context.
         modelContext.insert(career)
         modelContext.insert(result.league)
@@ -802,16 +816,14 @@ struct TeamSelectionView: View {
             modelContext.insert(history)
         }
 
-        // Reset per-career AppStorage flags
-        UserDefaults.standard.set(false, forKey: "scoutsSentToCombine")
-        UserDefaults.standard.set(false, forKey: "rosterEvaluationConfirmed")
-        UserDefaults.standard.set("{}", forKey: "rosterNotes")
-        UserDefaults.standard.set("{}", forKey: "rosterPriorities")
-        UserDefaults.standard.set("{}", forKey: "rosterOwnAssessments")
-        UserDefaults.standard.set(false, forKey: "rosterSortHintSeen")
-        UserDefaults.standard.set("[]", forKey: "prospectWatchlist")
-        UserDefaults.standard.set("{}", forKey: "prospectOwnAssessments")
-        UserDefaults.standard.set("[]", forKey: "prospectCustomBoard")
+        // Career-state AppStorage is namespaced per save (see
+        // `CareerScopedDefaults`), so a brand-new career simply starts from an
+        // empty namespace — the old global reset would have wiped the OTHER
+        // save's roster notes and prospect board.
+        CareerScopedDefaults.purge(careerID: careerID)
+        // Process-global engine caches (draft class, trade caps, wasFired, …)
+        // belong to whichever career last ran; a new save must not inherit them.
+        WeekAdvancer.resetProcessStateForCareerSwitch()
 
         isLoading = false
         selectedCareer = career

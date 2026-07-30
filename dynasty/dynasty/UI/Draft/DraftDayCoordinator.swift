@@ -88,7 +88,7 @@ final class DraftDayCoordinator: ObservableObject {
     init(career: Career, modelContext: ModelContext) {
         self.career = career
         self.modelContext = modelContext
-        self.recorder = DraftStoryRecorder(modelContext: modelContext)
+        self.recorder = DraftStoryRecorder(modelContext: modelContext, careerID: career.id)
     }
 
     deinit {
@@ -134,10 +134,11 @@ final class DraftDayCoordinator: ObservableObject {
 
     func loadData() async {
         let season = career.currentSeason
-        let teamFetch = FetchDescriptor<Team>()
-        let playerFetch = FetchDescriptor<Player>()
+        let cid = career.id
+        let teamFetch = FetchDescriptor<Team>(predicate: #Predicate { $0.careerID == cid })
+        let playerFetch = FetchDescriptor<Player>(predicate: #Predicate { $0.careerID == cid })
         let pickFetch = FetchDescriptor<DraftPick>(
-            predicate: #Predicate { $0.seasonYear == season },
+            predicate: #Predicate { $0.careerID == cid && $0.seasonYear == season },
             sortBy: [SortDescriptor(\.pickNumber)]
         )
 
@@ -162,7 +163,9 @@ final class DraftDayCoordinator: ObservableObject {
         WeekAdvancer.migrateLegacyDraftClassIfNeeded(career: career, modelContext: modelContext)
 
         let inMemoryClass = WeekAdvancer.currentDraftClass
-        let prospectFetch = FetchDescriptor<CollegeProspect>()
+        let prospectFetch = FetchDescriptor<CollegeProspect>(
+            predicate: #Predicate { $0.careerID == cid }
+        )
         let persistedClass = (try? modelContext.fetch(prospectFetch)) ?? []
         let draftClass: [CollegeProspect]
         if !persistedClass.isEmpty {
@@ -198,7 +201,9 @@ final class DraftDayCoordinator: ObservableObject {
         // Resolve each team's coordinator schemes once (#33 OSA B) so pick
         // grades can score a prospect against the drafting team's actual
         // offensive/defensive system instead of a flat placeholder.
-        let allCoaches = (try? modelContext.fetch(FetchDescriptor<Coach>())) ?? []
+        let allCoaches = (try? modelContext.fetch(FetchDescriptor<Coach>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
         var schemeMap: [UUID: (offense: OffensiveScheme?, defense: DefensiveScheme?)] = [:]
         for coach in allCoaches {
             guard let teamID = coach.teamID else { continue }
@@ -603,6 +608,7 @@ final class DraftDayCoordinator: ObservableObject {
             offensiveScheme: draftingSchemes?.offense,
             defensiveScheme: draftingSchemes?.defense
         )
+        player.careerID = career.id
         modelContext.insert(player)
         // He is in the league now — take him off every future prospect pool.
         // `ScoutingEngine.getUDFAPool` (the OTAs bulk fallback) filters on
@@ -637,6 +643,7 @@ final class DraftDayCoordinator: ObservableObject {
             publicOVR: grade.inputs.publicOVR,
             isGem: grade.isGemCandidate
         )
+        pickGrade.careerID = career.id
         modelContext.insert(pickGrade)
 
         // Update local state
@@ -785,6 +792,7 @@ final class DraftDayCoordinator: ObservableObject {
             defensiveScheme: signingSchemes?.defense,
             isUndrafted: true
         )
+        player.careerID = career.id
         modelContext.insert(player)
         rosters[teamID, default: []].append(player)
         signedUDFAProspectIDs.append(prospect.id)
@@ -832,6 +840,7 @@ final class DraftDayCoordinator: ObservableObject {
                     defensiveScheme: aiSchemes?.defense,
                     isUndrafted: true
                 )
+                player.careerID = career.id
                 modelContext.insert(player)
                 rosters[team.id, default: []].append(player)
                 team.currentCapUsage += player.annualSalary

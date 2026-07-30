@@ -66,8 +66,14 @@ struct ScheduleView: View {
 
     @Environment(\.modelContext) private var modelContext
 
-    @Query private var allGames: [Game]
-    @Query private var allTeams: [Team]
+    @Query private var allGamesUnscoped: [Game]
+    @Query private var allTeamsUnscoped: [Team]
+
+    // `@Query` cannot take a runtime predicate built from a stored property,
+    // so the store-wide result is narrowed to THIS save here. Without it the
+    // screen mixes two careers' populations into one list.
+    private var allGames: [Game] { allGamesUnscoped.filter { $0.careerID == career.id } }
+    private var allTeams: [Team] { allTeamsUnscoped.filter { $0.careerID == career.id } }
 
     @State private var selectedWeek: Int
     @State private var previewGame: Game?
@@ -170,8 +176,9 @@ struct ScheduleView: View {
             // or a signing is reflected the next time the schedule opens.
             // Rostered players only — free agents and the retired archive (which
             // grows every season) never contribute to a team's OVR.
+            let cid = career.id
             let descriptor = FetchDescriptor<Player>(
-                predicate: #Predicate<Player> { $0.teamID != nil }
+                predicate: #Predicate<Player> { $0.careerID == cid && $0.teamID != nil }
             )
             let players = (try? modelContext.fetch(descriptor)) ?? []
             ovrByTeam = TeamStrength.startersOVRByTeam(players: players)

@@ -25,6 +25,17 @@ enum PerfLog {
     private static var emittedOnce: Set<String> = []
     #endif
 
+    /// Both caches above are process-global; a career switch should let the
+    /// once-per-run metrics fire again for the newly opened save, and drop any
+    /// mark left dangling by the career that just closed. Called from
+    /// `WeekAdvancer.resetProcessStateForCareerSwitch()`.
+    static func resetProcessState() {
+        #if DEBUG
+        marks = [:]
+        emittedOnce = []
+        #endif
+    }
+
     // MARK: One-shot marks
 
     /// Records a named start time (e.g. the tap that opens a screen).

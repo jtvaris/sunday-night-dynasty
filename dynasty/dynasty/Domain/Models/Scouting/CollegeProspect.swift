@@ -5,6 +5,15 @@ import SwiftUI
 @Model
 final class CollegeProspect {
     var id: UUID
+
+    /// The save slot (``Career.id``) this row belongs to. `nil` marks a legacy
+    /// row written before multi-save isolation existed; `CareerScope.adopt`
+    /// stamps those on first launch. Default-value stored property, never in
+    /// `init` -> safe lightweight migration.
+    var careerID: UUID? = nil
+
+    #Index<CollegeProspect>([\.careerID])
+
     var firstName: String
     var lastName: String
     var college: String

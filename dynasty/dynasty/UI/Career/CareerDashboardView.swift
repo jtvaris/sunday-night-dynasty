@@ -227,7 +227,10 @@ struct CareerDashboardView: View {
         let opponentID = game.homeTeamID == teamID ? game.awayTeamID : game.homeTeamID
         guard let opponent = allTeamsByID[opponentID] else { return }
 
-        let coachDescriptor = FetchDescriptor<Coach>()
+        let cid = career.id
+        let coachDescriptor = FetchDescriptor<Coach>(
+            predicate: #Predicate { $0.careerID == cid }
+        )
         let leagueCoaches = (try? modelContext.fetch(coachDescriptor)) ?? []
 
         // Same opponent-prep boost the quick sim applies (WeekAdvancer parity).
@@ -3075,8 +3078,9 @@ struct CareerDashboardView: View {
     private var currentStreak: (label: String, count: Int, isWin: Bool)? {
         guard let teamID = career.teamID else { return nil }
         let seasonYear = career.currentSeason
+        let cid = career.id
         let gameDescriptor = FetchDescriptor<Game>(predicate: #Predicate {
-            $0.seasonYear == seasonYear
+            $0.careerID == cid && $0.seasonYear == seasonYear
         })
         let allGames = (try? modelContext.fetch(gameDescriptor)) ?? []
         let playedGames = allGames
@@ -3159,7 +3163,8 @@ struct CareerDashboardView: View {
     }
 
     private func fetchTeamsByID() -> [UUID: Team] {
-        let descriptor = FetchDescriptor<Team>()
+        let cid = career.id
+        let descriptor = FetchDescriptor<Team>(predicate: #Predicate { $0.careerID == cid })
         let teams = (try? modelContext.fetch(descriptor)) ?? []
         return Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
     }
@@ -3172,7 +3177,10 @@ struct CareerDashboardView: View {
         guard let teamID = career.teamID else { return }
 
         // All teams
-        let allTeamsDescriptor = FetchDescriptor<Team>()
+        let cid = career.id
+        let allTeamsDescriptor = FetchDescriptor<Team>(
+            predicate: #Predicate { $0.careerID == cid }
+        )
         let allTeams = (try? modelContext.fetch(allTeamsDescriptor)) ?? []
         allTeamsByID = Dictionary(uniqueKeysWithValues: allTeams.map { ($0.id, $0) })
 
@@ -3227,7 +3235,7 @@ struct CareerDashboardView: View {
         // Games for schedule info
         let seasonYear = career.currentSeason
         let gameDescriptor = FetchDescriptor<Game>(predicate: #Predicate {
-            $0.seasonYear == seasonYear
+            $0.careerID == cid && $0.seasonYear == seasonYear
         })
         let allGames = (try? modelContext.fetch(gameDescriptor)) ?? []
 
@@ -3267,7 +3275,7 @@ struct CareerDashboardView: View {
         let prevYear = career.currentSeason - 1
         if prevYear >= 1 {
             let prevGameDescriptor = FetchDescriptor<Game>(predicate: #Predicate {
-                $0.seasonYear == prevYear
+                $0.careerID == cid && $0.seasonYear == prevYear
             })
             let prevGames = (try? modelContext.fetch(prevGameDescriptor)) ?? []
             let prevMyGames = prevGames.filter {
@@ -3300,7 +3308,9 @@ struct CareerDashboardView: View {
     /// as a bottom toast if it is fresh (occurred within the last 30 seconds)
     /// and not yet displayed in this session.
     private func loadLatestHardKnocksEvent() {
+        let cid = career.id
         var descriptor = FetchDescriptor<HardKnocksEvent>(
+            predicate: #Predicate { $0.careerID == cid },
             sortBy: [SortDescriptor(\.occurredAt, order: .reverse)]
         )
         descriptor.fetchLimit = 1

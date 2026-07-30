@@ -5,8 +5,14 @@ struct StandingsView: View {
 
     let career: Career
 
-    @Query private var allTeams: [Team]
-    @Query private var allGames: [Game]
+    @Query private var allTeamsUnscoped: [Team]
+    @Query private var allGamesUnscoped: [Game]
+
+    // `@Query` cannot take a runtime predicate built from a stored property,
+    // so the store-wide result is narrowed to THIS save here. Without it the
+    // screen mixes two careers' populations into one list.
+    private var allTeams: [Team] { allTeamsUnscoped.filter { $0.careerID == career.id } }
+    private var allGames: [Game] { allGamesUnscoped.filter { $0.careerID == career.id } }
 
     @State private var selectedConference: Conference = .AFC
     @State private var selectedRowDetail: StandingsRowDetail?

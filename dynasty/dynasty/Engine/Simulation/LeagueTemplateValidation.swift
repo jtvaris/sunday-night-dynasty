@@ -559,7 +559,7 @@ enum LeagueTemplateValidation {
 
         let schema = Schema([
             Career.self, League.self, Team.self, Player.self, Owner.self,
-            Coach.self, Season.self, Game.self, Schedule.self, Contract.self,
+            Coach.self, Game.self, Contract.self,
             Scout.self, CollegeProspect.self, DraftPick.self, DraftEvent.self,
             DraftPickGrade.self, DraftReputation.self, CareerArcState.self,
             PlayerSeasonHistory.self, FABid.self, FAVisit.self,
@@ -576,6 +576,17 @@ enum LeagueTemplateValidation {
             return nil
         }
         let context = container.mainContext
+        // No `Career` row exists in this isolated store, but every row still
+        // gets a careerID so the "no unscoped row may ever be persisted"
+        // invariant holds here too.
+        let syntheticCareerID = UUID()
+        CareerScope.stamp(imported.league, careerID: syntheticCareerID)
+        CareerScope.stamp(imported.teams, careerID: syntheticCareerID)
+        CareerScope.stamp(imported.players, careerID: syntheticCareerID)
+        CareerScope.stamp(imported.owners, careerID: syntheticCareerID)
+        CareerScope.stamp(imported.coaches, careerID: syntheticCareerID)
+        CareerScope.stamp(imported.draftPicks, careerID: syntheticCareerID)
+        CareerScope.stamp(imported.seasonHistory, careerID: syntheticCareerID)
         context.insert(imported.league)
         imported.teams.forEach { context.insert($0) }
         imported.players.forEach { context.insert($0) }

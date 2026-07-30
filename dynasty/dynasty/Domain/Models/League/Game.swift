@@ -4,6 +4,15 @@ import SwiftData
 @Model
 final class Game {
     var id: UUID
+
+    /// The save slot (``Career.id``) this row belongs to. `nil` marks a legacy
+    /// row written before multi-save isolation existed; `CareerScope.adopt`
+    /// stamps those on first launch. Default-value stored property, never in
+    /// `init` -> safe lightweight migration.
+    var careerID: UUID? = nil
+
+    #Index<Game>([\.careerID])
+
     var seasonYear: Int
     var week: Int
     var homeTeamID: UUID

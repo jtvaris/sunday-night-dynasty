@@ -519,7 +519,8 @@ struct FranchiseTagView: View {
         teamPlayers = (try? modelContext.fetch(playerDesc)) ?? []
 
         // Fetch all players league-wide for tag value calculation
-        let allDesc = FetchDescriptor<Player>()
+        let cid = career.id
+        let allDesc = FetchDescriptor<Player>(predicate: #Predicate { $0.careerID == cid })
         allPlayers = (try? modelContext.fetch(allDesc)) ?? []
     }
 }

@@ -443,9 +443,10 @@ struct FAOfferSheet: View {
         // (i.e. recently signed). Sample up to 4.
         let targetOVR = player.overall
         let position = player.position
+        let cid = career.id
         let descriptor = FetchDescriptor<Player>(
             predicate: #Predicate { p in
-                p.contractYearsRemaining > 0 && p.teamID != nil
+                p.careerID == cid && p.contractYearsRemaining > 0 && p.teamID != nil
             }
         )
         let allSigned = (try? modelContext.fetch(descriptor)) ?? []
@@ -455,7 +456,9 @@ struct FAOfferSheet: View {
             .prefix(8)
 
         // Map to display, looking up team abbreviations
-        let allTeams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
+        let allTeams = (try? modelContext.fetch(FetchDescriptor<Team>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
         let mapped = similar.compactMap { p -> ComparableSigning? in
             guard p.annualSalary > 0 else { return nil }
             let abbr = allTeams.first(where: { $0.id == p.teamID })?.abbreviation ?? "?"

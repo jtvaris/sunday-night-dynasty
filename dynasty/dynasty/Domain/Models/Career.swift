@@ -214,6 +214,14 @@ final class Career {
     /// Optional new attribute → lightweight migration.
     var pendingLockerRoomEventData: Data? = nil
 
+    // MARK: - Multi-save isolation (careerID wave)
+    /// How far this save has been through the `careerID` adoption pass.
+    /// `0` = never adopted (a legacy save whose rows still carry
+    /// `careerID == nil`); `1` = every row in the store that belongs to this
+    /// save has been stamped. Default-value stored property, never in `init`
+    /// → safe lightweight migration.
+    var schemaBackfillVersion: Int = 0
+
     var winPercentage: Double {
         let totalGames = totalWins + totalLosses
         guard totalGames > 0 else { return 0.0 }

@@ -7,6 +7,13 @@ import SwiftData
 @Model
 final class DraftPickGrade {
     var id: UUID
+
+    /// The save slot (``Career.id``) this row belongs to. `nil` marks a legacy
+    /// row written before multi-save isolation existed; `CareerScope.adopt`
+    /// stamps those on first launch. Default-value stored property, never in
+    /// `init` -> safe lightweight migration.
+    var careerID: UUID? = nil
+
     var pickID: UUID
     var draftYear: Int
     var pickNumber: Int

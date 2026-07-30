@@ -898,11 +898,22 @@ struct FreeAgencyView: View {
 
     private func loadData() {
         // Load free agents: contractYearsRemaining == 0 and no team
+        // `teamID == nil` is the one team predicate that does NOT scope a
+        // fetch to one save — the other career's ~400 unsigned free agents look
+        // exactly like this career's.
+        let cid = career.id
+        // Four `&&` clauses tip `#Predicate` into an unbounded type-check, so
+        // the cheap-but-selective trio runs in SQL and `isRetired` is filtered
+        // on the (already tiny) result.
         var descriptor = FetchDescriptor<Player>(
-            predicate: #Predicate { $0.contractYearsRemaining == 0 && $0.teamID == nil && $0.isRetired == false }
+            predicate: #Predicate<Player> { player in
+                player.careerID == cid
+                    && player.contractYearsRemaining == 0
+                    && player.teamID == nil
+            }
         )
-        descriptor.sortBy = [SortDescriptor(\.annualSalary, order: .reverse)]
-        allFreeAgents = (try? modelContext.fetch(descriptor)) ?? []
+        descriptor.sortBy = [SortDescriptor(\Player.annualSalary, order: .reverse)]
+        allFreeAgents = ((try? modelContext.fetch(descriptor)) ?? []).filter { !$0.isRetired }
 
         // Load player's team for cap info
         guard let teamID = career.teamID else { return }

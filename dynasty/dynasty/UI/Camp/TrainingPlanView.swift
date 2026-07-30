@@ -436,6 +436,7 @@ struct TrainingPlanView: View {
                 technicalPct: technicalPct,
                 teamID: teamID
             )
+            plan.careerID = career.id
             modelContext.insert(plan)
         }
         try? modelContext.save()

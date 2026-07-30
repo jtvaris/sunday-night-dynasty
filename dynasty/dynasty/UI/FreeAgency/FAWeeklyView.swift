@@ -315,6 +315,7 @@ struct FAWeeklyView: View {
             expiresAt: Date().addingTimeInterval(48 * 3600),
             status: .active
         )
+        visit.careerID = career.id
         modelContext.insert(visit)
         allVisits.append(visit)
         career.faVisitsUsed += 1
@@ -1203,7 +1204,10 @@ struct FAWeeklyView: View {
     // MARK: - Skip
 
     private func skipRemainingFA() {
-        let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
+        let cid = career.id
+        let allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
         FreeAgencyEngine.simulateRemainingFA(
             allPlayers: allPlayers,
             allTeams: allTeams,
@@ -1273,14 +1277,23 @@ struct FAWeeklyView: View {
         let teamDesc = FetchDescriptor<Team>(predicate: #Predicate { $0.id == teamID })
         team = try? modelContext.fetch(teamDesc).first
 
-        allTeams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
+        let cid = career.id
+        allTeams = (try? modelContext.fetch(FetchDescriptor<Team>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
 
-        allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>())) ?? []
+        allPlayers = (try? modelContext.fetch(FetchDescriptor<Player>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
         freeAgents = FreeAgencyEngine.generateFreeAgentMarket(allPlayers: allPlayers)
 
         // FA Drama: load bids + visits for heat / ticker / outbid detection
-        allBids = (try? modelContext.fetch(FetchDescriptor<FABid>())) ?? []
-        allVisits = (try? modelContext.fetch(FetchDescriptor<FAVisit>())) ?? []
+        allBids = (try? modelContext.fetch(FetchDescriptor<FABid>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
+        allVisits = (try? modelContext.fetch(FetchDescriptor<FAVisit>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
         refreshOutbidEvents()
 
         // R23: visits already hosted by the user's team this FA period, plus

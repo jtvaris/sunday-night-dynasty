@@ -290,6 +290,7 @@ struct RosterCutView: View {
                 practiceSquadEligible: practiceSquadIDs.contains(player.id),
                 occurredAt: now
             )
+            cut.careerID = career.id
             modelContext.insert(cut)
         }
         try? modelContext.save()

@@ -62,6 +62,7 @@ enum VisitTracker {
             expiresAt: expires,
             status: .active
         )
+        visit.careerID = existingVisits.first?.careerID ?? WeekAdvancer.activeCareerID
         modelContext.insert(visit)
         return visit
     }

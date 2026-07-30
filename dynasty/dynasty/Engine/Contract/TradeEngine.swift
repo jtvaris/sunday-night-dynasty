@@ -111,7 +111,8 @@ enum TradeEngine {
         let offeringTeamID  = proposal.offeringTeamID
         let receivingTeamID = proposal.receivingTeamID
 
-        let teamDescriptor = FetchDescriptor<Team>()
+        let cid = WeekAdvancer.activeCareerID
+        let teamDescriptor = FetchDescriptor<Team>(predicate: #Predicate { $0.careerID == cid })
         let allTeams = (try? modelContext.fetch(teamDescriptor)) ?? []
         let teamLookup = Dictionary(uniqueKeysWithValues: allTeams.map { ($0.id, $0) })
 
@@ -122,7 +123,9 @@ enum TradeEngine {
         // Detailed contracts are fetched here rather than passed in so EVERY
         // execution path (Trade Center, deadline pass, forced holdout trade)
         // gets identical cap treatment — a caller cannot forget them.
-        let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>())) ?? []
+        let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>(
+            predicate: #Predicate { $0.careerID == cid }
+        ))) ?? []
         var contractByPlayer: [UUID: Contract] = [:]
         for contract in contracts where contractByPlayer[contract.playerID] == nil {
             contractByPlayer[contract.playerID] = contract

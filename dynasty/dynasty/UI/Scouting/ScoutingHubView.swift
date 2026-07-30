@@ -443,7 +443,10 @@ struct ScoutingHubView: View {
 
         // Restore draft class on app restart: prefer SwiftData, then re-generate.
         if WeekAdvancer.currentDraftClass.isEmpty {
-            let prospectFetch = FetchDescriptor<CollegeProspect>()
+            let cid = career.id
+            let prospectFetch = FetchDescriptor<CollegeProspect>(
+                predicate: #Predicate { $0.careerID == cid }
+            )
             let persisted = (try? modelContext.fetch(prospectFetch)) ?? []
             if !persisted.isEmpty {
                 WeekAdvancer.currentDraftClass = persisted
@@ -684,6 +687,7 @@ private struct HireScoutSheet: View {
                 HireScoutView(
                     scoutRole: role,
                     teamID: career.teamID ?? UUID(),
+                    career: career,
                     remainingBudget: remainingScoutBudget,
                     poolSeed: career.teamID.map {
                         CoachingEngine.scoutPoolSeed(teamID: $0, role: role, season: career.currentSeason)
