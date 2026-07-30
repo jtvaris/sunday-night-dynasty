@@ -239,7 +239,7 @@ enum HoldoutEngine {
             return .noMarket
         }
 
-        TradeEngine.executeTrade(
+        let outcome = TradeEngine.executeTrade(
             proposal: package.proposal,
             allPlayers: allPlayers,
             allPicks: allPicks,
@@ -252,6 +252,17 @@ enum HoldoutEngine {
             ),
             modelContext: modelContext
         )
+
+        // A forced trade is league news like any other executed deal — the
+        // user gave up a star; the whole league heard about it.
+        if let record = outcome.record {
+            let teams = (try? modelContext.fetch(FetchDescriptor<Team>())) ?? []
+            let teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
+            let announcement = TradeNewsFactory.announce(
+                record: record, teamsByID: teamsByID, userTeamID: career.teamID
+            )
+            career.newsLog.append(announcement.news)
+        }
 
         // He left angry, but he left: the standoff is over either way.
         player.isHoldingOut = false

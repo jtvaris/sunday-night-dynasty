@@ -78,6 +78,38 @@ enum WeekAdvancer {
     /// per season and resets it with the other statics at bootstrap.
     static var aiTradeOffersGenerated: Int = 0
 
+    /// Of `aiTradeOffersGenerated`, how many arrived in an OFFSEASON window.
+    /// Also monotonic: §5 bands the two halves of the league year separately
+    /// (3-8 in-season + 2-5 offseason), so the smoke diff needs both totals to
+    /// separate them. Wave 2.
+    static var aiTradeOffersOffseasonGenerated: Int = 0
+
+    /// In-season AI offers that have reached the user THIS season. Drives the
+    /// hazard ramp's cap and pity floor (`TradeValueEngine.userOfferHazard`);
+    /// reset in `startNewSeason`.
+    static var aiOffersThisSeason: Int = 0
+
+    /// AI offers that have reached the user in the CURRENT offseason cycle.
+    /// Reset in `startNewSeason`, which fires immediately after the offseason
+    /// ends — so between two kickoffs this counter sees exactly one offseason.
+    static var aiOffersThisOffseason: Int = 0
+
+    /// AI-vs-AI league trades completed this season between kickoff and the
+    /// deadline. Feeds the deadline-week catch-up (a quiet October makes deadline
+    /// day louder, which is also what the real league does) and the §5 in-season
+    /// ceiling. Wave 2.
+    static var leagueTradesThisSeason: Int = 0
+
+    /// AI-vs-AI league trades completed in the current offseason cycle — the
+    /// per-window catch-up and the §5 offseason ceiling read it.
+    static var leagueTradesThisOffseason: Int = 0
+
+    /// §5 ceilings, enforced here rather than inside the market so the bands are
+    /// visible next to the calendar they apply to: 8-25 in-season player trades
+    /// league-wide, 15-40 across the offseason.
+    static let maxLeagueTradesInSeason = 24
+    static let maxLeagueTradesOffseason = 38
+
     /// Historical mock draft snapshots, keyed by phase tag (e.g. "Mid-Season",
     /// "Combine", "Post-FA", "Pre-Draft"). Each value is a copy of
     /// `currentMockDraft` taken right after that phase's mock was generated.
@@ -540,6 +572,21 @@ enum WeekAdvancer {
         // 6. R21: stale trade offers never survive into a new season.
         career.pendingTradeOffers = []
 
+        // 6a. Wave 2: the league year's trade counters and the GMs' memory of how
+        // the user negotiated all reset at kickoff.
+        //
+        // Both offseason counters are zeroed HERE on purpose. The offseason of
+        // cycle N runs after week 18 of season N and before this function turns
+        // the year over, so resetting at kickoff means each pair of kickoffs
+        // brackets exactly one offseason — the counters are never half a cycle
+        // stale. (The smoke harness reads the MONOTONIC totals for its per-season
+        // diff, so this reset cannot hide a season's volume from the diagnostics.)
+        aiOffersThisSeason = 0
+        aiOffersThisOffseason = 0
+        leagueTradesThisSeason = 0
+        leagueTradesThisOffseason = 0
+        TradeValueEngine.TradeTalkRegistry.reset()
+
         // 6b. R28: return decisions are week-scoped calls — never carry them
         // into a new season (offseason rehab resolves the injuries anyway).
         career.pendingReturnDecisions = []
@@ -974,32 +1021,50 @@ enum WeekAdvancer {
                 )
             }
 
-            // 4c. R21: AI-initiated trade offer (~15 % chance per week through
-            // the deadline week itself — the busiest week of the real market must
-            // not be the one week the phone stays silent). Contenders buy,
-            // rebuilders sell — the offer is persisted on the career and lands as
-            // an inbox message.
-            if week <= tradeDeadlineWeek, Int.random(in: 1...100) <= 15 {
+            // 4c. Wave 2: the phone rings on a hazard ramp into the deadline
+            // (decision §7.2 — 3-8 offers a season, back-loaded, plus 2-5 in the
+            // offseason windows). The old rule was a flat 15 %/week over weeks
+            // 1-8 ≈ 1.2 attempts a season with both productive branches dead
+            // (finding S5), so the phone effectively never rang.
+            //
+            // `userOfferHazard` owns the curve, the cap and the pity floor; this
+            // block owns the dice. Deadline week gets two rolls, and a club that
+            // already has an offer on the table is excluded rather than allowed to
+            // overwrite it.
+            let offerWindow: TradeValueEngine.MarketWindow =
+                week == tradeDeadlineWeek ? .deadline : .week(week)
+            let hazard = TradeValueEngine.userOfferHazard(
+                window: offerWindow, offersSoFar: aiOffersThisSeason
+            )
+            if week <= tradeDeadlineWeek, hazard.rolls > 0 {
                 let activePicks = fetchActiveDraftPicks(modelContext: modelContext)
                 // Contracts make the offer builder no-trade-clause-aware; without
                 // them the Trade Center would veto on accept what the AI just
                 // offered (preview ≢ outcome).
                 let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>())) ?? []
-                if let offer = TradeValueEngine.generateWeeklyAIOffer(
-                    userTeam: playerTeam,
-                    allTeams: Array(teamsByID.values),
-                    allPlayers: allPlayers,
-                    allPicks: activePicks,
-                    capMode: career.capMode,
-                    currentSeason: season,
-                    contracts: contracts
-                ) {
+                for _ in 0..<hazard.rolls {
+                    guard aiOffersThisSeason < TradeValueEngine.maxInSeasonOffers else { break }
+                    guard Int.random(in: 1...100) <= hazard.chancePercent else { continue }
+                    let alreadyOffering = Set(career.pendingTradeOffers.map(\.offeringTeamID))
+                    guard let offer = TradeValueEngine.generateAIOffer(
+                        window: offerWindow,
+                        userTeam: playerTeam,
+                        allTeams: teams,
+                        allPlayers: allPlayers,
+                        allPicks: activePicks,
+                        capMode: career.capMode,
+                        currentSeason: season,
+                        week: week,
+                        contracts: contracts,
+                        excludingTeamIDs: alreadyOffering
+                    ) else { continue }
+
                     var pending = career.pendingTradeOffers
-                    // Never stack duplicate offers from the same team.
                     pending.removeAll { $0.offeringTeamID == offer.proposal.offeringTeamID }
                     pending.append(offer.proposal)
                     career.pendingTradeOffers = Array(pending.suffix(5))
                     aiTradeOffersGenerated += 1        // Wave 0 instrumentation
+                    aiOffersThisSeason += 1
                     lastInboxMessages.append(
                         TradeValueEngine.offerInboxMessage(offer: offer, week: week, season: season)
                     )
@@ -1418,6 +1483,23 @@ enum WeekAdvancer {
             }
         }
 
+        // Wave 2: the other 31 clubs do business with each other EVERY week, not
+        // only on deadline day (finding S5: "the other 31 teams never trade with
+        // each other, in any phase, ever"). Weeks 1-6 are nearly silent, 7-8 pick
+        // up, deadline week below is the flurry — the §5 shape of "8-25 in-season
+        // trades, ≥60 % of them in the last three pre-deadline weeks".
+        if week < tradeDeadlineWeek {
+            runLeagueMarketWindow(
+                window: .week(week),
+                career: career,
+                teams: teams,
+                teamsByID: teamsByID,
+                allPlayers: allPlayers,
+                week: week,
+                modelContext: modelContext
+            )
+        }
+
         // Deadline week CLOSES here: the deadline passes once the week's games
         // are in the books (real NFL: the Tuesday after them). Runs on the week
         // number rather than the phase so an in-flight save that entered week
@@ -1425,28 +1507,24 @@ enum WeekAdvancer {
         if week == tradeDeadlineWeek {
             career.currentPhase = .regularSeason
 
-            // R21: Deadline drama — 2-4 AI-vs-AI trades (contenders buy
-            // veterans from rebuilders for picks, value-curve validated).
-            // Players and picks really change teams.
-            let activePicks = fetchActiveDraftPicks(modelContext: modelContext)
-            let deadlineTrades = TradeValueEngine.executeDeadlineTrades(
-                userTeamID: career.teamID,
-                teams: Array(teamsByID.values),
+            // Deadline drama at Wave 2 scale: 5-9 AI-vs-AI deals plus whatever
+            // the rest of the season under-delivered (`leagueTradeTarget`'s
+            // deficit), every one of them real players and picks through the same
+            // valuation, validation, ledger and news path the user's own trades
+            // use.
+            let deadlineResult = runLeagueMarketWindow(
+                window: .deadline,
+                career: career,
+                teams: teams,
+                teamsByID: teamsByID,
                 allPlayers: allPlayers,
-                allPicks: activePicks,
-                capMode: career.capMode,
-                currentSeason: season,
+                week: week,
                 modelContext: modelContext
             )
-            for trade in deadlineTrades {
-                lastNewsItems.append(
-                    TradeValueEngine.newsItem(for: trade, week: week, season: season)
-                )
-            }
-            if !deadlineTrades.isEmpty {
+            if !deadlineResult.summaries.isEmpty {
                 lastInboxMessages.append(
                     TradeValueEngine.deadlineRoundupMessage(
-                        trades: deadlineTrades, week: week, season: season
+                        trades: deadlineResult.summaries, week: week, season: season
                     )
                 )
             }
@@ -2810,6 +2888,24 @@ enum WeekAdvancer {
             break
         }
 
+        // --- Wave 2: the offseason trade market ---
+        // Runs AFTER the phase's own logic so it reads the roster the phase just
+        // produced (post-FA signings, post-cutdown 53s) and appends to the news
+        // list rather than being overwritten by it — several cases above ASSIGN
+        // `lastNewsItems`. The draft phase is deliberately excluded: draft-weekend
+        // pick swaps are Wave 4's business and run inside `DraftDayCoordinator`.
+        let offseasonWindow = TradeValueEngine.MarketWindow.offseason(currentPhase)
+        if offseasonWindow.isMarketWindow {
+            runOffseasonTradeMarket(
+                window: offseasonWindow,
+                career: career,
+                teams: teams,
+                teamsByID: teamsByID,
+                allPlayers: allPlayers,
+                modelContext: modelContext
+            )
+        }
+
         // --- Apply owner demand consequences before season starts (#248) ---
         if nextPhase == .regularSeason {
             if let playerTeamID = career.teamID,
@@ -3538,6 +3634,181 @@ enum WeekAdvancer {
             predicate: #Predicate { !$0.isComplete }
         )
         return (try? modelContext.fetch(descriptor)) ?? []
+    }
+
+    // MARK: - Private: Wave 2 Trade Market (docs/TRADE_OVERHAUL_PLAN.md §6)
+
+    /// Runs one AI-vs-AI market window and routes its output into the same
+    /// persistence every other league event already uses: `lastNewsItems` (which
+    /// `advanceWeek` folds into the persisted `career.newsLog`) and
+    /// `lastInboxMessages` (collected by `CareerShellView` after the advance).
+    ///
+    /// Every executed deal goes through `TradeNewsFactory.announce`, which is the
+    /// user's standing Wave 2 requirement: nothing moves in this league without
+    /// him being able to read about it, and anything that touches or should
+    /// inform his club also lands in his inbox.
+    @discardableResult
+    private static func runLeagueMarketWindow(
+        window: TradeValueEngine.MarketWindow,
+        career: Career,
+        teams: [Team],
+        teamsByID: [UUID: Team],
+        allPlayers: [Player],
+        week: Int,
+        modelContext: ModelContext
+    ) -> TradeValueEngine.LeagueMarketResult {
+        let target = leagueMarketTarget(window: window)
+        guard target > 0 else { return TradeValueEngine.LeagueMarketResult() }
+
+        let activePicks = fetchActiveDraftPicks(modelContext: modelContext)
+        let result = TradeValueEngine.runLeagueMarketPass(
+            window: window,
+            targetCount: target,
+            userTeamID: career.teamID,
+            teams: teams,
+            allPlayers: allPlayers,
+            allPicks: activePicks,
+            capMode: career.capMode,
+            currentSeason: career.currentSeason,
+            week: week,
+            modelContext: modelContext
+        )
+
+        for record in result.records {
+            let announcement = TradeNewsFactory.announce(
+                record: record,
+                teamsByID: teamsByID,
+                userTeamID: career.teamID
+            )
+            lastNewsItems.append(announcement.news)
+            if let inbox = announcement.inbox {
+                lastInboxMessages.append(inbox)
+            }
+        }
+
+        if window.isInSeason {
+            leagueTradesThisSeason += result.count
+        } else {
+            leagueTradesThisOffseason += result.count
+        }
+        return result
+    }
+
+    /// Target deal count for one window: the market's own calendar shape
+    /// (`TradeValueEngine.leagueTradeTarget`), clamped by the §5 ceilings and
+    /// topped up by whatever the cycle owes.
+    ///
+    /// The catch-up matters more than it looks: a particular league year can have
+    /// few willing sellers (everyone .500, nobody with cap room), and without it
+    /// a quiet October would silently push the season under §5's 8-25 in-season
+    /// band. With it, deadline day settles the account — which is also exactly
+    /// what the real deadline is for.
+    private static func leagueMarketTarget(window: TradeValueEngine.MarketWindow) -> Int {
+        switch window {
+        case .week:
+            let headroom = maxLeagueTradesInSeason - leagueTradesThisSeason
+            return max(0, min(headroom, TradeValueEngine.leagueTradeTarget(window: window)))
+
+        case .deadline:
+            // ≈7 deals is what weeks 1-8 are expected to produce between them.
+            let deficit = max(0, 7 - leagueTradesThisSeason)
+            let headroom = maxLeagueTradesInSeason - leagueTradesThisSeason
+            return max(0, min(
+                headroom,
+                TradeValueEngine.leagueTradeTarget(window: window, deficit: deficit)
+            ))
+
+        case .offseason(let phase):
+            // Cumulative expectation entering each window, so a slow post-season
+            // is made up in March rather than lost. The order is the CALENDAR's
+            // (`phase(after:)`): reviewRoster → freeAgency → proDays → draft →
+            // otas → trainingCamp → preseason → rosterCuts, i.e. cut days are the
+            // LAST window of the cycle and carry the final catch-up.
+            let expectedBefore: Int
+            switch phase {
+            case .reviewRoster: expectedBefore = 0
+            case .freeAgency:   expectedBefore = 6
+            case .proDays:      expectedBefore = 13
+            case .otas:         expectedBefore = 20
+            case .rosterCuts:   expectedBefore = 26
+            default:            return 0
+            }
+            let deficit = max(0, expectedBefore - leagueTradesThisOffseason)
+            let headroom = maxLeagueTradesOffseason - leagueTradesThisOffseason
+            return max(0, min(
+                headroom,
+                TradeValueEngine.leagueTradeTarget(window: window, deficit: deficit)
+            ))
+        }
+    }
+
+    /// The offseason half of the market (finding S5: "Offseason:
+    /// `isTradeWindowOpen` says open, but nothing ever generates an offer").
+    ///
+    /// Two jobs per window: 2-5 AI calls to the user across the whole offseason
+    /// (post-season retool talks, post-FA, pre-draft, cut days, OTAs) and the
+    /// AI-vs-AI pass for the same window, which is where most of §5's 15-40
+    /// offseason trades come from.
+    private static func runOffseasonTradeMarket(
+        window: TradeValueEngine.MarketWindow,
+        career: Career,
+        teams: [Team],
+        teamsByID: [UUID: Team],
+        allPlayers: [Player],
+        modelContext: ModelContext
+    ) {
+        let season = career.currentSeason
+        let week = career.currentWeek
+
+        // 1. The user's phone.
+        if let userTeamID = career.teamID, let userTeam = teamsByID[userTeamID] {
+            let hazard = TradeValueEngine.userOfferHazard(
+                window: window, offersSoFar: aiOffersThisOffseason
+            )
+            if hazard.rolls > 0 {
+                let activePicks = fetchActiveDraftPicks(modelContext: modelContext)
+                let contracts = (try? modelContext.fetch(FetchDescriptor<Contract>())) ?? []
+                for _ in 0..<hazard.rolls {
+                    guard aiOffersThisOffseason < TradeValueEngine.maxOffseasonOffers else { break }
+                    guard Int.random(in: 1...100) <= hazard.chancePercent else { continue }
+                    let alreadyOffering = Set(career.pendingTradeOffers.map(\.offeringTeamID))
+                    guard let offer = TradeValueEngine.generateAIOffer(
+                        window: window,
+                        userTeam: userTeam,
+                        allTeams: teams,
+                        allPlayers: allPlayers,
+                        allPicks: activePicks,
+                        capMode: career.capMode,
+                        currentSeason: season,
+                        week: week,
+                        contracts: contracts,
+                        excludingTeamIDs: alreadyOffering
+                    ) else { continue }
+
+                    var pending = career.pendingTradeOffers
+                    pending.removeAll { $0.offeringTeamID == offer.proposal.offeringTeamID }
+                    pending.append(offer.proposal)
+                    career.pendingTradeOffers = Array(pending.suffix(5))
+                    aiTradeOffersGenerated += 1
+                    aiTradeOffersOffseasonGenerated += 1
+                    aiOffersThisOffseason += 1
+                    lastInboxMessages.append(
+                        TradeValueEngine.offerInboxMessage(offer: offer, week: week, season: season)
+                    )
+                }
+            }
+        }
+
+        // 2. The league's own business.
+        runLeagueMarketWindow(
+            window: window,
+            career: career,
+            teams: teams,
+            teamsByID: teamsByID,
+            allPlayers: allPlayers,
+            week: week,
+            modelContext: modelContext
+        )
     }
 
     // MARK: - Private: Season Summary & Career Counters (R32)

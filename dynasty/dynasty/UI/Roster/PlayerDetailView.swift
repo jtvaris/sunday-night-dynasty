@@ -47,8 +47,6 @@ private func isRealisticConversion(from primary: Position, to target: Position) 
 
 struct PlayerDetailView: View {
     let player: Player
-    /// Season stats for inline summary.
-    var seasonStats: [PlayerGameStats] = []
 
     // #178: Use @Query to fetch all players for league ranking context
     @Query private var allLeaguePlayers: [Player]
@@ -66,6 +64,17 @@ struct PlayerDetailView: View {
     /// All persisted draft pick grades. Filtered to this player to render the
     /// Public/True/Gem badge row in the header.
     @Query private var allDraftPickGrades: [DraftPickGrade]
+
+    /// The career, for the one thing the stat surfaces cannot do without: which
+    /// season is being played right now. Week 18 snapshots a season into
+    /// `PlayerSeasonHistory` BEFORE the offseason clears
+    /// `Player.seasonStatLine`, so without the season number the two sources
+    /// would double-count the same year.
+    @Query(sort: \Career.currentSeason, order: .reverse) private var careers: [Career]
+
+    /// Playoff production by season for this player. Dev-template only for now
+    /// (`DevPostseasonStats`); empty in Release and in every generated league.
+    @State private var postseasonLines: [Int: LeagueTemplate.PostLine] = [:]
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -193,10 +202,26 @@ struct PlayerDetailView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                NavigationLink(destination: PlayerStatsView(player: player, seasonStats: seasonStats)) {
+                NavigationLink(destination: PlayerStatsView(
+                    player: player,
+                    history: playerSeasonHistory,
+                    currentSeason: currentSeason,
+                    currentWeek: currentWeek,
+                    postseason: postseasonLines
+                )) {
                     Label("Stats", systemImage: "chart.bar.fill")
                 }
             }
+        }
+        .task(id: player.id) {
+            // Playoff lines: decoded off the main actor, cached for the whole app
+            // run, keyed to the player so tapping through a roster refreshes it.
+            // The body is deliberately empty in Release — the dev template is not
+            // in the product and nothing else can supply postseason production
+            // until `PlayerSeasonHistory` carries it.
+            #if DEBUG
+            postseasonLines = await DevPostseasonStats.lines(for: player)
+            #endif
         }
         .alert("Release Player", isPresented: $showCutConfirmation) {
             Button("Release", role: .destructive) {
@@ -754,83 +779,134 @@ struct PlayerDetailView: View {
 
     // MARK: - Season Stats Summary (#36)
 
+    /// The season the league is playing, and how far into it. `nil` only when no
+    /// career row exists (previews).
+    private var currentSeason: Int? { careers.first?.currentSeason }
+    private var currentWeek: Int? { careers.first?.currentWeek }
+
+    /// The finished snapshot for the current season, once week 18 has written it.
+    /// While it exists, it — not the live accumulator — is the season of record.
+    private var currentSeasonHistoryRow: PlayerSeasonHistory? {
+        guard let currentSeason else { return nil }
+        return playerSeasonHistory.last { $0.season == currentSeason }
+    }
+
+    /// This season's production. Two real sources, never both:
+    /// `Player.seasonStatLine` while the season runs, the history snapshot after
+    /// week 18 closes it.
+    private var seasonLine: SeasonStatLine {
+        currentSeasonHistoryRow?.statLine ?? player.seasonStatLine
+    }
+
+    private var seasonGamesPlayed: Int {
+        currentSeasonHistoryRow?.gamesPlayed ?? player.gamesPlayedThisSeason
+    }
+
+    private var seasonGamesStarted: Int {
+        currentSeasonHistoryRow?.gamesStarted ?? player.gamesStartedThisSeason
+    }
+
     @ViewBuilder
     private var seasonStatsSummarySection: some View {
-        let totals = aggregatedSeasonStats
-        let gamesPlayed = seasonStats.count
+        let line = seasonLine
+        let gamesPlayed = seasonGamesPlayed
+        // Genuinely empty = no appearances AND an all-zero line. A player who
+        // dressed and produced nothing has a real stat line of zeros, and gets
+        // the numbers rather than the "nothing recorded" note.
+        let isEmpty = gamesPlayed == 0 && line.isEmpty
 
-        Section("Season Stats") {
-            if gamesPlayed > 0 {
+        Section(currentSeason.map { "\(String($0)) Season Stats" } ?? "Season Stats") {
+            if !isEmpty {
                 HStack(spacing: 0) {
                     seasonQuickStat(label: "GP", value: "\(gamesPlayed)")
+                    quickStatDivider
+                    seasonQuickStat(label: "GS", value: "\(seasonGamesStarted)")
 
                     switch player.position {
                     case .QB:
                         quickStatDivider
-                        seasonQuickStat(label: "Pass Yds", value: "\(totals.passingYards)")
+                        seasonQuickStat(label: "Pass Yds", value: "\(line.passYards)")
                         quickStatDivider
-                        seasonQuickStat(label: "TD", value: "\(totals.passingTDs)", highlight: true)
+                        seasonQuickStat(label: "TD", value: "\(line.passTDs)", highlight: line.passTDs > 0)
                         quickStatDivider
-                        seasonQuickStat(label: "INT", value: "\(totals.interceptions)", negative: totals.interceptions > 5)
-                        quickStatDivider
-                        seasonQuickStat(label: "Rating", value: String(format: "%.1f", totals.passerRating))
+                        seasonQuickStat(label: "INT", value: "\(line.passInts)", negative: line.passInts > 5)
 
                     case .RB, .FB:
                         quickStatDivider
-                        seasonQuickStat(label: "Rush Yds", value: "\(totals.rushingYards)")
+                        seasonQuickStat(label: "Rush Yds", value: "\(line.rushYards)")
                         quickStatDivider
-                        seasonQuickStat(label: "Rush TD", value: "\(totals.rushingTDs)", highlight: true)
+                        seasonQuickStat(label: "Rush TD", value: "\(line.rushTDs)", highlight: line.rushTDs > 0)
                         quickStatDivider
-                        seasonQuickStat(label: "Y/A", value: String(format: "%.1f", totals.yardsPerCarry))
+                        seasonQuickStat(label: "Rec", value: "\(line.receptions)")
 
                     case .WR, .TE:
                         quickStatDivider
-                        seasonQuickStat(label: "Rec", value: "\(totals.receptions)")
+                        seasonQuickStat(label: "Rec", value: "\(line.receptions)")
                         quickStatDivider
-                        seasonQuickStat(label: "Rec Yds", value: "\(totals.receivingYards)")
+                        seasonQuickStat(label: "Rec Yds", value: "\(line.recYards)")
                         quickStatDivider
-                        seasonQuickStat(label: "Rec TD", value: "\(totals.receivingTDs)", highlight: true)
+                        seasonQuickStat(label: "Rec TD", value: "\(line.recTDs)", highlight: line.recTDs > 0)
+
+                    case .LT, .LG, .C, .RG, .RT:
+                        // No counting stats exist for the interior — snaps are it.
+                        quickStatDivider
+                        seasonQuickStat(label: "Snaps", value: "\(line.snapsPlayed)")
 
                     case .DE, .DT, .OLB, .MLB:
                         quickStatDivider
-                        seasonQuickStat(label: "Tackles", value: "\(totals.tackles)")
+                        seasonQuickStat(label: "Tackles", value: "\(line.tackles)")
                         quickStatDivider
-                        seasonQuickStat(label: "Sacks", value: String(format: "%.1f", totals.sacks), highlight: totals.sacks > 0)
+                        seasonQuickStat(label: "Sacks", value: String(format: "%.1f", line.sacks), highlight: line.sacks > 0)
                         quickStatDivider
-                        seasonQuickStat(label: "FF", value: "\(totals.forcedFumbles)")
+                        seasonQuickStat(label: "INT", value: "\(line.defInts)", highlight: line.defInts > 0)
 
                     case .CB, .FS, .SS:
                         quickStatDivider
-                        seasonQuickStat(label: "Tackles", value: "\(totals.tackles)")
+                        seasonQuickStat(label: "Tackles", value: "\(line.tackles)")
                         quickStatDivider
-                        seasonQuickStat(label: "INT", value: "\(totals.interceptionsCaught)", highlight: totals.interceptionsCaught > 0)
+                        seasonQuickStat(label: "INT", value: "\(line.defInts)", highlight: line.defInts > 0)
                         quickStatDivider
-                        seasonQuickStat(label: "Sacks", value: String(format: "%.1f", totals.sacks))
+                        seasonQuickStat(label: "PD", value: "\(line.passesDefended)")
 
-                    case .K, .P:
+                    case .K:
                         quickStatDivider
-                        seasonQuickStat(label: "FGM", value: "\(totals.fieldGoalsMade)")
+                        seasonQuickStat(label: "FGM", value: "\(line.fieldGoalsMade)")
                         quickStatDivider
-                        seasonQuickStat(label: "FGA", value: "\(totals.fieldGoalsAttempted)")
+                        seasonQuickStat(label: "FGA", value: "\(line.fieldGoalsAttempted)")
 
-                    default:
-                        EmptyView()
+                    case .P:
+                        quickStatDivider
+                        seasonQuickStat(label: "Punts", value: "\(line.punts)")
+                        quickStatDivider
+                        seasonQuickStat(label: "Avg", value: String(format: "%.1f", line.puntAverage))
                     }
                 }
                 .padding(.vertical, 6)
                 .background(Color.backgroundTertiary, in: RoundedRectangle(cornerRadius: 8))
             } else {
-                // #179: Show message when no season stats available
+                // #179: only shown when the season really has nothing to show —
+                // and it says why, so an offseason zero doesn't read as a bug.
                 HStack(spacing: 8) {
                     Image(systemName: "chart.bar")
                         .foregroundStyle(Color.textTertiary)
-                    Text("No stats recorded this season")
+                    Text(seasonEmptyNote)
                         .font(.caption)
                         .foregroundStyle(Color.textTertiary)
                 }
             }
         }
         .listRowBackground(Color.backgroundSecondary)
+    }
+
+    /// Why the season summary is empty, in the user's terms.
+    private var seasonEmptyNote: String {
+        if let week = currentWeek, week == 0 {
+            return "Season hasn't kicked off yet"
+        }
+        if player.isRetired {
+            return "Retired — see the career table below"
+        }
+        return "No games played this season"
     }
 
     private func seasonQuickStat(label: String, value: String, highlight: Bool = false, negative: Bool = false) -> some View {
@@ -849,31 +925,6 @@ struct PlayerDetailView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private var aggregatedSeasonStats: PlayerGameStats {
-        var total = PlayerGameStats(playerID: player.id, playerName: player.fullName, position: player.position)
-        for game in seasonStats {
-            total.passingYards += game.passingYards
-            total.passingTDs += game.passingTDs
-            total.interceptions += game.interceptions
-            total.completions += game.completions
-            total.attempts += game.attempts
-            total.rushingYards += game.rushingYards
-            total.rushingTDs += game.rushingTDs
-            total.carries += game.carries
-            total.receivingYards += game.receivingYards
-            total.receivingTDs += game.receivingTDs
-            total.receptions += game.receptions
-            total.targets += game.targets
-            total.tackles += game.tackles
-            total.sacks += game.sacks
-            total.forcedFumbles += game.forcedFumbles
-            total.interceptionsCaught += game.interceptionsCaught
-            total.fieldGoalsMade += game.fieldGoalsMade
-            total.fieldGoalsAttempted += game.fieldGoalsAttempted
-        }
-        return total
-    }
-
     // MARK: - Career Stats by Season
 
     /// History rows for this player, oldest → newest. Empty only for a true
@@ -883,177 +934,55 @@ struct PlayerDetailView: View {
         allSeasonHistory.filter { $0.playerID == player.id }
     }
 
-    /// One numeric column of the career table. `width` is fixed so the header and
-    /// the body rows can never drift apart; the whole set has to fit iPhone
-    /// portrait (~300 pt of content), which is why nobody gets more than four.
-    private struct CareerStatColumn: Identifiable {
-        let header: String
-        let width: CGFloat
-        /// Renders in the "good thing happened" tint (TDs, sacks, picks).
-        let isPositive: Bool
-        let value: (PlayerSeasonHistory) -> String
-
-        var id: String { header }
-
-        init(
-            _ header: String,
-            width: CGFloat,
-            isPositive: Bool = false,
-            value: @escaping (PlayerSeasonHistory) -> String
-        ) {
-            self.header = header
-            self.width = width
-            self.isPositive = isPositive
-            self.value = value
-        }
+    /// Rows of the career table for this player: the season in progress, every
+    /// finished season, the playoff sub-lines the dev template carries, and the
+    /// career-total summary. Built by `CareerTableBuilder` so this section and
+    /// `PlayerStatsView`'s "By Season" tab can never drift apart.
+    private var careerTableRows: [CareerSeasonRow] {
+        CareerTableBuilder.rows(
+            player: player,
+            history: playerSeasonHistory,
+            currentSeason: currentSeason,
+            postseason: postseasonLines
+        )
     }
 
-    /// The three-to-four categories that actually matter for this position.
-    /// Keyed on the player's CURRENT position so one table has one column set —
-    /// a row's own `positionRaw` records what he played that year for engines and
-    /// Hall-of-Fame snapshots, but mixing column sets mid-table would be unreadable.
-    private var careerStatColumns: [CareerStatColumn] {
-        switch player.position {
-        case .QB:
-            return [
-                CareerStatColumn("YDS", width: 48) { "\($0.passYards)" },
-                CareerStatColumn("TD", width: 30, isPositive: true) { "\($0.passTDs)" },
-                CareerStatColumn("INT", width: 32) { "\($0.passInts)" },
-            ]
-        case .RB, .FB:
-            return [
-                CareerStatColumn("YDS", width: 46) { "\($0.rushYards)" },
-                CareerStatColumn("TD", width: 30, isPositive: true) { "\($0.rushTDs)" },
-                CareerStatColumn("REC", width: 34) { "\($0.receptions)" },
-            ]
-        case .WR, .TE:
-            return [
-                CareerStatColumn("REC", width: 34) { "\($0.receptions)" },
-                CareerStatColumn("YDS", width: 46) { "\($0.recYards)" },
-                CareerStatColumn("TD", width: 30, isPositive: true) { "\($0.recTDs)" },
-            ]
-        case .LT, .LG, .C, .RG, .RT:
-            // A lineman has no counting stats — starts and snaps are the whole
-            // production record the game can honestly show.
-            return [
-                CareerStatColumn("GS", width: 32) { "\($0.gamesStarted)" },
-                CareerStatColumn("SNAP", width: 46) { "\($0.snapsPlayed)" },
-            ]
-        case .DE, .DT:
-            return [
-                CareerStatColumn("TKL", width: 36) { "\($0.tackles)" },
-                CareerStatColumn("SACK", width: 42, isPositive: true) {
-                    String(format: "%.1f", $0.sacks)
-                },
-            ]
-        case .OLB, .MLB:
-            return [
-                CareerStatColumn("TKL", width: 36) { "\($0.tackles)" },
-                CareerStatColumn("SACK", width: 42, isPositive: true) {
-                    String(format: "%.1f", $0.sacks)
-                },
-                CareerStatColumn("INT", width: 30, isPositive: true) { "\($0.defInts)" },
-            ]
-        case .CB, .FS, .SS:
-            return [
-                CareerStatColumn("TKL", width: 36) { "\($0.tackles)" },
-                CareerStatColumn("INT", width: 30, isPositive: true) { "\($0.defInts)" },
-                CareerStatColumn("PD", width: 30) { "\($0.passesDefended)" },
-            ]
-        case .K:
-            return [
-                CareerStatColumn("FGM", width: 36, isPositive: true) { "\($0.fieldGoalsMade)" },
-                CareerStatColumn("FGA", width: 36) { "\($0.fieldGoalsAttempted)" },
-                CareerStatColumn("FG%", width: 42) { entry in
-                    guard entry.fieldGoalsAttempted > 0 else { return "-" }
-                    let pct = Double(entry.fieldGoalsMade) / Double(entry.fieldGoalsAttempted) * 100
-                    return String(format: "%.0f%%", pct)
-                },
-            ]
-        case .P:
-            return [
-                CareerStatColumn("PUNT", width: 44) { "\($0.punts)" },
-                CareerStatColumn("AVG", width: 42) { String(format: "%.1f", $0.puntAverage) },
-            ]
-        }
-    }
-
-    /// Per-season career table: `Season | Age | OVR | GP | <position stats>`.
+    /// Per-season career table: `Season | Age | OVR | GP | <position stats>`,
+    /// closed by a CAREER totals row.
+    ///
     /// Always expanded — this is the page's main development story, not a detail
     /// worth hiding behind a chevron, and the single OVR column carries the trend
     /// the old bar chart used to duplicate.
     @ViewBuilder
     private var careerStatsHistorySection: some View {
-        if !playerSeasonHistory.isEmpty {
+        // Built once per render pass: `playerSeasonHistory` filters every history
+        // row in the store, so this is not a property to touch three times.
+        let rows = careerTableRows
+        if !rows.isEmpty {
             Section("Career Stats by Season") {
-                VStack(spacing: 6) {
-                    careerStatsHeaderRow
-                    ForEach(playerSeasonHistory.reversed(), id: \.id) { entry in
-                        careerStatsRow(entry)
-                    }
+                CareerStatTable(position: player.position, rows: rows)
+                    .padding(.vertical, 4)
+                if let note = careerTableNote(rows: rows) {
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundStyle(Color.textTertiaryReadable)
                 }
-                .padding(.vertical, 4)
             }
             .listRowBackground(Color.backgroundSecondary)
         }
     }
 
-    /// `spacing: 0` throughout: the fixed column widths ARE the layout budget,
-    /// so the default HStack gutter would silently overflow on iPhone portrait.
-    private var careerStatsHeaderRow: some View {
-        HStack(spacing: 0) {
-            careerStatsHeaderCell("SEASON")
-                .frame(maxWidth: .infinity, alignment: .leading)
-            careerStatsHeaderCell("AGE").frame(width: 32, alignment: .trailing)
-            careerStatsHeaderCell("OVR").frame(width: 38, alignment: .trailing)
-            careerStatsHeaderCell("GP").frame(width: 32, alignment: .trailing)
-            ForEach(careerStatColumns) { column in
-                careerStatsHeaderCell(column.header)
-                    .frame(width: column.width, alignment: .trailing)
-            }
+    /// Footnote for the two row kinds that need one. Nil when the table is a
+    /// plain list of finished seasons.
+    private func careerTableNote(rows: [CareerSeasonRow]) -> String? {
+        var parts: [String] = []
+        if rows.contains(where: { $0.kind == .inProgress }) {
+            parts.append("* season in progress")
         }
-    }
-
-    private func careerStatsHeaderCell(_ title: String) -> some View {
-        Text(title)
-            .font(.caption2.weight(.semibold))
-            // textTertiary fails WCAG AA on the card surface (DSTokens §contrast),
-            // so column labels use the readable muted token instead.
-            .foregroundStyle(Color.textTertiaryReadable)
-    }
-
-    private func careerStatsRow(_ entry: PlayerSeasonHistory) -> some View {
-        // A season not spent on an NFL roster is a real gap, not a zero line.
-        let played = entry.gamesPlayed > 0
-        return HStack(spacing: 0) {
-            Text("\(String(entry.season))")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(Color.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text("\(entry.ageAtEndOfSeason)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(Color.textSecondary)
-                .frame(width: 32, alignment: .trailing)
-            Text("\(entry.overallAtEndOfSeason)")
-                .font(.caption.weight(.bold).monospacedDigit())
-                .foregroundStyle(Color.forRating(entry.overallAtEndOfSeason))
-                .frame(width: 38, alignment: .trailing)
-            Text("\(entry.gamesPlayed)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(Color.textSecondary)
-                .frame(width: 32, alignment: .trailing)
-            ForEach(careerStatColumns) { column in
-                let text = played ? column.value(entry) : "-"
-                Text(text)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(
-                        !played ? Color.textTertiaryReadable :
-                        column.isPositive && text != "0" && text != "0.0" ? Color.success :
-                        Color.textPrimary
-                    )
-                    .frame(width: column.width, alignment: .trailing)
-            }
+        if rows.contains(where: { $0.kind == .postseason }) {
+            parts.append("playoff lines shown separately, not in the career total")
         }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     // MARK: - Trade Value Section (#37)
@@ -1160,12 +1089,23 @@ struct PlayerDetailView: View {
 
     // MARK: - Action Buttons (#35)
 
+    /// Whether the shown player is on the user's own roster. The league
+    /// browser makes EVERY player in the league navigable to this screen, and
+    /// the management actions below mutate the player — "Extend Contract" on a
+    /// rival would literally rewrite his contract. Own-roster players get the
+    /// management set; everyone else gets only "Trade For".
+    private var isUserRosterPlayer: Bool {
+        guard let userTeamID = careers.first?.teamID else { return false }
+        return player.teamID == userTeamID
+    }
+
     private var actionButtonsSection: some View {
         Section("Actions") {
             // 2×2 grid for the four primary actions, then a full-width "Change Position"
             // beneath. Avoids the previous asymmetric 5-button layout where the last
             // button sat alone in its row.
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                if isUserRosterPlayer {
                 actionButton(
                     label: "Set as Starter",
                     icon: "star.fill",
@@ -1180,12 +1120,22 @@ struct PlayerDetailView: View {
                 ) {
                     showContractNegotiation = true
                 }
-                actionButton(
-                    label: "Propose Trade",
-                    icon: "arrow.left.arrow.right",
-                    color: .success,
-                    subtitle: tradeInterestPreviewText
-                ) {}
+                }
+                // A player on another club is a trade TARGET: this opens the
+                // Trade Center with his team as the partner and him already
+                // ticked in their column. Hidden for our own players — there is
+                // no partner to name (shopping our own is the builder's job).
+                // Was a dead button with an empty closure (plan finding S8).
+                ProposeTradeButton(player: player, leaguePlayers: allLeaguePlayers) { hint, openTradeCenter in
+                    actionButton(
+                        label: "Trade For",
+                        icon: "arrow.left.arrow.right",
+                        color: .success,
+                        subtitle: hint,
+                        action: openTradeCenter
+                    )
+                }
+                if isUserRosterPlayer {
                 actionButton(
                     label: "Cut / Release",
                     icon: "scissors",
@@ -1194,18 +1144,21 @@ struct PlayerDetailView: View {
                 ) {
                     showCutConfirmation = true
                 }
+                }
             }
             .padding(.vertical, 4)
 
-            actionButton(
-                label: "Change Position",
-                icon: "arrow.triangle.swap",
-                color: .warning,
-                subtitle: nil
-            ) {
-                showPositionChange = true
+            if isUserRosterPlayer {
+                actionButton(
+                    label: "Change Position",
+                    icon: "arrow.triangle.swap",
+                    color: .warning,
+                    subtitle: nil
+                ) {
+                    showPositionChange = true
+                }
+                .padding(.bottom, 4)
             }
-            .padding(.bottom, 4)
         }
         .listRowBackground(Color.backgroundSecondary)
     }
@@ -1239,24 +1192,11 @@ struct PlayerDetailView: View {
         return String(format: "~$%.1fM/yr · %dyr", perYearM, years)
     }
 
-    /// Trade interest preview for the Propose Trade button. E.g. "~6 teams interested".
-    private var tradeInterestPreviewText: String? {
-        // Heuristic: count teams that aren't this team (assume 32 league teams) and where
-        // overall + age suggest acquirability. Cheap enough to do here.
-        guard player.overall >= 60 else { return "Limited interest" }
-        let baseInterest: Int
-        switch player.overall {
-        case 85...:    baseInterest = 12
-        case 78..<85:  baseInterest = 9
-        case 72..<78:  baseInterest = 6
-        case 65..<72:  baseInterest = 4
-        default:       baseInterest = 2
-        }
-        // Older players draw less interest
-        let agePenalty = max(0, player.age - player.position.peakAgeRange.upperBound) * 1
-        let count = max(1, baseInterest - agePenalty)
-        return "~\(count) team\(count == 1 ? "" : "s") interested"
-    }
+    // The old "~6 teams interested" teaser lived here. It was a hardcoded curve
+    // over OVR and age that never consulted a roster, a need or a cap sheet, so
+    // it invented a market that did not exist. `ProposeTradeButton` now supplies
+    // the subtitle from our actual depth at the position and the shared need
+    // model (`UI/Roster/LeagueRostersView.swift`).
 
     /// Reusable action button. Optional subtitle adds preview info under the label.
     private func actionButton(

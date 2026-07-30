@@ -8,7 +8,7 @@ import Foundation
 ///
 /// Used by:
 /// - Trade builder UI (`TradeView`) for showing pick worth.
-/// - `TradeEvaluator` (added in Vaihe 3) for accept/decline/counter logic.
+/// - `TradeValueEngine` for every accept/decline/counter decision.
 /// - `WarRoomPanel` for visualising the user's draft capital.
 enum PickValueChart {
 

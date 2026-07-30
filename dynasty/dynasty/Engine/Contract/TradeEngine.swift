@@ -40,202 +40,18 @@ struct TradeProposal: Identifiable, Codable {
 
 // MARK: - Trade Engine
 
+/// The one primitive that MOVES trade assets.
+///
+/// Wave 2 cleanup (plan §6 Wave 5, pulled forward because Wave 2 replaced the
+/// code): this type used to ship its own parallel trade brain —
+/// `evaluateTradeValue` (players priced by `ContractEngine.estimateMarketValue`,
+/// picks by the linear `DraftEngine.pickValue`), `aiWouldAccept` (a 90 % ratio
+/// test), `generateAITradeOffers` and a duplicate `evaluateTeamNeeds` depth
+/// table. All four were DEAD (plan §2: "three parallel trade brains ship in the
+/// binary; only one runs") and all four are now deleted: `TradeValueEngine` is
+/// the single valuation + AI authority, on the Jimmy Johnson scale the UI and
+/// the draft room already speak.
 enum TradeEngine {
-
-    // MARK: - Value Evaluation
-
-    /// Returns the total trade value for each side of the proposal.
-    ///
-    /// Player value = ContractEngine.estimateMarketValue (overall, age, position, contract).
-    /// Pick value   = DraftEngine.pickValue (classic NFL pick chart).
-    ///
-    /// - Returns: A tuple `(sendingValue, receivingValue)` where "sending" is what
-    ///   the **offering** team gives up and "receiving" is what they get back.
-    static func evaluateTradeValue(
-        proposal: TradeProposal,
-        allPlayers: [Player],
-        allPicks: [DraftPick]
-    ) -> (sendingValue: Int, receivingValue: Int) {
-        let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
-        let pickLookup   = Dictionary(uniqueKeysWithValues: allPicks.map   { ($0.id, $0) })
-
-        let sendingValue =
-            proposal.sendingPlayers.compactMap { playerLookup[$0] }
-                .reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1) }
-            +
-            proposal.sendingPicks.compactMap { pickLookup[$0] }
-                .reduce(0) { $0 + DraftEngine.pickValue($1.pickNumber) }
-
-        let receivingValue =
-            proposal.receivingPlayers.compactMap { playerLookup[$0] }
-                .reduce(0) { $0 + ContractEngine.estimateMarketValue(player: $1) }
-            +
-            proposal.receivingPicks.compactMap { pickLookup[$0] }
-                .reduce(0) { $0 + DraftEngine.pickValue($1.pickNumber) }
-
-        return (sendingValue, receivingValue)
-    }
-
-    // MARK: - AI Acceptance Logic
-
-    /// Returns `true` if the AI team would accept the given proposal.
-    ///
-    /// Acceptance criteria:
-    /// - The value coming **into** the AI team must be ≥ 90 % of the value going out
-    ///   (slight 10 % buffer so the AI doesn't demand perfection).
-    /// - Additionally the AI considers its own positional needs: if the players being
-    ///   sent away fill a position the AI is weak at, it is 20 % less likely to trade
-    ///   them (reflected as a 20 % premium on their value when evaluating).
-    static func aiWouldAccept(
-        proposal: TradeProposal,
-        aiTeam: Team,
-        allPlayers: [Player],
-        allPicks: [DraftPick]
-    ) -> Bool {
-        let playerLookup = Dictionary(uniqueKeysWithValues: allPlayers.map { ($0.id, $0) })
-        let pickLookup   = Dictionary(uniqueKeysWithValues: allPicks.map   { ($0.id, $0) })
-
-        // From the AI's perspective: "sending" = what AI gives up, "receiving" = what AI gets.
-        // In the proposal the AI is the receiving team, so:
-        //   AI gives up  → proposal.receivingPlayers / receivingPicks
-        //   AI gets      → proposal.sendingPlayers   / sendingPicks
-
-        let aiRoster = allPlayers.filter { $0.teamID == aiTeam.id }
-        let needs = evaluateTeamNeeds(roster: aiRoster)
-
-        // Value AI is giving up (adjusted upward for needed positions)
-        var aiGiving: Int = 0
-        for playerID in proposal.receivingPlayers {
-            guard let player = playerLookup[playerID] else { continue }
-            var value = ContractEngine.estimateMarketValue(player: player)
-            let needMultiplier = needs[player.position] ?? 1.0
-            // If this position has a high need (> 1.1) the AI values keeping them more
-            if needMultiplier > 1.1 {
-                value = Int(Double(value) * 1.2)
-            }
-            aiGiving += value
-        }
-        aiGiving += proposal.receivingPicks.compactMap { pickLookup[$0] }
-            .reduce(0) { $0 + DraftEngine.pickValue($1.pickNumber) }
-
-        // Value AI is receiving
-        var aiGetting: Int = 0
-        for playerID in proposal.sendingPlayers {
-            guard let player = playerLookup[playerID] else { continue }
-            let value = ContractEngine.estimateMarketValue(player: player)
-            // Boost value if incoming player fills a position the AI needs
-            let needMultiplier = needs[player.position] ?? 1.0
-            aiGetting += Int(Double(value) * needMultiplier)
-        }
-        aiGetting += proposal.sendingPicks.compactMap { pickLookup[$0] }
-            .reduce(0) { $0 + DraftEngine.pickValue($1.pickNumber) }
-
-        guard aiGiving > 0 else {
-            // AI is giving up nothing; always accept free assets
-            return true
-        }
-
-        // Accept if receiving value is at least 90 % of giving value
-        return Double(aiGetting) >= Double(aiGiving) * 0.9
-    }
-
-    // MARK: - AI Offer Generation
-
-    /// Generates 0–3 incoming trade proposals from random AI teams targeting the
-    /// user's team each week.
-    ///
-    /// AI teams will:
-    /// 1. Identify good players on the user's team that they need.
-    /// 2. Build a return package of their own players / picks that roughly matches value.
-    /// 3. Only offer if the package can cover at least 85 % of the target's value.
-    static func generateAITradeOffers(
-        forTeam playerTeam: Team,
-        allTeams: [Team],
-        allPlayers: [Player],
-        allPicks: [DraftPick]
-    ) -> [TradeProposal] {
-        guard allPlayers.contains(where: { $0.teamID == playerTeam.id }) else { return [] }
-
-        let aiTeams = allTeams.filter { $0.id != playerTeam.id }
-        var proposals: [TradeProposal] = []
-
-        // How many offers to generate this week (0-3)
-        let offerCount = Int.random(in: 0...3)
-        guard offerCount > 0 else { return [] }
-
-        var shuffledAI = aiTeams.shuffled()
-
-        for aiTeam in shuffledAI.prefix(offerCount * 2) {
-            guard proposals.count < offerCount else { break }
-
-            let aiRoster   = allPlayers.filter { $0.teamID == aiTeam.id }
-            let aiNeeds    = evaluateTeamNeeds(roster: aiRoster)
-            let aiPicks    = allPicks.filter { $0.currentTeamID == aiTeam.id && !$0.isComplete }
-            let userPicks  = allPicks.filter { $0.currentTeamID == playerTeam.id && !$0.isComplete }
-
-            // Sort user's players by market value descending; pick one the AI wants
-            let userPlayers = allPlayers.filter { $0.teamID == playerTeam.id }
-            let targets = userPlayers
-                .sorted {
-                    ContractEngine.estimateMarketValue(player: $0) >
-                    ContractEngine.estimateMarketValue(player: $1)
-                }
-                .filter { player in
-                    // AI wants the player if it has a positional need there
-                    let need = aiNeeds[player.position] ?? 1.0
-                    return need > 1.0 && player.overall >= 65
-                }
-                .prefix(5)
-
-            guard let target = targets.randomElement() else { continue }
-
-            let targetValue = ContractEngine.estimateMarketValue(player: target)
-
-            // Build AI return package: try to match target value with players + picks
-            var packagePlayers: [UUID] = []
-            var packagePicks:   [UUID] = []
-            var packageValue = 0
-
-            // First try matching with AI players the user might want
-            let aiPlayersSorted = aiRoster
-                .filter { $0.overall >= 60 }
-                .sorted { $0.overall > $1.overall }
-
-            for player in aiPlayersSorted {
-                guard packageValue < targetValue else { break }
-                packagePlayers.append(player.id)
-                packageValue += ContractEngine.estimateMarketValue(player: player)
-            }
-
-            // Fill remaining gap with picks if needed
-            if packageValue < targetValue {
-                let sortedPicks = aiPicks.sorted { $0.pickNumber < $1.pickNumber }
-                for pick in sortedPicks {
-                    guard packageValue < targetValue else { break }
-                    packagePicks.append(pick.id)
-                    packageValue += DraftEngine.pickValue(pick.pickNumber)
-                }
-            }
-
-            // Only proceed if package reaches 85 % of target value
-            guard Double(packageValue) >= Double(targetValue) * 0.85 else { continue }
-
-            // Random chance: not every AI team submits an offer even if eligible
-            guard Int.random(in: 1...100) <= 40 else { continue }
-
-            let proposal = TradeProposal(
-                offeringTeamID: aiTeam.id,
-                receivingTeamID: playerTeam.id,
-                sendingPlayers: packagePlayers,
-                receivingPlayers: [target.id],
-                sendingPicks: packagePicks,
-                receivingPicks: []
-            )
-            proposals.append(proposal)
-        }
-
-        return proposals
-    }
 
     // MARK: - Execute Trade
 
@@ -247,6 +63,15 @@ enum TradeEngine {
         var offeringDeadCap: Int = 0
         /// Dead cap the RECEIVING team keeps for the players it sent away.
         var receivingDeadCap: Int = 0
+        /// The ledger row this execution wrote, or `nil` when the trade could not
+        /// be applied (unknown team).
+        ///
+        /// Handed back so the caller can announce the deal without re-deriving
+        /// anything: `TradeNewsFactory.announce(record:…)` is called at EVERY
+        /// execution site (Wave 2 requirement — every trade in the league, the
+        /// user's and the other 31 clubs', has to surface as news and, when it
+        /// concerns him, as an inbox message).
+        var record: TradeRecord?
 
         var totalDeadCap: Int { offeringDeadCap + receivingDeadCap }
     }
@@ -304,7 +129,7 @@ enum TradeEngine {
         }
 
         // --- Ledger row, before any asset moves ---
-        TradeLedger.record(
+        let record = TradeLedger.record(
             proposal: proposal,
             context: ledger,
             allPlayers: allPlayers,
@@ -313,6 +138,7 @@ enum TradeEngine {
         )
 
         var outcome = TradeCapOutcome()
+        outcome.record = record
 
         // --- Move sending players: offering → receiving ---
         for playerID in proposal.sendingPlayers {
@@ -395,50 +221,5 @@ enum TradeEngine {
         }
 
         return split.deadCap
-    }
-
-    // MARK: - Private Helpers
-
-    /// Mirrors the need-evaluation logic from DraftEngine so TradeEngine remains
-    /// independent and does not break the compilation boundary.
-    private static func evaluateTeamNeeds(roster: [Player]) -> [Position: Double] {
-        let idealCounts: [Position: Int] = [
-            .QB: 2, .RB: 3, .FB: 1, .WR: 5, .TE: 3,
-            .LT: 2, .LG: 2, .C: 2, .RG: 2, .RT: 2,
-            .DE: 4, .DT: 3, .OLB: 4, .MLB: 2,
-            .CB: 5, .FS: 2, .SS: 2,
-            .K: 1, .P: 1
-        ]
-
-        var currentCounts: [Position: Int] = [:]
-        var positionOveralls: [Position: [Int]] = [:]
-        for player in roster {
-            currentCounts[player.position, default: 0] += 1
-            positionOveralls[player.position, default: []].append(player.overall)
-        }
-
-        var needs: [Position: Double] = [:]
-        for position in Position.allCases {
-            let ideal   = idealCounts[position] ?? 1
-            let current = currentCounts[position] ?? 0
-            let deficit = max(0, ideal - current)
-
-            var multiplier = 1.0 + Double(deficit) * 0.15
-
-            if let overalls = positionOveralls[position], !overalls.isEmpty {
-                let avgOverall = Double(overalls.reduce(0, +)) / Double(overalls.count)
-                if avgOverall < 60.0 {
-                    multiplier += 0.2
-                } else if avgOverall < 70.0 {
-                    multiplier += 0.1
-                }
-            } else {
-                multiplier += 0.3
-            }
-
-            needs[position] = multiplier
-        }
-
-        return needs
     }
 }

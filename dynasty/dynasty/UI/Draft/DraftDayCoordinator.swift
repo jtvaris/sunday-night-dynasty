@@ -333,7 +333,7 @@ final class DraftDayCoordinator: ObservableObject {
         // `TradeEngine.executeTrade` — they move `DraftPick` rows directly —
         // so the row is written here, before ownership flips. The offer already
         // carries both sides' JJ points from `TradeValueEngine`.
-        TradeLedger.recordPickSwap(
+        let record = TradeLedger.recordPickSwap(
             initiatorTeamID: teamID,
             partnerTeamID: offer.partnerTeamID,
             picksSent: offer.userGives,
@@ -348,6 +348,23 @@ final class DraftDayCoordinator: ObservableObject {
             ),
             modelContext: modelContext
         )
+
+        // Wave 2: every executed trade in the league is announced, and a
+        // draft-weekend swap is no exception — the war-room ticker is not the
+        // news feed, and a deal the user made in April should still be readable
+        // in July. The headline goes straight into the persisted `newsLog`
+        // (there is no week advance in progress to fold it in), while the
+        // optional inbox message rides the normal `lastInboxMessages` channel
+        // the shell collects on the next phase change.
+        let announcement = TradeNewsFactory.announce(
+            record: record,
+            teamsByID: teamsByID,
+            userTeamID: teamID
+        )
+        career.newsLog = [announcement.news] + career.newsLog
+        if let inbox = announcement.inbox {
+            WeekAdvancer.lastInboxMessages.append(inbox)
+        }
         for pick in offer.userGives {
             pick.currentTeamID = offer.partnerTeamID
             pick.teamAbbreviation = teamsByID[offer.partnerTeamID]?.abbreviation

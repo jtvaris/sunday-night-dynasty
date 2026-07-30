@@ -10,6 +10,20 @@ struct TradeView: View {
     /// R21: lets the shell surface completed-trade notices in the inbox.
     var onInboxMessage: ((InboxMessage) -> Void)? = nil
 
+    /// Opens the builder already pointed at a partner (and optionally at players
+    /// of theirs the user came here to ask about). Wave 2 UX: "Trade For" on
+    /// `PlayerDetailView` and the Trade button in the league roster browser both
+    /// arrive with the deal half-written instead of dropping the user on an
+    /// empty 31-team picker (plan finding S8).
+    var prefill: Prefill? = nil
+
+    /// Partner + targets to preselect. `Equatable` so the apply-once guard can
+    /// be reasoned about in one place.
+    struct Prefill: Equatable {
+        let partnerTeamID: UUID
+        let targetPlayerIDs: [UUID]
+    }
+
     @Environment(\.modelContext) private var modelContext
 
     // MARK: Data
@@ -45,6 +59,11 @@ struct TradeView: View {
     // MARK: Picks-only wizard
     @State private var wizardPickID: UUID?
     @State private var wizardPartnerID: UUID?
+
+    /// A `prefill` is a starting position, not a lock: it is applied on the first
+    /// load only, so `loadData()` after an executed trade doesn't re-tick a
+    /// player the user just acquired (or just decided against).
+    @State private var didApplyPrefill = false
 
     // MARK: - Body
 
@@ -95,8 +114,42 @@ struct TradeView: View {
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
+
+            // Scouting the league is never out of season, even when dealing is.
+            leagueRostersLink
+                .frame(maxWidth: 320)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - League Rosters Link
+
+    /// Entry into the 32-roster browser. "Who has what?" is the first question of
+    /// any trade, and the Trade Center used to have no answer to it — the partner
+    /// picker was 31 abbreviations (plan finding S8).
+    private var leagueRostersLink: some View {
+        NavigationLink {
+            LeagueRostersView(career: career)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "person.3.sequence.fill")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentBlue)
+                Text("Browse league rosters")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.accentBlue)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.accentBlue.opacity(0.10))
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Propose Trade Section
@@ -104,6 +157,8 @@ struct TradeView: View {
     private var proposeSectionCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             sectionHeader(title: "Propose Trade", icon: "arrow.left.arrow.right")
+
+            leagueRostersLink
 
             // Partner picker
             partnerPicker
@@ -370,7 +425,8 @@ struct TradeView: View {
             allPlayers: allPlayers,
             allPicks: allPicks,
             currentSeason: career.currentSeason,
-            contracts: allContracts
+            contracts: allContracts,
+            week: career.currentWeek
         )
     }
 
@@ -576,24 +632,34 @@ struct TradeView: View {
                     .foregroundStyle(accentColor)
             }
 
+            // Every name in an offer is tappable: judging "is this a good deal?"
+            // means reading the player, and the offer card used to be a dead end.
             ForEach(players) { player in
-                HStack(spacing: 6) {
-                    Text(player.position.rawValue)
-                        .font(.system(size: 9).weight(.bold))
-                        .foregroundStyle(Color.textPrimary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(positionColor(player.position), in: RoundedRectangle(cornerRadius: 3))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(player.fullName)
-                            .font(.caption.weight(.semibold))
+                NavigationLink(destination: PlayerDetailView(player: player)) {
+                    HStack(spacing: 6) {
+                        Text(player.position.rawValue)
+                            .font(.system(size: 9).weight(.bold))
                             .foregroundStyle(Color.textPrimary)
-                            .lineLimit(1)
-                        Text("\(player.overall) OVR · Age \(player.age)")
-                            .font(.system(size: 10))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(positionColor(player.position), in: RoundedRectangle(cornerRadius: 3))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(player.fullName)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.textPrimary)
+                                .lineLimit(1)
+                            Text("\(player.overall) OVR · Age \(player.age)")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color.textTertiary)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9))
                             .foregroundStyle(Color.textTertiary)
                     }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
 
             ForEach(picks) { pick in
@@ -728,6 +794,12 @@ struct TradeView: View {
                 Text(hasAssets ? willingness.label : "Select assets to gauge interest")
                     .font(.system(size: 13).weight(.bold))
                     .foregroundStyle(hasAssets ? willingness.color : Color.textTertiary)
+                if hasAssets, let ask = askingPriceHint(partner: partner) {
+                    Text(ask)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
         }
@@ -736,6 +808,28 @@ struct TradeView: View {
             RoundedRectangle(cornerRadius: 10)
                 .fill(willingness.color.opacity(hasAssets ? 0.10 : 0.0))
         )
+    }
+
+    /// What the other GM is asking for, in words instead of point totals.
+    ///
+    /// Derived from the same 5-step verdict the response uses, so it can never
+    /// contradict the outcome. HANDOFF to the market layer: when
+    /// `TradeValueEngine` exposes a real asking price (persona premium + hidden
+    /// noise, plan §6 Wave 2.3), swap the source here — the copy slot and the
+    /// no-exact-numbers rule stay as they are.
+    private func askingPriceHint(partner: Team) -> String? {
+        switch currentPartnerVerdict(partner: partner) {
+        case .loveIt:
+            return "They would sign this today."
+        case .likeIt:
+            return "Their ask is met — expect a yes."
+        case .onTheFence:
+            return "Close. A late-round pick or a rotational player gets it over the line."
+        case .wantMore:
+            return "They want a real piece added — a starter or early-round capital."
+        case .hangUp:
+            return "Not a conversation yet: their ask is far above what is on the table."
+        }
     }
 
     /// Willingness preview derived from the same 5-step verdict the AI uses
@@ -1364,7 +1458,8 @@ struct TradeView: View {
             allPlayers: allPlayers,
             allPicks: allPicks,
             currentSeason: career.currentSeason,
-            contracts: allContracts
+            contracts: allContracts,
+            week: career.currentWeek
         )
 
         switch response {
@@ -1428,20 +1523,50 @@ struct TradeView: View {
         }
         try? modelContext.save()
 
+        // Wave 2: the league hears about it. `TradeNewsFactory` reads the ledger
+        // row `executeTrade` just wrote, so a deal the user made and a deal two
+        // AI teams made read identically in the feed. The factory's inbox
+        // variant is dropped here on purpose — the receipt below is the same
+        // message plus the dead-money line, which only this call site knows.
+        announceExecutedTrade(record: capOutcome.record)
+
         // Surface the completed deal in the inbox, dead money included — the
         // user needs to see the bill for the players he just shipped out.
-        onInboxMessage?(completedTradeInboxMessage(
+        let receipt = completedTradeInboxMessage(
             proposal: proposal,
             counterparty: counterparty,
             userIsOfferingTeam: userIsOfferingTeam,
             deadCapRetained: userIsOfferingTeam
                 ? capOutcome.offeringDeadCap
                 : capOutcome.receivingDeadCap
-        ))
+        )
+        if let onInboxMessage {
+            onInboxMessage(receipt)
+        } else {
+            // Presented outside the shell (league roster browser, player
+            // detail): stage the receipt where the shell drains inbox mail on
+            // the next week/phase change, so it is delayed rather than lost.
+            WeekAdvancer.lastInboxMessages.append(receipt)
+        }
 
         clearSelections()
         selectedPartner = nil
         loadData()
+    }
+
+    /// Writes the league news item for a trade that just executed.
+    private func announceExecutedTrade(record: TradeRecord?) {
+        guard let record else { return }
+        let teamsByID = Dictionary(uniqueKeysWithValues: allTeams.map { ($0.id, $0) })
+        let announcement = TradeNewsFactory.announce(
+            record: record,
+            teamsByID: teamsByID,
+            userTeamID: career.teamID
+        )
+        var log = career.newsLog
+        log.insert(announcement.news, at: 0)
+        career.newsLog = log
+        try? modelContext.save()
     }
 
     private func acceptOffer(_ offer: TradeProposal) {
@@ -1556,6 +1681,23 @@ struct TradeView: View {
             try? modelContext.save()
         }
         incomingOffers = valid
+
+        applyPrefillIfNeeded()
+    }
+
+    /// Points the builder at the partner the caller arrived with and ticks the
+    /// players they asked about. Runs once (see `didApplyPrefill`).
+    private func applyPrefillIfNeeded() {
+        guard !didApplyPrefill, let prefill else { return }
+        didApplyPrefill = true
+        guard let partner = allTeams.first(where: { $0.id == prefill.partnerTeamID }),
+              partner.id != playerTeam?.id
+        else { return }
+        selectedPartner = partner
+        // Only targets still on that roster — an offer built from a stale detail
+        // screen must not silently include a player who was already traded away.
+        let onRoster = Set(allPlayers.filter { $0.teamID == partner.id }.map(\.id))
+        theirSelectedPlayers = Set(prefill.targetPlayerIDs.filter { onRoster.contains($0) })
     }
 
     // MARK: - Computed Helpers

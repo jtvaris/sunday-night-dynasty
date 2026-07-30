@@ -626,114 +626,10 @@ enum DraftEngine {
         }
     }
 
-    // MARK: - Trade Evaluation
-
-    /// Evaluates a trade offer by comparing the total pick value on each side.
-    ///
-    /// - Parameters:
-    ///   - offer: The trade offer to evaluate.
-    ///   - picks: All draft picks (used to look up pick numbers for value calculation).
-    /// - Returns: A ratio where > 1.0 means the offering team is overpaying
-    ///   (good deal for the receiving team), and < 1.0 means the receiving team
-    ///   would be overpaying (bad deal for receiver).
-    static func evaluateTradeOffer(offer: TradeOffer, picks: [DraftPick]) -> Double {
-        let pickLookup = Dictionary(uniqueKeysWithValues: picks.map { ($0.id, $0) })
-
-        // Value the offering team is sending.
-        let sendingPickValue = offer.picksSending.compactMap { pickLookup[$0] }
-            .reduce(0) { $0 + pickValue($1.pickNumber) }
-
-        // Value the offering team is receiving.
-        let receivingPickValue = offer.picksReceiving.compactMap { pickLookup[$0] }
-            .reduce(0) { $0 + pickValue($1.pickNumber) }
-
-        // Player trades add a flat value (approximate; a more sophisticated engine
-        // could factor in player overall rating and contract).
-        let sendingPlayerValue = offer.playersSending.count * 200
-        let receivingPlayerValue = offer.playersReceiving.count * 200
-
-        let totalSending = Double(sendingPickValue + sendingPlayerValue)
-        let totalReceiving = Double(receivingPickValue + receivingPlayerValue)
-
-        guard totalReceiving > 0 else { return 0.0 }
-
-        return totalSending / totalReceiving
-    }
-
-    // MARK: - AI Trade Offers
-
-    /// Generates 0-3 trade-up offers from AI teams for the current pick.
-    ///
-    /// AI teams that want to move up will offer a package of their own picks
-    /// in exchange for the current pick.
-    ///
-    /// - Parameters:
-    ///   - currentPick: The pick currently on the clock.
-    ///   - allPicks: All draft picks for the current draft.
-    ///   - teams: All teams in the league.
-    /// - Returns: An array of trade offers (may be empty if no team wants to trade up).
-    static func generateAITradeOffers(
-        currentPick: DraftPick,
-        allPicks: [DraftPick],
-        teams: [Team]
-    ) -> [TradeOffer] {
-        let currentValue = pickValue(currentPick.pickNumber)
-
-        // Only generate trade-up offers for picks with meaningful value.
-        guard currentValue >= 100 else { return [] }
-
-        // Find teams that pick later and might want to trade up.
-        let remainingPicks = allPicks.filter { !$0.isComplete && $0.id != currentPick.id }
-        let teamPicksMap = Dictionary(grouping: remainingPicks) { $0.currentTeamID }
-
-        var offers: [TradeOffer] = []
-
-        for (teamID, teamPicks) in teamPicksMap {
-            // Skip the team that already owns this pick.
-            guard teamID != currentPick.currentTeamID else { continue }
-
-            // Only consider teams with picks after the current one.
-            let laterPicks = teamPicks
-                .filter { $0.pickNumber > currentPick.pickNumber }
-                .sorted { $0.pickNumber < $1.pickNumber }
-
-            guard !laterPicks.isEmpty else { continue }
-
-            // Try to build a package that roughly matches the current pick's value.
-            var packagePicks: [DraftPick] = []
-            var packageValue = 0
-
-            for pick in laterPicks {
-                packagePicks.append(pick)
-                packageValue += pickValue(pick.pickNumber)
-
-                // Offer is viable if the package value is at least 85% of the target.
-                if Double(packageValue) >= Double(currentValue) * 0.85 {
-                    break
-                }
-            }
-
-            // Only offer if the package is within a reasonable range (85%-130%).
-            let ratio = Double(packageValue) / Double(currentValue)
-            guard ratio >= 0.85 && ratio <= 1.30 else { continue }
-
-            // Random chance: not every eligible team actually wants to trade up.
-            guard Int.random(in: 1...100) <= 25 else { continue }
-
-            let offer = TradeOffer(
-                offeringTeamID: teamID,
-                receivingTeamID: currentPick.currentTeamID,
-                picksSending: packagePicks.map(\.id),
-                picksReceiving: [currentPick.id]
-            )
-            offers.append(offer)
-
-            // Cap at 3 offers.
-            if offers.count >= 3 { break }
-        }
-
-        return offers
-    }
+    // Wave 5 cleanup: the draft-day trade brain that used to live here
+    // (`evaluateTradeOffer`, `generateAITradeOffers` on the dead `TradeOffer`
+    // model) was never called — `DraftDayTradeEngine` + `TradeValueEngine`
+    // are the draft room's real trade path (docs/TRADE_OVERHAUL_PLAN.md §2).
 
     // MARK: - Media Commentary
 
@@ -980,32 +876,6 @@ enum DraftEngine {
         guard !roster.isEmpty else { return [] }
         let needs = evaluateTeamNeeds(roster: roster)
         return needs.sorted { $0.value > $1.value }.prefix(limit).map(\.key)
-    }
-
-    // MARK: - Trade Value Helpers
-
-    /// NFL-style trade value chart (simplified).
-    /// Uses the piecewise `pickValue(_:)` internally.
-    static func tradeValue(forPick pickNumber: Int) -> Int {
-        pickValue(pickNumber)
-    }
-
-    /// Evaluate if a trade is fair (within 15% of equal value).
-    ///
-    /// - Parameters:
-    ///   - offering: Pick numbers the offering side is sending.
-    ///   - receiving: Pick numbers the receiving side is sending.
-    /// - Returns: Total value for each side and whether the trade is within 15%.
-    static func evaluateTradeValue(
-        offering: [Int],
-        receiving: [Int]
-    ) -> (offerValue: Int, receiveValue: Int, isFair: Bool) {
-        let offerValue = offering.reduce(0) { $0 + pickValue($1) }
-        let receiveValue = receiving.reduce(0) { $0 + pickValue($1) }
-        let maxVal = max(offerValue, receiveValue, 1)
-        let diff = abs(offerValue - receiveValue)
-        let isFair = Double(diff) / Double(maxVal) <= 0.15
-        return (offerValue: offerValue, receiveValue: receiveValue, isFair: isFair)
     }
 
     // MARK: - Fan Reactions / Social Media

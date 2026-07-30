@@ -104,6 +104,17 @@ final class TradeRecord {
         return initiatorTeamID != userTeamID && partnerTeamID != userTeamID
     }
 
+    /// True for a deal struck between kickoff and the deadline.
+    ///
+    /// Keyed on the PHASE, not on `week`: offseason rows keep whatever week the
+    /// career was advanced to (19-22 after the playoffs), so a week test would
+    /// bucket a March trade as in-season. §5 states its volume bands separately
+    /// for the two halves of the league year, and this is the split the Wave 2
+    /// smoke asserts read.
+    var isInSeason: Bool {
+        phase == .regularSeason || phase == .tradeDeadline
+    }
+
     init(
         id: UUID = UUID(),
         season: Int,
@@ -147,12 +158,21 @@ final class TradeRecord {
 enum TradeRecordKind: String, Codable, CaseIterable {
     /// User built the deal in the Trade Center and the AI accepted it.
     case userProposal
-    /// User accepted an AI-initiated offer (the weekly `generateWeeklyAIOffer`
-    /// roll that landed in the inbox).
+    /// User accepted an AI-initiated offer (the `generateAIOffer` roll that
+    /// landed in the inbox — weekly in-season, or an offseason window).
     case aiWeeklyOffer
-    /// AI-vs-AI deadline-day deal from `TradeValueEngine.executeDeadlineTrades`.
-    /// The user's team never participates in these.
+    /// AI-vs-AI deal from an ordinary in-season week of
+    /// `TradeValueEngine.runLeagueMarketPass` (Wave 2). Bucketed apart from
+    /// `.aiDeadline` because §5 bands the deadline-week flurry (5-15) separately
+    /// from the rest of the in-season market (8-25 total, ≥60 % of it in the last
+    /// three pre-deadline weeks).
+    case aiMarket
+    /// AI-vs-AI deal from the deadline-week pass. The user's team never
+    /// participates in these.
     case aiDeadline
+    /// AI-vs-AI deal from an offseason market window (post-season retool,
+    /// post-FA, pre-draft, cut days, OTAs). §5's 15-40 offseason band.
+    case aiOffseason
     /// Draft-room pick swap accepted in `DraftDayCoordinator` (R24).
     case draftDay
     /// Front office capitulated to a holdout and shipped the player out
@@ -165,11 +185,17 @@ enum TradeRecordKind: String, Codable, CaseIterable {
         switch self {
         case .userProposal:   return "Your proposal"
         case .aiWeeklyOffer:  return "Incoming offer"
+        case .aiMarket:       return "League deal"
         case .aiDeadline:     return "Deadline deal"
+        case .aiOffseason:    return "Offseason deal"
         case .draftDay:       return "Draft-day swap"
         case .holdoutForced:  return "Holdout trade"
         }
     }
+
+    /// The three AI-vs-AI market buckets — the league doing business without the
+    /// user. Handy for history filters and the smoke bands.
+    static let aiMarketKinds: Set<TradeRecordKind> = [.aiMarket, .aiDeadline, .aiOffseason]
 }
 
 // MARK: - Trade Ledger

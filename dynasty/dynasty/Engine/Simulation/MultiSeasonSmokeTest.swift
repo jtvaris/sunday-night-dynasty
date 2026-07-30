@@ -54,7 +54,17 @@ enum MultiSeasonSmokeTest {
         WeekAdvancer.currentDraftPicks = []
         WeekAdvancer.draftClassGenerated = false
         WeekAdvancer.udfaStageCompletedSeasons = []
+        // Trade counters: the monotonic pair the per-season diff reads, plus the
+        // per-cycle pair `startNewSeason` maintains (season 1 never calls it, so a
+        // second harness run in the same process would inherit run 1's totals and
+        // start with the market's volume caps already spent).
         WeekAdvancer.aiTradeOffersGenerated = 0
+        WeekAdvancer.aiTradeOffersOffseasonGenerated = 0
+        WeekAdvancer.aiOffersThisSeason = 0
+        WeekAdvancer.aiOffersThisOffseason = 0
+        WeekAdvancer.leagueTradesThisSeason = 0
+        WeekAdvancer.leagueTradesThisOffseason = 0
+        TradeValueEngine.TradeTalkRegistry.reset()
 
         // League + career bootstrap (mirrors TeamSelectionView.startCareer,
         // except the user's team KEEPS its generated coaching staff — the
@@ -139,6 +149,7 @@ enum MultiSeasonSmokeTest {
         var retiredTotalPrev = 0
         var seenRetiredIDs = Set<UUID>()      // OVR-drift diag: newly retired per cycle
         var offersGeneratedPrev = 0           // Wave 0 trade diag: per-season delta
+        var offseasonOffersPrev = 0           // Wave 2: the offseason half of that delta
         var hcSnapshot = headCoachByTeam(context: context)
         let maxAdvances = seasons * 60 + 60   // watchdog: infinite-loop guard
 
@@ -225,11 +236,13 @@ enum MultiSeasonSmokeTest {
                 // before the male half runs out.
                 auditFaces(seasonLabel: finishedSeason, context: context)
 
-                // Wave 0 trade instrumentation.
+                // Wave 0 instrumentation, Wave 2 band asserts.
                 printTradeDiagnostics(
                     seasonLabel: finishedSeason,
+                    seasonIndex: seasonsCompleted,
                     userTeamID: career.teamID,
                     offersGeneratedPrev: &offersGeneratedPrev,
+                    offseasonOffersPrev: &offseasonOffersPrev,
                     context: context
                 )
 
@@ -433,15 +446,22 @@ enum MultiSeasonSmokeTest {
     /// deadline pass finally clears its `guard !packagePicks.isEmpty`). A run that
     /// still prints all zeros means the pick pool never reached the deadline pass.
     ///
-    /// NO BAND ASSERTS HERE YET. The §5 NFL reference bands (30-70 player
-    /// trades/year, 12-35 draft-weekend pick swaps, ≥50 % involving a future
-    /// pick, 3-8 AI offers reaching the user in-season) become warn-level
-    /// asserts in Wave 2, once Wave 1 has made a market structurally possible.
-    /// Asserting them now would only fail on a known, documented baseline.
+    /// WAVE 2 ADDS THE BAND ASSERTS (plan §5 / §8). Each §5 band is checked and
+    /// a miss prints one `SMOKE: ANOMALY` line naming the band, the number and
+    /// what is binding — the same shape as the face-pool audit, so a run's log
+    /// says WHICH season the market fell out of NFL range and why.
+    ///
+    /// Season 1 is WARN-level on purpose (`SMOKE: warn trades …`): the league is
+    /// generated with every team 0-0 and no last-season record, so the stance
+    /// model has only talent and cap room to read, and the first cycle's
+    /// offseason windows run on rosters that have never been through a draft.
+    /// From season 2 the same misses are anomalies.
     private static func printTradeDiagnostics(
         seasonLabel: Int,
+        seasonIndex: Int,
         userTeamID: UUID?,
         offersGeneratedPrev: inout Int,
+        offseasonOffersPrev: inout Int,
         context: ModelContext
     ) {
         let descriptor = FetchDescriptor<TradeRecord>(
@@ -451,33 +471,99 @@ enum MultiSeasonSmokeTest {
 
         // AI-vs-AI offers to the user are counted at GENERATION, not execution:
         // the harness has no UI and never accepts one, so the ledger cannot see
-        // them (see `WeekAdvancer.aiTradeOffersGenerated`).
+        // them (see `WeekAdvancer.aiTradeOffersGenerated`). The offseason subtotal
+        // is tracked separately because §5 bands the two halves of the league year
+        // apart (3-8 in-season + 2-5 offseason).
         let offersTotal = WeekAdvancer.aiTradeOffersGenerated
-        let offersThisSeason = offersTotal - offersGeneratedPrev
+        let offseasonTotal = WeekAdvancer.aiTradeOffersOffseasonGenerated
+        let offersThisCycle = offersTotal - offersGeneratedPrev
+        let offseasonOffers = offseasonTotal - offseasonOffersPrev
+        let inSeasonOffers = max(0, offersThisCycle - offseasonOffers)
         offersGeneratedPrev = offersTotal
+        offseasonOffersPrev = offseasonTotal
 
-        // `futurePickShare` is the share of TRADES that include at least one
-        // future-year pick — the shape §5 states its band in ("~60-70 % of
-        // player trades", target ≥50 %), not a share of the picks themselves.
+        // `futurePickShare` is the share of PICK-INVOLVING trades that include at
+        // least one future-year pick — the shape §5 states its band in ("~60-70 %
+        // of player trades", target ≥50 %), not a share of the picks themselves.
+        // Measured over the pick-involving subset so a league year full of
+        // straight player-for-player swaps cannot dilute it into a false miss.
         let picksMoved = rows.reduce(0) { $0 + $1.picksMovedCount }
-        let withFuturePick = rows.filter { $0.futurePicksCount > 0 }.count
-        let futureShare = rows.isEmpty
+        let pickTrades = rows.filter { $0.picksMovedCount > 0 }
+        let withFuturePick = pickTrades.filter { $0.futurePicksCount > 0 }.count
+        let futureShare = pickTrades.isEmpty
             ? 0
-            : Double(withFuturePick) / Double(rows.count) * 100
+            : Double(withFuturePick) / Double(pickTrades.count) * 100
+
+        let inSeasonRows = rows.filter(\.isInSeason)
+        let offseasonRows = rows.filter { !$0.isInSeason && $0.kind != .draftDay }
+        let deadlineRows = rows.filter { $0.kind == .aiDeadline }
+        let deadlineWeek = WeekAdvancer.tradeDeadlineWeek
+        let lateRows = inSeasonRows.filter { $0.week >= deadlineWeek - 2 }
+        let lateShare = inSeasonRows.isEmpty
+            ? 0
+            : Double(lateRows.count) / Double(inSeasonRows.count) * 100
+        let packageTrades = rows.filter { $0.playersMovedCount > 0 && $0.picksMovedCount > 0 }
+        let packageShare = rows.isEmpty
+            ? 0
+            : Double(packageTrades.count) / Double(rows.count) * 100
 
         print(String(
-            format: "SMOKE: diag trades season=%d total=%d aiVsAi=%d deadline=%d userOffers=%d "
-                  + "draftSwaps=%d playersMoved=%d picksMoved=%d futurePickShare=%.1f%%",
+            format: "SMOKE: diag trades season=%d total=%d aiVsAi=%d inSeason=%d deadline=%d "
+                  + "offseason=%d userOffers=%d userOffersOff=%d draftSwaps=%d playersMoved=%d "
+                  + "picksMoved=%d futurePickShare=%.1f%% last3Share=%.1f%% pkgShare=%.1f%%",
             seasonLabel,
             rows.count,
             rows.filter { $0.isAIvsAI(userTeamID: userTeamID) }.count,
-            rows.filter { $0.kind == .aiDeadline }.count,
-            offersThisSeason,
+            inSeasonRows.count,
+            deadlineRows.count,
+            offseasonRows.count,
+            inSeasonOffers,
+            offseasonOffers,
             rows.filter { $0.kind == .draftDay }.count,
             rows.reduce(0) { $0 + $1.playersMovedCount },
             picksMoved,
-            futureShare
+            futureShare,
+            lateShare,
+            packageShare
         ))
+
+        // --- §5 bands ---
+        var misses: [String] = []
+        func check(_ ok: Bool, _ message: @autoclosure () -> String) {
+            if !ok { misses.append(message()) }
+        }
+
+        check(rows.count >= 30 && rows.count <= 70,
+              "total=\(rows.count) outside 30-70 (§5 player trades/year)")
+        check(inSeasonRows.count >= 8 && inSeasonRows.count <= 25,
+              "inSeason=\(inSeasonRows.count) outside 8-25")
+        check(deadlineRows.count >= 5 && deadlineRows.count <= 15,
+              "deadlineWeek=\(deadlineRows.count) outside 5-15")
+        check(offseasonRows.count >= 15 && offseasonRows.count <= 40,
+              "offseason=\(offseasonRows.count) outside 15-40")
+        check(inSeasonRows.isEmpty || lateShare >= 60,
+              String(format: "last3Share=%.1f%% below 60 %% (deadline back-loading)", lateShare))
+        check(pickTrades.isEmpty || futureShare >= 50,
+              String(format: "futurePickShare=%.1f%% below 50 %%", futureShare))
+        check(rows.isEmpty || packageShare >= 25,
+              String(format: "pkgShare=%.1f%% below 25 %% (player+pick packages)", packageShare))
+        check(inSeasonOffers >= 3 && inSeasonOffers <= 8,
+              "userOffers=\(inSeasonOffers) outside 3-8 in-season")
+        check(offseasonOffers >= 2 && offseasonOffers <= 5,
+              "userOffersOff=\(offseasonOffers) outside 2-5")
+
+        guard !misses.isEmpty else { return }
+        let detail = misses.joined(separator: "; ")
+        // Capacity-style hint: a market can only trade what the league is willing
+        // to move, so the two structural causes are named rather than left to be
+        // rediscovered — an under-delivering pass is nearly always one of them.
+        let hint = "— check seller supply (stance mix / untouchables) and cap room "
+                 + "(`validationErrors` vetoes a deal the buyer cannot absorb) before retuning the targets"
+        if seasonIndex <= 1 {
+            print("SMOKE: warn trades season=\(seasonLabel) \(detail) — season-1 league has no prior-year records (expected, hard from season 2)")
+        } else {
+            print("SMOKE: ANOMALY season=\(seasonLabel) trade bands missed: \(detail) \(hint)")
+        }
     }
 
     // MARK: - OVR-drift diagnostics

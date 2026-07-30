@@ -499,3 +499,303 @@ enum NewsGenerator {
         )
     }
 }
+
+// MARK: - Trade News Factory (Wave 2 — `docs/TRADE_OVERHAUL_PLAN.md`)
+
+/// Turns one executed trade (its persisted `TradeRecord`) into the two surfaces
+/// a trade has to reach: the league news feed, and the user's inbox whenever the
+/// deal concerns him.
+///
+/// WHY a factory instead of copy at each call site: five execution paths write
+/// ledger rows (`TradeRecordKind`) and before this every one of them either
+/// hand-rolled its own headline or — far more often — announced nothing at all
+/// (plan finding S7). A league that moves 30+ players a year invisibly reads as
+/// a league where nothing happens, so every path now announces through the same
+/// two sentences of copy.
+///
+/// The record's denormalized SNAPSHOT strings are the only input, deliberately:
+/// by the time this runs the players have already changed teams, so re-deriving
+/// "who got what" from live rosters would describe the trade backwards.
+enum TradeNewsFactory {
+
+    /// League-visible news + optional user inbox message for an executed trade.
+    /// Call AFTER the TradeLedger row at EVERY execution site.
+    static func announce(
+        record: TradeRecord,
+        teamsByID: [UUID: Team],
+        userTeamID: UUID?
+    ) -> (news: NewsItem, inbox: InboxMessage?) {
+        let initiator = teamsByID[record.initiatorTeamID]
+        let partner   = teamsByID[record.partnerTeamID]
+
+        let initiatorAbbr = initiator?.abbreviation ?? "???"
+        let partnerAbbr   = partner?.abbreviation   ?? "???"
+        let initiatorName = initiator?.fullName ?? "A rival club"
+        let partnerName   = partner?.fullName   ?? "a rival club"
+
+        // Ledger rows are written from the INITIATOR's perspective; the news
+        // reads from the perspective of whoever landed the best player, because
+        // that is the side a headline is about ("DEN acquire WR …", not "LV
+        // send WR …").
+        let sent     = parse(record.sentSummary)
+        let received = parse(record.receivedSummary)
+        let centerpiece = bestPlayer(in: sent + received)
+        let initiatorIsAcquirer = centerpiece.map { star in
+            !contains(player: star, in: sent)
+        } ?? true
+
+        let acquiredAssets = initiatorIsAcquirer ? received : sent
+        let priceAssets    = initiatorIsAcquirer ? sent : received
+        let acquiredValue  = initiatorIsAcquirer ? record.receivedValue : record.sentValue
+        let priceValue     = initiatorIsAcquirer ? record.sentValue : record.receivedValue
+
+        let acquirerAbbr = initiatorIsAcquirer ? initiatorAbbr : partnerAbbr
+        let acquirerName = initiatorIsAcquirer ? initiatorName : partnerName
+        let sellerAbbr   = initiatorIsAcquirer ? partnerAbbr : initiatorAbbr
+        let sellerName   = initiatorIsAcquirer ? partnerName : initiatorName
+        let acquirerTeamID = initiatorIsAcquirer ? record.initiatorTeamID : record.partnerTeamID
+
+        // "Big deal" = a headline star or first-round capital. Those get the
+        // louder headline; everything else stays a transaction line so the feed
+        // doesn't shout about a 5th-rounder for a backup guard.
+        let topOverall = (sent + received).compactMap(\.overall).max() ?? 0
+        let hasFirstRounder = (sent + received).contains { asset in
+            if case .pick(_, let round) = asset { return round == 1 }
+            return false
+        }
+        let isBigDeal = topOverall >= 85 || hasFirstRounder
+
+        let headline: String
+        if let star = centerpiece, isBigDeal {
+            headline = "Blockbuster: \(acquirerAbbr) land \(shortLabel(star)) (\(star.overall ?? 0) OVR) from \(sellerAbbr)"
+        } else if let star = centerpiece, priceAssets.isEmpty {
+            // A one-way asset dump is legal and has to read as one, not as
+            // "… for nothing", which sounds like a formatting bug.
+            headline = "\(sellerAbbr) send \(shortLabel(star)) to \(acquirerAbbr) for nothing in return"
+        } else if let star = centerpiece {
+            headline = "\(acquirerAbbr) acquire \(shortLabel(star)) from \(sellerAbbr) for \(clause(priceAssets, limit: 2))"
+        } else {
+            headline = "\(initiatorAbbr) and \(partnerAbbr) swap draft picks"
+        }
+
+        let whenPhrase: String
+        switch record.phase {
+        case .regularSeason, .tradeDeadline, .playoffs:
+            whenPhrase = " in Week \(record.week)"
+        default:
+            whenPhrase = ""
+        }
+
+        let body = """
+        \(acquirerName) acquired \(clause(acquiredAssets, long: true)) from \(sellerName)\(whenPhrase) in exchange for \(clause(priceAssets, long: true)). \(contextSentence(kind: record.kind, sellerAbbr: sellerAbbr, acquirerAbbr: acquirerAbbr)) \(valueSentence(paid: priceValue, got: acquiredValue, acquirerAbbr: acquirerAbbr))
+        """
+
+        // The feed's "My Team" filter keys off `relatedTeamID`, so a deal the
+        // user was part of has to point at HIS club whichever side he was on —
+        // selling a star is his story too.
+        let userWasInvolved = userTeamID.map {
+            record.initiatorTeamID == $0 || record.partnerTeamID == $0
+        } ?? false
+
+        let news = NewsItem(
+            headline: headline,
+            body: body,
+            category: .trade,
+            week: record.week,
+            season: record.season,
+            relatedTeamID: userWasInvolved ? userTeamID : acquirerTeamID,
+            // The ledger stores names, not player ids (it has to survive
+            // retirements), so news rows from trades carry no portrait. Handoff:
+            // a `headlinePlayerID` on `TradeRecord` would light one up.
+            relatedPlayerID: nil,
+            sentiment: isBigDeal
+                ? .positive
+                : (record.kind == .holdoutForced ? .negative : .neutral)
+        )
+
+        let dateString = InboxEngine.dateLabel(
+            week: record.week,
+            season: record.season,
+            phase: record.phase
+        )
+
+        // Inbox rule: the user always gets a receipt for his own trades, and a
+        // wire note for league business he would want to know about — a star
+        // changing teams, first-round capital moving, or a division rival
+        // making a move. Everything else stays news-feed-only so the inbox
+        // keeps its signal.
+        var inbox: InboxMessage?
+        if let userTeamID,
+           record.initiatorTeamID == userTeamID || record.partnerTeamID == userTeamID {
+            let userIsInitiator = record.initiatorTeamID == userTeamID
+            inbox = InboxEngine.tradeCompletedMessage(
+                partnerName: userIsInitiator ? partnerName : initiatorName,
+                partnerAbbr: userIsInitiator ? partnerAbbr : initiatorAbbr,
+                weReceive: clause(userIsInitiator ? received : sent, long: true),
+                weSend: clause(userIsInitiator ? sent : received, long: true),
+                dateString: dateString,
+                wasOurProposal: userIsInitiator
+            )
+        } else {
+            let userTeam = userTeamID.flatMap { teamsByID[$0] }
+            let isDivisionRival = userTeam.map { home in
+                [initiator, partner].contains {
+                    $0?.conference == home.conference && $0?.division == home.division
+                }
+            } ?? false
+            if isBigDeal || isDivisionRival {
+                inbox = InboxEngine.leagueTradeWireMessage(
+                    headline: headline,
+                    detail: body,
+                    dateString: dateString,
+                    isDivisionRival: isDivisionRival
+                )
+            }
+        }
+
+        return (news, inbox)
+    }
+
+    // MARK: - Asset Parsing
+
+    /// One asset lifted back out of a ledger summary string
+    /// (`"WR Marcus Vale (84 OVR), 2027 R2 P48"`).
+    ///
+    /// Parsing our own formatter's output is not elegant, but it is the only
+    /// input a 12-season-old ledger row still has — and it lets the copy say
+    /// "a 2027 2nd" where the ledger says "2027 R2 P48".
+    private enum Asset {
+        case player(position: String, name: String, overall: Int)
+        case pick(year: Int, round: Int)
+        case other(String)
+
+        var overall: Int? {
+            if case .player(_, _, let overall) = self { return overall }
+            return nil
+        }
+    }
+
+    private static func parse(_ summary: String) -> [Asset] {
+        guard !summary.isEmpty, summary != "nothing" else { return [] }
+        return summary.components(separatedBy: ", ").compactMap { token in
+            let text = token.trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty else { return nil }
+            return parsePick(text) ?? parsePlayer(text) ?? .other(text)
+        }
+    }
+
+    /// `"2027 R2 P48"` → `.pick(year: 2027, round: 2)`. The pick NUMBER is
+    /// dropped on purpose: for a future pick it is a provisional placeholder,
+    /// so quoting it would invent precision the league does not have.
+    private static func parsePick(_ text: String) -> Asset? {
+        let parts = text.split(separator: " ")
+        guard parts.count >= 2,
+              parts[0].count == 4,
+              let year = Int(parts[0]),
+              parts[1].hasPrefix("R"),
+              let round = Int(parts[1].dropFirst())
+        else { return nil }
+        return .pick(year: year, round: round)
+    }
+
+    /// `"WR Marcus Vale (84 OVR)"` → `.player(position: "WR", …)`.
+    private static func parsePlayer(_ text: String) -> Asset? {
+        guard text.hasSuffix(" OVR)"), let open = text.lastIndex(of: "(") else { return nil }
+        let head = text[text.startIndex..<open].trimmingCharacters(in: .whitespaces)
+        let rating = text[text.index(after: open)...]
+            .replacingOccurrences(of: " OVR)", with: "")
+        guard let overall = Int(rating) else { return nil }
+        var words = head.split(separator: " ").map(String.init)
+        guard words.count >= 2 else { return nil }
+        let position = words.removeFirst()
+        return .player(position: position, name: words.joined(separator: " "), overall: overall)
+    }
+
+    private static func bestPlayer(in assets: [Asset]) -> Asset? {
+        assets
+            .filter { $0.overall != nil }
+            .max { ($0.overall ?? 0) < ($1.overall ?? 0) }
+    }
+
+    private static func contains(player: Asset, in assets: [Asset]) -> Bool {
+        guard case .player(_, let name, let overall) = player else { return false }
+        return assets.contains { asset in
+            if case .player(_, let otherName, let otherOverall) = asset {
+                return otherName == name && otherOverall == overall
+            }
+            return false
+        }
+    }
+
+    // MARK: - Copy Helpers
+
+    private static func shortLabel(_ asset: Asset) -> String {
+        switch asset {
+        case .player(let position, let name, _): return "\(position) \(name)"
+        case .pick(let year, let round):         return "a \(year) \(ordinal(round))"
+        case .other(let text):                   return text
+        }
+    }
+
+    private static func longLabel(_ asset: Asset) -> String {
+        switch asset {
+        case .player(let position, let name, let overall):
+            return "\(position) \(name) (\(overall) OVR)"
+        case .pick(let year, let round):
+            return "a \(year) \(ordinal(round))-round pick"
+        case .other(let text):
+            return text
+        }
+    }
+
+    /// `"a 2027 2nd + G Tavon Reeves"`. `limit` keeps headlines from running
+    /// off the row on a five-asset package.
+    private static func clause(_ assets: [Asset], long: Bool = false, limit: Int? = nil) -> String {
+        guard !assets.isEmpty else { return "nothing" }
+        let labels = assets.map { long ? longLabel($0) : shortLabel($0) }
+        if let limit, labels.count > limit {
+            return labels.prefix(limit).joined(separator: " + ") + " and more"
+        }
+        return labels.joined(separator: " + ")
+    }
+
+    private static func ordinal(_ round: Int) -> String {
+        switch round {
+        case 1: return "1st"
+        case 2: return "2nd"
+        case 3: return "3rd"
+        default: return "\(round)th"
+        }
+    }
+
+    private static func contextSentence(
+        kind: TradeRecordKind,
+        sellerAbbr: String,
+        acquirerAbbr: String
+    ) -> String {
+        // Deliberately NOT an exhaustive switch: Wave 2 keeps adding ledger kinds
+        // (offseason windows, cap-cut days) and a new market path must be able to
+        // announce itself with the neutral line rather than breaking the build on
+        // this file.
+        if kind == .aiDeadline {
+            return "\(sellerAbbr) are clearly selling; \(acquirerAbbr) believe they are one piece away."
+        }
+        if kind == .draftDay {
+            return "The swap came together on the clock during the draft."
+        }
+        if kind == .holdoutForced {
+            return "\(sellerAbbr) had a holdout on their hands, and the return reflects it."
+        }
+        return "The two front offices finalized the paperwork with the league office."
+    }
+
+    private static func valueSentence(paid: Int, got: Int, acquirerAbbr: String) -> String {
+        guard got > 0, paid > 0 else {
+            return "League evaluators called it a low-cost move."
+        }
+        let ratio = Double(paid) / Double(got)
+        if ratio >= 1.15 { return "Rival executives called the price steep." }
+        if ratio <= 0.85 { return "\(acquirerAbbr) look like they got a bargain." }
+        return "Both sides walked away calling it fair value."
+    }
+}

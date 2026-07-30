@@ -1017,24 +1017,98 @@ enum InboxEngine {
         )
     }
 
+    // MARK: - Trade Wire (Wave 2 — `docs/TRADE_OVERHAUL_PLAN.md`)
+
+    /// Receipt for a trade the user's franchise was part of, whoever proposed it.
+    ///
+    /// Lives here rather than in `TradeNewsFactory` because this file is the
+    /// authority on inbox copy — the factory formats the asset lists and hands
+    /// them over. Category `.tradeOffer` (displayed as "Trade") is the existing
+    /// bucket for trade mail; no new `MessageCategory` was needed.
+    static func tradeCompletedMessage(
+        partnerName: String,
+        partnerAbbr: String,
+        weReceive: String,
+        weSend: String,
+        dateString: String,
+        wasOurProposal: Bool
+    ) -> InboxMessage {
+        let opening = wasOurProposal
+            ? "The deal you put on the table with \(partnerName) is done."
+            : "\(partnerName) came to us, and the deal is done."
+        return InboxMessage(
+            sender: .leagueOffice,
+            subject: "Trade completed with \(partnerAbbr)",
+            body: """
+            \(opening)
+
+            We receive: \(weReceive)
+            We send: \(weSend)
+
+            Roster and cap adjustments have been processed. The transaction is final.
+
+            NFL League Office
+            """,
+            date: dateString,
+            category: .tradeOffer,
+            actionDestination: .roster
+        )
+    }
+
+    /// Wire note for a trade the user was NOT part of but should hear about — a
+    /// star changing teams, first-round capital moving, or a division rival
+    /// making a move.
+    ///
+    /// WHY it exists: AI-vs-AI deals used to happen in total silence (plan
+    /// finding S5/S7), so the league felt frozen even when players were moving.
+    /// A rival's move is management information, not flavour text.
+    static func leagueTradeWireMessage(
+        headline: String,
+        detail: String,
+        dateString: String,
+        isDivisionRival: Bool
+    ) -> InboxMessage {
+        let lead = isDivisionRival
+            ? "A division rival just made a move. We should expect questions about how we answer it."
+            : "Worth your attention — this one moves the balance of power."
+        return InboxMessage(
+            sender: .media(outlet: "League Trade Wire"),
+            subject: headline,
+            body: """
+            \(lead)
+
+            \(detail)
+            """,
+            date: dateString,
+            category: .leagueNotice,
+            actionDestination: .news
+        )
+    }
+
     // MARK: - Helpers
 
     /// Creates a human-readable date string for the given phase.
     private static func dateLabel(for phase: SeasonPhase, career: Career) -> String {
+        dateLabel(week: career.currentWeek, season: career.currentSeason, phase: phase)
+    }
+
+    /// Calendar-free variant for callers that have a week/season pair but no
+    /// live `Career` — e.g. a `TradeRecord` row being announced after the fact.
+    static func dateLabel(week: Int, season: Int, phase: SeasonPhase) -> String {
         switch phase {
         case .regularSeason:
-            return "Week \(career.currentWeek), Season \(career.currentSeason)"
+            return "Week \(week), Season \(season)"
         case .playoffs:
             let roundName: String
-            switch career.currentWeek {
+            switch week {
             case 19: roundName = "Wild Card"
             case 20: roundName = "Divisional Round"
             case 21: roundName = "Conference Championship"
             default: roundName = "Playoffs"
             }
-            return "\(roundName), Season \(career.currentSeason)"
+            return "\(roundName), Season \(season)"
         case .tradeDeadline:
-            return "Week \(career.currentWeek), Season \(career.currentSeason)"
+            return "Week \(week), Season \(season)"
         default:
             let phaseName: String
             switch phase {
@@ -1052,7 +1126,7 @@ enum InboxEngine {
             case .rosterCuts:       phaseName = "Roster Cuts"
             default:                phaseName = "Offseason"
             }
-            return "Offseason - \(phaseName), \(career.currentSeason)"
+            return "Offseason - \(phaseName), \(season)"
         }
     }
 

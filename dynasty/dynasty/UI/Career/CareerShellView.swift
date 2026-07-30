@@ -565,6 +565,8 @@ struct CareerShellView: View {
 
     enum ShellDestination: Hashable {
         case roster, schedule, standings, draft, scouting, cap
+        /// Wave 2 UX: the 32-roster league browser (`LeagueRostersView`).
+        case leagueRosters
         case depthChart, gamePlan, coachingStaff, hireCoach
         case hireHC, hireOC, hireDC
         case prospectList, bigBoard, capOverview, freeAgency
@@ -601,6 +603,11 @@ struct CareerShellView: View {
                     markTaskVisited(for: .standings)
                     refreshTaskCompletionStatus()
                 }
+        case .leagueRosters:
+            // No `TaskDestination` case maps here yet (that enum is shared), so
+            // this route is pushed directly — from the Roster toolbar and from
+            // the Trade Center's "Scout league rosters" link.
+            LeagueRostersView(career: career)
         case .draft:
             DraftDayView(career: career)
                 .onAppear {

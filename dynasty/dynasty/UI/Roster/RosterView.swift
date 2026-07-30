@@ -168,7 +168,7 @@ struct RosterView: View {
 
     // MARK: - Position Groups (NFL-style names)
 
-    private static let offenseGroups: [PositionGroup] = [
+    static let offenseGroups: [PositionGroup] = [
         PositionGroup(name: "QB Room", positions: [.QB]),
         PositionGroup(name: "Backfield", positions: [.RB, .FB]),
         PositionGroup(name: "Wide Receivers", positions: [.WR]),
@@ -176,15 +176,21 @@ struct RosterView: View {
         PositionGroup(name: "Offensive Line", positions: [.LT, .LG, .C, .RG, .RT]),
     ]
 
-    private static let defenseGroups: [PositionGroup] = [
+    static let defenseGroups: [PositionGroup] = [
         PositionGroup(name: "Defensive Line", positions: [.DE, .DT]),
         PositionGroup(name: "Linebackers", positions: [.OLB, .MLB]),
         PositionGroup(name: "Secondary", positions: [.CB, .FS, .SS]),
     ]
 
-    private static let specialTeamsGroups: [PositionGroup] = [
+    static let specialTeamsGroups: [PositionGroup] = [
         PositionGroup(name: "Specialists", positions: [.K, .P]),
     ]
+
+    /// Offense → defense → specialists, in one list. Shared (rather than
+    /// re-declared) so another team's roster in `LeagueTeamRosterView` groups
+    /// exactly the way the user's own roster does.
+    static let allPositionGroups: [PositionGroup] =
+        offenseGroups + defenseGroups + specialTeamsGroups
 
     // MARK: - Computed
 
@@ -367,6 +373,25 @@ struct RosterView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 injuryReportButton
+            }
+            ToolbarItem(placement: .primaryAction) {
+                leagueRostersButton
+            }
+        }
+    }
+
+    // MARK: - League Rosters Button
+
+    /// Entry point into the 32-roster browser (plan finding S8: the other 31
+    /// teams had no surface at all). Needs the career for the "your team" mark
+    /// and the trade route, so lightweight call sites/previews simply omit it.
+    @ViewBuilder
+    private var leagueRostersButton: some View {
+        if let career {
+            NavigationLink {
+                LeagueRostersView(career: career)
+            } label: {
+                Label("League Rosters", systemImage: "person.3.sequence.fill")
             }
         }
     }
