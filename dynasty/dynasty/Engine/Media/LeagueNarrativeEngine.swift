@@ -160,7 +160,9 @@ enum LeagueNarrativeEngine {
         }
 
         if week >= 6, week % 3 == 0, !state.mvpRace.isEmpty {
-            news.append(mvpRaceNews(race: state.mvpRace, week: week, season: season))
+            news.append(mvpRaceNews(
+                race: state.mvpRace, players: players, week: week, season: season
+            ))
         }
 
         if week >= 12, let raceItem = divisionRaceNews(
@@ -599,9 +601,18 @@ enum LeagueNarrativeEngine {
 
     // MARK: - MVP Race
 
-    /// Weekly accumulation of a heuristic MVP-race score. League-wide season
-    /// stat lines aren't persisted, so the race blends team success, player
-    /// quality, and positional MVP-voting bias, with light weekly variance so
+    /// Weekly accumulation of the MVP-race score.
+    ///
+    /// Reads REAL production wherever it exists. `Player.seasonStatLine` is the
+    /// live, week-by-week accumulation for every player whose games produce a box
+    /// score — the user's roster, plus anyone traded off it mid-season. The other
+    /// 31 clubs are score-only until week 18 synthesizes their lines, so for them
+    /// the rating proxy is still the only signal available; the two star-power
+    /// terms are deliberately kept on the same 0...5.25 scale so a real season
+    /// and a modelled one compete on even footing.
+    ///
+    /// Everything around star power is unchanged: team success, positional
+    /// voting bias, a bonus for winning this week, and light weekly variance so
     /// the order can shift without teleporting.
     private static func accumulateMVPRace(
         state: LeagueNarrativeState,
@@ -612,9 +623,16 @@ enum LeagueNarrativeEngine {
         let teamsByID = Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
         let winnersThisWeek = Set(weekGames.compactMap(\.winnerID))
 
-        // Candidate pool: healthy stars on rosters.
-        let candidates = players.filter {
-            $0.teamID != nil && $0.overall >= 82 && !$0.isInjured && !$0.isHoldingOut
+        // Pool: healthy players on a roster who are either rated like stars, or
+        // are having a genuinely MVP-grade season in the box score whatever their
+        // rating says. A 78 OVR back on a 1,600-yard pace belongs in the
+        // conversation, and now the numbers exist to notice him.
+        let candidates = players.filter { player in
+            guard player.teamID != nil, !player.isInjured, !player.isHoldingOut else {
+                return false
+            }
+            if player.overall >= 82 { return true }
+            return (productionStarPower(player: player) ?? 0) >= 3.5
         }
 
         var points = state.mvpPoints
@@ -625,7 +643,9 @@ enum LeagueNarrativeEngine {
 
             var weekly = 0.0
             weekly += winPct * 3.0                                    // voters love winners
-            weekly += Double(player.overall - 80) * 0.35              // star power
+            // Star power: the real line when a box score exists, the rating
+            // proxy when it does not.
+            weekly += productionStarPower(player: player) ?? ratingStarPower(player.overall)
             weekly += mvpPositionWeight(player.position)              // QB-heavy award
             weekly += winnersThisWeek.contains(teamID) ? 1.2 : 0.0    // won this week
             weekly += Double.random(in: 0...1.2)                      // weekly narrative swing
@@ -653,6 +673,83 @@ enum LeagueNarrativeEngine {
         return (points, race)
     }
 
+    /// Star-power term from the player's REAL season line, or `nil` when no box
+    /// score exists for him yet (every AI-team player, all season).
+    ///
+    /// Each position is measured against an MVP-grade PER-GAME rate — 300 pass
+    /// yards, 110 rush yards, 95 receiving yards, a sack a game — so the result
+    /// lands in the same 0...5.25 band as `ratingStarPower`. Linemen and punters
+    /// return `nil`: nothing they produce has ever won this award, so they fall
+    /// back to the rating proxy like everyone else without a box score.
+    private static func productionStarPower(player: Player) -> Double? {
+        let games = Double(player.gamesPlayedThisSeason)
+        guard games > 0 else { return nil }
+        let line = player.seasonStatLine
+        guard !line.isEmpty else { return nil }
+
+        let score: Double
+        switch player.position {
+        case .QB:
+            score = Double(line.passYards) / games / 300.0 * 3.0
+                + Double(line.passTDs) / games / 2.5 * 2.25
+                - Double(line.passInts) / games / 1.5 * 0.75
+        case .RB, .FB:
+            score = Double(line.rushYards) / games / 110.0 * 3.5
+                + Double(line.rushTDs) / games * 1.0
+                + Double(line.recYards) / games / 40.0 * 0.75
+        case .WR, .TE:
+            score = Double(line.recYards) / games / 95.0 * 3.5
+                + Double(line.recTDs) / games / 0.8 * 1.75
+        case .DE, .DT, .OLB, .MLB:
+            score = line.sacks / games / 0.9 * 3.0
+                + Double(line.tackles) / games / 7.0 * 1.5
+                + Double(line.defInts) / games / 0.2 * 0.75
+        case .CB, .FS, .SS:
+            score = Double(line.defInts) / games / 0.35 * 2.5
+                + Double(line.passesDefended) / games / 1.2 * 1.5
+                + Double(line.tackles) / games / 5.5 * 1.25
+        case .K:
+            score = Double(line.fieldGoalsMade) / games / 2.2 * 2.0
+        case .LT, .LG, .C, .RG, .RT, .P:
+            return nil
+        }
+        return score.clampedNarrative(to: 0...5.25)
+    }
+
+    /// The rating proxy for star power, for everyone the box score cannot reach.
+    private static func ratingStarPower(_ overall: Int) -> Double {
+        (Double(overall - 80) * 0.35).clampedNarrative(to: 0...5.25)
+    }
+
+    /// One clause of the leader's real numbers for the MVP headline body, or
+    /// `nil` when his season has no box score behind it.
+    private static func mvpStatClause(player: Player) -> String? {
+        let games = player.gamesPlayedThisSeason
+        guard games > 0 else { return nil }
+        let line = player.seasonStatLine
+        guard !line.isEmpty else { return nil }
+
+        let production: String?
+        switch player.position {
+        case .QB:
+            production = "\(line.passYards) passing yards and \(line.passTDs) touchdowns"
+        case .RB, .FB:
+            production = "\(line.rushYards) rushing yards and \(line.rushTDs) touchdowns"
+        case .WR, .TE:
+            production = "\(line.receptions) catches for \(line.recYards) yards"
+        case .DE, .DT, .OLB, .MLB:
+            production = String(format: "%.1f sacks and %d tackles", line.sacks, line.tackles)
+        case .CB, .FS, .SS:
+            production = "\(line.defInts) interceptions and \(line.passesDefended) passes defended"
+        case .K:
+            production = "\(line.fieldGoalsMade) field goals"
+        case .LT, .LG, .C, .RG, .RT, .P:
+            production = nil
+        }
+        guard let production else { return nil }
+        return "\(production) in \(games) game\(games == 1 ? "" : "s")"
+    }
+
     /// MVP voting is QB-dominated; skill positions trail, defenders rarely win.
     private static func mvpPositionWeight(_ position: Position) -> Double {
         switch position {
@@ -667,6 +764,7 @@ enum LeagueNarrativeEngine {
 
     private static func mvpRaceNews(
         race: [MVPCandidate],
+        players: [Player],
         week: Int,
         season: Int
     ) -> NewsItem {
@@ -679,9 +777,16 @@ enum LeagueNarrativeEngine {
         let names = race.enumerated()
             .map { "\($0.offset + 1). \($0.element.playerName) (\($0.element.positionRaw), \($0.element.teamAbbr))" }
             .joined(separator: ", ")
+        // The leader's actual numbers when a box score exists for him (the user's
+        // roster); the AI clubs are score-only, so their leaders keep the
+        // qualitative framing.
+        let statSentence = players
+            .first { $0.id == leader.playerID }
+            .flatMap { mvpStatClause(player: $0) }
+            .map { " \(leader.playerName) has \($0)." } ?? ""
         return NewsItem(
             headline: headlines[week % headlines.count],
-            body: "With the season heating up, the award chatter has a clear shape: \(names). Voters reward winning — every result from here shifts the math.",
+            body: "With the season heating up, the award chatter has a clear shape: \(names).\(statSentence) Voters reward winning — every result from here shifts the math.",
             category: .award,
             week: week,
             season: season,

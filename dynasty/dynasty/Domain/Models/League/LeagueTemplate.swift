@@ -20,7 +20,13 @@ import Foundation
 /// Every field the transform emits is decoded except `calibration.teamOffsets`
 /// (a heterogeneous `[[String, Double]]` JSON array that carries no runtime
 /// meaning — the offsets are already baked into each `ratingTarget`).
-struct LeagueTemplate: Codable {
+///
+/// `nonisolated` because the module defaults to `@MainActor` isolation, which
+/// would isolate this type's `Decodable` conformance along with everything else:
+/// a 2.6 MB decode could then only ever run ON the main actor. Read-only import
+/// data has no business holding the UI, so the whole type opts out and a caller
+/// is free to decode it from a background task (see `DevPostseasonStats`).
+nonisolated struct LeagueTemplate: Codable {
 
     // MARK: - Profile
 
@@ -113,6 +119,18 @@ struct LeagueTemplate: Codable {
         /// `LeagueGenerator`'s blocklist-checked pools instead. QA gate 1
         /// asserts the publish identity has no such key at all.
         var ownerName: String?
+
+        /// `"male"` / `"female"` — the real principal owner's gender, kept in
+        /// BOTH profiles (unlike `ownerName`). Anonymizing a person's name does
+        /// not require pretending every owner is a man, and the publish league
+        /// would otherwise be all-male: its owners are drawn at import time, and
+        /// the draw that would decide this cannot run on the seeded stream (see
+        /// `LeagueGenerator.generateOwner`). So the template states it, exactly
+        /// as it states the scheme a team really runs.
+        ///
+        /// `nil` only for a template baked before the field existed, which reads
+        /// as male — the same convention as `Owner.gender` itself.
+        var ownerGender: String?
     }
 
     struct Record: Codable {
@@ -251,11 +269,135 @@ struct LeagueTemplate: Codable {
         /// template fail to load.
         var stats: [String: Double?]?
 
+        /// Playoff production for the same season, in the same key bag
+        /// (`make_templates.dev_statlines`). **Dev profile only**, and only on
+        /// the seasons that actually reached the postseason — 2 279 of the
+        /// 7 526 stat-line rows in `league_2026_dev.json`. `nil` everywhere
+        /// else, including every row of the publish file (which ships no stat
+        /// lines at all).
+        var post: PostLine?
+
         /// A single stat, `nil` when absent or explicitly null.
         func stat(_ key: String) -> Double? {
             guard let value = stats?[key] else { return nil }
             return value
         }
+    }
+
+    /// One season's POSTSEASON production: `{gp, stats}`, where `stats` is the
+    /// same position-family bag `StatLine.stats` uses (a QB's playoff line has
+    /// `att`/`comp`/`yds`, a rusher's has `rushAtt`/`rushYds`, and so on).
+    ///
+    /// Deliberately the most forgiving type in the schema — see the lenient
+    /// `init(from:)` below. The postseason bag is the newest thing the transform
+    /// emits, and one odd row must never take the whole 2.6 MB template down
+    /// with it.
+    struct PostLine: Codable {
+        /// Playoff games played.
+        var gp: Int?
+        /// Position-family stat bag, `Double?` for the same reason as
+        /// `StatLine.stats`: the source carries explicit `null` for categories a
+        /// season did not track.
+        var stats: [String: Double?]?
+
+        init(gp: Int? = nil, stats: [String: Double?]? = nil) {
+            self.gp = gp
+            self.stats = stats
+        }
+
+        /// A single stat, `nil` when absent or explicitly null.
+        func stat(_ key: String) -> Double? {
+            guard let value = stats?[key] else { return nil }
+            return value
+        }
+    }
+}
+
+// MARK: - Lenient postseason decoding
+
+extension LeagueTemplate.PostLine {
+
+    private enum CodingKeys: String, CodingKey {
+        case gp, stats
+    }
+
+    /// Never fails on a field: a `post` that is not an object at all, a `gp`
+    /// that arrived as a string, or a stat bag with a surprise shape all decode
+    /// to "no postseason recorded" instead of failing the enclosing template.
+    ///
+    /// Same double-unwrap trick as `SeasonStatLine.init(from:)` — `try?` wraps
+    /// the already-optional `decodeIfPresent`, so a missing key and a type
+    /// mismatch both fall through to `nil`.
+    init(from decoder: Decoder) throws {
+        self.init()
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        gp = (try? container.decodeIfPresent(Int.self, forKey: .gp)) ?? nil
+        stats = (try? container.decodeIfPresent([String: Double?].self, forKey: .stats)) ?? nil
+    }
+}
+
+// MARK: - Postseason convenience
+
+extension LeagueTemplate.PostLine {
+
+    /// The playoff bag wearing `StatLine`'s clothes, so postseason production
+    /// folds into a `SeasonStatLine` through the importer's ONE key→category
+    /// table (`LeagueTemplateImporter.statLine(from:)`) instead of a second copy
+    /// of it that could drift.
+    func asRegularShapedLine(year: Int) -> LeagueTemplate.StatLine {
+        LeagueTemplate.StatLine(
+            year: year,
+            team: nil,
+            gp: gp,
+            gs: nil,
+            snapShare: nil,
+            stats: stats,
+            post: nil
+        )
+    }
+}
+
+extension LeagueTemplate {
+
+    /// Every player's postseason lines, keyed by `postseasonKey(name:position:)`
+    /// → season → line. Players with no playoff data are absent, so the publish
+    /// profile returns an empty map.
+    ///
+    /// This is a template-side query, not import data: the postseason bag has no
+    /// column on `PlayerSeasonHistory` yet, so the career table reads it from
+    /// here (see `DevPostseasonStats`) until the import can persist it.
+    /// Spelled `nonisolated` again even though the type already is: an extension
+    /// member picks up the module's `@MainActor` default on its own, and this one
+    /// is called from the background decode.
+    nonisolated func postseasonLinesByPlayer() -> [String: [Int: PostLine]] {
+        var out: [String: [Int: PostLine]] = [:]
+        for team in teams {
+            for player in team.players {
+                var byYear: [Int: PostLine] = [:]
+                for line in player.statLines ?? [] {
+                    guard let post = line.post else { continue }
+                    let hasStats = !(post.stats?.isEmpty ?? true)
+                    guard (post.gp ?? 0) > 0 || hasStats else { continue }
+                    byYear[line.year] = post
+                }
+                guard !byYear.isEmpty else { continue }
+                // Exactly one name+position pair repeats in the 2026 dev
+                // template ("Jaylon Jones", CB). Merging keeps the first
+                // player's playoffs instead of letting the second silently
+                // erase them; the alternative (dropping both) would lose more.
+                out[Self.postseasonKey(name: player.name, position: player.pos), default: [:]]
+                    .merge(byYear) { first, _ in first }
+            }
+        }
+        return out
+    }
+
+    /// Lookup key for the postseason map. Name + position, because the template
+    /// carries a handful of shared names across different positions.
+    ///
+    /// `nonisolated` for the same reason as the map builder that calls it.
+    nonisolated static func postseasonKey(name: String, position: String) -> String {
+        "\(name)|\(position)"
     }
 }
 
