@@ -51,7 +51,7 @@ struct FranchiseTagView: View {
         .alert("Skip Franchise Tag?", isPresented: $showSkipConfirmation) {
             Button("Cancel", role: .cancel) { }
             Button("Skip", role: .destructive) {
-                UserDefaults.standard.set(true, forKey: "franchiseTagVisited")
+                CareerScopedDefaults.set(true, "franchiseTagVisited")
                 dismiss()
             }
         } message: {
@@ -454,7 +454,7 @@ struct FranchiseTagView: View {
 
         // Persist so CareerShellView picks up the change
         try? modelContext.save()
-        UserDefaults.standard.set(true, forKey: "franchiseTagVisited")
+        CareerScopedDefaults.set(true, "franchiseTagVisited")
 
         // Refresh local state
         loadData()

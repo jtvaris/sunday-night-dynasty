@@ -11,13 +11,29 @@ struct NegotiationOffer: Identifiable, Equatable {
     var guaranteedPercent: Int  // 0-100, percentage of total value guaranteed
     var noTradeClause: Bool     // Only elite players request this
 
-    /// Total contract value in thousands.
+    /// Performance clauses attached to the deal (TODO §5.5). Empty on every
+    /// offer that does not use them, which is why it is defaulted: the
+    /// memberwise init every existing caller uses is unchanged.
+    var incentives: [ContractIncentive] = []
+
+    /// Total **guaranteed-structure** value in thousands. Incentives are
+    /// deliberately excluded: this is the number both sides bargain over, and
+    /// folding money that may never be paid into it would let a GM "win" a
+    /// negotiation with clauses the player cannot reach. What the agent is
+    /// willing to count is `ContractEngine.creditedIncentiveValue`.
     var totalValue: Int { annualSalary * years + signingBonus }
+
+    /// Ceiling of the deal — every clause hit, every year.
+    var maxValue: Int {
+        totalValue + ContractEngine.maxSeasonIncentiveValue(incentives) * max(0, years)
+    }
 
     /// Guaranteed money in thousands.
     var guaranteedMoney: Int { Int(Double(totalValue) * Double(guaranteedPercent) / 100.0) }
 
-    /// Annual cap hit including prorated signing bonus.
+    /// Annual cap hit including prorated signing bonus. Incentives are absent on
+    /// purpose — they are charged when earned, at season end
+    /// (`ContractEngine`'s "Cap treatment" note).
     var annualCapHit: Int {
         let proratedBonus = years > 0 ? signingBonus / years : 0
         return annualSalary + proratedBonus
@@ -99,6 +115,13 @@ enum ContractNegotiationEngine {
     // MARK: - Generate Agent's Opening Demand
 
     /// Creates the agent's initial asking price based on player profile.
+    ///
+    /// The opening ask carries **no incentives** (TODO §5.5), and that is the
+    /// design rather than an omission: no agent opens by asking to be paid
+    /// conditionally. Clauses are the GM's instrument for closing a gap he
+    /// cannot close with guaranteed money, so they enter the conversation from
+    /// his side — and how much they buy him depends entirely on who is across
+    /// the table (`ContractEngine.personaIncentiveCredit`).
     static func generateOpeningDemand(
         player: Player,
         negotiationType: NegotiationType,
@@ -188,15 +211,37 @@ enum ContractNegotiationEngine {
                 annualSalary: previousAgentOffer.annualSalary,
                 signingBonus: previousAgentOffer.signingBonus,
                 guaranteedPercent: previousAgentOffer.guaranteedPercent,
-                noTradeClause: previousAgentOffer.noTradeClause
+                noTradeClause: previousAgentOffer.noTradeClause,
+                // Shortening the deal is not a reason to drop the clauses the
+                // GM already put on it.
+                incentives: gmOffer.incentives
             )
             let message = "At \(player.age) years old, \(player.firstName) isn't looking for a \(gmOffer.years)-year commitment. We'd consider \(maxYears) years max. Here's our revised ask."
             return (message, adjustedOffer, .pending)
         }
 
         let marketValue = ContractEngine.estimateMarketValue(player: player, salaryCap: salaryCap)
-        let askingTotal = previousAgentOffer.totalValue
-        let offerTotal = gmOffer.totalValue
+
+        // R22: persona shapes loyalty weighting, patience and lowball tolerance —
+        // and, since §5.5, how much a performance clause is worth to this agent.
+        let persona = AgentPersona.forPlayer(id: player.id)
+
+        // §5.5: incentives count toward the offer at the agent's own discount.
+        // Both sides of the ratio go through the same credit function so an
+        // agent who happens to be carrying clauses in his ask is not comparing
+        // face value against discounted value.
+        let askingTotal = previousAgentOffer.totalValue + ContractEngine.creditedIncentiveValue(
+            previousAgentOffer.incentives,
+            player: player,
+            persona: persona,
+            years: max(1, previousAgentOffer.years)
+        )
+        let offerTotal = gmOffer.totalValue + ContractEngine.creditedIncentiveValue(
+            gmOffer.incentives,
+            player: player,
+            persona: persona,
+            years: max(1, gmOffer.years)
+        )
 
         // Calculate how close the offer is to asking price (0.0 = nothing, 1.0 = full ask)
         let offerRatio = Double(offerTotal) / Double(max(1, askingTotal))
@@ -210,9 +255,6 @@ enum ContractNegotiationEngine {
             default: return -0.08     // Unhappy: harder to sign
             }
         }()
-
-        // R22: persona shapes loyalty weighting, patience and lowball tolerance.
-        let persona = AgentPersona.forPlayer(id: player.id)
 
         // Loyalty factor for extensions (longer on team = more willing).
         // A loyalist agent leans into tenure: +1% per loyalty year, up to +9%.
@@ -251,9 +293,17 @@ enum ContractNegotiationEngine {
             let counterOffer = generateCompromise(
                 gmOffer: gmOffer,
                 agentAsk: previousAgentOffer,
-                splitFactor: 0.6 // Agent moves 40%, expects GM to move 60%
+                splitFactor: 0.6, // Agent moves 40%, expects GM to move 60%
+                player: player,
+                persona: persona,
+                // §5.5: this close, an agent who believes in clauses will bridge
+                // the last of the gap with them himself. A hardliner never does.
+                proposeIncentives: persona != .hardliner
             )
-            let message = generateCounterMessage(player: player, persona: persona, tone: .reasonable, round: roundNumber)
+            let message = generateCounterMessage(
+                player: player, persona: persona, tone: .reasonable, round: roundNumber,
+                counter: counterOffer, gmOffer: gmOffer
+            )
             return (message, counterOffer, .pending)
         }
 
@@ -262,9 +312,14 @@ enum ContractNegotiationEngine {
             let counterOffer = generateCompromise(
                 gmOffer: gmOffer,
                 agentAsk: previousAgentOffer,
-                splitFactor: 0.75 // Agent barely moves
+                splitFactor: 0.75, // Agent barely moves
+                player: player,
+                persona: persona
             )
-            let message = generateCounterMessage(player: player, persona: persona, tone: .disappointed, round: roundNumber)
+            let message = generateCounterMessage(
+                player: player, persona: persona, tone: .disappointed, round: roundNumber,
+                counter: counterOffer, gmOffer: gmOffer
+            )
             return (message, counterOffer, .pending)
         }
 
@@ -278,9 +333,14 @@ enum ContractNegotiationEngine {
         let counterOffer = generateCompromise(
             gmOffer: gmOffer,
             agentAsk: previousAgentOffer,
-            splitFactor: 0.85 // Agent barely budges
+            splitFactor: 0.85, // Agent barely budges
+            player: player,
+            persona: persona
         )
-        let message = generateCounterMessage(player: player, persona: persona, tone: .insulted, round: roundNumber)
+        let message = generateCounterMessage(
+            player: player, persona: persona, tone: .insulted, round: roundNumber,
+            counter: counterOffer, gmOffer: gmOffer
+        )
         return (message, counterOffer, .pending)
     }
 
@@ -289,7 +349,10 @@ enum ContractNegotiationEngine {
     private static func generateCompromise(
         gmOffer: NegotiationOffer,
         agentAsk: NegotiationOffer,
-        splitFactor: Double  // 0.5 = meet in middle, 0.8 = agent barely moves
+        splitFactor: Double,  // 0.5 = meet in middle, 0.8 = agent barely moves
+        player: Player,
+        persona: AgentPersona,
+        proposeIncentives: Bool = false
     ) -> NegotiationOffer {
         let salary = Int(Double(agentAsk.annualSalary) * splitFactor + Double(gmOffer.annualSalary) * (1.0 - splitFactor))
         let bonus = Int(Double(agentAsk.signingBonus) * splitFactor + Double(gmOffer.signingBonus) * (1.0 - splitFactor))
@@ -298,12 +361,26 @@ enum ContractNegotiationEngine {
         // Years: agent usually holds firm on years
         let years = agentAsk.years
 
+        // §5.5: the counter keeps whatever clauses the GM put on the table —
+        // the agent is arguing about the money, not tearing up the structure.
+        // Only when the GM used none, the gap is nearly closed and the persona
+        // believes in clauses does the agent write them himself.
+        var incentives = gmOffer.incentives
+        if incentives.isEmpty, proposeIncentives {
+            incentives = ContractEngine.suggestedIncentives(
+                player: player,
+                annualSalaryK: salary,
+                limit: persona == .cooperative ? 2 : 1
+            )
+        }
+
         return NegotiationOffer(
             years: years,
             annualSalary: salary,
             signingBonus: bonus,
             guaranteedPercent: min(100, guaranteed),
-            noTradeClause: agentAsk.noTradeClause
+            noTradeClause: agentAsk.noTradeClause,
+            incentives: incentives
         )
     }
 
@@ -335,7 +412,58 @@ enum ContractNegotiationEngine {
         }
     }
 
-    private static func generateCounterMessage(player: Player, persona: AgentPersona, tone: Tone, round: Int) -> String {
+    private static func generateCounterMessage(
+        player: Player,
+        persona: AgentPersona,
+        tone: Tone,
+        round: Int,
+        counter: NegotiationOffer? = nil,
+        gmOffer: NegotiationOffer? = nil
+    ) -> String {
+        let body = counterBody(player: player, persona: persona, tone: tone, round: round)
+        guard let remark = incentiveRemark(
+            player: player,
+            persona: persona,
+            counter: counter,
+            gmOffer: gmOffer
+        ) else { return body }
+        return "\(body) \(remark)"
+    }
+
+    /// §5.5: the agent's line about the clauses on the table. Says out loud what
+    /// `ContractEngine.personaIncentiveCredit` does quietly, so a GM can learn
+    /// which agents incentives work on without reading the engine.
+    private static func incentiveRemark(
+        player: Player,
+        persona: AgentPersona,
+        counter: NegotiationOffer?,
+        gmOffer: NegotiationOffer?
+    ) -> String? {
+        let name = player.firstName
+        let gmClauses = gmOffer?.incentives ?? []
+        let counterClauses = counter?.incentives ?? []
+
+        // The agent volunteered clauses the GM had not offered.
+        if gmClauses.isEmpty, let lead = counterClauses.first {
+            return "We've written in \(lead.summary) to bridge the rest — \(name) will earn it."
+        }
+
+        guard !gmClauses.isEmpty else { return nil }
+
+        switch persona {
+        case .hardliner:
+            return "And spare us the escalators. \(name) gets hurt, \(name) gets benched, that money evaporates. Guarantee it or don't offer it."
+        case .cooperative:
+            let credited = ContractEngine.creditedIncentiveValue(
+                gmClauses, player: player, persona: persona, years: max(1, gmOffer?.years ?? 1)
+            )
+            return "The incentives help — we're counting them as about \(formatMillions(credited)) of real money."
+        case .loyalist:
+            return "\(name) will take the clauses. He backs himself in this building."
+        }
+    }
+
+    private static func counterBody(player: Player, persona: AgentPersona, tone: Tone, round: Int) -> String {
         let name = player.firstName
         switch tone {
         case .reasonable:
@@ -413,7 +541,10 @@ enum ContractNegotiationEngine {
             "We're happy with this. \(name) can't wait to get back to work. Deal done!",
             "That works for us. \(name) is committed to this team. Let's make it official."
         ]
-        return msgs.randomElement()!
+        let base = msgs.randomElement()!
+        guard !offer.incentives.isEmpty else { return base }
+        // §5.5: name the ceiling, so the GM leaves knowing what he might owe.
+        return "\(base) With the clauses he can push it to \(formatMillions(offer.maxValue))."
     }
 
     private static func generateWalkAwayMessage(player: Player, ratio: Double) -> String {

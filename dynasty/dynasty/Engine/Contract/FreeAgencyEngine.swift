@@ -141,9 +141,17 @@ enum FreeAgencyEngine {
 
     /// Build the free-agent market from all players whose contracts have expired.
     /// Asking prices are influenced by market value and the player's personality motivation.
+    /// §5.1: a practice-squad player is `teamID == nil` but under contract, so
+    /// the `contractYearsRemaining == 0` clause already keeps him off this
+    /// market. `!isOnPracticeSquad` is belt-and-braces on that invariant — if a
+    /// squad deal ever reached zero years without being dissolved, the market
+    /// would otherwise quietly sell 512 players who already have jobs.
     static func generateFreeAgentMarket(allPlayers: [Player], salaryCap: Int = 265_000) -> [FreeAgent] {
         allPlayers
-            .filter { $0.contractYearsRemaining == 0 && !$0.isFranchiseTagged && !$0.isRetired }
+            .filter {
+                $0.contractYearsRemaining == 0 && !$0.isFranchiseTagged && !$0.isRetired
+                    && !$0.isOnPracticeSquad
+            }
             .map { player in
                 let askingPrice = projectedAskingPrice(player: player, salaryCap: salaryCap)
 
@@ -318,12 +326,31 @@ enum FreeAgencyEngine {
         allPlayers: [Player],
         allTeams: [Team],
         playerTeamID: UUID,
-        modelContext: ModelContext
+        modelContext: ModelContext,
+        career: Career? = nil
     ) -> LeagueYearSummary {
         let playerTeam = allTeams.first { $0.id == playerTeamID }
         let capBefore = playerTeam?.currentCapUsage ?? 0
 
         var newFAs: [(name: String, position: String, overall: Int, formerTeam: String)] = []
+
+        // TODO §5.5 — settle the season's incentive clauses BEFORE anything
+        // below touches a roster.
+        //
+        // Ordering is load-bearing twice over. It has to run ahead of the expiry
+        // loop because `ContractEngine.evaluateIncentives` refuses to bill a club
+        // for a man nobody employs, and the loop is about to set `teamID = nil`
+        // on every expiring deal — a player who played the whole season and hit
+        // his number would otherwise collect nothing simply because his contract
+        // also ran out. And the CHARGE has to land after the cap true-up further
+        // down, which rebuilds `currentCapUsage` from rostered salaries and would
+        // wipe an increment applied here. So the verdicts are computed now and
+        // the money is added at the end.
+        let incentiveChargeByTeam = evaluateSeasonIncentives(
+            allPlayers: allPlayers,
+            career: career,
+            modelContext: modelContext
+        )
 
         // Task #45 — undo last season's midseason proration FIRST, before any
         // other line reads `annualSalary`.
@@ -393,6 +420,24 @@ enum FreeAgencyEngine {
             player.isFranchiseTagged = false
         }
 
+        // §5.1 — the practice squads dissolve with the league year.
+        //
+        // A squad deal is written for `PracticeSquadEngine.contractYears`, so the
+        // expiry loop above has just taken the last one to zero; this clears the
+        // squad markers that went with it and hands all 512 stashed players to
+        // the open market. That is the real calendar — practice-squad contracts
+        // expire in March and those players are free agents until somebody
+        // re-signs them — and it is also what keeps the rest of the offseason
+        // honest: from here until the next cutdown day nothing in the league
+        // carries a squad flag, so the FA market, the roster refill, the washout
+        // pass and the camp development pass all see a normal free agent.
+        //
+        // Deliberately AFTER the expiry loop and BEFORE the cap true-up: these
+        // rows were never on anyone's cap (squad pay is cap-exempt, see the
+        // engine header), and the true-up below rebuilds usage from
+        // `teamID != nil` rows only, so they cannot leak into it either way.
+        PracticeSquadEngine.dissolveSquads(allPlayers: allPlayers)
+
         // Apply cap growth (~5-8% increase)
         let capGrowth = Double.random(in: 0.05...0.08)
         for team in allTeams {
@@ -419,6 +464,17 @@ enum FreeAgencyEngine {
             team.currentCapUsage = salaryByTeam[team.id] ?? 0
         }
 
+        // TODO §5.5 — the earned half of the settlement computed at the top of
+        // this function. Charged here, immediately after the rebuild, so it is
+        // an honest liability of the league year that just opened and expires
+        // with it exactly like the dead money the true-up above ages off.
+        // Earned = charged, once: the clauses stay on the deal for next season,
+        // and nothing here clears the package.
+        for team in allTeams {
+            guard let charge = incentiveChargeByTeam[team.id], charge > 0 else { continue }
+            team.currentCapUsage += charge
+        }
+
         let capAfter = playerTeam?.currentCapUsage ?? 0
         let capFreed = capBefore - capAfter
 
@@ -434,6 +490,49 @@ enum FreeAgencyEngine {
             notableFreeAgents: notable,
             totalFreeAgentCount: newFAs.count
         )
+    }
+
+    // MARK: - Incentive Settlement (TODO §5.5)
+
+    /// Grades every live incentive package against the season that just ended
+    /// and returns the cap charge each club owes, in thousands.
+    ///
+    /// Reads only; the caller decides when the money lands. Returns empty —
+    /// after a single `UserDefaults` decode — in every save where nobody
+    /// negotiated a clause, which is the overwhelmingly common case, and in
+    /// `.sandbox`, where the whole cap is switched off.
+    ///
+    /// The season graded is `career.currentSeason`: the rollover runs during the
+    /// offseason phases, and `WeekAdvancer` does not increment the year until
+    /// the roster-cuts → regular-season transition, so the current season IS the
+    /// one whose `PlayerSeasonHistory` rows were snapshotted at week 18.
+    private static func evaluateSeasonIncentives(
+        allPlayers: [Player],
+        career: Career?,
+        modelContext: ModelContext
+    ) -> [UUID: Int] {
+        guard let career, career.capMode != .sandbox else { return [:] }
+        let packages = ContractIncentiveRegistry.allPackages(careerID: career.id)
+        guard !packages.isEmpty else { return [:] }
+
+        let cid = career.id
+        let season = career.currentSeason
+        let descriptor = FetchDescriptor<PlayerSeasonHistory>(
+            predicate: #Predicate { $0.careerID == cid && $0.season == season }
+        )
+        let rows = (try? modelContext.fetch(descriptor)) ?? []
+        var historyByPlayer: [UUID: PlayerSeasonHistory] = [:]
+        for row in rows { historyByPlayer[row.playerID] = row }
+
+        var chargeByTeam: [UUID: Int] = [:]
+        for player in allPlayers {
+            guard packages[player.id.uuidString]?.isEmpty == false else { continue }
+            guard let teamID = player.teamID, let history = historyByPlayer[player.id] else { continue }
+            let settlement = ContractEngine.evaluateIncentives(player: player, history: history)
+            guard settlement.payoutK > 0 else { continue }
+            chargeByTeam[teamID, default: 0] += settlement.payoutK
+        }
+        return chargeByTeam
     }
 
     // MARK: - Skip Remaining FA
@@ -563,6 +662,13 @@ enum FreeAgencyEngine {
     /// Task #27 adds the two budget constraints a market needs to be a market:
     /// clubs stop at `faRosterCeiling` players and never spend below
     /// `capReservePercent` of their cap. See both for the measurements.
+    ///
+    /// §5.1 adds the third thing a market has: a REPUTATION term. Which club a
+    /// free agent picks out of the shortlist used to be `randomElement()` —
+    /// uniform, so a building famous for developing players had no pull at all.
+    /// `CoachingEngine.developmentAppeal` is now that pull (0.85-1.15), applied
+    /// as a weight on the same shortlist rather than as a new filter, so it can
+    /// tilt a coin-flip without ever overriding need or cap room.
     static func simulateAIFreeAgency(
         freeAgents: [FreeAgent],
         teams: [Team],
@@ -577,6 +683,22 @@ enum FreeAgencyEngine {
         var needIndex: RosterNeedIndex?
         if let rosterPlayers = allPlayers, !rosterPlayers.isEmpty {
             needIndex = RosterNeedIndex(allPlayers: rosterPlayers)
+        }
+
+        // §5.1 — the staff's developer reputation, one fetch for the whole
+        // market rather than one per free agent (the loop below runs a few
+        // hundred times per league year).
+        let allCoaches = (try? modelContext.fetch(FetchDescriptor<Coach>())) ?? []
+        let coachesByTeam = Dictionary(
+            grouping: allCoaches.filter { $0.teamID != nil },
+            by: { $0.teamID! }
+        )
+        var appealByTeam: [UUID: Double] = [:]
+        for team in teams {
+            appealByTeam[team.id] = CoachingEngine.developmentAppeal(
+                teamID: team.id,
+                coaches: coachesByTeam[team.id] ?? []
+            )
         }
 
         for agent in sortedAgents {
@@ -628,8 +750,13 @@ enum FreeAgencyEngine {
 
             let candidates = Array(eligibleTeams.prefix(candidateCount))
 
-            // Randomly select a winner from the candidate pool
-            guard let winningTeam = candidates.randomElement() else { continue }
+            // Pick the winner out of the shortlist, weighted by how good the
+            // building is at developing players (§5.1). With every appeal at
+            // 1.0 this is exactly the uniform `randomElement()` it replaced.
+            guard let winningTeam = weightedPick(
+                candidates,
+                weight: { appealByTeam[$0.id] ?? 1.0 }
+            ) else { continue }
 
             // AI always signs at a slight discount (negotiation)
             let minimum = max(Int(0.0028 * Double(winningTeam.salaryCap)), 750)
@@ -658,6 +785,22 @@ enum FreeAgencyEngine {
             // per-call filter saw the new teamID on the next agent too).
             needIndex?.add(position: agentPosition, overall: agent.player.overall, to: winningTeam.id)
         }
+    }
+
+    /// Roulette-wheel pick over `weight`. Returns `nil` for an empty list and
+    /// degenerates to a uniform draw when every weight is equal, which is what
+    /// makes it a safe drop-in for `randomElement()`.
+    private static func weightedPick<T>(_ items: [T], weight: (T) -> Double) -> T? {
+        guard !items.isEmpty else { return nil }
+        let weights = items.map { max(0.0, weight($0)) }
+        let total = weights.reduce(0, +)
+        guard total > 0 else { return items.randomElement() }
+        var roll = Double.random(in: 0..<total)
+        for (index, w) in weights.enumerated() {
+            roll -= w
+            if roll < 0 { return items[index] }
+        }
+        return items.last
     }
 
     // MARK: - AI Position Need Assessment

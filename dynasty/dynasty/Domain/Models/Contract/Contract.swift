@@ -134,3 +134,295 @@ final class Contract {
         self.franchiseTagged = franchiseTagged
     }
 }
+
+// MARK: - Contract Incentives (TODO §5.5)
+
+/// A performance category a contract can put a bonus on.
+///
+/// Every case is backed by something the game actually records, so a clause can
+/// never be un-gradeable: the production tiers read `SeasonStatLine` (the same
+/// value type the live box score accumulates into and the career table renders),
+/// availability reads the games counter, and the playoff clause reads whether
+/// the player's postseason happened at all.
+///
+/// **Two categories are deliberately absent.** `snapsPlayed` and punting have no
+/// box-score source in the sim (`PlayerGameStats` tracks neither — see
+/// `SeasonStatLine`'s note), so a snap-count clause on a guard would grade off
+/// synthesized numbers for the user's own roster and off nothing at all mid-season.
+/// Linemen and punters get availability and the playoff berth instead, which is
+/// what their real contracts lean on anyway.
+enum IncentiveCategory: String, Codable, CaseIterable, Identifiable {
+    /// Games active — the availability clause almost every real deal carries.
+    case gamesPlayed
+    case passYards
+    case passTDs
+    case rushYards
+    case rushTDs
+    case receptions
+    case recYards
+    case recTDs
+    case tackles
+    case sacks
+    /// Interceptions CAUGHT (never picks thrown — no agent signs that clause).
+    case interceptions
+    case fieldGoals
+    /// Binary: the team reached the postseason.
+    case playoffBerth
+
+    var id: String { rawValue }
+
+    /// Label used on the clause row and in agent dialogue.
+    var displayName: String {
+        switch self {
+        case .gamesPlayed:   return "Games Played"
+        case .passYards:     return "Passing Yards"
+        case .passTDs:       return "Passing TDs"
+        case .rushYards:     return "Rushing Yards"
+        case .rushTDs:       return "Rushing TDs"
+        case .receptions:    return "Receptions"
+        case .recYards:      return "Receiving Yards"
+        case .recTDs:        return "Receiving TDs"
+        case .tackles:       return "Tackles"
+        case .sacks:         return "Sacks"
+        case .interceptions: return "Interceptions"
+        case .fieldGoals:    return "Field Goals Made"
+        case .playoffBerth:  return "Playoff Berth"
+        }
+    }
+
+    /// Compact label for the progress rows on the contract card.
+    var shortName: String {
+        switch self {
+        case .gamesPlayed:   return "GP"
+        case .passYards:     return "Pass Yds"
+        case .passTDs:       return "Pass TD"
+        case .rushYards:     return "Rush Yds"
+        case .rushTDs:       return "Rush TD"
+        case .receptions:    return "Rec"
+        case .recYards:      return "Rec Yds"
+        case .recTDs:        return "Rec TD"
+        case .tackles:       return "Tkl"
+        case .sacks:         return "Sacks"
+        case .interceptions: return "INT"
+        case .fieldGoals:    return "FG"
+        case .playoffBerth:  return "Playoffs"
+        }
+    }
+
+    /// True when the clause is a yes/no event rather than a counting tier.
+    var isBinary: Bool { self == .playoffBerth }
+
+    /// Half-sacks are real football; everything else counts in whole units.
+    var allowsHalfSteps: Bool { self == .sacks }
+
+    /// What the player has banked so far in this category.
+    ///
+    /// `gamesPlayed` and the playoff berth are not in `SeasonStatLine` (one is a
+    /// counter on the roster row, the other is a fact about the team), so they
+    /// are passed in rather than read out of the line.
+    func achieved(line: SeasonStatLine, gamesPlayed: Int, reachedPlayoffs: Bool) -> Double {
+        switch self {
+        case .gamesPlayed:   return Double(gamesPlayed)
+        case .passYards:     return Double(line.passYards)
+        case .passTDs:       return Double(line.passTDs)
+        case .rushYards:     return Double(line.rushYards)
+        case .rushTDs:       return Double(line.rushTDs)
+        case .receptions:    return Double(line.receptions)
+        case .recYards:      return Double(line.recYards)
+        case .recTDs:        return Double(line.recTDs)
+        case .tackles:       return Double(line.tackles)
+        case .sacks:         return line.sacks
+        case .interceptions: return Double(line.defInts)
+        case .fieldGoals:    return Double(line.fieldGoalsMade)
+        case .playoffBerth:  return reachedPlayoffs ? 1 : 0
+        }
+    }
+
+    /// Renders a threshold or a running total for display.
+    func format(_ value: Double) -> String {
+        if isBinary { return value >= 1 ? "Yes" : "No" }
+        if allowsHalfSteps {
+            return value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
+        }
+        return String(Int(value.rounded()))
+    }
+
+    /// The clause menu a player at this position can actually be offered.
+    /// Ordered most-negotiated first, because the offer builder shows the top
+    /// three by default.
+    static func menu(for position: Position) -> [IncentiveCategory] {
+        switch position {
+        case .QB:
+            return [.passYards, .passTDs, .gamesPlayed, .playoffBerth]
+        case .RB, .FB:
+            return [.rushYards, .rushTDs, .receptions, .gamesPlayed, .playoffBerth]
+        case .WR, .TE:
+            return [.recYards, .receptions, .recTDs, .gamesPlayed, .playoffBerth]
+        case .LT, .LG, .C, .RG, .RT:
+            // No snap-count source in the sim — availability is the lineman's clause.
+            return [.gamesPlayed, .playoffBerth]
+        case .DE, .DT:
+            return [.sacks, .tackles, .gamesPlayed, .playoffBerth]
+        case .OLB, .MLB:
+            return [.tackles, .sacks, .interceptions, .gamesPlayed, .playoffBerth]
+        case .CB, .FS, .SS:
+            // Tackles rather than pass breakups: the sim only credits a
+            // deflection on a targeted throw, so a corner good enough to stop
+            // being thrown at would be punished by his own clause.
+            return [.interceptions, .tackles, .gamesPlayed, .playoffBerth]
+        case .K:
+            return [.fieldGoals, .gamesPlayed, .playoffBerth]
+        case .P:
+            return [.gamesPlayed, .playoffBerth]
+        }
+    }
+}
+
+/// One negotiated performance clause on a contract.
+///
+/// `id` is derived rather than stored so the value stays cleanly `Codable` and
+/// two structurally identical clauses compare equal — a package never carries
+/// the same category twice, which is what makes the category the identity.
+struct ContractIncentive: Codable, Equatable, Identifiable {
+
+    var category: IncentiveCategory
+
+    /// The tier that has to be reached. Fractional only for sacks.
+    var threshold: Double
+
+    /// What it pays when earned, in thousands — the same unit as every other
+    /// money field on a contract.
+    var bonusK: Int
+
+    var id: String { category.rawValue }
+
+    init(category: IncentiveCategory, threshold: Double, bonusK: Int) {
+        self.category = category
+        self.threshold = threshold
+        self.bonusK = max(0, bonusK)
+    }
+
+    /// One-line summary: "1,200 Rushing Yards — $600K".
+    var summary: String {
+        if category.isBinary {
+            return "\(category.displayName) — \(Self.money(bonusK))"
+        }
+        return "\(category.format(threshold)) \(category.displayName) — \(Self.money(bonusK))"
+    }
+
+    static func money(_ thousands: Int) -> String {
+        thousands >= 1_000
+            ? String(format: "$%.1fM", Double(thousands) / 1_000.0)
+            : "$\(thousands)K"
+    }
+}
+
+/// How far along one clause is, for the contract card and the settlement.
+struct IncentiveProgress: Identifiable {
+    let incentive: ContractIncentive
+    /// What the player has banked in the clause's category so far.
+    let achieved: Double
+
+    var id: String { incentive.id }
+    var isEarned: Bool { achieved >= incentive.threshold }
+    /// 0…1, clamped — the progress bar's width.
+    var fraction: Double {
+        guard incentive.threshold > 0 else { return isEarned ? 1 : 0 }
+        return min(1.0, max(0.0, achieved / incentive.threshold))
+    }
+}
+
+// MARK: - Incentive Package Store
+
+/// Where a player's agreed incentive clauses live.
+///
+/// **Why not a column on `Contract`.** Detailed `Contract` rows only ever exist
+/// in realistic cap mode — `FreeAgencyEngine.signFreeAgent` is the single place
+/// that inserts one, and its `.simple` and `.sandbox` branches write the deal
+/// straight onto `Player.contractYearsRemaining` / `annualSalary` instead. A
+/// clause the user negotiated on the extension screen has to survive in every
+/// mode, so hanging the package off a row that two thirds of saves never create
+/// would have shipped a feature that silently does nothing in the default mode.
+///
+/// So the package rides in career-scoped `UserDefaults`, exactly like
+/// `NegotiationLockRegistry` next door: no new SwiftData model, no schema
+/// registration, no migration, and the same `careerID` namespacing every other
+/// piece of career state got in the multi-save wave. One key per save holds a
+/// `[playerID: [ContractIncentive]]` map.
+enum ContractIncentiveRegistry {
+
+    /// Base key — namespaced per save through `CareerScopedDefaults.key`, and
+    /// listed in `CareerScopedDefaults.keys` so deleting a save purges it.
+    static let defaultsKey = "contractIncentivePackages"
+
+    // MARK: Reads
+
+    /// The clauses on this player's current deal (empty when he has none).
+    static func incentives(for player: Player) -> [ContractIncentive] {
+        guard let careerID = player.careerID else { return [] }
+        return map(careerID: careerID)[player.id.uuidString] ?? []
+    }
+
+    /// Whether the player is playing on any incentive at all — the cheap test
+    /// the motivation link and the UI both start from.
+    static func hasIncentives(for player: Player) -> Bool {
+        !incentives(for: player).isEmpty
+    }
+
+    /// Every package in one save, keyed by `player.id.uuidString`.
+    ///
+    /// `incentives(for:)` decodes the whole table on every call, which is the
+    /// right trade for a contract card and the wrong one for a league-wide pass:
+    /// the rollover settlement walks ~2 000 players and only a handful of them
+    /// ever carry a clause. It reads the table once through here and skips
+    /// straight out when it comes back empty (the overwhelmingly common case —
+    /// only the user negotiates clauses).
+    static func allPackages(careerID: UUID) -> [String: [ContractIncentive]] {
+        map(careerID: careerID)
+    }
+
+    // MARK: Writes
+
+    /// Replaces the player's package. An empty array clears him out of the map
+    /// rather than storing an empty entry.
+    static func set(_ incentives: [ContractIncentive], for player: Player) {
+        guard let careerID = player.careerID else { return }
+        var table = map(careerID: careerID)
+        if incentives.isEmpty {
+            table.removeValue(forKey: player.id.uuidString)
+        } else {
+            table[player.id.uuidString] = incentives
+        }
+        write(table, careerID: careerID)
+    }
+
+    /// Drops the package — a cut, a trade to a club that did not take the
+    /// clauses, or a contract that ran out.
+    static func clear(for player: Player) {
+        set([], for: player)
+    }
+
+    /// Drops every package in one save (paired with `CareerScopedDefaults.purge`).
+    static func purge(careerID: UUID) {
+        UserDefaults.standard.removeObject(
+            forKey: CareerScopedDefaults.key(defaultsKey, careerID: careerID)
+        )
+    }
+
+    // MARK: Storage
+
+    private static func map(careerID: UUID) -> [String: [ContractIncentive]] {
+        let key = CareerScopedDefaults.key(defaultsKey, careerID: careerID)
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let table = try? JSONDecoder().decode([String: [ContractIncentive]].self, from: data) else {
+            return [:]
+        }
+        return table
+    }
+
+    private static func write(_ table: [String: [ContractIncentive]], careerID: UUID) {
+        let key = CareerScopedDefaults.key(defaultsKey, careerID: careerID)
+        guard let data = try? JSONEncoder().encode(table) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+}

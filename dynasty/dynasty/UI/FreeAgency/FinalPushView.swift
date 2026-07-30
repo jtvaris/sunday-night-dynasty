@@ -855,7 +855,7 @@ struct FinalPushView: View {
             capMode: career.capMode
         )
         try? modelContext.save()
-        UserDefaults.standard.set(true, forKey: "franchiseTagVisited")
+        CareerScopedDefaults.set(true, "franchiseTagVisited")
         var state = decisions[player.id] ?? PlayerDecisionState()
         state.status = .tagged(salary: player.annualSalary)
         decisions[player.id] = state

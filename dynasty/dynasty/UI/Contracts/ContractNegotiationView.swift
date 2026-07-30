@@ -27,6 +27,16 @@ struct ContractNegotiationView: View {
     @State private var offerBonus: Int = 0
     @State private var offerGuaranteed: Int = 30
 
+    // Incentive builder state (TODO §5.5).
+    //
+    // `incentiveMenu` holds the candidate clauses — position-appropriate, priced
+    // off the agent's opening ask — and `enabledIncentiveIDs` says which of them
+    // are actually on the offer. Splitting them keeps a clause's negotiated
+    // threshold intact while the GM toggles it off and back on.
+    @State private var incentiveMenu: [ContractIncentive] = []
+    @State private var enabledIncentiveIDs: Set<String> = []
+    @State private var showIncentives = false
+
     private let salaryStep = 500
     private let bonusStep = 500
     private let guaranteedStep = 5
@@ -264,6 +274,27 @@ struct ContractNegotiationView: View {
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(Color.textSecondary)
             }
+
+            // §5.5: clauses ride under the money so both bubbles show the same
+            // deal the engine graded.
+            if !offer.incentives.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(offer.incentives) { incentive in
+                        HStack(spacing: 4) {
+                            Image(systemName: "target")
+                                .font(.system(size: 8))
+                                .foregroundStyle(Color.accentGold)
+                            Text(incentive.summary)
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.textSecondary)
+                        }
+                    }
+                    Text("Max \(formatMillions(offer.maxValue))")
+                        .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(10)
         .background(
@@ -343,6 +374,9 @@ struct ContractNegotiationView: View {
             // Cap impact preview
             capPreview
 
+            // Performance clauses (TODO §5.5)
+            incentiveSection
+
             // Yearly breakdown toggle
             yearlyBreakdownSection
 
@@ -394,6 +428,199 @@ struct ContractNegotiationView: View {
                 .foregroundStyle(Color.textSecondary)
         }
         .padding(.horizontal, 4)
+    }
+
+    // MARK: - Incentive Section (TODO §5.5)
+
+    /// The clauses currently ON the offer, in menu order.
+    private var activeIncentives: [ContractIncentive] {
+        incentiveMenu.filter { enabledIncentiveIDs.contains($0.id) }
+    }
+
+    /// What this agent will actually count the active clauses for, across the
+    /// whole deal — the number that decides whether they close the gap.
+    private var creditedIncentiveValue: Int {
+        ContractEngine.creditedIncentiveValue(
+            activeIncentives,
+            player: player,
+            persona: agentPersona,
+            years: max(1, offerYears)
+        )
+    }
+
+    private var incentiveSection: some View {
+        VStack(spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showIncentives.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Performance Incentives")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.textSecondary)
+                    if !activeIncentives.isEmpty {
+                        Text("\(activeIncentives.count)")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Color.backgroundPrimary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentGold, in: Capsule())
+                    }
+                    Spacer()
+                    Image(systemName: showIncentives ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.textTertiary)
+                }
+                .padding(.horizontal, 4)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(showIncentives ? "Collapse performance incentives" : "Expand performance incentives")
+
+            if showIncentives {
+                VStack(spacing: 8) {
+                    if incentiveMenu.isEmpty {
+                        Text("No clauses available for this position.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.textTertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        ForEach(incentiveMenu) { incentive in
+                            incentiveRow(incentive)
+                        }
+                        incentiveFooter
+                    }
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.backgroundPrimary.opacity(0.5))
+                )
+            }
+        }
+    }
+
+    private func incentiveRow(_ incentive: ContractIncentive) -> some View {
+        let isOn = enabledIncentiveIDs.contains(incentive.id)
+        return VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Button {
+                    toggleIncentive(incentive)
+                } label: {
+                    Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 15))
+                        .foregroundStyle(isOn ? Color.accentGold : Color.textTertiary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isOn ? "Remove \(incentive.category.displayName) clause" : "Add \(incentive.category.displayName) clause")
+
+                Text(incentive.category.displayName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isOn ? Color.textPrimary : Color.textTertiary)
+
+                Spacer()
+
+                Text(ContractIncentive.money(incentive.bonusK))
+                    .font(.system(size: 11, weight: .bold).monospacedDigit())
+                    .foregroundStyle(isOn ? Color.accentGold : Color.textTertiary)
+            }
+
+            // Threshold dial. A binary clause (playoff berth) has nothing to
+            // tune, so it shows its odds instead of a stepper.
+            HStack(spacing: 10) {
+                Text(incentive.category.isBinary ? "Reach the postseason" : "Tier")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.textTertiary)
+
+                Spacer()
+
+                if !incentive.category.isBinary {
+                    stepperButton(systemImage: "minus") { adjustThreshold(incentive, direction: -1) }
+                        .disabled(!isOn)
+                    Text(incentive.category.format(incentive.threshold))
+                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .foregroundStyle(isOn ? Color.textPrimary : Color.textTertiary)
+                        .frame(minWidth: 46)
+                    stepperButton(systemImage: "plus") { adjustThreshold(incentive, direction: 1) }
+                        .disabled(!isOn)
+                }
+
+                Text(likelihoodLabel(for: incentive))
+                    .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+                    .frame(minWidth: 56, alignment: .trailing)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var incentiveFooter: some View {
+        VStack(spacing: 4) {
+            Divider().overlay(Color.surfaceBorder.opacity(0.5))
+            HStack {
+                Text("Max \(formatMillions(ContractEngine.maxSeasonIncentiveValue(activeIncentives)))/yr")
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(Color.textSecondary)
+                Spacer()
+                Text("\(agentPersona.styleLabel) credits \(formatMillions(creditedIncentiveValue))")
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(personaColor)
+            }
+            // Says the rule out loud so the cap treatment is never a surprise.
+            Text("Charged to the cap only when earned, at season end.")
+                .font(.system(size: 9))
+                .foregroundStyle(Color.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func likelihoodLabel(for incentive: ContractIncentive) -> String {
+        let p = ContractEngine.incentiveLikelihood(incentive, player: player)
+        return "\(Int((p * 100).rounded()))% odds"
+    }
+
+    /// Step size for one tap on the threshold dial — big enough to matter on a
+    /// yardage tier, exact on a counting one.
+    private func thresholdStep(for category: IncentiveCategory) -> Double {
+        switch category {
+        case .passYards, .rushYards, .recYards: return 50
+        case .sacks:                            return 0.5
+        default:                                return 1
+        }
+    }
+
+    private func adjustThreshold(_ incentive: ContractIncentive, direction: Double) {
+        guard let index = incentiveMenu.firstIndex(where: { $0.id == incentive.id }) else { return }
+        let step = thresholdStep(for: incentive.category)
+        // Floor at one step: a clause worth nothing to reach is not a clause.
+        let next = max(step, incentiveMenu[index].threshold + direction * step)
+        incentiveMenu[index] = ContractIncentive(
+            category: incentiveMenu[index].category,
+            threshold: next,
+            bonusK: incentiveMenu[index].bonusK
+        )
+    }
+
+    private func toggleIncentive(_ incentive: ContractIncentive) {
+        if enabledIncentiveIDs.contains(incentive.id) {
+            enabledIncentiveIDs.remove(incentive.id)
+        } else {
+            enabledIncentiveIDs.insert(incentive.id)
+        }
+    }
+
+    /// Folds clauses the agent wrote himself into the builder, so the GM can see
+    /// (and keep) what he is about to accept.
+    private func absorbAgentIncentives(_ incentives: [ContractIncentive]) {
+        for incentive in incentives {
+            if let index = incentiveMenu.firstIndex(where: { $0.id == incentive.id }) {
+                incentiveMenu[index] = incentive
+            } else {
+                incentiveMenu.append(incentive)
+            }
+            enabledIncentiveIDs.insert(incentive.id)
+        }
+        if !incentives.isEmpty { showIncentives = true }
     }
 
     // MARK: - Yearly Breakdown Section
@@ -590,6 +817,16 @@ struct ContractNegotiationView: View {
         offerSalary = roundToStep(Int(Double(agentOffer.annualSalary) * 0.85))
         offerBonus = roundToStep(Int(Double(agentOffer.signingBonus) * 0.75))
         offerGuaranteed = max(0, agentOffer.guaranteedPercent - 10)
+
+        // §5.5: the clause menu is priced off the agent's ASK, not off the
+        // pre-filled lowball, so the bonuses stay stable while the GM works the
+        // salary dial. Every clause starts switched OFF — incentives are a move
+        // the GM chooses to make.
+        incentiveMenu = ContractEngine.suggestedIncentives(
+            player: player,
+            annualSalaryK: agentOffer.annualSalary
+        )
+        enabledIncentiveIDs = []
     }
 
     private func submitCounterOffer() {
@@ -600,7 +837,8 @@ struct ContractNegotiationView: View {
             annualSalary: offerSalary,
             signingBonus: offerBonus,
             guaranteedPercent: offerGuaranteed,
-            noTradeClause: false
+            noTradeClause: false,
+            incentives: activeIncentives
         )
 
         // Add GM message
@@ -635,6 +873,9 @@ struct ContractNegotiationView: View {
 
         if let counter = result.counterOffer {
             latestAgentOffer = counter
+            // §5.5: an agent who wrote his own clauses gets them shown in the
+            // builder — otherwise "Accept" would sign terms the GM never saw.
+            absorbAgentIncentives(counter.incentives)
         }
 
         outcome = result.outcome
@@ -645,11 +886,12 @@ struct ContractNegotiationView: View {
         case .dealReached(let finalOffer):
             let sysMsg = NegotiationMessage(
                 sender: .system,
-                text: "Deal reached! \(player.fullName) signed for \(formatMillions(finalOffer.totalValue)) over \(finalOffer.years) years.",
+                text: dealSummary(finalOffer),
                 offer: nil
             )
             messages.append(sysMsg)
             scrollTarget = sysMsg.id
+            commitIncentives(finalOffer)
             onDealCompleted?(finalOffer)
 
         case .playerWalked:
@@ -689,14 +931,33 @@ struct ContractNegotiationView: View {
 
         let sysMsg = NegotiationMessage(
             sender: .system,
-            text: "Deal reached! \(player.fullName) signed for \(formatMillions(agentOffer.totalValue)) over \(agentOffer.years) years.",
+            text: dealSummary(agentOffer),
             offer: nil
         )
         messages.append(sysMsg)
 
         outcome = .dealReached(agentOffer)
         scrollTarget = sysMsg.id
+        commitIncentives(agentOffer)
         onDealCompleted?(agentOffer)
+    }
+
+    /// Closing line — names the incentive ceiling when the deal has one, so the
+    /// GM never signs clauses without seeing what they can cost.
+    private func dealSummary(_ offer: NegotiationOffer) -> String {
+        let base = "Deal reached! \(player.fullName) signed for \(formatMillions(offer.totalValue)) over \(offer.years) years."
+        guard !offer.incentives.isEmpty else { return base }
+        return base + " \(offer.incentives.count) performance clause\(offer.incentives.count == 1 ? "" : "s") take it to \(formatMillions(offer.maxValue)) if he hits them all."
+    }
+
+    /// Writes the signed clauses onto the player (TODO §5.5).
+    ///
+    /// Deliberately NOT left to `onDealCompleted`: the four screens that present
+    /// this view each apply the money their own way, and a clause that only
+    /// survived on some of those paths would be worse than no clause at all.
+    /// Always called — an empty package clears whatever the old deal carried.
+    private func commitIncentives(_ offer: NegotiationOffer) {
+        ContractIncentiveRegistry.set(offer.incentives, for: player)
     }
 
     private func walkAway() {

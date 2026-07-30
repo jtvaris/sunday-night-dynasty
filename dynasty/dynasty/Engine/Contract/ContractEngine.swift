@@ -638,4 +638,290 @@ enum ContractEngine {
         }
         return rank(current) >= rank(natural) ? current : natural
     }
+
+    // MARK: - Incentive Valuation (TODO §5.5)
+
+    /// **Cap treatment, in one paragraph.** An incentive counts against the cap
+    /// **when it is earned, at season end** — not when it is written, and never
+    /// prorated. Real NFL accounting splits clauses into "likely to be earned"
+    /// (charged up front, trued up the next league year) and "not likely to be
+    /// earned" (charged only if hit); modelling both would need a second set of
+    /// carry-forward columns on every team row to hold the true-up, for a
+    /// distinction the player never sees. So every clause here behaves like an
+    /// NLTBE clause: free until hit, then a one-time charge in the year it is
+    /// hit. `suggestedIncentives` keeps the whole package inside
+    /// ``incentivePackageCapFraction`` of the annual salary precisely so that
+    /// "free until hit" cannot become a cap loophole worth exploiting.
+    ///
+    /// The charge itself is one line at rollover — see ``evaluateIncentives``.
+
+    /// Ceiling on a whole package, as a fraction of the deal's annual salary.
+    /// 15 % is the line above which incentives stop being a bridge across a
+    /// negotiation gap and start being a way to sign a player the cap says you
+    /// cannot afford.
+    static let incentivePackageCapFraction = 0.15
+
+    /// The tier a player of this rating is expected to be *arguing about* —
+    /// reachable in a good season, missed in an ordinary one.
+    ///
+    /// Anchored at **OVR 74**, the starter line `marketBasePercent` already uses,
+    /// with a per-point slope so the bar tracks the player rather than the
+    /// position average. Because the bar is derived from his own rating, a
+    /// clause left at par is roughly a coin flip for everybody; the negotiation
+    /// dial is what moves it (see ``incentiveLikelihood``).
+    static func parThreshold(for category: IncentiveCategory, overall: Int) -> Double {
+        // Clamped so a 45-OVR camp body and a 99 do not produce absurd bars.
+        let d = Double(max(-20, min(25, overall - 74)))
+
+        func rounded(_ value: Double, to step: Double, floor: Double) -> Double {
+            let clamped = Swift.max(floor, value)
+            return (clamped / step).rounded() * step
+        }
+
+        switch category {
+        case .gamesPlayed:
+            // Availability, not production: 14 of 17 is the bar real deals use.
+            return 14
+        case .passYards:     return rounded(3_600 + 70 * d, to: 50, floor: 2_200)
+        case .passTDs:       return rounded(24 + 0.7 * d, to: 1, floor: 14)
+        case .rushYards:     return rounded(900 + 35 * d, to: 50, floor: 500)
+        case .rushTDs:       return rounded(7 + 0.25 * d, to: 1, floor: 4)
+        case .receptions:    return rounded(60 + 2.0 * d, to: 1, floor: 30)
+        case .recYards:      return rounded(800 + 32 * d, to: 50, floor: 400)
+        case .recTDs:        return rounded(5 + 0.3 * d, to: 1, floor: 3)
+        case .tackles:       return rounded(75 + 2.2 * d, to: 5, floor: 40)
+        case .sacks:         return rounded(6 + 0.45 * d, to: 0.5, floor: 3)
+        case .interceptions: return rounded(2 + 0.15 * d, to: 1, floor: 1)
+        case .fieldGoals:    return rounded(24 + 0.5 * d, to: 1, floor: 15)
+        case .playoffBerth:  return 1
+        }
+    }
+
+    /// Share of the annual salary one clause is worth at par.
+    private static func incentiveWeight(_ category: IncentiveCategory) -> Double {
+        switch category {
+        case .gamesPlayed:  return 0.040   // availability money is cheap money
+        case .playoffBerth: return 0.030   // team outcome, not his to control
+        default:            return 0.055   // a production tier is the real prize
+        }
+    }
+
+    /// A ready-made package to open the incentive conversation with: the top
+    /// clauses from the player's position menu, each set at par and priced off
+    /// the deal on the table, scaled down together if the total would break
+    /// ``incentivePackageCapFraction``.
+    static func suggestedIncentives(
+        player: Player,
+        annualSalaryK: Int,
+        limit: Int = 3
+    ) -> [ContractIncentive] {
+        guard annualSalaryK > 0, limit > 0 else { return [] }
+        let menu = IncentiveCategory.menu(for: player.position).prefix(limit)
+
+        let raw: [ContractIncentive] = menu.map { category in
+            let bonus = Double(annualSalaryK) * incentiveWeight(category)
+            return ContractIncentive(
+                category: category,
+                threshold: parThreshold(for: category, overall: player.overall),
+                bonusK: roundBonus(bonus)
+            )
+        }
+
+        let ceiling = Int(Double(annualSalaryK) * incentivePackageCapFraction)
+        let total = raw.reduce(0) { $0 + $1.bonusK }
+        guard total > ceiling, total > 0 else { return raw }
+
+        let scale = Double(ceiling) / Double(total)
+        return raw.map {
+            ContractIncentive(
+                category: $0.category,
+                threshold: $0.threshold,
+                bonusK: roundBonus(Double($0.bonusK) * scale)
+            )
+        }
+    }
+
+    /// Bonus figures round to $50K and never fall under $100K — below that a
+    /// clause is not worth the row it occupies in the offer sheet.
+    private static func roundBonus(_ thousands: Double) -> Int {
+        Swift.max(100, Int((thousands / 50).rounded()) * 50)
+    }
+
+    /// Probability the player clears this clause in a given season.
+    ///
+    /// A clause left at par is a coin flip by construction, so the number that
+    /// actually moves is the GM's: dropping the bar below par makes the money
+    /// close to guaranteed (and the agent values it as such), raising it turns
+    /// the clause into a lottery ticket the agent all but ignores.
+    static func incentiveLikelihood(_ incentive: ContractIncentive, player: Player) -> Double {
+        let par = parThreshold(for: incentive.category, overall: player.overall)
+
+        switch incentive.category {
+        case .playoffBerth:
+            // 12 clubs of 32 make the field; no dial to turn.
+            return 0.38
+        case .gamesPlayed:
+            let durability = Double(player.physical.durability)
+            var p = 0.55 + 0.003 * (durability - 70)
+            p += 0.045 * (par - incentive.threshold)     // per game off the bar
+            return clampProbability(p)
+        default:
+            guard par > 0 else { return 0 }
+            let ratio = incentive.threshold / par
+            var p = 0.45 + 0.55 * (1.0 - ratio)
+            // Past his peak window the bar set off today's rating gets harder
+            // every year — the same decline curve the market value already prices.
+            let peak = player.position.peakAgeRange
+            if player.age > peak.upperBound {
+                p -= 0.03 * Double(player.age - peak.upperBound)
+            }
+            return clampProbability(p)
+        }
+    }
+
+    private static func clampProbability(_ p: Double) -> Double {
+        Swift.min(0.95, Swift.max(0.05, p))
+    }
+
+    /// Expected payout of a package for ONE season, in thousands.
+    static func expectedSeasonIncentiveValue(
+        _ incentives: [ContractIncentive],
+        player: Player
+    ) -> Int {
+        Int(incentives.reduce(0.0) { total, incentive in
+            total + incentiveLikelihood(incentive, player: player) * Double(incentive.bonusK)
+        }.rounded())
+    }
+
+    /// How much of a clause's expected value an agent will actually count
+    /// against the guaranteed ask.
+    ///
+    /// This is the persona's whole position on incentives. A hardliner is not
+    /// being irrational at 0.35 — he is doing his job: a clause is money his
+    /// client can be injured out of, benched out of, or schemed out of, and it
+    /// pays nothing if the team collapses. A deal-maker takes it near face
+    /// value because it closes deals. A loyalist sits between the two, trusting
+    /// the building more than the paper.
+    static func personaIncentiveCredit(_ persona: AgentPersona) -> Double {
+        switch persona {
+        case .hardliner:   return 0.35
+        case .cooperative: return 0.85
+        case .loyalist:    return 0.65
+        }
+    }
+
+    /// What the agent adds to an offer's total for its incentives, across the
+    /// whole contract — clauses reset every season, so the credit scales with
+    /// the number of years on the deal.
+    static func creditedIncentiveValue(
+        _ incentives: [ContractIncentive],
+        player: Player,
+        persona: AgentPersona,
+        years: Int
+    ) -> Int {
+        guard !incentives.isEmpty, years > 0 else { return 0 }
+        let perSeason = Double(expectedSeasonIncentiveValue(incentives, player: player))
+        return Int((perSeason * personaIncentiveCredit(persona) * Double(years)).rounded())
+    }
+
+    /// Maximum a package can pay in one season if every clause hits.
+    static func maxSeasonIncentiveValue(_ incentives: [ContractIncentive]) -> Int {
+        incentives.reduce(0) { $0 + $1.bonusK }
+    }
+
+    // MARK: - Incentive Progress & Settlement
+
+    /// Result of grading one player's clauses against one season.
+    struct IncentiveSettlement {
+        let playerID: UUID
+        let earned: [ContractIncentive]
+        let missed: [ContractIncentive]
+
+        /// Cap charge the club takes for this season, in thousands.
+        var payoutK: Int { earned.reduce(0) { $0 + $1.bonusK } }
+
+        /// True when the player carried no clauses at all — the common case,
+        /// and the one the rollover path should skip in a single branch.
+        var isEmpty: Bool { earned.isEmpty && missed.isEmpty }
+    }
+
+    /// Grades the season that just finished against the player's clauses.
+    ///
+    /// Pure: it reads the package and the history row and returns a verdict,
+    /// mutating neither. Postseason participation is the playoff-berth test —
+    /// `PlayerSeasonHistory.postGamesPlayed` is credited for every available
+    /// player on a club that played a playoff game, which is exactly the fact
+    /// the clause is written about.
+    ///
+    /// **WIRED — the rollover call.** `FreeAgencyEngine.executeNewLeagueYear`
+    /// grades every live package through
+    /// `evaluateSeasonIncentives(allPlayers:career:modelContext:)` at the top of
+    /// the rollover (before the expiry loop empties `teamID`), and charges the
+    /// earned total to each club right after the league-year cap true-up
+    /// rebuilds `currentCapUsage` — earned = charged, once, and it ages off with
+    /// the league year exactly like the dead money beside it.
+    ///
+    /// Nothing else has to change: the clauses stay on the deal for next season,
+    /// and `ContractIncentiveRegistry.clear(for:)` is the call when the contract
+    /// actually expires or the player is released.
+    static func evaluateIncentives(player: Player, history: PlayerSeasonHistory) -> IncentiveSettlement {
+        // A man nobody employs at season end collects nothing, whatever is still
+        // written in his old package. This is also the safety net for the one
+        // lifecycle hole below: a release does not currently clear the registry,
+        // and without this an old clause could bill a club that cut him in
+        // October. HANDOFF: the release and contract-expiry paths should call
+        // `ContractIncentiveRegistry.clear(for:)` so the stale rows go away too.
+        guard player.teamID != nil else {
+            return IncentiveSettlement(playerID: player.id, earned: [], missed: [])
+        }
+
+        let progress = incentiveProgress(
+            ContractIncentiveRegistry.incentives(for: player),
+            line: history.statLine,
+            gamesPlayed: history.gamesPlayed,
+            reachedPlayoffs: history.postGamesPlayed > 0
+        )
+        return IncentiveSettlement(
+            playerID: player.id,
+            earned: progress.filter { $0.isEarned }.map(\.incentive),
+            missed: progress.filter { !$0.isEarned }.map(\.incentive)
+        )
+    }
+
+    /// Live, mid-season progress against the clauses the player is carrying —
+    /// what the contract card renders. The playoff clause cannot be graded
+    /// before the bracket exists, so it reads as "not yet" until the caller
+    /// knows otherwise.
+    static func liveIncentiveProgress(
+        for player: Player,
+        reachedPlayoffs: Bool = false
+    ) -> [IncentiveProgress] {
+        incentiveProgress(
+            ContractIncentiveRegistry.incentives(for: player),
+            line: player.seasonStatLine,
+            gamesPlayed: player.gamesPlayedThisSeason,
+            reachedPlayoffs: reachedPlayoffs
+        )
+    }
+
+    /// Shared grader. Clauses whose category is not on the player's current
+    /// position menu are still graded — a player who changed position keeps the
+    /// deal he signed.
+    static func incentiveProgress(
+        _ incentives: [ContractIncentive],
+        line: SeasonStatLine,
+        gamesPlayed: Int,
+        reachedPlayoffs: Bool
+    ) -> [IncentiveProgress] {
+        incentives.map { incentive in
+            IncentiveProgress(
+                incentive: incentive,
+                achieved: incentive.category.achieved(
+                    line: line,
+                    gamesPlayed: gamesPlayed,
+                    reachedPlayoffs: reachedPlayoffs
+                )
+            )
+        }
+    }
 }

@@ -221,7 +221,8 @@ struct NewLeagueYearView: View {
             allPlayers: allPlayers,
             allTeams: allTeams,
             playerTeamID: teamID,
-            modelContext: modelContext
+            modelContext: modelContext,
+            career: career
         )
 
         // Track lost players (those who were on our team and became FAs)

@@ -47,6 +47,19 @@ enum AgentPersona: String, CaseIterable {
         return agentNamePool[index]
     }
 
+    /// A name from the same pool for a surface with no player to key on — the
+    /// offseason cold-call in `InboxEngine`, which is an agent talking about
+    /// "several clients" rather than about one man.
+    ///
+    /// This is the ONLY other agent-name source in the app on purpose: the pool
+    /// below is the one place a name has to clear the anonymization gate
+    /// (`tools/league-data/scan_bundle.py`, check F), and a second literal list
+    /// somewhere else is exactly how five real, working NFL agents shipped in
+    /// `InboxEngine` unnoticed.
+    static func randomAgentName() -> String {
+        agentNamePool.randomElement() ?? agentNamePool[0]
+    }
+
     /// Packs 8 UUID bytes (starting at `byteOffset`, wrapping at 16) into a UInt64.
     private static func uuidValue(_ id: UUID, byteOffset: Int) -> UInt64 {
         let b = id.uuid
@@ -151,7 +164,13 @@ enum AgentPersona: String, CaseIterable {
 /// `WeekAdvancer.startNewSeason`.
 enum NegotiationLockRegistry {
 
-    private static let key = "negotiationLockedPlayerIDs"
+    /// Base key — namespaced per save through `CareerScopedDefaults.scopedKey`.
+    /// The bare key is never touched: `migrateGlobalKeys` moves the legacy value
+    /// to the scoped one and deletes the global, so a registry still reading the
+    /// bare key would report "nobody is locked" for every save after the update.
+    private static let baseKey = "negotiationLockedPlayerIDs"
+
+    private static var key: String { CareerScopedDefaults.scopedKey(baseKey) }
 
     /// Marks a player's agent as refusing further talks this offseason.
     static func lock(_ playerID: UUID) {
