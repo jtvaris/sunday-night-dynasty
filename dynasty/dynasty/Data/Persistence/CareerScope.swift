@@ -39,6 +39,7 @@ extension OpponentPrepWeek: CareerScoped {}
 extension VoluntaryWorkout: CareerScoped {}
 extension HardKnocksEvent: CareerScoped {}
 extension TradeRecord: CareerScoped {}
+extension TeamSeasonArchive: CareerScoped {}
 
 // MARK: - CareerScope
 
@@ -49,6 +50,11 @@ extension TradeRecord: CareerScoped {}
 /// a **non-optional** `careerID` in its `init` and has been correct since day
 /// one, so it never needs adoption. It IS covered by `cascadeDelete` and
 /// `debugCounts`, which handle it explicitly.
+///
+/// `TeamSeasonArchive` (TODO §5.2) is `CareerScoped` but likewise absent from
+/// the adoption pass: the table was born after this wave, so an unstamped row
+/// cannot exist in any store. It is covered by `cascadeDelete` and both audits,
+/// which is where a forgotten stamp would actually show up.
 enum CareerScope {
 
     /// Schema version written to `Career.schemaBackfillVersion` once a save's
@@ -292,6 +298,7 @@ enum CareerScope {
         plan(VoluntaryWorkout.self, "VoluntaryWorkout", #Predicate { $0.careerID == cid })
         plan(HardKnocksEvent.self, "HardKnocksEvent", #Predicate { $0.careerID == cid })
         plan(TradeRecord.self, "TradeRecord", #Predicate { $0.careerID == cid })
+        plan(TeamSeasonArchive.self, "TeamSeasonArchive", #Predicate { $0.careerID == cid })
 
         for run in deletes { run() }
 
@@ -364,6 +371,7 @@ enum CareerScope {
         count("VoluntaryWorkout", #Predicate<VoluntaryWorkout> { $0.careerID == nil })
         count("HardKnocksEvent", #Predicate<HardKnocksEvent> { $0.careerID == nil })
         count("TradeRecord", #Predicate<TradeRecord> { $0.careerID == nil })
+        count("TeamSeasonArchive", #Predicate<TeamSeasonArchive> { $0.careerID == nil })
         return parts.joined(separator: " ")
     }
 
@@ -426,6 +434,7 @@ enum CareerScope {
         audit(VoluntaryWorkout.self, "VoluntaryWorkout")
         audit(HardKnocksEvent.self, "HardKnocksEvent")
         audit(TradeRecord.self, "TradeRecord")
+        audit(TeamSeasonArchive.self, "TeamSeasonArchive")
 
         let header = "CAREERID-AUDIT [\(label)] careers=\(careers.count) "
             + careers.map { "\($0.playerName)/\($0.currentSeason)" }.joined(separator: ", ")
@@ -473,7 +482,21 @@ enum CareerScopedDefaults {
         "personalWorkoutsUsed",
         "scoutingPendingTab",
         "negotiationLockedPlayerIDs",
+        // TODO §5.5 — `ContractIncentiveRegistry.defaultsKey`. Listed so a
+        // deleted save purges its incentive packages with everything else.
+        "contractIncentivePackages",
     ]
+
+    /// Every read of a key above goes through `CareerScopedDefaults.scopedKey`
+    /// (see `CareerScopedStorage.swift`) or `@CareerScopedStorage`.
+    ///
+    /// **Nothing may read these bare.** `migrateGlobalKeys` moves the legacy
+    /// global value onto the scoped key and then DELETES the global, so a bare
+    /// read is not merely unscoped — it returns nothing at all from the first
+    /// launch after this wave, which is how the roster notes, prospect board,
+    /// watchlist and priorities all read as empty. `@AppStorage` cannot be used
+    /// on these keys for the same reason: its key is fixed at declaration time,
+    /// when the open career is not yet known.
 
     /// `"rosterNotes"` -> `"rosterNotes.<career-uuid>"`.
     static func key(_ base: String, careerID: UUID) -> String {

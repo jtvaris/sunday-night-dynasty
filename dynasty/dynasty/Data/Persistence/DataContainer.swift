@@ -32,6 +32,7 @@ enum DataContainer {
             VoluntaryWorkout.self,
             HardKnocksEvent.self,
             TradeRecord.self,
+            TeamSeasonArchive.self,
         ])
         let config = ModelConfiguration(isStoredInMemoryOnly: false)
         do {
