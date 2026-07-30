@@ -1,13 +1,18 @@
 import SwiftUI
 
-/// Draft-day pick-swap offer banner (wired to `pendingPickOffer` since R24).
+/// Draft-day trade offer banner (wired to `pendingTradeOffer`).
 ///
 /// Visual contract: gold-bordered card, slides in from the top edge, presents
-/// motive + outgoing/incoming asset summaries with Accept / Decline actions.
+/// the GM who called + his motive + outgoing/incoming asset summaries with
+/// Accept / Decline actions. Since Wave 4 the assets on either side can be
+/// picks (this year's or a future one) or veterans, so the columns render
+/// whatever string the offer hands them.
 struct TradeOfferBanner: View {
     let motive: String
     let outgoing: String        // e.g. "#5 (R1)"
-    let incoming: String        // e.g. "#11 (R1) + #43 (R2)"
+    let incoming: String        // e.g. "#11 (R1) + 2028 R1"
+    /// "Ray Pellman · Analytics" — who is on the other end of the phone.
+    var gmLine: String? = nil
     var valueSummary: String? = nil   // e.g. "you send 1100 pts · receive 1180 pts"
     let onAccept: () -> Void
     let onDecline: () -> Void
@@ -24,11 +29,17 @@ struct TradeOfferBanner: View {
                     .tracking(1.4)
                     .foregroundStyle(Color.draftStealGold)
                 Spacer()
+                if let gmLine {
+                    Text(gmLine)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                }
             }
             Text(motive)
                 .font(.callout)
                 .foregroundStyle(Color.textPrimary)
-                .lineLimit(2)
+                .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: DSSpacing.sm) {
                 tradeColumn(title: "You Send", value: outgoing)
@@ -89,7 +100,8 @@ struct TradeOfferBanner: View {
             Text(value)
                 .font(.callout.weight(.semibold))
                 .foregroundStyle(Color.textPrimary)
-                .lineLimit(2)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

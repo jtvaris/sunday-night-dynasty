@@ -73,17 +73,23 @@ struct DraftDayView: View {
                     .padding(.bottom, DSSpacing.xl)
             }
 
+            // League trades cut in over the board (AI-vs-AI swaps and the
+            // user's own deals) — Wave 4 renders what was previously a
+            // write-only `DraftEvent`.
+            TradeBeatBanner(coordinator: coord)
+
             // Trade offer banner pinned to the top edge when an AI partner
-            // proposes a pick swap (R24 — real picks on both sides).
-            if let offer = coord.pendingPickOffer, coord.mode != .userPick {
+            // proposes a deal (Wave 4 — picks, future picks and veterans).
+            if let offer = coord.pendingTradeOffer, coord.mode != .userPick {
                 VStack {
                     TradeOfferBanner(
                         motive: offer.motive,
-                        outgoing: offer.userGives.map { "#\($0.pickNumber) (R\($0.round))" }.joined(separator: " + "),
-                        incoming: offer.userGets.map { "#\($0.pickNumber) (R\($0.round))" }.joined(separator: " + "),
+                        outgoing: offer.givesLabel(currentSeason: coord.draftYear),
+                        incoming: offer.getsLabel(currentSeason: coord.draftYear),
+                        gmLine: "\(offer.gmName) · \(offer.gmStyle)",
                         valueSummary: "Chart value: you send \(offer.userGivesValue) pts · receive \(offer.userGetsValue) pts",
-                        onAccept: { coord.acceptPickOffer() },
-                        onDecline: { coord.declinePickOffer() }
+                        onAccept: { coord.acceptTradeOffer() },
+                        onDecline: { coord.declineTradeOffer() }
                     )
                     .padding(.top, DSSpacing.md)
                     .padding(.horizontal, DSSpacing.md)
@@ -122,6 +128,16 @@ struct DraftDayView: View {
             if let recap = coord.pendingRoundRecap {
                 RoundRecapSheet(coordinator: coord, recap: recap)
             }
+        }
+        // The move-up call sheet, presented from the war room / big board while
+        // an AI club is on the clock. Two `.sheet` modifiers on one view cannot
+        // both present, so the on-the-clock case is presented from INSIDE
+        // `PickSheetView` instead — same coordinator state, one sheet each.
+        .sheet(isPresented: Binding(
+            get: { coord.isTradeUpBoardOpen && coord.mode != .userPick },
+            set: { if !$0 { coord.closeTradeUpBoard() } }
+        )) {
+            TradeUpBoardSheet(coordinator: coord)
         }
     }
 }

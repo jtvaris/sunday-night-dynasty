@@ -47,9 +47,54 @@ final class DraftDayCoordinator: ObservableObject {
     @Published private(set) var allPickResults: [PickResult] = []
     @Published private(set) var lastRoundShown: Int = 0
 
-    // R24 — pick-swap trades (real DraftPick rows on both sides)
-    @Published private(set) var pendingPickOffer: DraftDayTradeEngine.PickSwapOffer?
+    // MARK: - Trades (R24 pick swaps, rebuilt in Wave 4)
+
+    /// The offer on the table: an AI club buying one of the user's picks, or a
+    /// move-up quote the user asked for. Real `DraftPick` rows and real
+    /// `Player`s on both sides.
+    @Published private(set) var pendingTradeOffer: DraftDayTradeEngine.DraftTradeOffer?
     @Published private(set) var tradeDownMessage: String?
+
+    /// Later-year picks the user and the other 31 clubs own — the bridges that
+    /// make the top of the board reachable (plan §6 Wave 1.1 minted them, Wave 4
+    /// is the first code that spends them).
+    @Published private(set) var futurePicks: [DraftPick] = []
+
+    /// Trades that have happened tonight, newest first. One line per persisted
+    /// `DraftEvent` of a trade kind — those rows were write-only before Wave 4
+    /// (plan finding S6: "trade events are persisted and never rendered").
+    @Published private(set) var tradeTicker: [TradeTickerLine] = []
+
+    /// Queue of league-trade moments big enough to interrupt the broadcast.
+    @Published private(set) var pendingTradeBeats: [TradeBeat] = []
+
+    /// "Call about moving up" sheet state.
+    @Published private(set) var isTradeUpBoardOpen = false
+    @Published private(set) var tradeUpQuotes: [DraftDayTradeEngine.DraftTradeOffer] = []
+    @Published private(set) var tradeUpProspect: CollegeProspect?
+    @Published private(set) var tradeUpMessage: String?
+    /// Whether the user is willing to put veterans in the package.
+    @Published private(set) var tradeUpIncludesVeterans = false
+
+    /// One rendered trade line. `pickNumber` is the slot the deal was about, so
+    /// the ticker can sort trades into the pick order they interrupted.
+    struct TradeTickerLine: Identifiable {
+        let id = UUID()
+        let pickNumber: Int?
+        let headline: String
+        let detail: String
+        let involvesUser: Bool
+    }
+
+    /// A league trade worth a broadcast beat (round 1-2, or a deal with a
+    /// veteran in it). Deliberately a local type rather than a new
+    /// `DraftDramaEngine.DramaEvent` case: the drama engine is shared code and
+    /// a trade beat needs none of its pick-grade heuristics.
+    struct TradeBeat: Identifiable, Equatable {
+        let id = UUID()
+        let title: String
+        let subtitle: String
+    }
 
     // R24 — UDFA stage after the final pick
     @Published private(set) var udfaPool: [CollegeProspect] = []
@@ -61,8 +106,31 @@ final class DraftDayCoordinator: ObservableObject {
     /// One trade-down search per pick — prevents re-rolling the dice.
     private var tradeDownSearchedPickNumber: Int?
 
-    /// User picks whose AI trade-up offer was declined — no nagging re-offers.
+    /// Slot the AI-vs-AI market has already been rolled for.
+    private var swapRolledPickNumber: Int?
+
+    /// User picks whose INCOMING (AI-initiated) trade-up offer was declined —
+    /// no nagging re-offers on the same pick.
     private var declinedTradeUpPickNumbers: Set<Int> = []
+
+    /// User picks he shopped himself and then walked away from.
+    ///
+    /// Wave 4 bug fix (plan finding S6): both sets used to be one, and since a
+    /// trade-DOWN offer also lists the user's pick under `userGives`, turning
+    /// down a price he had asked for permanently blocked rival GMs from calling
+    /// about that same pick. Two sets, keyed off who picked up the phone.
+    private var declinedTradeDownPickNumbers: Set<Int> = []
+
+    /// Cached GM market views (persona + stance + starter-quality needs), built
+    /// on demand and invalidated for the two clubs in any executed trade.
+    /// Rebuilding 32 of them per dice roll would cost more than the draft.
+    private var marketSeats: [UUID: TradeValueEngine.GMMarketView] = [:]
+    private var leagueCoreReference: Double = 80.0
+    /// Every pro player in the league at load, for market views and for the
+    /// `TradeEngine.executeTrade` lookup. Rookies drafted tonight are added to
+    /// `rosters` but not here on purpose: a draft-night need is graded on the
+    /// roster a GM walked into the building with.
+    private var allLeaguePlayers: [Player] = []
 
     // MARK: - Reputation snapshot (used to compute round-recap deltas)
 
@@ -198,6 +266,18 @@ final class DraftDayCoordinator: ObservableObject {
         self.availableProspects = availablePool
         self.rosters = Dictionary(grouping: allPlayers, by: { $0.teamID ?? UUID() })
 
+        // Wave 4: later-year picks are tradable assets on draft night — they
+        // are the only thing that reaches the top of the board (finding S6).
+        let futureFetch = FetchDescriptor<DraftPick>(
+            predicate: #Predicate { $0.careerID == cid && $0.seasonYear > season },
+            sortBy: [SortDescriptor(\.seasonYear), SortDescriptor(\.round)]
+        )
+        self.futurePicks = ((try? modelContext.fetch(futureFetch)) ?? []).filter { !$0.isComplete }
+
+        self.allLeaguePlayers = allPlayers
+        self.leagueCoreReference = TradeValueEngine.leagueCoreReference(allPlayers: allPlayers)
+        self.marketSeats = [:]
+
         // Resolve each team's coordinator schemes once (#33 OSA B) so pick
         // grades can score a prospect against the drafting team's actual
         // offensive/defensive system instead of a flat placeholder.
@@ -323,99 +403,107 @@ final class DraftDayCoordinator: ObservableObject {
         advance()
     }
 
-    // MARK: - Trade offers (R24 — pick swaps on real DraftPick rows)
+    // MARK: - Trades (R24 pick swaps, rebuilt in Wave 4)
 
-    /// Called by UI when the user accepts the pending pick-swap offer.
-    /// Ownership flips on the real picks, so the draft continues in the
-    /// correct order with the new owners on the clock.
-    func acceptPickOffer() {
-        guard let offer = pendingPickOffer, let teamID = userTeamID else { return }
+    /// The board every trade decision is read off. `seat` is a closure so the
+    /// engine can price as many clubs as it likes while the cache lives here.
+    private var tradeBoard: DraftDayTradeEngine.Board {
+        DraftDayTradeEngine.Board(
+            picks: picks,
+            futurePicks: futurePicks,
+            currentPickIndex: currentPickIndex,
+            currentSeason: career.currentSeason,
+            availableProspects: availableProspects,
+            publicBoardRanks: publicBoardRanks,
+            seat: { [weak self] teamID in self?.seat(for: teamID) }
+        )
+    }
+
+    /// One club's GM chair: persona (hidden chart lean), stance and
+    /// starter-quality needs. Cached — see `marketSeats`.
+    private func seat(for teamID: UUID) -> TradeValueEngine.GMMarketView? {
+        if let cached = marketSeats[teamID] { return cached }
+        guard let team = teamsByID[teamID] else { return nil }
+        let view = TradeValueEngine.marketView(
+            team: team,
+            allPlayers: allLeaguePlayers,
+            season: career.currentSeason,
+            week: career.currentWeek,
+            coreReference: leagueCoreReference
+        )
+        marketSeats[teamID] = view
+        return view
+    }
+
+    // MARK: Accept / decline
+
+    /// The user accepts whatever is on the table.
+    ///
+    /// Wave 4 routes draft-day deals through `TradeEngine.executeTrade` instead
+    /// of flipping `currentTeamID` by hand: the offer can now carry veterans in
+    /// either direction, and only the one primitive gets the cap split, the
+    /// contract re-point and the ledger row right.
+    func acceptTradeOffer() {
+        guard let offer = pendingTradeOffer, let teamID = userTeamID else { return }
         guard isOfferStillValid(offer) else {
-            pendingPickOffer = nil
+            pendingTradeOffer = nil
+            tradeDownMessage = "That offer is off the table — the assets have moved."
             return
         }
-        // Wave 0 ledger (`docs/TRADE_OVERHAUL_PLAN.md`): pick swaps bypass
-        // `TradeEngine.executeTrade` — they move `DraftPick` rows directly —
-        // so the row is written here, before ownership flips. The offer already
-        // carries both sides' JJ points from `TradeValueEngine`.
-        let record = TradeLedger.recordPickSwap(
-            initiatorTeamID: teamID,
-            partnerTeamID: offer.partnerTeamID,
-            picksSent: offer.userGives,
-            picksReceived: offer.userGets,
-            sentValue: offer.userGivesValue,
-            receivedValue: offer.userGetsValue,
-            context: TradeLedger.Context(
-                kind: .draftDay,
-                season: career.currentSeason,
-                week: career.currentWeek,
-                phase: career.currentPhase
-            ),
-            modelContext: modelContext
-        )
-
-        // Wave 2: every executed trade in the league is announced, and a
-        // draft-weekend swap is no exception — the war-room ticker is not the
-        // news feed, and a deal the user made in April should still be readable
-        // in July. The headline goes straight into the persisted `newsLog`
-        // (there is no week advance in progress to fold it in), while the
-        // optional inbox message rides the normal `lastInboxMessages` channel
-        // the shell collects on the next phase change.
-        let announcement = TradeNewsFactory.announce(
-            record: record,
-            teamsByID: teamsByID,
-            userTeamID: teamID
-        )
-        career.newsLog = [announcement.news] + career.newsLog
-        if let inbox = announcement.inbox {
-            WeekAdvancer.lastInboxMessages.append(inbox)
+        guard execute(offer: offer, userTeamID: teamID) else {
+            // The one primitive refused (unknown team / unbound career). Say so
+            // rather than clearing the banner and pretending the deal happened.
+            tradeDownMessage = "The deal could not be processed. Nothing changed."
+            return
         }
-        for pick in offer.userGives {
-            pick.currentTeamID = offer.partnerTeamID
-            pick.teamAbbreviation = teamsByID[offer.partnerTeamID]?.abbreviation
-        }
-        for pick in offer.userGets {
-            pick.currentTeamID = teamID
-            pick.teamAbbreviation = teamsByID[teamID]?.abbreviation
-        }
-        recordEvent(
-            type: .tradeAccepted,
-            teamID: offer.partnerTeamID,
-            pickNumber: offer.userGives.first?.pickNumber,
-            round: offer.userGives.first?.round
-        )
-        try? modelContext.save()
-        pendingPickOffer = nil
+        pendingTradeOffer = nil
         tradeDownMessage = nil
 
-        // If the pick on the clock just changed hands (trade down), restart
-        // the pick flow so the AI partner goes on the clock immediately.
-        if let current = currentPick, current.currentTeamID != teamID, mode == .userPick {
-            beginCurrentPick()
+        // If the pick on the clock just changed hands, restart the pick flow so
+        // the new owner (either side) goes on the clock immediately.
+        if let current = currentPick {
+            let ownerChanged = (mode == .userPick && current.currentTeamID != teamID)
+                || (mode != .userPick && current.currentTeamID == teamID)
+            if ownerChanged { beginCurrentPick() }
         }
     }
 
-    /// Called by UI when the user rejects the pending pick-swap offer.
-    func declinePickOffer() {
-        if let offer = pendingPickOffer {
-            if let pickNumber = offer.userGives.first?.pickNumber {
-                declinedTradeUpPickNumbers.insert(pickNumber)
+    /// The user turns the offer down.
+    func declineTradeOffer() {
+        guard let offer = pendingTradeOffer else { return }
+        let pickNumber = offer.kind == .userMovesDown
+            ? offer.userGivesPicks.first?.pickNumber
+            : offer.userGetsPicks.first?.pickNumber
+        if let pickNumber {
+            switch offer.origin {
+            case .aiCall:   declinedTradeUpPickNumbers.insert(pickNumber)
+            case .userCall: declinedTradeDownPickNumbers.insert(pickNumber)
             }
-            recordEvent(
-                type: .tradeDeclined,
-                teamID: offer.partnerTeamID,
-                pickNumber: offer.userGives.first?.pickNumber,
-                round: nil
-            )
         }
-        pendingPickOffer = nil
+        recordTradeEvent(
+            type: .tradeDeclined,
+            teamID: offer.partnerTeamID,
+            pickNumber: pickNumber,
+            round: nil,
+            headline: "\(offer.partnerAbbreviation) hung up",
+            detail: "You passed on \(offer.gmName)'s offer\(pickNumber.map { " for #\($0)" } ?? "").",
+            involvesUser: true,
+            beat: nil
+        )
+        pendingTradeOffer = nil
     }
+
+    // MARK: Trade DOWN (user shops the pick he is on the clock with)
 
     /// User taps "Trade Down" while on the clock: search for a willing AI
     /// partner. One search per pick — if the league passes, that's the answer.
     func requestTradeDown() {
         guard isUserOnClock, let pick = currentPick, let teamID = userTeamID else { return }
-        guard pendingPickOffer == nil else { return }
+        guard pendingTradeOffer == nil else { return }
+        if declinedTradeDownPickNumbers.contains(pick.pickNumber) {
+            tradeDownMessage = "You already turned down the price on #\(pick.pickNumber)."
+            return
+        }
         if tradeDownSearchedPickNumber == pick.pickNumber {
             if tradeDownMessage == nil {
                 tradeDownMessage = "You already shopped this pick — no new callers."
@@ -426,33 +514,115 @@ final class DraftDayCoordinator: ObservableObject {
 
         if let offer = DraftDayTradeEngine.userTradeDownOffer(
             currentPick: pick,
-            picks: picks,
-            currentPickIndex: currentPickIndex,
-            userTeamID: teamID,
-            teamsByID: teamsByID,
-            rosters: rosters,
-            availableProspects: availableProspects,
-            publicBoardRanks: publicBoardRanks,
-            currentSeason: career.currentSeason
+            board: tradeBoard,
+            userTeamID: teamID
         ) {
-            pendingPickOffer = offer
+            pendingTradeOffer = offer
             tradeDownMessage = nil
-            recordEvent(
+            recordTradeEvent(
                 type: .tradeOffered,
                 teamID: offer.partnerTeamID,
                 pickNumber: pick.pickNumber,
-                round: pick.round
+                round: pick.round,
+                headline: "\(offer.partnerAbbreviation) call about #\(pick.pickNumber)",
+                detail: offer.motive,
+                involvesUser: true,
+                beat: nil
             )
         } else {
             tradeDownMessage = "No teams are willing to move up to #\(pick.pickNumber) right now."
         }
     }
 
-    /// Called from beginCurrentPick: when the user is 1-3 picks from the
-    /// clock, an AI team may offer to trade up into the user's pick.
+    // MARK: Trade UP (the user calls)
+
+    /// Opens the call sheet. Freezes the clock without touching `mode`, so the
+    /// pick sheet stays up when the user calls from his own turn.
+    func openTradeUpBoard(for prospect: CollegeProspect? = nil) {
+        guard userTeamID != nil, mode != .complete, mode != .loading else { return }
+        clockTask?.cancel()
+        tradeUpProspect = prospect
+        isTradeUpBoardOpen = true
+        refreshTradeUpQuotes()
+    }
+
+    func closeTradeUpBoard() {
+        guard isTradeUpBoardOpen else { return }
+        isTradeUpBoardOpen = false
+        tradeUpQuotes = []
+        tradeUpProspect = nil
+        tradeUpMessage = nil
+        if mode == .playing || mode == .userPick {
+            startClockLoop(forUser: mode == .userPick)
+        }
+    }
+
+    /// Veterans in the package are opt-in: most users are shopping picks, and a
+    /// builder that silently offered up a starter would be a nasty surprise.
+    func setTradeUpIncludesVeterans(_ enabled: Bool) {
+        guard tradeUpIncludesVeterans != enabled else { return }
+        tradeUpIncludesVeterans = enabled
+        if isTradeUpBoardOpen { refreshTradeUpQuotes() }
+    }
+
+    /// Re-prices every callable slot ahead of the user.
+    func refreshTradeUpQuotes() {
+        guard let teamID = userTeamID else { return }
+        let board = tradeBoard
+        var targets = DraftDayTradeEngine.tradeUpTargets(board: board, userTeamID: teamID)
+        if let prospect = tradeUpProspect, let rank = publicBoardRanks[prospect.id] {
+            // Only slots where he is plausibly still there: a few picks either
+            // side of his consensus rank. Falling back to the full list keeps
+            // the sheet from ever being empty for a prospect the user starred.
+            let narrowed = targets.filter { $0.pickNumber >= max(1, rank - 8) }
+            if !narrowed.isEmpty { targets = narrowed }
+        }
+        tradeUpQuotes = targets.compactMap { target in
+            DraftDayTradeEngine.userTradeUpQuote(
+                targetPick: target,
+                board: board,
+                userTeamID: teamID,
+                allowPlayers: tradeUpIncludesVeterans,
+                targetProspect: tradeUpProspect
+            )
+        }
+        tradeUpMessage = tradeUpQuotes.isEmpty
+            ? "Nobody ahead of you is picking up the phone."
+            : nil
+    }
+
+    /// Commits one quote from the call sheet.
+    func acceptTradeUpQuote(_ quote: DraftDayTradeEngine.DraftTradeOffer) {
+        guard quote.isAffordable, let teamID = userTeamID else { return }
+        guard isOfferStillValid(quote) else {
+            tradeUpMessage = "That pick is gone — re-price the board."
+            refreshTradeUpQuotes()
+            return
+        }
+        guard execute(offer: quote, userTeamID: teamID) else {
+            tradeUpMessage = "The deal could not be processed. Nothing changed."
+            return
+        }
+        closeTradeUpBoard()
+        if let current = currentPick, current.currentTeamID == teamID, mode != .userPick {
+            beginCurrentPick()
+        }
+    }
+
+    // MARK: Incoming AI calls
+
+    /// Called from the pick flow: when the user is 1-3 picks from the clock, an
+    /// AI team may offer to trade up into the user's pick.
+    ///
+    /// Wave 4 (plan finding S6): this also runs inside `autoAdvanceUntil`, so
+    /// the flagship moment finally fires on the skip path — the only way anyone
+    /// plays a 224-pick draft. The fast-forward loop stops as soon as an offer
+    /// lands, which is what "roll offers before the fast-forward resumes" means
+    /// in practice.
     private func considerAITradeUpOffer() {
         guard !isUserOnClock,
-              pendingPickOffer == nil,
+              pendingTradeOffer == nil,
+              !isTradeUpBoardOpen,
               let teamID = userTeamID else { return }
         let until = picksUntilUserPick
         guard until >= 1, until <= 3 else { return }
@@ -463,40 +633,253 @@ final class DraftDayCoordinator: ObservableObject {
 
         if let offer = DraftDayTradeEngine.aiTradeUpOffer(
             userPick: userPick,
-            picks: picks,
-            currentPickIndex: currentPickIndex,
-            userTeamID: teamID,
-            teamsByID: teamsByID,
-            rosters: rosters,
-            availableProspects: availableProspects,
-            publicBoardRanks: publicBoardRanks,
-            currentSeason: career.currentSeason
+            board: tradeBoard,
+            userTeamID: teamID
         ) {
-            pendingPickOffer = offer
-            recordEvent(
+            pendingTradeOffer = offer
+            recordTradeEvent(
                 type: .tradeOffered,
                 teamID: offer.partnerTeamID,
                 pickNumber: userPick.pickNumber,
-                round: userPick.round
+                round: userPick.round,
+                headline: "\(offer.partnerAbbreviation) want #\(userPick.pickNumber)",
+                detail: offer.motive,
+                involvesUser: true,
+                beat: nil
             )
         }
     }
 
-    /// A pending offer survives only while every pick on both sides is still
-    /// owned by the expected team and hasn't been used yet.
-    private func isOfferStillValid(_ offer: DraftDayTradeEngine.PickSwapOffer) -> Bool {
-        guard let teamID = userTeamID else { return false }
-        let currentNumber = currentPick?.pickNumber ?? Int.max
-        for pick in offer.userGives {
-            guard pick.currentTeamID == teamID, !pick.isComplete,
-                  pick.pickNumber >= currentNumber else { return false }
-        }
-        for pick in offer.userGets {
-            guard pick.currentTeamID == offer.partnerTeamID, !pick.isComplete,
-                  pick.pickNumber >= currentNumber else { return false }
-        }
+    // MARK: AI vs AI (plan finding S6 — the "31 mannequins")
+
+    /// Rolls one AI-vs-AI move-up into the pick about to be made. Runs on both
+    /// the live path and the fast-forward path, so a skipped draft still reads
+    /// like a draft.
+    private func considerAIvsAISwap() {
+        guard let pick = currentPick, !pick.isComplete else { return }
+        guard pick.currentTeamID != userTeamID else { return }
+        // One roll per slot. `beginCurrentPick` runs again after an accepted
+        // offer and after the fast-forward stops, and without this a single
+        // pick could be shopped three times at three separate odds.
+        guard swapRolledPickNumber != pick.pickNumber else { return }
+        swapRolledPickNumber = pick.pickNumber
+        guard Double.random(in: 0..<1) < DraftDayTradeEngine.aiSwapChance(round: pick.round) else { return }
+        guard let swap = DraftDayTradeEngine.aiVsAiSwap(board: tradeBoard, userTeamID: userTeamID) else { return }
+        execute(swap: swap)
+    }
+
+    private func execute(swap: DraftDayTradeEngine.AISwap) {
+        let proposal = TradeProposal(
+            offeringTeamID: swap.buyerTeamID,
+            receivingTeamID: swap.sellerTeamID,
+            sendingPlayers: swap.buyerGives.compactMap { asset in
+                if case .player(let player) = asset { return player.id } else { return nil }
+            },
+            receivingPlayers: [],
+            sendingPicks: swap.buyerGives.compactMap { asset in
+                if case .pick(let pick) = asset { return pick.id } else { return nil }
+            },
+            receivingPicks: swap.sellerGives.map(\.id)
+        )
+        guard let record = applyTrade(proposal: proposal) else { return }
+        settleAfterTrade(
+            proposal: proposal,
+            record: record,
+            teamIDs: [swap.buyerTeamID, swap.sellerTeamID]
+        )
+
+        let hasVeteran = swap.buyerGives.contains { if case .player = $0 { return true } else { return false } }
+        let notable = (currentPick?.round ?? 9) <= 2 || hasVeteran
+        recordTradeEvent(
+            type: .tradeAccepted,
+            teamID: swap.buyerTeamID,
+            pickNumber: swap.targetPickNumber,
+            round: currentPick?.round,
+            headline: swap.headline,
+            detail: swap.motive,
+            involvesUser: false,
+            beat: notable
+                ? TradeBeat(
+                    title: "TRADE: \(swap.buyerAbbreviation) MOVE UP",
+                    subtitle: "#\(swap.targetPickNumber) from \(swap.sellerAbbreviation) — \(swap.motive)"
+                )
+                : nil
+        )
+    }
+
+    // MARK: Execution plumbing
+
+    /// Applies one of the user's draft-night deals and reports it everywhere a
+    /// trade has to show up: ledger row, league news, inbox, ticker, event log.
+    @discardableResult
+    private func execute(offer: DraftDayTradeEngine.DraftTradeOffer, userTeamID teamID: UUID) -> Bool {
+        let proposal = TradeProposal(
+            offeringTeamID: teamID,
+            receivingTeamID: offer.partnerTeamID,
+            sendingPlayers: offer.userGivesPlayers.map(\.id),
+            receivingPlayers: offer.userGetsPlayers.map(\.id),
+            sendingPicks: offer.userGivesPicks.map(\.id),
+            receivingPicks: offer.userGetsPicks.map(\.id)
+        )
+        guard let record = applyTrade(proposal: proposal) else { return false }
+        settleAfterTrade(
+            proposal: proposal,
+            record: record,
+            teamIDs: [teamID, offer.partnerTeamID]
+        )
+
+        let season = career.currentSeason
+        let movedUp = offer.kind == .userMovesUp
+        let slot = movedUp
+            ? offer.userGetsPicks.first?.pickNumber
+            : offer.userGivesPicks.first?.pickNumber
+        recordTradeEvent(
+            type: .tradeAccepted,
+            teamID: offer.partnerTeamID,
+            pickNumber: slot,
+            round: movedUp ? offer.userGetsPicks.first?.round : offer.userGivesPicks.first?.round,
+            headline: movedUp
+                ? "TRADE — you move up to #\(slot ?? 0), \(offer.partnerAbbreviation) move down"
+                : "TRADE — you send #\(slot ?? 0) to \(offer.partnerAbbreviation)",
+            detail: "Out: \(offer.givesLabel(currentSeason: season)) · In: \(offer.getsLabel(currentSeason: season))",
+            involvesUser: true,
+            beat: TradeBeat(
+                title: movedUp ? "YOU'RE ON THE MOVE" : "YOU MOVED DOWN",
+                subtitle: movedUp
+                    ? "Up to #\(slot ?? 0) — \(offer.getsLabel(currentSeason: season)) in, \(offer.givesLabel(currentSeason: season)) out"
+                    : "\(offer.getsLabel(currentSeason: season)) in from \(offer.partnerAbbreviation)"
+            )
+        )
         return true
     }
+
+    /// The one call that moves assets. Everything else in this file goes
+    /// through it so no draft-night deal can skip the cap split or the ledger.
+    private func applyTrade(proposal: TradeProposal) -> TradeRecord? {
+        let outcome = TradeEngine.executeTrade(
+            proposal: proposal,
+            allPlayers: allLeaguePlayers,
+            allPicks: picks + futurePicks,
+            capMode: career.capMode,
+            ledger: TradeLedger.Context(
+                kind: .draftDay,
+                season: career.currentSeason,
+                week: career.currentWeek,
+                phase: career.currentPhase
+            ),
+            modelContext: modelContext
+        )
+        return outcome.record
+    }
+
+    /// News + inbox + local caches after a trade has been applied.
+    private func settleAfterTrade(
+        proposal: TradeProposal,
+        record: TradeRecord,
+        teamIDs: Set<UUID>
+    ) {
+        // Wave 2: every executed trade in the league is announced, and a
+        // draft-weekend deal is no exception — the war-room ticker is not the
+        // news feed, and a deal struck in April should still be readable in
+        // July. The headline goes straight into the persisted `newsLog` (there
+        // is no week advance in progress to fold it in) while the optional
+        // inbox message rides the normal `lastInboxMessages` channel.
+        let announcement = TradeNewsFactory.announce(
+            record: record,
+            teamsByID: teamsByID,
+            userTeamID: userTeamID
+        )
+        career.newsLog = [announcement.news] + career.newsLog
+        if let inbox = announcement.inbox {
+            WeekAdvancer.lastInboxMessages.append(inbox)
+        }
+
+        // `executeTrade` moves ownership but not the denormalised abbreviation
+        // the ticker renders, and the local roster map has to follow the
+        // players so needs/AI picking stay honest for the rest of the night.
+        let movedPickIDs = Set(proposal.sendingPicks + proposal.receivingPicks)
+        for pick in (picks + futurePicks) where movedPickIDs.contains(pick.id) {
+            pick.teamAbbreviation = teamsByID[pick.currentTeamID]?.abbreviation
+        }
+        let movedPlayerIDs = Set(proposal.sendingPlayers + proposal.receivingPlayers)
+        if !movedPlayerIDs.isEmpty {
+            resyncLocalRosters(playerIDs: movedPlayerIDs)
+        }
+        for teamID in teamIDs { marketSeats[teamID] = nil }
+        if let userTeamID {
+            teamNeedScores = DraftIntel.teamNeedScores(roster: rosters[userTeamID] ?? [])
+        }
+        try? modelContext.save()
+    }
+
+    /// Re-files traded players in the local roster map (the source the draft
+    /// room reads; `Player.teamID` is already correct on the model side).
+    private func resyncLocalRosters(playerIDs: Set<UUID>) {
+        for teamID in rosters.keys {
+            rosters[teamID]?.removeAll { playerIDs.contains($0.id) }
+        }
+        for player in allLeaguePlayers where playerIDs.contains(player.id) {
+            guard let teamID = player.teamID else { continue }
+            rosters[teamID, default: []].append(player)
+        }
+    }
+
+    /// A pending offer survives only while every asset on both sides is still
+    /// where the offer says it is.
+    private func isOfferStillValid(_ offer: DraftDayTradeEngine.DraftTradeOffer) -> Bool {
+        guard let teamID = userTeamID else { return false }
+        let currentNumber = currentPick?.pickNumber ?? Int.max
+        let season = career.currentSeason
+
+        func pickIsLive(_ pick: DraftPick, ownedBy owner: UUID) -> Bool {
+            guard pick.currentTeamID == owner, !pick.isComplete else { return false }
+            // A future-year pick has no slot in tonight's order to fall behind.
+            guard pick.seasonYear == season else { return true }
+            return pick.pickNumber >= currentNumber
+        }
+
+        for pick in offer.userGivesPicks where !pickIsLive(pick, ownedBy: teamID) { return false }
+        for pick in offer.userGetsPicks where !pickIsLive(pick, ownedBy: offer.partnerTeamID) { return false }
+        for player in offer.userGivesPlayers where player.teamID != teamID { return false }
+        for player in offer.userGetsPlayers where player.teamID != offer.partnerTeamID { return false }
+        return true
+    }
+
+    // MARK: Ticker + beats
+
+    /// Records the persisted `DraftEvent` AND the line the ticker renders, in
+    /// one call — the two drifted apart before Wave 4 (the events existed, the
+    /// ticker never showed them).
+    private func recordTradeEvent(
+        type: DraftEventType,
+        teamID: UUID?,
+        pickNumber: Int?,
+        round: Int?,
+        headline: String,
+        detail: String,
+        involvesUser: Bool,
+        beat: TradeBeat?
+    ) {
+        recordEvent(type: type, teamID: teamID, pickNumber: pickNumber, round: round)
+        tradeTicker.insert(
+            TradeTickerLine(
+                pickNumber: pickNumber,
+                headline: headline,
+                detail: detail,
+                involvesUser: involvesUser
+            ),
+            at: 0
+        )
+        if tradeTicker.count > 30 { tradeTicker.removeLast(tradeTicker.count - 30) }
+        if let beat { pendingTradeBeats.append(beat) }
+    }
+
+    /// UI calls this once it has shown the next trade beat.
+    func consumeOldestTradeBeat() {
+        guard !pendingTradeBeats.isEmpty else { return }
+        pendingTradeBeats.removeFirst()
+    }
+
 
     // MARK: - Internal pick flow
 
@@ -506,18 +889,35 @@ final class DraftDayCoordinator: ObservableObject {
             return
         }
 
+        // Expire stale offers (assets drafted or ownership moved). `.tradeExpired`
+        // existed in `DraftEventType` from R24 and had never been written by
+        // anything — an offer just silently vanished off the screen.
+        if let offer = pendingTradeOffer, !isOfferStillValid(offer) {
+            recordTradeEvent(
+                type: .tradeExpired,
+                teamID: offer.partnerTeamID,
+                pickNumber: offer.userGivesPicks.first?.pickNumber,
+                round: offer.userGivesPicks.first?.round,
+                headline: "\(offer.partnerAbbreviation) pulled their offer",
+                detail: "The board moved on before you answered.",
+                involvesUser: true,
+                beat: nil
+            )
+            pendingTradeOffer = nil
+        }
+        tradeDownMessage = nil
+
+        // AI clubs get their move BEFORE the slot is announced — a war room
+        // that trades up does it while the previous card is being handed in,
+        // not after the wrong team is announced as on the clock.
+        considerAIvsAISwap()
+
         recordEvent(
             type: .onTheClock,
             teamID: pick.currentTeamID,
             pickNumber: pick.pickNumber,
             round: pick.round
         )
-
-        // Expire stale pick-swap offers (assets drafted or ownership moved).
-        if let offer = pendingPickOffer, !isOfferStillValid(offer) {
-            pendingPickOffer = nil
-        }
-        tradeDownMessage = nil
 
         considerAITradeUpOffer()
 
@@ -757,7 +1157,9 @@ final class DraftDayCoordinator: ObservableObject {
 
     private func completeDraft() {
         clockTask?.cancel()
-        pendingPickOffer = nil
+        pendingTradeOffer = nil
+        isTradeUpBoardOpen = false
+        tradeUpQuotes = []
         mode = .complete
         recordEvent(type: .draftCompleted)
         prepareUDFAStage()
@@ -923,6 +1325,19 @@ final class DraftDayCoordinator: ObservableObject {
             // Capture round before pick
             let roundBefore = pick.round
             announceCurrentRoundIfNeeded()
+
+            // Wave 4 (plan finding S6): the trade rolls happen HERE too, before
+            // the fast-forward consumes the pick. Skipping to your pick used to
+            // bypass both the AI-vs-AI market and the incoming-offer window
+            // entirely — i.e. the flagship draft-night moment never fired on the
+            // only path anyone actually plays.
+            considerAIvsAISwap()
+            considerAITradeUpOffer()
+            if pendingTradeOffer != nil {
+                // A phone is ringing: stop the tape so it can be answered.
+                break
+            }
+
             recordEvent(
                 type: .onTheClock,
                 teamID: pick.currentTeamID,

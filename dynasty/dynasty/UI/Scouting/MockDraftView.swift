@@ -829,32 +829,48 @@ struct MockDraftView: View {
 
     // MARK: - Trade Hints
 
+    /// A "call about moving up" idea, priced the way the draft room will price
+    /// it (Wave 4). Before this the hints ran on `DraftEngine.pickValue`, a
+    /// LINEAR curve that diverges 10x from the Jimmy Johnson chart by pick 160
+    /// — the pre-draft screen quoted costs the war room would have laughed at
+    /// (plan finding S6). Now: same chart, same package decay, same GM ask.
     private struct TradeHint {
         let prospectID: UUID
         let name: String
         let position: Position
         let projectedPick: Int
         let userPick: Int
-        let estimatedCost: String
-        /// Concrete user-pick description (e.g. "Rd1 #14 + Rd2 #46").
+        /// Abbreviation of the club that holds the target slot.
+        let sellerAbbreviation: String
+        /// What that GM asks, in Jimmy Johnson points.
+        let askPoints: Int
+        /// What the assembled package is worth on the same chart.
+        let packagePoints: Int
+        /// Concrete package description (e.g. "Rd1 #14 + 2028 Rd1").
         let offerDescription: String
-        /// Whether the user has the picks to make this realistic.
+        /// Whether the user has the capital to make this realistic.
         let feasible: Bool
-        /// Surplus or deficit in pick value (negative = user falls short).
+        /// Surplus or deficit in chart points (negative = user falls short).
         let valueDelta: Int
     }
 
     private func computeTradeHints() -> [TradeHint] {
         guard let userAbbr = userTeamAbbreviation else { return [] }
+        let season = career.currentSeason
         let userPicks = mockDraft.filter { $0.teamAbbreviation == userAbbr && $0.round == 1 }.map { $0.pickNumber }.sorted()
         guard let firstUserPick = userPicks.first else { return [] }
 
-        // Real user picks from DraftPick model, sorted by pick number ascending.
-        let realPicks = teamDraftPicks
-            .filter { !$0.isComplete }
-            .sorted { $0.pickNumber < $1.pickNumber }
+        // Every pick the user still owns, this year AND the future years Wave 1
+        // minted — the future firsts are what make a real jump reachable.
+        let realPicks = teamDraftPicks.filter { !$0.isComplete }
+        let anchor = realPicks.first { $0.seasonYear == season && $0.pickNumber == firstUserPick }
+        let extras = realPicks
+            .filter { $0.id != anchor?.id }
+            .sorted {
+                TradeValueEngine.pickTradeValue(pick: $0, currentSeason: season) >
+                TradeValueEngine.pickTradeValue(pick: $1, currentSeason: season)
+            }
 
-        // Find user-scouted prospects that are projected above the user's pick
         return scoutedProspects.values
             .compactMap { prospect -> TradeHint? in
                 guard let mockPick = prospect.mockDraftPickNumber,
@@ -864,46 +880,32 @@ struct MockDraftView: View {
                 let gap = firstUserPick - mockPick
                 guard gap >= 3 else { return nil } // Only show if meaningful trade up needed
 
-                // Required value: target pick value minus what user gives up at their pick.
-                // Approximate Jimmy-Johnson-style: value(target) - value(currentPick) = value of additional picks needed.
-                let targetValue = DraftEngine.pickValue(mockPick)
-                let currentValue = DraftEngine.pickValue(firstUserPick)
-                let needed = max(0, targetValue - currentValue)
+                // The slot's owner sets the price, not an average.
+                let sellerAbbr = mockDraft.first { $0.pickNumber == mockPick }?.teamAbbreviation
+                let sellerTeam = teams.first { $0.abbreviation == sellerAbbr }
+                let ask = DraftDayTradeEngine.publicAskPrice(
+                    targetPickNumber: mockPick,
+                    sellerTeamID: sellerTeam?.id,
+                    season: season,
+                    week: career.currentWeek
+                )
 
-                // Greedily pick from user's remaining picks (skip the first round one we are already trading) to cover `needed`.
-                let candidates = realPicks.filter { $0.pickNumber != firstUserPick }
-                var offerPicks: [DraftPick] = []
-                var coverage = 0
-                for pick in candidates {
-                    if coverage >= needed { break }
-                    offerPicks.append(pick)
-                    coverage += DraftEngine.pickValue(pick.pickNumber)
+                // Greedy-descending fill, same shape as the war room's builder.
+                var package: [DraftPick] = anchor.map { [$0] } ?? []
+                var covered = DraftDayTradeEngine.publicPackageValue(package, currentSeason: season)
+                for pick in extras {
+                    if covered >= ask { break }
+                    if package.count >= DraftDayTradeEngine.bridgePackageCap { break }
+                    package.append(pick)
+                    covered = DraftDayTradeEngine.publicPackageValue(package, currentSeason: season)
                 }
-                let feasible = coverage >= needed
-                let valueDelta = coverage - needed
 
                 let offerDesc: String = {
-                    let primary = "Rd\(realPicks.first(where: { $0.pickNumber == firstUserPick })?.round ?? 1) #\(firstUserPick)"
-                    if offerPicks.isEmpty {
-                        return primary
-                    }
-                    let extras = offerPicks.map { "Rd\($0.round) #\($0.pickNumber)" }.joined(separator: " + ")
-                    return "\(primary) + \(extras)"
+                    guard !package.isEmpty else { return "Rd1 #\(firstUserPick)" }
+                    return package
+                        .map { DraftDayTradeEngine.pickLabel($0, currentSeason: season) }
+                        .joined(separator: " + ")
                 }()
-
-                // Cost description, fallback to round-based summary if no picks loaded.
-                let cost: String
-                if !realPicks.isEmpty && !offerPicks.isEmpty {
-                    cost = offerPicks.map { "Rd\($0.round)" }.joined(separator: " + ")
-                } else if gap <= 5 {
-                    cost = "~Rd 2"
-                } else if gap <= 10 {
-                    cost = "~Rd 1 + Rd 3"
-                } else if gap <= 15 {
-                    cost = "~Rd 1 + Rd 2"
-                } else {
-                    cost = "~2 Rd 1s"
-                }
 
                 return TradeHint(
                     prospectID: prospect.id,
@@ -911,10 +913,12 @@ struct MockDraftView: View {
                     position: prospect.position,
                     projectedPick: mockPick,
                     userPick: firstUserPick,
-                    estimatedCost: cost,
+                    sellerAbbreviation: sellerAbbr ?? "???",
+                    askPoints: ask,
+                    packagePoints: covered,
                     offerDescription: offerDesc,
-                    feasible: feasible,
-                    valueDelta: valueDelta
+                    feasible: covered >= ask,
+                    valueDelta: covered - ask
                 )
             }
             .sorted { $0.projectedPick < $1.projectedPick }
@@ -942,16 +946,26 @@ struct MockDraftView: View {
                             .background(Color.warning, in: Capsule())
                     }
                 }
-                Text("Projected #\(hint.projectedPick) - need ~\(hint.estimatedCost)")
+                Text("Projected #\(hint.projectedPick) · \(hint.sellerAbbreviation) ask \(hint.askPoints) pts")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(Color.textTertiary)
                 if !teamDraftPicks.isEmpty {
-                    Text("Send: \(hint.offerDescription)")
+                    Text("Send: \(hint.offerDescription) (\(hint.packagePoints) pts)")
                         .font(.system(size: 9, weight: .medium).monospacedDigit())
                         .foregroundStyle(hint.feasible ? Color.success : Color.warning)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
                 }
+                // The pre-draft screen cannot make the call; the draft room can.
+                // Same chart, same GM, same ask — so this line is a plan, not a
+                // guess that gets laughed at on the night.
+                Text(hint.feasible
+                     ? "Callable on draft night from the Big Board or the pick sheet."
+                     : "Short \(-hint.valueDelta) pts — add future capital before the draft.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
 
             Spacer()

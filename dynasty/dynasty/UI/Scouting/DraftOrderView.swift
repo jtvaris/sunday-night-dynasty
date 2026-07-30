@@ -319,9 +319,11 @@ struct DraftOrderView: View {
 
             Spacer()
 
-            // Pick value label
-            Text(pickValueLabel(pickNumber: pick.pickNumber))
-                .font(.system(size: 9, weight: .semibold))
+            // Pick value label — the tier word plus the Jimmy Johnson points the
+            // trade market actually charges, so this screen speaks the same
+            // language as the war room and the Trade Center (decision §7.1).
+            Text("\(pickValueLabel(pickNumber: pick.pickNumber)) · \(PickValueChart.points(forPick: pick.pickNumber))")
+                .font(.system(size: 9, weight: .semibold).monospacedDigit())
                 .foregroundStyle(pickValueColor(pickNumber: pick.pickNumber))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)

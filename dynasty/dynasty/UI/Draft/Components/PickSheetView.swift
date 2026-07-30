@@ -38,16 +38,17 @@ struct PickSheetView: View {
                 }
                 Divider().overlay(Color.surfaceBorder)
 
-                // R24 — pending pick-swap offer surfaces inside the sheet
-                // (the main-view banner is hidden behind this modal).
-                if let offer = coordinator.pendingPickOffer {
+                // R24 — a pending offer surfaces inside the sheet (the
+                // main-view banner is hidden behind this modal).
+                if let offer = coordinator.pendingTradeOffer {
                     TradeOfferBanner(
                         motive: offer.motive,
-                        outgoing: offer.userGives.map { "#\($0.pickNumber) (R\($0.round))" }.joined(separator: " + "),
-                        incoming: offer.userGets.map { "#\($0.pickNumber) (R\($0.round))" }.joined(separator: " + "),
+                        outgoing: offer.givesLabel(currentSeason: coordinator.draftYear),
+                        incoming: offer.getsLabel(currentSeason: coordinator.draftYear),
+                        gmLine: "\(offer.gmName) · \(offer.gmStyle)",
                         valueSummary: "Chart value: you send \(offer.userGivesValue) pts · receive \(offer.userGetsValue) pts",
-                        onAccept: { coordinator.acceptPickOffer() },
-                        onDecline: { coordinator.declinePickOffer() }
+                        onAccept: { coordinator.acceptTradeOffer() },
+                        onDecline: { coordinator.declineTradeOffer() }
                     )
                     .frame(maxWidth: .infinity)
                 }
@@ -95,6 +96,15 @@ struct PickSheetView: View {
                 Button("Cancel", role: .cancel) { pendingProspect = nil }
             } message: { prospect in
                 Text("\(prospect.position.rawValue) \(prospect.firstName) \(prospect.lastName) — OVR \(prospect.trueOverall) · \(prospect.college)")
+            }
+            // Presented from here rather than from `DraftDayView` because this
+            // sheet is already up when the user is on the clock, and one view
+            // can only present one sheet at a time.
+            .sheet(isPresented: Binding(
+                get: { coordinator.isTradeUpBoardOpen },
+                set: { if !$0 { coordinator.closeTradeUpBoard() } }
+            )) {
+                TradeUpBoardSheet(coordinator: coordinator)
             }
         }
     }
@@ -301,15 +311,27 @@ struct PickSheetView: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(Color.accentGold)
-                .disabled(coordinator.pendingPickOffer != nil)
+                .disabled(coordinator.pendingTradeOffer != nil)
+                // Wave 4: the pick sheet is the second entry point into the
+                // move-up call sheet (the big board is the first). From the
+                // clock it prices the slots ahead of the user's NEXT turn.
+                Button {
+                    coordinator.openTradeUpBoard()
+                } label: {
+                    Label("Call About Moving Up", systemImage: "arrow.up.right.circle.fill")
+                        .font(.callout.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .tint(Color.draftStealGold)
+                .disabled(coordinator.pendingTradeOffer != nil)
                 Spacer()
             }
             if let feedback = coordinator.tradeDownMessage {
                 Text(feedback)
                     .font(.caption2)
                     .foregroundStyle(Color.warning)
-            } else if coordinator.pendingPickOffer == nil {
-                Text("Shop this pick to teams behind you — interest rises when top prospects are still on the board. Trade-up offers come from rival GMs.")
+            } else if coordinator.pendingTradeOffer == nil {
+                Text("Shop this pick to teams behind you — interest rises when top prospects are still on the board. Or call ahead and pay a rival GM's price to move up.")
                     .font(.caption2)
                     .foregroundStyle(Color.textSecondary)
             }

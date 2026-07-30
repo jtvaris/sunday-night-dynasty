@@ -211,6 +211,20 @@ struct WarRoomPanel: View {
                         .foregroundStyle(Color.accentGold)
                 }
             }
+            // Future years are spendable tonight (Wave 4), so they belong in
+            // the capital total. Priced on the same chart with the 20 %/year
+            // discount the engine charges — no second opinion in the UI.
+            ForEach(userFuturePicks, id: \.id) { pick in
+                HStack {
+                    Text("\(pick.seasonYear) Rd \(pick.round)")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(Color.textTertiary)
+                    Spacer()
+                    Text("\(TradeValueEngine.pickTradeValue(pick: pick, currentSeason: coordinator.draftYear)) pts")
+                        .font(.caption.monospaced().weight(.bold))
+                        .foregroundStyle(Color.accentGold.opacity(0.75))
+                }
+            }
             Divider().overlay(Color.surfaceBorder).padding(.vertical, 2)
             HStack {
                 Text("Total")
@@ -269,7 +283,24 @@ struct WarRoomPanel: View {
     private var tradeRadarCard: some View {
         VStack(alignment: .leading, spacing: DSSpacing.xs) {
             SectionHeaderText(title: "Trade Radar")
-            if let offer = coordinator.pendingPickOffer {
+
+            // Wave 4: the war room's own phone. Available whenever the draft is
+            // live — moving up is the one GM move the draft room never had.
+            Button {
+                coordinator.openTradeUpBoard()
+            } label: {
+                Label("Call About Moving Up", systemImage: "phone.arrow.up.right.fill")
+                    .font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(Color.draftStealGold.opacity(0.22))
+                    .foregroundStyle(Color.draftStealGold)
+                    .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+            }
+            .buttonStyle(.plain)
+            .disabled(coordinator.pendingTradeOffer != nil)
+
+            if let offer = coordinator.pendingTradeOffer {
                 Label("\(offer.partnerAbbreviation) offer on the table", systemImage: "phone.fill")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.draftStealGold)
@@ -336,6 +367,17 @@ struct WarRoomPanel: View {
             .map { $0 }
     }
 
+    private var userFuturePicks: [DraftPick] {
+        guard let teamID = coordinator.userTeamID else { return [] }
+        return coordinator.futurePicks
+            .filter { $0.currentTeamID == teamID }
+            .sorted {
+                $0.seasonYear != $1.seasonYear
+                    ? $0.seasonYear < $1.seasonYear
+                    : $0.round < $1.round
+            }
+    }
+
     private func nextUserPick() -> DraftPick? {
         guard let teamID = coordinator.userTeamID else { return nil }
         return coordinator.picks
@@ -345,9 +387,13 @@ struct WarRoomPanel: View {
 
     private func userTotalValue() -> Int {
         guard let teamID = coordinator.userTeamID else { return 0 }
-        return coordinator.picks
+        let thisYear = coordinator.picks
             .dropFirst(coordinator.currentPickIndex)
             .filter { $0.currentTeamID == teamID }
             .reduce(0) { $0 + PickValueChart.points(forPick: $1.pickNumber) }
+        let future = userFuturePicks.reduce(0) {
+            $0 + TradeValueEngine.pickTradeValue(pick: $1, currentSeason: coordinator.draftYear)
+        }
+        return thisYear + future
     }
 }

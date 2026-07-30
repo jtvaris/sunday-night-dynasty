@@ -95,6 +95,14 @@ enum TradeEngine {
     /// acquiring team takes only the base salary, and the traded player's
     /// `Contract` row follows him with the bonus stripped so next season's cap
     /// hits and any later cut price him correctly on his new team.
+    ///
+    /// Wave 4 (task #26) adds the calendar to that split: the base salary is
+    /// prorated by how much of the league year is still unpaid, which the
+    /// `ledger` stamp already knows (`phase` + `week`). Deriving it there rather
+    /// than from a new parameter is deliberate — the same argument as making
+    /// `ledger` mandatory. A caller cannot move a player without saying WHEN,
+    /// so no execution path can accidentally charge a deadline rental twelve
+    /// months of salary.
     @discardableResult
     static func executeTrade(
         proposal: TradeProposal,
@@ -143,6 +151,12 @@ enum TradeEngine {
         var outcome = TradeCapOutcome()
         outcome.record = record
 
+        // Task #26: how much of the league year the acquiring club still owes.
+        let remaining = CapManagementEngine.leagueYearRemaining(
+            phase: ledger.phase,
+            week: ledger.week
+        )
+
         // --- Move sending players: offering → receiving ---
         for playerID in proposal.sendingPlayers {
             guard let player = playerLookup[playerID] else { continue }
@@ -151,7 +165,8 @@ enum TradeEngine {
                 from: offeringTeam,
                 to: receivingTeam,
                 contract: contractByPlayer[playerID],
-                capMode: capMode
+                capMode: capMode,
+                leagueYearRemaining: remaining
             )
             outcome.offeringDeadCap += dead
         }
@@ -164,7 +179,8 @@ enum TradeEngine {
                 from: receivingTeam,
                 to: offeringTeam,
                 contract: contractByPlayer[playerID],
-                capMode: capMode
+                capMode: capMode,
+                leagueYearRemaining: remaining
             )
             outcome.receivingDeadCap += dead
         }
@@ -187,26 +203,32 @@ enum TradeEngine {
     /// Moves one player between teams with NFL cap consequences and returns the
     /// dead cap `from` is left holding.
     ///
-    /// The old team drops his full cap hit and picks the accelerated bonus back
-    /// up; the new team is charged base salary only. `player.annualSalary` is
-    /// rewritten to that base so it keeps matching what the new team is charged
-    /// — every other engine (contract-year processing, cuts, valuation) reads
-    /// `annualSalary` as the cap hit, and leaving it stale would let cap usage
-    /// drift on the next expiry.
+    /// The old team drops his full cap hit and picks back up both the
+    /// accelerated bonus and the base salary it has already paid out this league
+    /// year (task #26); the new team is charged only what is still owed.
+    /// `player.annualSalary` is rewritten to that assumed figure so it keeps
+    /// matching what the new team is charged — every other engine (contract-year
+    /// processing, cuts, valuation) reads `annualSalary` as the cap hit, and
+    /// leaving it stale would let cap usage drift on the next expiry.
     private static func movePlayer(
         _ player: Player,
         from oldTeam: Team,
         to newTeam: Team,
         contract: Contract?,
-        capMode: CapMode
+        capMode: CapMode,
+        leagueYearRemaining: Double
     ) -> Int {
         let split = CapManagementEngine.tradeCapSplit(
             player: player,
             contract: contract,
-            capMode: capMode
+            capMode: capMode,
+            leagueYearRemaining: leagueYearRemaining
         )
 
-        oldTeam.currentCapUsage = max(0, oldTeam.currentCapUsage - player.annualSalary) + split.deadCap
+        oldTeam.currentCapUsage =
+            max(0, oldTeam.currentCapUsage - player.annualSalary)
+            + split.deadCap
+            + split.salaryRetained
         newTeam.currentCapUsage += split.salaryAssumed
 
         player.annualSalary = split.salaryAssumed

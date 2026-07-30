@@ -14,6 +14,15 @@ struct DraftTickerPanel: View {
                     if let current = coordinator.currentPick {
                         liveRow(current)
                     }
+                    // Wave 4: the league's trade wire. Every line here is a
+                    // persisted `DraftEvent` of a trade kind — rows the game
+                    // wrote and never showed anyone before (plan finding S6).
+                    if !coordinator.tradeTicker.isEmpty {
+                        sectionLabel("TRADE WIRE")
+                        ForEach(coordinator.tradeTicker.prefix(6)) { line in
+                            tradeRow(line)
+                        }
+                    }
                     if !completedPicks.isEmpty {
                         sectionLabel("RECENT")
                         ForEach(completedPicks.reversed().prefix(8), id: \.id) { pick in
@@ -176,6 +185,38 @@ struct DraftTickerPanel: View {
         case "C": return .warning
         default:  return .danger
         }
+    }
+
+    private func tradeRow(_ line: DraftDayCoordinator.TradeTickerLine) -> some View {
+        let tint = line.involvesUser ? Color.draftStealGold : Color.accentBlue
+        return HStack(alignment: .top, spacing: DSSpacing.xs) {
+            Image(systemName: "arrow.left.arrow.right")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(tint)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(line.headline)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(line.detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, DSSpacing.xs)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(tint.opacity(0.10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                        .strokeBorder(tint.opacity(0.45), lineWidth: 1)
+                )
+        )
     }
 
     private func liveRow(_ pick: DraftPick) -> some View {

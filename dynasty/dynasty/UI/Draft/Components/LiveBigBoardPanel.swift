@@ -63,7 +63,20 @@ struct LiveBigBoardPanel: View {
         }
     }
 
+    /// Wave 4: the board is the natural place to start a move-up call — the
+    /// user is looking at the man he wants when the thought occurs. Tapping a
+    /// row opens the call sheet pre-targeted at that prospect, which filters
+    /// the quotes to the slots where he is plausibly still on the board.
     private func prospectRow(_ prospect: CollegeProspect) -> some View {
+        Button {
+            coordinator.openTradeUpBoard(for: prospect)
+        } label: {
+            prospectRowContent(prospect)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func prospectRowContent(_ prospect: CollegeProspect) -> some View {
         HStack(spacing: DSSpacing.xs) {
             if let rank = coordinator.publicBoardRanks[prospect.id] {
                 Text("#\(rank)")

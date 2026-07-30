@@ -146,16 +146,67 @@ enum CapManagementEngine {
         /// Signing-bonus acceleration the TRADING team keeps on its books,
         /// in thousands. Identical model to a release (`calculateDeadCap`).
         let deadCap: Int
-        /// Cap hit the ACQUIRING team takes on, in thousands: the player's base
-        /// salary, i.e. his old cap hit minus this year's bonus proration.
+        /// Cap hit the ACQUIRING team takes on, in thousands: the share of the
+        /// player's base salary that is still UNPAID at the moment of the trade
+        /// (see `leagueYearRemaining` — the whole base for an offseason deal,
+        /// ~55 % of it at a Week 9 deadline).
         let salaryAssumed: Int
         /// This year's prorated bonus slice — the part that stays behind.
         let proratedPerYear: Int
+        /// Base salary the TRADING team has already paid out this league year
+        /// and therefore keeps on its own books, in thousands. Zero for any
+        /// trade struck outside the regular season.
+        let salaryRetained: Int
 
         /// Cap space the trading team actually frees up (can be negative when
         /// the acceleration is larger than the salary relief — a real and
         /// deliberately painful outcome for bonus-heavy deals).
-        var traderRelief: Int { salaryAssumed + proratedPerYear - deadCap }
+        var traderRelief: Int { salaryAssumed + proratedPerYear - deadCap - salaryRetained }
+    }
+
+    // MARK: - League-year proration (task #26)
+
+    /// Regular-season weeks in one league year.
+    ///
+    /// Local to the cap model on purpose: what proration needs is the LENGTH of
+    /// the paid season, not the schedule (`ScheduleGenerator`'s copy is private
+    /// to the scheduler and describes when games are played, not when money is
+    /// earned). The two are the same number today and would stay in step by
+    /// definition if the season were ever lengthened.
+    static let regularSeasonWeeks = 18
+
+    /// The share of the league year still ahead at `week` of `phase`, 0…1.
+    ///
+    /// NFL base salary is earned week by week: a club that acquires a player at
+    /// the deadline is charged only the game checks he has left to collect, and
+    /// the club that traded him keeps what it already paid. `tradeCapSplit`
+    /// multiplies the base by this fraction, which is why a deadline rental is
+    /// affordable to a team that could never carry the same contract in March.
+    ///
+    /// Bounds worth knowing: the trade window closes after
+    /// `TradeValueEngine.deadlineWeek` (9 of 18), so an in-season trade can
+    /// never carry a fraction below 10/18 ≈ 0.56 — the model is a discount of at
+    /// most ~44 %, never a rounding-to-nothing. Every offseason phase returns
+    /// 1.0: a March acquisition owes the whole season.
+    ///
+    /// PAIRED CHANGE STILL OPEN (handoff to the `TradeValueEngine` owner):
+    /// `capDeltas` — and through it `validationErrors`, `canAbsorbExactly` and
+    /// the Trade Center's cap preview — still calls `tradeCapSplit` without a
+    /// fraction, i.e. it prices a deadline deal at full-season cost while
+    /// execution now charges the prorated one. The divergence is in the SAFE
+    /// direction (the preview is stricter than the outcome, so no illegal deal
+    /// can slip through) but it is a divergence: pass
+    /// `leagueYearRemaining(phase:week:)` there and the plan's 5 % AI market cap
+    /// slack (`aiMarketCapSlackFraction`) can shrink or go away entirely.
+    static func leagueYearRemaining(phase: SeasonPhase, week: Int) -> Double {
+        switch phase {
+        case .regularSeason, .tradeDeadline, .playoffs:
+            let weeksLeft = regularSeasonWeeks - max(1, week) + 1
+            let fraction = Double(weeksLeft) / Double(regularSeasonWeeks)
+            return min(1.0, max(1.0 / Double(regularSeasonWeeks), fraction))
+        default:
+            return 1.0
+        }
     }
 
     /// Splits a traded player's money the same way a release does.
@@ -175,15 +226,54 @@ enum CapManagementEngine {
     ///
     /// Sandbox keeps the old 1:1 behaviour: cap rules are off, so there is no
     /// dead money to eat and the receiver takes the full salary.
+    ///
+    /// ## Midseason proration (task #26)
+    ///
+    /// `leagueYearRemaining` is the share of the season still unpaid — 1.0
+    /// everywhere except the regular season, where it is
+    /// `leagueYearRemaining(phase:week:)`. The base salary splits on it:
+    ///
+    /// ```
+    /// base            = annualSalary − proratedPerYear   (the bonus stays behind)
+    /// salaryAssumed   = base × leagueYearRemaining       (buyer: the checks still to come)
+    /// salaryRetained  = base − salaryAssumed             (seller: the checks already written)
+    /// ```
+    ///
+    /// The two halves always sum back to `base`, so a trade moves cap charge
+    /// between two clubs and never creates or destroys any. The model is the
+    /// same shape as the dead-money math directly above it: money already spent
+    /// stays with the club that spent it, money still owed follows the player.
+    ///
+    /// WHY it matters beyond realism: with the full-season charge, a deadline
+    /// buyer had to fit twelve months of salary under a cap he had already spent
+    /// ten months of — which is why the league market needed
+    /// `TradeValueEngine.aiMarketCapSlackFraction` to function at all (1240 of
+    /// 1530 candidate deals that had cleared both GMs' VALUE bars died on the
+    /// cap check). At the Week 9 deadline the charge is now 10/18 of the base.
+    ///
+    /// KNOWN SIMPLIFICATION: `TradeEngine` writes `salaryAssumed` back into
+    /// `player.annualSalary`, because `Team.currentCapUsage` is an incrementally
+    /// maintained ledger and every other engine subtracts `annualSalary` when the
+    /// deal expires — the two numbers have to agree or cap room drifts. So a
+    /// player acquired at the deadline stays booked at his REMAINING number
+    /// (≥ 56 % of base, the window bound above) in later league years too, until
+    /// he is re-signed. Restoring the full base at the league-year rollover is a
+    /// `FreeAgencyEngine.executeNewLeagueYear` change and is left as a handoff.
     static func tradeCapSplit(
         player: Player,
         contract: Contract?,
-        capMode: CapMode
+        capMode: CapMode,
+        leagueYearRemaining: Double = 1.0
     ) -> TradeCapSplit {
         let salary = max(0, player.annualSalary)
 
         guard capMode != .sandbox else {
-            return TradeCapSplit(deadCap: 0, salaryAssumed: salary, proratedPerYear: 0)
+            return TradeCapSplit(
+                deadCap: 0,
+                salaryAssumed: salary,
+                proratedPerYear: 0,
+                salaryRetained: 0
+            )
         }
 
         // Remaining years drive the acceleration, same as a mid-contract cut.
@@ -203,10 +293,15 @@ enum CapManagementEngine {
         let deadCap = max(0, min(rawDead, salary * years))
         let proratedPerYear = deadCap / years
 
+        let base = max(0, salary - proratedPerYear)
+        let remaining = min(1.0, max(0.0, leagueYearRemaining))
+        let assumed = Int((Double(base) * remaining).rounded())
+
         return TradeCapSplit(
             deadCap: deadCap,
-            salaryAssumed: max(0, salary - proratedPerYear),
-            proratedPerYear: proratedPerYear
+            salaryAssumed: assumed,
+            proratedPerYear: proratedPerYear,
+            salaryRetained: base - assumed
         )
     }
 
