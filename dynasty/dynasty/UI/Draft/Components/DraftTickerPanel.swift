@@ -14,6 +14,16 @@ struct DraftTickerPanel: View {
                     if let current = coordinator.currentPick {
                         liveRow(current)
                     }
+                    // Batch 2A: the story of the night. Runs on a position,
+                    // slides and reaches have always been computed (and two of
+                    // them persisted as `DraftEvent`s) — no view had ever read
+                    // them, which is why this column sat empty between picks.
+                    if !coordinator.storyFeed.isEmpty {
+                        sectionLabel("LIVE FEED")
+                        ForEach(coordinator.storyFeed.prefix(10)) { beat in
+                            storyRow(beat)
+                        }
+                    }
                     // Wave 4: the league's trade wire. Every line here is a
                     // persisted `DraftEvent` of a trade kind — rows the game
                     // wrote and never showed anyone before (plan finding S6).
@@ -187,6 +197,59 @@ struct DraftTickerPanel: View {
         }
     }
 
+    // MARK: - Story feed
+
+    private func storyRow(_ beat: DraftDayCoordinator.StoryBeat) -> some View {
+        let style = storyStyle(beat.kind)
+        return HStack(alignment: .top, spacing: DSSpacing.xs) {
+            Image(systemName: style.icon)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(style.tint)
+                .frame(width: 14)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(beat.headline)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(beat.detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            if let pickNumber = beat.pickNumber {
+                Text("#\(pickNumber)")
+                    .font(.system(size: 10).monospaced())
+                    .foregroundStyle(Color.textTertiary)
+            }
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, DSSpacing.xs)
+        .background(
+            RoundedRectangle(cornerRadius: DSCornerRadius.inline)
+                .fill(style.tint.opacity(0.08))
+        )
+        .overlay(
+            Rectangle()
+                .fill(style.tint)
+                .frame(width: 3),
+            alignment: .leading
+        )
+        .clipShape(RoundedRectangle(cornerRadius: DSCornerRadius.inline))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func storyStyle(_ kind: DraftDayCoordinator.StoryBeat.Kind) -> (icon: String, tint: Color) {
+        switch kind {
+        case .steal: return ("sparkles", Color.draftStealGold)
+        case .reach: return ("exclamationmark.triangle.fill", Color.warning)
+        case .slide: return ("arrow.down.right", Color.accentBlue)
+        case .run:   return ("flame.fill", Color.danger)
+        case .round: return ("flag.checkered", Color.textSecondary)
+        }
+    }
+
     private func tradeRow(_ line: DraftDayCoordinator.TradeTickerLine) -> some View {
         let tint = line.involvesUser ? Color.draftStealGold : Color.accentBlue
         return HStack(alignment: .top, spacing: DSSpacing.xs) {
@@ -244,20 +307,26 @@ struct DraftTickerPanel: View {
     }
 
     private func upcomingRow(_ pick: DraftPick) -> some View {
-        HStack(spacing: DSSpacing.xs) {
+        // Five rows of "#16 MIA" told the user nothing he could act on. The
+        // distance to each slot is what he is actually counting.
+        let isUser = pick.currentTeamID == coordinator.userTeamID
+        let away = pick.pickNumber - (coordinator.currentPick?.pickNumber ?? pick.pickNumber)
+        return HStack(spacing: DSSpacing.xs) {
             Text("#\(pick.pickNumber)")
                 .font(.caption.monospaced())
                 .foregroundStyle(Color.textTertiary)
                 .frame(width: 32, alignment: .leading)
             Text(coordinator.teamsByID[pick.currentTeamID]?.abbreviation ?? "—")
-                .font(.caption)
-                .foregroundStyle(Color.textTertiary)
-            if pick.currentTeamID == coordinator.userTeamID {
-                Text("(yours)")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(Color.draftStealGold)
-            }
+                .font(.caption.weight(isUser ? .bold : .regular))
+                .foregroundStyle(isUser ? Color.draftStealGold : Color.textTertiary)
+                .frame(width: 36, alignment: .leading)
+            Text(isUser ? "YOU'RE UP" : (away == 1 ? "next" : "in \(away)"))
+                .font(.system(size: 10, weight: isUser ? .heavy : .regular))
+                .foregroundStyle(isUser ? Color.draftStealGold : Color.textTertiary)
             Spacer()
+            Text("Rd \(pick.round)")
+                .font(.system(size: 10).monospaced())
+                .foregroundStyle(Color.textTertiary.opacity(0.7))
         }
         .padding(.vertical, 2)
         .padding(.horizontal, DSSpacing.xs)

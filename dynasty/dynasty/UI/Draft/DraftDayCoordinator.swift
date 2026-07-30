@@ -68,6 +68,45 @@ final class DraftDayCoordinator: ObservableObject {
     /// Queue of league-trade moments big enough to interrupt the broadcast.
     @Published private(set) var pendingTradeBeats: [TradeBeat] = []
 
+    // MARK: - Story feed (Batch 2A)
+
+    /// The night's narrative beats, newest first: runs on a position, slides,
+    /// steals, reaches, round breaks.
+    ///
+    /// The draft has always *computed* these — `bigDrop` and `positionRun` have
+    /// been cases in `DraftEventType` since Vaihe 1 and the gem/reach grades
+    /// come out of `PickGradeCalculator` on every card — and then thrown them
+    /// away: the persisted events were write-only and `recentEvents` was a
+    /// published array no view ever read. Meanwhile the ticker column showed
+    /// five near-identical "#16 MIA" rows and ~1200 px of nothing. This is the
+    /// same data, rendered.
+    @Published private(set) var storyFeed: [StoryBeat] = []
+
+    /// One rendered narrative line.
+    struct StoryBeat: Identifiable {
+        enum Kind {
+            case steal
+            case reach
+            case slide
+            case run
+            case round
+        }
+        let id = UUID()
+        let kind: Kind
+        let pickNumber: Int?
+        let headline: String
+        let detail: String
+    }
+
+    /// Position of the current same-position streak and how long it is. A run
+    /// surfaces at three straight and then keeps rewriting its own line, so a
+    /// four-deep run is one row that counts up, not four rows.
+    private var positionStreak: (position: Position, count: Int)?
+
+    /// The run beat currently on the feed, so a lengthening run rewrites its own
+    /// line instead of pushing a new one on top of it.
+    private var activeRunBeatID: UUID?
+
     /// "Call about moving up" sheet state.
     @Published private(set) var isTradeUpBoardOpen = false
     @Published private(set) var tradeUpQuotes: [DraftDayTradeEngine.DraftTradeOffer] = []
@@ -1096,6 +1135,7 @@ final class DraftDayCoordinator: ObservableObject {
         )
         lastPickResult = result
         allPickResults.append(result)
+        recordStoryBeats(for: result, prospect: prospect, pick: pick)
 
         // Reactions for the user's own picks (mechanical effects only)
         if isUserPick, let rep = reputation {
@@ -1370,6 +1410,16 @@ final class DraftDayCoordinator: ObservableObject {
             : picks[currentPickIndex - 1].round
         if prevRound != pick.round {
             recordEvent(type: .roundTransition, round: pick.round)
+            appendStoryBeat(StoryBeat(
+                kind: .round,
+                pickNumber: pick.pickNumber,
+                headline: "Round \(pick.round) is under way",
+                detail: "\(availableProspects.count) names still on the board."
+            ))
+            // A new round is a new run: three straight receivers in round two
+            // is not the same story as one card of it in round one.
+            positionStreak = nil
+            activeRunBeatID = nil
         }
     }
 
@@ -1428,6 +1478,106 @@ final class DraftDayCoordinator: ObservableObject {
         case 60..<66: return "C"
         default:      return "D"
         }
+    }
+
+    // MARK: - Story feed
+
+    /// Turns one finished card into the narrative beats the ticker renders, and
+    /// persists the two `DraftEventType` cases that had never been written by
+    /// anything (`bigDrop`, `positionRun`) so the saved story matches what the
+    /// user watched. Everything here is read off values the pick already
+    /// produced — no second opinion on the board, no new evaluation.
+    private func recordStoryBeats(for result: PickResult, prospect: CollegeProspect, pick: DraftPick) {
+        let name = Self.shortName(result.playerName)
+        let boardRank = publicBoardRanks[prospect.id]
+
+        // 1) Value beats — the grade the pick was just given.
+        switch result.grade {
+        case .stealAPlus, .hofTrack:
+            appendStoryBeat(StoryBeat(
+                kind: .steal,
+                pickNumber: result.pickNumber,
+                headline: "\(result.teamAbbrev) steal \(result.position.rawValue) \(name)",
+                detail: boardRank.map { "Consensus board had him #\($0); he went at #\(result.pickNumber)." }
+                    ?? "Value the rest of the room let slide."
+            ))
+        case .reach, .bigReach:
+            appendStoryBeat(StoryBeat(
+                kind: .reach,
+                pickNumber: result.pickNumber,
+                headline: "\(result.teamAbbrev) reach for \(result.position.rawValue) \(name)",
+                detail: boardRank.map { "Board had him #\($0) — taken \(result.pickNumber - $0) picks early." }
+                    ?? "Nobody else had him this high."
+            ))
+        default:
+            if result.isGem {
+                appendStoryBeat(StoryBeat(
+                    kind: .steal,
+                    pickNumber: result.pickNumber,
+                    headline: "\(result.teamAbbrev) may have found one in \(name)",
+                    detail: "The room likes the value at #\(result.pickNumber)."
+                ))
+            }
+        }
+
+        // 2) The slide — projected rounds earlier, still sitting there.
+        if result.isBigDrop, let projection = prospect.draftProjection {
+            recordEvent(
+                type: .bigDrop,
+                teamID: pick.currentTeamID,
+                pickNumber: pick.pickNumber,
+                round: pick.round,
+                prospectID: prospect.id
+            )
+            appendStoryBeat(StoryBeat(
+                kind: .slide,
+                pickNumber: result.pickNumber,
+                headline: "\(name)'s slide ends at #\(result.pickNumber)",
+                detail: "Media had him going in Round \(projection). \(result.teamAbbrev) let him come to them."
+            ))
+        }
+
+        // 3) The run — three straight cards at the same position. A run that
+        //    keeps going updates its own line ("3 straight" → "4 straight")
+        //    instead of stacking near-identical rows on top of each other.
+        if let streak = positionStreak, streak.position == result.position {
+            positionStreak = (result.position, streak.count + 1)
+        } else {
+            positionStreak = (result.position, 1)
+            activeRunBeatID = nil
+        }
+        if let streak = positionStreak, streak.count >= 3 {
+            recordEvent(
+                type: .positionRun,
+                teamID: pick.currentTeamID,
+                pickNumber: pick.pickNumber,
+                round: pick.round
+            )
+            let takers = allPickResults.suffix(streak.count).map(\.teamAbbrev).joined(separator: " · ")
+            if let previous = activeRunBeatID {
+                storyFeed.removeAll { $0.id == previous }
+            }
+            let beat = StoryBeat(
+                kind: .run,
+                pickNumber: result.pickNumber,
+                headline: "Run on \(result.position.rawValue)s — \(streak.count) straight",
+                detail: "\(takers). The position is drying up."
+            )
+            activeRunBeatID = beat.id
+            appendStoryBeat(beat)
+        }
+    }
+
+    private func appendStoryBeat(_ beat: StoryBeat) {
+        storyFeed.insert(beat, at: 0)
+        if storyFeed.count > 40 { storyFeed.removeLast(storyFeed.count - 40) }
+    }
+
+    /// "Marcus Harlanson" → "M. Harlanson", so a beat headline fits one line.
+    private static func shortName(_ fullName: String) -> String {
+        let parts = fullName.split(separator: " ")
+        guard parts.count >= 2, let initial = parts.first?.first else { return fullName }
+        return "\(initial). \(parts.dropFirst().joined(separator: " "))"
     }
 
     // MARK: - Events

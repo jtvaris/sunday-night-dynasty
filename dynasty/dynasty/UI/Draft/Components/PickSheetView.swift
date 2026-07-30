@@ -95,7 +95,7 @@ struct PickSheetView: View {
                 Button("Draft \(prospect.lastName)") { draftPendingProspect() }
                 Button("Cancel", role: .cancel) { pendingProspect = nil }
             } message: { prospect in
-                Text("\(prospect.position.rawValue) \(prospect.firstName) \(prospect.lastName) — OVR \(prospect.trueOverall) · \(prospect.college)")
+                Text("\(prospect.position.rawValue) \(prospect.firstName) \(prospect.lastName) — \(ProspectFog.read(prospect).labelledText) · \(prospect.college)")
             }
             // Presented from here rather than from `DraftDayView` because this
             // sheet is already up when the user is on the clock, and one view
@@ -153,9 +153,13 @@ struct PickSheetView: View {
                         }
                     }
                     HStack(spacing: 4) {
-                        Text("\(prospect.position.rawValue) · \(prospect.college) · OVR \(prospect.trueOverall) · \(stars(prospect))")
+                        Text("\(prospect.position.rawValue) · \(prospect.college)")
                             .font(.caption)
                             .foregroundStyle(Color.textSecondary)
+                        // The confidence stars are the band width now — a
+                        // single "B+" is a converged read, "C+/A-" is a class
+                        // your scouts have barely opened.
+                        ProspectGradeBand(prospect: prospect, alignment: .leading, font: .caption.monospaced().weight(.heavy))
                         Text("·")
                             .font(.caption)
                             .foregroundStyle(Color.textSecondary)
@@ -222,9 +226,7 @@ struct PickSheetView: View {
                 .foregroundStyle(Color.textPrimary)
                 .lineLimit(2)
             HStack(spacing: 4) {
-                Text("OVR \(prospect.trueOverall)")
-                    .font(.caption.monospaced().weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
+                ProspectGradeBand(prospect: prospect, alignment: .leading, font: .caption.monospaced().weight(.heavy))
                 Text("·")
                     .foregroundStyle(Color.textSecondary)
                 Text(prospect.position.rawValue)
@@ -253,24 +255,28 @@ struct PickSheetView: View {
                 Text(prospect.collegeProductionTier.displayName)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(prospect.collegeProductionTier.chipColor)
+                // Measurables are public the moment a man runs them in front of
+                // 32 clubs — but only then. A prospect with no combine invite,
+                // no pro day and no report filed has none the user could know.
+                let hasMeasurables = ProspectFog.showsMeasurables(prospect)
                 Text("Speed")
                     .font(.caption2)
                     .foregroundStyle(Color.textSecondary)
-                Text("\(prospect.truePhysical.speed)")
+                Text(hasMeasurables ? "\(prospect.truePhysical.speed)" : "—")
                     .font(.caption.monospaced().weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
+                    .foregroundStyle(hasMeasurables ? Color.textPrimary : Color.textTertiary)
                 Text("Strength")
                     .font(.caption2)
                     .foregroundStyle(Color.textSecondary)
-                Text("\(prospect.truePhysical.strength)")
+                Text(hasMeasurables ? "\(prospect.truePhysical.strength)" : "—")
                     .font(.caption.monospaced().weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
+                    .foregroundStyle(hasMeasurables ? Color.textPrimary : Color.textTertiary)
                 Text("Agility")
                     .font(.caption2)
                     .foregroundStyle(Color.textSecondary)
-                Text("\(prospect.truePhysical.agility)")
+                Text(hasMeasurables ? "\(prospect.truePhysical.agility)" : "—")
                     .font(.caption.monospaced().weight(.semibold))
-                    .foregroundStyle(Color.textPrimary)
+                    .foregroundStyle(hasMeasurables ? Color.textPrimary : Color.textTertiary)
             }
             Button {
                 pendingProspect = prospect
@@ -353,9 +359,11 @@ struct PickSheetView: View {
         // every clock tick, which caused mis-taps on an instant-draft UI.
         let entries = topByPosition
             .sorted {
-                if $0.value.trueOverall != $1.value.trueOverall {
-                    return $0.value.trueOverall > $1.value.trueOverall
-                }
+                // Ordered by the fogged band, not by the hidden overall — the
+                // strip used to rank the whole class for the user for free.
+                let lhs = ProspectFog.rank($0.value)
+                let rhs = ProspectFog.rank($1.value)
+                if lhs != rhs { return lhs > rhs }
                 return $0.key.rawValue < $1.key.rawValue
             }
             .prefix(8)
@@ -399,9 +407,7 @@ struct PickSheetView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.textPrimary)
                 HStack(spacing: 4) {
-                    Text("OVR \(prospect.trueOverall)")
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(Color.textSecondary)
+                    ProspectGradeBand(prospect: prospect, alignment: .leading, font: .caption2.monospaced().weight(.heavy))
                     if (coordinator.teamNeedScores[position] ?? 0) >= 0.7 {
                         Text("•").foregroundStyle(Color.draftStealGold)
                         Text("NEED")
@@ -428,10 +434,15 @@ struct PickSheetView: View {
 
     private func pickGradePreview(prospect: CollegeProspect, bbRank: Int?, pickNumber: Int, needScore: Double) -> PickGradeCalculator.Output {
         let valueDelta = pickNumber - (bbRank ?? pickNumber)
+        // Same public OVR the coordinator grades the finished pick on
+        // (`DraftDayCoordinator.computePickGrade`, #33 OSA B): the scouted
+        // consensus, falling back to the hidden value only for a prospect
+        // nobody in the league has seen. Feeding `trueOverall` in here made the
+        // *preview* grade sharper than the grade the pick would actually get.
         let inputs = PickGradeCalculator.Inputs(
             valueDelta: valueDelta,
             needScore: needScore,
-            publicOVR: prospect.trueOverall,
+            publicOVR: prospect.scoutedOverall ?? prospect.trueOverall,
             schemeFit: 0.6
         )
         return PickGradeCalculator.compute(inputs)
@@ -477,10 +488,5 @@ struct PickSheetView: View {
             if delta <= -4 { return "REACH \(delta)" }
             return "FAIR"
         }
-    }
-
-    private func stars(_ prospect: CollegeProspect) -> String {
-        let n = DraftIntel.scoutConfidence(for: prospect)
-        return String(repeating: "★", count: n)
     }
 }
