@@ -1,6 +1,119 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Headroom Fog
+
+/// How precisely the staff may read a player's remaining headroom.
+///
+/// `TrainingFocusEngine.potentialCeiling` is derived from the player's hidden
+/// `truePotential`, so printing "+7 headroom" hands the manager a number the
+/// game deliberately keeps behind a curtain: the same ceiling only ever reaches
+/// him as a verbal band on the camp report, fogged by
+/// `PlayerDevelopmentEngine.assessPotential`. This mirrors that engine's noise
+/// ladder — tenure with the club sets it (0 yrs → 2, 1 yr → 1, 2+ → 0), and an
+/// elite developer (playerDevelopment ≥ 80) buys one step back — and applies it
+/// to the picker's headroom figure, so both surfaces admit the same uncertainty.
+///
+/// Lives in the view, not the engine: `PlayerDevelopmentEngine`'s API is
+/// untouched, only its ladder is re-stated (and referenced) here.
+private enum HeadroomFog {
+
+    /// noise 2 — a qualitative tier, no number and no range.
+    case tier
+    /// noise 1 — a coarse ~8-wide band.
+    case band
+    /// noise 0 — two years of tape; the exact number.
+    case exact
+
+    /// The noise ladder from `PlayerDevelopmentEngine.assessPotential`
+    /// (Engine/PlayerDevelopment/PlayerDevelopmentEngine.swift), one-to-one.
+    static func level(yearsOnTeam: Int, coachDevelopmentRating: Int) -> HeadroomFog {
+        var noise: Int
+        switch yearsOnTeam {
+        case 0:     noise = 2   // just drafted/acquired — very inaccurate
+        case 1:     noise = 1   // one year of observation
+        default:    noise = 0   // two+ years — accurate assessment
+        }
+        if coachDevelopmentRating >= 80 { noise = max(0, noise - 1) }
+
+        switch noise {
+        case 2:     return .tier
+        case 1:     return .band
+        default:    return .exact
+        }
+    }
+
+    /// The evaluator, chosen exactly like
+    /// `PlayerDevelopmentEngine.assessedPotentialLabel` does it: the position
+    /// coach is the man watching the reps, and an unstaffed room reads at the
+    /// league-average 50 (i.e. never sees a ceiling early).
+    static func developmentRating(for player: Player, coaches: [Coach]) -> Int {
+        coaches.first {
+            CoachingEngine.positionRoleMatch(coachRole: $0.role, playerPosition: player.position)
+        }?.playerDevelopment ?? 50
+    }
+
+    /// Band floors. 0–4 is "barely anything left", then ~8-wide steps.
+    private static let bandFloors = [0, 5, 13, 21, 29]
+
+    /// The band `headroom` falls in, as (floor, upper?) — nil upper = open top.
+    private static func band(for headroom: Int) -> (floor: Int, top: Int?) {
+        let clamped = max(0, headroom)
+        let floor = bandFloors.last(where: { clamped >= $0 }) ?? 0
+        guard let next = bandFloors.first(where: { $0 > floor }) else { return (floor, nil) }
+        return (floor, next - 1)
+    }
+
+    /// What the staff is willing to say out loud about `headroom` points of room.
+    /// The exact value goes in; at anything but `.exact` it does not come out.
+    func label(headroom: Int) -> String {
+        let clamped = max(0, headroom)
+        switch self {
+        case .exact:
+            return clamped > 0 ? "+\(clamped) headroom" : "at ceiling"
+        case .band:
+            let range = Self.band(for: clamped)
+            if let top = range.top {
+                return "+\(range.floor)–\(top) headroom"
+            }
+            return "+\(range.floor)+ headroom"
+        case .tier:
+            if clamped >= 13 { return "High headroom" }
+            if clamped >= 5 { return "Some headroom" }
+            return "Near ceiling"
+        }
+    }
+
+    /// The only headroom figure the ranking is allowed to see: the exact value
+    /// when the read is clean, otherwise the midpoint of whatever band or tier
+    /// the manager is actually shown. Sorting on the exact number would leak the
+    /// ceiling through list position, which is the same leak by another route.
+    func rankingHeadroom(_ headroom: Int) -> Double {
+        let clamped = max(0, headroom)
+        switch self {
+        case .exact:
+            return Double(clamped)
+        case .band:
+            let range = Self.band(for: clamped)
+            guard let top = range.top else { return Double(range.floor) + 3.5 }
+            return (Double(range.floor) + Double(top)) / 2.0
+        case .tier:
+            if clamped >= 13 { return 18.0 }   // "High"
+            if clamped >= 5 { return 8.5 }     // "Some"
+            return 2.0                         // "Near ceiling"
+        }
+    }
+
+    /// Whether the chip should read amber ("there may be nothing left here").
+    /// A fogged read can never assert an empty tank, only a thin one.
+    func isThin(headroom: Int) -> Bool {
+        switch self {
+        case .exact:        return headroom <= 0
+        case .band, .tier:  return headroom <= 4
+        }
+    }
+}
+
 // MARK: - DevelopmentReportView (R26)
 
 /// Development hub for the user's team:
@@ -19,6 +132,9 @@ struct DevelopmentReportView: View {
 
     @State private var players: [Player] = []
     @State private var coaches: [Coach] = []
+    /// Completed seasons each player has spent with THIS club, the input to the
+    /// potential-fog ladder. Built in `loadPlayers()` from `PlayerSeasonHistory`.
+    @State private var tenureByPlayer: [UUID: Int] = [:]
     @State private var showFocusPicker = false
 
     // MARK: - Derived
@@ -78,27 +194,55 @@ struct DevelopmentReportView: View {
         let player: Player
         /// `TrainingFocusEngine.weeklyGainChance` — probability of a +1 this week.
         let weeklyChance: Double
-        /// Points left under `TrainingFocusEngine.potentialCeiling`, floored at 0.
-        let headroom: Int
+        /// How precisely this staff can read this man's ceiling.
+        let fog: HeadroomFog
+        /// Points left under `TrainingFocusEngine.potentialCeiling`, floored at
+        /// 0. Deliberately `private`: it is derived from the hidden
+        /// `truePotential`, so it never leaves this struct — every caller reads
+        /// it through the fogged accessors below.
+        private let exactHeadroom: Int
+
+        init(player: Player, weeklyChance: Double, fog: HeadroomFog, exactHeadroom: Int) {
+            self.player = player
+            self.weeklyChance = weeklyChance
+            self.fog = fog
+            self.exactHeadroom = max(0, exactHeadroom)
+        }
 
         var id: UUID { player.id }
 
-        /// "31%/wk" — the engine's own roll, printed.
+        /// "31%/wk" — the engine's own roll, printed exactly. This one is
+        /// honestly observable: the manager watches it resolve every week.
         var chanceLabel: String { "\(Int((weeklyChance * 100).rounded()))%/wk" }
 
-        var headroomLabel: String { headroom > 0 ? "+\(headroom) headroom" : "at ceiling" }
+        /// "+7 headroom" / "+5–12 headroom" / "High headroom", by fog level.
+        var headroomLabel: String { fog.label(headroom: exactHeadroom) }
 
-        /// A slot spent here is money burned: he cannot gain a point.
-        var isCapped: Bool { headroom <= 0 }
+        /// Expected points per week of reps, on the headroom figure the manager
+        /// is actually shown — never the exact ceiling for a fogged read.
+        var expectedWeeklyGain: Double { weeklyChance * fog.rankingHeadroom(exactHeadroom) }
+
+        /// A slot spent here is money burned: he cannot gain a point. Only an
+        /// unfogged read is allowed to make that call — a first-year man who
+        /// looks capped might simply be misread.
+        var isCapped: Bool { fog == .exact && exactHeadroom <= 0 }
+
+        /// Amber chip: the tank looks thin (empty, or in the bottom band/tier).
+        var isThin: Bool { fog.isThin(headroom: exactHeadroom) }
     }
 
     /// Candidates for a new focus slot, best expected gain first.
     ///
     /// Was: youngest-first, showing OVR only — which is a proxy for the real
     /// answer, and a bad one for a 22-year-old who is already at his ceiling.
-    /// Now ranked on the two numbers that decide the outcome: a player who
-    /// cannot gain sinks to the bottom regardless of age, and above that line
-    /// the weekly roll leads.
+    /// Now ranked on the two numbers that decide the outcome: a player the staff
+    /// KNOWS cannot gain sinks to the bottom regardless of age, and above that
+    /// line it is expected points per week — the weekly roll times the headroom
+    /// the staff can actually see.
+    ///
+    /// That last part matters for the fog: a fogged candidate contributes his
+    /// band/tier midpoint, never his exact ceiling, so list position cannot be
+    /// read backwards into `truePotential`.
     private var focusCandidates: [FocusCandidate] {
         players
             .filter { $0.trainingFocusArea == nil }
@@ -106,17 +250,32 @@ struct DevelopmentReportView: View {
                 FocusCandidate(
                     player: player,
                     weeklyChance: TrainingFocusEngine.weeklyGainChance(player: player, coaches: coaches),
-                    headroom: max(0, TrainingFocusEngine.potentialCeiling(for: player) - player.overall)
+                    fog: fog(for: player),
+                    exactHeadroom: TrainingFocusEngine.potentialCeiling(for: player) - player.overall
                 )
             }
             .sorted {
                 if $0.isCapped != $1.isCapped { return !$0.isCapped }
+                if abs($0.expectedWeeklyGain - $1.expectedWeeklyGain) > 0.0005 {
+                    return $0.expectedWeeklyGain > $1.expectedWeeklyGain
+                }
+                // Both remaining tie-breaks are things the manager can see for
+                // himself: the weekly roll and the overall on the roster page.
                 if abs($0.weeklyChance - $1.weeklyChance) > 0.0005 {
                     return $0.weeklyChance > $1.weeklyChance
                 }
-                if $0.headroom != $1.headroom { return $0.headroom > $1.headroom }
                 return $0.player.overall > $1.player.overall
             }
+    }
+
+    /// How fogged this staff's read on this player is — tenure with the club
+    /// plus the position coach's eye, the ladder `assessPotential` uses.
+    /// An unknown tenure reads as "just arrived", i.e. the most fog.
+    private func fog(for player: Player) -> HeadroomFog {
+        HeadroomFog.level(
+            yearsOnTeam: tenureByPlayer[player.id] ?? 0,
+            coachDevelopmentRating: HeadroomFog.developmentRating(for: player, coaches: coaches)
+        )
     }
 
     /// The three the staff would take, used to pre-populate the empty state.
@@ -363,12 +522,14 @@ struct DevelopmentReportView: View {
     }
 
     /// Age · headroom · weekly chance — the whole case for a slot in one line.
+    /// The headroom chip carries whatever precision the staff has earned on this
+    /// man (`HeadroomFog`), so the suggestion rows leak no more than the picker.
     private func candidateReasonChips(_ candidate: FocusCandidate) -> some View {
         HStack(spacing: 4) {
             reasonChip("Age \(candidate.player.age)", color: .textSecondary)
             reasonChip(
                 candidate.headroomLabel,
-                color: candidate.isCapped ? .warning : .accentBlue
+                color: candidate.isThin ? .warning : .accentBlue
             )
             reasonChip(
                 candidate.chanceLabel,
@@ -909,7 +1070,7 @@ struct DevelopmentReportView: View {
             Image(systemName: "info.circle")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Color.accentBlue)
-            Text("Ranked by expected gain. **%/wk** is the chance one week's extra reps produce a +1; **headroom** is how many points he still has under his ceiling. Age, work ethic, his position coach and his mood all move the weekly number.")
+            Text("Ranked by expected gain — the weekly chance times the room the staff can see. **%/wk** is the chance one week's extra reps produce a +1; **headroom** is how many points he still has under his ceiling, and it is a scouting read, not a fact. The room needs two seasons with a player before it names the number — one under an elite developer — so newer men show a range or a tier instead.")
                 .font(.caption2)
                 .foregroundStyle(Color.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1019,5 +1180,45 @@ struct DevelopmentReportView: View {
         // §5.3: the conversion offers need the staff for their week estimates.
         let coachDesc = FetchDescriptor<Coach>(predicate: #Predicate<Coach> { $0.teamID == teamID })
         coaches = (try? modelContext.fetch(coachDesc)) ?? []
+        loadTenure(teamID: teamID)
+    }
+
+    /// Completed seasons with the current club, per player — the same count
+    /// `WeekAdvancer.buildOffseasonInputs` feeds `assessPotential`: consecutive
+    /// season-history rows, newest first, that were spent here. A rookie drafted
+    /// this season has no rows yet and lands on 0, and so does a veteran signed
+    /// this offseason, whose newest row names another team.
+    ///
+    /// `Player.loyaltyYears` looks like the right field but nothing ever writes
+    /// it, so reading it would pin every man at "just acquired" forever.
+    private func loadTenure(teamID: UUID) {
+        let ids = players.map(\.id)
+        guard !ids.isEmpty else {
+            tenureByPlayer = [:]
+            return
+        }
+        let cid = career.id
+        let descriptor = FetchDescriptor<PlayerSeasonHistory>(
+            predicate: #Predicate<PlayerSeasonHistory> {
+                $0.careerID == cid && ids.contains($0.playerID)
+            },
+            sortBy: [SortDescriptor(\.season, order: .reverse)]
+        )
+        let rows = (try? modelContext.fetch(descriptor)) ?? []
+
+        var rowsByPlayer: [UUID: [PlayerSeasonHistory]] = [:]
+        for row in rows { rowsByPlayer[row.playerID, default: []].append(row) }
+
+        var tenure: [UUID: Int] = [:]
+        tenure.reserveCapacity(players.count)
+        for player in players {
+            var years = 0
+            for row in rowsByPlayer[player.id] ?? [] {
+                guard row.teamID == teamID else { break }
+                years += 1
+            }
+            tenure[player.id] = years
+        }
+        tenureByPlayer = tenure
     }
 }
